@@ -171,8 +171,8 @@ class CosmoAgentService: ObservableObject {
     private let baseMaxToolIterations = 12
     nonisolated static let recentToolResultsToKeepUncompressed = 8
 
-    nonisolated static func defaultModelTier(for _: AgentIntent) -> AgentModelTier {
-        .strategist
+    nonisolated static func defaultModelTier(for intent: AgentIntent) -> AgentModelTier {
+        .geminiFlashLatest
     }
 
     /// Returns the max tool iterations for a given intent.
@@ -565,6 +565,9 @@ class CosmoAgentService: ObservableObject {
         )
         print("[AGENT-PERF] assembleSystemPrompt=\(Int(Date().timeIntervalSince(perfAsmStart) * 1000))ms lightweight=\(lightweightContext) cached=\(systemPrompt.cached.count)c dynamic=\(systemPrompt.dynamic.count)c (~\((systemPrompt.cached.count + systemPrompt.dynamic.count) / 4) tok) tools=\(tools.count) intent=\(intent) tier=\(tierOverride.map { "\($0)" } ?? "default")")
 
+        conversation.applyModelSelection(tierOverride)
+        let modelTier = conversation.effectiveModelTier(userOverride: tierOverride)
+
         // Build message array for LLM (no system message — passed separately for caching)
         var llmMessages: [AgentMessage] = []
 
@@ -578,19 +581,16 @@ class CosmoAgentService: ObservableObject {
             // accumulating per-surface conversation doesn't re-bloat every call.
             rawWindow = buildLightweightWindow(conversation.messages)
         } else {
-            rawWindow = buildTokenAwareWindow(conversation.messages)
+            rawWindow = Self.buildModelAwareHistoryWindow(
+                conversation.messages,
+                modelTier: modelTier,
+                reservedOutputTokens: modelTier.maxTokens,
+                reservedSystemTokens: systemPrompt.estimatedTokenCount
+            )
         }
         // Sanitize to remove orphaned tool_result messages whose tool_use was truncated
         let historyWindow = sanitizeToolPairs(rawWindow)
         llmMessages.append(contentsOf: historyWindow)
-
-        // --- Intent-based model tier routing ---
-        let modelTier: AgentModelTier
-        if let override = tierOverride {
-            modelTier = override
-        } else {
-            modelTier = Self.defaultModelTier(for: intent)
-        }
 
         // For draft intent, guide the agent to use writing tools (not inline text)
         // but let it decide whether to continue existing content or create new
@@ -637,7 +637,7 @@ class CosmoAgentService: ObservableObject {
 
         // Update failover chain for the current model tier (OpenRouter only)
         if let failoverProvider = provider as? FailoverLLMProvider {
-            let tierChain = ModelFailoverChain.chain(for: modelTier)
+            let tierChain = ModelFailoverChain.chain(for: modelTier, allowCrossModelFailover: false)
             // Re-wrap the inner provider with the tier-appropriate chain
             let updatedProvider = FailoverLLMProvider(
                 wrapping: failoverProvider,
@@ -1053,19 +1053,18 @@ class CosmoAgentService: ObservableObject {
             activeItemsContext: activeItemsContext[conversation.id]
         )
 
+        conversation.applyModelSelection(nil)
+        let modelTier = conversation.effectiveModelTier(userOverride: nil)
+
         var llmMessages: [AgentMessage] = []
-        let lightweightIntents: Set<AgentIntent> = [.capture, .correct, .meta]
-        let rawWindow: [AgentMessage]
-        if lightweightIntents.contains(effectiveIntent) {
-            rawWindow = buildLightweightWindow(conversation.messages)
-        } else {
-            rawWindow = buildTokenAwareWindow(conversation.messages)
-        }
+        let rawWindow = Self.buildModelAwareHistoryWindow(
+            conversation.messages,
+            modelTier: modelTier,
+            reservedOutputTokens: modelTier.maxTokens,
+            reservedSystemTokens: systemPrompt.estimatedTokenCount
+        )
         let historyWindow = sanitizeToolPairs(rawWindow)
         llmMessages.append(contentsOf: historyWindow)
-
-        let modelTier = Self.defaultModelTier(for: effectiveIntent)
-        let modelTier = Self.defaultModelTier(for: effectiveIntent)
 
         // For draft intent with active content, inject a system message forcing tool use
         if effectiveIntent == .draft || effectiveIntent == .brainstorm {
@@ -1097,7 +1096,7 @@ class CosmoAgentService: ObservableObject {
         // Resolve provider with tier-appropriate failover chain
         let activeProvider: LLMProvider
         if let failoverProvider = provider as? FailoverLLMProvider {
-            let tierChain = ModelFailoverChain.chain(for: modelTier)
+            let tierChain = ModelFailoverChain.chain(for: modelTier, allowCrossModelFailover: false)
             activeProvider = FailoverLLMProvider(wrapping: failoverProvider, chain: tierChain)
         } else {
             activeProvider = provider
@@ -2119,6 +2118,40 @@ class CosmoAgentService: ObservableObject {
         return window
     }
 
+    nonisolated static func buildModelAwareHistoryWindow(
+        _ messages: [AgentMessage],
+        modelTier: AgentModelTier,
+        reservedOutputTokens: Int,
+        reservedSystemTokens: Int
+    ) -> [AgentMessage] {
+        let usableInputWindow = max(0, modelTier.contextWindow - reservedOutputTokens - reservedSystemTokens)
+        var selected = messages
+
+        while estimatedTokens(selected) > usableInputWindow, selected.count > 1 {
+            selected.removeFirst()
+        }
+
+        return selected
+    }
+
+    nonisolated static func buildContextWindowForTests(
+        _ messages: [AgentMessage],
+        modelTier: AgentModelTier,
+        reservedOutputTokens: Int,
+        reservedSystemTokens: Int
+    ) -> [AgentMessage] {
+        buildModelAwareHistoryWindow(
+            messages,
+            modelTier: modelTier,
+            reservedOutputTokens: reservedOutputTokens,
+            reservedSystemTokens: reservedSystemTokens
+        )
+    }
+
+    nonisolated private static func estimatedTokens(_ messages: [AgentMessage]) -> Int {
+        messages.reduce(0) { $0 + max(1, $1.content.count / 4) }
+    }
+
     nonisolated static func pruneShadowVisibleMessages(_ conversation: AgentConversation) -> AgentConversation {
         var pruned = AgentConversation(
             id: conversation.id,
@@ -2128,6 +2161,7 @@ class CosmoAgentService: ObservableObject {
         pruned.summary = conversation.summary
         pruned.linkedAtomUUIDs = conversation.linkedAtomUUIDs
         pruned.topics = conversation.topics
+        pruned.modelLock = conversation.modelLock
 
         var enrichedUserKeys = Set<String>()
         for message in conversation.messages {

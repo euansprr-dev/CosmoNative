@@ -433,7 +433,7 @@ struct CosmoAIFocusModeView: View {
     // MARK: - Model Selector
     private var modelSelector: some View {
         Menu {
-            Button("Auto") { viewModel.modelOverride = nil }
+            Button("Gemini 3 Flash") { viewModel.modelOverride = nil }
             Divider()
             ForEach(AgentModelTier.skillSelectableCases, id: \.self) { tier in
                 Button(tier.displayLabel) { viewModel.modelOverride = tier }
@@ -449,7 +449,7 @@ struct CosmoAIFocusModeView: View {
     }
 
     private var modelLabel: String {
-        viewModel.modelOverride?.displayLabel ?? "Auto"
+        viewModel.modelOverride?.displayLabel ?? "Gemini 3 Flash"
     }
 
     // MARK: - Send

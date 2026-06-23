@@ -464,6 +464,15 @@ enum AgentModelTier: String, Codable, Sendable {
             return "high"
         }
     }
+
+    var displayContextWindow: String {
+        switch contextWindow {
+        case 1_000_000...:
+            return "1M"
+        default:
+            return "\(contextWindow / 1_000)K"
+        }
+    }
 }
 
 // MARK: - System Prompt (Cacheable)
@@ -482,6 +491,10 @@ struct SystemPrompt: Sendable {
     var combined: String {
         if dynamic.isEmpty { return cached }
         return cached + "\n\n" + dynamic
+    }
+
+    var estimatedTokenCount: Int {
+        max(1, (cached.count + dynamic.count) / 4)
     }
 }
 
@@ -572,6 +585,7 @@ struct AgentConversation: Codable, Identifiable, Sendable {
     var summary: String?
     var linkedAtomUUIDs: [String]
     var topics: [String]
+    var modelLock: AgentModelTier?
 
     init(source: MessageSource) {
         self.id = UUID().uuidString
@@ -581,6 +595,7 @@ struct AgentConversation: Codable, Identifiable, Sendable {
         self.summary = nil
         self.linkedAtomUUIDs = []
         self.topics = []
+        self.modelLock = nil
     }
 
     init(id: String, source: MessageSource, createdAt: Date = Date()) {
@@ -591,6 +606,7 @@ struct AgentConversation: Codable, Identifiable, Sendable {
         self.summary = nil
         self.linkedAtomUUIDs = []
         self.topics = []
+        self.modelLock = nil
     }
 
     mutating func append(_ message: AgentMessage) {
@@ -600,6 +616,14 @@ struct AgentConversation: Codable, Identifiable, Sendable {
     /// Total token count estimate (rough: 4 chars per token)
     var estimatedTokenCount: Int {
         messages.reduce(0) { $0 + ($1.content.count / 4) }
+    }
+
+    mutating func applyModelSelection(_ selected: AgentModelTier?) {
+        modelLock = selected ?? modelLock ?? .geminiFlashLatest
+    }
+
+    func effectiveModelTier(userOverride: AgentModelTier?) -> AgentModelTier {
+        userOverride ?? modelLock ?? .geminiFlashLatest
     }
 }
 
@@ -833,6 +857,16 @@ struct ModelFailoverChain: Sendable {
         case .geminiFlashLatest: return .geminiFlashLatestChain
         case .gemini35Flash: return .gemini35FlashChain
         }
+    }
+
+    static func chain(for tier: AgentModelTier, allowCrossModelFailover: Bool) -> ModelFailoverChain {
+        if allowCrossModelFailover {
+            return chain(for: tier)
+        }
+
+        return ModelFailoverChain(models: [
+            FailoverModel(modelId: tier.modelId, maxRetries: 2, label: tier.displayLabel)
+        ])
     }
 }
 

@@ -127,24 +127,66 @@ final class CosmoWindowRoutingTests: XCTestCase {
         XCTAssertEqual(AgentModelTier.gemini35Flash.maxTokens, 8192)
     }
 
-    func testAutoDefaultModelTierUsesDailyDriverSonnetForEveryIntent() {
-        let autoIntents: [AgentIntent] = [
+    func testAutoModeAlwaysDefaultsToGeminiFlashLatest() {
+        let intents: [AgentIntent] = [
             .capture, .brainstorm, .plan, .query, .execute, .debrief,
-            .reflect, .correct, .meta, .strategy, .draft, .analyze
+            .reflect, .correct, .meta, .strategy, .draft, .research,
+            .synthesize, .analyze, .organize
         ]
 
-        XCTAssertTrue(autoIntents.allSatisfy {
-            CosmoAgentService.defaultModelTier(for: $0) == .strategist
-        })
+        for intent in intents {
+            XCTAssertEqual(
+                CosmoAgentService.defaultModelTier(for: intent),
+                .geminiFlashLatest,
+                "Auto mode must not switch models for intent \(intent.rawValue)"
+            )
+        }
     }
 
-    func testCosmoModelPickerLabelsDailyDriverSonnetAsEverydayDefault() {
+    func testGeminiFlashChainDoesNotFailOverToAnotherModelWhenLocked() {
+        let chain = ModelFailoverChain.chain(for: .geminiFlashLatest, allowCrossModelFailover: false)
+
+        XCTAssertEqual(chain.models.map(\.modelId), [AgentModelTier.geminiFlashLatest.modelId])
+    }
+
+    func testConversationModelLockPersistsManualSelection() {
+        var conversation = AgentConversation(id: "conversation-1", source: .inApp)
+        conversation.modelLock = .opus47
+
+        XCTAssertEqual(conversation.effectiveModelTier(userOverride: nil), .opus47)
+        XCTAssertEqual(conversation.effectiveModelTier(userOverride: .geminiFlashLatest), .geminiFlashLatest)
+    }
+
+    func testHistoryBuilderKeepsAllMessagesWhenUnderModelWindow() {
+        var messages: [AgentMessage] = []
+        for index in 1...40 {
+            messages.append(.user("User decision \(index): keep slide \(index) direction."))
+            messages.append(.assistant("Acknowledged decision \(index)."))
+        }
+
+        let window = CosmoAgentService.buildContextWindowForTests(
+            messages,
+            modelTier: .geminiFlashLatest,
+            reservedOutputTokens: 8_192,
+            reservedSystemTokens: 12_000
+        )
+
+        XCTAssertEqual(window.count, messages.count)
+        XCTAssertTrue(window.first?.content.contains("User decision 1") == true)
+    }
+
+    func testFocusModeUsesGeminiFlashWhenNoManualOverrideExists() {
+        XCTAssertEqual(CosmoAIFocusModeViewModel.defaultModelTier(userOverride: nil), .geminiFlashLatest)
+        XCTAssertEqual(CosmoAIFocusModeViewModel.defaultModelTier(userOverride: .opus47), .opus47)
+    }
+
+    func testCosmoModelPickerLabelsGeminiFlashAsEverydayDefault() {
         let autoOption = CosmoModelOption.all.first { $0.id == "auto" }
         let sonnetOption = CosmoModelOption.all.first { $0.id == "sonnet" }
         let geminiOption = CosmoModelOption.all.first { $0.id == "geminiFlashLatest" }
         let gemini35Option = CosmoModelOption.all.first { $0.id == "gemini35Flash" }
 
-        XCTAssertEqual(autoOption?.detail, "Sonnet 4.6 by default")
+        XCTAssertEqual(autoOption?.detail, "Gemini 3 Flash by default")
         XCTAssertEqual(sonnetOption?.title, "Sonnet 4.6")
         XCTAssertEqual(sonnetOption?.detail, "Daily driver via Claude API")
         XCTAssertEqual(geminiOption?.title, "Gemini 3 Flash")
@@ -162,17 +204,18 @@ final class CosmoWindowRoutingTests: XCTestCase {
         XCTAssertFalse(autoIntents.contains { CosmoAgentService.defaultModelTier(for: $0) == .writer })
     }
 
-    func testAutoDefaultFailoverChainsStartWithDailyDriverSonnet() {
+    func testAutoDefaultFailoverChainsStartWithGeminiFlash() {
         let autoIntents: [AgentIntent] = [
             .capture, .brainstorm, .plan, .query, .execute, .debrief,
-            .reflect, .correct, .meta, .strategy, .draft, .analyze
+            .reflect, .correct, .meta, .strategy, .draft, .research,
+            .synthesize, .analyze, .organize
         ]
 
         let startingModelIds = autoIntents.compactMap {
             ModelFailoverChain.chain(for: CosmoAgentService.defaultModelTier(for: $0)).models.first?.modelId
         }
 
-        XCTAssertTrue(startingModelIds.allSatisfy { $0 == "anthropic/claude-sonnet-4.6" })
+        XCTAssertTrue(startingModelIds.allSatisfy { $0 == AgentModelTier.geminiFlashLatest.modelId })
     }
 
     func testExplicitPickerStillAllowsOpus() {

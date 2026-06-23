@@ -29,18 +29,13 @@ class ConversationMemoryService {
             conv.topics = extractTopics(from: conv)
         }
 
-        // Auto-summarize long conversations
-        if conv.messages.count >= summarizationThreshold && conv.summary == nil {
-            conv.summary = await generateSummary(for: conv)
-        }
-
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
 
         guard let messagesData = try? encoder.encode(conv.messages),
               let messagesJSON = String(data: messagesData, encoding: .utf8) else { return }
 
-        let metaDict: [String: Any] = [
+        var metaDict: [String: Any] = [
             "subtype": "agent_conversation",
             "conversationId": conv.id,
             "source": conv.source.rawValue,
@@ -48,6 +43,9 @@ class ConversationMemoryService {
             "linkedAtomUUIDs": conv.linkedAtomUUIDs,
             "topics": conv.topics
         ]
+        if let modelLock = conv.modelLock {
+            metaDict["modelLock"] = modelLock.rawValue
+        }
         let metadataJSON = (try? JSONSerialization.data(withJSONObject: metaDict)).flatMap { String(data: $0, encoding: .utf8) }
 
         var structuredDict: [String: Any] = [
@@ -499,6 +497,7 @@ class ConversationMemoryService {
 
         let linkedUUIDs = metaDict["linkedAtomUUIDs"] as? [String] ?? []
         let topics = metaDict["topics"] as? [String] ?? []
+        let modelLock = (metaDict["modelLock"] as? String).flatMap(AgentModelTier.init(rawValue:))
 
         // Parse structured data
         var summary: String? = nil
@@ -519,6 +518,7 @@ class ConversationMemoryService {
         conv.summary = summary
         conv.linkedAtomUUIDs = linkedUUIDs
         conv.topics = topics
+        conv.modelLock = modelLock
 
         return conv
     }

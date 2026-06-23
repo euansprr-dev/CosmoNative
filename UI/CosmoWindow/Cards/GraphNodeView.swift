@@ -111,8 +111,8 @@ struct GraphNodeView: View {
         guard total > 0 else { return center }
         let angle = (2 * .pi / Double(total)) * Double(index) - .pi / 2
         return CGPoint(
-            x: center.x + orbitRadius * cos(angle),
-            y: center.y + orbitRadius * sin(angle)
+            x: center.x + orbitRadius * CGFloat(cos(angle)),
+            y: center.y + orbitRadius * CGFloat(sin(angle))
         )
     }
 

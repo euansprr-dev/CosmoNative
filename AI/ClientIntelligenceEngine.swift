@@ -36,7 +36,7 @@ final class ClientIntelligenceEngine {
         let response = try await ResearchService.shared.analyze(
             prompt: prompt,
             systemPrompt: intelligenceSystemPrompt,
-            tier: .reasoner
+            tier: .strategist
         )
 
         print("ClientIntelligenceEngine: Got response (\(response.count) chars)")
@@ -252,7 +252,7 @@ final class ClientIntelligenceEngine {
         let response = try await ResearchService.shared.analyze(
             prompt: prompt,
             systemPrompt: failureAnalysisSystemPrompt,
-            tier: .reasoner
+            tier: .strategist
         )
 
         print("ClientIntelligenceEngine: Failure fingerprint response (\(response.count) chars) for \(formatLabel)")

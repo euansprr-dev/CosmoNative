@@ -621,6 +621,110 @@ class AgentToolRegistry {
         ]
     }
 
+    // MARK: - Writing and Scoring Tools
+
+    private var scoringTools: [LLMToolDefinition] {
+        [
+            LLMToolDefinition(
+                name: "get_beat_patterns",
+                description: "Query the beat pattern library to find common structural patterns across swipe files. Returns fingerprint, beat sequence, frequency, and average hook score for each pattern.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "format": ["type": "string", "description": "Optional content format filter, such as reel, thread, carousel, or post"] as [String: Any],
+                        "niche": ["type": "string", "description": "Optional niche filter"] as [String: Any],
+                        "limit": ["type": "integer", "description": "Max results, default 5 and max 20"] as [String: Any]
+                    ] as [String: Any],
+                    "required": [] as [String]
+                ]
+            ),
+            LLMToolDefinition(
+                name: "score_draft",
+                description: "Run the content scorecard engine on a draft and return hook, copy, CTA, voice match, structural alignment, slide analysis, and guided feedback.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "contentUUID": ["type": "string", "description": "UUID of the content atom to score"] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["contentUUID"]
+                ]
+            ),
+        ]
+    }
+
+    private var writingTools: [LLMToolDefinition] {
+        [
+            LLMToolDefinition(
+                name: "generate_outline",
+                description: "Generate a structured content outline using the cloud writing engine. Requires a content atom UUID. Pass clientName when available and blueprintSwipeUUID when the user names a specific swipe to emulate.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "contentUUID": ["type": "string", "description": "UUID of the content atom to generate an outline for"] as [String: Any],
+                        "notes": ["type": "string", "description": "Creator direction for the outline"] as [String: Any],
+                        "clientName": ["type": "string", "description": "Client name for this content piece"] as [String: Any],
+                        "blueprintSwipeUUID": ["type": "string", "description": "UUID of a swipe to use as the primary structural blueprint"] as [String: Any],
+                        "blueprintSwipeUUIDs": ["type": "array", "items": ["type": "string"] as [String: Any], "description": "Swipe UUIDs to use as structural blueprints"] as [String: Any],
+                        "contentFormat": ["type": "string", "enum": ["reel", "carousel", "thread", "post"], "description": "Target content format"] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["contentUUID"]
+                ]
+            ),
+            LLMToolDefinition(
+                name: "generate_draft",
+                description: "Generate a full draft for a content atom using the cloud writing engine. Requires a content atom UUID with outline or direction. Pass clientName and contentFormat when known.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "contentUUID": ["type": "string", "description": "UUID of the content atom to draft"] as [String: Any],
+                        "clientName": ["type": "string", "description": "Client name for this content piece"] as [String: Any],
+                        "userDirection": ["type": "string", "description": "The user's creative direction or instructions for this draft"] as [String: Any],
+                        "contentFormat": ["type": "string", "enum": ["reel", "carousel", "thread", "post"], "description": "Target content format"] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["contentUUID"]
+                ]
+            ),
+            LLMToolDefinition(
+                name: "read_draft",
+                description: "Read the full current draft for a content atom with title and word count. Use this before revising existing draft content.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "contentUUID": ["type": "string", "description": "UUID of the content atom to read the draft from"] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["contentUUID"]
+                ]
+            ),
+            LLMToolDefinition(
+                name: "generate_hooks",
+                description: "Generate hook variants for a content atom using the cloud writing engine. Pass clientName when available.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "contentUUID": ["type": "string", "description": "UUID of the content atom to generate hooks for"] as [String: Any],
+                        "count": ["type": "integer", "description": "Number of hook variants to generate"] as [String: Any],
+                        "clientName": ["type": "string", "description": "Client name for this content piece"] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["contentUUID"]
+                ]
+            ),
+            LLMToolDefinition(
+                name: "revise_draft",
+                description: "Revise an existing draft using the cloud writing engine. Pass the user's complete feedback and clientName when available.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "contentUUID": ["type": "string", "description": "UUID of the content atom to revise"] as [String: Any],
+                        "feedback": ["type": "string", "description": "The user's complete revision feedback"] as [String: Any],
+                        "currentDraft": ["type": "string", "description": "Optional full current draft text when it has not been saved yet"] as [String: Any],
+                        "clientName": ["type": "string", "description": "Client name for this content piece"] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["contentUUID", "feedback"]
+                ]
+            ),
+        ]
+    }
+
     // MARK: - Content Data Tools (non-writing)
 
     private var contentDataTools: [LLMToolDefinition] {

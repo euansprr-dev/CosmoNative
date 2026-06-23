@@ -70,8 +70,8 @@ class AIWritingAssistant: ObservableObject {
     /// Optional client profile atom for brand-aware writing. Set before calling actions.
     var clientProfileAtom: Atom?
 
-    /// Model tier for writing assistance — agent (Gemini 3 Flash) for balanced quality/speed.
-    private let modelTier: AgentModelTier = .agent
+    /// Model tier for writing assistance - Gemini 3 Flash for balanced quality/speed.
+    private let modelTier: AgentModelTier = .geminiFlashLatest
 
     /// Returns profile context string if a client profile is set, empty otherwise.
     private var profileContextBlock: String {

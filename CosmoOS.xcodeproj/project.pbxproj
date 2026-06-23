@@ -141,6 +141,13 @@
 		18D44BDAEAAB62B035A07227 /* PhysicsHeroHeaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A4FC48F7BC89BD426909DE1 /* PhysicsHeroHeaderView.swift */; };
 		191498C32B2A921D64E5009E /* RedTeamEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38A406E62C07B4FA05DD3D32 /* RedTeamEngine.swift */; };
 		197B18980BAB9E49EE93D627 /* CosmoMessageBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = D973F56DCE6429EE02014640 /* CosmoMessageBubble.swift */; };
+		C0DECA7D0000000000000101 /* AtomCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECA7D0000000000000001 /* AtomCardView.swift */; };
+		C0DECA7D0000000000000102 /* AtomListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECA7D0000000000000002 /* AtomListView.swift */; };
+		C0DECA7D0000000000000103 /* AutomationPreviewCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECA7D0000000000000003 /* AutomationPreviewCard.swift */; };
+		C0DECA7D0000000000000104 /* GraphNodeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECA7D0000000000000004 /* GraphNodeView.swift */; };
+		C0DECA7D0000000000000105 /* SynthesisCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECA7D0000000000000005 /* SynthesisCardView.swift */; };
+		C0DECA7D0000000000000106 /* TimelineCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECA7D0000000000000006 /* TimelineCardView.swift */; };
+		C0DECA7D0000000000000107 /* WorkflowPlanCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECA7D0000000000000007 /* WorkflowPlanCard.swift */; };
 		19DB8E580B84BD52B44EA98A /* TemplateEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B3D4D3FCB083C0605C58E7E /* TemplateEngine.swift */; };
 		19F5B892FEA6A95810A449F6 /* IdeaResearchAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26B17B57DEE177D85A55AB32 /* IdeaResearchAgent.swift */; };
 		1A2A75EBD1D9B78A25F0FAD4 /* ContextIndexStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0158F17DB0EEA72E93BF2218 /* ContextIndexStore.swift */; };
@@ -1829,6 +1836,13 @@
 		D8F5A3AAC9C655BF182B002C /* CortexIdeasBrowser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CortexIdeasBrowser.swift; sourceTree = "<group>"; };
 		D94ACA2D8C52F23EBD570E28 /* L2WhisperASR.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = L2WhisperASR.swift; sourceTree = "<group>"; };
 		D973F56DCE6429EE02014640 /* CosmoMessageBubble.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmoMessageBubble.swift; sourceTree = "<group>"; };
+		C0DECA7D0000000000000001 /* AtomCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Cards/AtomCardView.swift; sourceTree = "<group>"; };
+		C0DECA7D0000000000000002 /* AtomListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Cards/AtomListView.swift; sourceTree = "<group>"; };
+		C0DECA7D0000000000000003 /* AutomationPreviewCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Cards/AutomationPreviewCard.swift; sourceTree = "<group>"; };
+		C0DECA7D0000000000000004 /* GraphNodeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Cards/GraphNodeView.swift; sourceTree = "<group>"; };
+		C0DECA7D0000000000000005 /* SynthesisCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Cards/SynthesisCardView.swift; sourceTree = "<group>"; };
+		C0DECA7D0000000000000006 /* TimelineCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Cards/TimelineCardView.swift; sourceTree = "<group>"; };
+		C0DECA7D0000000000000007 /* WorkflowPlanCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Cards/WorkflowPlanCard.swift; sourceTree = "<group>"; };
 		DA49915CE2C4D102E676F3CD /* StreakDetailsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreakDetailsView.swift; sourceTree = "<group>"; };
 		DAB98DCD18D55924F910D911 /* InboxInspector.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = InboxInspector.swift; sourceTree = "<group>"; };
 		DB44193A09EC4158BFE3948C /* ClaudeAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeAPIClient.swift; sourceTree = "<group>"; };
@@ -2992,6 +3006,13 @@
 				AA7E57EB4E45844676CC402E /* CosmoContextProvider.swift */,
 				2B03D944F9BFA399FEC51357 /* CosmoMentionOverlay.swift */,
 				D973F56DCE6429EE02014640 /* CosmoMessageBubble.swift */,
+				C0DECA7D0000000000000001 /* AtomCardView.swift */,
+				C0DECA7D0000000000000002 /* AtomListView.swift */,
+				C0DECA7D0000000000000003 /* AutomationPreviewCard.swift */,
+				C0DECA7D0000000000000004 /* GraphNodeView.swift */,
+				C0DECA7D0000000000000005 /* SynthesisCardView.swift */,
+				C0DECA7D0000000000000006 /* TimelineCardView.swift */,
+				C0DECA7D0000000000000007 /* WorkflowPlanCard.swift */,
 				8F8C3D039948DC0478F81DFB /* CosmoWindowMessage.swift */,
 				65A2BDE9831B159E27367592 /* CosmoWindowPanelController.swift */,
 				F1D0DC38C316E40ACE6F5632 /* CosmoWindowView.swift */,
@@ -4451,6 +4472,13 @@
 				3BE58823E41911E00F1AB325 /* CosmoMentionOverlay.swift in Sources */,
 				D98E6D64D64EF8F4C57622B7 /* CosmoMenuChrome.swift in Sources */,
 				197B18980BAB9E49EE93D627 /* CosmoMessageBubble.swift in Sources */,
+				C0DECA7D0000000000000101 /* AtomCardView.swift in Sources */,
+				C0DECA7D0000000000000102 /* AtomListView.swift in Sources */,
+				C0DECA7D0000000000000103 /* AutomationPreviewCard.swift in Sources */,
+				C0DECA7D0000000000000104 /* GraphNodeView.swift in Sources */,
+				C0DECA7D0000000000000105 /* SynthesisCardView.swift in Sources */,
+				C0DECA7D0000000000000106 /* TimelineCardView.swift in Sources */,
+				C0DECA7D0000000000000107 /* WorkflowPlanCard.swift in Sources */,
 				BDA29264509E54F48F4D70DF /* CosmoNotifications.swift in Sources */,
 				0785C46F6D3FB09491318348 /* CosmoUndoManager.swift in Sources */,
 				829444BC2CC9EC73C9A88001 /* CosmoVoiceDaemon.swift in Sources */,

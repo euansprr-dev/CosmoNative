@@ -2028,7 +2028,7 @@ final class CosmoWindowViewModel: ObservableObject {
                 uiConversation.append(AgentMessage(role: .system, content: msg.content, timestamp: msg.timestamp))
             case .toolResult(let name, _, _):
                 uiConversation.append(AgentMessage(role: .tool, content: msg.content, timestamp: msg.timestamp, toolCallId: name))
-            case .contextTrace, .contextChange:
+            case .contextTrace, .contextChange, .atomCard, .atomList, .graphView, .automationPreview, .workflowPlan, .timelineView, .synthesisCard:
                 break
             case .actionButtons:
                 uiConversation.append(AgentMessage(role: .assistant, content: msg.content, timestamp: msg.timestamp))

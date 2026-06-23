@@ -217,7 +217,7 @@ class ExperienceBufferService {
         do {
             let response = try await ResearchService.shared.analyze(
                 prompt: prompt,
-                tier: .router,
+                tier: .sensor,
                 maxTokens: 100
             )
             let trimmed = response.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)

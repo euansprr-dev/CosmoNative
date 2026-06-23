@@ -181,7 +181,7 @@ final class InsightExtractionEngine {
 
         let response = try await researchService.analyze(
             prompt: prompt,
-            tier: .agent,
+            tier: .geminiFlashLatest,
             maxTokens: 4000
         )
 
@@ -244,7 +244,7 @@ final class InsightExtractionEngine {
 
         let response = try await researchService.analyze(
             prompt: prompt,
-            tier: .agent,
+            tier: .geminiFlashLatest,
             maxTokens: 4000
         )
 

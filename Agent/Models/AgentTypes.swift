@@ -57,7 +57,6 @@ enum AgentProvider: String, Codable, CaseIterable, Sendable {
         ("openai/gpt-chat-latest", "GPT Chat Latest"),
         ("google/gemini-3.5-flash", "Gemini 3.5 Flash"),
         ("google/gemini-3-flash-preview", "Gemini 3 Flash"),
-        ("google/gemini-3.1-flash-lite-preview", "Gemini 3.1 Flash Lite"),
         ("anthropic/claude-sonnet-4.6", "Claude Sonnet 4.6"),
         ("anthropic/claude-sonnet-4.5", "Claude Sonnet 4.5"),
         ("anthropic/claude-haiku-4.5", "Claude Haiku 4.5"),
@@ -750,6 +749,47 @@ struct AgentContextTrace: Sendable {
             }
             .compactMap(\.resultSummary)
             .filter { !$0.isEmpty && $0 != "0 results" }
+    }
+
+    /// Swipe titles surfaced from writing engine tools.
+    var writingEngineSwipes: [String] {
+        toolCalls
+            .filter { $0.name.hasPrefix("generate_") || $0.name == "revise_draft" }
+            .compactMap(\.resultSummary)
+            .flatMap { summary -> [String] in
+                guard let range = summary.range(of: "Swipes:") else { return [] }
+                let tail = summary[range.upperBound...]
+                let line = tail.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? String(tail)
+                return line.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            }
+    }
+
+    /// Total swipe count loaded by the inner writing engine, parsed from "Swipes(N):".
+    var writingEngineSwipeCount: Int {
+        for call in toolCalls where call.name.hasPrefix("generate_") || call.name == "revise_draft" {
+            guard let summary = call.resultSummary,
+                  let openParen = summary.range(of: "Swipes("),
+                  let closeParen = summary[openParen.upperBound...].range(of: ")") else { continue }
+            let countText = summary[openParen.upperBound..<closeParen.lowerBound]
+            if let count = Int(countText) {
+                return count
+            }
+        }
+        return 0
+    }
+
+    /// Beat pattern names used by writing and scoring tools.
+    var beatPatternsUsed: [String] {
+        toolCalls
+            .filter { $0.name.contains("beat_pattern") || $0.name.contains("beat") }
+            .compactMap(\.resultSummary)
+    }
+
+    /// Writing engine tools used.
+    var writingToolsUsed: [String] {
+        toolCalls
+            .filter { $0.name.hasPrefix("generate_") || $0.name.contains("draft") || $0.name.contains("score") || $0.name.contains("write") }
+            .map(\.name)
     }
 
     /// Tools used for knowledge queries and synthesis

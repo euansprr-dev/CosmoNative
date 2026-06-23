@@ -301,6 +301,26 @@ class AgentContextAssembler {
         return result.joined(separator: "\n\n")
     }
 
+    // MARK: - Writing Methodology Context
+
+    private func writingMethodologyContext() -> String {
+        """
+        [WRITING METHODOLOGY - Condensed]
+
+        7 VIRALITY DRIVERS: Relatability, Novelty, Emotional Intensity, Practical Value, Identity Signaling, Controversy/Tension, Shareability.
+
+        HOOK CHECKLIST: Specific, pattern interrupt, curiosity gap, emotional trigger, benefit-forward, platform-native.
+
+        COPY CHECKLIST: One idea per section, conversational tone, sensory/concrete language, transitions between beats, proof points, reads aloud naturally, no filler, progressive disclosure.
+
+        CTA CHECKLIST: Single clear action, low friction, benefit restated, urgency or scarcity when true.
+
+        EMOTIONAL SEQUENCE: Tension -> relatability -> insight -> CTA.
+
+        Use writing tools for longform drafts, outlines, hooks, and revisions so generated content stays aligned with client context, swipe intelligence, and saved draft state.
+        """
+    }
+
     // MARK: - Intent-Aware Context
 
     /// Build context sections relevant to the current intent.
@@ -311,8 +331,8 @@ class AgentContextAssembler {
         }
 
         switch intent {
-        case .strategy, .query:
-            // For strategy/query, pull pipeline + recent drafts + swipe stats
+        case .strategy, .query, .draft:
+            // For strategy/query/draft, pull pipeline + recent drafts + swipe stats
             return await buildStrategyContext()
 
         case .plan:
@@ -1174,8 +1194,7 @@ class AgentContextAssembler {
                        date > oneDayAgo {
                         created[type.rawValue, default: 0] += 1
                     }
-                    if let updatedAt = atom.updatedAt,
-                       let date = isoFormatter.date(from: updatedAt),
+                    if let date = isoFormatter.date(from: atom.updatedAt),
                        date > oneDayAgo {
                         updated[type.rawValue, default: 0] += 1
                     }

@@ -195,6 +195,20 @@ struct CosmoCollaboratorPaneView: View {
                     .font(DS.dateSerif)
                     .italic()
                     .foregroundStyle(isError ? DS.red : DS.inkFaded)
+            case .atomCard(let data):
+                AtomCardView(data: data)
+            case .atomList(let data):
+                AtomListView(data: data)
+            case .graphView(let data):
+                GraphNodeView(data: data)
+            case .automationPreview(let data):
+                AutomationPreviewCard(data: data)
+            case .workflowPlan(let data):
+                WorkflowPlanCard(data: data)
+            case .timelineView(let data):
+                TimelineCardView(data: data)
+            case .synthesisCard(let data):
+                SynthesisCardView(data: data)
             case .contextTrace, .contextChange:
                 EmptyView()
             }

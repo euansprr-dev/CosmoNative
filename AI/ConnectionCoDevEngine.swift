@@ -113,7 +113,7 @@ class ConnectionCoDevEngine: ObservableObject {
         do {
             let response = try await ResearchService.shared.analyze(
                 prompt: prompt,
-                tier: .agent,
+                tier: .geminiFlashLatest,
                 maxTokens: 300
             )
 
@@ -188,7 +188,7 @@ class ConnectionCoDevEngine: ObservableObject {
         do {
             let response = try await ResearchService.shared.analyze(
                 prompt: prompt,
-                tier: .agent,
+                tier: .geminiFlashLatest,
                 maxTokens: 1500
             )
 
@@ -242,7 +242,7 @@ class ConnectionCoDevEngine: ObservableObject {
         do {
             let response = try await ResearchService.shared.analyze(
                 prompt: prompt,
-                tier: .router,
+                tier: .sensor,
                 maxTokens: 200
             )
             let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)

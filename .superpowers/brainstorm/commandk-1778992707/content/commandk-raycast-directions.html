@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Command K — Raycast Master/Detail · Direction Brainstorm</title>
+<style>
+  :root{ --bg:#f8f7f4; --ink:#1a1a1f; --muted:#72736e; --line:rgba(42,52,45,.10);
+         --green:#2d6a4f; --gilt:#c4a265; --vellum:#f3ede4; --sepia:#ddd5c8; }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',sans-serif;
+       padding:48px 40px 80px;line-height:1.5}
+  .wrap{max-width:1180px;margin:0 auto}
+  h1{font-family:Georgia,'Times New Roman',serif;font-weight:400;font-size:34px;letter-spacing:-.5px;margin-bottom:6px}
+  .sub{color:var(--muted);font-size:15px;margin-bottom:34px;max-width:780px}
+  .eyebrow{font-size:11px;font-weight:600;letter-spacing:1.6px;text-transform:uppercase;color:var(--gilt);
+           display:flex;align-items:center;gap:12px;margin:40px 0 16px}
+  .eyebrow::after{content:"";flex:1;height:1px;background:var(--sepia)}
+  .q{font-size:19px;font-family:Georgia,serif;margin-bottom:4px}
+  .qd{color:var(--muted);font-size:13px;margin-bottom:18px}
+  .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+  .card{background:#fff;border:1px solid var(--line);border-radius:16px;overflow:hidden;cursor:pointer;
+        transition:transform .14s ease,box-shadow .14s ease,border-color .14s ease}
+  .card:hover{transform:translateY(-2px);box-shadow:0 14px 30px rgba(0,0,0,.07)}
+  .card.sel{border-color:var(--green);box-shadow:0 0 0 3px rgba(45,106,79,.14)}
+  .card-image{background:var(--vellum);padding:18px;min-height:210px;display:flex;align-items:center;justify-content:center}
+  .card-body{padding:16px 18px}
+  .card-body h3{font-size:15px;margin-bottom:5px}
+  .card-body p{font-size:12.5px;color:var(--muted);line-height:1.45}
+  .rec{background:var(--vellum);border:1px solid var(--sepia);border-radius:14px;padding:20px 24px;margin-top:40px}
+  .rec h3{font-family:Georgia,serif;font-weight:400;font-size:18px;margin-bottom:8px}
+  .rec p{font-size:13.5px;color:#3a3a40}
+  .phase{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:14px 0 4px}
+  .phase div{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:12.5px;color:#3a3a40}
+  .phase b{display:block;font-size:12px;letter-spacing:1px;text-transform:uppercase;color:var(--green);margin-bottom:6px}
+  /* mini mockup primitives */
+  .mk{width:100%;font-family:-apple-system,sans-serif}
+  .bar{height:26px;background:rgba(255,255,255,.85);border:1px solid var(--line);border-radius:13px;
+       display:flex;align-items:center;padding:0 10px;font-size:9px;color:#9a9a93;margin-bottom:8px}
+  .split{display:flex;gap:8px}
+  .rail{flex:0 0 38%;display:flex;flex-direction:column;gap:4px}
+  .lbl{font-size:7px;letter-spacing:1px;color:var(--gilt);font-weight:700;margin:4px 0 2px}
+  .row{height:15px;background:#fff;border:1px solid var(--line);border-radius:5px}
+  .row.on{background:rgba(45,106,79,.12);border-color:rgba(45,106,79,.35)}
+  .pane{flex:1;background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px;display:flex;flex-direction:column;gap:5px}
+  .thumb{height:54px;background:linear-gradient(135deg,#3a2030,#241a26);border-radius:5px}
+  .ttl{height:8px;width:70%;background:#3a3a40;border-radius:2px;margin-top:2px}
+  .meta{height:4px;width:90%;background:#cfcabf;border-radius:2px}
+  .meta.s{width:55%}
+  .actionbar{height:18px;background:#fff;border:1px solid var(--line);border-radius:7px;margin-top:8px;
+             display:flex;align-items:center;justify-content:flex-end;gap:6px;padding:0 8px;font-size:7px;color:#7a7568}
+  .chip{height:34px;background:#fff;border:1px solid var(--line);border-radius:8px;display:flex;
+        align-items:center;justify-content:center;font-size:8px;color:#3a3a40}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Command&nbsp;K → Raycast master/detail, in CosmoOS language</h1>
+  <p class="sub">You liked Raycast's glass + list→preview + persistent action bar. We render that <em>structure</em>
+     in the warm Greenhouse/Atelier skin (vellum, sepia hairlines, gilt brackets, serif titles) — not dark neon.
+     Selection &amp; keyboard nav already exist in the view model, so this is mostly composition. Pick a lane in each
+     group below; the recommended option is highlighted in the writeup.</p>
+
+  <div class="phase">
+    <div><b>Phase 1 · Shell</b>Two-pane glass surface: left rail (Spaces + Recents / live results) → right preview → persistent action bar. Reuses existing selection state.</div>
+    <div><b>Phase 2 · Depth</b>Per-type preview renderers, the “Information” metadata table, search scope filter, ⌘K actions menu.</div>
+    <div><b>Phase 3 · Unify</b>Fold the expanded Database/Swipe/Ideas/Library browsers into the one shared detail surface.</div>
+  </div>
+
+  <!-- GROUP 1 -->
+  <div class="eyebrow">Decision 1 — Default state</div>
+  <div class="q">Where do the four Spaces live once there's a left rail?</div>
+  <div class="qd">The big plates are gone. Spaces still need a home alongside Recents and live results.</div>
+  <div class="cards">
+    <div class="card" data-choice="d1-rail-section" onclick="pick(this)">
+      <div class="card-image"><div class="mk">
+        <div class="bar">⌕ Search your mind…</div>
+        <div class="split">
+          <div class="rail">
+            <div class="lbl">SPACES</div><div class="row"></div><div class="row"></div>
+            <div class="lbl">RECENTS</div><div class="row on"></div><div class="row"></div><div class="row"></div>
+          </div>
+          <div class="pane"><div class="thumb"></div><div class="ttl"></div><div class="meta"></div><div class="meta s"></div></div>
+        </div>
+        <div class="actionbar">Open ↵ · Actions ⌘K</div>
+      </div></div>
+      <div class="card-body"><h3>A. Spaces as a rail section</h3>
+        <p>Slim “SPACES” section pinned at the top of the left rail, “RECENTS” beneath, preview on the right. Most Raycast-faithful, zero dead space, everything keyboard-reachable.</p></div>
+    </div>
+    <div class="card" data-choice="d1-top-strip" onclick="pick(this)">
+      <div class="card-image"><div class="mk">
+        <div class="bar">⌕ Search your mind…</div>
+        <div style="display:flex;gap:5px;margin-bottom:8px">
+          <div class="chip" style="flex:1">Database</div><div class="chip" style="flex:1">Swipe</div>
+          <div class="chip" style="flex:1">Ideas</div><div class="chip" style="flex:1">Library</div>
+        </div>
+        <div class="split">
+          <div class="rail"><div class="lbl">RECENTS</div><div class="row on"></div><div class="row"></div><div class="row"></div></div>
+          <div class="pane"><div class="thumb"></div><div class="ttl"></div><div class="meta"></div></div>
+        </div>
+      </div></div>
+      <div class="card-body"><h3>B. Spaces as a top strip</h3>
+        <p>A horizontal Spaces strip above the split, Recents/results fill the rail below. Keeps Spaces prominent and tappable, but the strip competes with the preview for vertical room.</p></div>
+    </div>
+    <div class="card" data-choice="d1-scope-only" onclick="pick(this)">
+      <div class="card-image"><div class="mk">
+        <div class="bar" style="justify-content:space-between">⌕ Search…<span style="border:1px solid var(--line);border-radius:6px;padding:1px 5px">All ▾</span></div>
+        <div class="split">
+          <div class="rail"><div class="lbl">TODAY</div><div class="row on"></div><div class="row"></div><div class="row"></div><div class="row"></div></div>
+          <div class="pane"><div class="thumb"></div><div class="ttl"></div><div class="meta"></div><div class="meta s"></div></div>
+        </div>
+        <div class="actionbar">Open ↵ · Actions ⌘K</div>
+      </div></div>
+      <div class="card-body"><h3>C. Spaces as scope filter only</h3>
+        <p>Purest Raycast: the rail is just Recents/results; Spaces become a scope dropdown (“Database / Swipe / Ideas / Library / All”). Cleanest, but Spaces lose their at-a-glance presence.</p></div>
+    </div>
+  </div>
+
+  <!-- GROUP 2 -->
+  <div class="eyebrow">Decision 2 — Interaction model</div>
+  <div class="q">What happens when you select a row?</div>
+  <div class="qd">Today a click opens immediately. Raycast’s “magic” is: selecting <em>previews</em>, Enter opens. This is the one real behavioral change.</div>
+  <div class="cards">
+    <div class="card" data-choice="d2-raycast" onclick="pick(this)">
+      <div class="card-image"><div class="mk">
+        <div class="split">
+          <div class="rail"><div class="row"></div><div class="row on"></div><div class="row"></div><div class="row"></div></div>
+          <div class="pane"><div class="thumb"></div><div class="ttl"></div><div class="meta"></div><div class="meta s"></div></div>
+        </div>
+        <div class="actionbar" style="justify-content:space-between"><span>↑↓ preview</span><span>Open ↵ · ⌘K</span></div>
+      </div></div>
+      <div class="card-body"><h3>A. Select previews · Enter opens</h3>
+        <p>Arrow/click highlights and live-previews on the right; Enter or the action-bar primary actually opens. The Raycast feel — fast browsing without committing. Requires decoupling select from open.</p></div>
+    </div>
+    <div class="card" data-choice="d2-hybrid" onclick="pick(this)">
+      <div class="card-image"><div class="mk">
+        <div class="split">
+          <div class="rail"><div class="row"></div><div class="row on"></div><div class="row"></div></div>
+          <div class="pane"><div class="thumb"></div><div class="ttl"></div><div class="meta"></div></div>
+        </div>
+        <div class="actionbar" style="justify-content:space-between"><span>1-click preview · 2× open</span><span>⌘K</span></div>
+      </div></div>
+      <div class="card-body"><h3>B. Hybrid: 1-click preview, double/Enter open</h3>
+        <p>Single click previews, double-click or Enter opens. Familiar Finder muscle memory, but double-click on a command surface can feel heavy and is less keyboard-pure.</p></div>
+    </div>
+    <div class="card" data-choice="d2-instant" onclick="pick(this)">
+      <div class="card-image"><div class="mk">
+        <div class="split">
+          <div class="rail"><div class="row"></div><div class="row on"></div><div class="row"></div></div>
+          <div class="pane" style="opacity:.5"><div class="thumb"></div><div class="ttl"></div></div>
+        </div>
+        <div class="actionbar"><span>hover = peek</span></div>
+      </div></div>
+      <div class="card-body"><h3>C. Keep instant-open, peek on hover</h3>
+        <p>Preserves today’s “click opens now”; preview only appears on hover/Space as a peek. Lowest risk &amp; smallest diff, but you don’t get the calm browse-then-commit flow you liked.</p></div>
+    </div>
+  </div>
+
+  <!-- GROUP 3 -->
+  <div class="eyebrow">Decision 3 — Preview emphasis</div>
+  <div class="q">What does the right pane lead with?</div>
+  <div class="qd">Your items vary wildly: swipes have thumbnails, notes are text, ideas have hooks, books have covers.</div>
+  <div class="cards">
+    <div class="card" data-choice="d3-adaptive" onclick="pick(this)">
+      <div class="card-image"><div class="mk"><div class="pane" style="min-height:150px">
+        <div class="thumb" style="height:60px"></div><div class="ttl"></div>
+        <div class="lbl" style="margin-top:4px">INFORMATION</div>
+        <div class="meta"></div><div class="meta s"></div><div class="meta" style="width:70%"></div>
+      </div></div></div>
+      <div class="card-body"><h3>A. Adaptive per type</h3>
+        <p>Each type leads with what matters — thumbnail for swipes/images, hooks for ideas, excerpt for notes — always followed by a compact “Information” table. Richest, most useful; most renderers to build.</p></div>
+    </div>
+    <div class="card" data-choice="d3-visual" onclick="pick(this)">
+      <div class="card-image"><div class="mk"><div class="pane" style="min-height:150px">
+        <div class="thumb" style="height:95px"></div><div class="ttl"></div><div class="meta s"></div>
+      </div></div></div>
+      <div class="card-body"><h3>B. Big visual first</h3>
+        <p>Always lead with a large thumbnail/hero, minimal text beneath. Gorgeous for media-heavy libraries, weak for text notes and ideas (lots of faux-page placeholders).</p></div>
+    </div>
+    <div class="card" data-choice="d3-reading" onclick="pick(this)">
+      <div class="card-image"><div class="mk"><div class="pane" style="min-height:150px">
+        <div class="ttl" style="width:80%;height:10px"></div>
+        <div class="meta"></div><div class="meta"></div><div class="meta s"></div><div class="meta"></div>
+        <div class="lbl" style="margin-top:6px">INFORMATION</div><div class="meta s"></div><div class="meta s"></div>
+      </div></div></div>
+      <div class="card-body"><h3>C. Reading excerpt + Information</h3>
+        <p>Clipboard-manager style (like the Raycast shot): serif title, text excerpt, then the metadata table. Calmest and most “editorial”, but undersells visual swipe/image content.</p></div>
+    </div>
+  </div>
+
+  <div class="rec">
+    <h3>My recommendation</h3>
+    <p><strong>1A · Spaces as a rail section</strong> — keeps everything keyboard-reachable and kills the dead-space problem outright.
+       <strong>2A · Select previews, Enter opens</strong> — this <em>is</em> the Raycast magic; it's a contained behavioral change (stop calling
+       <code>openSelected()</code> on row tap; let ↵ / the action bar do it). <strong>3A · Adaptive preview + Information table</strong> — your
+       content is too varied for one fixed layout; the per-type renderers + a shared metadata table reuse the existing Spotlight* preview
+       components and the per-browser preview panes you already have. Tell me if you'd rather swap any lane (e.g. 1C if you want it ruthlessly minimal).</p>
+  </div>
+</div>
+<script>
+  function pick(el){
+    var group = el.parentElement;
+    Array.prototype.forEach.call(group.children, function(c){ c.classList.remove('sel'); });
+    el.classList.add('sel');
+    var payload = { type:'click',
+      text: el.querySelector('.card-body h3').innerText + ' — ' + el.querySelector('.card-body p').innerText,
+      choice: el.getAttribute('data-choice'), id:null, timestamp: Date.now() };
+    try{ fetch('/event',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}); }catch(e){}
+  }
+</script>
+</body>
+</html>

@@ -39,6 +39,7 @@ struct ResearchFocusModeView: View {
     @Environment(\.isPaneContext) private var isPaneContext
     @Environment(\.isPeekContext) private var isPeekContext
     @Environment(\.isPaneActive) private var isPaneActive
+    @Environment(\.atomWindowChromeContext) private var atomChrome
 
     // MARK: - Initialization
 
@@ -124,7 +125,7 @@ struct ResearchFocusModeView: View {
             .padding(.top, 56)
         }
         .overlay(alignment: .topTrailing) {
-            if isPaneContext, !isPeekContext {
+            if isPaneContext, !isPeekContext, atomChrome == nil {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
                         .font(DS.buttonText)
@@ -440,7 +441,9 @@ struct ResearchFocusModeView: View {
     private var topBar: some View {
         HStack(spacing: 16) {
             // Main sidebar toggle (standalone only)
-            if !isPaneContext {
+            if let atomChrome {
+                AtomWindowChromeLeadingControls(context: atomChrome)
+            } else if !isPaneContext {
                 Button {
                     withAnimation(ProMotionSprings.sidebar) {
                         isSidebarHidden.toggle()
@@ -457,7 +460,7 @@ struct ResearchFocusModeView: View {
             }
 
             // Back button (hidden in pane mode — X button handles close)
-            if !isPaneContext {
+            if atomChrome == nil, !isPaneContext {
                 Button(action: onClose) {
                     HStack(spacing: 6) {
                         Image(systemName: "chevron.left")
@@ -474,22 +477,24 @@ struct ResearchFocusModeView: View {
             }
 
             // Title
-            Text(atom.title ?? "Research")
-                .font(DS.headline)
-                .foregroundStyle(DS.text)
-                .lineLimit(1)
+            if atomChrome == nil {
+                Text(atom.title ?? "Research")
+                    .font(DS.headline)
+                    .foregroundStyle(DS.text)
+                    .lineLimit(1)
 
-            // Type badge
-            HStack(spacing: 4) {
-                Image(systemName: "magnifyingglass")
-                    .font(DS.caption2)
-                Text("Research")
-                    .font(DS.smallCaps)
+                // Type badge
+                HStack(spacing: 4) {
+                    Image(systemName: "magnifyingglass")
+                        .font(DS.caption2)
+                    Text("Research")
+                        .font(DS.smallCaps)
+                }
+                .foregroundStyle(DS.entityResearch)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(DS.entityResearch.opacity(0.12), in: Capsule())
             }
-            .foregroundStyle(DS.entityResearch)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(DS.entityResearch.opacity(0.12), in: Capsule())
 
             Spacer()
 
@@ -528,6 +533,10 @@ struct ResearchFocusModeView: View {
                         .font(DS.caption)
                 }
                 .foregroundStyle(DS.textSecondary)
+            }
+
+            if let atomChrome {
+                AtomWindowChromeTrailingControls(context: atomChrome)
             }
 
         }

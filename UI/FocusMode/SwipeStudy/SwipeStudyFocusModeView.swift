@@ -152,6 +152,7 @@ struct SwipeStudyFocusModeView: View {
     @Environment(\.isPaneContext) private var isPaneContext
     @Environment(\.isPeekContext) private var isPeekContext
     @Environment(\.isPaneActive) private var isPaneActive
+    @Environment(\.atomWindowChromeContext) private var atomChrome
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var panelPadding: CGFloat { isPaneContext ? 16 : 24 }
@@ -305,7 +306,9 @@ struct SwipeStudyFocusModeView: View {
 
     private func topBar(atom: Atom) -> some View {
         HStack(spacing: DS.space12) {
-            if !isPaneContext {
+            if let atomChrome {
+                AtomWindowChromeLeadingControls(context: atomChrome)
+            } else if !isPaneContext {
                 Button {
                     withAnimation(ProMotionSprings.sidebar) {
                         isSidebarHidden.toggle()
@@ -404,7 +407,9 @@ struct SwipeStudyFocusModeView: View {
                 Text("This will permanently remove this swipe file and all its analysis data.")
             }
 
-            if isPaneContext, !isPeekContext {
+            if let atomChrome {
+                AtomWindowChromeTrailingControls(context: atomChrome)
+            } else if isPaneContext, !isPeekContext {
                 SwipeStudyIconControl(
                     systemName: "xmark",
                     label: "Close pane",

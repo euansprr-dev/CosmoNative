@@ -7,16 +7,12 @@ struct AtomWindowRootView: View {
     let viewModel: AtomWindowViewModel
 
     var body: some View {
-        VStack(spacing: 0) {
-            AtomWindowHeaderBar(viewModel: viewModel)
-            Divider().foregroundStyle(DS.sepiaSubtle)
-            atomContent
-        }
-        .background(DS.vellum)
+        atomContent
+        .background(atomWindowBackdrop)
         .clipShape(.rect(cornerRadius: AtomWindowMetrics.panelCornerRadius))
         .overlay(
             RoundedRectangle(cornerRadius: AtomWindowMetrics.panelCornerRadius, style: .continuous)
-                .stroke(DS.sepiaBorder, lineWidth: 0.5)
+                .stroke(DS.glassBorder.opacity(0.84), lineWidth: 0.6)
         )
         .compositingGroup()
         .padding(10)
@@ -31,14 +27,21 @@ struct AtomWindowRootView: View {
             if let atom = viewModel.currentAtom {
                 atomFocusView(atom: atom)
                     .id(atom.uuid)
+                    .environment(\.atomWindowChromeContext, chromePayload(for: atom))
             } else if viewModel.isLoading {
-                loadingView
+                emptyShell {
+                    loadingView
+                }
             } else {
-                emptyStateView
+                emptyShell {
+                    emptyStateView
+                }
             }
 
             if viewModel.isSearchVisible {
-                Color.black.opacity(0.3)
+                Rectangle()
+                    .fill(.ultraThinMaterial)
+                    .opacity(0.22)
                     .ignoresSafeArea()
                     .onTapGesture {
                         withAnimation(ProMotionSprings.snappy) {
@@ -51,6 +54,13 @@ struct AtomWindowRootView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var atomWindowBackdrop: some View {
+        ZStack {
+            DS.bg
+            DS.glassPanelTint.opacity(0.42)
+        }
     }
 
     // MARK: - Focus View Routing
@@ -83,6 +93,73 @@ struct AtomWindowRootView: View {
 
     private func handleClose() {
         viewModel.unloadCurrentSession()
+    }
+
+    private func chromePayload(for atom: Atom) -> AtomWindowChromePayload {
+        AtomWindowChromePayload(
+            state: AtomWindowChromeState(
+                title: atom.title ?? "Untitled",
+                typeIcon: atom.type.iconName,
+                typeColor: AtomWindowChromeTypeColor(atomType: atom.type),
+                canGoBack: viewModel.canGoBack,
+                canGoForward: viewModel.canGoForward,
+                canBookmark: true,
+                isBookmarked: viewModel.isCurrentBookmarked
+            ),
+            actions: chromeActions
+        )
+    }
+
+    private var emptyChromePayload: AtomWindowChromePayload {
+        AtomWindowChromePayload(
+            state: AtomWindowChromeState(
+                title: "Atom Window",
+                typeIcon: "atom",
+                typeColor: .neutral,
+                canGoBack: viewModel.canGoBack,
+                canGoForward: viewModel.canGoForward,
+                canBookmark: false,
+                isBookmarked: false
+            ),
+            actions: chromeActions
+        )
+    }
+
+    private var chromeActions: AtomWindowChromeActions {
+        AtomWindowChromeActions(
+            closeWindow: {
+                AtomWindowPanelController.shared.hide()
+            },
+            unloadAtom: {
+                viewModel.unloadCurrentSession()
+            },
+            goBack: {
+                Task { await viewModel.goBack() }
+            },
+            goForward: {
+                Task { await viewModel.goForward() }
+            },
+            toggleBookmark: {
+                viewModel.toggleBookmark()
+            },
+            showSearch: {
+                viewModel.isSearchVisible.toggle()
+            },
+            createAtom: { type in
+                Task { await viewModel.createNewAtom(type: type) }
+            }
+        )
+    }
+
+    private func emptyShell<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        VStack(spacing: 0) {
+            AtomWindowStandaloneChrome(context: emptyChromePayload, showsAtomClose: false)
+                .padding(.horizontal, DS.space16)
+                .padding(.top, DS.space16)
+                .padding(.bottom, DS.space8)
+
+            content()
+        }
     }
 
     // MARK: - Empty State
@@ -312,20 +389,30 @@ struct AtomWindowHeaderBar: View {
 
 struct AtomWindowGenericView: View {
     let atom: Atom
+    @Environment(\.atomWindowChromeContext) private var atomChrome
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: DS.space16) {
-                headerSection
-                if let body = atom.body, !body.isEmpty {
-                    bodySection(body)
+        ZStack(alignment: .top) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: DS.space16) {
+                    headerSection
+                    if let body = atom.body, !body.isEmpty {
+                        bodySection(body)
+                    }
+                    metadataSection
                 }
-                metadataSection
+                .padding(DS.space24)
+                .padding(.top, atomChrome == nil ? 0 : 64)
             }
-            .padding(DS.space24)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(DS.bg)
+
+            if let atomChrome {
+                AtomWindowStandaloneChrome(context: atomChrome)
+                    .padding(.horizontal, DS.space16)
+                    .padding(.top, DS.space16)
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(DS.bg)
     }
 
     private var headerSection: some View {

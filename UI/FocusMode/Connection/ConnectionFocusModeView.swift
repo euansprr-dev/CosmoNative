@@ -39,6 +39,7 @@ struct ConnectionFocusModeView: View {
     @Environment(\.isPaneContext) private var isPaneContext
     @Environment(\.isPeekContext) private var isPeekContext
     @Environment(\.isPaneContextOwner) private var isPaneContextOwner
+    @Environment(\.atomWindowChromeContext) private var atomChrome
 
     // MARK: - Initialization
 
@@ -91,7 +92,7 @@ struct ConnectionFocusModeView: View {
 
     @ViewBuilder
     private var paneCloseButton: some View {
-        if isPaneContext, !isPeekContext {
+        if isPaneContext, !isPeekContext, atomChrome == nil {
             Button(action: onClose) {
                 Image(systemName: "xmark")
                     .font(DS.buttonText)

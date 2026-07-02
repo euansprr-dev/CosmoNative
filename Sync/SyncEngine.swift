@@ -53,7 +53,7 @@ class SyncEngine: ObservableObject {
     // and appear on the canvas via SpatialEngine's thinkspace_id query on open.
     // graph_edges are derived from atom.links and rebuilt by NodeGraphEngine — no sync needed
     private let pushTables = ["atoms", "canvas_blocks"]
-    private let pullTables = ["atoms", "canvas_blocks"]
+    private let pullTables = ["atoms", "canvas_blocks", "swipe_boards"]
 
     private init() {
         supabaseClient = SupabaseClient.shared
@@ -104,6 +104,13 @@ class SyncEngine: ObservableObject {
 
         // FIX 5: Housekeeping — remove expired sync fences to prevent unbounded table growth
         await cleanupExpiredFences()
+
+        // iOS companion ext 2: one-shot push of existing boards to the cloud.
+        await SwipeBoardStore.shared.backfillCloudBoardsIfNeeded()
+
+        // iOS companion ext 3a: mirror cached swipe thumbnails to Supabase
+        // Storage (throttled, once per launch) so the iPhone renders real cards.
+        await SwipeThumbnailCloudMirror.runBackfillPassIfNeeded()
 
         syncState = .syncing
 

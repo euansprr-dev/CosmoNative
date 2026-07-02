@@ -792,3 +792,97 @@ final class SwipeProcessingService {
         print("SwipeProcessingService: Processing complete for \(uuid) — \(finalSlides.count) slides")
     }
 }
+
+// MARK: - iOS Companion Ext 3a: Swipe Thumbnail Cloud Mirror
+// The Mac's ThumbnailCache is the only durable copy of swipe thumbnails
+// (Instagram CDN URLs expire). Mirror the cached JPEGs to Supabase Storage
+// (`atom-images/<user>/swipe-thumbs/<atomUUID>.jpg`) and record
+// `metadata.thumbnailStorageURL` so the iPhone renders real cards.
+// Throttled backfill; purely additive — existing behavior untouched.
+
+@MainActor
+enum SwipeThumbnailCloudMirror {
+
+    private static let perPassLimit = 15
+    private static var passRanThisLaunch = false
+
+    /// Run once per launch (invoked from the sync cycle via SwipeBoardStore's
+    /// neighbor hook). Mirrors up to `perPassLimit` swipes missing a storage URL.
+    static func runBackfillPassIfNeeded() async {
+        guard !passRanThisLaunch else { return }
+        passRanThisLaunch = true
+        guard let client = SupabaseClient.shared, client.isAuthenticated,
+              let userId = client.currentUserId else { return }
+
+        let atoms = (try? await AtomRepository.shared.fetchAll(type: .research)) ?? []
+        var mirrored = 0
+        for atom in atoms {
+            guard mirrored < perPassLimit else { break }
+            guard atom.isSwipeFileAtom else { continue }
+            if mirrorableStorageURL(from: atom.metadata) != nil { continue }
+            if await mirror(atom: atom, client: client, userId: userId) {
+                mirrored += 1
+            }
+        }
+        if mirrored > 0 {
+            print("SwipeThumbnailCloudMirror: mirrored \(mirrored) thumbnail(s) to Supabase Storage")
+        }
+    }
+
+    private static func mirrorableStorageURL(from metadata: String?) -> String? {
+        guard let metadata, let data = metadata.data(using: .utf8),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return dict["thumbnailStorageURL"] as? String
+    }
+
+    /// Locate the cached JPEG for this swipe (carousel stable key first, then
+    /// the thumbnail URL's cache key) and upload it.
+    private static func mirror(atom: Atom, client: SupabaseClient, userId: String) async -> Bool {
+        var keys: [String] = []
+        if let instagramId = atom.richContent?.instagramId {
+            keys.append("ig-carousel-\(instagramId)-0")
+        }
+        let thumbnailURLString = atom.researchMetadata?.thumbnailUrl ?? atom.richContent?.thumbnailUrl
+        if let thumbnailURLString, let url = URL(string: thumbnailURLString) {
+            keys.append(ThumbnailCacheService.shared.cacheKey(for: url, stableKey: nil))
+        }
+        guard !keys.isEmpty else { return false }
+
+        let cacheDir = FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("Cosmo/ThumbnailCache", isDirectory: true)
+
+        var jpegData: Data?
+        for key in keys {
+            let path = cacheDir.appendingPathComponent("thumb-\(key).jpg")
+            if let data = try? Data(contentsOf: path), !data.isEmpty {
+                jpegData = data
+                break
+            }
+        }
+        guard let jpegData else { return false }
+
+        do {
+            let storageURL = try await client.uploadStorageObject(
+                bucket: "atom-images",
+                path: "\(userId)/swipe-thumbs/\(atom.uuid).jpg",
+                data: jpegData
+            )
+            // Key-level metadata merge — every other key survives.
+            guard var dict = atom.metadata
+                .flatMap({ $0.data(using: .utf8) })
+                .flatMap({ try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }) else { return false }
+            dict["thumbnailStorageURL"] = storageURL
+            guard let merged = try? JSONSerialization.data(withJSONObject: dict),
+                  let mergedString = String(data: merged, encoding: .utf8) else { return false }
+
+            var updated = atom
+            updated.metadata = mergedString
+            _ = try await AtomRepository.shared.update(updated)
+            return true
+        } catch {
+            print("SwipeThumbnailCloudMirror: upload failed for \(atom.uuid): \(error)")
+            return false
+        }
+    }
+}

@@ -340,6 +340,12 @@ class ConflictResolver {
                 insertData["id"] = insertData["uuid"] as? String ?? UUID().uuidString
             }
         }
+        // swipe_boards: local table uses camelCase TEXT timestamps only.
+        if table == "swipe_boards" {
+            insertData.removeValue(forKey: "created_at")
+            insertData.removeValue(forKey: "updated_at")
+            insertData.removeValue(forKey: "synced_at")
+        }
 
         let columns = insertData.keys.filter { key in
             !key.starts(with: "_") || ["_local_version", "_server_version", "_sync_version", "_local_pending"].contains(key)
@@ -407,6 +413,11 @@ class ConflictResolver {
         // Fill NOT NULL defaults for canvas_blocks
         if table == "canvas_blocks" {
             sanitizeCanvasBlockDefaults(&updateData)
+        }
+        if table == "swipe_boards" {
+            updateData.removeValue(forKey: "created_at")
+            updateData.removeValue(forKey: "updated_at")
+            updateData.removeValue(forKey: "synced_at")
         }
 
         let updateColumns = updateData.keys.filter { $0 != "id" && $0 != "uuid" }

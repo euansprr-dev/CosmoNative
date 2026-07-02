@@ -295,6 +295,36 @@ final class SupabaseClient {
         return json.first
     }
 
+    // MARK: - Storage (iOS companion ext 3a — thumbnail mirror)
+
+    /// Upload a file to Supabase Storage (upsert). Returns the authenticated
+    /// object URL (clients attach their own Bearer when fetching).
+    func uploadStorageObject(
+        bucket: String,
+        path: String,
+        data: Data,
+        contentType: String = "image/jpeg"
+    ) async throws -> String {
+        guard let url = URL(string: "\(baseURL)/storage/v1/object/\(bucket)/\(path)") else {
+            throw SupabaseError.invalidURL
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        request.setValue("true", forHTTPHeaderField: "x-upsert")
+        addHeaders(to: &request)
+        request.httpBody = data
+
+        let (responseData, response) = try await session.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+            let body = String(data: responseData, encoding: .utf8) ?? ""
+            throw SupabaseError.upsertFailed(statusCode: statusCode, body: body)
+        }
+        return "\(baseURL)/storage/v1/object/\(bucket)/\(path)"
+    }
+
     // MARK: - Add Headers
 
     private func addHeaders(to request: inout URLRequest) {

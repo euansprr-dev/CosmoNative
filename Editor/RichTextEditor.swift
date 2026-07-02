@@ -511,7 +511,8 @@ struct RichTextEditor: View {
                 splitsOnReturn: splitsOnReturn,
                 caretRequest: caretRequest,
                 externalContentToken: externalContentToken,
-                dragSelectionController: dragSelectionController
+                dragSelectionController: dragSelectionController,
+                editorInstanceID: overlayEscapeOwnerID
             )
             // Non-scrolling editors report their live height through
             // CosmoScrollView.intrinsicContentSize. Do not also pin this view to
@@ -975,6 +976,12 @@ struct RichTextEditor: View {
         if let editorTargetID, !editorTargetID.isEmpty {
             userInfo["targetEditorID"] = editorTargetID
         }
+        // Pin the command to THIS editor instance. Target IDs are not unique
+        // (the canvas note block behind a focus mode shares the note-body
+        // target), and a second editor executing the same command runs the
+        // legacy TextKit path, steals first responder, and writes stale
+        // content back over the note.
+        userInfo["sourceEditorInstanceID"] = overlayEscapeOwnerID
         NotificationCenter.default.post(
             name: .performSlashCommand,
             object: nil,

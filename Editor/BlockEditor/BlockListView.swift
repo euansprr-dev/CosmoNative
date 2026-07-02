@@ -100,7 +100,7 @@ struct BlockListView: View {
     /// drags here; frames come from the layout index (registered per row).
     @State private var ownedDragController = BlockDragSelectionController()
     @State private var blockLayoutIndex = BlockLayoutIndex()
-    @State private var listGlobalFrame: CGRect = .zero
+    @State private var selectionKeyMonitor = BlockSelectionKeyMonitor()
     @State private var listSize: CGSize = .zero
     @FocusState private var selectionKeyboardFocused: Bool
 
@@ -152,7 +152,9 @@ struct BlockListView: View {
         .onGeometryChange(for: CGRect.self) { proxy in
             providesNavigationOrder ? proxy.frame(in: .global) : .zero
         } action: { newFrame in
-            listGlobalFrame = newFrame
+            // Plain-class storage — a .global frame changes on every scroll
+            // tick and must never invalidate the list's body.
+            ownedDragController.listGlobalFrame = newFrame
         }
         .onAppear {
             configureUndoRegistrar()
@@ -171,7 +173,13 @@ struct BlockListView: View {
         .onChange(of: document.blocks.count) { _, _ in
             if resolvedSelectionCoordinator.isActive {
                 resolvedSelectionCoordinator.prune(against: document)
+                if !resolvedSelectionCoordinator.isActive {
+                    deactivateSelectionKeyboard()
+                }
             }
+        }
+        .onDisappear {
+            selectionKeyMonitor.remove()
         }
     }
 
@@ -484,6 +492,7 @@ struct BlockListView: View {
     /// (.global − listGlobalFrame.origin).
     private func listPoint(fromWindowPoint windowPoint: NSPoint, in textView: NSTextView) -> CGPoint? {
         guard let contentView = textView.window?.contentView else { return nil }
+        let listGlobalFrame = ownedDragController.listGlobalFrame
         let inContent = contentView.convert(windowPoint, from: nil)
         let globalY = contentView.isFlipped ? inContent.y : contentView.bounds.height - inContent.y
         return CGPoint(
@@ -508,8 +517,7 @@ struct BlockListView: View {
                         resolvedSelectionCoordinator.selectRange(to: block.id, in: document)
                     } else {
                         resolvedSelectionCoordinator.clear()
-                        BlockSelectionClipboardTarget.deactivate()
-                        selectionKeyboardFocused = false
+                        deactivateSelectionKeyboard()
                         resolvedFocusCoordinator.focus(block.id)
                     }
                 }
@@ -538,7 +546,7 @@ struct BlockListView: View {
         case .clearSelection:
             if selection.isActive {
                 selection.clear()
-                BlockSelectionClipboardTarget.deactivate()
+                deactivateSelectionKeyboard()
             }
             return true
         }
@@ -593,8 +601,13 @@ struct BlockListView: View {
     }
 
     /// Moves AppKit first responder off the text views so arrow keys, delete,
-    /// and shortcuts land on the block list while blocks are selected.
+    /// and shortcuts land on the block list while blocks are selected. Keys
+    /// are handled by an AppKit-level monitor — the SwiftUI focus handoff
+    /// races makeFirstResponder(nil) and drops keys (⌘A then ⌫ did nothing).
     private func activateSelectionKeyboard() {
+        selectionKeyMonitor.install { event in
+            handleSelectionKeyEvent(event)
+        }
         DispatchQueue.main.async {
             let window = NSApp.keyWindow
             FocusModeTextClipboardTarget.collapseActiveSelection(in: window, deactivate: true)
@@ -608,11 +621,65 @@ struct BlockListView: View {
         }
     }
 
+    private func deactivateSelectionKeyboard() {
+        selectionKeyMonitor.remove()
+        BlockSelectionClipboardTarget.deactivate()
+        selectionKeyboardFocused = false
+    }
+
+    /// AppKit-level key routing while blocks are selected. Returns true when
+    /// the event was consumed. ⌘C/⌘X stay on the clipboard-target path.
+    private func handleSelectionKeyEvent(_ event: NSEvent) -> Bool {
+        let selection = resolvedSelectionCoordinator
+        guard selection.isActive else { return false }
+        let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
+
+        switch event.keyCode {
+        case 51, 117: // delete / forward delete
+            guard flags.isEmpty else { return false }
+            deleteSelectedBlocks(selection.selectedBlockIDs)
+            return true
+        case 126, 125: // up / down
+            let direction: BlockSelectionDirection = event.keyCode == 126 ? .up : .down
+            if flags == .shift {
+                selection.extend(direction, in: document)
+            } else if flags.isEmpty {
+                selection.step(direction, in: document)
+            } else {
+                return false
+            }
+            return true
+        case 36: // return
+            guard flags.isEmpty else { return false }
+            beginEditingSelection()
+            return true
+        case 53: // escape
+            guard flags.isEmpty else { return false }
+            clearSelectionAndResumeEditing()
+            return true
+        default:
+            break
+        }
+
+        if flags == .command, let characters = event.charactersIgnoringModifiers?.lowercased() {
+            switch characters {
+            case "d":
+                duplicateSelectedBlocks(selection.selectedBlockIDs)
+                return true
+            case "a":
+                selection.selectAll(in: document)
+                return true
+            default:
+                break
+            }
+        }
+        return false
+    }
+
     private func clearSelectionAndResumeEditing() {
         let anchor = resolvedSelectionCoordinator.anchorBlockID
         resolvedSelectionCoordinator.clear()
-        BlockSelectionClipboardTarget.deactivate()
-        selectionKeyboardFocused = false
+        deactivateSelectionKeyboard()
         if let anchor {
             resolvedFocusCoordinator.focus(anchor)
         }
@@ -621,8 +688,7 @@ struct BlockListView: View {
     private func beginEditingSelection() {
         let target = resolvedSelectionCoordinator.leadBlockID ?? resolvedSelectionCoordinator.anchorBlockID
         resolvedSelectionCoordinator.clear()
-        BlockSelectionClipboardTarget.deactivate()
-        selectionKeyboardFocused = false
+        deactivateSelectionKeyboard()
         if let target {
             resolvedFocusCoordinator.focus(target)
         }
@@ -707,8 +773,7 @@ struct BlockListView: View {
     private func deleteSelectedBlocks(_ ids: Set<UUID>) {
         guard let result = BlockOperations.deleteBlocks(withIDs: ids, in: document) else { return }
         resolvedSelectionCoordinator.clear()
-        BlockSelectionClipboardTarget.deactivate()
-        selectionKeyboardFocused = false
+        deactivateSelectionKeyboard()
         commit(result, undoActionName: "Delete Blocks")
     }
 

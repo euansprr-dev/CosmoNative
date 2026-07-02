@@ -165,13 +165,7 @@ class CosmoDatabase: ObservableObject {
     }
 
     private static var isRunningTests: Bool {
-        let environment = ProcessInfo.processInfo.environment
-        if environment["XCTestConfigurationFilePath"] != nil {
-            return true
-        }
-        return ProcessInfo.processInfo.arguments.contains { argument in
-            argument.hasSuffix(".xctest") || argument.contains("/XCTest")
-        }
+        ProcessInfo.processInfo.isRunningTests
     }
 
     // MARK: - Database Migrator

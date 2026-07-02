@@ -1513,6 +1513,10 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     var externalContentToken: Int = 0
     /// Cross-block drag selection bridge (block rows; set via environment).
     var dragSelectionController: BlockDragSelectionController? = nil
+    /// Identifies this editor instance for slash-command notifications —
+    /// target IDs are shared across surfaces (focus-mode row vs canvas block
+    /// of the same note), instance IDs are not.
+    var editorInstanceID: UUID? = nil
 
     var resolvedEditorTextColor: NSColor {
         overrideTextColor ?? (darkMode ? NSColor.white : NSColor(DS.documentText))
@@ -3410,6 +3414,13 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                   let textView = activeTextView,
                   let command = notification.userInfo?["command"] as? SlashCommand,
                   let storage = textView.textStorage else {
+                return
+            }
+            // Only the editor that presented the menu may execute — target
+            // IDs alone are ambiguous (focus-mode row and canvas block of the
+            // same note share one), and a second executor corrupts the note.
+            if let sourceInstanceID = notification.userInfo?["sourceEditorInstanceID"] as? UUID,
+               parent.editorInstanceID != sourceInstanceID {
                 return
             }
             guard acceptsActiveEditorCommand(notification, textView: textView) else { return }

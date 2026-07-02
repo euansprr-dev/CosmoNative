@@ -154,7 +154,9 @@ struct MarkdownBlockAlias {
                 return MarkdownBlockAlias(kind: kind, checked: checked, utf16Length: length)
             }
         }
-        if let match = text.range(of: #"^\d+\.\s"#, options: .regularExpression) {
+        // Digit guard before the regex — this matcher runs per keystroke.
+        if let first = text.first, first.isNumber,
+           let match = text.range(of: #"^\d+\.\s"#, options: .regularExpression) {
             let length = (String(text[match]) as NSString).length
             if cursorLocation == length {
                 return MarkdownBlockAlias(kind: .numberedList, checked: nil, utf16Length: length)

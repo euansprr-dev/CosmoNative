@@ -45,6 +45,7 @@ final class RealtimeSyncService {
     // MARK: - Start/Stop
 
     func startListening() {
+        guard SupabaseSyncTrafficPolicy.allowsNetworkSync else { return }
         guard !isConnected else { return }
 
         listenTask = Task { [weak self] in

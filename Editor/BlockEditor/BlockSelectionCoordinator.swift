@@ -45,6 +45,11 @@ final class BlockDragSelectionController {
     /// Session state, managed by the list's handleDrag.
     var originBlockID: UUID?
     var isEscalated = false
+    /// The block list's frame in SwiftUI .global space — lives HERE (plain
+    /// class) instead of view @State because a .global frame changes on
+    /// every scroll tick, and writing it into @State re-rendered the entire
+    /// block list continuously while scrolling.
+    var listGlobalFrame: CGRect = .zero
 }
 
 private struct BlockDragSelectionControllerKey: EnvironmentKey {
@@ -234,6 +239,31 @@ final class BlockSelectionCoordinator {
         case .up: return selectedIndices.min()
         case .down: return selectedIndices.max()
         }
+    }
+}
+
+/// Routes keyboard input to an active block selection at the AppKit level.
+/// The SwiftUI path (focusable + @FocusState + onKeyPress) races the
+/// makeFirstResponder(nil) handoff and can drop keys — with this monitor,
+/// ⌫/arrows/Return/Esc/⌘D/⌘A work the instant blocks are selected.
+@MainActor
+final class BlockSelectionKeyMonitor {
+    private var monitor: Any?
+
+    /// Installs the local keyDown monitor (idempotent). The handler returns
+    /// true when it consumed the event.
+    func install(_ handler: @escaping (NSEvent) -> Bool) {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            handler(event) ? nil : event
+        }
+    }
+
+    func remove() {
+        if let monitor {
+            NSEvent.removeMonitor(monitor)
+        }
+        monitor = nil
     }
 }
 

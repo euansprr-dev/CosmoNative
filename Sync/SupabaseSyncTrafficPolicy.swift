@@ -1,9 +1,29 @@
 import Foundation
 import Realtime
 
+extension ProcessInfo {
+    /// True when running inside an XCTest host. Sync must NEVER touch the real
+    /// Supabase project from tests: the local database is sandboxed to a temp
+    /// path, but the keychain (and therefore the authenticated Supabase session)
+    /// is the developer's real one — an unguarded push writes test fixtures into
+    /// production cloud data that other devices then pull.
+    var isRunningTests: Bool {
+        if environment["XCTestConfigurationFilePath"] != nil { return true }
+        return arguments.contains { argument in
+            argument.hasSuffix(".xctest") || argument.contains("/XCTest")
+        }
+    }
+}
+
 enum SupabaseSyncTrafficPolicy {
     static let localSource = "mac"
     static let sourceColumn = "_source"
+
+    /// Master kill-switch for ALL Supabase traffic (push, pull, realtime).
+    /// False under tests — see ProcessInfo.isRunningTests.
+    static var allowsNetworkSync: Bool {
+        !ProcessInfo.processInfo.isRunningTests
+    }
 
     static var remoteOnlyQueryItem: URLQueryItem {
         URLQueryItem(name: sourceColumn, value: "neq.\(localSource)")
@@ -19,7 +39,7 @@ enum SupabaseSyncTrafficPolicy {
     }
 
     static func shouldAttemptPush(isAuthenticated: Bool) -> Bool {
-        isAuthenticated
+        allowsNetworkSync && isAuthenticated
     }
 }
 

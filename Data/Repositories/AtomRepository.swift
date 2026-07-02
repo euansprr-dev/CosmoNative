@@ -856,6 +856,15 @@ class AtomRepository: ObservableObject {
             assertionFailure("hardDelete() called without confirmed: true — add a confirmation dialog before calling")
             return
         }
+
+        // Tombstone the cloud rows BEFORE destroying local state. Without this
+        // the Supabase row lives forever and every other device resurrects the
+        // "permanently deleted" atom on its next pull. trackDelete queues a
+        // DELETE op (offline-safe batch retry) and fires an immediate soft
+        // delete — the queue row survives the local hard delete below.
+        await changeTracker.trackDelete(table: Atom.databaseTableName, uuid: uuid, rowId: nil)
+        await changeTracker.trackDelete(table: CanvasBlockRecord.databaseTableName, uuid: uuid, rowId: nil)
+
         try await database.asyncWrite { db in
             try db.execute(
                 sql: "DELETE FROM atoms WHERE uuid = ?",

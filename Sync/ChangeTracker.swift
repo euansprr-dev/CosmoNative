@@ -92,6 +92,7 @@ class ChangeTracker: ObservableObject {
         )
 
         // Fire-and-forget immediate delete
+        guard SupabaseSyncTrafficPolicy.allowsNetworkSync else { return }
         Task.detached { @MainActor in
             guard let client = SupabaseClient.shared, client.isAuthenticated else { return }
             do {
@@ -99,8 +100,8 @@ class ChangeTracker: ObservableObject {
                 // Mark synced in queue
                 try? await CosmoDatabase.shared.asyncWrite { db in
                     try db.execute(
-                        sql: "UPDATE sync_queue SET status = 'synced', synced_at = ? WHERE uuid = ? AND status = 'pending'",
-                        arguments: [ISO8601.string(from: Date()), uuid]
+                        sql: "UPDATE sync_queue SET status = 'synced', synced_at = ? WHERE uuid = ? AND table_name = ? AND status = 'pending'",
+                        arguments: [ISO8601.string(from: Date()), uuid, table]
                     )
                 }
             } catch {
@@ -119,6 +120,7 @@ class ChangeTracker: ObservableObject {
         entity: T,
         operation: String
     ) async {
+        guard SupabaseSyncTrafficPolicy.allowsNetworkSync else { return }
         ConsoleLog.verbose("immediatePush table=\(table) uuid=\(uuid) op=\(operation)", subsystem: .sync)
         Task.detached { @MainActor in
             guard let client = SupabaseClient.shared, client.isAuthenticated else {
@@ -188,8 +190,8 @@ class ChangeTracker: ObservableObject {
                 do {
                     try await CosmoDatabase.shared.asyncWrite { db in
                         try db.execute(
-                            sql: "UPDATE sync_queue SET status = 'synced', synced_at = ? WHERE uuid = ? AND status = 'pending' AND local_version <= ?",
-                            arguments: [ISO8601.string(from: Date()), uuid, pushedLocalVersion]
+                            sql: "UPDATE sync_queue SET status = 'synced', synced_at = ? WHERE uuid = ? AND table_name = ? AND status = 'pending' AND local_version <= ?",
+                            arguments: [ISO8601.string(from: Date()), uuid, table, pushedLocalVersion]
                         )
                         try db.execute(
                             sql: """
@@ -233,10 +235,13 @@ class ChangeTracker: ObservableObject {
 
         do {
             try await database.asyncWrite { db in
+                // Scoped by table too: canvas_blocks rows share the entity's
+                // uuid, so a uuid-only match would swallow one table's op
+                // with the other's.
                 let existing = try Row.fetchOne(
                     db,
-                    sql: "SELECT id FROM sync_queue WHERE uuid = ? AND status = 'pending'",
-                    arguments: [uuid]
+                    sql: "SELECT id FROM sync_queue WHERE uuid = ? AND table_name = ? AND status = 'pending'",
+                    arguments: [uuid, table]
                 )
 
                 if let existingId = existing?["id"] as? Int64 {

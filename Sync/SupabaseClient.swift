@@ -295,6 +295,85 @@ final class SupabaseClient {
         return json.first
     }
 
+    // MARK: - Lightweight Column Fetch (cloud reconciliation)
+
+    /// Page through a table fetching only the given columns, ordered by uuid
+    /// (stable across pages — unlike updated_at, uuid never changes mid-scan).
+    func fetchColumns(
+        table: String,
+        columns: [String],
+        limit: Int = 1000,
+        offset: Int = 0
+    ) async throws -> [[String: Any]] {
+        guard var urlComponents = URLComponents(string: "\(baseURL)/rest/v1/\(table)") else {
+            throw SupabaseError.invalidURL
+        }
+        var queryItems = [
+            URLQueryItem(name: "select", value: columns.joined(separator: ",")),
+            URLQueryItem(name: "order", value: "uuid.asc"),
+            URLQueryItem(name: "limit", value: "\(limit)")
+        ]
+        if offset > 0 {
+            queryItems.append(URLQueryItem(name: "offset", value: "\(offset)"))
+        }
+        urlComponents.queryItems = queryItems
+
+        guard let url = urlComponents.url else {
+            throw SupabaseError.invalidURL
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        addHeaders(to: &request)
+
+        let (data, response) = try await session.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            throw SupabaseError.fetchFailed
+        }
+
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            throw SupabaseError.invalidResponse
+        }
+
+        return json
+    }
+
+    // MARK: - Batch Soft Delete (cloud reconciliation)
+
+    /// Tombstone many rows in one PATCH via `uuid=in.(...)`. Callers batch to
+    /// ~50 uuids per call to stay well under URL length limits.
+    func batchSoftDelete(table: String, uuids: [String]) async throws {
+        guard !uuids.isEmpty else { return }
+        guard var urlComponents = URLComponents(string: "\(baseURL)/rest/v1/\(table)") else {
+            throw SupabaseError.invalidURL
+        }
+        let list = uuids.map { "\"\($0)\"" }.joined(separator: ",")
+        urlComponents.queryItems = [URLQueryItem(name: "uuid", value: "in.(\(list))")]
+
+        guard let url = urlComponents.url else {
+            throw SupabaseError.invalidURL
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "PATCH"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("return=minimal", forHTTPHeaderField: "Prefer")
+        addHeaders(to: &request)
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "is_deleted": true,
+            "updated_at": ISO8601.string(from: Date())
+        ])
+
+        let (_, response) = try await session.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+            throw SupabaseError.updateFailed(statusCode: statusCode)
+        }
+    }
+
     // MARK: - Storage (iOS companion ext 3a — thumbnail mirror)
 
     /// Upload a file to Supabase Storage (upsert). Returns the authenticated

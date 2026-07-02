@@ -2347,6 +2347,7 @@ struct CrystallizationOutput: Codable, Sendable {
         var mergeTargetConnectionUUID: String?   // AI-chosen merge destination (concept-first)
         var conceptAliases: [String]?
         var conceptKey: String?                  // Normalized concept name; cross-session dedup
+        var relatedConceptNames: [String]?       // Other concept pages this one mentions → hyperlinks
 
         init(
             id: String = UUID().uuidString,
@@ -2364,7 +2365,8 @@ struct CrystallizationOutput: Codable, Sendable {
             accepted: Bool = false,
             mergeTargetConnectionUUID: String? = nil,
             conceptAliases: [String]? = nil,
-            conceptKey: String? = nil
+            conceptKey: String? = nil,
+            relatedConceptNames: [String]? = nil
         ) {
             self.id = id
             self.name = name
@@ -2382,13 +2384,14 @@ struct CrystallizationOutput: Codable, Sendable {
             self.mergeTargetConnectionUUID = mergeTargetConnectionUUID
             self.conceptAliases = conceptAliases
             self.conceptKey = conceptKey
+            self.relatedConceptNames = relatedConceptNames
         }
 
         private enum CodingKeys: String, CodingKey {
             case id, name, rationale, clusterExtractUUIDs, seededLexiconCandidateIds
             case proposedTitle, proposedConcept, proposedSections, proposedReferences
             case branchNodeId, materialCount, proposedNotes, accepted
-            case mergeTargetConnectionUUID, conceptAliases, conceptKey
+            case mergeTargetConnectionUUID, conceptAliases, conceptKey, relatedConceptNames
         }
 
         init(from decoder: Decoder) throws {
@@ -2413,6 +2416,7 @@ struct CrystallizationOutput: Codable, Sendable {
             mergeTargetConnectionUUID = try c.decodeIfPresent(String.self, forKey: .mergeTargetConnectionUUID)
             conceptAliases = try c.decodeIfPresent([String].self, forKey: .conceptAliases)
             conceptKey = try c.decodeIfPresent(String.self, forKey: .conceptKey)
+            relatedConceptNames = try c.decodeIfPresent([String].self, forKey: .relatedConceptNames)
         }
 
         func encode(to encoder: Encoder) throws {
@@ -2436,6 +2440,7 @@ struct CrystallizationOutput: Codable, Sendable {
             try c.encodeIfPresent(mergeTargetConnectionUUID, forKey: .mergeTargetConnectionUUID)
             try c.encodeIfPresent(conceptAliases, forKey: .conceptAliases)
             try c.encodeIfPresent(conceptKey, forKey: .conceptKey)
+            try c.encodeIfPresent(relatedConceptNames, forKey: .relatedConceptNames)
         }
     }
     struct ModelUpdateProposal: Codable, Sendable, Identifiable {
@@ -2853,6 +2858,7 @@ struct ExtractMetadata: Codable, Sendable {
     var citation: String?                // Display chip e.g. "Buteyko Paper · 2007 · Author"
     var routingDecisionId: String?       // Live-router decision that settled this extract (idempotency)
     var conceptNames: [String]?          // Concept-page assignments ("Pranayama", "Vagus nerve")
+    var kindPending: Bool?               // True while awaiting LLM classification ("Classifying…" UI)
 
     init(
         kind: ExtractKind,
@@ -2871,7 +2877,8 @@ struct ExtractMetadata: Codable, Sendable {
         originType: String? = nil,
         citation: String? = nil,
         routingDecisionId: String? = nil,
-        conceptNames: [String]? = nil
+        conceptNames: [String]? = nil,
+        kindPending: Bool? = nil
     ) {
         self.kind = kind
         self.sourceUUID = sourceUUID
@@ -2890,6 +2897,7 @@ struct ExtractMetadata: Codable, Sendable {
         self.citation = citation
         self.routingDecisionId = routingDecisionId
         self.conceptNames = conceptNames
+        self.kindPending = kindPending
     }
 }
 

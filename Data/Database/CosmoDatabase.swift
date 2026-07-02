@@ -1989,6 +1989,24 @@ class CosmoDatabase: ObservableObject {
             print("✅ app_flags table created")
         }
 
+        migrator.registerMigration("create_inquiry_routing_corrections") { db in
+            // Learned classification rules: manual kind corrections feed back
+            // into the inquiry live-router prompt as worked examples.
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS inquiry_routing_corrections (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    text TEXT NOT NULL,
+                    from_kind TEXT NOT NULL,
+                    to_kind TEXT NOT NULL,
+                    deep_dive_uuid TEXT,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_inquiry_routing_corrections_recency
+                    ON inquiry_routing_corrections(created_at DESC);
+            """)
+            print("✅ inquiry_routing_corrections table created")
+        }
+
         migrator.registerMigration("add_canvas_blocks_metadata") { db in
             // Round-trip storage for block metadata (sticky color, rich body
             // document, etc.) — previously only note_content survived a restart.

@@ -92,7 +92,28 @@ final class InquiryWorkspaceViewModel {
             metadata.lastActiveAt = ISO8601.string(from: Date())
             scheduleSave()
         }
+        requeueStrandedClassifications()
         await refreshSourceRecommendationsIfNeeded()
+    }
+
+    /// Captures left pending by a quit/crash mid-classification get another
+    /// pass when the session reopens — nothing stays "Classifying…" forever.
+    private func requeueStrandedClassifications() {
+        let stranded = extracts.filter { atom in
+            guard let meta = atom.extractMetadata else { return false }
+            return meta.kindPending == true
+                && meta.routingDecisionId == nil
+                && meta.parentSessionUUID == session.uuid
+        }
+        for atom in stranded {
+            guard let body = atom.body ?? atom.title, !body.isEmpty else { continue }
+            enqueueClassification(
+                extractUUID: atom.uuid,
+                text: body,
+                lockedKind: nil,
+                originalKind: atom.extractMetadata?.kind ?? .note
+            )
+        }
     }
 
     private func reloadDeepDiveScopedAtoms() async {
@@ -1397,7 +1418,9 @@ final class InquiryWorkspaceViewModel {
         case .note, .claim, .speculativeClaim, .evidence, .counterevidence, .term, .practice, .output,
              .goal, .problem, .benefit, .example, .mechanism, .objection, .principle, .assumption, .quote, .reference:
             guard let kind = parsed.extractKind else { return }
-            await saveDockExtract(body, kind: kind, originType: parsed.intent.rawValue)
+            // A prefix is an explicit user choice — the classifier may split and
+            // route the capture but never re-type it.
+            await saveDockExtract(body, kind: kind, originType: parsed.intent.rawValue, kindLocked: true)
         case .ask:
             let intent = CaptureIntentClassifier.classifyHeuristic(
                 text: body,
@@ -1417,17 +1440,25 @@ final class InquiryWorkspaceViewModel {
                 addCapture(body, source: .type, suggestedKind: .question)
                 showToast("Captured question", detail: "Make it a branch from the notes rail.")
             } else {
-                await saveDockExtract(body, kind: .note, originType: "dock")
+                // No keyword pre-classification: the capture lands pending and
+                // the LLM classifier assigns its kind from scratch.
+                await saveDockExtract(body, kind: .note, originType: "dock", kindLocked: false)
             }
         }
     }
 
     @discardableResult
-    private func saveDockExtract(_ raw: String, kind: ExtractKind, originType: String) async -> Atom? {
+    private func saveDockExtract(
+        _ raw: String,
+        kind: ExtractKind,
+        originType: String,
+        kindLocked: Bool = true
+    ) async -> Atom? {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         do {
-            // Provisional until the live router confirms or refines the routing.
+            // Pending until the classifier settles it: locked captures keep the
+            // user's kind and only await routing; unlocked ones await their kind.
             let extract = try await InquiryRepository.shared.createExtract(
                 body: trimmed,
                 kind: kind,
@@ -1441,13 +1472,14 @@ final class InquiryWorkspaceViewModel {
                 userNote: nil,
                 originType: originType,
                 citation: activeSourceTab?.url ?? activeSourceTab?.title,
-                status: .temporary
+                status: .temporary,
+                kindPending: kindLocked ? nil : true
             )
             registerSavedExtract(extract, sourceTabId: activeSourceTabId)
             appendRouteReceipt(
                 InquiryRouteReceipt(
                     kind: kind == .note ? .noteSaved : .extractSaved,
-                    message: "\(kind.displayName) saved",
+                    message: kindLocked ? "\(kind.displayName) saved" : "Captured",
                     detail: "Routed to \(activeQuestionTitle)",
                     questionUUID: activeQuestionUUID,
                     branchNodeId: activeBranchNodeId,
@@ -1456,17 +1488,23 @@ final class InquiryWorkspaceViewModel {
                 )
             )
             routeThought(trimmed, originExtractUUID: extract.uuid, sourceTabId: activeSourceTabId)
-            scheduleLiveRefinement(forExtract: extract.uuid, text: trimmed, kind: kind)
+            enqueueClassification(
+                extractUUID: extract.uuid,
+                text: trimmed,
+                lockedKind: kindLocked ? kind : nil,
+                originalKind: kind
+            )
             pushRoutingReceipt(InquiryRoutingReceiptItem(
                 id: extract.uuid,
-                headline: "\(kind.displayName) saved",
+                headline: kindLocked ? "\(kind.displayName) saved" : "Captured",
                 destinations: [.init(
                     extractUUID: extract.uuid,
                     kind: kind,
                     questionUUID: activeQuestionUUID,
                     questionTitle: activeQuestionTitle,
                     conceptNames: [],
-                    isNewBranch: false
+                    isNewBranch: false,
+                    isPending: !kindLocked
                 )],
                 isProvisional: true
             ))
@@ -1515,12 +1553,32 @@ final class InquiryWorkspaceViewModel {
         cancelPendingRefinement(forExtract: extractUUID)
         guard var extract = try? await AtomRepository.shared.fetch(uuid: extractUUID),
               var metadata = extract.extractMetadata, metadata.kind != kind else { return }
+        let previousKind = metadata.kind
+        let wasPending = metadata.kindPending == true
         metadata.kind = kind
         metadata.status = .committed
+        metadata.kindPending = nil
         metadata.routingDecisionId = "user-correction-\(UUID().uuidString)"
         extract = extract.withMetadata(metadata)
         _ = try? await AtomRepository.shared.update(extract)
-        updateReceiptDestination(extractUUID: extractUUID) { $0.kind = kind }
+        // A correction of a settled kind is a learned rule the classifier must
+        // follow next time. Pre-classification picks (still pending) aren't —
+        // there was no visible kind to correct.
+        if !wasPending, let body = extract.body ?? extract.title {
+            let deepDiveUUID = deepDive?.uuid
+            Task.detached(priority: .utility) {
+                await InquiryRoutingCorrectionStore.shared.record(
+                    text: body,
+                    fromKind: previousKind,
+                    toKind: kind,
+                    deepDiveUUID: deepDiveUUID
+                )
+            }
+        }
+        updateReceiptDestination(extractUUID: extractUUID) {
+            $0.kind = kind
+            $0.isPending = false
+        }
         scheduleSave()
         await reloadDeepDiveScopedAtoms()
     }
@@ -1529,6 +1587,12 @@ final class InquiryWorkspaceViewModel {
         cancelPendingRefinement(forExtract: extractUUID)
         guard var extract = try? await AtomRepository.shared.fetch(uuid: extractUUID),
               var metadata = extract.extractMetadata, metadata.parentQuestionUUID != questionUUID else { return }
+        // Settle a still-pending kind heuristically — the user-correction stamp
+        // below blocks the classifier, so the kind must not stay a placeholder.
+        if metadata.kindPending == true, let body = extract.body {
+            metadata.kind = CaptureIntentClassifier.classifyHeuristic(text: body).kind
+        }
+        metadata.kindPending = nil
         metadata.parentQuestionUUID = questionUUID
         metadata.status = .committed
         metadata.routingDecisionId = "user-correction-\(UUID().uuidString)"
@@ -1543,12 +1607,11 @@ final class InquiryWorkspaceViewModel {
         await reloadDeepDiveScopedAtoms()
     }
 
-    /// A manual correction outranks any in-flight live-router refinement: cancel
-    /// the pending task so the LLM result cannot overwrite the user's choice.
-    /// (The stamped routingDecisionId guards the already-fetched case too.)
+    /// A manual correction outranks any in-flight classification: drop the
+    /// capture from the queue so it never rides a batch. For batches already
+    /// in flight, the stamped routingDecisionId guards apply time.
     private func cancelPendingRefinement(forExtract extractUUID: String) {
-        liveRefinementTasks[extractUUID]?.cancel()
-        liveRefinementTasks[extractUUID] = nil
+        classificationQueue.removeAll { $0.extractUUID == extractUUID }
     }
 
     func promoteExtractToBranch(_ extractUUID: String) async {
@@ -1571,23 +1634,82 @@ final class InquiryWorkspaceViewModel {
         }
     }
 
-    // MARK: - Live routing refinement (hybrid async)
+    // MARK: - Live classification (batched, LLM-only)
 
-    private var liveRefinementTasks: [String: Task<Void, Never>] = [:]
-
-    func cancelLiveRefinements() {
-        for task in liveRefinementTasks.values { task.cancel() }
-        liveRefinementTasks.removeAll()
+    private struct PendingClassification {
+        let extractUUID: String
+        let text: String
+        let lockedKind: ExtractKind?
+        let originalKind: ExtractKind
     }
 
-    private func scheduleLiveRefinement(forExtract extractUUID: String, text: String, kind: ExtractKind) {
-        liveRefinementTasks[extractUUID]?.cancel()
-        let context = liveRouterContext()
-        liveRefinementTasks[extractUUID] = Task { [weak self] in
-            let refinement = await InquiryLiveRouter.shared.refine(text: text, currentKind: kind, context: context)
+    private var classificationQueue: [PendingClassification] = []
+    private var classificationFlushTask: Task<Void, Never>?
+    private var classificationRunTask: Task<Void, Never>?
+
+    func cancelLiveRefinements() {
+        classificationFlushTask?.cancel()
+        classificationFlushTask = nil
+        classificationRunTask?.cancel()
+        classificationRunTask = nil
+        classificationQueue.removeAll()
+    }
+
+    private func enqueueClassification(
+        extractUUID: String,
+        text: String,
+        lockedKind: ExtractKind?,
+        originalKind: ExtractKind
+    ) {
+        guard !classificationQueue.contains(where: { $0.extractUUID == extractUUID }) else { return }
+        classificationQueue.append(PendingClassification(
+            extractUUID: extractUUID,
+            text: text,
+            lockedKind: lockedKind,
+            originalKind: originalKind
+        ))
+        scheduleClassificationFlush()
+    }
+
+    /// Short debounce so rapid-fire captures ride the same batch — the model
+    /// classifies them together, which keeps kinds and concept tags coherent.
+    /// While a batch is in flight the queue simply accumulates and drains as
+    /// soon as it returns.
+    private func scheduleClassificationFlush() {
+        guard classificationRunTask == nil else { return }
+        classificationFlushTask?.cancel()
+        classificationFlushTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
             guard !Task.isCancelled else { return }
-            await self?.applyRefinement(refinement, toExtract: extractUUID, originalText: text, originalKind: kind)
-            self?.liveRefinementTasks[extractUUID] = nil
+            self?.runClassificationBatch()
+        }
+    }
+
+    private func runClassificationBatch() {
+        guard classificationRunTask == nil, !classificationQueue.isEmpty else { return }
+        let batch = Array(classificationQueue.prefix(InquiryLiveRouter.maxBatchSize))
+        classificationQueue.removeFirst(batch.count)
+        let context = liveRouterContext()
+        let deepDiveUUID = deepDive?.uuid
+        classificationRunTask = Task { [weak self] in
+            var enriched = context
+            enriched.corrections = await InquiryRoutingCorrectionStore.shared.recentExamples(deepDiveUUID: deepDiveUUID)
+            let refinements = await InquiryLiveRouter.shared.classify(
+                captures: batch.map { .init(id: $0.extractUUID, text: $0.text, lockedKind: $0.lockedKind) },
+                context: enriched
+            )
+            guard !Task.isCancelled else { return }
+            for item in batch {
+                await self?.applyRefinement(
+                    refinements[item.extractUUID],
+                    toExtract: item.extractUUID,
+                    originalText: item.text,
+                    originalKind: item.originalKind,
+                    lockedKind: item.lockedKind
+                )
+            }
+            self?.classificationRunTask = nil
+            self?.runClassificationBatch()   // Drain captures queued while in flight.
         }
     }
 
@@ -1614,18 +1736,30 @@ final class InquiryWorkspaceViewModel {
         _ refinement: InquiryLiveRouter.Refinement?,
         toExtract extractUUID: String,
         originalText: String,
-        originalKind: ExtractKind
+        originalKind: ExtractKind,
+        lockedKind: ExtractKind? = nil
     ) async {
         guard var extract = try? await AtomRepository.shared.fetch(uuid: extractUUID),
               var metadata = extract.extractMetadata else { return }
         guard metadata.routingDecisionId == nil else { return }   // Already refined.
+        let wasPending = metadata.kindPending == true
 
-        // No refinement (offline/timeout): heuristics stand; just settle.
+        // No refinement (both attempts failed / offline): settle with the
+        // keyword heuristic, marked unconfirmed so the badge invites correction.
         guard let refinement else {
+            if wasPending, lockedKind == nil {
+                metadata.kind = CaptureIntentClassifier.classifyHeuristic(text: originalText).kind
+            }
+            metadata.kindPending = nil
             metadata.status = .committed
-            metadata.routingDecisionId = "heuristic-\(UUID().uuidString)"
+            metadata.routingDecisionId = "heuristic-fallback-\(UUID().uuidString)"
             extract = extract.withMetadata(metadata)
             _ = try? await AtomRepository.shared.update(extract)
+            let settledKind = metadata.kind
+            updateReceiptDestination(extractUUID: extractUUID) {
+                $0.kind = settledKind
+                $0.isPending = false
+            }
             if let idx = routingReceipts.firstIndex(where: { $0.id == extractUUID }) {
                 routingReceipts[idx].isProvisional = false
             }
@@ -1654,6 +1788,7 @@ final class InquiryWorkspaceViewModel {
             relocateExtractNode(extractUUID: extractUUID, toQuestionUUID: target)
         }
         if !plan.original.conceptNames.isEmpty { metadata.conceptNames = plan.original.conceptNames }
+        metadata.kindPending = nil
         metadata.status = .committed
         metadata.routingDecisionId = refinement.decisionId
         extract = extract.withMetadata(metadata)
@@ -1723,9 +1858,21 @@ final class InquiryWorkspaceViewModel {
                 )
             )
         }
+        // A pending capture never showed its placeholder kind, so "Note →
+        // Benefit" would read as a correction that never happened — phrase it
+        // as the classification it was.
+        var headline = plan.isNoOp ? "Routing confirmed" : plan.summary
+        if wasPending {
+            headline = plan.isNoOp
+                ? "Classified as \(metadata.kind.displayName)"
+                : plan.summary.replacingOccurrences(
+                    of: "\(originalKind.displayName) → ",
+                    with: "Classified as "
+                )
+        }
         pushRoutingReceipt(InquiryRoutingReceiptItem(
             id: extractUUID,
-            headline: plan.isNoOp ? "Routing confirmed" : plan.summary,
+            headline: headline,
             destinations: destinations.map { destination in
                 .init(
                     extractUUID: destination.extractUUID,

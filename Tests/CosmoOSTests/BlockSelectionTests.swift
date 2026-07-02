@@ -262,4 +262,33 @@ final class BlockSelectionTests: XCTestCase {
         XCTAssertEqual(loaded.lineSpacing.lineSpacingDelta, 4)
         XCTAssertEqual(loaded.lineSpacing.blockGap, 9)
     }
+
+    // MARK: - BlockLayoutIndex (cross-block drag hit-testing)
+
+    func testLayoutIndexHitTestsContainingAndNearestBlocks() {
+        let a = UUID(), b = UUID(), c = UUID()
+        let index = BlockLayoutIndex()
+        index.update(CGRect(x: 0, y: 0, width: 100, height: 30), for: a)
+        index.update(CGRect(x: 0, y: 40, width: 100, height: 30), for: b)
+        index.update(CGRect(x: 0, y: 80, width: 100, height: 30), for: c)
+        let order = [a, b, c]
+
+        XCTAssertEqual(index.blockID(atY: 15, rootOrder: order), a)
+        XCTAssertEqual(index.blockID(atY: 55, rootOrder: order), b)
+        // In the gap between rows — nearest wins.
+        XCTAssertEqual(index.blockID(atY: 32, rootOrder: order), a)
+        XCTAssertEqual(index.blockID(atY: 38, rootOrder: order), b)
+        // Past the last row — clamps to the nearest (last) block.
+        XCTAssertEqual(index.blockID(atY: 500, rootOrder: order), c)
+    }
+
+    func testLayoutIndexIgnoresFramesOfBlocksOutsideRootOrder() {
+        let a = UUID(), stale = UUID()
+        let index = BlockLayoutIndex()
+        index.update(CGRect(x: 0, y: 0, width: 100, height: 30), for: a)
+        index.update(CGRect(x: 0, y: 40, width: 100, height: 30), for: stale)
+
+        XCTAssertEqual(index.blockID(atY: 55, rootOrder: [a]), a, "deleted block's stale frame must never win")
+        XCTAssertNil(index.blockID(atY: 55, rootOrder: []))
+    }
 }

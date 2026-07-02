@@ -383,7 +383,7 @@ struct RichDocument: Codable, Equatable, Hashable, Sendable {
         return RichDocument(blocks: collapseTrailingEmptyParagraphs(blocks))
     }
 
-    private static func block(fromLegacyLine line: String) -> RichBlock {
+    static func block(fromLegacyLine line: String) -> RichBlock {
         if line == "───────────────" || line.trimmingCharacters(in: .whitespaces) == "---" {
             return RichBlock(kind: .divider)
         }

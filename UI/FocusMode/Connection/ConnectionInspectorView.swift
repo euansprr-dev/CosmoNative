@@ -190,11 +190,13 @@ struct ConnectionInspectorItemDetail: View {
                 .foregroundStyle(DS.textMuted)
 
             if let item {
-                Text(item.resolvedPlainText)
-                    .font(DS.callout)
-                    .foregroundStyle(DS.text)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
+                if let linkedUUID = item.linkedConnectionUUID {
+                    ConnectionLinkPill(title: item.resolvedPlainText) {
+                        actions.onSourceTap(linkedUUID)
+                    }
+                } else {
+                    ConnectionLinkedText(text: item.resolvedPlainText, font: DS.callout)
+                }
 
                 if let snippet = item.sourceSnippet, !snippet.isEmpty {
                     VStack(alignment: .leading, spacing: DS.space4) {
@@ -210,7 +212,7 @@ struct ConnectionInspectorItemDetail: View {
                     }
                 }
 
-                if let sourceUUID = item.sourceAtomUUID {
+                if let sourceUUID = item.sourceAtomUUID, !item.isConnectionLink {
                     Button("Open Source") {
                         actions.onSourceTap(sourceUUID)
                     }

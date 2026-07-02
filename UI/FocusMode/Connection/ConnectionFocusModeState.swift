@@ -303,6 +303,7 @@ struct ConnectionItem: Identifiable, Codable, Equatable {
     var plainText: String?
     var sourceAtomUUID: String?     // If pulled from another atom
     var sourceSnippet: String?      // Original text from source
+    var linkedConnectionUUID: String?   // First-class link to another Connection page
     let createdAt: Date
     var updatedAt: Date
 
@@ -312,7 +313,8 @@ struct ConnectionItem: Identifiable, Codable, Equatable {
         document: RichDocument? = nil,
         plainText: String? = nil,
         sourceAtomUUID: String? = nil,
-        sourceSnippet: String? = nil
+        sourceSnippet: String? = nil,
+        linkedConnectionUUID: String? = nil
     ) {
         self.id = id
         self.content = content
@@ -320,12 +322,18 @@ struct ConnectionItem: Identifiable, Codable, Equatable {
         self.plainText = plainText ?? content
         self.sourceAtomUUID = sourceAtomUUID
         self.sourceSnippet = sourceSnippet
+        self.linkedConnectionUUID = linkedConnectionUUID
         self.createdAt = Date()
         self.updatedAt = Date()
     }
 
     var hasSource: Bool {
         sourceAtomUUID != nil
+    }
+
+    /// True when this item is a hyperlink row to another Connection page.
+    var isConnectionLink: Bool {
+        linkedConnectionUUID != nil
     }
 
     var resolvedDocument: RichDocument {

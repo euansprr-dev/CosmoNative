@@ -91,6 +91,17 @@ struct BlockListView: View {
     @State private var ownedFocusCoordinator = BlockFocusCoordinator()
     @State private var ownedSelectionCoordinator = BlockSelectionCoordinator()
     @State private var undoRegistrar = BlockUndoRegistrar()
+    /// Hoists row editors' slash menus above every row (each row is its own
+    /// AppKit text view — a menu inside one row draws/hit-tests under the
+    /// rows below it). Only the top-level list presents; element-embedded
+    /// lists inherit it through the environment.
+    @State private var ownedOverlayPresenter = EditorOverlayPresenter()
+    /// Cross-block drag selection: rows' text views route their selection
+    /// drags here; frames come from the layout index (registered per row).
+    @State private var ownedDragController = BlockDragSelectionController()
+    @State private var blockLayoutIndex = BlockLayoutIndex()
+    @State private var listGlobalFrame: CGRect = .zero
+    @State private var listSize: CGSize = .zero
     @FocusState private var selectionKeyboardFocused: Bool
 
     var body: some View {
@@ -110,21 +121,44 @@ struct BlockListView: View {
             value: dimsInactiveBlocks ? resolvedFocusCoordinator.focusedBlockID : nil
         )
         .frame(maxWidth: .infinity, alignment: .topLeading)
+        .coordinateSpace(name: providesNavigationOrder
+            ? EditorOverlayPresenter.coordinateSpaceName
+            : "\(EditorOverlayPresenter.coordinateSpaceName).nested")
+        .transformEnvironment(\.blockEditorOverlayPresenter) { presenter in
+            if providesNavigationOrder {
+                presenter = ownedOverlayPresenter
+            }
+        }
+        .transformEnvironment(\.blockDragSelectionController) { controller in
+            if providesNavigationOrder {
+                controller = ownedDragController
+            }
+        }
+        .overlay(alignment: .topLeading) {
+            hoistedSlashMenuOverlay
+        }
         .focusable(resolvedSelectionCoordinator.isActive)
         .focusEffectDisabled()
         .focused($selectionKeyboardFocused)
         .onKeyPress(phases: .down) { press in
             handleSelectionKeyPress(press)
         }
-        .onGeometryChange(for: CGFloat.self) { proxy in
-            proxy.size.height
-        } action: { newHeight in
-            onContentHeightChange?(newHeight)
+        .onGeometryChange(for: CGSize.self) { proxy in
+            proxy.size
+        } action: { newSize in
+            listSize = newSize
+            onContentHeightChange?(newSize.height)
+        }
+        .onGeometryChange(for: CGRect.self) { proxy in
+            providesNavigationOrder ? proxy.frame(in: .global) : .zero
+        } action: { newFrame in
+            listGlobalFrame = newFrame
         }
         .onAppear {
             configureUndoRegistrar()
             scheduleEnsureEditableDocument()
             syncNavigationOrderIfNeeded()
+            configureDragSelection()
         }
         .onChange(of: document.blocks.isEmpty) { _, isEmpty in
             if isEmpty {
@@ -169,6 +203,14 @@ struct BlockListView: View {
         ) {
             blockContent(for: block, at: path)
                 .overlay { selectionClickCatcher(for: block) }
+        }
+        .onGeometryChange(for: CGRect.self) { proxy in
+            providesNavigationOrder
+                ? proxy.frame(in: .named(EditorOverlayPresenter.coordinateSpaceName))
+                : .zero
+        } action: { frame in
+            guard providesNavigationOrder else { return }
+            blockLayoutIndex.update(frame, for: block.id)
         }
     }
 
@@ -301,6 +343,153 @@ struct BlockListView: View {
 
     private var resolvedSelectionCoordinator: BlockSelectionCoordinator {
         selectionCoordinator ?? ownedSelectionCoordinator
+    }
+
+    // MARK: - Hoisted Slash Menu
+
+    /// The single slash menu for every row in this list, rendered above all
+    /// row text views. Position is caret-anchored (published by the row) and
+    /// clamped against the list's own bounds — a row is only ~1 line tall, so
+    /// clamping there pins the menu to nonsense positions.
+    @ViewBuilder
+    private var hoistedSlashMenuOverlay: some View {
+        if providesNavigationOrder {
+            if let session = ownedOverlayPresenter.slashSession {
+                SlashCommandMenu(
+                    position: clampedOverlayPosition(for: session.anchorInList, menuSize: CGSize(width: 528, height: 348)),
+                    query: session.query,
+                    commands: session.commands,
+                    elementSubmenuCommands: session.elementSubmenuCommands,
+                    selectedIndex: session.selectedIndex,
+                    onHighlight: session.onHighlight,
+                    onSelect: session.onSelect,
+                    onDismiss: session.onDismiss,
+                    darkMode: session.darkMode
+                )
+                .zIndex(1000)
+                .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .topLeading)))
+            }
+            if let session = ownedOverlayPresenter.elementCreationSession {
+                ElementCreationMenu(
+                    position: clampedOverlayPosition(for: session.anchorInList, menuSize: CGSize(width: 330, height: 364)),
+                    onCreate: session.onCreate,
+                    onDismiss: session.onDismiss,
+                    darkMode: session.darkMode
+                )
+                .zIndex(1001)
+                .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .topLeading)))
+            }
+        }
+    }
+
+    private func clampedOverlayPosition(for anchor: CGPoint, menuSize: CGSize) -> CGPoint {
+        var origin = anchor
+        origin.x = max(0, min(origin.x, listSize.width - menuSize.width - 8))
+        // Flip above the caret when the menu would spill past the list's end
+        // (the note's scroll-past-end padding usually leaves room below).
+        if origin.y + menuSize.height > listSize.height, origin.y - menuSize.height - 28 > 0 {
+            origin.y -= menuSize.height + 28
+        }
+        return origin
+    }
+
+    // MARK: - Cross-Block Drag Selection
+
+    private func configureDragSelection() {
+        guard providesNavigationOrder else { return }
+        ownedDragController.handleDrag = { windowPoint, phase, textView in
+            handleBlockDrag(windowPoint: windowPoint, phase: phase, textView: textView)
+        }
+        ownedDragController.handleShiftClick = { windowPoint, textView in
+            handleBlockShiftClick(windowPoint: windowPoint, textView: textView)
+        }
+    }
+
+    /// The Notion drag model: inside the origin block the text view keeps
+    /// native character selection (.textLocal); crossing a block boundary
+    /// escalates to whole-block range selection; dragging back into the
+    /// origin de-escalates.
+    private func handleBlockDrag(
+        windowPoint: NSPoint,
+        phase: BlockDragPhase,
+        textView: NSTextView
+    ) -> BlockDragResolution {
+        let controller = ownedDragController
+        guard let listPoint = listPoint(fromWindowPoint: windowPoint, in: textView) else {
+            return .textLocal
+        }
+        let rootOrder = BlockSelectionCoordinator.rootOrder(in: document)
+
+        switch phase {
+        case .began:
+            controller.originBlockID = blockLayoutIndex.blockID(atY: listPoint.y, rootOrder: rootOrder)
+            controller.isEscalated = false
+            return .textLocal
+        case .changed:
+            guard let origin = controller.originBlockID,
+                  let current = blockLayoutIndex.blockID(atY: listPoint.y, rootOrder: rootOrder) else {
+                return .textLocal
+            }
+            if current == origin {
+                if controller.isEscalated {
+                    controller.isEscalated = false
+                    resolvedSelectionCoordinator.clear()
+                }
+                return .textLocal
+            }
+            if !controller.isEscalated {
+                controller.isEscalated = true
+                resolvedSelectionCoordinator.select(origin)
+            }
+            resolvedSelectionCoordinator.selectRange(to: current, in: document)
+            return .escalated
+        case .ended:
+            defer { controller.originBlockID = nil }
+            if controller.isEscalated {
+                controller.isEscalated = false
+                activateSelectionKeyboard()
+                return .escalated
+            }
+            return .textLocal
+        }
+    }
+
+    /// Shift+Click on another block while one holds focus (or a selection is
+    /// active) — extend into a block-range selection. Shift+Click within the
+    /// focused block returns false so native text-selection extension runs.
+    private func handleBlockShiftClick(windowPoint: NSPoint, textView: NSTextView) -> Bool {
+        guard let listPoint = listPoint(fromWindowPoint: windowPoint, in: textView) else { return false }
+        let rootOrder = BlockSelectionCoordinator.rootOrder(in: document)
+        guard let target = blockLayoutIndex.blockID(atY: listPoint.y, rootOrder: rootOrder) else { return false }
+
+        let selection = resolvedSelectionCoordinator
+        if selection.isActive {
+            selection.selectRange(to: target, in: document)
+            activateSelectionKeyboard()
+            return true
+        }
+        guard let origin = resolvedFocusCoordinator.focusedBlockID,
+              origin != target,
+              rootOrder.contains(origin) else {
+            return false
+        }
+        selection.select(origin)
+        selection.selectRange(to: target, in: document)
+        activateSelectionKeyboard()
+        return true
+    }
+
+    /// AppKit window point → this list's coordinate space. Row frames are
+    /// registered in the list's named space, which coincides with
+    /// (.global − listGlobalFrame.origin).
+    private func listPoint(fromWindowPoint windowPoint: NSPoint, in textView: NSTextView) -> CGPoint? {
+        guard let contentView = textView.window?.contentView else { return nil }
+        let inContent = contentView.convert(windowPoint, from: nil)
+        let globalY = contentView.isFlipped ? inContent.y : contentView.bounds.height - inContent.y
+        return CGPoint(
+            x: inContent.x - listGlobalFrame.minX,
+            y: globalY - listGlobalFrame.minY
+        )
     }
 
     // MARK: - Block Selection
@@ -439,15 +628,21 @@ struct BlockListView: View {
         }
     }
 
+    /// Block copy writes two flavors: markdown as the plain-text
+    /// representation (kinds survive into other apps AND round-trip through
+    /// this app's paste parser), plus the structured com.cosmo.blocks JSON
+    /// (exact kinds, checked state, rich inlines) preferred by block paste.
     @discardableResult
     private func copySelectionToPasteboard() -> Bool {
-        let text = BlockOperations.plainText(
-            ofBlocksWithIDs: resolvedSelectionCoordinator.selectedBlockIDs,
-            in: document
-        )
-        guard !text.isEmpty else { return false }
+        let ids = resolvedSelectionCoordinator.selectedBlockIDs
+        let markdown = BlockOperations.markdown(ofBlocksWithIDs: ids, in: document)
+        guard !markdown.isEmpty else { return false }
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
+        NSPasteboard.general.setString(markdown, forType: .string)
+        let blocks = BlockOperations.blocks(withIDs: ids, in: document)
+        if let data = try? JSONEncoder().encode(blocks) {
+            NSPasteboard.general.setData(data, forType: .cosmoBlocks)
+        }
         return true
     }
 

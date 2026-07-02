@@ -196,15 +196,15 @@ struct ConnectionItemEditRow: View {
                     }
                 )
                 .frame(minHeight: 22)
+            } else if let linkedUUID = item.linkedConnectionUUID {
+                ConnectionLinkPill(title: item.resolvedPlainText) {
+                    onSourceTap(linkedUUID)
+                }
             } else {
-                Text(item.resolvedPlainText)
-                    .font(DS.body)
-                    .foregroundStyle(DS.text)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
+                ConnectionLinkedText(text: item.resolvedPlainText)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            if let sourceUUID = item.sourceAtomUUID {
+            if let sourceUUID = item.sourceAtomUUID, !item.isConnectionLink {
                 Button(action: { onSourceTap(sourceUUID) }) {
                     Label("source", systemImage: "link")
                         .font(DS.caption2)

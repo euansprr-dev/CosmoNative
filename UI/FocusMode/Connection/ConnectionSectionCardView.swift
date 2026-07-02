@@ -159,14 +159,22 @@ struct ConnectionItemPreviewRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: DS.space8) {
-            Circle()
-                .fill(accent.opacity(0.9))
-                .frame(width: 5, height: 5)
-                .padding(.top, 6)
-                .accessibilityHidden(true)
+            if item.isConnectionLink {
+                Image(systemName: "point.3.connected.trianglepath.dotted")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(CosmoMentionColors.connection)
+                    .padding(.top, 4)
+                    .accessibilityHidden(true)
+            } else {
+                Circle()
+                    .fill(accent.opacity(0.9))
+                    .frame(width: 5, height: 5)
+                    .padding(.top, 6)
+                    .accessibilityHidden(true)
+            }
             Text(item.resolvedPlainText)
                 .font(DS.callout)
-                .foregroundStyle(DS.text)
+                .foregroundStyle(item.isConnectionLink ? CosmoMentionColors.connection : DS.text)
                 .lineLimit(lineLimit)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }

@@ -274,9 +274,7 @@ struct InquiryNoteRow: View {
         HStack(alignment: .top, spacing: DS.space8) {
             icon
             VStack(alignment: .leading, spacing: 4) {
-                Text(kindLabel)
-                    .font(CosmoTypography.labelSmall)
-                    .foregroundStyle(kindColor)
+                kindHeader
                 Text(bodyText)
                     .font(CosmoTypography.bodySmall)
                     .foregroundStyle(CosmoColors.textPrimary)
@@ -309,6 +307,29 @@ struct InquiryNoteRow: View {
     }
 
     // MARK: - Subviews
+
+    /// The kind line: pending captures show a shimmer chip, routed extracts a
+    /// clickable kind badge that opens the correction dropdown in place.
+    @ViewBuilder
+    private var kindHeader: some View {
+        switch item {
+        case .capture:
+            Text(kindLabel)
+                .font(CosmoTypography.labelSmall)
+                .foregroundStyle(kindColor)
+        case .extract(let atom):
+            if atom.extractMetadata?.kindPending == true {
+                InquiryClassifyingChip()
+            } else {
+                InquiryKindBadgeMenu(
+                    viewModel: viewModel,
+                    extractUUID: atom.uuid,
+                    kind: kind,
+                    isUnconfirmed: atom.extractMetadata?.routingDecisionId?.hasPrefix("heuristic-fallback-") == true
+                )
+            }
+        }
+    }
 
     /// Quiet marker for material already crystallized in an earlier session.
     private var crystallizedBadge: some View {

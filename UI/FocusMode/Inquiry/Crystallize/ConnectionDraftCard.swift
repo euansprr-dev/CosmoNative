@@ -5,7 +5,20 @@ import SwiftUI
 
 @MainActor
 struct ConnectionDraftCard: View {
+    /// Another page/draft the user can retarget this candidate at.
+    struct PageRef: Identifiable, Equatable {
+        var id: String
+        var title: String
+    }
+
     @Binding var candidate: CrystallizationOutput.ConnectionCandidate
+    /// Existing Connection pages of the same deep dive (merge targets).
+    var existingPages: [PageRef] = []
+    /// Other drafts in this crystallize run (fold targets).
+    var otherDrafts: [PageRef] = []
+    /// Folds this candidate's material into the given draft id.
+    var onFoldInto: (String) -> Void = { _ in }
+
     @State private var expandedSections: Set<ConnectionSectionType> = Set(ConnectionSectionType.allCases)
 
     var body: some View {
@@ -38,12 +51,11 @@ struct ConnectionDraftCard: View {
                     .font(.system(.title3, design: .serif).weight(.semibold))
                     .foregroundStyle(CosmoColors.textPrimary)
                 HStack(spacing: 8) {
+                    destinationMenu
                     chip("\(candidate.materialCount) captures")
                     chip("\(filledSections.count) sections")
-                    if let concept = candidate.proposedConcept, !concept.isEmpty {
-                        chip(concept)
-                    }
                 }
+                relatedConceptChips
             }
 
             Spacer(minLength: DS.space12)
@@ -52,6 +64,99 @@ struct ConnectionDraftCard: View {
                 .toggleStyle(.switch)
                 .font(CosmoTypography.caption)
                 .foregroundStyle(CosmoColors.textSecondary)
+        }
+    }
+
+    // MARK: - Destination control
+
+    /// Where this material lands: a new page, an existing page, or folded
+    /// into another draft — the user's final say over merge-vs-create.
+    private var destinationMenu: some View {
+        Menu {
+            Button {
+                candidate.mergeTargetConnectionUUID = nil
+            } label: {
+                if candidate.mergeTargetConnectionUUID == nil {
+                    Label("New page", systemImage: "checkmark")
+                } else {
+                    Text("New page")
+                }
+            }
+            if !existingPages.isEmpty {
+                Section("Merge into existing page") {
+                    ForEach(existingPages) { page in
+                        Button {
+                            candidate.mergeTargetConnectionUUID = page.id
+                        } label: {
+                            if candidate.mergeTargetConnectionUUID == page.id {
+                                Label(page.title, systemImage: "checkmark")
+                            } else {
+                                Text(page.title)
+                            }
+                        }
+                    }
+                }
+            }
+            if !otherDrafts.isEmpty {
+                Section("Fold into another draft") {
+                    ForEach(otherDrafts) { draft in
+                        Button(draft.title) { onFoldInto(draft.id) }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: destinationIsMerge ? "arrow.triangle.merge" : "plus.circle")
+                    .font(.system(size: 9, weight: .semibold))
+                    .accessibilityHidden(true)
+                Text(destinationLabel)
+                    .font(CosmoTypography.caption)
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 7, weight: .semibold))
+                    .accessibilityHidden(true)
+            }
+            .foregroundStyle(destinationIsMerge ? DS.green : DS.accent)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background((destinationIsMerge ? DS.green : DS.accent).opacity(0.1), in: Capsule())
+            .contentShape(Capsule())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .accessibilityLabel("Destination: \(destinationLabel)")
+    }
+
+    private var destinationIsMerge: Bool {
+        candidate.mergeTargetConnectionUUID != nil
+    }
+
+    private var destinationLabel: String {
+        guard let target = candidate.mergeTargetConnectionUUID else { return "New page" }
+        let title = existingPages.first { $0.id == target }?.title ?? "existing page"
+        return "Merge into \(title)"
+    }
+
+    @ViewBuilder
+    private var relatedConceptChips: some View {
+        if let related = candidate.relatedConceptNames, !related.isEmpty {
+            HStack(spacing: 5) {
+                Image(systemName: "point.3.connected.trianglepath.dotted")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(CosmoMentionColors.connection)
+                    .accessibilityHidden(true)
+                ForEach(related.prefix(4), id: \.self) { name in
+                    Text(name)
+                        .font(CosmoTypography.labelSmall)
+                        .foregroundStyle(CosmoMentionColors.connection)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(CosmoMentionColors.connection.opacity(0.1), in: Capsule())
+                        .lineLimit(1)
+                }
+            }
+            .accessibilityLabel("Will link to \(related.prefix(4).joined(separator: ", "))")
         }
     }
 

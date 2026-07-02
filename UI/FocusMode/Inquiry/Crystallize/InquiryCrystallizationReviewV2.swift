@@ -11,6 +11,7 @@ struct InquiryCrystallizationReviewV2: View {
     @State private var status: Status = .idle
     @State private var statusMessage: String = ""
     @State private var promotionResult: ConnectionPromotionResult?
+    @State private var existingPages: [ConnectionDraftCard.PageRef] = []
 
     var body: some View {
         VStack(spacing: 0) {
@@ -155,7 +156,14 @@ struct InquiryCrystallizationReviewV2: View {
                     emptyCandidates
                 } else {
                     ForEach(candidateBindings.indices, id: \.self) { index in
-                        ConnectionDraftCard(candidate: candidateBindings[index])
+                        ConnectionDraftCard(
+                            candidate: candidateBindings[index],
+                            existingPages: existingPages,
+                            otherDrafts: otherDrafts(excluding: candidates[index].id),
+                            onFoldInto: { targetId in
+                                foldCandidate(candidates[index].id, into: targetId)
+                            }
+                        )
                     }
                 }
 
@@ -251,11 +259,60 @@ struct InquiryCrystallizationReviewV2: View {
             for i in crystallized.modelUpdates.indices { crystallized.modelUpdates[i].accepted = true }
             for i in crystallized.outputCandidates.indices { crystallized.outputCandidates[i].accepted = true }
             output = crystallized
+            if let dd {
+                let connections = (try? await InquiryRepository.shared.fetchConnections(forDeepDive: dd)) ?? []
+                existingPages = connections.compactMap { atom in
+                    guard let title = atom.title, !title.isEmpty else { return nil }
+                    return ConnectionDraftCard.PageRef(id: atom.uuid, title: title)
+                }
+            }
             status = .ready
         } catch {
             statusMessage = error.localizedDescription
             status = .failed
         }
+    }
+
+    private func otherDrafts(excluding candidateId: String) -> [ConnectionDraftCard.PageRef] {
+        candidates
+            .filter { $0.id != candidateId && $0.accepted }
+            .map { ConnectionDraftCard.PageRef(id: $0.id, title: $0.proposedTitle) }
+    }
+
+    /// Folds one draft's material into another: real items (extract-backed or
+    /// source-backed) move over, deduped by origin extract; the source draft
+    /// un-accepts so nothing promotes twice.
+    private func foldCandidate(_ sourceId: String, into targetId: String) {
+        guard var current = output,
+              let sourceIdx = current.possibleConnections.firstIndex(where: { $0.id == sourceId }),
+              let targetIdx = current.possibleConnections.firstIndex(where: { $0.id == targetId }),
+              sourceIdx != targetIdx else { return }
+        var target = current.possibleConnections[targetIdx]
+        let source = current.possibleConnections[sourceIdx]
+
+        let knownOrigins = Set(target.proposedSections.values.flatMap { $0 }.compactMap(\.originExtractUUID))
+        for (type, drafts) in source.proposedSections where type != .goal && type != .conceptName {
+            let material = drafts.filter { draft in
+                guard draft.originExtractUUID != nil || draft.sourceUUID != nil else { return false }
+                guard let origin = draft.originExtractUUID else { return true }
+                return !knownOrigins.contains(origin)
+            }
+            guard !material.isEmpty else { continue }
+            target.proposedSections[type, default: []] += material
+        }
+        let knownExtracts = Set(target.clusterExtractUUIDs)
+        target.clusterExtractUUIDs += source.clusterExtractUUIDs.filter { !knownExtracts.contains($0) }
+        target.proposedNotes += source.proposedNotes
+        target.materialCount = target.proposedSections.values.reduce(0) { $0 + $1.count }
+        var related = target.relatedConceptNames ?? []
+        for name in source.relatedConceptNames ?? [] where !related.contains(name) && name != target.proposedTitle {
+            related.append(name)
+        }
+        target.relatedConceptNames = related.isEmpty ? nil : related
+
+        current.possibleConnections[targetIdx] = target
+        current.possibleConnections[sourceIdx].accepted = false
+        output = current
     }
 
     private func acceptAll() async {

@@ -168,6 +168,57 @@ enum EditorTextInsetPolicy {
     }
 }
 
+/// Hoists a block-row editor's slash menu to the top of the enclosing block
+/// list. Each row is a separate AppKit text view; a menu rendered inside a
+/// row's own ZStack draws and hit-tests underneath the NSTextViews of the
+/// rows below it, and gets clamped to the row's ~1-line-tall container. Rows
+/// publish a session here instead; the block list renders the single menu in
+/// an overlay above every row.
+@MainActor
+@Observable
+final class EditorOverlayPresenter {
+    /// The coordinate space the owning block list declares; rows convert
+    /// their caret anchors into it.
+    static let coordinateSpaceName = "cosmoBlockEditorOverlaySpace"
+
+    struct SlashMenuSession {
+        /// Caret-anchored menu origin in the block list's coordinate space.
+        var anchorInList: CGPoint
+        var query: String
+        /// Already filtered against the query, in display order.
+        var commands: [SlashCommand]
+        var elementSubmenuCommands: [SlashCommand]
+        var selectedIndex: Int
+        var darkMode: Bool
+        var onHighlight: (Int) -> Void
+        var onSelect: (SlashCommand) -> Void
+        var onDismiss: () -> Void
+    }
+
+    struct ElementCreationSession {
+        var anchorInList: CGPoint
+        var darkMode: Bool
+        var onCreate: (String, String) -> Void
+        var onDismiss: () -> Void
+    }
+
+    var slashSession: SlashMenuSession?
+    var elementCreationSession: ElementCreationSession?
+}
+
+private struct BlockEditorOverlayPresenterKey: EnvironmentKey {
+    static let defaultValue: EditorOverlayPresenter? = nil
+}
+
+extension EnvironmentValues {
+    /// Set by the top-level BlockListView; block-row editors publish their
+    /// slash menu sessions into it instead of presenting inline.
+    var blockEditorOverlayPresenter: EditorOverlayPresenter? {
+        get { self[BlockEditorOverlayPresenterKey.self] }
+        set { self[BlockEditorOverlayPresenterKey.self] = newValue }
+    }
+}
+
 struct RichTextEditor: View {
     @Binding var text: NSAttributedString
     @Binding var plainText: String
@@ -177,6 +228,18 @@ struct RichTextEditor: View {
     @State private var showSelectionMenu = false
     @State private var showElementCreationMenu = false
     @State private var slashMenuPosition: CGPoint = .zero
+    /// Live query typed after the "/" — the text view keeps focus, the menu
+    /// filters reactively (type-through model).
+    @State private var slashQuery = ""
+    @State private var slashSelectedIndex = 0
+    /// Unclamped caret-anchored menu origin in this editor's local space —
+    /// the hoisted overlay clamps against the block list's size instead.
+    @State private var slashMenuLocalAnchor: CGPoint = .zero
+    /// This editor's frame in the block list's overlay coordinate space —
+    /// converts local caret anchors into list space for the hoisted menu.
+    @State private var frameInOverlaySpace: CGRect = .zero
+    @Environment(\.blockEditorOverlayPresenter) private var overlayPresenter
+    @Environment(\.blockDragSelectionController) private var dragSelectionController
     @State private var mentionMenuPosition: CGPoint = .zero
     @State private var selectionMenuPosition: CGPoint = .zero
     @State private var elementCreationMenuPosition: CGPoint = .zero
@@ -254,6 +317,15 @@ struct RichTextEditor: View {
 
     private var elementSubmenuCommands: [SlashCommand] {
         SlashCommandCatalog.elementSubmenuCommands(elementDefinitions: elementStore.activeDefinitions)
+    }
+
+    /// The slash menu's rows, filtered by the live type-through query.
+    private var slashFilteredCommands: [SlashCommand] {
+        let isSearching = !slashQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return SlashCommandCatalog.filteredCommands(
+            matching: slashQuery,
+            commands: isSearching ? slashSearchCommands : slashCommands
+        )
     }
 
     init(
@@ -383,11 +455,11 @@ struct RichTextEditor: View {
                 typewriterMode: typewriterMode,
                 isEditable: isEditable,
                 scrollsInternally: scrollsInternally,
-                onSlashCommand: { position in
-                    guard allowSlashCommands else { return }
-                    let adjustedPosition = positionFromTextKit(position)
-                    slashMenuPosition = clampMenuPosition(adjustedPosition, menuSize: CGSize(width: 528, height: 340), in: containerSize)
-                    showSlashMenu = true
+                onSlashCommand: { position, query in
+                    handleSlashTrigger(position: position, query: query)
+                },
+                onSlashMenuKey: { event in
+                    handleSlashMenuKey(event)
                 },
                 onMention: { position, query in
                     guard allowMentions else { return }
@@ -422,14 +494,24 @@ struct RichTextEditor: View {
                     scheduleMeasuredContentHeightUpdate(height)
                 },
                 onActivate: onActivate,
-                onDeactivate: onDeactivate,
+                onDeactivate: {
+                    // Type-through menus never take focus themselves, so a
+                    // deactivation while one is open means the user genuinely
+                    // clicked away — close it.
+                    if showSlashMenu {
+                        dismissAllOverlays(includeSelection: false)
+                    }
+                    onDeactivate?()
+                },
                 onCommit: onCommit,
                 onBoundaryCommand: onBoundaryCommand,
+                onSlashCommandSelected: onSlashCommandSelected,
                 onPlainTextDidChange: onPlainTextDidChange,
                 onStructuredDocumentChange: onStructuredDocumentChange,
                 splitsOnReturn: splitsOnReturn,
                 caretRequest: caretRequest,
-                externalContentToken: externalContentToken
+                externalContentToken: externalContentToken,
+                dragSelectionController: dragSelectionController
             )
             // Non-scrolling editors report their live height through
             // CosmoScrollView.intrinsicContentSize. Do not also pin this view to
@@ -472,46 +554,20 @@ struct RichTextEditor: View {
                     .allowsHitTesting(true)
             }
 
-            // Slash command menu
-            if showSlashMenu {
+            // Slash command menu — inline presentation only when no block-list
+            // presenter is hoisting it (continuous editors: Content, Idea,
+            // canvas blocks). Block rows publish a session to the presenter
+            // instead, so the menu renders above every row's text view.
+            if showSlashMenu, overlayPresenter == nil {
                 SlashCommandMenu(
                     position: slashMenuPosition,
-                    commands: slashCommands,
-                    searchCommands: slashSearchCommands,
+                    query: slashQuery,
+                    commands: slashFilteredCommands,
                     elementSubmenuCommands: elementSubmenuCommands,
-                    onSelect: { command in
-                        ConsoleLog.info("[SLASHDBG] menu.onSelect type=\(command.type)", subsystem: .canvas)
-                        if command.type == .newElement {
-                            showSlashMenu = false
-                            elementCreationMenuPosition = clampMenuPosition(
-                                slashMenuPosition,
-                                menuSize: CGSize(width: 330, height: 364),
-                                in: containerSize
-                            )
-                            showElementCreationMenu = true
-                            return
-                        }
-
-                        // First dismiss overlays and refocus
-                        dismissAllOverlays()
-
-                        // Then after a short delay, insert the command
-                        // This ensures the editor has focus when the notification is posted
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                            ConsoleLog.info("[SLASHDBG] onSelect async#1 fired, setting shouldRefocus", subsystem: .canvas)
-                            shouldRefocusEditor = true
-
-                            // Wait for refocus to complete, then insert
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                                ConsoleLog.info("[SLASHDBG] onSelect async#2 fired, calling insertSlashCommand", subsystem: .canvas)
-                                insertSlashCommand(command)
-                            }
-                        }
-                    },
-                    onDismiss: {
-                        dismissAllOverlays()
-                        refocusAfterDismiss()
-                    },
+                    selectedIndex: slashSelectedIndex,
+                    onHighlight: { slashSelectedIndex = $0 },
+                    onSelect: { handleSlashMenuSelection($0) },
+                    onDismiss: { dismissAllOverlays() },
                     darkMode: darkMode
                 )
                 .background(ScrollEventBlocker())
@@ -519,7 +575,7 @@ struct RichTextEditor: View {
                 .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .topLeading)))
             }
 
-            if showElementCreationMenu {
+            if showElementCreationMenu, overlayPresenter == nil {
                 ElementCreationMenu(
                     position: elementCreationMenuPosition,
                     onCreate: { title, icon in
@@ -583,6 +639,13 @@ struct RichTextEditor: View {
         } action: { newValue in
             containerSize = newValue
         }
+        .onGeometryChange(for: CGRect.self) { proxy in
+            overlayPresenter == nil
+                ? .zero
+                : proxy.frame(in: .named(EditorOverlayPresenter.coordinateSpaceName))
+        } action: { newValue in
+            frameInOverlaySpace = newValue
+        }
         .onAppear {
             if autoFocus {
                 shouldRefocusEditor = true
@@ -593,6 +656,9 @@ struct RichTextEditor: View {
         }
         .onDisappear {
             EditorOverlayEscapeCoordinator.shared.unregister(id: overlayEscapeOwnerID)
+            if showSlashMenu {
+                overlayPresenter?.slashSession = nil
+            }
         }
         .onChange(of: autoFocus) { _, shouldFocus in
             if shouldFocus {
@@ -667,6 +733,133 @@ struct RichTextEditor: View {
         if includeSelection {
             showSelectionMenu = false
         }
+        slashQuery = ""
+        slashSelectedIndex = 0
+        overlayPresenter?.slashSession = nil
+        overlayPresenter?.elementCreationSession = nil
+    }
+
+    // MARK: - Slash Menu (type-through)
+
+    /// Trigger/update from the coordinator: the "/" was typed (or the query
+    /// after it changed). The text view keeps focus the whole time.
+    private func handleSlashTrigger(position: CGPoint, query: String) {
+        guard allowSlashCommands else { return }
+        if !showSlashMenu {
+            slashSelectedIndex = 0
+        }
+        slashQuery = query
+        let filtered = slashFilteredCommands
+        guard !filtered.isEmpty else {
+            // Nothing matches — retire the menu. Deleting back to a matching
+            // query reopens it on the next keystroke.
+            showSlashMenu = false
+            overlayPresenter?.slashSession = nil
+            return
+        }
+        if slashSelectedIndex >= filtered.count {
+            slashSelectedIndex = 0
+        }
+        let localAnchor = positionFromTextKit(position)
+        slashMenuLocalAnchor = localAnchor
+        slashMenuPosition = clampMenuPosition(
+            localAnchor,
+            menuSize: CGSize(width: 528, height: 340),
+            in: containerSize
+        )
+        showSlashMenu = true
+        publishSlashSessionIfHoisted()
+    }
+
+    /// ↑/↓/Return/Esc routed from the coordinator while the menu is open.
+    private func handleSlashMenuKey(_ event: SlashMenuKeyEvent) -> Bool {
+        guard showSlashMenu else { return false }
+        let filtered = slashFilteredCommands
+        switch event {
+        case .up:
+            slashSelectedIndex = max(0, slashSelectedIndex - 1)
+            publishSlashSessionIfHoisted()
+            return true
+        case .down:
+            slashSelectedIndex = min(max(0, filtered.count - 1), slashSelectedIndex + 1)
+            publishSlashSessionIfHoisted()
+            return true
+        case .commit:
+            guard let command = filtered[safe: slashSelectedIndex],
+                  command.type != .elements else { return false }
+            handleSlashMenuSelection(command)
+            return true
+        case .dismiss:
+            dismissAllOverlays()
+            return true
+        }
+    }
+
+    /// Menu selection — synchronous. No dismiss-refocus-insert delay chain:
+    /// the text view never lost focus, so the command can execute immediately.
+    private func handleSlashMenuSelection(_ command: SlashCommand) {
+        CosmicHaptics.shared.play(.selection)
+        if command.type == .newElement {
+            showSlashMenu = false
+            overlayPresenter?.slashSession = nil
+            elementCreationMenuPosition = clampMenuPosition(
+                slashMenuPosition,
+                menuSize: CGSize(width: 330, height: 364),
+                in: containerSize
+            )
+            showElementCreationMenu = true
+            publishElementCreationSessionIfHoisted()
+            return
+        }
+        guard command.type != .elements else { return }
+        dismissAllOverlays()
+        postSlashCommand(command)
+    }
+
+    /// Publishes the New Element form for block rows — same hoisting as the
+    /// slash menu (a form inside a one-line row clamps and hit-tests badly).
+    private func publishElementCreationSessionIfHoisted() {
+        guard let overlayPresenter, showElementCreationMenu else { return }
+        overlayPresenter.elementCreationSession = EditorOverlayPresenter.ElementCreationSession(
+            anchorInList: CGPoint(
+                x: frameInOverlaySpace.minX + slashMenuLocalAnchor.x,
+                y: frameInOverlaySpace.minY + slashMenuLocalAnchor.y
+            ),
+            darkMode: darkMode,
+            onCreate: { title, icon in
+                createElementAndInsert(title: title, icon: icon)
+            },
+            onDismiss: {
+                dismissAllOverlays()
+                refocusAfterDismiss()
+            }
+        )
+    }
+
+    /// Publishes/updates the hoisted menu session for block rows.
+    private func publishSlashSessionIfHoisted() {
+        guard let overlayPresenter, showSlashMenu else { return }
+        overlayPresenter.slashSession = EditorOverlayPresenter.SlashMenuSession(
+            anchorInList: CGPoint(
+                x: frameInOverlaySpace.minX + slashMenuLocalAnchor.x,
+                y: frameInOverlaySpace.minY + slashMenuLocalAnchor.y
+            ),
+            query: slashQuery,
+            commands: slashFilteredCommands,
+            elementSubmenuCommands: elementSubmenuCommands,
+            selectedIndex: slashSelectedIndex,
+            darkMode: darkMode,
+            onHighlight: { index in
+                slashSelectedIndex = index
+                publishSlashSessionIfHoisted()
+            },
+            onSelect: { command in
+                handleSlashMenuSelection(command)
+            },
+            onDismiss: {
+                dismissAllOverlays()
+            }
+        )
     }
 
     /// Escape handler for EditorOverlayEscapeCoordinator: if a menu is open,
@@ -769,22 +962,11 @@ struct RichTextEditor: View {
     }
 
     // MARK: - Slash Command Insertion
+
+    /// All slash execution routes through the coordinator notification: it
+    /// owns the text storage, consumes the tracked "/" trigger, and — for
+    /// block rows — hands the command to the block pipeline synchronously.
     private func insertSlashCommand(_ command: SlashCommand) {
-        ConsoleLog.info("[SLASHDBG] insertSlashCommand type=\(command.type) plainText='\(plainText.prefix(20))' hasHandler=\(onSlashCommandSelected != nil) requiresTextKit=\(command.type.requiresTextKitMutationBeforeSemanticHandling) targetID='\(editorTargetID ?? "nil")'", subsystem: .canvas)
-        if command.type.requiresTextKitMutationBeforeSemanticHandling {
-            postSlashCommand(command)
-            _ = onSlashCommandSelected?(command, plainText)
-            return
-        }
-
-        let handled = onSlashCommandSelected?(command, plainText)
-        ConsoleLog.info("[SLASHDBG] onSlashCommandSelected returned \(String(describing: handled))", subsystem: .canvas)
-        if handled == true {
-            return
-        }
-
-        // Delegate all text manipulation to TextKitCoordinator to ensure
-        // atomic operations on the text storage and avoid binding desync.
         postSlashCommand(command)
     }
 

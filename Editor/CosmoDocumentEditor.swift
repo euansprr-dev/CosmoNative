@@ -105,6 +105,63 @@ enum EditorBoundaryCommand: Equatable {
     case escapeSelectBlock
     /// ⌘A when the block's text is already fully selected — escalate to all blocks.
     case selectAllBlocks
+    /// Multi-line paste into a block row — the host splices the pasted text
+    /// into real blocks in ONE synchronous operation. Hard newlines must
+    /// never enter the row's text view (the transient multi-line state is the
+    /// root of the paste-duplication class of bugs).
+    case pasteBlocks(pastedText: String, caretUTF16OffsetFromEnd: Int, livePlainText: String)
+    /// Backstop: a hard newline reached the row's text view anyway
+    /// (dictation, IME, RTF paste). The host re-parses the live text into
+    /// blocks synchronously, before any stale re-emission can splice twice.
+    case normalizeHardNewlines(caretUTF16OffsetFromEnd: Int, livePlainText: String)
+    /// A markdown prefix ("# ", "- ", "> ", "[] ", "1. ", "---") completed at
+    /// the start of a paragraph row — convert the block live (Notion model).
+    case applyMarkdownAlias(kind: RichBlockKind, checked: Bool?, aliasUTF16Length: Int, livePlainText: String)
+    /// Structured block paste (com.cosmo.blocks pasteboard flavor) — kinds
+    /// survive copy/paste within the app.
+    case pasteBlockRun(blocks: [RichBlock], caretUTF16OffsetFromEnd: Int, livePlainText: String)
+}
+
+/// Live markdown-alias detection for block rows: a recognized prefix typed
+/// at the very start of the block (caret sitting right after it) converts
+/// the block's kind in place.
+struct MarkdownBlockAlias {
+    let kind: RichBlockKind
+    let checked: Bool?
+    let utf16Length: Int
+
+    private static let prefixes: [(String, RichBlockKind, Bool?)] = [
+        ("# ", .heading1, nil),
+        ("## ", .heading2, nil),
+        ("### ", .heading3, nil),
+        ("- [ ] ", .checklist, false),
+        ("- [x] ", .checklist, true),
+        ("- [X] ", .checklist, true),
+        ("[ ] ", .checklist, false),
+        ("[] ", .checklist, false),
+        ("- ", .bulletList, nil),
+        ("* ", .bulletList, nil),
+        ("> ", .quote, nil)
+    ]
+
+    static func match(text: String, cursorLocation: Int) -> MarkdownBlockAlias? {
+        if text == "---", cursorLocation == 3 {
+            return MarkdownBlockAlias(kind: .divider, checked: nil, utf16Length: 3)
+        }
+        for (prefix, kind, checked) in prefixes {
+            let length = (prefix as NSString).length
+            if cursorLocation == length, text.hasPrefix(prefix) {
+                return MarkdownBlockAlias(kind: kind, checked: checked, utf16Length: length)
+            }
+        }
+        if let match = text.range(of: #"^\d+\.\s"#, options: .regularExpression) {
+            let length = (String(text[match]) as NSString).length
+            if cursorLocation == length {
+                return MarkdownBlockAlias(kind: .numberedList, checked: nil, utf16Length: length)
+            }
+        }
+        return nil
+    }
 }
 
 /// A one-shot caret placement consumed by the text view after an external

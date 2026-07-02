@@ -245,12 +245,16 @@ struct InquiryNotebookPane: View {
                     .background(notebookTint(for: kind).opacity(0.12), in: Circle())
                 VStack(alignment: .leading, spacing: 5) {
                     HStack(spacing: 6) {
-                        Text(kind.displayName)
-                            .font(CosmoTypography.labelSmall)
-                            .foregroundStyle(notebookTint(for: kind))
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 3)
-                            .background(notebookTint(for: kind).opacity(0.1), in: Capsule())
+                        if item.extractMetadata?.kindPending == true {
+                            InquiryClassifyingChip()
+                        } else {
+                            InquiryKindBadgeMenu(
+                                viewModel: viewModel,
+                                extractUUID: item.uuid,
+                                kind: kind,
+                                isUnconfirmed: item.extractMetadata?.routingDecisionId?.hasPrefix("heuristic-fallback-") == true
+                            )
+                        }
                         if let origin = item.extractMetadata?.originType, !origin.isEmpty {
                             Text(origin)
                                 .font(CosmoTypography.labelSmall)

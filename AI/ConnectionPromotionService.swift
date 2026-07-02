@@ -22,6 +22,12 @@ final class ConnectionPromotionService {
 
     private init() {}
 
+    /// A resolved link target: another Connection page this one references.
+    struct ConnectionLinkRef: Sendable, Equatable {
+        var uuid: String
+        var title: String
+    }
+
     @discardableResult
     func applyAcceptedCandidates(
         _ candidates: [CrystallizationOutput.ConnectionCandidate],
@@ -33,7 +39,13 @@ final class ConnectionPromotionService {
 
         var result = ConnectionPromotionResult()
         var promotedByCandidateId: [String: Atom] = [:]
+        var createdUUIDs = Set<String>()
         var currentDeepDive = deepDive
+        let preexisting: [Atom] = if let currentDeepDive {
+            (try? await InquiryRepository.shared.fetchConnections(forDeepDive: currentDeepDive)) ?? []
+        } else {
+            []
+        }
 
         for candidate in accepted {
             let existing = try await existingConnection(for: candidate, deepDive: currentDeepDive)
@@ -42,28 +54,87 @@ final class ConnectionPromotionService {
                 existing: existing,
                 session: session,
                 deepDive: currentDeepDive,
-                siblingUUIDsByCandidateId: [:]
+                siblingRefs: [],
+                connectionTitlesByUUID: [:]
             )
             promotedByCandidateId[candidate.id] = promoted
             if existing == nil {
                 result.created += 1
+                createdUUIDs.insert(promoted.uuid)
             } else {
                 result.updated += 1
             }
         }
 
+        // Link resolution spans BOTH this run's pages and every page the deep
+        // dive already has — related concepts name pages regardless of when
+        // they were crystallized.
+        var uuidByConceptKey: [String: String] = [:]
+        var titleByUUID: [String: String] = [:]
+        for atom in preexisting {
+            guard let title = atom.title, !title.isEmpty else { continue }
+            titleByUUID[atom.uuid] = title
+            uuidByConceptKey[ConceptResolver.conceptKey(title)] = atom.uuid
+        }
         for candidate in accepted {
             guard let promoted = promotedByCandidateId[candidate.id] else { continue }
-            let siblingUUIDs = candidate.proposedReferences.compactMap { promotedByCandidateId[$0]?.uuid }
+            let title = promoted.title ?? candidate.proposedTitle
+            titleByUUID[promoted.uuid] = title
+            for name in [title] + (candidate.conceptAliases ?? []) {
+                uuidByConceptKey[ConceptResolver.conceptKey(name)] = promoted.uuid
+            }
+        }
+
+        // Second pass: write outgoing reference rows + atom links, collecting
+        // every edge so the reciprocal backlinks can be applied afterwards
+        // against fresh atoms (writing them mid-pass would race the upserts).
+        var edges: [(from: ConnectionLinkRef, to: ConnectionLinkRef)] = []
+        for candidate in accepted {
+            guard let promoted = promotedByCandidateId[candidate.id] else { continue }
+            var targetsByUUID: [String: String] = [:]
+            for candidateId in candidate.proposedReferences {
+                guard let sibling = promotedByCandidateId[candidateId], sibling.uuid != promoted.uuid else { continue }
+                targetsByUUID[sibling.uuid] = titleByUUID[sibling.uuid] ?? sibling.title ?? "Connection"
+            }
+            for name in candidate.relatedConceptNames ?? [] {
+                guard let uuid = uuidByConceptKey[ConceptResolver.conceptKey(name)], uuid != promoted.uuid else { continue }
+                targetsByUUID[uuid] = titleByUUID[uuid] ?? name
+            }
+            let refs = targetsByUUID
+                .map { ConnectionLinkRef(uuid: $0.key, title: $0.value) }
+                .sorted { $0.title < $1.title }
             let updated = try await upsertConnection(
                 candidate,
                 existing: promoted,
                 session: session,
                 deepDive: currentDeepDive,
-                siblingUUIDsByCandidateId: Dictionary(uniqueKeysWithValues: siblingUUIDs.map { ($0, $0) })
+                siblingRefs: refs,
+                connectionTitlesByUUID: titleByUUID
             )
             promotedByCandidateId[candidate.id] = updated
-            result.linked += try await ensureLinks(for: updated, candidate: candidate, siblingUUIDs: siblingUUIDs)
+            result.linked += try await ensureLinks(for: updated, candidate: candidate, siblingUUIDs: refs.map(\.uuid))
+            let selfRef = ConnectionLinkRef(uuid: updated.uuid, title: titleByUUID[updated.uuid] ?? updated.title ?? "Connection")
+            edges.append(contentsOf: refs.map { (from: selfRef, to: $0) })
+        }
+
+        // Backlinks: every A → B edge gets a B → A reference row, so the graph
+        // reads in both directions.
+        for edge in edges {
+            await ensureLinkRow(on: edge.to.uuid, to: edge.from)
+        }
+
+        // Retro-linking: a page created today lights up yesterday's pages that
+        // already mention it — the web compounds with every crystallization.
+        for createdUUID in createdUUIDs {
+            guard let title = titleByUUID[createdUUID] else { continue }
+            let aliases = accepted.first { promotedByCandidateId[$0.id]?.uuid == createdUUID }?.conceptAliases ?? []
+            let newRef = ConnectionLinkRef(uuid: createdUUID, title: title)
+            for other in preexisting where other.uuid != createdUUID {
+                guard Self.connectionMentions(other, names: [title] + aliases) else { continue }
+                let otherRef = ConnectionLinkRef(uuid: other.uuid, title: other.title ?? "Connection")
+                await ensureLinkRow(on: other.uuid, to: newRef)
+                await ensureLinkRow(on: createdUUID, to: otherRef)
+            }
         }
 
         // Mark crystallized extracts so the next run only processes new material
@@ -134,14 +205,15 @@ final class ConnectionPromotionService {
         existing: Atom?,
         session: Atom,
         deepDive: Atom?,
-        siblingUUIDsByCandidateId: [String: String]
+        siblingRefs: [ConnectionLinkRef],
+        connectionTitlesByUUID: [String: String]
     ) async throws -> Atom {
-        let proposedSections = sections(for: candidate, siblingUUIDsByCandidateId: siblingUUIDsByCandidateId)
+        let proposedSections = sections(for: candidate, siblingRefs: siblingRefs)
         let links = baseLinks(
             for: candidate,
             sessionUUID: session.uuid,
             deepDiveUUID: deepDive?.uuid,
-            siblingUUIDs: Array(siblingUUIDsByCandidateId.values)
+            siblingUUIDs: siblingRefs.map(\.uuid)
         )
 
         let saved: Atom
@@ -149,8 +221,10 @@ final class ConnectionPromotionService {
         if var existing {
             // Merge, never replace: a concept page accumulates knowledge across
             // sessions, so user edits and previously merged items must survive.
-            let existingSections = existing.structured
-                .flatMap { ConnectionStructuredData.fromJSON($0)?.sections } ?? []
+            let existingSections = Self.upgradedLegacyLinkRows(
+                existing.structured.flatMap { ConnectionStructuredData.fromJSON($0)?.sections } ?? [],
+                connectionTitlesByUUID: connectionTitlesByUUID
+            )
             finalSections = Self.mergedSections(existing: existingSections, proposed: proposedSections)
 
             var metadata = existing.metadataValue(as: InquiryPromotedConnectionMetadata.self)
@@ -245,7 +319,7 @@ final class ConnectionPromotionService {
 
     private func sections(
         for candidate: CrystallizationOutput.ConnectionCandidate,
-        siblingUUIDsByCandidateId: [String: String]
+        siblingRefs: [ConnectionLinkRef]
     ) -> [ConnectionSection] {
         var sections = ConnectionSectionType.allCases.map { ConnectionSection(type: $0) }
         for (type, drafts) in candidate.proposedSections {
@@ -253,19 +327,100 @@ final class ConnectionPromotionService {
             sections[sectionIndex].items = drafts.map { item(from: $0) }
         }
         if let referencesIndex = sections.firstIndex(where: { $0.type == .references }) {
-            for siblingUUID in siblingUUIDsByCandidateId.values.sorted() {
-                if !sections[referencesIndex].items.contains(where: { $0.sourceAtomUUID == siblingUUID }) {
-                    sections[referencesIndex].items.append(
-                        ConnectionItem(
-                            content: "Sibling Connection",
-                            sourceAtomUUID: siblingUUID,
-                            sourceSnippet: "Auto-linked sibling Connection from the same Deep Dive."
-                        )
-                    )
+            for ref in siblingRefs {
+                if !sections[referencesIndex].items.contains(where: {
+                    $0.linkedConnectionUUID == ref.uuid || $0.sourceAtomUUID == ref.uuid
+                }) {
+                    sections[referencesIndex].items.append(Self.linkItem(to: ref))
                 }
             }
         }
         return ConnectionFocusModeState.backfillingMissingSections(sections)
+    }
+
+    /// A first-class hyperlink row to another Connection page.
+    nonisolated private static func linkItem(to ref: ConnectionLinkRef) -> ConnectionItem {
+        ConnectionItem(
+            content: ref.title,
+            sourceAtomUUID: ref.uuid,
+            sourceSnippet: "Linked Connection from the same Deep Dive.",
+            linkedConnectionUUID: ref.uuid
+        )
+    }
+
+    /// Upgrades pre-hyperlink "Sibling Connection" reference rows in place:
+    /// rows whose provenance points at a known Connection gain the link field
+    /// and show the page's real title.
+    nonisolated static func upgradedLegacyLinkRows(
+        _ sections: [ConnectionSection],
+        connectionTitlesByUUID: [String: String]
+    ) -> [ConnectionSection] {
+        guard !connectionTitlesByUUID.isEmpty else { return sections }
+        var upgraded = sections
+        for sectionIdx in upgraded.indices where upgraded[sectionIdx].type == .references {
+            for itemIdx in upgraded[sectionIdx].items.indices {
+                var item = upgraded[sectionIdx].items[itemIdx]
+                guard item.linkedConnectionUUID == nil,
+                      let sourceUUID = item.sourceAtomUUID,
+                      let title = connectionTitlesByUUID[sourceUUID] else { continue }
+                item.linkedConnectionUUID = sourceUUID
+                if item.resolvedPlainText == "Sibling Connection" {
+                    item.content = title
+                    item.plainText = title
+                    item.document = nil
+                }
+                upgraded[sectionIdx].items[itemIdx] = item
+            }
+        }
+        return upgraded
+    }
+
+    /// Idempotently adds a hyperlink row (references section) + atom link from
+    /// the page `uuid` to `ref`. Used for backlinks and retro-linking, where
+    /// the target page is not part of the current promotion pass — the atom is
+    /// fetched fresh so concurrent upserts are never clobbered.
+    private func ensureLinkRow(on uuid: String, to ref: ConnectionLinkRef) async {
+        guard uuid != ref.uuid, var target = try? await atoms.fetch(uuid: uuid) else { return }
+        var sections = ConnectionFocusModeState.backfillingMissingSections(
+            target.structured.flatMap { ConnectionStructuredData.fromJSON($0)?.sections } ?? []
+        )
+        guard let referencesIndex = sections.firstIndex(where: { $0.type == .references }) else { return }
+        let alreadyLinked = sections[referencesIndex].items.contains {
+            $0.linkedConnectionUUID == ref.uuid || $0.sourceAtomUUID == ref.uuid
+        }
+        let link = AtomLink(type: AtomLinkType.connection.rawValue, uuid: ref.uuid, entityType: AtomType.connection.rawValue)
+        let hasAtomLink = target.linksList.contains { $0.type == link.type && $0.uuid == link.uuid }
+        guard !alreadyLinked || !hasAtomLink else { return }
+
+        if !alreadyLinked {
+            sections[referencesIndex].items.append(Self.linkItem(to: ref))
+            target = target.mergingStructuredKeys(ConnectionStructuredData(sections: sections))
+            var state = ConnectionFocusModeState.load(atomUUID: target.uuid)
+                ?? ConnectionFocusModeState(atomUUID: target.uuid)
+            state.sections = sections
+            state.lastModified = Date()
+            state.save()
+        }
+        if !hasAtomLink {
+            target = target.withLinks(mergeLinks(target.linksList, [link]))
+        }
+        _ = try? await atoms.update(target)
+    }
+
+    /// True when any non-reference item on the page mentions one of `names`
+    /// (normalized containment, short names skipped to avoid noise).
+    nonisolated static func connectionMentions(_ atom: Atom, names: [String]) -> Bool {
+        let sections = atom.structured.flatMap { ConnectionStructuredData.fromJSON($0)?.sections } ?? []
+        let keys = names.map(normalizedKey).filter { $0.count >= 4 }
+        guard !keys.isEmpty else { return false }
+        for section in sections where section.type != .references {
+            for item in section.items {
+                let text = normalizedKey(item.resolvedPlainText)
+                guard !text.isEmpty else { continue }
+                if keys.contains(where: { text.contains($0) }) { return true }
+            }
+        }
+        return false
     }
 
     private func item(from draft: ConnectionSectionItemDraft) -> ConnectionItem {

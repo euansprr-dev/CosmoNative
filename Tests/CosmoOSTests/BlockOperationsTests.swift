@@ -318,4 +318,214 @@ final class BlockOperationsTests: XCTestCase {
         XCTAssertEqual(result.document.blocks[0].plainInlineText, "Draft idea")
         XCTAssertEqual(result.intent, .preserveCaret)
     }
+
+    // MARK: - Slash apply with trigger already removed (type-through commit)
+
+    func testApplyTransformWithTriggerAlreadyRemovedKeepsLiteralSlashesInContent() throws {
+        let id = UUID()
+        let document = RichDocument(blocks: [
+            RichBlock(id: id, kind: .paragraph, inlines: [.text("a/b ")])
+        ])
+
+        let result = try BlockOperations.apply(
+            .transform(.heading1),
+            in: document,
+            at: .root(index: 0),
+            livePlainText: "a/b ",
+            triggerAlreadyRemoved: true
+        )
+
+        XCTAssertEqual(result.document.blocks[0].id, id)
+        XCTAssertEqual(result.document.blocks[0].kind, .heading1)
+        XCTAssertEqual(result.document.blocks[0].plainInlineText, "a/b ")
+    }
+
+    func testApplyReplaceOrInsertWithTriggerAlreadyRemovedTreatsEmptyLiveTextAsEmptyBlock() throws {
+        // The block still holds "/" in the (lagging) document, but the text
+        // view already consumed the trigger — live text is authoritative.
+        let document = RichDocument(blocks: [
+            RichBlock(kind: .paragraph, inlines: [.text("/")])
+        ])
+
+        let result = try BlockOperations.apply(
+            .replaceOrInsert(.divider),
+            in: document,
+            at: .root(index: 0),
+            livePlainText: "",
+            triggerAlreadyRemoved: true
+        )
+
+        XCTAssertEqual(result.document.blocks.map(\.kind), [.divider, .paragraph])
+        XCTAssertEqual(result.document.blocks[1].plainInlineText, "")
+    }
+
+    // MARK: - pasteBlocks
+
+    func testPasteBlocksSplicesMultiLineTextAtCaretWithNotionMergeSemantics() throws {
+        let id = UUID()
+        let document = RichDocument(blocks: [
+            RichBlock(id: id, kind: .paragraph, inlines: [.text("helloworld")])
+        ])
+
+        let result = try BlockOperations.pasteBlocks(
+            in: document,
+            at: .root(index: 0),
+            utf16Offset: 5,
+            pastedText: "A\nB\nC"
+        )
+
+        XCTAssertEqual(result.document.blocks.map(\.plainInlineText), ["helloA", "B", "Cworld"])
+        XCTAssertEqual(result.document.blocks[0].id, id, "head keeps the row's identity")
+        XCTAssertEqual(result.focusPath, .root(index: 2))
+        // Caret at the end of the pasted content — before "world".
+        let focused = result.document.blocks[2]
+        XCTAssertEqual(result.caretOffsetFromEnd(for: focused), "world".utf16.count)
+    }
+
+    func testPasteBlocksIntoEmptyParagraphAdoptsFirstPastedKind() throws {
+        let document = RichDocument(blocks: [
+            RichBlock(kind: .paragraph, inlines: [.text("")])
+        ])
+
+        let result = try BlockOperations.pasteBlocks(
+            in: document,
+            at: .root(index: 0),
+            utf16Offset: 0,
+            pastedText: "# Title\nBody"
+        )
+
+        XCTAssertEqual(result.document.blocks.map(\.kind), [.heading1, .paragraph])
+        XCTAssertEqual(result.document.blocks.map(\.plainInlineText), ["Title", "Body"])
+    }
+
+    func testPasteBlocksParsesMarkdownFlavors() throws {
+        let document = RichDocument(blocks: [
+            RichBlock(kind: .paragraph, inlines: [.text("")])
+        ])
+
+        let result = try BlockOperations.pasteBlocks(
+            in: document,
+            at: .root(index: 0),
+            utf16Offset: 0,
+            pastedText: "- a\n- [ ] b\n- [x] c\n> d\n---\n1. e"
+        )
+
+        XCTAssertEqual(
+            result.document.blocks.map(\.kind),
+            [.bulletList, .checklist, .checklist, .quote, .divider, .numberedList]
+        )
+        XCTAssertEqual(result.document.blocks[1].checked, false)
+        XCTAssertEqual(result.document.blocks[2].checked, true)
+        XCTAssertEqual(result.document.blocks[5].plainInlineText, "e")
+    }
+
+    func testPasteBlocksSingleDividerSplitsTextAroundIt() throws {
+        let id = UUID()
+        let document = RichDocument(blocks: [
+            RichBlock(id: id, kind: .paragraph, inlines: [.text("ab")])
+        ])
+
+        let result = try BlockOperations.pasteBlocks(
+            in: document,
+            at: .root(index: 0),
+            utf16Offset: 1,
+            pastedText: "---"
+        )
+
+        XCTAssertEqual(result.document.blocks.map(\.kind), [.paragraph, .divider, .paragraph])
+        XCTAssertEqual(result.document.blocks.map(\.plainInlineText), ["a", "", "b"])
+        XCTAssertEqual(result.document.blocks[0].id, id)
+        XCTAssertNotEqual(result.document.blocks[2].id, id, "split-off tail needs a fresh identity")
+        XCTAssertEqual(result.focusPath, .root(index: 2))
+    }
+
+    func testPasteBlocksTrailingNewlineDoesNotCreateEmptyBlock() throws {
+        let document = RichDocument(blocks: [
+            RichBlock(kind: .paragraph, inlines: [.text("")])
+        ])
+
+        let result = try BlockOperations.pasteBlocks(
+            in: document,
+            at: .root(index: 0),
+            utf16Offset: 0,
+            pastedText: "A\nB\n"
+        )
+
+        XCTAssertEqual(result.document.blocks.map(\.plainInlineText), ["A", "B"])
+    }
+
+    func testPasteBlocksPreservesInteriorBlankLinesAsEmptyParagraphs() throws {
+        let document = RichDocument(blocks: [
+            RichBlock(kind: .paragraph, inlines: [.text("")])
+        ])
+
+        let result = try BlockOperations.pasteBlocks(
+            in: document,
+            at: .root(index: 0),
+            utf16Offset: 0,
+            pastedText: "A\n\nB"
+        )
+
+        XCTAssertEqual(result.document.blocks.map(\.plainInlineText), ["A", "", "B"])
+    }
+
+    // MARK: - Markdown aliases (live conversion)
+
+    func testMarkdownAliasMatchesPrefixesOnlyWithCaretRightAfterThem() {
+        XCTAssertEqual(MarkdownBlockAlias.match(text: "# ", cursorLocation: 2)?.kind, .heading1)
+        XCTAssertEqual(MarkdownBlockAlias.match(text: "## ", cursorLocation: 3)?.kind, .heading2)
+        XCTAssertEqual(MarkdownBlockAlias.match(text: "- ", cursorLocation: 2)?.kind, .bulletList)
+        XCTAssertEqual(MarkdownBlockAlias.match(text: "> ", cursorLocation: 2)?.kind, .quote)
+        XCTAssertEqual(MarkdownBlockAlias.match(text: "[] ", cursorLocation: 3)?.kind, .checklist)
+        XCTAssertEqual(MarkdownBlockAlias.match(text: "- [x] ", cursorLocation: 6)?.checked, true)
+        XCTAssertEqual(MarkdownBlockAlias.match(text: "12. ", cursorLocation: 4)?.kind, .numberedList)
+        XCTAssertEqual(MarkdownBlockAlias.match(text: "---", cursorLocation: 3)?.kind, .divider)
+
+        // Caret elsewhere, or prefix not at block start — no conversion.
+        XCTAssertNil(MarkdownBlockAlias.match(text: "# heading", cursorLocation: 9))
+        XCTAssertNil(MarkdownBlockAlias.match(text: "a- ", cursorLocation: 3))
+        XCTAssertNil(MarkdownBlockAlias.match(text: "-- ", cursorLocation: 3))
+        XCTAssertNil(MarkdownBlockAlias.match(text: "----", cursorLocation: 4))
+    }
+
+    // MARK: - Markdown copy flavor
+
+    func testMarkdownCopyRendersKindsAndNumbersConsecutiveOrderedItems() {
+        let blocks: [RichBlock] = [
+            RichBlock(kind: .heading2, inlines: [.text("Title")]),
+            RichBlock(kind: .bulletList, inlines: [.text("a")]),
+            RichBlock(kind: .numberedList, inlines: [.text("one")]),
+            RichBlock(kind: .numberedList, inlines: [.text("two")]),
+            RichBlock(kind: .checklist, inlines: [.text("done")], checked: true),
+            RichBlock(kind: .divider),
+            RichBlock(kind: .paragraph, inlines: [.text("plain")])
+        ]
+        let document = RichDocument(blocks: blocks)
+
+        let markdown = BlockOperations.markdown(
+            ofBlocksWithIDs: Set(blocks.map(\.id)),
+            in: document
+        )
+
+        XCTAssertEqual(markdown, "## Title\n- a\n1. one\n2. two\n- [x] done\n---\nplain")
+    }
+
+    // MARK: - Hard-newline containment caret mapping
+
+    func testCaretLocationMapsOffsetFromEndAcrossLines() {
+        let lines = ["ab", "cd", "ef"]
+        let parsed = lines.map { RichBlock.paragraph($0) }
+
+        let end = BlockTextEditorRow.caretLocation(lines: lines, parsed: parsed, offsetFromEnd: 0)
+        XCTAssertEqual(end.blockOffset, 2)
+        XCTAssertEqual(end.caretOffsetFromEnd, 0)
+
+        let midSecondLine = BlockTextEditorRow.caretLocation(lines: lines, parsed: parsed, offsetFromEnd: 4)
+        XCTAssertEqual(midSecondLine.blockOffset, 1)
+        XCTAssertEqual(midSecondLine.caretOffsetFromEnd, 1)
+
+        let firstLine = BlockTextEditorRow.caretLocation(lines: lines, parsed: parsed, offsetFromEnd: 8)
+        XCTAssertEqual(firstLine.blockOffset, 0)
+        XCTAssertEqual(firstLine.caretOffsetFromEnd, 2)
+    }
 }

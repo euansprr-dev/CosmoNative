@@ -15,6 +15,7 @@ struct InquiryRoutingReceiptItem: Identifiable, Equatable {
         var questionTitle: String
         var conceptNames: [String]
         var isNewBranch: Bool
+        var isPending: Bool = false     // Awaiting LLM classification
     }
     var id: String                 // Original extract UUID
     var headline: String
@@ -95,14 +96,40 @@ private struct InquiryReceiptDestinationRow: View {
     let destination: InquiryRoutingReceiptItem.Destination
 
     var body: some View {
+        HStack(spacing: DS.space6) {
+            Image(systemName: "arrow.turn.down.right")
+                .font(.system(size: 9))
+                .foregroundStyle(CosmoColors.textTertiary)
+                .accessibilityHidden(true)
+            kindChip
+            destinationMenu
+        }
+        .padding(.horizontal, DS.space8)
+        .padding(.vertical, 4)
+        .background(DS.surface, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+    }
+
+    /// The kind is its own one-click dropdown; while classification is in
+    /// flight a shimmer chip holds its place (correcting early still works —
+    /// the user-correction stamp outranks the eventual LLM result).
+    @ViewBuilder
+    private var kindChip: some View {
+        if destination.isPending {
+            InquiryClassifyingChip()
+        } else {
+            InquiryKindBadgeMenu(
+                viewModel: viewModel,
+                extractUUID: destination.extractUUID,
+                kind: destination.kind
+            )
+        }
+    }
+
+    private var destinationMenu: some View {
         Menu {
             correctionMenu
         } label: {
             HStack(spacing: DS.space6) {
-                Image(systemName: "arrow.turn.down.right")
-                    .font(.system(size: 9))
-                    .foregroundStyle(CosmoColors.textTertiary)
-                    .accessibilityHidden(true)
                 Text(destinationLine)
                     .font(CosmoTypography.bodySmall)
                     .foregroundStyle(CosmoColors.textPrimary)
@@ -113,9 +140,6 @@ private struct InquiryReceiptDestinationRow: View {
                     .foregroundStyle(CosmoColors.textTertiary)
                     .accessibilityHidden(true)
             }
-            .padding(.horizontal, DS.space8)
-            .padding(.vertical, 4)
-            .background(DS.surface, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
             .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
@@ -124,7 +148,7 @@ private struct InquiryReceiptDestinationRow: View {
     }
 
     private var destinationLine: String {
-        var line = "\(destination.kind.displayName) · \(destination.questionTitle)"
+        var line = destination.questionTitle
         if !destination.conceptNames.isEmpty {
             line += "  →  \(destination.conceptNames.prefix(2).joined(separator: ", "))"
         }

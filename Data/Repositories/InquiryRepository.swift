@@ -537,7 +537,8 @@ final class InquiryRepository {
         userNote: String?,
         originType: String?,
         citation: String?,
-        status: ExtractStatus = .committed
+        status: ExtractStatus = .committed,
+        kindPending: Bool? = nil
     ) async throws -> Atom {
         let metadata = ExtractMetadata(
             kind: kind,
@@ -551,7 +552,8 @@ final class InquiryRepository {
             userNote: userNote,
             status: status,
             originType: originType,
-            citation: citation
+            citation: citation,
+            kindPending: kindPending
         )
         let structured = ExtractStructured()
         var links: [AtomLink] = []

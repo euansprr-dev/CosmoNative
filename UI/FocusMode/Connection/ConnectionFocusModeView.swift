@@ -33,6 +33,8 @@ struct ConnectionFocusModeView: View {
     @State private var isLoadingSuggestedSources = false
     @State private var isShowingSuggestedSources = false
     @State private var isRefreshingInsights = false
+    /// Sibling pages of the same deep dive — powers inline mention links.
+    @State private var linkTargets: ConnectionLinkTargets = .empty
     /// Pending inline-assistant proposal targeting this connection's sections.
     @State private var reviewProposal: CosmoAssistantProposal?
 
@@ -88,6 +90,7 @@ struct ConnectionFocusModeView: View {
             isPaneContext: isPaneContext,
             actions: workspaceActions
         )
+        .environment(\.connectionLinkTargets, linkTargets)
     }
 
     @ViewBuilder
@@ -189,6 +192,7 @@ struct ConnectionFocusModeView: View {
             await viewModel.refreshSectionsFromDatabase()
             await viewModel.generateGhostSuggestions()
             await loadSources()
+            await loadLinkTargets()
             await refreshInsightsIfStale()
         }
     }
@@ -335,6 +339,19 @@ struct ConnectionFocusModeView: View {
                 userInfo: ["atomUUID": atomUUID, "asPane": true]
             )
         }
+    }
+
+    /// Sibling Connection pages of the same deep dive become inline link
+    /// targets — mentions of their titles in item text open them as panes.
+    @MainActor
+    private func loadLinkTargets() async {
+        guard let deepDiveUUID = atom.linksOfType(.deepDiveConnection).first?.uuid,
+              let deepDive = try? await AtomRepository.shared.fetch(uuid: deepDiveUUID),
+              let siblings = try? await InquiryRepository.shared.fetchConnections(forDeepDive: deepDive) else { return }
+        linkTargets = ConnectionLinkTargets(targets: siblings.compactMap { sibling in
+            guard sibling.uuid != atom.uuid, let title = sibling.title, !title.isEmpty else { return nil }
+            return .init(uuid: sibling.uuid, title: title)
+        })
     }
 
     @MainActor

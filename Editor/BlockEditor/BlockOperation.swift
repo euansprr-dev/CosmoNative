@@ -107,4 +107,52 @@ final class BlockUndoRegistrar: NSObject {
         }
         undoManager.setActionName(actionName)
     }
+
+    /// Typing checkpoint: registered ONCE at the start of a typing burst.
+    /// Block rows disable NSTextView's own undo (its per-view entries
+    /// reference ranges that stop existing after structural rebuilds), so
+    /// undo restores the document as it was when the burst began; the "after"
+    /// side is read lazily at undo time so redo replays the whole burst.
+    func registerCheckpoint(
+        undoManager: UndoManager?,
+        before: RichDocument,
+        currentDocument: @escaping () -> RichDocument,
+        actionName: String = "Typing"
+    ) {
+        guard let undoManager else { return }
+        undoManager.registerUndo(withTarget: self) { registrar in
+            let after = currentDocument()
+            registrar.applyDocument?(before)
+            registrar.register(
+                undoManager: undoManager,
+                before: after,
+                after: before,
+                actionName: actionName
+            )
+        }
+        undoManager.setActionName(actionName)
+    }
+}
+
+/// Per-row typing-burst state for document-level undo checkpoints.
+/// Reference type so escaping timers can mutate it without view rebuilds.
+@MainActor
+final class BlockTypingUndoBurst {
+    var isActive = false
+    var endWorkItem: DispatchWorkItem?
+
+    func scheduleEnd(after delay: TimeInterval = 1.2) {
+        endWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.isActive = false
+        }
+        endWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
+    func end() {
+        endWorkItem?.cancel()
+        endWorkItem = nil
+        isActive = false
+    }
 }

@@ -95,6 +95,181 @@ enum BlockOperations {
         return BlockOperationResult(document: document, focusPath: focusPath, caretUTF16Offset: 0)
     }
 
+    /// Multi-line paste into a text block, as ONE structural operation
+    /// (Notion semantics): the first pasted line merges into the text before
+    /// the caret, middle lines become their own blocks, the last line takes
+    /// the text after the caret, and the caret lands at the end of the pasted
+    /// content. The current block keeps its identity (row stability).
+    static func pasteBlocks(
+        in document: RichDocument,
+        at path: BlockPath,
+        utf16Offset: Int,
+        pastedText: String
+    ) throws -> BlockOperationResult {
+        try pasteParsedBlocks(
+            in: document,
+            at: path,
+            utf16Offset: utf16Offset,
+            parsed: parsedPasteBlocks(from: pastedText)
+        )
+    }
+
+    /// Splices already-parsed blocks (structured paste flavor, or the text
+    /// flavor after line parsing) into a text block at the caret.
+    static func pasteParsedBlocks(
+        in document: RichDocument,
+        at path: BlockPath,
+        utf16Offset: Int,
+        parsed: [RichBlock]
+    ) throws -> BlockOperationResult {
+        var document = document
+        let original = try block(in: document, at: path)
+        guard original.kind.isTextEditableBlock else {
+            throw BlockOperationError.unsupportedBlockKind(original.kind)
+        }
+        let text = original.plainInlineText
+        guard let splitIndex = String.Index(utf16Offset: utf16Offset, in: text) else {
+            throw BlockOperationError.invalidTextOffset(utf16Offset)
+        }
+        let before = String(text[..<splitIndex])
+        let after = String(text[splitIndex...])
+
+        var parsed = parsed
+        if parsed.isEmpty {
+            parsed = [RichBlock(kind: .paragraph, inlines: [.text("")])]
+        }
+
+        let splice = pasteSplice(parsed: parsed, original: original, before: before, after: after)
+        try mutateChildren(in: &document.blocks, indices: path.indices) { siblings, index in
+            siblings.replaceSubrange(index...index, with: splice.blocks)
+        }
+        let focusIndex = path.indexInParent + splice.focusOffset
+        let focusPath = path.parent?.appendingChild(index: focusIndex) ?? .root(index: focusIndex)
+        return BlockOperationResult(
+            document: document,
+            focusPath: focusPath,
+            caretUTF16Offset: splice.caretUTF16Offset
+        )
+    }
+
+    /// Builds the replacement run for a paste — the head keeps the original
+    /// block's identity, non-text blocks (dividers) never receive merged text.
+    private static func pasteSplice(
+        parsed: [RichBlock],
+        original: RichBlock,
+        before: String,
+        after: String
+    ) -> (blocks: [RichBlock], focusOffset: Int, caretUTF16Offset: Int) {
+        let first = parsed[0]
+        let last = parsed[parsed.count - 1]
+        // An empty paragraph adopts the first pasted block's kind wholesale.
+        let adoptFirstKind = before.isEmpty && original.kind == .paragraph && first.kind.isTextEditableBlock
+
+        if parsed.count == 1 {
+            guard first.kind.isTextEditableBlock else {
+                // Single non-text block ("---"): before / block / after.
+                var blocks: [RichBlock] = []
+                var head = original
+                head.inlines = [.text(before)]
+                let keepsHead = !before.isEmpty
+                if keepsHead { blocks.append(head) }
+                blocks.append(first)
+                var tail = original
+                tail.inlines = [.text(after)]
+                if keepsHead { tail = tail.withRegeneratedIDs() }
+                blocks.append(tail)
+                return (blocks, blocks.count - 1, 0)
+            }
+            var head = adoptFirstKind ? adopting(first, into: original) : original
+            let pastedContent = first.plainInlineText
+            if adoptFirstKind, after.isEmpty {
+                head.inlines = first.inlines
+            } else {
+                head.inlines = [.text(before + pastedContent + after)]
+            }
+            return ([head], 0, (before + pastedContent).utf16.count)
+        }
+
+        var blocks: [RichBlock] = []
+
+        // Head
+        if first.kind.isTextEditableBlock {
+            var head = adoptFirstKind ? adopting(first, into: original) : original
+            // Keep the pasted block's rich inlines when nothing merges in.
+            head.inlines = adoptFirstKind ? first.inlines : [.text(before + first.plainInlineText)]
+            blocks.append(head)
+        } else if before.isEmpty, original.plainInlineText.isEmpty {
+            blocks.append(first)
+        } else {
+            var head = original
+            head.inlines = [.text(before)]
+            blocks.append(head)
+            blocks.append(first)
+        }
+
+        // Middles
+        if parsed.count > 2 {
+            blocks.append(contentsOf: parsed[1..<(parsed.count - 1)])
+        }
+
+        // Tail
+        if last.kind.isTextEditableBlock {
+            var tail = last
+            let tailContent = last.plainInlineText
+            if !after.isEmpty {
+                tail.inlines = [.text(tailContent + after)]
+            }
+            blocks.append(tail)
+            return (blocks, blocks.count - 1, tailContent.utf16.count)
+        }
+        blocks.append(last)
+        blocks.append(RichBlock(kind: .paragraph, inlines: [.text(after)]))
+        return (blocks, blocks.count - 1, 0)
+    }
+
+    private static func adopting(_ source: RichBlock, into target: RichBlock) -> RichBlock {
+        var result = target
+        result.kind = source.kind
+        result.checked = source.checked
+        result.heading = source.heading
+        return result
+    }
+
+    /// Line-based paste parser: the app's own serialized prefixes (via the
+    /// legacy line parser) plus common markdown habits ("- ", "* ", "> ",
+    /// "- [ ] ", "***"). Blank lines stay as empty paragraphs (Notion keeps
+    /// them); one trailing empty line from a terminal newline is trimmed.
+    static func parsedPasteBlocks(from pastedText: String) -> [RichBlock] {
+        let lines = pastedText.normalizingHardNewlines().components(separatedBy: "\n")
+        var blocks = lines.map(pasteBlock(fromLine:))
+        if blocks.count > 1,
+           let lastBlock = blocks.last,
+           lastBlock.kind == .paragraph,
+           lastBlock.plainInlineText.isEmpty {
+            blocks.removeLast()
+        }
+        return blocks
+    }
+
+    private static func pasteBlock(fromLine line: String) -> RichBlock {
+        if line.hasPrefix("- [ ] ") {
+            return RichBlock(kind: .checklist, inlines: [.text(String(line.dropFirst(6)))], checked: false)
+        }
+        if line.hasPrefix("- [x] ") || line.hasPrefix("- [X] ") {
+            return RichBlock(kind: .checklist, inlines: [.text(String(line.dropFirst(6)))], checked: true)
+        }
+        if line.hasPrefix("- ") || line.hasPrefix("* ") {
+            return RichBlock(kind: .bulletList, inlines: [.text(String(line.dropFirst(2)))])
+        }
+        if line.hasPrefix("> ") {
+            return RichBlock(kind: .quote, inlines: [.text(String(line.dropFirst(2)))])
+        }
+        if line.trimmingCharacters(in: .whitespaces) == "***" {
+            return RichBlock(kind: .divider)
+        }
+        return RichDocument.block(fromLegacyLine: line)
+    }
+
     static func mergeBackward(
         in document: RichDocument,
         at path: BlockPath
@@ -214,13 +389,26 @@ enum BlockOperations {
         _ action: BlockCommand.Action,
         in document: RichDocument,
         at path: BlockPath,
-        livePlainText: String
+        livePlainText: String,
+        triggerAlreadyRemoved: Bool = false
     ) throws -> BlockOperationResult {
         switch action {
         case .transform(let kind):
-            return try applyTransform(kind, in: document, at: path, livePlainText: livePlainText)
+            return try applyTransform(
+                kind,
+                in: document,
+                at: path,
+                livePlainText: livePlainText,
+                triggerAlreadyRemoved: triggerAlreadyRemoved
+            )
         case .replaceOrInsert(let kind):
-            return try applyReplaceOrInsert(kind, in: document, at: path, livePlainText: livePlainText)
+            return try applyReplaceOrInsert(
+                kind,
+                in: document,
+                at: path,
+                livePlainText: livePlainText,
+                triggerAlreadyRemoved: triggerAlreadyRemoved
+            )
         case .insertElement(let definition):
             return try replaceBlock(
                 in: document,
@@ -240,13 +428,16 @@ enum BlockOperations {
         _ kind: RichBlockKind,
         in document: RichDocument,
         at path: BlockPath,
-        livePlainText: String
+        livePlainText: String,
+        triggerAlreadyRemoved: Bool = false
     ) throws -> BlockOperationResult {
         var block = try block(in: document, at: path)
         guard kind.isTextEditableBlock else {
             throw BlockOperationError.unsupportedBlockKind(kind)
         }
-        block.inlines = cleanedSlashCommandInlines(from: livePlainText, fallback: block.inlines)
+        block.inlines = triggerAlreadyRemoved
+            ? reconciledInlines(from: livePlainText, fallback: block.inlines)
+            : cleanedSlashCommandInlines(from: livePlainText, fallback: block.inlines)
         var updated = document
         try replaceBlock(block, in: &updated, at: path)
         return try transformBlock(in: updated, at: path, to: kind)
@@ -256,14 +447,25 @@ enum BlockOperations {
         _ kind: RichBlockKind,
         in document: RichDocument,
         at path: BlockPath,
-        livePlainText: String
+        livePlainText: String,
+        triggerAlreadyRemoved: Bool = false
     ) throws -> BlockOperationResult {
         if kind.isTextEditableBlock {
-            return try applyTransform(kind, in: document, at: path, livePlainText: livePlainText)
+            return try applyTransform(
+                kind,
+                in: document,
+                at: path,
+                livePlainText: livePlainText,
+                triggerAlreadyRemoved: triggerAlreadyRemoved
+            )
         }
 
         let block = try block(in: document, at: path)
-        let cleanedText = cleanedSlashCommandText(from: livePlainText, fallback: block.plainInlineText)
+        // triggerAlreadyRemoved: livePlainText is authoritative, even when
+        // empty (a bare "/" block is empty after the trigger is consumed).
+        let cleanedText = triggerAlreadyRemoved
+            ? livePlainText
+            : cleanedSlashCommandText(from: livePlainText, fallback: block.plainInlineText)
         let replacement = RichBlock(kind: kind)
         let shouldReplaceTrigger = cleanedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
@@ -352,6 +554,16 @@ enum BlockOperations {
             }
             document.blocks.insert(block, at: target.index)
         }
+    }
+
+    /// Live text is authoritative (trigger already consumed by the text
+    /// view) — keep the block's rich inlines only when the plain text agrees,
+    /// otherwise rebuild from the live string.
+    private static func reconciledInlines(
+        from livePlainText: String,
+        fallback: [RichInlineNode]
+    ) -> [RichInlineNode] {
+        fallback.plainText == livePlainText ? fallback : [.text(livePlainText)]
     }
 
     private static func cleanedSlashCommandInlines(
@@ -490,6 +702,40 @@ extension BlockOperations {
             .filter { ids.contains($0.id) }
             .map(\.plainInlineText)
             .joined(separator: "\n")
+    }
+
+    /// Markdown rendering of the given root blocks — what block-selection ⌘C
+    /// writes to the plain-text pasteboard, so kinds survive into other apps
+    /// (and round-trip through this app's own paste parser).
+    static func markdown(ofBlocksWithIDs ids: Set<UUID>, in document: RichDocument) -> String {
+        var lines: [String] = []
+        var numberedIndex = 0
+        for block in document.blocks where ids.contains(block.id) {
+            numberedIndex = block.kind == .numberedList ? numberedIndex + 1 : 0
+            lines.append(markdownLine(for: block, numberedIndex: max(1, numberedIndex)))
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private static func markdownLine(for block: RichBlock, numberedIndex: Int) -> String {
+        let text = block.plainInlineText
+        switch block.kind {
+        case .heading1: return "# " + text
+        case .heading2: return "## " + text
+        case .heading3: return "### " + text
+        case .bulletList: return "- " + text
+        case .numberedList: return "\(numberedIndex). " + text
+        case .checklist: return (block.checked == true ? "- [x] " : "- [ ] ") + text
+        case .quote: return "> " + text
+        case .divider: return "---"
+        default: return text
+        }
+    }
+
+    /// The selected root blocks themselves, in document order — the
+    /// structured (com.cosmo.blocks) copy flavor.
+    static func blocks(withIDs ids: Set<UUID>, in document: RichDocument) -> [RichBlock] {
+        document.blocks.filter { ids.contains($0.id) }
     }
 }
 

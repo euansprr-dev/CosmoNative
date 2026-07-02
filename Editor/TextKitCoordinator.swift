@@ -394,6 +394,19 @@ final class CosmoTextView: NSTextView {
     var elementBlockDarkMode: Bool = false
     var elementBlockBaseFontSize: CGFloat = 16
     var headingDisclosureColor: NSColor?
+    /// Block-row mode: this view holds exactly ONE block — hard newlines must
+    /// never enter its storage. Multi-line pastes route through onBlockPaste.
+    var blockRowMode: Bool = false
+    /// Multi-line paste in block-row mode — returns true when the host
+    /// spliced the text into blocks structurally.
+    var onBlockPaste: ((String) -> Bool)?
+    /// Structured block paste (com.cosmo.blocks flavor) in block-row mode.
+    var onStructuredBlockPaste: ((Data) -> Bool)?
+    /// Cross-block drag selection bridge (block-row mode). When set, single
+    /// clicks run a custom tracking loop so drags can escalate to whole-block
+    /// selection at block boundaries — NSTextView's own loop clamps at the
+    /// view's bounds.
+    weak var blockDragSelectionController: BlockDragSelectionController?
     private var disclosureTrackingArea: NSTrackingArea?
 
     override func draw(_ dirtyRect: NSRect) {
@@ -406,6 +419,13 @@ final class CosmoTextView: NSTextView {
 
     override func paste(_ sender: Any?) {
         let selectedRange = self.selectedRange()
+
+        // Structured block flavor first — kinds survive within the app.
+        if blockRowMode,
+           let blockData = NSPasteboard.general.data(forType: .cosmoBlocks),
+           onStructuredBlockPaste?(blockData) == true {
+            return
+        }
 
         if selectedRange.length > 0,
            let pasteboardString = NSPasteboard.general.string(forType: .string),
@@ -442,6 +462,20 @@ final class CosmoTextView: NSTextView {
         }
 
         if let pasteboardString = NSPasteboard.general.string(forType: .string) {
+            // Block rows hold exactly one block — a multi-line paste is a
+            // STRUCTURAL edit (split into real blocks), never raw text with
+            // embedded newlines. If the structural path declines, degrade to
+            // soft line separators so the one-block invariant still holds.
+            if blockRowMode, pasteboardString.containsHardNewline {
+                if onBlockPaste?(pasteboardString) == true {
+                    return
+                }
+                insertText(
+                    pasteboardString.replacingHardNewlinesWithLineSeparators(),
+                    replacementRange: selectedRange
+                )
+                return
+            }
             insertText(pasteboardString, replacementRange: selectedRange)
             return
         }
@@ -497,7 +531,114 @@ final class CosmoTextView: NSTextView {
             setSelectedRange(imageRange)
             return
         }
+        if blockRowMode, let dragController = blockDragSelectionController {
+            // Shift+Click while another block holds focus — extend into a
+            // block-range selection instead of a local text selection.
+            if event.modifierFlags.contains(.shift),
+               dragController.handleShiftClick?(event.locationInWindow, self) == true {
+                return
+            }
+            if event.clickCount == 1, !event.modifierFlags.contains(.shift),
+               trackBlockRowSelectionDrag(with: event, dragController: dragController) {
+                return
+            }
+        }
         super.mouseDown(with: event)
+    }
+
+    /// Owns the selection-drag tracking loop for block rows (NSTextView's own
+    /// loop lives inside mouseDown and clamps at the view's bounds, so it can
+    /// never see a drag cross into the next block). Inside the origin block
+    /// this reproduces native character selection; past a block boundary the
+    /// controller escalates to whole-block selection; dragging back into the
+    /// origin de-escalates. Returns false when the event should fall through
+    /// to native handling (e.g. drag-and-drop of selected text).
+    private func trackBlockRowSelectionDrag(
+        with event: NSEvent,
+        dragController: BlockDragSelectionController
+    ) -> Bool {
+        guard let window, isEditable else { return false }
+        let localPoint = convert(event.locationInWindow, from: nil)
+        let anchor = characterIndexForInsertion(at: NSPoint(
+            x: localPoint.x - textContainerInset.width,
+            y: localPoint.y - textContainerInset.height
+        ))
+        // Click inside an existing selection starts text drag-and-drop —
+        // that's native behavior, keep it.
+        let existing = selectedRange()
+        if existing.length > 0, NSLocationInRange(anchor, existing) {
+            return false
+        }
+
+        window.makeFirstResponder(self)
+        setSelectedRange(NSRange(location: anchor, length: 0))
+        _ = dragController.handleDrag?(event.locationInWindow, .began, self)
+
+        var escalated = false
+        NSEvent.startPeriodicEvents(afterDelay: 0.1, withPeriod: 0.05)
+        defer { NSEvent.stopPeriodicEvents() }
+        var lastWindowPoint = event.locationInWindow
+
+        while true {
+            guard let next = window.nextEvent(matching: [.leftMouseDragged, .leftMouseUp, .periodic]) else { break }
+            if next.type == .leftMouseUp {
+                let resolution = dragController.handleDrag?(next.locationInWindow, .ended, self) ?? .textLocal
+                if resolution == .textLocal {
+                    setSelectedRange(selectedRange(), affinity: .downstream, stillSelecting: false)
+                }
+                break
+            }
+            if next.type == .leftMouseDragged {
+                lastWindowPoint = next.locationInWindow
+            }
+            let resolution = dragController.handleDrag?(lastWindowPoint, .changed, self) ?? .textLocal
+            if resolution == .escalated {
+                if !escalated {
+                    escalated = true
+                    // Whole-block selection owns the gesture — collapse the
+                    // partial text selection (Notion behavior).
+                    setSelectedRange(NSRange(location: anchor, length: 0))
+                }
+                autoscrollAncestorScrollView(towardWindowPoint: lastWindowPoint)
+                continue
+            }
+            if escalated {
+                escalated = false
+            }
+            let point = convert(lastWindowPoint, from: nil)
+            let index = characterIndexForInsertion(at: NSPoint(
+                x: point.x - textContainerInset.width,
+                y: point.y - textContainerInset.height
+            ))
+            let range = NSRange(location: min(anchor, index), length: abs(index - anchor))
+            setSelectedRange(range, affinity: index < anchor ? .upstream : .downstream, stillSelecting: true)
+        }
+        return true
+    }
+
+    /// Scrolls the page (the nearest ancestor scroll view — the row's own
+    /// scroll view is single-block-sized) while an escalated drag hovers near
+    /// the viewport's edges.
+    private func autoscrollAncestorScrollView(towardWindowPoint windowPoint: NSPoint) {
+        guard let scrollView = nearestAncestorScrollView(excluding: enclosingScrollView) else { return }
+        let clipView = scrollView.contentView
+        let pointInClip = clipView.convert(windowPoint, from: nil)
+        let visible = clipView.bounds
+        let margin: CGFloat = 32
+        let step: CGFloat = 14
+
+        var origin = visible.origin
+        if pointInClip.y < visible.minY + margin {
+            origin.y = max(0, origin.y - step)
+        } else if pointInClip.y > visible.maxY - margin {
+            let documentHeight = scrollView.documentView?.bounds.height ?? 0
+            origin.y = min(max(0, documentHeight - visible.height), origin.y + step)
+        } else {
+            return
+        }
+        guard origin != visible.origin else { return }
+        clipView.setBoundsOrigin(origin)
+        scrollView.reflectScrolledClipView(clipView)
     }
 
     /// Hit-tests the ☐/☑ glyph at the head of a checklist line. Returns the
@@ -1264,6 +1405,39 @@ enum EditorCaretPalette {
     }
 }
 
+extension String {
+    /// True when the string contains a block-splitting newline (\n, \r,
+    /// \r\n). Soft separators (U+2028/U+2029) stay inside a block and don't
+    /// count — the serializer only splits blocks on hard newlines.
+    var containsHardNewline: Bool {
+        contains("\n") || contains("\r")
+    }
+
+    /// Degrades hard newlines to soft line separators (U+2028) — the escape
+    /// hatch that preserves the one-block-per-row invariant when a structural
+    /// splice isn't possible.
+    func replacingHardNewlinesWithLineSeparators() -> String {
+        replacingOccurrences(of: "\r\n", with: "\u{2028}")
+            .replacingOccurrences(of: "\n", with: "\u{2028}")
+            .replacingOccurrences(of: "\r", with: "\u{2028}")
+    }
+
+    /// Normalizes newline flavors to \n for line-based parsing.
+    func normalizingHardNewlines() -> String {
+        replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+    }
+}
+
+/// Keys the coordinator routes to an open slash menu while the text view
+/// keeps first responder (type-through model — the menu never takes focus).
+enum SlashMenuKeyEvent {
+    case up
+    case down
+    case commit
+    case dismiss
+}
+
 struct TextKitEditorRepresentable: NSViewRepresentable {
     @Binding var attributedText: NSAttributedString
     @Binding var plainText: String
@@ -1301,7 +1475,13 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     var isEditable: Bool = true
     var scrollsInternally: Bool = false
 
-    var onSlashCommand: ((CGPoint) -> Void)?
+    /// Slash menu trigger/update — caret-anchored position plus the live query
+    /// typed after the "/" (type-through filtering: typing stays in the text
+    /// view; the menu never takes focus).
+    var onSlashCommand: ((CGPoint, String) -> Void)?
+    /// Keyboard routed to the open slash menu (↑/↓/Return/Esc) while the text
+    /// view keeps first responder. Returns true when the menu consumed the key.
+    var onSlashMenuKey: ((SlashMenuKeyEvent) -> Bool)?
     var onMention: ((CGPoint, String) -> Void)?
     var onSelectionChange: ((EditorSelectionSnapshot) -> Void)?
     var onDismissMenus: (() -> Void)?
@@ -1313,6 +1493,10 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     var onDeactivate: (() -> Void)?
     var onCommit: (() -> Void)?
     var onBoundaryCommand: ((EditorBoundaryCommand) -> Bool)?
+    /// Block-row semantic slash execution (BlockTextEditorRow → BlockOperations).
+    /// Receives the command plus the live plain text with the "/" trigger and
+    /// query ALREADY removed. Returns true when the block pipeline applied it.
+    var onSlashCommandSelected: ((SlashCommand, String) -> Bool)?
     /// Direct per-keystroke plain text callback — fires from syncBindings immediately,
     /// bypassing the SwiftUI @Binding→onChange chain which can coalesce/skip updates.
     var onPlainTextDidChange: ((String) -> Void)?
@@ -1327,6 +1511,8 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     /// Bumped by the host when editor content was rebuilt from the document by
     /// an EXTERNAL change — content must apply even while this view is focused.
     var externalContentToken: Int = 0
+    /// Cross-block drag selection bridge (block rows; set via environment).
+    var dragSelectionController: BlockDragSelectionController? = nil
 
     var resolvedEditorTextColor: NSColor {
         overrideTextColor ?? (darkMode ? NSColor.white : NSColor(DS.documentText))
@@ -1440,7 +1626,10 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
     private func configureTextView(_ textView: CosmoTextView, context: Context, isInitial: Bool = true) {
         textView.isRichText = true
-        textView.allowsUndo = true
+        // Block rows use document-level snapshot undo (BlockUndoRegistrar):
+        // per-view NSTextView undo stacks reference ranges that stop existing
+        // after structural rebuilds and resurrect stale text on ⌘Z.
+        textView.allowsUndo = !splitsOnReturn
         textView.isEditable = isEditable
         textView.isSelectable = isEditable
 
@@ -1468,6 +1657,16 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             coordinator?.parent.onDeactivate?()
         }
         textView.scrollsInternally = scrollsInternally
+        textView.blockRowMode = splitsOnReturn
+        textView.blockDragSelectionController = splitsOnReturn ? dragSelectionController : nil
+        textView.onBlockPaste = { [weak coordinator = context.coordinator] pastedText in
+            guard let coordinator, let textView = coordinator.textViewReference else { return false }
+            return coordinator.performBlockPaste(pastedText, in: textView)
+        }
+        textView.onStructuredBlockPaste = { [weak coordinator = context.coordinator] data in
+            guard let coordinator, let textView = coordinator.textViewReference else { return false }
+            return coordinator.performStructuredBlockPaste(data, in: textView)
+        }
         textView.rendersElementChrome = rendersElementChrome
         textView.elementBlockDarkMode = darkMode
         textView.elementBlockBaseFontSize = fontSize
@@ -1657,6 +1856,10 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         private weak var scrollContentView: NSClipView?
         private weak var observedScrollView: NSScrollView?
         private var mentionStartIndex: Int?
+        /// UTF-16 offset of the "/" that opened the slash menu. Tracked like
+        /// mentionStartIndex so the query filters live and the trigger can be
+        /// removed by exact range on commit (never by guessing at the last "/").
+        private var slashStartIndex: Int?
         private var isInHeadingMode = false
 
         private enum ActiveBlockMode {
@@ -1989,6 +2192,25 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 return
             }
 
+            // Containment: a hard newline reached a block row anyway
+            // (dictation, IME commit, RTF paste). Splice it into real blocks
+            // SYNCHRONOUSLY — before the deferred sync can round-trip the
+            // multi-line content through the document and re-splice it on the
+            // next keystroke (the paste-duplication bug). While a rebuild is
+            // already in flight the view is the stale side: swallow instead
+            // of clearing the suppression flag below.
+            if parent.splitsOnReturn, textView.string.containsHardNewline {
+                if awaitingExternalContent { return }
+                containHardNewlines(in: textView)
+                return
+            }
+
+            // Live markdown aliases: "# ", "- ", "> ", "[] ", "1. ", "---"
+            // completed at the start of a paragraph row convert the block.
+            if parent.splitsOnReturn, applyMarkdownAliasIfNeeded(in: textView) {
+                return
+            }
+
             // A real edit landed in the text view — it's authoritative again.
             awaitingExternalContent = false
 
@@ -2217,6 +2439,15 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             applyFocusBand(to: textView)
             updateImageResizeOverlay(in: textView)
 
+            // A caret that moved at or before the "/" trigger ends the slash
+            // session (clicking before it, selecting across it, Home, etc.).
+            if let startIndex = slashStartIndex, selectedRange.location <= startIndex {
+                slashStartIndex = nil
+                if parent.menusVisible?() == true {
+                    dismissMenus()
+                }
+            }
+
             // Auto-detect block mode based on current line prefix (must run for ALL cursor positions)
             let lineRange = currentLineRange(in: textView)
             let lineText = (textView.string as NSString).substring(with: lineRange)
@@ -2335,6 +2566,33 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         }
 
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            // Slash menu owns ↑/↓/Return/Tab/Esc while it's open — the text
+            // view keeps first responder (type-through filtering), so these
+            // keys must be routed to the menu BEFORE any editing behavior
+            // (especially before the splitsOnReturn branch: Return during an
+            // open menu commits the highlighted command, it must never split).
+            if slashMenuIsActive {
+                if commandSelector == #selector(NSResponder.moveUp(_:)),
+                   parent.onSlashMenuKey?(.up) == true {
+                    return true
+                }
+                if commandSelector == #selector(NSResponder.moveDown(_:)),
+                   parent.onSlashMenuKey?(.down) == true {
+                    return true
+                }
+                if commandSelector == #selector(NSResponder.insertNewline(_:))
+                    || commandSelector == #selector(NSResponder.insertTab(_:)) {
+                    if parent.onSlashMenuKey?(.commit) == true {
+                        return true
+                    }
+                }
+                if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+                    _ = parent.onSlashMenuKey?(.dismiss)
+                    dismissMenus()
+                    return true
+                }
+            }
+
             if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
                 if parent.menusVisible?() != true,
                    parent.onBoundaryCommand?(.escapeSelectBlock) == true {
@@ -2690,8 +2948,41 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         }
 
         private func handleSlashState(in textView: CosmoTextView, text: String, cursorLocation: Int) {
-            guard parent.allowSlashCommands, cursorLocation > 0 else { return }
+            guard parent.allowSlashCommands else {
+                slashStartIndex = nil
+                return
+            }
             let nsText = text as NSString
+
+            // Live session: keep the query (text between the "/" and the caret)
+            // in sync, dismiss when the trigger breaks. Typing stays in the
+            // text view the whole time — the menu never takes focus.
+            if let startIndex = slashStartIndex {
+                let stillValid = startIndex < nsText.length
+                    && nsText.substring(with: NSRange(location: startIndex, length: 1)) == "/"
+                    && cursorLocation > startIndex
+                guard stillValid else {
+                    slashStartIndex = nil
+                    dismissMenus()
+                    return
+                }
+                let queryRange = NSRange(location: startIndex + 1, length: cursorLocation - startIndex - 1)
+                guard NSMaxRange(queryRange) <= nsText.length else {
+                    slashStartIndex = nil
+                    dismissMenus()
+                    return
+                }
+                let query = nsText.substring(with: queryRange)
+                if query.contains("\n") || query.contains("\u{2028}") {
+                    slashStartIndex = nil
+                    dismissMenus()
+                    return
+                }
+                parent.onSlashCommand?(caretPosition(for: startIndex, in: textView), query)
+                return
+            }
+
+            guard cursorLocation > 0 else { return }
             let currentChar = nsText.substring(with: NSRange(location: cursorLocation - 1, length: 1))
             guard currentChar == "/" else { return }
 
@@ -2703,9 +2994,148 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             }()
 
             if isStartOfDocument || precededByWhitespace {
+                slashStartIndex = cursorLocation - 1
                 menuOpenedAt = CFAbsoluteTimeGetCurrent()
-                parent.onSlashCommand?(caretPosition(for: cursorLocation - 1, in: textView))
+                parent.onSlashCommand?(caretPosition(for: cursorLocation - 1, in: textView), "")
             }
+        }
+
+        /// Multi-line paste in a block row: delete any selection, then hand
+        /// the pasted text to the host as ONE structural splice. The text
+        /// view never holds the multi-line content, so there is no window in
+        /// which a stale re-emission can duplicate blocks.
+        func performBlockPaste(_ pastedText: String, in textView: CosmoTextView) -> Bool {
+            guard parent.splitsOnReturn else { return false }
+            let selection = textView.selectedRange()
+            if selection.length > 0 {
+                textView.insertText("", replacementRange: selection)
+            }
+            let textLength = (textView.string as NSString).length
+            let caretOffsetFromEnd = max(0, textLength - textView.selectedRange().location)
+            beginAwaitingExternalContent()
+            if parent.onBoundaryCommand?(.pasteBlocks(
+                pastedText: pastedText,
+                caretUTF16OffsetFromEnd: caretOffsetFromEnd,
+                livePlainText: textView.string
+            )) == true {
+                dismissMenus()
+                return true
+            }
+            cancelAwaitingExternalContent()
+            return false
+        }
+
+        /// Markdown alias completion — hand the conversion to the block
+        /// pipeline. The row validates the block's kind (paragraphs only).
+        private func applyMarkdownAliasIfNeeded(in textView: CosmoTextView) -> Bool {
+            guard parent.allowSlashCommands,
+                  slashStartIndex == nil,
+                  let alias = MarkdownBlockAlias.match(
+                    text: textView.string,
+                    cursorLocation: textView.selectedRange().location
+                  ) else {
+                return false
+            }
+            beginAwaitingExternalContent()
+            if parent.onBoundaryCommand?(.applyMarkdownAlias(
+                kind: alias.kind,
+                checked: alias.checked,
+                aliasUTF16Length: alias.utf16Length,
+                livePlainText: textView.string
+            )) == true {
+                return true
+            }
+            cancelAwaitingExternalContent()
+            return false
+        }
+
+        /// Structured block paste (com.cosmo.blocks) — kinds survive within
+        /// the app. Falls back to the plain-text splice when decode fails.
+        func performStructuredBlockPaste(_ data: Data, in textView: CosmoTextView) -> Bool {
+            guard parent.splitsOnReturn,
+                  let blocks = try? JSONDecoder().decode([RichBlock].self, from: data),
+                  !blocks.isEmpty else {
+                return false
+            }
+            let selection = textView.selectedRange()
+            if selection.length > 0 {
+                textView.insertText("", replacementRange: selection)
+            }
+            let textLength = (textView.string as NSString).length
+            let caretOffsetFromEnd = max(0, textLength - textView.selectedRange().location)
+            beginAwaitingExternalContent()
+            if parent.onBoundaryCommand?(.pasteBlockRun(
+                blocks: blocks.map { $0.withRegeneratedIDs() },
+                caretUTF16OffsetFromEnd: caretOffsetFromEnd,
+                livePlainText: textView.string
+            )) == true {
+                dismissMenus()
+                return true
+            }
+            cancelAwaitingExternalContent()
+            return false
+        }
+
+        /// Backstop for hard newlines that entered a block row through paths
+        /// paste interception can't see. Re-parses the live content into
+        /// blocks synchronously with write-back suppression armed.
+        private func containHardNewlines(in textView: CosmoTextView) {
+            let textLength = (textView.string as NSString).length
+            let caretOffsetFromEnd = max(0, textLength - textView.selectedRange().location)
+            beginAwaitingExternalContent()
+            if parent.onBoundaryCommand?(.normalizeHardNewlines(
+                caretUTF16OffsetFromEnd: caretOffsetFromEnd,
+                livePlainText: textView.string
+            )) == true {
+                return
+            }
+            // No host handled it — degrade the newlines to soft separators in
+            // place so the one-block invariant holds.
+            cancelAwaitingExternalContent()
+            let sanitized = textView.string.replacingHardNewlinesWithLineSeparators()
+            let fullRange = NSRange(location: 0, length: textLength)
+            if textView.shouldChangeText(in: fullRange, replacementString: sanitized) {
+                let selection = textView.selectedRange()
+                isApplyingStructuralEdit = true
+                textView.textStorage?.replaceCharacters(in: fullRange, with: sanitized)
+                textView.setSelectedRange(NSRange(
+                    location: min(selection.location, (textView.string as NSString).length),
+                    length: 0
+                ))
+                textView.didChangeText()
+                isApplyingStructuralEdit = false
+                syncBindings(from: textView)
+            }
+        }
+
+        /// Whether a slash session is live (trigger tracked and the host
+        /// reports its menu visible) — gates the menu key routing.
+        private var slashMenuIsActive: Bool {
+            slashStartIndex != nil && parent.menusVisible?() == true
+        }
+
+        /// Deletes the tracked "/" trigger and any query typed after it, as one
+        /// undoable text edit. Returns true when a trigger was removed.
+        @discardableResult
+        func consumeSlashTrigger(in textView: CosmoTextView) -> Bool {
+            guard let startIndex = slashStartIndex else { return false }
+            slashStartIndex = nil
+            let nsText = textView.string as NSString
+            guard startIndex < nsText.length,
+                  nsText.substring(with: NSRange(location: startIndex, length: 1)) == "/" else {
+                return false
+            }
+            let caret = textView.selectedRange().location
+            let end = max(startIndex + 1, min(caret, nsText.length))
+            let triggerRange = NSRange(location: startIndex, length: end - startIndex)
+            guard textView.shouldChangeText(in: triggerRange, replacementString: "") else { return false }
+            isApplyingStructuralEdit = true
+            textView.textStorage?.replaceCharacters(in: triggerRange, with: "")
+            textView.setSelectedRange(NSRange(location: startIndex, length: 0))
+            textView.didChangeText()
+            isApplyingStructuralEdit = false
+            syncBindings(from: textView)
+            return true
         }
 
         private func caretPosition(for location: Int, in textView: NSTextView) -> CGPoint {
@@ -2724,6 +3154,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
         private func dismissMenus() {
             mentionStartIndex = nil
+            slashStartIndex = nil
             parent.onDismissMenus?()
         }
 
@@ -2983,8 +3414,20 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             }
             guard acceptsActiveEditorCommand(notification, textView: textView) else { return }
 
+            // Block rows execute synchronously through the block pipeline —
+            // the legacy TextKit mutations below (heading fonts, "• " prefixes,
+            // divider glyph runs) are continuous-editor behaviors and corrupt a
+            // single-block row. Only .image and .writingAI fall through, with
+            // the trigger already consumed.
+            if parent.splitsOnReturn {
+                handleBlockRowSlashCommand(command, in: textView)
+                return
+            }
+
             var insertionPoint = textView.selectedRange().location
-            if insertionPoint > 0 {
+            if consumeSlashTrigger(in: textView) {
+                insertionPoint = textView.selectedRange().location
+            } else if insertionPoint > 0 {
                 let slashRange = NSRange(location: insertionPoint - 1, length: 1)
                 if slashRange.location < storage.length,
                    (textView.string as NSString).substring(with: slashRange) == "/" {
@@ -3039,6 +3482,39 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             notifyContentHeightChange(for: textView)
 
             dismissMenus()
+        }
+
+        /// Block-row slash execution: consume the tracked trigger, then hand
+        /// the command to the block pipeline (BlockOperations via the row's
+        /// onSlashCommandSelected) in ONE synchronous step — no delays, no
+        /// refocus hops, no raw TextKit mutations. The text view is the stale
+        /// side once the document rebuilds, so write-backs are suppressed
+        /// until the fresh content lands (same contract as split/merge).
+        private func handleBlockRowSlashCommand(_ command: SlashCommand, in textView: CosmoTextView) {
+            consumeSlashTrigger(in: textView)
+            defer { dismissMenus() }
+
+            switch command.type {
+            case .writingAI:
+                NotificationCenter.default.post(name: .contentFocusOpenWritingAI, object: nil)
+                return
+            case .image:
+                guard parent.allowImages else { return }
+                presentImagePicker(for: textView)
+                return
+            case .elements, .newElement:
+                // Submenu navigation is handled by the menu itself.
+                return
+            default:
+                break
+            }
+
+            guard let handler = parent.onSlashCommandSelected else { return }
+            beginAwaitingExternalContent()
+            let handled = handler(command, plainTextForBinding(from: textView))
+            if !handled {
+                cancelAwaitingExternalContent()
+            }
         }
 
         @objc private func handleToggleFormatting(_ notification: Notification) {

@@ -745,6 +745,8 @@
 		C0DECAFE0000000000000027 /* MindMapLayoutEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECAFE0000000000000026 /* MindMapLayoutEngineTests.swift */; };
 		C0DECAFE0000000000000032 /* InquiryAssistantDock.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECAFE0000000000000031 /* InquiryAssistantDock.swift */; };
 		C0DECAFE0000000000000034 /* InquiryRoutingReceiptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECAFE0000000000000033 /* InquiryRoutingReceiptView.swift */; };
+		C0DECAFE00000000000000A5 /* InquiryKindBadgeMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECAFE00000000000000A4 /* InquiryKindBadgeMenu.swift */; };
+		C0DECAFE00000000000000A3 /* InquiryRoutingCorrectionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECAFE00000000000000A2 /* InquiryRoutingCorrectionStore.swift */; };
 		C0DECAFE0000000000000042 /* InquiryMindMapModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECAFE0000000000000041 /* InquiryMindMapModel.swift */; };
 		C0DECAFE0000000000000044 /* InquiryMindMapLayoutEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECAFE0000000000000043 /* InquiryMindMapLayoutEngine.swift */; };
 		C0DECAFE0000000000000046 /* InquiryMindMapNodeCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECAFE0000000000000045 /* InquiryMindMapNodeCard.swift */; };
@@ -758,6 +760,7 @@
 		C0DECAFE0000000000000077 /* ConnectionBoardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECAFE0000000000000076 /* ConnectionBoardView.swift */; };
 		C0DECAFE0000000000000079 /* ConnectionSectionCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECAFE0000000000000078 /* ConnectionSectionCardView.swift */; };
 		C0DECAFE0000000000000081 /* ConnectionSectionDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECAFE0000000000000080 /* ConnectionSectionDetailView.swift */; };
+		C0DECAFE00000000000000A7 /* ConnectionLinkedText.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECAFE00000000000000A6 /* ConnectionLinkedText.swift */; };
 		C0DECAFE0000000000000083 /* ConnectionOutlineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECAFE0000000000000082 /* ConnectionOutlineView.swift */; };
 		C0DECAFE0000000000000085 /* ConnectionInspectorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECAFE0000000000000084 /* ConnectionInspectorView.swift */; };
 		C0DECAFE0000000000000087 /* ConnectionWorkspaceToolbar.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECAFE0000000000000086 /* ConnectionWorkspaceToolbar.swift */; };
@@ -1719,6 +1722,8 @@
 		C0DECAFE0000000000000026 /* MindMapLayoutEngineTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MindMapLayoutEngineTests.swift; sourceTree = "<group>"; };
 		C0DECAFE0000000000000031 /* InquiryAssistantDock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InquiryAssistantDock.swift; sourceTree = "<group>"; };
 		C0DECAFE0000000000000033 /* InquiryRoutingReceiptView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InquiryRoutingReceiptView.swift; sourceTree = "<group>"; };
+		C0DECAFE00000000000000A4 /* InquiryKindBadgeMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InquiryKindBadgeMenu.swift; sourceTree = "<group>"; };
+		C0DECAFE00000000000000A2 /* InquiryRoutingCorrectionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InquiryRoutingCorrectionStore.swift; sourceTree = "<group>"; };
 		C0DECAFE0000000000000041 /* InquiryMindMapModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InquiryMindMapModel.swift; sourceTree = "<group>"; };
 		C0DECAFE0000000000000043 /* InquiryMindMapLayoutEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InquiryMindMapLayoutEngine.swift; sourceTree = "<group>"; };
 		C0DECAFE0000000000000045 /* InquiryMindMapNodeCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InquiryMindMapNodeCard.swift; sourceTree = "<group>"; };
@@ -1732,6 +1737,7 @@
 		C0DECAFE0000000000000076 /* ConnectionBoardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionBoardView.swift; sourceTree = "<group>"; };
 		C0DECAFE0000000000000078 /* ConnectionSectionCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionSectionCardView.swift; sourceTree = "<group>"; };
 		C0DECAFE0000000000000080 /* ConnectionSectionDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionSectionDetailView.swift; sourceTree = "<group>"; };
+		C0DECAFE00000000000000A6 /* ConnectionLinkedText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionLinkedText.swift; sourceTree = "<group>"; };
 		C0DECAFE0000000000000082 /* ConnectionOutlineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionOutlineView.swift; sourceTree = "<group>"; };
 		C0DECAFE0000000000000084 /* ConnectionInspectorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionInspectorView.swift; sourceTree = "<group>"; };
 		C0DECAFE0000000000000086 /* ConnectionWorkspaceToolbar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionWorkspaceToolbar.swift; sourceTree = "<group>"; };
@@ -2674,6 +2680,7 @@
 				02C9DE1E8E9B41B9BB25EA5D /* InquirySteleView.swift */,
 				F7AC3A8DF6BD4F5BBEFA6213 /* InquiryReaderView.swift */,
 				8447EE7345BB40F3B10EDC1C /* InquiryNotesRail.swift */,
+				C0DECAFE00000000000000A4 /* InquiryKindBadgeMenu.swift */,
 				0F836BC968A04D06AEF34F1C /* InquirySourcesRail.swift */,
 				9A61F239B40F43E197E2E966 /* InquiryDockView.swift */,
 				EDFE83DD885E4D76B2EBD26A /* InquiryMapOverlay.swift */,
@@ -2811,6 +2818,7 @@
 			isa = PBXGroup;
 			children = (
 				4590D845DF7417C167ABEE85 /* CatalogStore.swift */,
+				C0DECAFE00000000000000A2 /* InquiryRoutingCorrectionStore.swift */,
 				608FF06118EAB164B022E805 /* ConnectionStore.swift */,
 				134A4349CB6BC042E1EDB151 /* ImageStore.swift */,
 				E59FAE4103FD53EA2F539E8E /* ThumbnailCacheService.swift */,
@@ -3260,6 +3268,7 @@
 				C0DECAFE0000000000000076 /* ConnectionBoardView.swift */,
 				C0DECAFE0000000000000078 /* ConnectionSectionCardView.swift */,
 				C0DECAFE0000000000000080 /* ConnectionSectionDetailView.swift */,
+				C0DECAFE00000000000000A6 /* ConnectionLinkedText.swift */,
 				C0DECAFE0000000000000082 /* ConnectionOutlineView.swift */,
 				C0DECAFE0000000000000084 /* ConnectionInspectorView.swift */,
 				C0DECAFE0000000000000086 /* ConnectionWorkspaceToolbar.swift */,
@@ -4662,6 +4671,8 @@
 				C0DECAFE0000000000000021 /* InquiryLiveRouter.swift in Sources */,
 				C0DECAFE0000000000000032 /* InquiryAssistantDock.swift in Sources */,
 				C0DECAFE0000000000000034 /* InquiryRoutingReceiptView.swift in Sources */,
+				C0DECAFE00000000000000A5 /* InquiryKindBadgeMenu.swift in Sources */,
+				C0DECAFE00000000000000A3 /* InquiryRoutingCorrectionStore.swift in Sources */,
 				C0DECAFE0000000000000042 /* InquiryMindMapModel.swift in Sources */,
 				C0DECAFE0000000000000051 /* ConnectionEditableSurface.swift in Sources */,
 				C0DECAFE0000000000000071 /* ConnectionWorkspaceModel.swift in Sources */,
@@ -4670,6 +4681,7 @@
 				C0DECAFE0000000000000077 /* ConnectionBoardView.swift in Sources */,
 				C0DECAFE0000000000000079 /* ConnectionSectionCardView.swift in Sources */,
 				C0DECAFE0000000000000081 /* ConnectionSectionDetailView.swift in Sources */,
+				C0DECAFE00000000000000A7 /* ConnectionLinkedText.swift in Sources */,
 				C0DECAFE0000000000000083 /* ConnectionOutlineView.swift in Sources */,
 				C0DECAFE0000000000000085 /* ConnectionInspectorView.swift in Sources */,
 				C0DECAFE0000000000000087 /* ConnectionWorkspaceToolbar.swift in Sources */,

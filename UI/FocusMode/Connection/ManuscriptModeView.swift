@@ -92,11 +92,18 @@ struct ManuscriptModeView: View {
                             .fill(section.type.accentColor.opacity(0.7))
                             .frame(width: 5, height: 5)
                             .padding(.top, 9)
-                        Text(item.resolvedPlainText)
-                            .font(.system(size: 16, weight: .regular, design: .serif))
-                            .foregroundStyle(DS.inkWash)
-                            .fixedSize(horizontal: false, vertical: true)
+                        if let linkedUUID = item.linkedConnectionUUID {
+                            ConnectionLinkPill(title: item.resolvedPlainText) {
+                                ConnectionLinkOpener.open(uuid: linkedUUID)
+                            }
+                        } else {
+                            ConnectionLinkedText(
+                                text: item.resolvedPlainText,
+                                font: .system(size: 16, weight: .regular, design: .serif),
+                                color: DS.inkWash
+                            )
                             .lineSpacing(4)
+                        }
                     }
                 }
             }

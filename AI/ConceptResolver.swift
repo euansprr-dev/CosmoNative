@@ -35,35 +35,37 @@ actor ConceptResolver {
         var extractUUIDs: [String]
         var rationale: String
         var confidence: Double
+        var relatedConceptNames: [String] = []   // Other pages this one mentions → hyperlinks
     }
 
     /// Resolves concept assignments for a session's extracts.
-    /// Extracts the live router already concept-tagged at capture time are assigned
-    /// deterministically from their persisted tags — they are NOT re-categorized.
-    /// Only untagged extracts go to the LLM; when everything is tagged, no LLM
-    /// call happens at all. Never throws.
+    /// One LLM call sees the WHOLE session — every extract, with any capture-time
+    /// concept tags included as hints — so pages consolidate instead of
+    /// fragmenting one tag at a time. Tagged extracts the model omits are
+    /// backfilled into EXISTING pages only (merge-only: the backfill can never
+    /// create a new page). Falls back to tags + heuristics offline. Never throws.
     func resolve(_ input: Input) async -> [ConceptAssignment] {
         guard !input.extracts.isEmpty else { return [] }
         let preassigned = Self.assignmentsFromPersistedTags(input)
-        let taggedUUIDs = Set(preassigned.flatMap(\.extractUUIDs))
-        let remaining = input.extracts.filter { !taggedUUIDs.contains($0.uuid) }
-        guard !remaining.isEmpty else { return preassigned }
-
-        var llmInput = input
-        llmInput.extracts = remaining
         do {
             let raw = try await ResearchService.shared.analyze(
-                prompt: buildPrompt(llmInput, sessionConcepts: preassigned.map(\.conceptName)),
+                prompt: buildPrompt(input),
                 systemPrompt: Self.systemPrompt,
                 tier: .strategist,
                 maxTokens: 2400
             )
-            let parsed = parse(raw: raw, input: llmInput)
-            if !parsed.isEmpty { return Self.merged(preassigned, parsed) }
+            let parsed = parse(raw: raw, input: input)
+            if !parsed.isEmpty {
+                let backfill = preassigned.filter { assignment in
+                    if case .mergeInto = assignment.action { return true }
+                    return false
+                }
+                return Self.consolidated(Self.merged(parsed, backfill))
+            }
         } catch {
-            print("[ConceptResolver] LLM failed: \(error) — using heuristic assignments")
+            print("[ConceptResolver] LLM failed: \(error) — using tag + heuristic assignments")
         }
-        return Self.merged(preassigned, Self.heuristicAssignments(llmInput))
+        return Self.consolidated(Self.merged(preassigned, Self.heuristicAssignments(input)))
     }
 
     // MARK: - Prompt
@@ -78,16 +80,37 @@ actor ConceptResolver {
     research sessions: future sessions will merge new extracts into the same page.
 
     You receive:
-    1. EXTRACTS — each with a UUID, kind, and text.
+    1. EXTRACTS — each with a UUID, kind, optional capture-time tags, and text. Tags were added mid-session \
+    by a quick router with no overview: treat them as HINTS, not verdicts — consolidate freely. But when a \
+    tag matches an EXISTING page, prefer merging that extract into it.
     2. EXISTING CONCEPT PAGES — each with a UUID and title. If an extract belongs to one of these, you MUST \
     merge into it by its UUID rather than creating a near-duplicate page.
-    3. LEXICON TERMS — vocabulary the user has accumulated; prefer these spellings for concept names.
+    3. HOME CONCEPT — the Deep Dive's own topic. Extracts about the topic in general belong on its page \
+    (when it appears in EXISTING CONCEPT PAGES), not on new miscellaneous pages.
+    4. LEXICON TERMS — vocabulary the user has accumulated; prefer these spellings for concept names.
+
+    THE GRANULARITY RUBRIC — what earns a page:
+    - The encyclopedia-entry litmus: a page is a topic someone would look up on its own and revisit across \
+    sessions. An ASPECT of a topic — its benefits, its history, its steps, its problems — is NEVER its own \
+    page; that material merges into the topic's page. "Benefits of pranayama" is wrong: those extracts \
+    belong on "Pranayama".
+    - Create a NEW page only when (a) 2+ extracts substantively develop the concept, OR (b) one extract \
+    but the concept is clearly central to the Deep Dive and will accrue more — justify this in rationale.
+    - Otherwise merge the material into the closest existing page (or the home concept's page) and name \
+    the concept in that assignment's relatedConcepts — it earns its own page in a later session once more \
+    material accrues.
+    - Calibration: a typical session yields 0-3 new pages. If you are proposing more than 4, you are \
+    fragmenting — consolidate.
 
     Decision rules, in order:
     - If an extract's main subject matches an existing page (same concept, even with different wording), \
     assign action "merge" with that page's UUID. "Pranayama breathing" matches an existing "Pranayama" page.
     - If 2+ extracts share a subject with no existing page, create ONE new concept ("create").
-    - One extract may belong to MULTIPLE concepts when it genuinely bridges them — list its UUID under each.
+    - OVERLAP IS GOOD: one extract may belong to MULTIPLE concepts — when a benefit, mechanism, or example \
+    genuinely applies to two pages, list its UUID under BOTH. Do not pick one.
+    - relatedConcepts: for each assignment, list the other concept pages (from this plan or from EXISTING \
+    pages, by name) that this page mentions or depends on. These become hyperlinks between pages — be \
+    generous but truthful.
     - If an extract is too vague, personal, or session-specific to belong to any durable concept, OMIT it \
     entirely. Do not force assignments.
     - Never invent UUIDs. Only use extract UUIDs and connection UUIDs that appear in the input.
@@ -100,13 +123,20 @@ actor ConceptResolver {
 
     Example B (create new): No existing pages. Extracts e-1 "Vagal tone improves with slow exhales", \
     e-2 "The vagus nerve links breath rate to heart rate". \
-    → {"conceptName":"Vagus nerve","action":"create","extractUUIDs":["e-1","e-2"]}
+    → {"conceptName":"Vagus nerve","action":"create","extractUUIDs":["e-1","e-2"],"relatedConcepts":["Coherent breathing"]}
 
     Example C (multi-concept extract): Extract e-4 "Slow pranayama raises vagal tone within minutes" \
-    bridges both → its UUID appears under BOTH "Pranayama" (merge, if a page exists) and "Vagus nerve".
+    bridges both → its UUID appears under BOTH "Pranayama" (merge, if a page exists) and "Vagus nerve", \
+    and each page lists the other in relatedConcepts.
 
     Example D (leave unassigned): Extract e-7 "remember to ask Maria about her teacher" is personal/\
     session-specific → appears in NO assignment.
+
+    Example E (aspect folds into its topic): Existing page {"uuid":"abc-1","title":"Breathwork"}. \
+    Extracts e-11 "Breathwork lowers stress", e-12 "It also improves sleep quality" (tagged \
+    ["Benefits of breathwork"]). "Benefits of breathwork" is an ASPECT, not a topic → \
+    {"conceptName":"Breathwork","action":"merge","connectionUUID":"abc-1","extractUUIDs":["e-11","e-12"]}. \
+    No "Benefits of breathwork" page is ever created.
 
     ALWAYS respond with VALID JSON only, no prose, matching:
     {
@@ -117,6 +147,7 @@ actor ConceptResolver {
           "action": "create" | "merge",
           "connectionUUID": "<existing page UUID, required when action is merge>",
           "extractUUIDs": ["<uuid>", ...],
+          "relatedConcepts": ["<other concept page name>", ...],
           "rationale": "<one sentence>",
           "confidence": <0.0-1.0>
         }
@@ -124,10 +155,10 @@ actor ConceptResolver {
     }
     """
 
-    private func buildPrompt(_ input: Input, sessionConcepts: [String] = []) -> String {
+    private func buildPrompt(_ input: Input) -> String {
         var lines: [String] = []
         if let dd = input.deepDive {
-            lines.append("Deep Dive topic: \(dd.title ?? "Untitled")")
+            lines.append("HOME CONCEPT (the Deep Dive's own topic): \(dd.title ?? "Untitled")")
         }
         if !input.existingConnections.isEmpty {
             lines.append("\nEXISTING CONCEPT PAGES:")
@@ -141,14 +172,17 @@ actor ConceptResolver {
             let terms = input.lexicon.prefix(30).compactMap(\.title).joined(separator: ", ")
             lines.append("\nLEXICON TERMS: \(terms)")
         }
-        if !sessionConcepts.isEmpty {
-            lines.append("\nCONCEPTS ALREADY ASSIGNED THIS SESSION (reuse these exact names when an extract fits one): \(sessionConcepts.prefix(25).joined(separator: ", "))")
-        }
         lines.append("\nEXTRACTS:")
         for extract in input.extracts.prefix(60) {
             let kind = extract.extractMetadata?.kind.rawValue ?? "extract"
             let body = (extract.body ?? extract.title ?? "").prefix(280)
-            lines.append(#"- {"uuid":"\#(extract.uuid)","kind":"\#(kind)","text":"\#(body)"}"#)
+            let tags = extract.extractMetadata?.conceptNames ?? []
+            if tags.isEmpty {
+                lines.append(#"- {"uuid":"\#(extract.uuid)","kind":"\#(kind)","text":"\#(body)"}"#)
+            } else {
+                let tagList = tags.prefix(3).map { #""\#($0)""# }.joined(separator: ",")
+                lines.append(#"- {"uuid":"\#(extract.uuid)","kind":"\#(kind)","tags":[\#(tagList)],"text":"\#(body)"}"#)
+            }
         }
         lines.append("\n---\nAssign these extracts to concept pages per the system prompt rules. JSON only.")
         return lines.joined(separator: "\n")
@@ -196,7 +230,10 @@ actor ConceptResolver {
                 action: action,
                 extractUUIDs: extractUUIDs,
                 rationale: (entry["rationale"] as? String) ?? "",
-                confidence: (entry["confidence"] as? Double) ?? 0.6
+                confidence: (entry["confidence"] as? Double) ?? 0.6,
+                relatedConceptNames: ((entry["relatedConcepts"] as? [String]) ?? [])
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty && Self.conceptKey($0) != key }
             ))
         }
         return assignments
@@ -259,12 +296,91 @@ actor ConceptResolver {
                 if case .createNew = result[idx].action, case .mergeInto = assignment.action {
                     result[idx].action = assignment.action
                 }
+                let knownRelated = Set(result[idx].relatedConceptNames.map(conceptKey))
+                result[idx].relatedConceptNames += assignment.relatedConceptNames
+                    .filter { !knownRelated.contains(conceptKey($0)) }
             } else {
                 indexByKey[assignment.conceptKey] = result.count
                 result.append(assignment)
             }
         }
         return result
+    }
+
+    // MARK: - Deterministic consolidation post-pass
+
+    /// Anti-fragmentation safety net applied to every resolver result (LLM and
+    /// fallback alike):
+    /// 1. Near-duplicate fold — assignments whose concept keys are token-subsets
+    ///    of each other ("breathing" ⊂ "box breathing") collapse into whichever
+    ///    holds more material; the folded name survives as an alias.
+    /// 2. Singleton fold — a one-extract "create" whose extract already lives in
+    ///    another assignment is dropped; its name survives as a relatedConcept
+    ///    (a mention link), not a page.
+    nonisolated static func consolidated(_ assignments: [ConceptAssignment]) -> [ConceptAssignment] {
+        guard assignments.count > 1 else { return assignments }
+        var result = assignments
+
+        // 1. Near-duplicate fold.
+        var didFold = true
+        while didFold {
+            didFold = false
+            outer: for i in result.indices {
+                for j in result.indices where i != j {
+                    let a = Set(result[i].conceptKey.split(separator: " ").map(String.init))
+                    let b = Set(result[j].conceptKey.split(separator: " ").map(String.init))
+                    guard !a.isEmpty, !b.isEmpty, a != b, a.isSubset(of: b) || b.isSubset(of: a) else { continue }
+                    // Survivor = more material; a merge action always survives a create.
+                    var survivorIdx = result[i].extractUUIDs.count >= result[j].extractUUIDs.count ? i : j
+                    var otherIdx = survivorIdx == i ? j : i
+                    if case .createNew = result[survivorIdx].action, case .mergeInto = result[otherIdx].action {
+                        swap(&survivorIdx, &otherIdx)
+                    }
+                    var kept = result[survivorIdx]
+                    let dropped = result[otherIdx]
+                    let knownExtracts = Set(kept.extractUUIDs)
+                    kept.extractUUIDs += dropped.extractUUIDs.filter { !knownExtracts.contains($0) }
+                    if kept.conceptName != dropped.conceptName, !kept.aliases.contains(dropped.conceptName) {
+                        kept.aliases.append(dropped.conceptName)
+                    }
+                    let knownRelated = Set(kept.relatedConceptNames.map(conceptKey) + [kept.conceptKey])
+                    kept.relatedConceptNames += dropped.relatedConceptNames
+                        .filter { !knownRelated.contains(conceptKey($0)) }
+                    result[survivorIdx] = kept
+                    result.remove(at: otherIdx)
+                    didFold = true
+                    break outer
+                }
+            }
+        }
+
+        // 2. Singleton fold.
+        let allExtractCounts = result.reduce(into: [String: Int]()) { counts, assignment in
+            for uuid in assignment.extractUUIDs { counts[uuid, default: 0] += 1 }
+        }
+        var survivors: [ConceptAssignment] = []
+        var mentionNames: [String] = []
+        for assignment in result {
+            let isSingletonCreate: Bool
+            if case .createNew = assignment.action, assignment.extractUUIDs.count == 1,
+               let only = assignment.extractUUIDs.first, (allExtractCounts[only] ?? 0) > 1 {
+                isSingletonCreate = true
+            } else {
+                isSingletonCreate = false
+            }
+            if isSingletonCreate {
+                mentionNames.append(assignment.conceptName)
+            } else {
+                survivors.append(assignment)
+            }
+        }
+        guard !mentionNames.isEmpty else { return survivors }
+        return survivors.map { assignment in
+            var copy = assignment
+            let known = Set(copy.relatedConceptNames.map(conceptKey) + [copy.conceptKey])
+            copy.relatedConceptNames += mentionNames.filter { !known.contains(conceptKey($0)) }
+            return copy
+        }
     }
 
     // MARK: - Heuristic fallback

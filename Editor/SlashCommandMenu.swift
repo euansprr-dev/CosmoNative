@@ -5,46 +5,38 @@
 
 import SwiftUI
 
+/// Type-through slash menu: the query lives in the document text after the
+/// "/" — this view never takes focus. Filtering, the highlighted index, and
+/// keyboard events (routed from the text view's coordinator) all arrive from
+/// the host; the menu is purely presentational plus hover/click.
 struct SlashCommandMenu: View {
     let position: CGPoint
+    /// Live query typed after the "/" (display only — filtering is upstream).
+    let query: String
+    /// Already filtered against the query, in display order.
     let commands: [SlashCommand]
-    let searchCommands: [SlashCommand]
     let elementSubmenuCommands: [SlashCommand]
+    let selectedIndex: Int
+    let onHighlight: (Int) -> Void
     let onSelect: (SlashCommand) -> Void
     let onDismiss: () -> Void
     var darkMode: Bool = false  // Dark glass mode for Thinkspace blocks
 
-    @State private var searchText = ""
-    @State private var selectedIndex = 0
     @State private var appearedRows: Set<String> = []
-    @State private var menuAppeared = false
-    @FocusState private var isSearchFocused: Bool
-
-    // MARK: - Theme-Aware Colors
-    private var menuFill: Color { darkMode ? Color.white.opacity(0.06) : DS.glassInputFill.opacity(0.34) }
-    private var textPrimary: Color { darkMode ? .white : DS.documentText }
-    private var textTertiary: Color { darkMode ? Color.white.opacity(0.45) : DS.textMuted }
 
     private var isSearching: Bool {
-        !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    private var filteredCommands: [SlashCommand] {
-        SlashCommandCatalog.filteredCommands(
-            matching: searchText,
-            commands: isSearching ? searchCommands : commands
-        )
+        !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var shouldShowElementsSubmenu: Bool {
-        !isSearching && filteredCommands[safe: selectedIndex]?.type == .elements
+        !isSearching && commands[safe: selectedIndex]?.type == .elements
     }
 
     private var elementsSubmenuYOffset: CGFloat {
-        guard let index = filteredCommands.firstIndex(where: { $0.type == .elements }) else {
-            return 58
+        guard let index = commands.firstIndex(where: { $0.type == .elements }) else {
+            return 12
         }
-        return 58 + CGFloat(index) * 54
+        return 12 + CGFloat(index) * 54
     }
 
     private let menuWidth: CGFloat = 280
@@ -63,7 +55,7 @@ struct SlashCommandMenu: View {
             if shouldShowElementsSubmenu {
                 ElementCommandSubmenu(
                     commands: elementSubmenuCommands,
-                    onSelect: handleCommandSelection,
+                    onSelect: onSelect,
                     darkMode: darkMode
                 )
                 .frame(width: elementSubmenuWidth)
@@ -74,10 +66,6 @@ struct SlashCommandMenu: View {
         .frame(width: totalWidth, height: menuHeight, alignment: .topLeading)
         .position(x: position.x + (totalWidth / 2), y: position.y + (menuHeight / 2))
         .onAppear(perform: handleAppear)
-        .onKeyPress(.upArrow) { handleUpArrow() }
-        .onKeyPress(.downArrow) { handleDownArrow() }
-        .onKeyPress(.escape) { handleEscape() }
-        .onKeyPress(.delete) { handleDelete() }
     }
 
     // MARK: - Subviews
@@ -85,56 +73,30 @@ struct SlashCommandMenu: View {
     @ViewBuilder
     private var menuContent: some View {
         VStack(spacing: 0) {
-            searchFieldView
-            dividerView
             commandListView
             keyboardHintView
         }
     }
 
-    private var searchFieldView: some View {
-        HStack {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(textTertiary)
-                .symbolEffect(.bounce, value: menuAppeared)
-
-            TextField("Search commands or elements...", text: $searchText)
-                .textFieldStyle(.plain)
-                .foregroundStyle(textPrimary)
-                .focused($isSearchFocused)
-                .onSubmit {
-                    ConsoleLog.info("[SLASHDBG] searchField onSubmit selectedIndex=\(selectedIndex) hasCmd=\(filteredCommands[safe: selectedIndex] != nil)", subsystem: .canvas)
-                    if let command = filteredCommands[safe: selectedIndex] {
-                        CosmicHaptics.shared.play(.selection)
-                        handleCommandSelection(command)
+    private var commandListView: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(Array(commands.enumerated()), id: \.element.id) { index, command in
+                        commandRow(command: command, index: index)
                     }
                 }
-        }
-        .padding(12)
-        .background(menuFill)
-    }
-
-    private var dividerView: some View {
-        CosmoGradientDivider()
-    }
-
-    private var commandListView: some View {
-        ScrollView {
-            LazyVStack(spacing: 0) {
-                ForEach(Array(filteredCommands.enumerated()), id: \.element.id) { index, command in
-                    commandRow(command: command, index: index)
+                .padding(.vertical, 4)
+            }
+            .frame(maxHeight: 300)
+            .scrollBounceBehavior(.basedOnSize)
+            .background(Color.clear)
+            .onChange(of: selectedIndex) { _, newIndex in
+                CosmicHaptics.shared.play(.threshold)
+                withAnimation(.easeOut(duration: 0.12)) {
+                    proxy.scrollTo(newIndex)
                 }
             }
-            .padding(.vertical, 4)
-        }
-        .frame(maxHeight: 300)
-        .scrollBounceBehavior(.basedOnSize)
-        .background(Color.clear)
-        .onChange(of: selectedIndex) { _, _ in
-            CosmicHaptics.shared.play(.threshold)
-        }
-        .onChange(of: searchText) { _, _ in
-            selectedIndex = 0
         }
     }
 
@@ -148,17 +110,14 @@ struct SlashCommandMenu: View {
         )
         .id(index)
         .onTapGesture {
-            ConsoleLog.info("[SLASHDBG] row onTapGesture index=\(index) type=\(command.type)", subsystem: .canvas)
             CosmicHaptics.shared.play(.selection)
-            selectedIndex = index
-            handleCommandSelection(command)
+            guard command.type != .elements else { return }
+            onSelect(command)
         }
         .onHover { isHovered in
-            if isHovered {
-                if selectedIndex != index {
-                    CosmicHaptics.shared.play(.threshold)
-                }
-                selectedIndex = index
+            if isHovered, selectedIndex != index {
+                CosmicHaptics.shared.play(.threshold)
+                onHighlight(index)
             }
         }
         .onAppear {
@@ -177,44 +136,7 @@ struct SlashCommandMenu: View {
     // MARK: - Event Handlers
 
     private func handleAppear() {
-        selectedIndex = 0
         CosmicHaptics.shared.play(.menuAppear)
-        withAnimation(ProMotionSprings.bouncy) {
-            menuAppeared = true
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            isSearchFocused = true
-        }
-    }
-
-    private func handleUpArrow() -> KeyPress.Result {
-        selectedIndex = max(0, selectedIndex - 1)
-        return .handled
-    }
-
-    private func handleDownArrow() -> KeyPress.Result {
-        selectedIndex = min(max(0, filteredCommands.count - 1), selectedIndex + 1)
-        return .handled
-    }
-
-    private func handleCommandSelection(_ command: SlashCommand) {
-        ConsoleLog.info("[SLASHDBG] handleCommandSelection type=\(command.type) isElements=\(command.type == .elements)", subsystem: .canvas)
-        guard command.type != .elements else { return }
-        onSelect(command)
-    }
-
-    private func handleEscape() -> KeyPress.Result {
-        CosmicHaptics.shared.play(.selection)
-        onDismiss()
-        return .handled
-    }
-
-    private func handleDelete() -> KeyPress.Result {
-        if searchText.isEmpty {
-            onDismiss()
-            return .handled
-        }
-        return .ignored
     }
 }
 

@@ -1,5 +1,96 @@
+import AppKit
 import Foundation
 import Observation
+import SwiftUI
+
+extension NSPasteboard.PasteboardType {
+    /// Structured block copy: JSON-encoded [RichBlock] — kinds, checked
+    /// state, and nesting survive copy/paste within the app.
+    static let cosmoBlocks = NSPasteboard.PasteboardType("com.cosmo.blocks")
+}
+
+/// Phase of a mouse drag that started inside a block row's text view.
+enum BlockDragPhase {
+    case began
+    case changed
+    case ended
+}
+
+/// What the block list decided about a drag point: `textLocal` keeps the
+/// origin text view's native character selection; `escalated` means the drag
+/// crossed a block boundary and whole-block selection has taken over.
+enum BlockDragResolution {
+    case textLocal
+    case escalated
+}
+
+/// Bridges mouse drags from per-block NSTextViews up to the block list
+/// (Notion model: drag within a block = native text selection; crossing a
+/// block boundary escalates to whole-block range selection; dragging back
+/// into the origin de-escalates). NSTextView tracks selection drags in a
+/// modal loop inside mouseDown, so CosmoTextView owns its own loop in
+/// block-row mode and consults this controller per event. The block list
+/// wires the closures; text views reach the controller through the
+/// environment, mirroring EditorOverlayPresenter.
+@MainActor
+final class BlockDragSelectionController {
+    /// Wired by the owning BlockListView. Receives the drag point in WINDOW
+    /// coordinates (AppKit, bottom-left origin) plus the text view for
+    /// coordinate conversion context.
+    var handleDrag: ((_ windowPoint: NSPoint, _ phase: BlockDragPhase, _ textView: NSTextView) -> BlockDragResolution)?
+    /// Shift+Click in a block row while another block holds focus/selection —
+    /// returns true when the list consumed it as a range-selection extension.
+    var handleShiftClick: ((_ windowPoint: NSPoint, _ textView: NSTextView) -> Bool)?
+
+    /// Session state, managed by the list's handleDrag.
+    var originBlockID: UUID?
+    var isEscalated = false
+}
+
+private struct BlockDragSelectionControllerKey: EnvironmentKey {
+    static let defaultValue: BlockDragSelectionController? = nil
+}
+
+extension EnvironmentValues {
+    /// Set by the top-level BlockListView; block-row text views route their
+    /// selection drags through it.
+    var blockDragSelectionController: BlockDragSelectionController? {
+        get { self[BlockDragSelectionControllerKey.self] }
+        set { self[BlockDragSelectionControllerKey.self] = newValue }
+    }
+}
+
+/// Root-block frames in the block list's coordinate space, for hit-testing a
+/// drag point to a block. Plain class (not @Observable) — frame updates must
+/// not invalidate any view body.
+@MainActor
+final class BlockLayoutIndex {
+    private(set) var frames: [UUID: CGRect] = [:]
+
+    func update(_ frame: CGRect, for blockID: UUID) {
+        frames[blockID] = frame
+    }
+
+    func remove(_ blockID: UUID) {
+        frames[blockID] = nil
+    }
+
+    /// The root block under (or nearest to) the given Y, restricted to the
+    /// document's current root order so stale frames of deleted blocks never
+    /// win.
+    func blockID(atY y: CGFloat, rootOrder: [UUID]) -> UUID? {
+        var best: (id: UUID, distance: CGFloat)?
+        for id in rootOrder {
+            guard let frame = frames[id] else { continue }
+            if y >= frame.minY, y <= frame.maxY { return id }
+            let distance = y < frame.minY ? frame.minY - y : y - frame.maxY
+            if best == nil || distance < best!.distance {
+                best = (id, distance)
+            }
+        }
+        return best?.id
+    }
+}
 
 /// Direction of travel for keyboard-driven block selection.
 enum BlockSelectionDirection {

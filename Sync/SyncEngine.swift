@@ -48,10 +48,12 @@ class SyncEngine: ObservableObject {
 
     // MARK: - Sync Tables (unified)
     // Push: atoms + canvas_blocks go UP to Supabase
-    // Pull: ONLY atoms come DOWN (canvas_blocks are Mac-only, never modified by cloud)
+    // Pull: atoms AND canvas_blocks come DOWN — both filtered `_source neq mac`,
+    // so Mac-originated rows never round-trip. iOS-placed blocks land in GRDB
+    // and appear on the canvas via SpatialEngine's thinkspace_id query on open.
     // graph_edges are derived from atom.links and rebuilt by NodeGraphEngine — no sync needed
     private let pushTables = ["atoms", "canvas_blocks"]
-    private let pullTables = ["atoms"]  // Only pull cloud-originated changes
+    private let pullTables = ["atoms", "canvas_blocks"]
 
     private init() {
         supabaseClient = SupabaseClient.shared
@@ -434,7 +436,7 @@ class SyncEngine: ObservableObject {
                     let page = try await client.fetchChanges(
                         table: table,
                         since: lastSync,
-                        excludeLocalSource: table == "atoms",
+                        excludeLocalSource: true,
                         limit: pullPageLimit,
                         offset: offset
                     )

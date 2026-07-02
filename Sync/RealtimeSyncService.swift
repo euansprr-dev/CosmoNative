@@ -88,7 +88,6 @@ final class RealtimeSyncService {
     // MARK: - Subscribe
 
     private func subscribeToChanges() async {
-        // Only subscribe to atoms — canvas_blocks are Mac-only, never modified by cloud
         let atoms = supabase.channel("atoms_sync")
         self.atomsChannel = atoms
 
@@ -99,10 +98,19 @@ final class RealtimeSyncService {
             filter: SupabaseSyncTrafficPolicy.remoteOnlyRealtimeFilter
         )
 
+        // iPhone-placed canvas blocks (`_source neq mac` — Mac blocks never echo).
+        // Applied rows land in GRDB and appear on next thinkspace open.
+        let blockChanges = atoms.postgresChange(
+            AnyAction.self,
+            schema: "public",
+            table: "canvas_blocks",
+            filter: SupabaseSyncTrafficPolicy.remoteOnlyRealtimeFilter
+        )
+
         await atoms.subscribe()
 
         isConnected = true
-        print("✅ Realtime sync connected — listening for cloud-originated atom changes only")
+        print("✅ Realtime sync connected — listening for cloud-originated atom + canvas block changes")
 
         Task { [weak self] in
             for await action in atomChanges {
@@ -110,6 +118,55 @@ final class RealtimeSyncService {
                 await self.handleAtomChange(action)
             }
         }
+
+        Task { [weak self] in
+            for await action in blockChanges {
+                guard let self, !self.isPaused else { continue }
+                await self.handleCanvasBlockChange(action)
+            }
+        }
+    }
+
+    // MARK: - Canvas Block Changes (iPhone-placed blocks)
+
+    /// Same shields as atoms (own-echo, pending, fence), applied through the
+    /// shared ConflictResolver. No inbox/swipe post-processing applies to blocks.
+    private func handleCanvasBlockChange(_ action: AnyAction) async {
+        let data: [String: Any]
+        switch action {
+        case .insert(let insert): data = convertRecord(insert.record)
+        case .update(let update): data = convertRecord(update.record)
+        case .delete(let delete):
+            let oldData = convertRecord(delete.oldRecord)
+            guard let uuid = oldData["uuid"] as? String, !uuid.isEmpty else { return }
+            if let source = oldData[SupabaseSyncTrafficPolicy.sourceColumn] as? String,
+               source == SupabaseSyncTrafficPolicy.localSource {
+                return
+            }
+            guard !isLocallyPending(uuid: uuid, table: "canvas_blocks"),
+                  !hasSyncFence(uuid: uuid) else { return }
+            do {
+                try await database.asyncWrite { db in
+                    try db.execute(
+                        sql: "UPDATE canvas_blocks SET is_deleted = 1, updated_at = ? WHERE uuid = ?",
+                        arguments: [ISO8601.string(from: Date()), uuid]
+                    )
+                }
+                lastEventTime = Date()
+            } catch {
+                PersistenceHealth.note(.writeFailure, context: "RealtimeSync.blockDelete(\(uuid.prefix(8)))", detail: String(describing: error))
+            }
+            return
+        }
+
+        guard let uuid = data["uuid"] as? String, !uuid.isEmpty else { return }
+        guard isFromCloud(data) else { return }
+        guard !isLocallyPending(uuid: uuid, table: "canvas_blocks") else { return }
+        guard !hasSyncFence(uuid: uuid) else { return }
+
+        let localData = convertJSONFieldsFromPostgres(data)
+        await conflictResolver.applyRemoteChange(table: "canvas_blocks", uuid: uuid, data: localData)
+        lastEventTime = Date()
     }
 
     // MARK: - Handle Changes
@@ -235,12 +292,12 @@ final class RealtimeSyncService {
     /// Skip changes for atoms that have pending local modifications.
     /// The local version is authoritative until it's pushed and confirmed.
     /// Fail safe: if the shield can't be verified, behave as if pending.
-    private func isLocallyPending(uuid: String) -> Bool {
+    private func isLocallyPending(uuid: String, table: String = "atoms") -> Bool {
         do {
             let hasPending = try CosmoDatabase.shared.dbQueue.read { db in
                 try Row.fetchOne(
                     db,
-                    sql: "SELECT _local_pending FROM atoms WHERE uuid = ? AND _local_pending = 1",
+                    sql: "SELECT _local_pending FROM \(table) WHERE uuid = ? AND _local_pending = 1",
                     arguments: [uuid]
                 )
             }

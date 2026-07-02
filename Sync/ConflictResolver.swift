@@ -334,6 +334,11 @@ class ConflictResolver {
         // Fill NOT NULL defaults for canvas_blocks (Postgres allows null, GRDB doesn't)
         if table == "canvas_blocks" {
             sanitizeCanvasBlockDefaults(&insertData)
+            // Local canvas_blocks PK is TEXT (Postgres id is BIGSERIAL and was
+            // stripped above) — reuse the row's uuid as its local id.
+            if insertData["id"] == nil {
+                insertData["id"] = insertData["uuid"] as? String ?? UUID().uuidString
+            }
         }
 
         let columns = insertData.keys.filter { key in

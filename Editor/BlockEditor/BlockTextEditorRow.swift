@@ -97,6 +97,7 @@ struct BlockTextEditorRow: View {
     }
 
     private func handleBlockDocumentChange(_ updatedBlockDocument: RichDocument, _: String) {
+        ConsoleLog.info("[SLASHDBG] handleBlockDocumentChange incoming kind=\(String(describing: updatedBlockDocument.blocks.first?.kind)) text='\(updatedBlockDocument.blocks.first?.plainInlineText.prefix(12) ?? "")' curKind=\(String(describing: currentBlock?.kind))", subsystem: .canvas)
         let mergedDocument = applyReplacementBlocks(updatedBlockDocument.blocks)
         onDocumentChange?(mergedDocument, mergedDocument.plainText)
     }
@@ -113,7 +114,16 @@ struct BlockTextEditorRow: View {
         }
 
         document = result.document
-        focusCoordinator.focus(stableBlocks.last?.id)
+        // Only move focus when the editor's content genuinely expanded into
+        // MULTIPLE blocks (e.g. a multi-line paste) — then landing on the last
+        // one is right. A plain single-block content sync must NOT move focus:
+        // right after a Return-split this row re-syncs its (unchanged) single
+        // block and, by re-focusing itself, would yank the caret back out of the
+        // freshly-created block below (the "cursor won't follow" bug).
+        // Structural edits (split/merge) own focus placement.
+        if stableBlocks.count > 1 {
+            focusCoordinator.focus(stableBlocks.last?.id)
+        }
         return result.document
     }
 
@@ -241,24 +251,31 @@ struct BlockTextEditorRow: View {
     }
 
     private func executeSlashCommand(_ command: SlashCommand, livePlainText: String) -> Bool {
+        let path = currentPath
+        let action = BlockCommandCatalog.action(for: command)
+        ConsoleLog.info("[SLASHDBG] executeSlashCommand blockID=\(blockID.uuidString.prefix(8)) hasBlock=\(currentBlock != nil) hasPath=\(path != nil) action=\(String(describing: action)) live='\(livePlainText.prefix(20))'", subsystem: .canvas)
         guard currentBlock != nil,
               let currentPath,
-              let action = BlockCommandCatalog.action(for: command) else {
+              let action else {
             return false
         }
 
         switch action {
         case .transform, .replaceOrInsert, .insertElement:
-            guard let result = try? BlockOperations.apply(
-                action,
-                in: document,
-                at: currentPath,
-                livePlainText: livePlainText
-            ) else {
+            do {
+                let result = try BlockOperations.apply(
+                    action,
+                    in: document,
+                    at: currentPath,
+                    livePlainText: livePlainText
+                )
+                apply(result, undoActionName: action.undoActionName)
+                ConsoleLog.info("[SLASHDBG] executeSlashCommand applied OK", subsystem: .canvas)
+                return true
+            } catch {
+                ConsoleLog.info("[SLASHDBG] executeSlashCommand apply THREW \(error)", subsystem: .canvas)
                 return false
             }
-            apply(result, undoActionName: action.undoActionName)
-            return true
         case .createElement, .openElementsSubmenu, .openWritingAI:
             return false
         }
@@ -302,6 +319,7 @@ struct BlockTextEditorRow: View {
         }
         if let focusPath = result.focusPath,
            let focusedBlock = try? BlockOperations.currentBlock(in: result.document, at: focusPath) {
+            ConsoleLog.info("[SLASHDBG] apply undo='\(undoActionName ?? "")' resultBlockKind=\(focusedBlock.kind) text='\(focusedBlock.plainInlineText.prefix(12))'", subsystem: .canvas)
             focusCoordinator.focus(focusedBlock.id, caretOffsetFromEnd: result.caretOffsetFromEnd(for: focusedBlock))
         }
         onDocumentChange?(result.document, result.document.plainText)

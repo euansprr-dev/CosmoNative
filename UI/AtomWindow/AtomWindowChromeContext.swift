@@ -99,6 +99,25 @@ extension EnvironmentValues {
 
 // MARK: - Shared Atom Window Chrome
 
+extension View {
+    /// A flat warm-fill capsule that clusters chrome controls on the Atom window
+    /// glass rail. This is *inner chrome* (peakui Law 3) — a flat `DS.glassCardFill`
+    /// wash + hairline, never glass-on-glass — so the leading/center/trailing clusters
+    /// read as one material family. `fixedSize` keeps each cluster at its intrinsic
+    /// width so the rail distributes slack *around* the pills as the window resizes,
+    /// rather than stretching any one of them.
+    func atomWindowChromeCluster() -> some View {
+        padding(.horizontal, DS.space6)
+            .padding(.vertical, DS.space4)
+            .background(DS.glassCardFill.opacity(0.52), in: Capsule())
+            .overlay(
+                Capsule()
+                    .stroke(DS.glassBorder.opacity(0.82), lineWidth: 0.5)
+            )
+            .fixedSize(horizontal: true, vertical: false)
+    }
+}
+
 struct AtomWindowChromeLeadingControls: View {
     let context: AtomWindowChromePayload
     var showsTitle: Bool = true
@@ -133,14 +152,7 @@ struct AtomWindowChromeLeadingControls: View {
                 titlePill
             }
         }
-        .padding(.horizontal, DS.space6)
-        .padding(.vertical, DS.space4)
-        .background(DS.glassCardFill.opacity(0.52), in: Capsule())
-        .overlay(
-            Capsule()
-                .stroke(DS.glassBorder.opacity(0.82), lineWidth: 0.5)
-        )
-        .fixedSize(horizontal: true, vertical: false)
+        .atomWindowChromeCluster()
     }
 
     private var chromeDivider: some View {
@@ -211,14 +223,7 @@ struct AtomWindowChromeTrailingControls: View {
                 )
             }
         }
-        .padding(.horizontal, DS.space6)
-        .padding(.vertical, DS.space4)
-        .background(DS.glassCardFill.opacity(0.52), in: Capsule())
-        .overlay(
-            Capsule()
-                .stroke(DS.glassBorder.opacity(0.82), lineWidth: 0.5)
-        )
-        .fixedSize(horizontal: true, vertical: false)
+        .atomWindowChromeCluster()
     }
 
     private var createMenu: some View {

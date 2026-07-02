@@ -644,6 +644,7 @@
 		B10C0DEC0000000000000008 /* ElementBlockHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10C0DEC0000000000000007 /* ElementBlockHeader.swift */; };
 		B10C0DEC000000000000000A /* ElementBlockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10C0DEC0000000000000009 /* ElementBlockView.swift */; };
 		B10C0DEC000000000000000D /* BlockListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10C0DEC000000000000000C /* BlockListView.swift */; };
+		B10C0DEC0000000000000A02 /* ResizableImageBlockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10C0DEC0000000000000A01 /* ResizableImageBlockView.swift */; };
 		B10C0DEC0000000000000011 /* BlockPath.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10C0DEC0000000000000021 /* BlockPath.swift */; };
 		B10C0DEC0000000000000012 /* BlockOperation.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10C0DEC0000000000000022 /* BlockOperation.swift */; };
 		B10C0DEC0000000000000013 /* BlockOperations.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10C0DEC0000000000000023 /* BlockOperations.swift */; };
@@ -720,6 +721,7 @@
 		C0C6945037E18B1A40EFD000 /* QueryResultCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6443E2395ACB64F44A736EE3 /* QueryResultCache.swift */; };
 		C0D3C0D3C0D3C0D3C0D3A002 /* CodexMonoPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D3C0D3C0D3C0D3C0D3A001 /* CodexMonoPalette.swift */; };
 		C0D3C0D3C0D3C0D3C0D3C0D2 /* ThemePaletteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D3C0D3C0D3C0D3C0D3C0D1 /* ThemePaletteTests.swift */; };
+		C0D3C0D3C0D3C0D3C0D3CA02 /* ImageResizeMathTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D3C0D3C0D3C0D3C0D3CA01 /* ImageResizeMathTests.swift */; };
 		C0D5FE67900C9ECA5AAACD97 /* CosmoVoiceDaemon.swift in Sources */ = {isa = PBXBuildFile; fileRef = 891FE94AF6E3DE3235B5036C /* CosmoVoiceDaemon.swift */; };
 		C0DE4E0A0000000000000101 /* NoteStructurePlanTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE4E0A0000000000000102 /* NoteStructurePlanTests.swift */; };
 		C0DE4E0A0000000000000201 /* NoteStructurePlanModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE4E0A0000000000000202 /* NoteStructurePlanModels.swift */; };
@@ -1621,6 +1623,7 @@
 		B10C0DEC0000000000000007 /* ElementBlockHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ElementBlockHeader.swift; sourceTree = "<group>"; };
 		B10C0DEC0000000000000009 /* ElementBlockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ElementBlockView.swift; sourceTree = "<group>"; };
 		B10C0DEC000000000000000C /* BlockListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockListView.swift; sourceTree = "<group>"; };
+		B10C0DEC0000000000000A01 /* ResizableImageBlockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResizableImageBlockView.swift; sourceTree = "<group>"; };
 		B10C0DEC0000000000000021 /* BlockPath.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockPath.swift; sourceTree = "<group>"; };
 		B10C0DEC0000000000000022 /* BlockOperation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockOperation.swift; sourceTree = "<group>"; };
 		B10C0DEC0000000000000023 /* BlockOperations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockOperations.swift; sourceTree = "<group>"; };
@@ -1693,6 +1696,7 @@
 		BFF9BFF380AB4DA7648ADC7E /* CosmicHaptics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmicHaptics.swift; sourceTree = "<group>"; };
 		C0D3C0D3C0D3C0D3C0D3A001 /* CodexMonoPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexMonoPalette.swift; sourceTree = "<group>"; };
 		C0D3C0D3C0D3C0D3C0D3C0D1 /* ThemePaletteTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ThemePaletteTests.swift; sourceTree = "<group>"; };
+		C0D3C0D3C0D3C0D3C0D3CA01 /* ImageResizeMathTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ImageResizeMathTests.swift; sourceTree = "<group>"; };
 		C0DE4E0A0000000000000102 /* NoteStructurePlanTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NoteStructurePlanTests.swift; sourceTree = "<group>"; };
 		C0DE4E0A0000000000000202 /* NoteStructurePlanModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteStructurePlanModels.swift; sourceTree = "<group>"; };
 		C0DE4E0A0000000000000302 /* NoteStructureApplyService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteStructureApplyService.swift; sourceTree = "<group>"; };
@@ -3205,6 +3209,7 @@
 				B10C0DEC0000000000000101 /* BlockSelectionCoordinator.swift */,
 				B10C0DEC0000000000000103 /* BlockHandleMenu.swift */,
 				B10C0DEC000000000000000C /* BlockListView.swift */,
+				B10C0DEC0000000000000A01 /* ResizableImageBlockView.swift */,
 				B10C0DEC0000000000000024 /* BlockCommandCatalog.swift */,
 				B10C0DEC0000000000000025 /* BlockDropController.swift */,
 				B10C0DEC0000000000000022 /* BlockOperation.swift */,
@@ -3731,6 +3736,7 @@
 				D15C0DE52900000100000301 /* SocialInstagramMapperTests.swift */,
 				C0DE5AFE0000000000000004 /* SupabaseSyncTrafficPolicyTests.swift */,
 				C0D3C0D3C0D3C0D3C0D3C0D1 /* ThemePaletteTests.swift */,
+				C0D3C0D3C0D3C0D3C0D3CA01 /* ImageResizeMathTests.swift */,
 				DE1A3A8D61EEEB003E266A2C /* TelegramCaptureCommandParserTests.swift */,
 				676FAE0CE51D03195E6DA3E1 /* UnifiedWritingEngineCostTests.swift */,
 				27B06FC74E2432B7AEE5C967 /* VoiceCommandRouterTests.swift */,
@@ -4136,6 +4142,7 @@
 				D15C0DE52900000100000302 /* SocialInstagramMapperTests.swift in Sources */,
 				C0DE5AFE0000000000000003 /* SupabaseSyncTrafficPolicyTests.swift in Sources */,
 				C0D3C0D3C0D3C0D3C0D3C0D2 /* ThemePaletteTests.swift in Sources */,
+				C0D3C0D3C0D3C0D3C0D3CA02 /* ImageResizeMathTests.swift in Sources */,
 				28885BC1D149750314D61518 /* TelegramCaptureCommandParserTests.swift in Sources */,
 				F8036854BF90AE6406566B26 /* UnifiedWritingEngineCostTests.swift in Sources */,
 				E6210BB2C79234200EF6812C /* VoiceCommandRouterTests.swift in Sources */,
@@ -4447,6 +4454,7 @@
 				B10C0DEC0000000000000104 /* BlockHandleMenu.swift in Sources */,
 				B10C0DEC0000000000000106 /* NoteDocumentStyle.swift in Sources */,
 				B10C0DEC000000000000000D /* BlockListView.swift in Sources */,
+				B10C0DEC0000000000000A02 /* ResizableImageBlockView.swift in Sources */,
 				B10C0DEC0000000000000014 /* BlockCommandCatalog.swift in Sources */,
 				B10C0DEC0000000000000015 /* BlockDropController.swift in Sources */,
 				B10C0DEC0000000000000012 /* BlockOperation.swift in Sources */,

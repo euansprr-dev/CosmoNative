@@ -10,8 +10,10 @@ struct CommandCenterGlassRail<Content: View>: View {
     }
 
     var body: some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         content
             .padding(DS.space12)
+            .background(DS.commandCenterRailStabilizingFill, in: shape)
             .cosmoGlassPanel(role: .globalSidebar, cornerRadius: cornerRadius)
     }
 }

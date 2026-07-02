@@ -147,6 +147,14 @@ enum DS {
         return documentVellum
     }
 
+    /// Opaque-enough interior wash for Command Center glass rails in Black Mono.
+    /// Native glass can brighten when the window resigns key status; this keeps
+    /// the rail visually anchored without changing light or paper-led themes.
+    static var commandCenterRailStabilizingFill: Color {
+        if usesBlackMonoPaper { return palette.surfaceElevated.opacity(0.94) }
+        return Color.clear
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // FOCUS MODE — Immersive full-screen chrome for Black Mono.
     // These are intentionally separate from document paper tokens.

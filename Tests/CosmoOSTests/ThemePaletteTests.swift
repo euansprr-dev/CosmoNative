@@ -190,6 +190,39 @@ final class ThemePaletteTests: XCTestCase {
         assertColor(DS.documentSepiaBorder, equalsHex: "E8E8EC")
     }
 
+    func testBlackMonoUsesDarkDashboardReportChromeInsteadOfDocumentPaper() throws {
+        DS.palette = try XCTUnwrap(CosmoAppTheme(rawValue: "blackMono")?.palette)
+
+        assertColor(DashboardReportChrome.insetFill, equalsHex: "101012")
+        assertColor(DashboardReportChrome.controlFill, equalsHex: "171717")
+        assertColor(DashboardReportChrome.cardFill, equalsHex: "0B0B0D")
+        assertColor(DashboardReportChrome.border, equalsHex: "242428")
+        assertColor(DashboardReportChrome.subtleBorder, equalsHex: "242428")
+        assertColor(DashboardReportChrome.primaryText, equalsHex: "F5F5F7")
+        assertColor(DashboardReportChrome.secondaryText, equalsHex: "B7B7C0")
+        assertColor(DashboardReportChrome.mutedText, equalsHex: "7C7D86")
+        assertColor(DashboardReportChrome.heatmapEmptyFill, equalsHex: "0B0B0D")
+        assertColor(DashboardReportChrome.heatmapLowFill, equalsHex: "171717")
+        assertColor(DS.commandCenterRailStabilizingFill, equalsHex: "0B0B0D", alpha: 0.94)
+
+        assertColor(DS.documentSurface, equalsHex: "FFFFFF")
+        assertColor(DS.documentVellumDeep, equalsHex: "F8F7F4")
+    }
+
+    func testDashboardReportChromePreservesGreenhousePaperTreatment() {
+        DS.palette = GreenhousePalette()
+
+        assertColor(DashboardReportChrome.insetFill, equalsHex: "EDE5D8")
+        assertColor(DashboardReportChrome.controlFill, equalsHex: "F3EDE4")
+        assertColor(DashboardReportChrome.cardFill, equalsHex: "F5F4F0")
+        assertColor(DashboardReportChrome.border, equalsHex: "DDD5C8")
+        assertColor(DashboardReportChrome.subtleBorder, equalsHex: "E8E1D6")
+        assertColor(DashboardReportChrome.primaryText, equalsHex: "2C2A26")
+        assertColor(DashboardReportChrome.mutedText, equalsHex: "7A7568")
+        assertColor(DashboardReportChrome.heatmapEmptyFill, equalsHex: "EDE5D8")
+        assertColor(DashboardReportChrome.heatmapLowFill, equalsHex: "F5EDD8")
+    }
+
     func testSwipeLibraryBackgroundMatchesCommandCenterRootInBlackMono() throws {
         DS.palette = try XCTUnwrap(CosmoAppTheme(rawValue: "blackMono")?.palette)
 

@@ -6,6 +6,36 @@
 import SwiftUI
 import AppKit
 
+/// Lets an editor's open slash / mention / selection menu claim Escape before
+/// MainView's global key monitor falls through to closing the whole focus mode
+/// or page. The handler dismisses just the menu (leaving the typed `/` or `@`
+/// in place) and reports whether it consumed the press.
+@MainActor
+final class EditorOverlayEscapeCoordinator {
+
+    static let shared = EditorOverlayEscapeCoordinator()
+
+    private var handlers: [(id: UUID, handle: () -> Bool)] = []
+
+    func register(id: UUID, handler: @escaping () -> Bool) {
+        unregister(id: id)
+        handlers.append((id, handler))
+    }
+
+    func unregister(id: UUID) {
+        handlers.removeAll { $0.id == id }
+    }
+
+    /// Ask handlers (most recent first) to dismiss their open menu. Returns
+    /// true as soon as one consumes the Escape press.
+    func dismissTopOverlay() -> Bool {
+        for entry in handlers.reversed() where entry.handle() {
+            return true
+        }
+        return false
+    }
+}
+
 enum EditorHeightUpdatePolicy {
     static let defaultEpsilon: CGFloat = 1.0
 
@@ -153,6 +183,7 @@ struct RichTextEditor: View {
     @State private var mentionSearchQuery = ""
     @State private var cursorPosition: Int = 0
     @State private var shouldRefocusEditor = false
+    @State private var overlayEscapeOwnerID = UUID()
     @StateObject private var elementStore = DocumentElementStore()
 
     // Configuration
@@ -449,6 +480,7 @@ struct RichTextEditor: View {
                     searchCommands: slashSearchCommands,
                     elementSubmenuCommands: elementSubmenuCommands,
                     onSelect: { command in
+                        ConsoleLog.info("[SLASHDBG] menu.onSelect type=\(command.type)", subsystem: .canvas)
                         if command.type == .newElement {
                             showSlashMenu = false
                             elementCreationMenuPosition = clampMenuPosition(
@@ -466,10 +498,12 @@ struct RichTextEditor: View {
                         // Then after a short delay, insert the command
                         // This ensures the editor has focus when the notification is posted
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                            ConsoleLog.info("[SLASHDBG] onSelect async#1 fired, setting shouldRefocus", subsystem: .canvas)
                             shouldRefocusEditor = true
 
                             // Wait for refocus to complete, then insert
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                                ConsoleLog.info("[SLASHDBG] onSelect async#2 fired, calling insertSlashCommand", subsystem: .canvas)
                                 insertSlashCommand(command)
                             }
                         }
@@ -553,6 +587,12 @@ struct RichTextEditor: View {
             if autoFocus {
                 shouldRefocusEditor = true
             }
+            EditorOverlayEscapeCoordinator.shared.register(id: overlayEscapeOwnerID) {
+                dismissOverlaysForEscape()
+            }
+        }
+        .onDisappear {
+            EditorOverlayEscapeCoordinator.shared.unregister(id: overlayEscapeOwnerID)
         }
         .onChange(of: autoFocus) { _, shouldFocus in
             if shouldFocus {
@@ -627,6 +667,15 @@ struct RichTextEditor: View {
         if includeSelection {
             showSelectionMenu = false
         }
+    }
+
+    /// Escape handler for EditorOverlayEscapeCoordinator: if a menu is open,
+    /// dismiss it (leaving the typed `/` or `@` in the text) and report that we
+    /// consumed the press so the global monitor doesn't also close the page.
+    private func dismissOverlaysForEscape() -> Bool {
+        guard isOverlayVisible else { return false }
+        dismissAllOverlays()
+        return true
     }
 
     private func createElementAndInsert(title: String, icon: String) {
@@ -721,13 +770,16 @@ struct RichTextEditor: View {
 
     // MARK: - Slash Command Insertion
     private func insertSlashCommand(_ command: SlashCommand) {
+        ConsoleLog.info("[SLASHDBG] insertSlashCommand type=\(command.type) plainText='\(plainText.prefix(20))' hasHandler=\(onSlashCommandSelected != nil) requiresTextKit=\(command.type.requiresTextKitMutationBeforeSemanticHandling) targetID='\(editorTargetID ?? "nil")'", subsystem: .canvas)
         if command.type.requiresTextKitMutationBeforeSemanticHandling {
             postSlashCommand(command)
             _ = onSlashCommandSelected?(command, plainText)
             return
         }
 
-        if onSlashCommandSelected?(command, plainText) == true {
+        let handled = onSlashCommandSelected?(command, plainText)
+        ConsoleLog.info("[SLASHDBG] onSlashCommandSelected returned \(String(describing: handled))", subsystem: .canvas)
+        if handled == true {
             return
         }
 

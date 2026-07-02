@@ -617,9 +617,14 @@ struct NoteFocusModeView: View {
                     .transition(.opacity)
             }
 
-            Spacer(minLength: DS.space8)
+            // Balanced rail: nav (left) · view controls (center) · actions (right).
+            // Two equal spacers absorb window-width changes symmetrically, so the
+            // center pill stays visually anchored and the bar never reads lopsided.
+            Spacer(minLength: DS.space12)
 
-            topBarChromeButtons
+            atomViewControlsCluster
+
+            Spacer(minLength: DS.space12)
 
             AtomWindowChromeTrailingControls(context: atomChrome)
         }
@@ -738,6 +743,35 @@ struct NoteFocusModeView: View {
                 )
             }
         }
+    }
+
+    /// The center pill of the Atom window bar: the document's view controls
+    /// (style · panels · graph). Same flat capsule language as the leading/trailing
+    /// clusters (`atomWindowChromeCluster`) so all three read as one material family,
+    /// and `space4` spacing matches the nav/action pills exactly. In the Atom window
+    /// the extra pane-close glyph never applies (chrome owns close), so this cluster
+    /// is intentionally just the three view toggles.
+    private var atomViewControlsCluster: some View {
+        HStack(spacing: DS.space4) {
+            styleMenuButton
+            chromeIconButton(
+                systemName: "rectangle.split.3x1",
+                isActive: leftRailVisible || rightRailVisible,
+                tint: DS.accent,
+                help: "Toggle panels (⌘\\)",
+                accessibilityLabel: "Toggle side panels",
+                action: { togglePanels() }
+            )
+            chromeIconButton(
+                systemName: "point.3.filled.connected.trianglepath.dotted",
+                isActive: graphOverlayVisible,
+                tint: DS.gilt,
+                help: "Graph view (⌘G)",
+                accessibilityLabel: "Toggle graph view",
+                action: { toggleGraphOverlay() }
+            )
+        }
+        .atomWindowChromeCluster()
     }
 
     /// "Aa" — the document's voice. Font family, text size, page width, and

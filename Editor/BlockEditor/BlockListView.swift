@@ -29,6 +29,26 @@ enum BlockRhythmPolicy {
     }
 }
 
+/// Flattens a block tree into the visual (pre-order) sequence of block IDs an
+/// element header comes before its children, which come before the next
+/// sibling. This is the order ⬆/⬇ navigation follows.
+enum BlockNavigationOrder {
+    static func flatten(_ blocks: [RichBlock]) -> [UUID] {
+        var result: [UUID] = []
+        append(blocks, into: &result)
+        return result
+    }
+
+    private static func append(_ blocks: [RichBlock], into result: inout [UUID]) {
+        for block in blocks {
+            result.append(block.id)
+            if !block.children.isEmpty {
+                append(block.children, into: &result)
+            }
+        }
+    }
+}
+
 struct BlockListView: View {
     @Environment(\.undoManager) private var undoManager
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -57,6 +77,11 @@ struct BlockListView: View {
     var navigationTargetID: UUID? = nil
     var focusCoordinator: BlockFocusCoordinator? = nil
     var selectionCoordinator: BlockSelectionCoordinator? = nil
+    /// The top-level list owns the visual block order it feeds the focus
+    /// coordinator (its document already contains every nested child). Element
+    /// bodies embed their own BlockListView on the SAME coordinator and pass
+    /// `false` so they don't overwrite that full-document order with a subset.
+    var providesNavigationOrder: Bool = true
     var autoFocusFirstTextRegion: Bool = false
     var onSelectionChanged: ((EditorSelectionSnapshot) -> Void)? = nil
     var onContentHeightChange: ((CGFloat) -> Void)? = nil
@@ -99,17 +124,34 @@ struct BlockListView: View {
         .onAppear {
             configureUndoRegistrar()
             scheduleEnsureEditableDocument()
+            syncNavigationOrderIfNeeded()
         }
         .onChange(of: document.blocks.isEmpty) { _, isEmpty in
             if isEmpty {
                 scheduleEnsureEditableDocument()
             }
         }
+        .onChange(of: navigationOrderSignature) { _, _ in
+            syncNavigationOrderIfNeeded()
+        }
         .onChange(of: document.blocks.count) { _, _ in
             if resolvedSelectionCoordinator.isActive {
                 resolvedSelectionCoordinator.prune(against: document)
             }
         }
+    }
+
+    /// A flattened, pre-order list of every block ID (descending into element
+    /// children) — the document's visual top-to-bottom order. Only the IDs
+    /// change with structure, so `.onChange` fires on real structural edits,
+    /// not on every keystroke.
+    private var navigationOrderSignature: [UUID] {
+        BlockNavigationOrder.flatten(document.blocks)
+    }
+
+    private func syncNavigationOrderIfNeeded() {
+        guard providesNavigationOrder else { return }
+        resolvedFocusCoordinator.syncNavigationOrder(navigationOrderSignature)
     }
 
     @ViewBuilder
@@ -136,7 +178,7 @@ struct BlockListView: View {
         case .divider:
             dividerRow
         case .image:
-            imageRow(for: block)
+            imageRow(for: block, at: path)
         case .element:
             ElementBlockView(
                 block: blockBinding(at: path, fallback: block),
@@ -206,22 +248,27 @@ struct BlockListView: View {
             .padding(.vertical, 10)
     }
 
-    private func imageRow(for block: RichBlock) -> some View {
-        Group {
-            if let image = block.inlines.compactMap(\.image).first,
-               let nsImage = ImageStore.load(path: image.path) {
-                Image(nsImage: nsImage)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: min(680, image.width))
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            } else {
-                Text("[Image]")
-                    .font(.system(size: fontSize, weight: .medium))
-                    .foregroundStyle(darkMode ? Color.white.opacity(0.62) : DS.documentTextSecondary)
-                    .padding(.vertical, 8)
+    private func imageRow(for block: RichBlock, at path: BlockPath) -> some View {
+        ResizableImageBlockView(
+            image: block.inlines.compactMap(\.image).first ?? RichImageReference(path: "", width: 1, height: 1),
+            darkMode: darkMode,
+            onCommitWidth: { newWidth in
+                setImageDisplayWidth(newWidth, at: path, block: block)
             }
-        }
+        )
+    }
+
+    /// Persist a resized image's display width back into the block. One named undo step per
+    /// gesture; never steals focus (image blocks have no text region to focus).
+    private func setImageDisplayWidth(_ width: CGFloat?, at path: BlockPath, block: RichBlock) {
+        guard let imageIndex = block.inlines.firstIndex(where: { $0.kind == .imageRef }),
+              var image = block.inlines[imageIndex].image else { return }
+        image.displayWidth = width
+        var newBlock = block
+        newBlock.inlines[imageIndex].image = image
+        guard let result = try? BlockOperations.replaceBlock(in: document, at: path, with: newBlock),
+              result.document != document else { return }
+        commit(result, undoActionName: "Resize Image", focusAfterCommit: false)
     }
 
     private func blockKindBadge(for kind: RichBlockKind) -> some View {

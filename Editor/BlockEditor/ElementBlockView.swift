@@ -64,6 +64,7 @@ struct ElementBlockView: View {
             editorTargetID: editorTargetID,
             navigationTargetID: navigationTargetID,
             focusCoordinator: focusCoordinator,
+            providesNavigationOrder: false,
             onSelectionChanged: onSelectionChanged,
             onExitFinalEmptyTextRegion: exitBody,
             onDocumentChange: { _, _ in onElementChange?() }

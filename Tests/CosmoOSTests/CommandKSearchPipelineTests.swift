@@ -463,6 +463,66 @@ final class CommandKSearchPipelineTests: XCTestCase {
     }
 
     @MainActor
+    func testOpenSelectedBrowserFavoriteDismissesCommandKBeforeOpeningBrowserPane() async {
+        let url = URL(string: "https://www.instagram.com/joshvillareal/")!
+        let result = UnifiedSearchResult(
+            id: "browser-pin-josh-instagram",
+            source: .browser,
+            resultKind: .browserPin,
+            title: "Josh Instagram",
+            subtitle: "instagram.com · Browser Favorite",
+            snippet: url.absoluteString,
+            icon: "star.fill",
+            accentColor: DS.entityResearch,
+            relevance: 1.4,
+            atomUUID: nil,
+            atomType: nil,
+            thinkspaceId: nil,
+            projectUUID: nil,
+            projectName: nil,
+            thinkspaceNames: [],
+            readwiseBookId: nil,
+            browserURL: url,
+            browserTitle: "Josh Instagram"
+        )
+        let viewModel = CommandKViewModel()
+        var events: [Notification.Name] = []
+        let expectation = expectation(description: "browser favorite opened")
+        let closeToken = NotificationCenter.default.addObserver(
+            forName: CosmoNotification.NodeGraph.closeCommandK,
+            object: nil,
+            queue: nil
+        ) { notification in
+            events.append(notification.name)
+        }
+        let openToken = NotificationCenter.default.addObserver(
+            forName: CosmoNotification.Navigation.openWebBrowserPane,
+            object: nil,
+            queue: nil
+        ) { notification in
+            events.append(notification.name)
+            expectation.fulfill()
+        }
+
+        viewModel.isUnifiedSearchActive = true
+        viewModel.unifiedFlatResults = [result]
+        viewModel.selectedResultIndex = 0
+
+        viewModel.openSelected()
+        await fulfillment(of: [expectation], timeout: 1)
+        NotificationCenter.default.removeObserver(closeToken)
+        NotificationCenter.default.removeObserver(openToken)
+
+        XCTAssertEqual(
+            events,
+            [
+                CosmoNotification.NodeGraph.closeCommandK,
+                CosmoNotification.Navigation.openWebBrowserPane
+            ]
+        )
+    }
+
+    @MainActor
     func testOpenSelectedCosmoPaneCommandPostsPaneNotification() async {
         let viewModel = CommandKViewModel(
             userCommandStore: CommandKUserCommandStore(

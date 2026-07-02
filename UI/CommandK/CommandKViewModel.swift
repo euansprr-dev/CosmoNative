@@ -2792,6 +2792,21 @@ public final class CommandKViewModel {
         NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
     }
 
+    private func openBrowserPaneAfterCommandKDismissal(url: URL, title: String) {
+        NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+        actionStatusMessage = nil
+        setQueryProgrammatically("")
+        setPrimaryAction(nil)
+        NotificationCenter.default.post(
+            name: CosmoNotification.Navigation.openWebBrowserPane,
+            object: nil,
+            userInfo: [
+                "url": url,
+                "title": title
+            ]
+        )
+    }
+
     private func selectedUnifiedSearchResultForPaneOpen() -> UnifiedSearchResult? {
         guard isUnifiedSearchActive else { return nil }
         if let selectedNodeId,
@@ -2804,15 +2819,10 @@ public final class CommandKViewModel {
 
     private func openUnifiedSearchResultAsPane(_ result: UnifiedSearchResult) async {
         if result.resultKind == .browserPin, let browserURL = result.browserURL {
-            NotificationCenter.default.post(
-                name: CosmoNotification.Navigation.openWebBrowserPane,
-                object: nil,
-                userInfo: [
-                    "url": browserURL,
-                    "title": result.browserTitle ?? result.subtitle ?? "Browser"
-                ]
+            openBrowserPaneAfterCommandKDismissal(
+                url: browserURL,
+                title: result.browserTitle ?? result.subtitle ?? "Browser"
             )
-            finishAction()
         } else if result.resultKind == .thinkspace, let thinkspaceId = result.thinkspaceId {
             openThinkspaceAsPane(id: thinkspaceId)
         } else if let atomUUID = result.atomUUID {
@@ -2892,15 +2902,10 @@ public final class CommandKViewModel {
 
     private func openUnifiedSearchResult(_ result: UnifiedSearchResult) {
         if result.resultKind == .browserPin, let browserURL = result.browserURL {
-            NotificationCenter.default.post(
-                name: CosmoNotification.Navigation.openWebBrowserPane,
-                object: nil,
-                userInfo: [
-                    "url": browserURL,
-                    "title": result.browserTitle ?? result.subtitle ?? "Browser"
-                ]
+            openBrowserPaneAfterCommandKDismissal(
+                url: browserURL,
+                title: result.browserTitle ?? result.subtitle ?? "Browser"
             )
-            finishAction()
         } else if result.resultKind == .thinkspace, let thinkspaceId = result.thinkspaceId {
             NotificationCenter.default.post(
                 name: CosmoNotification.Navigation.navigateToThinkspaceById,
@@ -3064,15 +3069,7 @@ public final class CommandKViewModel {
             } else {
                 title = "Browser"
             }
-            NotificationCenter.default.post(
-                name: CosmoNotification.Navigation.openWebBrowserPane,
-                object: nil,
-                userInfo: [
-                    "url": targetURL,
-                    "title": title
-                ]
-            )
-            finishAction()
+            openBrowserPaneAfterCommandKDismissal(url: targetURL, title: title)
 
         case .openSwipeGallery:
             NotificationCenter.default.post(name: CosmoNotification.Navigation.openSwipeGallery, object: nil)

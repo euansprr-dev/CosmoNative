@@ -46,6 +46,52 @@ final class RichDocumentTests: XCTestCase {
     }
 
     @MainActor
+    func testBlockFocusCoordinatorNavigatesInDocumentOrderNotRegistrationOrder() {
+        let first = UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!
+        let second = UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB")!
+        let third = UUID(uuidString: "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC")!
+        let coordinator = BlockFocusCoordinator()
+
+        // Rows can mount in any order (AppKit onAppear timing). Register them
+        // reversed to prove navigation ignores registration order.
+        coordinator.register(third)
+        coordinator.register(second)
+        coordinator.register(first)
+        coordinator.syncNavigationOrder([first, second, third])
+
+        coordinator.focus(second)
+        // ⬇ moves to the block visually below (third), not the next registered.
+        XCTAssertTrue(coordinator.focusNext())
+        XCTAssertEqual(coordinator.focusedBlockID, third)
+        // ⬆ moves back up in document order.
+        XCTAssertTrue(coordinator.focusPrevious())
+        XCTAssertEqual(coordinator.focusedBlockID, second)
+        XCTAssertTrue(coordinator.focusPrevious())
+        XCTAssertEqual(coordinator.focusedBlockID, first)
+        // Already at the top — no wrap.
+        XCTAssertFalse(coordinator.focusPrevious())
+        XCTAssertEqual(coordinator.focusedBlockID, first)
+    }
+
+    @MainActor
+    func testBlockFocusCoordinatorSkipsUnmountedBlocksInDocumentOrder() {
+        let first = UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!
+        let hiddenMiddle = UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB")!
+        let third = UUID(uuidString: "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC")!
+        let coordinator = BlockFocusCoordinator()
+
+        // The middle block exists in the document order but has no live editor
+        // (e.g. a collapsed element child) — navigation should step over it.
+        coordinator.register(first)
+        coordinator.register(third)
+        coordinator.syncNavigationOrder([first, hiddenMiddle, third])
+
+        coordinator.focus(first)
+        XCTAssertTrue(coordinator.focusNext())
+        XCTAssertEqual(coordinator.focusedBlockID, third)
+    }
+
+    @MainActor
     func testBlockFocusCoordinatorDoesNotJumpToFirstBlockWhenFocusIsUnknown() {
         let first = UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!
         let second = UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB")!

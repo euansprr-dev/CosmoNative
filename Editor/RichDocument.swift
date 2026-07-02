@@ -83,8 +83,62 @@ public struct RichMention: Codable, Equatable, Hashable, Sendable {
 
 struct RichImageReference: Codable, Equatable, Hashable, Sendable {
     var path: String
+    /// Intrinsic pixel dimensions of the source image.
     var width: CGFloat
     var height: CGFloat
+    /// User-chosen on-screen width in points. `nil` ⇒ default size (back-compat: older
+    /// documents have no stored size and fall back to `ImageResizeMath.defaultDisplayWidth`).
+    var displayWidth: CGFloat?
+}
+
+/// Pure geometry for proportional (aspect-locked) image resizing. Shared by the SwiftUI
+/// (Note focus mode) and AppKit (Content focus mode) resize surfaces, and unit-tested in
+/// isolation. Height always follows from width and the intrinsic aspect ratio, so images
+/// can never be distorted.
+enum ImageResizeMath {
+    /// Smallest on-screen width the user can shrink an image to, in points.
+    static let minWidth: CGFloat = 64
+
+    /// Aspect ratio (w/h) of the source image, guarded against zero/NaN.
+    static func aspectRatio(intrinsic: CGSize) -> CGFloat {
+        guard intrinsic.width > 0, intrinsic.height > 0 else { return 1 }
+        return intrinsic.width / intrinsic.height
+    }
+
+    /// The width an image renders at when the user hasn't picked one. Reproduces the
+    /// historical default of fitting within `min(680, w) × 420` so existing documents keep
+    /// their previous appearance.
+    static func defaultDisplayWidth(intrinsic: CGSize) -> CGFloat {
+        let w = max(1, intrinsic.width)
+        let h = max(1, intrinsic.height)
+        let ratio = min(min(680, w) / w, 420 / h, 1)
+        return w * ratio
+    }
+
+    /// Final on-screen size: chosen-or-default width, clamped to `[minWidth, maxWidth]`,
+    /// with height derived from the aspect ratio.
+    static func resolvedSize(displayWidth: CGFloat?, intrinsic: CGSize, maxWidth: CGFloat) -> CGSize {
+        let aspect = aspectRatio(intrinsic: intrinsic)
+        let base = displayWidth ?? defaultDisplayWidth(intrinsic: intrinsic)
+        let upper = max(minWidth, maxWidth)
+        let width = min(max(base, minWidth), upper)
+        return CGSize(width: width, height: (width / aspect).rounded())
+    }
+
+    /// New aspect-locked width while dragging a corner. `startWidth` is the width when the
+    /// drag began; `deltaX` is the dragged corner's horizontal translation; `growsRight` is
+    /// true for right-edge corners (drag right → grow) and false for left-edge corners
+    /// (drag left → grow). Result is clamped to `[minWidth, maxWidth]`.
+    static func cornerResizedWidth(startWidth: CGFloat, deltaX: CGFloat, growsRight: Bool, maxWidth: CGFloat) -> CGFloat {
+        let signed = growsRight ? deltaX : -deltaX
+        let upper = max(minWidth, maxWidth)
+        return min(max(startWidth + signed, minWidth), upper)
+    }
+
+    /// "648 × 432" for the live size badge.
+    static func format(size: CGSize) -> String {
+        "\(Int(size.width.rounded())) × \(Int(size.height.rounded()))"
+    }
 }
 
 struct RichInlineNode: Identifiable, Codable, Equatable, Hashable, Sendable {
@@ -433,6 +487,7 @@ enum RichDocumentAttributeKeys {
     static let entityID = NSAttributedString.Key("CosmoEntityId")
     static let entityUUID = NSAttributedString.Key("CosmoEntityUUID")
     static let imagePath = NSAttributedString.Key("CosmoImagePath")
+    static let imageDisplayWidth = NSAttributedString.Key("CosmoImageDisplayWidth")
     static let headingLevel = NSAttributedString.Key("CosmoHeadingLevel")
     static let headingBlockID = NSAttributedString.Key("CosmoHeadingBlockID")
     static let headingCollapsed = NSAttributedString.Key("CosmoHeadingCollapsed")
@@ -602,7 +657,12 @@ enum RichDocumentSerializer {
                     guard let image = node.image else { continue }
                     if let attachment = imageAttachment(for: image) {
                         let attributed = NSMutableAttributedString(attachment: attachment)
-                        attributed.addAttribute(RichDocumentAttributeKeys.imagePath, value: image.path, range: NSRange(location: 0, length: attributed.length))
+                        let imageRange = NSRange(location: 0, length: attributed.length)
+                        var imageAttrs: [NSAttributedString.Key: Any] = [RichDocumentAttributeKeys.imagePath: image.path]
+                        if let displayWidth = image.displayWidth {
+                            imageAttrs[RichDocumentAttributeKeys.imageDisplayWidth] = NSNumber(value: Double(displayWidth))
+                        }
+                        attributed.addAttributes(imageAttrs, range: imageRange)
                         result.append(attributed)
                     } else {
                         result.append(imageFallbackAttributedString(fontSize: fontSize, darkMode: darkMode))
@@ -958,10 +1018,14 @@ enum RichDocumentSerializer {
     }
 
     private static func imageNode(from attachment: NSTextAttachment, attributes: [NSAttributedString.Key: Any]) -> RichImageReference? {
+        // The user-chosen display width rides along as an attribute on the attachment so it
+        // survives editing in the live text view; it is persisted via RichImageReference.
+        let displayWidth = (attributes[RichDocumentAttributeKeys.imageDisplayWidth] as? NSNumber).map { CGFloat($0.doubleValue) }
+
         if let existingPath = attributes[RichDocumentAttributeKeys.imagePath] as? String,
            let image = ImageStore.load(path: existingPath) {
             let size = image.size
-            return RichImageReference(path: existingPath, width: size.width, height: size.height)
+            return RichImageReference(path: existingPath, width: size.width, height: size.height, displayWidth: displayWidth)
         }
 
         let data = attachment.fileWrapper?.regularFileContents ?? attachment.image?.pngData() ?? attachment.image?.tiffRepresentation
@@ -974,7 +1038,7 @@ enum RichDocumentSerializer {
             return nil
         }
 
-        return RichImageReference(path: saved.path, width: saved.width, height: saved.height)
+        return RichImageReference(path: saved.path, width: saved.width, height: saved.height, displayWidth: displayWidth)
     }
 
     private static func imageAttachment(for image: RichImageReference) -> NSTextAttachment? {
@@ -982,8 +1046,14 @@ enum RichDocumentSerializer {
             return nil
         }
 
+        let intrinsic = CGSize(width: image.width, height: image.height)
+        let display = ImageResizeMath.resolvedSize(displayWidth: image.displayWidth, intrinsic: intrinsic, maxWidth: 680)
+
         let attachment = NSTextAttachment()
-        attachment.image = nsImage.scaled(toFit: CGSize(width: min(680, image.width), height: 420))
+        // Keep a crisp bitmap (scaled to the historical cap), but let `bounds` drive the
+        // on-screen size so resizing is a pure layout change — no image re-decode.
+        attachment.image = nsImage.scaled(toFit: CGSize(width: min(680, image.width), height: 10_000))
+        attachment.bounds = CGRect(origin: .zero, size: display)
         return attachment
     }
 

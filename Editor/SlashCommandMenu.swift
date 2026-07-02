@@ -103,6 +103,7 @@ struct SlashCommandMenu: View {
                 .foregroundStyle(textPrimary)
                 .focused($isSearchFocused)
                 .onSubmit {
+                    ConsoleLog.info("[SLASHDBG] searchField onSubmit selectedIndex=\(selectedIndex) hasCmd=\(filteredCommands[safe: selectedIndex] != nil)", subsystem: .canvas)
                     if let command = filteredCommands[safe: selectedIndex] {
                         CosmicHaptics.shared.play(.selection)
                         handleCommandSelection(command)
@@ -147,6 +148,7 @@ struct SlashCommandMenu: View {
         )
         .id(index)
         .onTapGesture {
+            ConsoleLog.info("[SLASHDBG] row onTapGesture index=\(index) type=\(command.type)", subsystem: .canvas)
             CosmicHaptics.shared.play(.selection)
             selectedIndex = index
             handleCommandSelection(command)
@@ -196,6 +198,7 @@ struct SlashCommandMenu: View {
     }
 
     private func handleCommandSelection(_ command: SlashCommand) {
+        ConsoleLog.info("[SLASHDBG] handleCommandSelection type=\(command.type) isElements=\(command.type == .elements)", subsystem: .canvas)
         guard command.type != .elements else { return }
         onSelect(command)
     }

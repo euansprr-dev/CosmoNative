@@ -2180,6 +2180,13 @@ struct MainView: View {
                     return nil
                 }
 
+                // 7c. Slash / mention / selection menu open in a block editor —
+                // dismiss just the menu (leaving the typed / or @ in place),
+                // never the whole focus mode / page.
+                if EditorOverlayEscapeCoordinator.shared.dismissTopOverlay() {
+                    return nil
+                }
+
                 // 8. Focus mode
                 if appState.focusedEntity != nil {
                     withAnimation(.spring(response: 0.2)) {

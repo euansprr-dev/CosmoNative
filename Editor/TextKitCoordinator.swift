@@ -139,6 +139,219 @@ final class CosmoClipView: NSClipView {
 
 // MARK: - Custom NSTextView
 
+/// Carries a right-click resize choice from an NSMenuItem back to the coordinator.
+private final class ImageResizePresetPayload: NSObject {
+    let charIndex: Int
+    let width: CGFloat?
+    init(charIndex: Int, width: CGFloat?) {
+        self.charIndex = charIndex
+        self.width = width
+    }
+}
+
+/// AppKit overlay that draws Google-Docs-style proportional resize handles over a selected
+/// inline image attachment in the content editor, and live-resizes it by mutating the
+/// attachment's `bounds` (height always follows the intrinsic aspect ratio, so the image can
+/// never be distorted). It passes every click through to the text view except the four corner
+/// hot-zones, so caret placement and text selection keep working. The final width is reported
+/// once per gesture via `onCommit`.
+final class ImageResizeOverlayView: NSView {
+    weak var textView: CosmoTextView?
+    var charIndex: Int = 0
+    var intrinsic: CGSize = CGSize(width: 1, height: 1)
+    var maxWidth: CGFloat = 680
+    var onCommit: ((CGFloat) -> Void)?
+
+    private enum Corner: CaseIterable { case topLeft, topRight, bottomLeft, bottomRight }
+
+    private let dotSize: CGFloat = 11
+    private let hitInset: CGFloat = 14
+    private var margin: CGFloat { hitInset + 2 }
+
+    private var activeCorner: Corner?
+    private var startWidth: CGFloat = 0
+    private var startMouseX: CGFloat = 0
+    private var isDragging = false
+
+    override var isFlipped: Bool { true }
+    override var acceptsFirstResponder: Bool { false }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    // MARK: - Geometry
+
+    /// The image occupies the overlay's bounds inset by `margin` (the handles straddle the edge).
+    private var imageRect: CGRect { bounds.insetBy(dx: margin, dy: margin) }
+
+    private func cornerPoint(_ corner: Corner) -> CGPoint {
+        let r = imageRect
+        switch corner {
+        case .topLeft: return CGPoint(x: r.minX, y: r.minY)
+        case .topRight: return CGPoint(x: r.maxX, y: r.minY)
+        case .bottomLeft: return CGPoint(x: r.minX, y: r.maxY)
+        case .bottomRight: return CGPoint(x: r.maxX, y: r.maxY)
+        }
+    }
+
+    private func handleRect(_ corner: Corner) -> CGRect {
+        let c = cornerPoint(corner)
+        return CGRect(x: c.x - hitInset, y: c.y - hitInset, width: hitInset * 2, height: hitInset * 2)
+    }
+
+    private func growsRight(_ corner: Corner) -> Bool { corner == .topRight || corner == .bottomRight }
+
+    // MARK: - Attachment access
+
+    private var attachment: NSTextAttachment? {
+        guard let storage = textView?.textStorage, charIndex < storage.length else { return nil }
+        return storage.attribute(.attachment, at: charIndex, effectiveRange: nil) as? NSTextAttachment
+    }
+
+    private func currentWidth() -> CGFloat {
+        guard let attachment else { return imageRect.width }
+        if attachment.bounds.width > 0 { return attachment.bounds.width }
+        return attachment.image?.size.width ?? imageRect.width
+    }
+
+    /// Re-fit the overlay frame to the attachment's current glyph rect. Returns false when the
+    /// attachment can no longer be located, so the caller can drop the overlay.
+    @discardableResult
+    func repositionToAttachment() -> Bool {
+        guard let textView, let lm = textView.layoutManager, let tc = textView.textContainer,
+              let storage = textView.textStorage, charIndex < storage.length,
+              storage.attribute(.attachment, at: charIndex, effectiveRange: nil) is NSTextAttachment else {
+            return false
+        }
+        let glyphRange = lm.glyphRange(forCharacterRange: NSRange(location: charIndex, length: 1), actualCharacterRange: nil)
+        var rect = lm.boundingRect(forGlyphRange: glyphRange, in: tc)
+        let origin = textView.textContainerOrigin
+        rect.origin.x += origin.x
+        rect.origin.y += origin.y
+        frame = rect.insetBy(dx: -margin, dy: -margin)
+        needsDisplay = true
+        return true
+    }
+
+    // MARK: - Hit-testing & cursors
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let superview else { return nil }
+        let local = convert(point, from: superview)
+        for corner in Corner.allCases where handleRect(corner).contains(local) { return self }
+        return nil
+    }
+
+    override func resetCursorRects() {
+        for corner in Corner.allCases {
+            addCursorRect(handleRect(corner), cursor: cursor(for: corner))
+        }
+    }
+
+    private func cursor(for corner: Corner) -> NSCursor {
+        switch corner {
+        case .topLeft: return .frameResize(position: .topLeft, directions: .all)
+        case .topRight: return .frameResize(position: .topRight, directions: .all)
+        case .bottomLeft: return .frameResize(position: .bottomLeft, directions: .all)
+        case .bottomRight: return .frameResize(position: .bottomRight, directions: .all)
+        }
+    }
+
+    // MARK: - Drag
+
+    override func mouseDown(with event: NSEvent) {
+        let local = convert(event.locationInWindow, from: nil)
+        guard let corner = Corner.allCases.first(where: { handleRect($0).contains(local) }) else {
+            super.mouseDown(with: event)
+            return
+        }
+        activeCorner = corner
+        startWidth = currentWidth()
+        startMouseX = event.locationInWindow.x   // window space: stable as the overlay reflows
+        isDragging = true
+        needsDisplay = true
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard isDragging, let corner = activeCorner, let attachment else { return }
+        let deltaX = event.locationInWindow.x - startMouseX
+        let width = ImageResizeMath.cornerResizedWidth(startWidth: startWidth, deltaX: deltaX, growsRight: growsRight(corner), maxWidth: maxWidth)
+        let aspect = ImageResizeMath.aspectRatio(intrinsic: intrinsic)
+        attachment.bounds = CGRect(x: 0, y: 0, width: width, height: (width / aspect).rounded())
+        invalidateAttachmentLayout()
+        repositionToAttachment()
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard isDragging else { super.mouseUp(with: event); return }
+        isDragging = false
+        activeCorner = nil
+        needsDisplay = true
+        onCommit?(currentWidth())
+    }
+
+    private func invalidateAttachmentLayout() {
+        guard let textView, let lm = textView.layoutManager, let tc = textView.textContainer else { return }
+        let range = NSRange(location: charIndex, length: 1)
+        lm.invalidateLayout(forCharacterRange: range, actualCharacterRange: nil)
+        lm.invalidateDisplay(forCharacterRange: range)
+        lm.ensureLayout(for: tc)
+        textView.needsDisplay = true
+    }
+
+    // MARK: - Drawing
+
+    override func draw(_ dirtyRect: NSRect) {
+        let accent = NSColor(DS.accent)
+        let r = imageRect
+
+        let framePath = NSBezierPath(roundedRect: r, xRadius: 10, yRadius: 10)
+        framePath.lineWidth = 1.5
+        accent.setStroke()
+        framePath.stroke()
+
+        for corner in Corner.allCases {
+            let c = cornerPoint(corner)
+            let dot = NSBezierPath(
+                roundedRect: CGRect(x: c.x - dotSize / 2, y: c.y - dotSize / 2, width: dotSize, height: dotSize),
+                xRadius: 3, yRadius: 3
+            )
+            accent.setFill()
+            dot.fill()
+            NSColor.white.setStroke()
+            dot.lineWidth = 1.5
+            dot.stroke()
+        }
+
+        if isDragging { drawBadge(over: r) }
+    }
+
+    private func drawBadge(over rect: CGRect) {
+        let aspect = ImageResizeMath.aspectRatio(intrinsic: intrinsic)
+        let size = CGSize(width: currentWidth(), height: currentWidth() / aspect)
+        let text = ImageResizeMath.format(size: size) as NSString
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium),
+            .foregroundColor: NSColor.white
+        ]
+        let textSize = text.size(withAttributes: attrs)
+        let padX: CGFloat = 8, padY: CGFloat = 4
+        let badge = CGRect(
+            x: rect.midX - (textSize.width + padX * 2) / 2,
+            y: rect.minY + 6,
+            width: textSize.width + padX * 2,
+            height: textSize.height + padY * 2
+        )
+        NSColor.black.withAlphaComponent(0.62).setFill()
+        NSBezierPath(roundedRect: badge, xRadius: badge.height / 2, yRadius: badge.height / 2).fill()
+        text.draw(at: CGPoint(x: badge.minX + padX, y: badge.minY + padY), withAttributes: attrs)
+    }
+}
+
 final class CosmoTextView: NSTextView {
     fileprivate weak var shortcutDelegate: CosmoTextViewShortcutDelegate?
 
@@ -174,6 +387,9 @@ final class CosmoTextView: NSTextView {
     var onToggleHeadingCollapse: ((NSRange) -> Void)?
     /// Click on a ☐/☑ glyph toggles the to-do — passes the line's start offset.
     var onToggleChecklistItem: ((Int) -> Void)?
+    /// Right-click resize preset on an image: passes the attachment's char index and the new
+    /// display width (`nil` ⇒ reset to default size).
+    var onImageResizePreset: ((Int, CGFloat?) -> Void)?
     var rendersElementChrome: Bool = true
     var elementBlockDarkMode: Bool = false
     var elementBlockBaseFontSize: CGFloat = 16
@@ -274,6 +490,13 @@ final class CosmoTextView: NSTextView {
             onToggleChecklistItem?(lineStart)
             return
         }
+        if let imageRange = imageAttachmentHit(at: localPoint) {
+            // Select the attachment so the coordinator reveals the resize handles
+            // (Google Docs: click an image → handles appear).
+            window?.makeFirstResponder(self)
+            setSelectedRange(imageRange)
+            return
+        }
         super.mouseDown(with: event)
     }
 
@@ -306,6 +529,81 @@ final class CosmoTextView: NSTextView {
         glyphRect.origin.y += textContainerInset.height
         guard glyphRect.insetBy(dx: -4, dy: -2).contains(point) else { return nil }
         return lineRange.location
+    }
+
+    /// Hit-tests an inline image attachment. Returns the attachment's character range
+    /// (length 1) when the click lands on the image itself, so the caller can select it and
+    /// reveal the resize handles. Nil for any other click.
+    fileprivate func imageAttachmentHit(at point: NSPoint) -> NSRange? {
+        guard isEditable, let layoutManager, let textContainer, let textStorage else { return nil }
+        let nsText = string as NSString
+        guard nsText.length > 0 else { return nil }
+
+        let adjusted = NSPoint(x: point.x - textContainerInset.width, y: point.y - textContainerInset.height)
+        let glyphIndex = layoutManager.glyphIndex(for: adjusted, in: textContainer)
+        let charIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
+        guard charIndex < textStorage.length else { return nil }
+
+        let attributes = textStorage.attributes(at: charIndex, effectiveRange: nil)
+        guard attributes[.attachment] is NSTextAttachment,
+              attributes[RichDocumentAttributeKeys.imagePath] != nil else { return nil }
+
+        // glyphIndex(for:) snaps to the nearest glyph — confirm the click is inside it.
+        let glyphRange = layoutManager.glyphRange(forCharacterRange: NSRange(location: charIndex, length: 1), actualCharacterRange: nil)
+        var rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+        rect.origin.x += textContainerInset.width
+        rect.origin.y += textContainerInset.height
+        guard rect.contains(point) else { return nil }
+
+        return NSRange(location: charIndex, length: 1)
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let localPoint = convert(event.locationInWindow, from: nil)
+        if isEditable, onImageResizePreset != nil, let range = imageAttachmentHit(at: localPoint) {
+            return imageResizeMenu(charIndex: range.location)
+        }
+        return super.menu(for: event)
+    }
+
+    private func imageResizeMenu(charIndex: Int) -> NSMenu {
+        let intrinsic = imageIntrinsicSize(at: charIndex)
+        let maxWidth = max(ImageResizeMath.minWidth, bounds.width - 2 * textContainerInset.width)
+        let presets: [(String, CGFloat?)] = [
+            ("Small", intrinsic.width * 0.25),
+            ("Medium", intrinsic.width * 0.5),
+            ("Original size", intrinsic.width),
+            ("Fit width", maxWidth),
+            ("", nil)   // separator marker
+        ]
+        let menu = NSMenu()
+        for (title, rawWidth) in presets {
+            guard !title.isEmpty else { menu.addItem(.separator()); continue }
+            let item = NSMenuItem(title: title, action: #selector(handleImageResizeMenu(_:)), keyEquivalent: "")
+            item.target = self
+            let clamped = rawWidth.map { ImageResizeMath.resolvedSize(displayWidth: $0, intrinsic: intrinsic, maxWidth: maxWidth).width }
+            item.representedObject = ImageResizePresetPayload(charIndex: charIndex, width: clamped)
+            menu.addItem(item)
+        }
+        let reset = NSMenuItem(title: "Reset size", action: #selector(handleImageResizeMenu(_:)), keyEquivalent: "")
+        reset.target = self
+        reset.representedObject = ImageResizePresetPayload(charIndex: charIndex, width: nil)
+        menu.addItem(reset)
+        return menu
+    }
+
+    private func imageIntrinsicSize(at charIndex: Int) -> CGSize {
+        guard let storage = textStorage, charIndex < storage.length,
+              let attachment = storage.attribute(.attachment, at: charIndex, effectiveRange: nil) as? NSTextAttachment,
+              let size = attachment.image?.size, size.width > 0, size.height > 0 else {
+            return CGSize(width: 1, height: 1)
+        }
+        return size
+    }
+
+    @objc private func handleImageResizeMenu(_ sender: NSMenuItem) {
+        guard let payload = sender.representedObject as? ImageResizePresetPayload else { return }
+        onImageResizePreset?(payload.charIndex, payload.width)
     }
 
     override func updateTrackingAreas() {
@@ -1102,6 +1400,8 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         context.coordinator.awaitingExternalContent = false
         if !textView.attributedString().isEqual(to: attributedText) {
             let selectedRange = textView.selectedRange()
+            // The attachment objects the overlay points at are about to be replaced.
+            context.coordinator.removeImageResizeOverlay()
             textView.textStorage?.setAttributedString(attributedText)
             applyStorageOverrides(textView.textStorage)
             let safeLocation = min(selectedRange.location, textView.string.count)
@@ -1115,6 +1415,18 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         context.coordinator.applyPolishHighlights(to: textView)
         context.coordinator.applyFocusBand(to: textView)
         context.coordinator.normalizeSingleLineViewport(for: textView)
+        // Re-measure height whenever fresh external content lands, even if the
+        // string itself is unchanged. A newly-split EMPTY block has empty
+        // content that equals the binding, so the guarded branch above skips its
+        // height update — yet the fresh row can briefly inherit the previous
+        // editor's tall frame and, with nothing to re-measure it, stay
+        // page-sized (the "one block became huge" gap on Return). Gated on
+        // fresh external content so idle rows don't re-measure on every
+        // keystroke; notifyContentHeightChange is tolerance-guarded (>1pt) and
+        // idempotent regardless.
+        if hasFreshExternalContent {
+            context.coordinator.notifyContentHeightChange(for: textView)
+        }
         context.coordinator.applyCaretRequestIfNeeded(to: textView)
         context.coordinator.navigateIfNeeded(to: navigationTargetID, in: textView)
 
@@ -1194,6 +1506,10 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         textView.onToggleChecklistItem = { [weak coordinator = context.coordinator] lineStart in
             guard let coordinator, let textView = coordinator.textViewReference else { return }
             coordinator.toggleChecklistItem(atLineStart: lineStart, in: textView)
+        }
+        textView.onImageResizePreset = { [weak coordinator = context.coordinator] charIndex, width in
+            guard let coordinator, let textView = coordinator.textViewReference else { return }
+            coordinator.commitImageResize(width: width, at: charIndex, in: textView)
         }
         textView.textContainerInset = resolvedTextInsets()
         textView.textContainer?.lineFragmentPadding = 0
@@ -1474,8 +1790,91 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             }
             lastObservedFrameWidth = newWidth
             notifyContentHeightChange(for: textView)
+            repositionImageResizeOverlay()
         }
 
+        // MARK: - Image resize overlay (content editor)
+
+        private var imageResizeOverlay: ImageResizeOverlayView?
+
+        /// Show & position the resize overlay when exactly one inline image attachment is
+        /// selected; hide it otherwise. Cheap enough to call on every selection change.
+        func updateImageResizeOverlay(in textView: CosmoTextView) {
+            guard textView.isEditable, let storage = textView.textStorage else {
+                removeImageResizeOverlay()
+                return
+            }
+            let selection = textView.selectedRange()
+            guard selection.length == 1, selection.location < storage.length else {
+                removeImageResizeOverlay()
+                return
+            }
+            let attributes = storage.attributes(at: selection.location, effectiveRange: nil)
+            guard let attachment = attributes[.attachment] as? NSTextAttachment,
+                  attributes[RichDocumentAttributeKeys.imagePath] != nil else {
+                removeImageResizeOverlay()
+                return
+            }
+
+            let imageSize = attachment.image?.size ?? attachment.bounds.size
+            let intrinsic = (imageSize.width > 0 && imageSize.height > 0) ? imageSize : CGSize(width: 1, height: 1)
+            let maxWidth = max(ImageResizeMath.minWidth, textView.bounds.width - 2 * textView.textContainerInset.width)
+
+            let overlay = imageResizeOverlay ?? makeImageResizeOverlay(in: textView)
+            overlay.charIndex = selection.location
+            overlay.intrinsic = intrinsic
+            overlay.maxWidth = maxWidth
+            if overlay.superview !== textView { textView.addSubview(overlay) }
+            if !overlay.repositionToAttachment() { removeImageResizeOverlay() }
+        }
+
+        func repositionImageResizeOverlay() {
+            guard let overlay = imageResizeOverlay else { return }
+            if !overlay.repositionToAttachment() { removeImageResizeOverlay() }
+        }
+
+        func removeImageResizeOverlay() {
+            imageResizeOverlay?.removeFromSuperview()
+            imageResizeOverlay = nil
+        }
+
+        private func makeImageResizeOverlay(in textView: CosmoTextView) -> ImageResizeOverlayView {
+            let overlay = ImageResizeOverlayView(frame: .zero)
+            overlay.textView = textView
+            overlay.onCommit = { [weak self, weak textView] width in
+                guard let self, let textView, let charIndex = self.imageResizeOverlay?.charIndex else { return }
+                self.commitImageResize(width: width, at: charIndex, in: textView)
+            }
+            imageResizeOverlay = overlay
+            return overlay
+        }
+
+        /// Persist a resized image's display width by stamping the attribute the serializer
+        /// reads (or removing it for a reset), updating the attachment bounds, then flushing
+        /// through the normal binding sync so it lands in the document model.
+        func commitImageResize(width: CGFloat?, at charIndex: Int, in textView: CosmoTextView) {
+            guard let storage = textView.textStorage, charIndex < storage.length else { return }
+            let range = NSRange(location: charIndex, length: 1)
+            let attachment = storage.attribute(.attachment, at: charIndex, effectiveRange: nil) as? NSTextAttachment
+            let intrinsic = attachment?.image?.size ?? CGSize(width: 1, height: 1)
+
+            if let width {
+                storage.addAttribute(RichDocumentAttributeKeys.imageDisplayWidth, value: NSNumber(value: Double(width)), range: range)
+                let aspect = ImageResizeMath.aspectRatio(intrinsic: intrinsic)
+                attachment?.bounds = CGRect(x: 0, y: 0, width: width, height: (width / aspect).rounded())
+            } else {
+                storage.removeAttribute(RichDocumentAttributeKeys.imageDisplayWidth, range: range)
+                attachment?.bounds = CGRect(origin: .zero, size: ImageResizeMath.resolvedSize(displayWidth: nil, intrinsic: intrinsic, maxWidth: 680))
+            }
+
+            textView.layoutManager?.invalidateLayout(forCharacterRange: range, actualCharacterRange: nil)
+            if let container = textView.textContainer {
+                textView.layoutManager?.ensureLayout(for: container)
+            }
+            textView.window?.invalidateCursorRects(for: textView)
+            syncBindings(from: textView)
+            updateImageResizeOverlay(in: textView)
+        }
 
         func applyPolishHighlights(to textView: NSTextView) {
             guard let storage = textView.textStorage else { return }
@@ -1816,6 +2215,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
             parent.cursorPosition = selectedRange.location
             applyFocusBand(to: textView)
+            updateImageResizeOverlay(in: textView)
 
             // Auto-detect block mode based on current line prefix (must run for ALL cursor positions)
             let lineRange = currentLineRange(in: textView)
@@ -2333,11 +2733,35 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         func applyCaretRequestIfNeeded(to textView: CosmoTextView) {
             guard let request = parent.caretRequest, request.token != lastAppliedCaretToken else { return }
             lastAppliedCaretToken = request.token
+            placeCaretWhenReady(in: textView, utf16OffsetFromEnd: request.utf16OffsetFromEnd)
+        }
+
+        /// Focuses `textView` and places the caret after a structural edit
+        /// (split/merge/delete). The new block's NSView may not be attached to a
+        /// window on the very next runloop tick, in which case
+        /// `makeFirstResponder` silently no-ops and the caret is stranded in the
+        /// block the user just left. Retry across a few ticks until the view is
+        /// in a window so focus reliably follows to the new block.
+        private func placeCaretWhenReady(
+            in textView: CosmoTextView,
+            utf16OffsetFromEnd: Int,
+            attemptsRemaining: Int = 8
+        ) {
             DispatchQueue.main.async { [weak textView] in
                 guard let textView else { return }
+                guard let window = textView.window else {
+                    if attemptsRemaining > 0 {
+                        self.placeCaretWhenReady(
+                            in: textView,
+                            utf16OffsetFromEnd: utf16OffsetFromEnd,
+                            attemptsRemaining: attemptsRemaining - 1
+                        )
+                    }
+                    return
+                }
                 let length = (textView.string as NSString).length
-                let location = max(0, min(length, length - request.utf16OffsetFromEnd))
-                textView.window?.makeFirstResponder(textView)
+                let location = max(0, min(length, length - utf16OffsetFromEnd))
+                window.makeFirstResponder(textView)
                 textView.setSelectedRange(NSRange(location: location, length: 0))
                 textView.scrollRangeToVisible(NSRange(location: location, length: 0))
             }
@@ -3478,7 +3902,11 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             }
 
             let attachment = NSTextAttachment()
-            attachment.image = image.scaled(toFit: CGSize(width: min(680, saved.width), height: 420))
+            // Crisp bitmap (no height cap); `bounds` drives the on-screen size so the resize
+            // overlay can change it with a pure layout update.
+            attachment.image = image.scaled(toFit: CGSize(width: min(680, saved.width), height: 10_000))
+            let intrinsic = CGSize(width: saved.width, height: saved.height)
+            attachment.bounds = CGRect(origin: .zero, size: ImageResizeMath.resolvedSize(displayWidth: nil, intrinsic: intrinsic, maxWidth: 680))
 
             let attributed = NSMutableAttributedString(attachment: attachment)
             attributed.addAttributes([

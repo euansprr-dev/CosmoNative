@@ -15,7 +15,14 @@ struct BlockCaretRequest: Equatable {
 final class BlockFocusCoordinator {
     private(set) var focusedBlockID: UUID?
     private(set) var caretRequest: BlockCaretRequest?
+    /// Blocks that currently have a live editor row (membership). Maintained by
+    /// register/unregister on row appear/disappear. Order here reflects AppKit
+    /// onAppear timing, NOT document order — do not navigate by it directly.
     private var registeredBlockIDs: [UUID] = []
+    /// The document's visual (top-to-bottom) block order, supplied by the block
+    /// list. Keyboard navigation walks THIS order so ⬆/⬇ always match what the
+    /// user sees, regardless of the order rows happened to mount in.
+    private var navigationOrder: [UUID] = []
 
     func register(_ blockID: UUID?) {
         guard let blockID, !registeredBlockIDs.contains(blockID) else { return }
@@ -28,6 +35,15 @@ final class BlockFocusCoordinator {
         if focusedBlockID == blockID {
             focusedBlockID = nil
         }
+    }
+
+    /// Feeds the coordinator the document's visual block order (a flattened,
+    /// pre-order list of every block ID, including nested element children).
+    /// Called by the top-level block list whenever the structure changes, so
+    /// arrow navigation can move in document order instead of mount order.
+    func syncNavigationOrder(_ orderedBlockIDs: [UUID]) {
+        guard navigationOrder != orderedBlockIDs else { return }
+        navigationOrder = orderedBlockIDs
     }
 
     func focus(_ blockID: UUID?) {
@@ -84,15 +100,32 @@ final class BlockFocusCoordinator {
     }
 
     private func moveFocus(offset: Int) -> Bool {
-        guard !registeredBlockIDs.isEmpty else { return false }
-        guard let focusedBlockID,
-              let currentIndex = registeredBlockIDs.firstIndex(of: focusedBlockID) else {
+        let order = navigableOrder()
+        guard !order.isEmpty,
+              let focusedBlockID,
+              let currentIndex = order.firstIndex(of: focusedBlockID) else {
             return false
         }
 
         let nextIndex = currentIndex + offset
-        guard registeredBlockIDs.indices.contains(nextIndex) else { return false }
-        self.focusedBlockID = registeredBlockIDs[nextIndex]
+        guard order.indices.contains(nextIndex) else { return false }
+        self.focusedBlockID = order[nextIndex]
         return true
+    }
+
+    /// The blocks reachable by ⬆/⬇, in document order. We start from the visual
+    /// `navigationOrder` and keep only IDs that currently have a live editor
+    /// (so dividers/images and collapsed-away rows are skipped), then append any
+    /// registered rows the order hasn't caught up with yet (a row that mounted
+    /// before the next order sync) so navigation never strands a block. Falls
+    /// back to registration order when no document order has been supplied
+    /// (e.g. the coordinator used standalone in tests).
+    private func navigableOrder() -> [UUID] {
+        guard !navigationOrder.isEmpty else { return registeredBlockIDs }
+        let registered = Set(registeredBlockIDs)
+        var ordered = navigationOrder.filter { registered.contains($0) }
+        let known = Set(ordered)
+        ordered.append(contentsOf: registeredBlockIDs.filter { !known.contains($0) })
+        return ordered
     }
 }

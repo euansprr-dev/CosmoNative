@@ -236,6 +236,9 @@ struct CosmoDocumentEditor: View {
             syncEditorFromDocument()
         }
         .onChange(of: document) { _, _ in
+            if splitsOnReturn {
+                ConsoleLog.info("[SLASHDBG] CDE.onChange(document) kind=\(String(describing: document.blocks.first?.kind)) text='\(document.blocks.first?.plainInlineText.prefix(12) ?? "")' applyingExt=\(isApplyingExternalUpdate) syncingFromEd=\(isSyncingFromEditor) willSync=\(!isApplyingExternalUpdate && !isSyncingFromEditor)", subsystem: .canvas)
+            }
             guard !isApplyingExternalUpdate, !isSyncingFromEditor else { return }
             syncEditorFromDocument()
         }
@@ -262,6 +265,9 @@ struct CosmoDocumentEditor: View {
     private func syncEditorFromDocument(preferLivePlainText: Bool = false) {
         isApplyingExternalUpdate = true
         let resolved = resolvedDocumentForEditor(preferLivePlainText: preferLivePlainText)
+        if splitsOnReturn {
+            ConsoleLog.info("[SLASHDBG] CDE.syncEditorFromDocument resolvedKind=\(String(describing: resolved.blocks.first?.kind)) text='\(resolved.blocks.first?.plainInlineText.prefix(12) ?? "")' preferLive=\(preferLivePlainText) mirror='\(plainTextMirror.prefix(12))'", subsystem: .canvas)
+        }
         attributedText = EditorRhythmPolicy.applyingLineSpacing(
             lineSpacingAdjustment,
             to: EditorFontPolicy.applyingDesign(

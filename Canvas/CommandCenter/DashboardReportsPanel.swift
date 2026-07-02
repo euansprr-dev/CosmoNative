@@ -4,6 +4,56 @@
 
 import SwiftUI
 
+enum DashboardReportChrome {
+    static var usesDarkMonoChrome: Bool {
+        DS.palette.name == "Black Mono"
+    }
+
+    static var insetFill: Color {
+        usesDarkMonoChrome ? DS.commandChromeProminentFill : DS.vellumDeep
+    }
+
+    static var controlFill: Color {
+        usesDarkMonoChrome ? DS.commandChromeControlFill : DS.vellum
+    }
+
+    static var cardFill: Color {
+        usesDarkMonoChrome ? DS.commandChromePanelFill : DS.surface
+    }
+
+    static var border: Color {
+        usesDarkMonoChrome ? DS.commandChromeBorder : DS.sepiaBorder
+    }
+
+    static var subtleBorder: Color {
+        usesDarkMonoChrome ? DS.commandChromeSeparatorStrong : DS.sepiaSubtle
+    }
+
+    static var primaryText: Color {
+        usesDarkMonoChrome ? DS.commandCenterTitleText : DS.inkWash
+    }
+
+    static var secondaryText: Color {
+        usesDarkMonoChrome ? DS.commandCenterSecondaryText : DS.inkFaded
+    }
+
+    static var mutedText: Color {
+        usesDarkMonoChrome ? DS.commandCenterMutedText : DS.inkFaded
+    }
+
+    static var sectionText: Color {
+        usesDarkMonoChrome ? DS.commandCenterOrnamentText : DS.giltMuted
+    }
+
+    static var heatmapEmptyFill: Color {
+        usesDarkMonoChrome ? DS.commandChromePanelFill : DS.vellumDeep
+    }
+
+    static var heatmapLowFill: Color {
+        usesDarkMonoChrome ? DS.commandChromeControlFill : DS.giltSoft
+    }
+}
+
 struct DashboardReportsPanel: View {
 
     @ObservedObject var viewModel: CommandCenterDashboardViewModel
@@ -51,7 +101,7 @@ struct DashboardReportsPanel: View {
             VStack(spacing: 3) {
                 Text(tab.displayName)
                     .font(DS.caption)
-                    .foregroundStyle(isActive ? DS.accent : DS.inkFaded)
+                    .foregroundStyle(isActive ? DS.accent : DashboardReportChrome.mutedText)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 5)
 
@@ -75,16 +125,16 @@ struct DashboardReportsPanel: View {
             } label: {
                 Image(systemName: "chevron.left")
                     .font(DS.caption2).fontWeight(.semibold)
-                    .foregroundStyle(DS.inkFaded)
+                    .foregroundStyle(DashboardReportChrome.secondaryText)
                     .frame(width: 24, height: 24)
-                    .background(DS.vellum, in: Circle())
-                    .overlay(Circle().stroke(DS.sepiaBorder, lineWidth: 0.5))
+                    .background(DashboardReportChrome.controlFill, in: Circle())
+                    .overlay(Circle().stroke(DashboardReportChrome.border, lineWidth: 0.5))
             }
             .buttonStyle(.plain)
 
             Text(viewModel.reportDateLabel)
                 .font(DS.callout)
-                .foregroundStyle(DS.inkFaded)
+                .foregroundStyle(DashboardReportChrome.mutedText)
                 .frame(maxWidth: .infinity)
 
             Button {
@@ -92,10 +142,10 @@ struct DashboardReportsPanel: View {
             } label: {
                 Image(systemName: "chevron.right")
                     .font(DS.caption2).fontWeight(.semibold)
-                    .foregroundStyle(isAtPresent ? DS.inkFaded.opacity(0.3) : DS.inkFaded)
+                    .foregroundStyle(isAtPresent ? DashboardReportChrome.mutedText.opacity(0.3) : DashboardReportChrome.secondaryText)
                     .frame(width: 24, height: 24)
-                    .background(DS.vellum, in: Circle())
-                    .overlay(Circle().stroke(DS.sepiaBorder, lineWidth: 0.5))
+                    .background(DashboardReportChrome.controlFill, in: Circle())
+                    .overlay(Circle().stroke(DashboardReportChrome.border, lineWidth: 0.5))
             }
             .buttonStyle(.plain)
             .disabled(isAtPresent)
@@ -164,7 +214,7 @@ struct DashboardReportsPanel: View {
             .frame(height: 110)
         }
         .padding(10)
-        .dsVellumInset(cornerRadius: 10)
+        .dashboardReportInset(cornerRadius: 10)
         .onAppear { triggerChartAnimation() }
     }
 
@@ -240,7 +290,7 @@ struct DashboardReportsPanel: View {
             heatmapLegend
         }
         .padding(10)
-        .dsVellumInset(cornerRadius: 10)
+        .dashboardReportInset(cornerRadius: 10)
     }
 
     @ViewBuilder
@@ -255,8 +305,8 @@ struct DashboardReportsPanel: View {
                 RoundedRectangle(cornerRadius: 3)
                     .stroke(
                         day.isToday ? DS.gilt.opacity(0.8) :
-                        (day.isFuture ? DS.sepiaSubtle.opacity(0.3) :
-                        (day.trackedMinutes == 0 ? DS.sepiaSubtle.opacity(0.4) : Color.clear)),
+                        (day.isFuture ? DashboardReportChrome.subtleBorder.opacity(0.3) :
+                        (day.trackedMinutes == 0 ? DashboardReportChrome.subtleBorder.opacity(0.4) : Color.clear)),
                         lineWidth: day.isToday ? 1.5 : 0.5
                     )
             )
@@ -272,8 +322,8 @@ struct DashboardReportsPanel: View {
 
     /// Cartographic terrain-map coloring: parchment → gold → forest green
     private func heatmapColor(minutes: Int) -> Color {
-        if minutes == 0 { return DS.vellumDeep }
-        if minutes < 30 { return DS.giltSoft }
+        if minutes == 0 { return DashboardReportChrome.heatmapEmptyFill }
+        if minutes < 30 { return DashboardReportChrome.heatmapLowFill }
         if minutes < 120 { return DS.gilt.opacity(0.35) }
         return DS.accent.opacity(0.65)
     }
@@ -283,19 +333,19 @@ struct DashboardReportsPanel: View {
             Spacer()
             Text("Less")
                 .font(DS.smallCaps)
-                .foregroundStyle(DS.inkFaded)
+                .foregroundStyle(DashboardReportChrome.mutedText)
             ForEach(Array([0, 15, 60, 180].enumerated()), id: \.offset) { _, mins in
                 RoundedRectangle(cornerRadius: 2)
                     .fill(heatmapColor(minutes: mins))
                     .frame(width: 10, height: 10)
                     .overlay(
                         RoundedRectangle(cornerRadius: 2)
-                            .stroke(mins == 0 ? DS.sepiaSubtle.opacity(0.5) : Color.clear, lineWidth: 0.5)
+                            .stroke(mins == 0 ? DashboardReportChrome.subtleBorder.opacity(0.5) : Color.clear, lineWidth: 0.5)
                     )
             }
             Text("More")
                 .font(DS.smallCaps)
-                .foregroundStyle(DS.inkFaded)
+                .foregroundStyle(DashboardReportChrome.mutedText)
         }
     }
 
@@ -327,7 +377,7 @@ struct DashboardReportsPanel: View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Completion Rates")
                 .font(DS.smallCaps)
-                .foregroundStyle(DS.giltMuted)
+                .foregroundStyle(DashboardReportChrome.sectionText)
                 .padding(.bottom, 2)
 
             ForEach(report.habitEntries) { entry in
@@ -377,7 +427,7 @@ struct DashboardReportsPanel: View {
         .padding(.vertical, 6)
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(DS.sepiaBorder.opacity(0.4), lineWidth: 0.5)
+                .stroke(DashboardReportChrome.border.opacity(0.4), lineWidth: 0.5)
         )
     }
 
@@ -417,7 +467,7 @@ struct DashboardReportsPanel: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Overall")
                 .font(DS.smallCaps)
-                .foregroundStyle(DS.giltMuted)
+                .foregroundStyle(DashboardReportChrome.sectionText)
 
             HStack(spacing: 8) {
                 // Progress bar
@@ -447,7 +497,7 @@ struct DashboardReportsPanel: View {
         .padding(10)
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .stroke(DS.sepiaBorder.opacity(0.4), lineWidth: 0.5)
+                .stroke(DashboardReportChrome.border.opacity(0.4), lineWidth: 0.5)
         )
     }
 
@@ -486,7 +536,7 @@ struct DashboardReportsPanel: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(DS.surface, in: RoundedRectangle(cornerRadius: 6))
+        .background(DashboardReportChrome.cardFill, in: RoundedRectangle(cornerRadius: 6))
     }
 
     // MARK: - Stats Grid
@@ -528,23 +578,23 @@ struct DashboardReportsPanel: View {
         VStack(alignment: .leading, spacing: 2) {
             Text(value)
                 .font(DS.title3)
-                .foregroundStyle(DS.inkWash)
+                .foregroundStyle(DashboardReportChrome.primaryText)
 
             Text(label)
                 .font(DS.smallCaps)
-                .foregroundStyle(DS.inkFaded)
+                .foregroundStyle(DashboardReportChrome.mutedText)
 
             if let detail {
                 Text(detail)
                     .font(.system(size: 9))
-                    .foregroundStyle(DS.inkFaded)
+                    .foregroundStyle(DashboardReportChrome.mutedText)
             }
         }
         .frame(maxWidth: .infinity, minHeight: 70, alignment: .leading)
         .padding(8)
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(DS.sepiaBorder.opacity(0.4), lineWidth: 0.5)
+                .stroke(DashboardReportChrome.border.opacity(0.4), lineWidth: 0.5)
         )
     }
 
@@ -574,7 +624,7 @@ struct DashboardReportsPanel: View {
                 }
             }
             .padding(10)
-            .background(DS.surface, in: RoundedRectangle(cornerRadius: 8))
+            .background(DashboardReportChrome.cardFill, in: RoundedRectangle(cornerRadius: 8))
         }
     }
 
@@ -686,5 +736,16 @@ extension ReportTab {
         case .month: return "Month"
         case .habits: return "Habits"
         }
+    }
+}
+
+private extension View {
+    func dashboardReportInset(cornerRadius: CGFloat = 8) -> some View {
+        self
+            .background(DashboardReportChrome.insetFill, in: RoundedRectangle(cornerRadius: cornerRadius))
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .stroke(DashboardReportChrome.border, lineWidth: 0.5)
+            )
     }
 }

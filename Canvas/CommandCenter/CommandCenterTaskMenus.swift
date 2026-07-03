@@ -449,6 +449,8 @@ struct CommandCenterComposerHost: View {
                 existing.icon = draft.icon
                 existing.accentColor = draft.accentColor
                 existing.dailyTargetCount = draft.dailyTargetCount
+                existing.goalType = draft.isTimeBased ? "minutes" : nil
+                existing.dailyTargetMinutes = draft.isTimeBased ? draft.dailyTargetMinutes : nil
                 existing.keywordTriggers = draft.keywords
                 existing.mappedIntents = draft.mappedIntents.map(\.rawValue).sorted()
                 existing.defaultIntentUUID = draft.defaultIntentUUID
@@ -460,6 +462,8 @@ struct CommandCenterComposerHost: View {
                     icon: draft.icon,
                     accentColor: draft.accentColor,
                     dailyTargetCount: draft.dailyTargetCount,
+                    goalType: draft.isTimeBased ? "minutes" : nil,
+                    dailyTargetMinutes: draft.isTimeBased ? draft.dailyTargetMinutes : nil,
                     keywordTriggers: draft.keywords,
                     mappedIntents: Array(draft.mappedIntents).sorted { $0.displayName < $1.displayName },
                     defaultIntentUUID: draft.defaultIntentUUID,

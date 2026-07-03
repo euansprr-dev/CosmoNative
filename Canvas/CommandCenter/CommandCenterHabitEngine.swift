@@ -66,6 +66,12 @@ struct HabitDefinition: Identifiable, Codable, Equatable, Sendable {
     var sortOrder: Int
     var isBuiltIn: Bool
     var isArchived: Bool
+    /// Goal type: "count" (default when nil) or "minutes". Field names must match iOS exactly.
+    var goalType: String? = nil
+    /// Daily minutes target for time-based habits; ignored for count habits.
+    var dailyTargetMinutes: Int? = nil
+
+    var isTimeBased: Bool { goalType == "minutes" }
 
     var accent: Color {
         Color(hex: accentColor)
@@ -121,10 +127,18 @@ struct HabitProgressState: Identifiable, Equatable, Sendable {
 
     var id: String { definition.id }
     var todayProgress: Double {
+        if definition.isTimeBased, let target = definition.dailyTargetMinutes, target > 0 {
+            return min(1, Double(trackedMinutesToday) / Double(target))
+        }
         guard targetCount > 0 else { return 0 }
         return min(1, Double(todayCount) / Double(targetCount))
     }
-    var isTodayComplete: Bool { todayCount >= targetCount }
+    var isTodayComplete: Bool {
+        if definition.isTimeBased, let target = definition.dailyTargetMinutes, target > 0 {
+            return trackedMinutesToday >= target
+        }
+        return todayCount >= targetCount
+    }
     var consistencyCount: Int { last7Days.filter { $0 }.count }
     var isBuiltIn: Bool { definition.isBuiltIn }
     var isEditable: Bool { !definition.isBuiltIn }
@@ -525,6 +539,8 @@ final class CommandCenterHabitEngine: ObservableObject {
         icon: String,
         accentColor: String,
         dailyTargetCount: Int,
+        goalType: String? = nil,
+        dailyTargetMinutes: Int? = nil,
         keywordTriggers: [String],
         mappedIntents: [TaskIntent],
         defaultIntentUUID: String?,
@@ -550,7 +566,9 @@ final class CommandCenterHabitEngine: ObservableObject {
             allowManualCompletion: allowManualCompletion,
             sortOrder: nextSortOrder(),
             isBuiltIn: false,
-            isArchived: false
+            isArchived: false,
+            goalType: goalType,
+            dailyTargetMinutes: goalType == "minutes" ? dailyTargetMinutes.map { max(5, $0) } : nil
         )
 
         do {
@@ -673,6 +691,10 @@ final class CommandCenterHabitEngine: ObservableObject {
 
     func recordTaskCompletion(taskUUID: String) async {
         guard let resolution = await resolveTaskHabit(taskUUID: taskUUID) else { return }
+        // Time-based habits derive progress from deep-work blocks — never from
+        // completion records (a count record here would be dead weight and
+        // risks cross-device double-crediting if ever counted).
+        guard !resolution.definition.isTimeBased else { return }
         let taskMinutes = await totalTrackedMinutes(forTaskUUID: taskUUID)
         await persistCompletion(
             HabitCompletionRecord(
@@ -689,6 +711,7 @@ final class CommandCenterHabitEngine: ObservableObject {
 
     func reverseTaskCompletion(taskUUID: String) async {
         guard let resolution = await resolveTaskHabit(taskUUID: taskUUID) else { return }
+        guard !resolution.definition.isTimeBased else { return }
         let taskMinutes = await totalTrackedMinutes(forTaskUUID: taskUUID)
         await persistCompletion(
             HabitCompletionRecord(
@@ -725,12 +748,16 @@ final class CommandCenterHabitEngine: ObservableObject {
                 CommandCenterHabitPersistence.habitCompletionRecord(from: $0)
             }
 
-            let trackedMinutesByHabitToday = sessionAtoms.reduce(into: [String: Int]()) { partial, atom in
+            // Per habit per day — time-based habits derive both today's ring and
+            // 7-day history from these synced session atoms (no completion records,
+            // so cross-device sums can't double-credit).
+            let trackedMinutesByHabitAndDay = sessionAtoms.reduce(into: [String: [Date: Int]]()) { partial, atom in
                 guard let session = CommandCenterHabitPersistence.deepWorkSession(from: atom),
-                      session.startedAt >= todayStart,
                       let habitUUID = session.habitUUID else { return }
-                partial[habitUUID, default: 0] += session.minutes
+                let day = calendar.startOfDay(for: session.startedAt)
+                partial[habitUUID, default: [:]][day, default: 0] += session.minutes
             }
+            let trackedMinutesByHabitToday = trackedMinutesByHabitAndDay.mapValues { $0[todayStart] ?? 0 }
 
             let totalTrackedMinutesToday = sessionAtoms.reduce(into: 0) { partial, atom in
                 guard let session = CommandCenterHabitPersistence.deepWorkSession(from: atom),
@@ -774,12 +801,19 @@ final class CommandCenterHabitEngine: ObservableObject {
                 let dayCounts = customCountsByHabitAndDay[definition.id] ?? [:]
                 let todayCount = max(0, dayCounts[todayStart] ?? 0)
                 let breakdown = customTodayBreakdown[definition.id] ?? HabitSourceBreakdown()
+                let history: [Bool]
+                if definition.isTimeBased, let targetMinutes = definition.dailyTargetMinutes, targetMinutes > 0 {
+                    let minutesByDay = trackedMinutesByHabitAndDay[definition.id] ?? [:]
+                    history = last7Days.map { (minutesByDay[$0] ?? 0) >= targetMinutes }
+                } else {
+                    history = last7Days.map { max(0, dayCounts[$0] ?? 0) >= max(1, definition.dailyTargetCount) }
+                }
                 return HabitProgressState(
                     definition: definition,
                     todayCount: todayCount,
                     targetCount: max(1, definition.dailyTargetCount),
                     trackedMinutesToday: trackedMinutesByHabitToday[definition.id] ?? 0,
-                    last7Days: last7Days.map { max(0, dayCounts[$0] ?? 0) >= max(1, definition.dailyTargetCount) },
+                    last7Days: history,
                     sourceBreakdown: breakdown,
                     linkedIntentSummary: linkedIntentSummary(for: definition)
                 )

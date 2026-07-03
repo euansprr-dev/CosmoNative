@@ -190,6 +190,13 @@ final class CanvasBlockSyncObserver: TransactionObserver, @unchecked Sendable {
         return try body()
     }
 
+    /// True while a remote apply is in flight on the writer queue. Other
+    /// table observers (canvas_drawings) honor the same suppression window,
+    /// so every remote-apply site keeps wrapping in ONE suppressingSync call.
+    static var isSuppressingRemoteApply: Bool {
+        shared.suppressionDepth > 0
+    }
+
     // MARK: TransactionObserver
 
     func observes(eventsOfKind eventKind: DatabaseEventKind) -> Bool {

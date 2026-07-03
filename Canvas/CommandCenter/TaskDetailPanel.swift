@@ -19,6 +19,7 @@ struct TaskDetailPanel: View {
     @State private var editedSchedulingState: String?
     @State private var editedChecklist: [ChecklistItem] = []
     @State private var editedPriority: TaskPriority = .medium
+    @State private var editedTimeGoalMinutes: Int? = nil
     @State private var editedIntentUUID: String? = nil
     @State private var editedHabitUUID: String? = nil
     @State private var editedLinkedAtoms: [TaskLinkedAtom] = []
@@ -102,6 +103,7 @@ struct TaskDetailPanel: View {
         editedSchedulingState = task.schedulingState
         editedChecklist = task.checklist
         editedPriority = task.priority
+        editedTimeGoalMinutes = task.timeGoalMinutes
         editedIntentUUID = task.intentUUID
         editedHabitUUID = task.habitUUID
         editedLinkedAtoms = task.linkedAtoms
@@ -352,14 +354,61 @@ struct TaskDetailPanel: View {
             // Habit — interactive picker
             habitSection
 
+            // Time goal — completing the goal prompts completion
+            timeGoalSection
+
             // Session tracking
             if task.totalFocusMinutes > 0 {
                 detailRow(label: "Tracked", icon: "timer") {
-                    Text("\(task.sessionCount) sessions, \(task.totalFocusMinutes)m")
+                    Text(trackedSummary)
                         .font(DS.cardMeta)
                         .foregroundStyle(DS.textSecondary)
                 }
             }
+        }
+    }
+
+    private var trackedSummary: String {
+        if let goal = task.timeGoalMinutes, !task.isRecurring {
+            return "\(task.sessionCount) sessions, \(task.totalFocusMinutes) of \(goal)m"
+        }
+        return "\(task.sessionCount) sessions, \(task.totalFocusMinutes)m"
+    }
+
+    // MARK: - Time Goal (timed tasks)
+
+    private static let timeGoalPresets = [15, 25, 30, 45, 60, 90, 120]
+
+    private var timeGoalSection: some View {
+        detailRow(label: "Time goal", icon: "timer") {
+            Menu {
+                Button("None") { saveTimeGoal(nil) }
+                Divider()
+                ForEach(Self.timeGoalPresets, id: \.self) { minutes in
+                    Button("\(minutes) min") { saveTimeGoal(minutes) }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text(editedTimeGoalMinutes.map { "\($0) min" } ?? "None")
+                        .font(DS.caption)
+                    Image(systemName: "chevron.down")
+                        .font(DS.caption2)
+                }
+                .foregroundStyle(editedTimeGoalMinutes != nil ? DS.accent : DS.textMuted)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background((editedTimeGoalMinutes != nil ? DS.accent : DS.textMuted).opacity(0.08), in: Capsule())
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("Track this much time to complete the task")
+        }
+    }
+
+    private func saveTimeGoal(_ minutes: Int?) {
+        editedTimeGoalMinutes = minutes
+        Task {
+            await viewModel.updateTask(uuid: task.uuid, timeGoalMinutes: .some(minutes))
         }
     }
 

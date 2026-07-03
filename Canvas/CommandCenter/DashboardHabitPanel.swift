@@ -145,9 +145,7 @@ private struct DashboardHabitOrbitCard: View {
 
             Spacer(minLength: 0)
 
-            if habit.allowManualComplete {
-                manualButton
-            }
+            trailingAccessory
         }
         .padding(.horizontal, DS.space8)
         .padding(.vertical, DS.space8)
@@ -188,47 +186,31 @@ private struct DashboardHabitOrbitCard: View {
         let isComplete = habit.isTodayComplete
         let justCompleted = completedHabitId == habit.id
 
+        // iOS-parity ring: hollow interior, 3.5pt track at 18% accent,
+        // full-accent progress arc with round caps.
         return ZStack {
             Circle()
-                .stroke(accent.opacity(0.12), lineWidth: 2)
-                .frame(width: 36, height: 36)
+                .stroke(accent.opacity(0.18), lineWidth: 3.5)
 
             Circle()
                 .trim(from: 0, to: progress)
-                .stroke(accent, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                .stroke(accent, style: StrokeStyle(lineWidth: 3.5, lineCap: .round))
                 .rotationEffect(.degrees(-90))
-                .frame(width: 36, height: 36)
                 .animation(
                     reduceMotion ? .none : .spring(response: 0.6, dampingFraction: 0.7),
                     value: progress
                 )
 
             Image(systemName: habit.iconName)
-                .font(DS.callout).fontWeight(.semibold)
-                .foregroundStyle(accent)
-                .frame(width: 30, height: 30)
-                .background(accent.opacity(isComplete ? 0.14 : 0.06), in: Circle())
-
-            if isComplete {
-                completionBadge(accent: accent)
-            }
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(isComplete ? accent : DS.textSecondary)
         }
+        .frame(width: 34, height: 34)
         .scaleEffect(justCompleted ? 1.08 : 1.0)
         .animation(
             reduceMotion ? .none : .spring(response: 0.25, dampingFraction: 0.5),
             value: justCompleted
         )
-    }
-
-    private func completionBadge(accent: Color) -> some View {
-        Image(systemName: "checkmark")
-            .font(.system(size: 7, weight: .black))
-            .foregroundStyle(.white)
-            .frame(width: 12, height: 12)
-            .background(accent, in: Circle())
-            .overlay(Circle().stroke(DS.surface, lineWidth: 1.5))
-            .offset(x: 13, y: 13)
-            .transition(.scale.combined(with: .opacity))
     }
 
     private var titleRow: some View {
@@ -269,18 +251,18 @@ private struct DashboardHabitOrbitCard: View {
                     .font(DS.caption2).fontWeight(.medium)
                     .foregroundStyle(habit.accentColor)
             } else {
-                Text("\(habit.todayCount)/\(habit.targetCount) today")
+                Text(habit.todayProgressLabel)
                     .font(DS.caption2).fontWeight(.medium)
                     .foregroundStyle(DS.textSecondary)
             }
 
-            if habit.trackedMinutesToday > 0 {
+            if !habit.isTimeBased, habit.trackedMinutesToday > 0 {
                 Text("  ·  \(habit.trackedMinutesToday)m")
                     .font(DS.caption2).fontWeight(.medium)
                     .foregroundStyle(DS.textMuted)
             }
 
-            if habit.targetCount > 1 && !habit.isTodayComplete {
+            if (habit.isTimeBased || habit.targetCount > 1) && !habit.isTodayComplete {
                 Spacer(minLength: 8)
                 inlineProgressBar
             }
@@ -306,22 +288,29 @@ private struct DashboardHabitOrbitCard: View {
         .frame(width: 48, height: 3)
     }
 
-    private var manualButton: some View {
+    // iOS-parity accessory: accent plus while incomplete, seal stamp once done.
+    @ViewBuilder
+    private var trailingAccessory: some View {
         let accent = habit.accentColor
-        let isDone = habit.todayCount >= habit.targetCount
 
-        return Button(action: onRecordManual) {
-            Image(systemName: isDone ? "checkmark" : "plus")
-                .font(DS.caption2).fontWeight(.bold)
-                .foregroundStyle(isDone ? accent.opacity(0.5) : accent)
+        if habit.allowManualComplete && !habit.isTodayComplete {
+            Button(action: onRecordManual) {
+                Image(systemName: "plus.circle.fill")
+                    .font(.system(size: 22))
+                    .foregroundStyle(accent)
+                    .frame(width: 26, height: 26)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Check in")
+            .accessibilityLabel("Check in")
+        } else if habit.isTodayComplete {
+            Image(systemName: "checkmark.seal.fill")
+                .font(.system(size: 18))
+                .foregroundStyle(accent)
                 .frame(width: 26, height: 26)
-                .background(isDone ? accent.opacity(0.10) : DS.glassInputFill, in: Circle())
-                .overlay(
-                    Circle().stroke(isDone ? accent.opacity(0.15) : DS.glassBorder, lineWidth: 0.8)
-                )
+                .transition(.scale(scale: 1.4).combined(with: .opacity))
         }
-        .buttonStyle(.plain)
-        .disabled(isDone)
     }
 
 

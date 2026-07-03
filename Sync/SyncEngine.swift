@@ -52,8 +52,8 @@ class SyncEngine: ObservableObject {
     // so Mac-originated rows never round-trip. iOS-placed blocks land in GRDB
     // and appear on the canvas via SpatialEngine's thinkspace_id query on open.
     // graph_edges are derived from atom.links and rebuilt by NodeGraphEngine — no sync needed
-    private let pushTables = ["atoms", "canvas_blocks"]
-    private let pullTables = ["atoms", "canvas_blocks", "swipe_boards"]
+    private let pushTables = ["atoms", "canvas_blocks", "canvas_drawings"]
+    private let pullTables = ["atoms", "canvas_blocks", "swipe_boards", "canvas_drawings"]
 
     private init() {
         supabaseClient = SupabaseClient.shared
@@ -118,6 +118,11 @@ class SyncEngine: ObservableObject {
         // there's nothing left.
         SwipeMediaMirrorCoordinator.kick()
 
+        // Drawings sync: one-shot enqueue of every drawing created before the
+        // CanvasDrawingSyncObserver existed — without this, historical
+        // annotations never reach the cloud or the iPhone.
+        await backfillCanvasDrawingsIfNeeded()
+
         syncState = .syncing
 
         // 1. Push local changes
@@ -138,6 +143,50 @@ class SyncEngine: ObservableObject {
         // Update state
         lastSyncTime = Date()
         syncState = .idle
+    }
+
+    // MARK: - Canvas Drawings Backfill
+
+    /// One-shot: enqueue every existing (pre-observer) canvas drawing for
+    /// cloud push. Flag-gated in app_flags so it survives UserDefaults resets.
+    private func backfillCanvasDrawingsIfNeeded() async {
+        let flagKey = "canvas_drawings_backfill_v1"
+        do {
+            let done = try await database.asyncRead { db in
+                try Row.fetchOne(db, sql: "SELECT value FROM app_flags WHERE key = ?", arguments: [flagKey]) != nil
+            }
+            guard !done else { return }
+
+            try await database.asyncWrite { db in
+                let rows = try Row.fetchAll(db, sql: "SELECT * FROM canvas_drawings WHERE is_deleted = 0")
+                for row in rows {
+                    guard let payload = CanvasDrawingRecord.cloudSyncPayload(row: row),
+                          let cloudKey = payload["uuid"] as? String,
+                          let json = try? JSONSerialization.data(withJSONObject: payload),
+                          let jsonString = String(data: json, encoding: .utf8) else { continue }
+                    let pending = try Row.fetchOne(
+                        db,
+                        sql: "SELECT 1 FROM sync_queue WHERE uuid = ? AND table_name = 'canvas_drawings' AND status = 'pending'",
+                        arguments: [cloudKey]
+                    )
+                    guard pending == nil else { continue }
+                    try db.execute(
+                        sql: """
+                        INSERT INTO sync_queue (uuid, table_name, row_id, operation, data, local_version, status)
+                        VALUES (?, 'canvas_drawings', NULL, 'INSERT', ?, ?, 'pending')
+                        """,
+                        arguments: [cloudKey, jsonString, row["_local_version"] as Int? ?? 1]
+                    )
+                }
+                try db.execute(
+                    sql: "INSERT OR REPLACE INTO app_flags (key, value, updated_at) VALUES (?, '1', ?)",
+                    arguments: [flagKey, ISO8601.string(from: Date())]
+                )
+                print("🖊️ Canvas drawings backfill enqueued \(rows.count) drawing(s)")
+            }
+        } catch {
+            PersistenceHealth.note(.syncFailure, context: "SyncEngine.backfillCanvasDrawings", detail: String(describing: error))
+        }
     }
 
     // MARK: - Inbox Catch-Up Migration
@@ -402,7 +451,7 @@ class SyncEngine: ObservableObject {
         // was in flight keeps `_local_pending = 1` and gets its own push instead
         // of being silently claimed as synced.
         do {
-            let keyColumn = item.tableName == "canvas_blocks" ? "id" : "uuid"
+            let keyColumn = ["canvas_blocks", "canvas_drawings"].contains(item.tableName) ? "id" : "uuid"
             try await database.asyncWrite { db in
                 try CanvasBlockSyncObserver.suppressingSync {
                     try db.execute(
@@ -551,7 +600,7 @@ class SyncEngine: ObservableObject {
         // skip the remote apply rather than risk overwriting unpushed local edits.
         // canvas_blocks: local identity is `id` (== cloud key; the local uuid
         // column holds the entity uuid on legacy rows).
-        let keyColumn = table == "canvas_blocks" ? "id" : "uuid"
+        let keyColumn = ["canvas_blocks", "canvas_drawings"].contains(table) ? "id" : "uuid"
 
         let hasPending: Bool
         do {
@@ -605,7 +654,7 @@ class SyncEngine: ObservableObject {
     private func applyRemoteTombstone(table: String, uuid: String, data: [String: Any]) async {
         let remoteVersion = data["_version"] as? Int ?? data["_server_version"] as? Int ?? data["version"] as? Int ?? 0
         let updatedAt = (data["updated_at"] as? String).map(ISO8601.normalize) ?? ISO8601.string(from: Date())
-        let keyColumn = table == "canvas_blocks" ? "id" : "uuid"
+        let keyColumn = ["canvas_blocks", "canvas_drawings"].contains(table) ? "id" : "uuid"
         do {
             try await database.asyncWrite { db in
                 try CanvasBlockSyncObserver.suppressingSync {

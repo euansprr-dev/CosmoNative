@@ -22,7 +22,7 @@ class ConflictResolver {
             let local = try await database.asyncRead { db in
                 try Row.fetchOne(
                     db,
-                    sql: "SELECT *, _local_version, _server_version, _local_pending FROM \(table) WHERE uuid = ?",
+                    sql: "SELECT *, _local_version, _server_version, _local_pending FROM \(table) WHERE \(["canvas_blocks", "canvas_drawings"].contains(table) ? "id" : "uuid") = ?",
                     arguments: [uuid]
                 )
             }
@@ -340,6 +340,14 @@ class ConflictResolver {
                 insertData["id"] = insertData["uuid"] as? String ?? UUID().uuidString
             }
         }
+        // canvas_drawings: same TEXT-PK contract, and the local table has no
+        // uuid column — the cloud uuid becomes the local id.
+        if table == "canvas_drawings" {
+            if insertData["id"] == nil {
+                insertData["id"] = insertData["uuid"] as? String ?? UUID().uuidString
+            }
+            insertData.removeValue(forKey: "uuid")
+        }
         // swipe_boards: local table uses camelCase TEXT timestamps only.
         if table == "swipe_boards" {
             insertData.removeValue(forKey: "created_at")
@@ -362,12 +370,13 @@ class ConflictResolver {
         // the cloud key (pulled rows set id = cloud uuid; Mac-created rows push
         // keyed by their id). The local `uuid` column holds the entity uuid on
         // legacy Mac rows and must not be used for identity.
-        let keyColumn = table == "canvas_blocks" ? "id" : "uuid"
+        let keyColumn = ["canvas_blocks", "canvas_drawings"].contains(table) ? "id" : "uuid"
 
         do {
             try await database.asyncWrite { db in
                 try CanvasBlockSyncObserver.suppressingSync {
-                    let uuidValue = insertData["uuid"] as? String ?? ""
+                    // canvas_drawings rows carry no uuid column locally — their id IS the cloud key.
+                    let uuidValue = insertData["uuid"] as? String ?? (insertData["id"] as? String ?? "")
                     let exists = try Row.fetchOne(
                         db,
                         sql: "SELECT 1 FROM \(table) WHERE \(keyColumn) = ?",
@@ -422,6 +431,9 @@ class ConflictResolver {
         if table == "canvas_blocks" {
             sanitizeCanvasBlockDefaults(&updateData)
         }
+        if table == "canvas_drawings" {
+            updateData.removeValue(forKey: "uuid")
+        }
         if table == "swipe_boards" {
             updateData.removeValue(forKey: "created_at")
             updateData.removeValue(forKey: "updated_at")
@@ -433,7 +445,7 @@ class ConflictResolver {
         let values = updateColumns.compactMap { updateData[$0] }
 
         // canvas_blocks: local identity is `id` (== cloud key), see applyRemoteInsert.
-        let keyColumn = table == "canvas_blocks" ? "id" : "uuid"
+        let keyColumn = ["canvas_blocks", "canvas_drawings"].contains(table) ? "id" : "uuid"
         let sql = "UPDATE \(table) SET \(setClause) WHERE \(keyColumn) = ?"
 
         var dbArgsArray = values.map { databaseValue(from: $0) }

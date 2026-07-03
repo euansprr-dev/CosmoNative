@@ -854,6 +854,23 @@ final class CaptureNotificationDelegate: NSObject, UNUserNotificationCenterDeleg
     ) {
         let userInfo = response.notification.request.content.userInfo
 
+        // Timed-goal notifications route to the session engine.
+        if response.notification.request.content.categoryIdentifier == "timedGoal" {
+            let action = response.actionIdentifier
+            DispatchQueue.main.async {
+                Task { @MainActor in
+                    if action == "timed_goal_complete" {
+                        await DeepWorkSessionEngine.shared.markTimedGoalComplete()
+                    } else {
+                        // "Keep Going", default tap, or dismiss — session continues
+                        DeepWorkSessionEngine.shared.dismissTimedGoalPrompt()
+                    }
+                }
+            }
+            completionHandler()
+            return
+        }
+
         switch response.actionIdentifier {
         case "open_capture", UNNotificationDefaultActionIdentifier:
             // User tapped "Open" or the notification itself — navigate to the atom
@@ -874,12 +891,17 @@ final class CaptureNotificationDelegate: NSObject, UNUserNotificationCenterDeleg
         completionHandler()
     }
 
-    /// Allow notifications to show even when app is in foreground
+    /// Allow notifications to show even when app is in foreground — except timed-goal
+    /// alerts, whose in-app prompt already covers the foreground case.
     func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
+        if notification.request.content.categoryIdentifier == "timedGoal" {
+            completionHandler([])
+            return
+        }
         completionHandler([.banner, .sound])
     }
 }

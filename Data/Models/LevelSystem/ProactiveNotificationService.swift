@@ -40,6 +40,9 @@ public enum CosmoNotificationType: String, CaseIterable, Sendable {
     case deepWorkReminder           // Nudge to start focus block
     case deepWorkComplete           // Focus block completed
 
+    // Timed goal notifications
+    case timedGoalReached           // Task/habit time goal hit mid-session
+
     var category: NotificationCategory {
         switch self {
         case .morningSummary, .eveningSummary:
@@ -56,11 +59,17 @@ public enum CosmoNotificationType: String, CaseIterable, Sendable {
             return .health
         case .deepWorkReminder, .deepWorkComplete:
             return .deepWork
+        case .timedGoalReached:
+            return .timedGoal
         }
     }
 
     var priority: NotificationPriority {
         switch self {
+        // The goal alert fires DURING a deep work session by definition, so it must
+        // bypass the deep-work deferral (and quiet hours — the user set the timer).
+        case .timedGoalReached:
+            return .critical
         case .levelUp, .badgeUnlocked, .streakMilestone:
             return .high
         case .streakAtRisk, .morningSummary, .readinessUpdate:
@@ -79,6 +88,7 @@ public enum NotificationCategory: String, Sendable {
     case quest
     case health
     case deepWork
+    case timedGoal
 }
 
 public enum NotificationPriority: Int, Comparable, Sendable {
@@ -193,7 +203,8 @@ public struct NotificationPreferences: Codable, Sendable {
                 "badge": true,
                 "quest": true,
                 "health": true,
-                "deepWork": true
+                "deepWork": true,
+                "timedGoal": true
             ],
             deliveryStyle: .intelligent
         )
@@ -757,11 +768,29 @@ public final class ProactiveNotificationService: ObservableObject {
             intentIdentifiers: []
         )
 
-        notificationCenter.setNotificationCategories([
+        // Timed goal category — actions mirror the in-app prompt
+        let timedGoalCategory = UNNotificationCategory(
+            identifier: NotificationCategory.timedGoal.rawValue,
+            actions: [
+                UNNotificationAction(identifier: "timed_goal_complete", title: "Mark Complete"),
+                UNNotificationAction(identifier: "timed_goal_keep_going", title: "Keep Going")
+            ],
+            intentIdentifiers: []
+        )
+
+        // Merge with categories other services registered (SwipeFileEngine's
+        // capture category) — setNotificationCategories REPLACES the whole set.
+        let ownCategories: Set<UNNotificationCategory> = [
             summaryCategory,
             streakCategory,
             badgeCategory,
-            questCategory
-        ])
+            questCategory,
+            timedGoalCategory
+        ]
+        let ownIdentifiers = Set(ownCategories.map(\.identifier))
+        UNUserNotificationCenter.current().getNotificationCategories { existing in
+            let preserved = existing.filter { !ownIdentifiers.contains($0.identifier) }
+            UNUserNotificationCenter.current().setNotificationCategories(preserved.union(ownCategories))
+        }
     }
 }

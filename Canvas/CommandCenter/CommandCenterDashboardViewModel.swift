@@ -114,10 +114,20 @@ struct HabitState: Identifiable, Equatable {
     var targetCount: Int
     var todayCount: Int
     var trackedMinutesToday: Int
+    var isTimeBased: Bool
+    var targetMinutes: Int?
     var sourceBreakdown: HabitSourceBreakdown
     var isBuiltIn: Bool
     var isEditable: Bool
     var linkedIntentSummary: String?
+
+    /// "2/3 today" for count habits, "42/60m today" for time-based habits.
+    var todayProgressLabel: String {
+        if isTimeBased, let targetMinutes, targetMinutes > 0 {
+            return "\(min(trackedMinutesToday, targetMinutes))/\(targetMinutes)m today"
+        }
+        return "\(todayCount)/\(max(targetCount, 1)) today"
+    }
 }
 
 private enum DashboardRefreshDomain: Hashable {
@@ -715,9 +725,20 @@ class CommandCenterDashboardViewModel: ObservableObject {
             if name == .deepWorkSessionEnded {
                 self?.scheduleRefresh(.weeklyReport, delayNanoseconds: 150_000_000)
                 self?.scheduleRefresh(.habits, delayNanoseconds: 150_000_000)
+                // Timed-goal sessions can auto-complete their task on end
+                self?.scheduleRefresh(.tasks, delayNanoseconds: 150_000_000)
             }
         }
         .store(in: &cancellables)
+
+        // Timed goal completions (prompt "Mark complete" or session-end auto-complete)
+        // change task + habit state outside the dashboard's own mutation paths.
+        NotificationCenter.default.publisher(for: .timedGoalTaskCompleted)
+            .sink { [weak self] _ in
+                self?.scheduleRefresh(.tasks, delayNanoseconds: 100_000_000)
+                self?.scheduleRefresh(.habits, delayNanoseconds: 150_000_000)
+            }
+            .store(in: &cancellables)
 
         // React to objective changes
         objectiveEngine.$objectives
@@ -1742,6 +1763,8 @@ class CommandCenterDashboardViewModel: ObservableObject {
                 targetCount: state.targetCount,
                 todayCount: state.todayCount,
                 trackedMinutesToday: state.trackedMinutesToday,
+                isTimeBased: state.definition.isTimeBased,
+                targetMinutes: state.definition.dailyTargetMinutes,
                 sourceBreakdown: state.sourceBreakdown,
                 isBuiltIn: state.isBuiltIn,
                 isEditable: state.isEditable,
@@ -1820,6 +1843,8 @@ class CommandCenterDashboardViewModel: ObservableObject {
         icon: String,
         accentColor: String,
         dailyTargetCount: Int,
+        goalType: String? = nil,
+        dailyTargetMinutes: Int? = nil,
         keywordTriggers: [String],
         mappedIntents: [TaskIntent],
         defaultIntentUUID: String?,
@@ -1830,6 +1855,8 @@ class CommandCenterDashboardViewModel: ObservableObject {
             icon: icon,
             accentColor: accentColor,
             dailyTargetCount: dailyTargetCount,
+            goalType: goalType,
+            dailyTargetMinutes: dailyTargetMinutes,
             keywordTriggers: keywordTriggers,
             mappedIntents: mappedIntents,
             defaultIntentUUID: defaultIntentUUID,
@@ -2145,7 +2172,8 @@ class CommandCenterDashboardViewModel: ObservableObject {
         scheduledTime: Date? = nil,
         intent: TaskIntent? = nil,
         intentUUID: String? = nil,
-        body: String? = nil
+        body: String? = nil,
+        timeGoalMinutes: Int?? = nil
     ) async {
         do {
             _ = try await AtomRepository.shared.update(uuid: uuid) { atom in
@@ -2155,6 +2183,10 @@ class CommandCenterDashboardViewModel: ObservableObject {
                 if let title = title { atom.title = title }
                 if let body = body { atom.body = body }
                 if let priority = priority { metadata.priority = priority.rawValue }
+                if let goalUpdate = timeGoalMinutes {
+                    // Outer nil = unchanged; inner nil (or 0) clears the goal
+                    metadata.timeGoalMinutes = goalUpdate.flatMap { $0 > 0 ? $0 : nil }
+                }
                 if let dueDate = dueDate {
                     let dateString = PlannerumFormatters.iso8601.string(from: dueDate)
                     metadata.dueDate = dateString
@@ -2846,6 +2878,15 @@ class CommandCenterDashboardViewModel: ObservableObject {
         if intentPresentation.isUnassigned, let habitIntentUUID = habit?.defaultIntentUUID {
             intentPresentation = resolvedIntentPresentation(intentUUID: habitIntentUUID, legacyIntentRaw: nil)
         }
+        // Timed tasks: aim the session at the remaining goal time, not the estimate.
+        // (Recurring per-day progress is resolved async by the engine's goal context;
+        // the session length here is just the visible countdown.)
+        let plannedMinutes: Int
+        if let goal = task.timeGoalMinutes {
+            plannedMinutes = max(1, goal - (task.isRecurring ? 0 : task.totalFocusMinutes))
+        } else {
+            plannedMinutes = task.estimatedMinutes
+        }
         sessionEngine.startSession(
             taskUUID: task.uuid,
             taskTitle: task.title,
@@ -2854,7 +2895,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
             intentTitleSnapshot: intentPresentation.isUnassigned ? nil : intentPresentation.title,
             habitUUID: habit?.id,
             habitTitleSnapshot: habit?.title,
-            plannedMinutes: task.estimatedMinutes
+            plannedMinutes: plannedMinutes
         )
 
         // Route to focus mode — use linkedAtoms (primary = main, others = panes)

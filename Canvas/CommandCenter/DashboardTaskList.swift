@@ -49,6 +49,12 @@ struct DashboardTaskList: View {
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    // Rows glide to close the gap when a completed task departs
+                    // (or a task is added/reordered) instead of teleporting.
+                    .animation(
+                        reduceMotion ? nil : ProMotionSprings.gentle,
+                        value: todayListIdentity
+                    )
                 }
                 .scrollIndicators(.never)
             }
@@ -70,6 +76,13 @@ struct DashboardTaskList: View {
         } message: {
             Text("This removes the repeating task and its entire completion history.")
         }
+    }
+
+    /// Identity of the visible today sections — the animation key for row moves.
+    private var todayListIdentity: [String] {
+        viewModel.overdueTasks.map(\.id)
+            + viewModel.scheduledTasks.map(\.id)
+            + viewModel.unscheduledTasks.map(\.id)
     }
 
     // MARK: - Delete Routing
@@ -688,7 +701,16 @@ struct DashboardTaskList: View {
                         .foregroundStyle(task.projectColor)
                 }
 
-                if task.sessionCount > 0 {
+                if let goal = task.timeGoalMinutes {
+                    // Timed task: progress toward the goal (recurring per-day progress
+                    // is session-scoped, so template rows show the goal itself)
+                    Label(
+                        task.isRecurring ? "\(goal)m goal" : "\(min(task.totalFocusMinutes, goal))/\(goal)m",
+                        systemImage: "timer"
+                    )
+                    .font(DS.caption2)
+                    .foregroundStyle(!task.isRecurring && task.totalFocusMinutes >= goal ? DS.accent : DS.textMuted)
+                } else if task.sessionCount > 0 {
                     Label("\(task.totalFocusMinutes)m tracked", systemImage: "timer")
                         .font(DS.caption2)
                         .foregroundStyle(DS.textMuted)
@@ -724,16 +746,15 @@ struct DashboardTaskList: View {
                 viewModel.startFocusSession(for: task)
             }
         } label: {
-            Image(systemName: isActive ? "pause.fill" : "play.fill")
-                .font(DS.caption2)
-                .foregroundStyle(isActive ? DS.accent : DS.commandCenterMutedText)
+            // iOS-parity time-tracking affordance: dusty-rose task accent.
+            Image(systemName: isActive ? "pause.circle.fill" : "play.circle")
+                .font(.system(size: 20))
+                .foregroundStyle(DS.entityTask)
                 .frame(width: 24, height: 24)
-                .background(
-                    Circle()
-                        .fill(isActive ? DS.accentSoft.opacity(0.85) : Color.clear)
-                )
+                .contentShape(Circle())
         }
         .buttonStyle(.plain)
+        .help(isActive ? "Pause session" : "Start focus session")
     }
 
     @ViewBuilder
@@ -960,8 +981,9 @@ struct DashboardTaskList: View {
             withAnimation(.easeInOut(duration: timings.fadeDuration)) {
                 updateCompletionState(for: task.uuid) { state in
                     state.rowOpacity = 0
-                    state.rowScale = reduceMotion ? 0.98 : 0.95
-                    state.rowOffsetY = reduceMotion ? -4 : -10
+                    state.rowScale = reduceMotion ? 0.98 : 0.96
+                    // Depart downward — the row reads as filing itself away below.
+                    state.rowOffsetY = reduceMotion ? 4 : 14
                     state.blurRadius = reduceMotion ? 0.6 : 1.8
                 }
             }

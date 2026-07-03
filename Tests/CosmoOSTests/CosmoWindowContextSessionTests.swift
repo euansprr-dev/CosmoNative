@@ -336,6 +336,8 @@ final class CosmoWindowContextSessionTests: XCTestCase {
                 targetCount: 2,
                 todayCount: 1,
                 trackedMinutesToday: 30,
+                isTimeBased: false,
+                targetMinutes: nil,
                 sourceBreakdown: HabitSourceBreakdown(taskCount: 1),
                 isBuiltIn: false,
                 isEditable: true,

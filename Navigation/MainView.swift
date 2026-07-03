@@ -239,6 +239,18 @@ struct MainView: View {
             }
             .zIndex(40)
 
+            // Timed goal prompt (top-right): session crossed a task/habit time goal
+            VStack {
+                HStack {
+                    Spacer()
+                    TimedGoalPromptView()
+                        .padding(.trailing, 20)
+                        .padding(.top, 20)
+                }
+                Spacer()
+            }
+            .zIndex(41)
+
             // Data-safety guard rails: save-failure banner + Trash sheet.
             PersistenceGuardRailsOverlay()
                 .zIndex(70)

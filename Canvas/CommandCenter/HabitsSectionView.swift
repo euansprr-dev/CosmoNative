@@ -247,15 +247,19 @@ private struct HabitPlanningRow: View {
 
                 HStack(spacing: DS.space8) {
                     sourcePill
-                    Text("\(habit.todayCount)/\(max(habit.targetCount, 1))")
+                    Text(habit.isTimeBased
+                        ? "\(min(habit.trackedMinutesToday, habit.targetMinutes ?? 0))/\(habit.targetMinutes ?? 0)m"
+                        : "\(habit.todayCount)/\(max(habit.targetCount, 1))")
                         .font(DS.caption.weight(.semibold))
                         .monospacedDigit()
                         .foregroundStyle(DS.textSecondary)
 
-                    Text(formatMinutes(habit.trackedMinutesToday))
-                        .font(DS.caption)
-                        .monospacedDigit()
-                        .foregroundStyle(DS.textMuted)
+                    if !habit.isTimeBased {
+                        Text(formatMinutes(habit.trackedMinutesToday))
+                            .font(DS.caption)
+                            .monospacedDigit()
+                            .foregroundStyle(DS.textMuted)
+                    }
                 }
             }
 

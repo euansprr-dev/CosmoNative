@@ -2533,6 +2533,12 @@ struct TaskMetadata: Codable, Sendable {
 
     // MARK: - Session Tracking (WP2)
 
+    /// Time goal in minutes. Presence makes this a "timed task": tracked focus time
+    /// counts toward the goal (per occurrence day for recurring tasks, lifetime for
+    /// one-offs) and the user is prompted when the goal is reached. Distinct from
+    /// `durationMinutes`, which stays a scheduling estimate.
+    var timeGoalMinutes: Int?
+
     /// Accumulated focus minutes across all sessions
     var totalFocusMinutes: Int?
 

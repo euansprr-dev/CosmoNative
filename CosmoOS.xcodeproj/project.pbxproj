@@ -521,6 +521,7 @@
 		953B45A18F51F136CC1894C3 /* InboxRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF1545D21D99A06C84545A87 /* InboxRepository.swift */; };
 		955C731079D93E7604469097 /* EditorLayoutMetricsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40830DB846D9B1BD193E899E /* EditorLayoutMetricsTests.swift */; };
 		9576ECCC62B5E0190A9D9DD1 /* GlobalStatusIndicator.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF8D9D23C1462C64F9E8575D /* GlobalStatusIndicator.swift */; };
+		30DDFC1855E09ECBA1409B84 /* TimedGoalPromptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B77B740BB0A7A1E8D4C4D3D /* TimedGoalPromptView.swift */; };
 		95A8F34B98A8EC9F7FF99E56 /* WhisperEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07E41D15283C5AD20E1BAFD4 /* WhisperEngine.swift */; };
 		95B1D9236161386152289BA0 /* CognitiveMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4ED855DBAA220B42632DCDC0 /* CognitiveMetadata.swift */; };
 		95CBD7D061E63A073FD6C410 /* GraphNode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5299194D0DED674E7AA3119F /* GraphNode.swift */; };
@@ -1924,6 +1925,7 @@
 		EE540F151E53E884BD71664F /* SettingsMenuButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsMenuButton.swift; sourceTree = "<group>"; };
 		EF6180D2E2CB09F00308D8DF /* CodexHeroHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexHeroHeader.swift; sourceTree = "<group>"; };
 		EF8D9D23C1462C64F9E8575D /* GlobalStatusIndicator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalStatusIndicator.swift; sourceTree = "<group>"; };
+		2B77B740BB0A7A1E8D4C4D3D /* TimedGoalPromptView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimedGoalPromptView.swift; sourceTree = "<group>"; };
 		F01F792D9108F44EC31A41B8 /* adapters.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = adapters.safetensors; sourceTree = "<group>"; };
 		F02AC1167F3869612EDB3A14 /* NetworkMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkMonitor.swift; sourceTree = "<group>"; };
 		F0C05A110000000000000001 /* FocusModeAppearanceTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = FocusModeAppearanceTests.swift; sourceTree = "<group>"; };
@@ -2477,6 +2479,7 @@
 			isa = PBXGroup;
 			children = (
 				EF8D9D23C1462C64F9E8575D /* GlobalStatusIndicator.swift */,
+				2B77B740BB0A7A1E8D4C4D3D /* TimedGoalPromptView.swift */,
 				11683652BB070625523218AF /* MultilineHookEditor.swift */,
 			);
 			path = Components;
@@ -4598,6 +4601,7 @@
 				1831376CE3D8C647D9BBA746 /* GhostSuggestionEngine.swift in Sources */,
 				42BEEF57017E825AA82DA8C4 /* GlassMaterial.swift in Sources */,
 				9576ECCC62B5E0190A9D9DD1 /* GlobalStatusIndicator.swift in Sources */,
+				30DDFC1855E09ECBA1409B84 /* TimedGoalPromptView.swift in Sources */,
 				86A8AF83C388808E8F6A490C /* GraphEdge.swift in Sources */,
 				95CBD7D061E63A073FD6C410 /* GraphNode.swift in Sources */,
 				8AD844AD751C207164D53005 /* GraphQueryEngine.swift in Sources */,

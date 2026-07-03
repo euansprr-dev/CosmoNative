@@ -95,6 +95,7 @@ class CosmoDatabase: ObservableObject {
             // Auto-track local canvas_blocks writes for cloud sync. Registered
             // AFTER migrations so schema maintenance never enqueues pushes.
             dbQueue.add(transactionObserver: CanvasBlockSyncObserver.shared, extent: .databaseLifetime)
+            dbQueue.add(transactionObserver: CanvasDrawingSyncObserver.shared, extent: .databaseLifetime)
 
             // Initialize the Sendable actor core for FoundationModels tools
             let core = DatabaseActorCore(queue: dbQueue)
@@ -2014,6 +2015,25 @@ class CosmoDatabase: ObservableObject {
                 // Column already exists on databases that pre-created it
             }
             print("✅ canvas_blocks.metadata column ensured")
+        }
+
+        migrator.registerMigration("canvas_drawings_sync_columns") { db in
+            // Drawings sync to Supabase like canvas_blocks — the queue/resolver
+            // machinery requires the standard version-tracking columns.
+            for column in [
+                "_local_version INTEGER NOT NULL DEFAULT 1",
+                "_server_version INTEGER NOT NULL DEFAULT 0",
+                "_sync_version INTEGER NOT NULL DEFAULT 0",
+                "_local_pending INTEGER NOT NULL DEFAULT 0",
+                "synced_at TEXT",
+            ] {
+                do {
+                    try db.execute(sql: "ALTER TABLE canvas_drawings ADD COLUMN \(column)")
+                } catch {
+                    // Column already exists
+                }
+            }
+            print("✅ canvas_drawings sync columns ensured")
         }
 
         return migrator

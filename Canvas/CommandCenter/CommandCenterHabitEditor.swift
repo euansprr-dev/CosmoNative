@@ -5,10 +5,15 @@ struct CommandCenterHabitEditorDraft: Equatable {
     var icon: String = "repeat"
     var accentColor: String = "2D6A4F"
     var dailyTargetCount: Int = 1
+    /// "count" (N×/day) or "minutes" (N min/day of tracked focus time)
+    var goalType: String = "count"
+    var dailyTargetMinutes: Int = 30
     var allowManualCompletion: Bool = true
     var keywordInput: String = ""
     var mappedIntents: Set<TaskIntent> = []
     var defaultIntentUUID: String? = nil
+
+    var isTimeBased: Bool { goalType == "minutes" }
 
     init() {}
 
@@ -17,6 +22,8 @@ struct CommandCenterHabitEditorDraft: Equatable {
         icon = habit.icon
         accentColor = habit.accentColor
         dailyTargetCount = habit.dailyTargetCount
+        goalType = habit.goalType ?? "count"
+        dailyTargetMinutes = habit.dailyTargetMinutes ?? 30
         allowManualCompletion = habit.allowManualCompletion
         keywordInput = habit.keywordTriggers.joined(separator: ", ")
         mappedIntents = Set(habit.taskIntents)
@@ -172,6 +179,56 @@ struct CommandCenterHabitComposer: View {
         VStack(alignment: .leading, spacing: DS.space12) {
             glassComposerSectionLabel("Cadence")
 
+            goalTypeSwitcher
+
+            if draft.isTimeBased {
+                minutesCadenceControls
+            } else {
+                countCadenceControls
+            }
+        }
+    }
+
+    private var goalTypeSwitcher: some View {
+        HStack(spacing: DS.space8) {
+            goalTypeChip(title: "Count", subtitle: "times per day", type: "count", icon: "checkmark.circle")
+            goalTypeChip(title: "Time", subtitle: "minutes per day", type: "minutes", icon: "timer")
+        }
+    }
+
+    private func goalTypeChip(title: String, subtitle: String, type: String, icon: String) -> some View {
+        let isSelected = draft.goalType == type
+        return Button {
+            draft.goalType = type
+        } label: {
+            HStack(spacing: DS.space6) {
+                Image(systemName: icon)
+                    .font(DS.caption)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(title)
+                        .font(DS.caption.weight(.semibold))
+                    Text(subtitle)
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textSecondary)
+                }
+            }
+            .foregroundStyle(isSelected ? DS.text : DS.textSecondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, DS.space12)
+            .padding(.vertical, DS.space8)
+            .background(isSelected ? DS.accentSoft : DS.glassInputFill, in: .rect(cornerRadius: 12))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(isSelected ? DS.accent.opacity(0.42) : DS.glassBorder, lineWidth: 0.5)
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(isBuiltIn)
+        .help(type == "minutes" ? "Ring fills from tracked focus time on linked tasks" : "Ring fills from completions")
+    }
+
+    private var countCadenceControls: some View {
+        VStack(alignment: .leading, spacing: DS.space12) {
             HStack(spacing: DS.space12) {
                 cadenceStepButton(systemImage: "minus", enabled: draft.dailyTargetCount > 1) {
                     draft.dailyTargetCount = max(1, draft.dailyTargetCount - 1)
@@ -205,6 +262,63 @@ struct CommandCenterHabitComposer: View {
                 }
             }
         }
+    }
+
+    private var minutesCadenceControls: some View {
+        VStack(alignment: .leading, spacing: DS.space12) {
+            HStack(spacing: DS.space12) {
+                cadenceStepButton(systemImage: "minus", enabled: draft.dailyTargetMinutes > 5) {
+                    draft.dailyTargetMinutes = max(5, draft.dailyTargetMinutes - 5)
+                }
+
+                VStack(spacing: 2) {
+                    Text("\(draft.dailyTargetMinutes)")
+                        .font(DS.title1).monospacedDigit()
+                        .foregroundStyle(DS.text)
+                    Text("minutes per day")
+                        .font(DS.callout)
+                        .foregroundStyle(DS.textSecondary)
+                }
+                .frame(maxWidth: .infinity)
+
+                cadenceStepButton(systemImage: "plus", enabled: draft.dailyTargetMinutes < 480) {
+                    draft.dailyTargetMinutes = min(480, draft.dailyTargetMinutes + 5)
+                }
+            }
+            .padding(.horizontal, DS.space12)
+            .padding(.vertical, DS.space12)
+            .background(DS.glassInputFill, in: .rect(cornerRadius: 14))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(DS.glassBorder, lineWidth: 0.5)
+            )
+
+            HStack(spacing: DS.space8) {
+                ForEach([15, 30, 60, 90], id: \.self) { target in
+                    minutesCadenceChip(target)
+                }
+            }
+        }
+    }
+
+    private func minutesCadenceChip(_ target: Int) -> some View {
+        let isSelected = draft.dailyTargetMinutes == target
+        return Button {
+            draft.dailyTargetMinutes = target
+        } label: {
+            Text("\(target)m")
+                .font(DS.callout)
+                .foregroundStyle(isSelected ? DS.text : DS.textSecondary)
+                .padding(.horizontal, DS.space12)
+                .padding(.vertical, DS.space8)
+                .background(isSelected ? DS.accentSoft : DS.glassInputFill, in: Capsule())
+                .overlay(
+                    Capsule()
+                        .stroke(isSelected ? DS.accent.opacity(0.42) : DS.glassBorder, lineWidth: 0.5)
+                )
+        }
+        .buttonStyle(.plain)
+        .disabled(isBuiltIn)
     }
 
     private var mappingSection: some View {
@@ -358,6 +472,7 @@ struct CommandCenterHabitComposer: View {
 
     private var previewSubtitle: String {
         if isBuiltIn { return "Built-in orbit" }
+        if draft.isTimeBased { return "\(draft.dailyTargetMinutes) minutes per day" }
         if draft.dailyTargetCount == 1 { return "1 completion per day" }
         return "\(draft.dailyTargetCount) completions per day"
     }

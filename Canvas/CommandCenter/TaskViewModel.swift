@@ -34,6 +34,10 @@ public struct TaskViewModel: Identifiable, Equatable, Sendable {
     public let scheduledTime: Date?
     public let estimatedMinutes: Int
 
+    /// Time goal in minutes — presence makes this a timed task (tracked focus time
+    /// counts toward the goal; a prompt fires when it's reached).
+    public let timeGoalMinutes: Int?
+
     // MARK: - Status
 
     public let priority: TaskPriority
@@ -322,6 +326,7 @@ public struct TaskViewModel: Identifiable, Equatable, Sendable {
         scheduledDate: Date? = nil,
         scheduledTime: Date? = nil,
         estimatedMinutes: Int = 30,
+        timeGoalMinutes: Int? = nil,
         priority: TaskPriority = .medium,
         isCompleted: Bool = false,
         completedAt: Date? = nil,
@@ -368,6 +373,7 @@ public struct TaskViewModel: Identifiable, Equatable, Sendable {
         self.scheduledDate = scheduledDate
         self.scheduledTime = scheduledTime
         self.estimatedMinutes = estimatedMinutes
+        self.timeGoalMinutes = timeGoalMinutes
         self.priority = priority
         self.isCompleted = isCompleted
         self.completedAt = completedAt
@@ -603,6 +609,7 @@ extension TaskViewModel {
             scheduledDate: scheduledDate,
             scheduledTime: scheduledTime,
             estimatedMinutes: metadata?.durationMinutes ?? metadata?.estimatedFocusMinutes ?? 30,
+            timeGoalMinutes: metadata?.timeGoalMinutes,
             priority: TaskPriority(from: metadata?.priority),
             isCompleted: metadata?.isCompleted ?? false,
             completedAt: completedAt,
@@ -662,6 +669,7 @@ extension TaskViewModel {
             scheduledDate: occ.day,
             scheduledTime: occ.start,
             estimatedMinutes: estimatedMinutes,
+            timeGoalMinutes: timeGoalMinutes,
             priority: priority,
             isCompleted: completed,
             completedAt: completed ? (completedAt ?? occ.day) : nil,

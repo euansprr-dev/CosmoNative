@@ -1628,14 +1628,15 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         // keystroke; notifyContentHeightChange is tolerance-guarded (>1pt) and
         // idempotent regardless.
         if hasFreshExternalContent {
-            context.coordinator.notifyContentHeightChange(for: textView)
             // An EMPTY styled row (fresh heading from the slash menu) has no
             // attributed run for typing to inherit — seed the typing
-            // attributes for its kind, or the first character comes out
-            // plain and parses back as a paragraph.
+            // attributes for its kind BEFORE measuring, so the caret and the
+            // row height are heading-sized immediately (Notion behavior),
+            // and the first character round-trips with the right kind.
             if splitsOnReturn, textView.string.isEmpty {
                 seedTypingAttributesForEmptyRow(in: textView)
             }
+            context.coordinator.notifyContentHeightChange(for: textView)
         }
         context.coordinator.applyCaretRequestIfNeeded(to: textView)
         context.coordinator.navigateIfNeeded(to: navigationTargetID, in: textView)
@@ -2499,6 +2500,14 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             parent.cursorPosition = selectedRange.location
             applyFocusBand(to: textView)
             updateImageResizeOverlay(in: textView)
+
+            // NSTextView recomputes typing attributes on every selection
+            // change; in an EMPTY row it falls back to the view's base font,
+            // shrinking a fresh heading's caret back to body size. Re-seed so
+            // the caret stays heading-sized before the first character.
+            if parent.splitsOnReturn, textView.string.isEmpty {
+                parent.seedTypingAttributesForEmptyRow(in: textView)
+            }
 
             // A caret that moved at or before the "/" trigger ends the slash
             // session (clicking before it, selecting across it, Home, etc.).

@@ -221,7 +221,7 @@ struct CloudSyncSettingsTab: View {
                     mirrorRow(label: "Carousels", lane: progress.carousels, perPass: SwipeCarouselCloudMirror.perPassLimit)
                     mirrorRow(label: "Thumbnails", lane: progress.thumbnails, perPass: SwipeThumbnailCloudMirror.perPassLimit)
 
-                    Text("Uploads run every \(SwipeCloudMirrorSupport.passIntervalMinutes) minutes while CosmoOS is open. The iPhone picks media up as it lands.")
+                    Text("Uploads drain continuously while CosmoOS is open. The iPhone picks media up as it lands.")
                         .font(DS.footnote)
                         .foregroundStyle(DS.textMuted)
                 }

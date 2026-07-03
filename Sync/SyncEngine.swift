@@ -113,9 +113,10 @@ class SyncEngine: ObservableObject {
         await SwipeThumbnailCloudMirror.runBackfillPassIfNeeded()
 
         // Swipe media v2: reels/videos + every carousel page mirror to Storage
-        // so the iPhone gets the full swipe experience (throttled per pass).
-        await SwipeVideoCloudMirror.runBackfillPassIfNeeded()
-        await SwipeCarouselCloudMirror.runBackfillPassIfNeeded()
+        // so the iPhone gets the full swipe experience. The coordinator drains
+        // the backlog continuously (non-blocking); this kick is a no-op when
+        // there's nothing left.
+        SwipeMediaMirrorCoordinator.kick()
 
         syncState = .syncing
 

@@ -905,7 +905,7 @@ enum SwipeThumbnailCloudMirror {
         do {
             let storageURL = try await client.uploadStorageObject(
                 bucket: "atom-images",
-                path: "\(userId)/swipe-thumbs/\(atom.uuid).jpg",
+                path: "\(userId.lowercased())/swipe-thumbs/\(atom.uuid).jpg",
                 data: jpegData
             )
             return await SwipeCloudMirrorSupport.mergeMetadata(
@@ -968,14 +968,12 @@ final class SwipeMediaMirrorProgress {
 
 @MainActor
 enum SwipeCloudMirrorSupport {
-    /// Sync cycle cadence — used for "~N min left" estimates in logs + UI.
-    static let passIntervalMinutes = 5
-
+    /// Backlogs drain continuously (SwipeMediaMirrorCoordinator), so status is
+    /// a plain remaining count — time claims would be connection-speed guesses.
     static func etaDescription(remaining: Int, perPass: Int) -> String {
-        guard remaining > 0 else { return "done" }
-        let passes = Int((Double(remaining) / Double(perPass)).rounded(.up))
-        return "~\(passes * passIntervalMinutes) min left"
+        remaining > 0 ? "\(remaining) to go" : "done"
     }
+
     /// Key-level metadata merge — every key this build doesn't model survives.
     static func mergeMetadata(atom: Atom, entries: [String: Any], context: String) async -> Bool {
         guard var dict = atom.metadata
@@ -996,6 +994,39 @@ enum SwipeCloudMirrorSupport {
             print("\(context): metadata merge failed for \(atom.uuid): \(error)")
             return false
         }
+    }
+}
+
+// MARK: - Continuous drain coordinator
+
+/// Runs mirror passes BACK-TO-BACK until the backlog is empty, instead of one
+/// pass per 5-minute sync cycle — the backlog uploads at connection speed.
+/// The loop stops when a full round makes no progress (everything mirrored,
+/// or only deferred failures remain); the next sync cycle re-kicks it, which
+/// is a cheap no-op when there's nothing to do.
+@MainActor
+enum SwipeMediaMirrorCoordinator {
+    private static var drainTask: Task<Void, Never>?
+
+    static func kick() {
+        guard drainTask == nil else { return }
+        drainTask = Task {
+            defer { drainTask = nil }
+            while !Task.isCancelled {
+                let before = doneCounts()
+                await SwipeThumbnailCloudMirror.runBackfillPassIfNeeded()
+                await SwipeCarouselCloudMirror.runBackfillPassIfNeeded()
+                await SwipeVideoCloudMirror.runBackfillPassIfNeeded()
+                let after = doneCounts()
+                if after == before { break }   // no forward progress → idle until next kick
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
+    }
+
+    private static func doneCounts() -> [Int] {
+        let progress = SwipeMediaMirrorProgress.shared
+        return [progress.thumbnails.done, progress.carousels.done, progress.videos.done]
     }
 }
 
@@ -1094,7 +1125,7 @@ enum SwipeVideoCloudMirror {
         do {
             let storageURL = try await client.uploadStorageObject(
                 bucket: "swipe-videos",
-                path: "\(userId)/\(atom.uuid).mp4",
+                path: "\(userId.lowercased())/\(atom.uuid).mp4",
                 data: videoData,
                 contentType: "video/mp4"
             )
@@ -1197,7 +1228,7 @@ enum SwipeCarouselCloudMirror {
             do {
                 let storageURL = try await client.uploadStorageObject(
                     bucket: "atom-images",
-                    path: "\(userId)/swipe-carousel/\(atom.uuid)-\(item.index).jpg",
+                    path: "\(userId.lowercased())/swipe-carousel/\(atom.uuid)-\(item.index).jpg",
                     data: imageData
                 )
                 uploaded.append(storageURL)

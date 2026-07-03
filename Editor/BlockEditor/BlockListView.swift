@@ -99,7 +99,6 @@ struct BlockListView: View {
     /// Cross-block drag selection: rows' text views route their selection
     /// drags here; frames come from the layout index (registered per row).
     @State private var ownedDragController = BlockDragSelectionController()
-    @State private var blockLayoutIndex = BlockLayoutIndex()
     @State private var selectionKeyMonitor = BlockSelectionKeyMonitor()
     @State private var listSize: CGSize = .zero
     @FocusState private var selectionKeyboardFocused: Bool
@@ -148,13 +147,6 @@ struct BlockListView: View {
         } action: { newSize in
             listSize = newSize
             onContentHeightChange?(newSize.height)
-        }
-        .onGeometryChange(for: CGRect.self) { proxy in
-            providesNavigationOrder ? proxy.frame(in: .global) : .zero
-        } action: { newFrame in
-            // Plain-class storage — a .global frame changes on every scroll
-            // tick and must never invalidate the list's body.
-            ownedDragController.listGlobalFrame = newFrame
         }
         .onAppear {
             configureUndoRegistrar()
@@ -211,14 +203,6 @@ struct BlockListView: View {
         ) {
             blockContent(for: block, at: path)
                 .overlay { selectionClickCatcher(for: block) }
-        }
-        .onGeometryChange(for: CGRect.self) { proxy in
-            providesNavigationOrder
-                ? proxy.frame(in: .named(EditorOverlayPresenter.coordinateSpaceName))
-                : .zero
-        } action: { frame in
-            guard providesNavigationOrder else { return }
-            blockLayoutIndex.update(frame, for: block.id)
         }
     }
 
@@ -363,6 +347,7 @@ struct BlockListView: View {
     private var hoistedSlashMenuOverlay: some View {
         if providesNavigationOrder {
             if let session = ownedOverlayPresenter.slashSession {
+                let _ = ConsoleLog.info("[SLASHDBG] hoisted menu RENDER anchor=\(session.anchorInList) clamped=\(clampedOverlayPosition(for: session.anchorInList, menuSize: CGSize(width: 528, height: 348))) listSize=\(listSize) commands=\(session.commands.count)", subsystem: .canvas)
                 SlashCommandMenu(
                     position: clampedOverlayPosition(for: session.anchorInList, menuSize: CGSize(width: 528, height: 348)),
                     query: session.query,
@@ -391,13 +376,13 @@ struct BlockListView: View {
     }
 
     private func clampedOverlayPosition(for anchor: CGPoint, menuSize: CGSize) -> CGPoint {
+        // Clamp horizontally only. NEVER flip above the caret based on the
+        // list's own height: the list ends right after its last block, so a
+        // caret near the end flipped the menu ~370pt above the cursor — the
+        // user never saw it. Below the caret is always right in notes: the
+        // scroll-past-end padding leaves room, and overlays don't clip.
         var origin = anchor
         origin.x = max(0, min(origin.x, listSize.width - menuSize.width - 8))
-        // Flip above the caret when the menu would spill past the list's end
-        // (the note's scroll-past-end padding usually leaves room below).
-        if origin.y + menuSize.height > listSize.height, origin.y - menuSize.height - 28 > 0 {
-            origin.y -= menuSize.height + 28
-        }
         return origin
     }
 
@@ -414,42 +399,49 @@ struct BlockListView: View {
     }
 
     /// The Notion drag model: inside the origin block the text view keeps
-    /// native character selection (.textLocal); crossing a block boundary
-    /// escalates to whole-block range selection; dragging back into the
-    /// origin de-escalates.
+    /// native character selection (.textLocal); crossing into ANOTHER
+    /// block's text view escalates to whole-block range selection; dragging
+    /// back into the origin de-escalates. Blocks are resolved by AppKit
+    /// hit-testing on the actual text views (each knows its rowBlockID) —
+    /// never by converting between AppKit and SwiftUI coordinate spaces,
+    /// which drifts by the titlebar height and misfires at row boundaries.
     private func handleBlockDrag(
         windowPoint: NSPoint,
         phase: BlockDragPhase,
         textView: NSTextView
     ) -> BlockDragResolution {
         let controller = ownedDragController
-        guard let listPoint = listPoint(fromWindowPoint: windowPoint, in: textView) else {
-            return .textLocal
-        }
-        let rootOrder = BlockSelectionCoordinator.rootOrder(in: document)
 
         switch phase {
         case .began:
-            controller.originBlockID = blockLayoutIndex.blockID(atY: listPoint.y, rootOrder: rootOrder)
+            controller.originBlockID = ((textView as? CosmoTextView)?.rowBlockID).flatMap(rootBlockID(containing:))
             controller.isEscalated = false
             return .textLocal
         case .changed:
-            guard let origin = controller.originBlockID,
-                  let current = blockLayoutIndex.blockID(atY: listPoint.y, rootOrder: rootOrder) else {
-                return .textLocal
-            }
-            if current == origin {
+            guard let origin = controller.originBlockID else { return .textLocal }
+            // Hysteresis: anywhere inside (or within a few points of) the
+            // origin view stays native text selection — you can slightly
+            // overshoot a line without the selection jumping to whole-block.
+            let pointInOrigin = textView.convert(windowPoint, from: nil)
+            if textView.bounds.insetBy(dx: 0, dy: -6).contains(pointInOrigin) {
                 if controller.isEscalated {
                     controller.isEscalated = false
                     resolvedSelectionCoordinator.clear()
                 }
                 return .textLocal
             }
+            guard let hit = hitTestBlockID(at: windowPoint, in: textView.window),
+                  let target = rootBlockID(containing: hit),
+                  target != origin else {
+                // In a gap/gutter or still over the origin — keep whatever
+                // mode we're in (sticky) so the selection doesn't flicker.
+                return controller.isEscalated ? .escalated : .textLocal
+            }
             if !controller.isEscalated {
                 controller.isEscalated = true
                 resolvedSelectionCoordinator.select(origin)
             }
-            resolvedSelectionCoordinator.selectRange(to: current, in: document)
+            resolvedSelectionCoordinator.selectRange(to: target, in: document)
             return .escalated
         case .ended:
             defer { controller.originBlockID = nil }
@@ -462,13 +454,13 @@ struct BlockListView: View {
         }
     }
 
-    /// Shift+Click on another block while one holds focus (or a selection is
-    /// active) — extend into a block-range selection. Shift+Click within the
-    /// focused block returns false so native text-selection extension runs.
+    /// Shift+Click inside a block while ANOTHER block holds focus (or a
+    /// selection is active) — extend into a block-range selection.
+    /// Shift+Click within the focused block returns false so native
+    /// text-selection extension runs.
     private func handleBlockShiftClick(windowPoint: NSPoint, textView: NSTextView) -> Bool {
-        guard let listPoint = listPoint(fromWindowPoint: windowPoint, in: textView) else { return false }
-        let rootOrder = BlockSelectionCoordinator.rootOrder(in: document)
-        guard let target = blockLayoutIndex.blockID(atY: listPoint.y, rootOrder: rootOrder) else { return false }
+        guard let hit = (textView as? CosmoTextView)?.rowBlockID,
+              let target = rootBlockID(containing: hit) else { return false }
 
         let selection = resolvedSelectionCoordinator
         if selection.isActive {
@@ -478,7 +470,7 @@ struct BlockListView: View {
         }
         guard let origin = resolvedFocusCoordinator.focusedBlockID,
               origin != target,
-              rootOrder.contains(origin) else {
+              BlockSelectionCoordinator.rootOrder(in: document).contains(origin) else {
             return false
         }
         selection.select(origin)
@@ -487,18 +479,29 @@ struct BlockListView: View {
         return true
     }
 
-    /// AppKit window point → this list's coordinate space. Row frames are
-    /// registered in the list's named space, which coincides with
-    /// (.global − listGlobalFrame.origin).
-    private func listPoint(fromWindowPoint windowPoint: NSPoint, in textView: NSTextView) -> CGPoint? {
-        guard let contentView = textView.window?.contentView else { return nil }
-        let listGlobalFrame = ownedDragController.listGlobalFrame
-        let inContent = contentView.convert(windowPoint, from: nil)
-        let globalY = contentView.isFlipped ? inContent.y : contentView.bounds.height - inContent.y
-        return CGPoint(
-            x: inContent.x - listGlobalFrame.minX,
-            y: globalY - listGlobalFrame.minY
-        )
+    /// Selection operates on ROOT blocks — a hit inside an element's nested
+    /// row selects the whole element.
+    private func rootBlockID(containing blockID: UUID) -> UUID? {
+        guard let path = BlockOperations.path(of: blockID, in: document),
+              let rootIndex = path.indices.first,
+              document.blocks.indices.contains(rootIndex) else { return nil }
+        return document.blocks[rootIndex].id
+    }
+
+    /// The block whose text view sits under the window point — exact, no
+    /// coordinate-space conversion. Walks up from the deepest hit view until
+    /// a CosmoTextView with a rowBlockID is found.
+    private func hitTestBlockID(at windowPoint: NSPoint, in window: NSWindow?) -> UUID? {
+        guard let contentView = window?.contentView,
+              let container = contentView.superview else { return nil }
+        var view = contentView.hitTest(container.convert(windowPoint, from: nil))
+        while let current = view {
+            if let textView = current as? CosmoTextView, let blockID = textView.rowBlockID {
+                return blockID
+            }
+            view = current.superview
+        }
+        return nil
     }
 
     // MARK: - Block Selection

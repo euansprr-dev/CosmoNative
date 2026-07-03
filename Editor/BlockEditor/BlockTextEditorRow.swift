@@ -60,6 +60,7 @@ struct BlockTextEditorRow: View {
             onBoundaryCommand: handleBoundaryCommand,
             onSlashCommandSelected: executeSlashCommand,
             splitsOnReturn: true,
+            rowBlockID: blockID,
             immediateDocumentSync: true,
             caretRequest: editorCaretRequest,
             autoFocus: autoFocus || focusCoordinator.focusedBlockID == blockID

@@ -631,6 +631,22 @@ class SyncEngine: ObservableObject {
             return
         }
 
+        // Deletes are one-way: a locally-deleted row is never resurrected by
+        // a remote live row (e.g. another device's update in flight while the
+        // delete's tombstone push races it). The queued DELETE tombstones the
+        // cloud copy and the other device follows.
+        let locallyDeleted = (try? await database.asyncRead { db in
+            try Bool.fetchOne(
+                db,
+                sql: "SELECT EXISTS(SELECT 1 FROM \(table) WHERE \(keyColumn) = ? AND is_deleted = 1)",
+                arguments: [uuid]
+            ) ?? false
+        }) ?? false
+        if locallyDeleted {
+            PersistenceHealth.note(.conflict, context: "SyncEngine.applyRemoteChange(\(uuid.prefix(8)))", detail: "remote live row skipped — row is locally deleted; deletes are one-way")
+            return
+        }
+
         // For atoms table: convert JSONB objects back to TEXT strings for GRDB
         var localData = data
         if table == "atoms" {

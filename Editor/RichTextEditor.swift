@@ -286,6 +286,7 @@ struct RichTextEditor: View {
     var onBoundaryCommand: ((EditorBoundaryCommand) -> Bool)? = nil
     var onSlashCommandSelected: ((SlashCommand, String) -> Bool)? = nil
     var splitsOnReturn: Bool = false
+    var rowBlockID: UUID? = nil
     var caretRequest: EditorCaretRequest? = nil
     var externalContentToken: Int = 0
     var onPlainTextDidChange: ((String) -> Void)? = nil
@@ -368,6 +369,7 @@ struct RichTextEditor: View {
         onBoundaryCommand: ((EditorBoundaryCommand) -> Bool)? = nil,
         onSlashCommandSelected: ((SlashCommand, String) -> Bool)? = nil,
         splitsOnReturn: Bool = false,
+        rowBlockID: UUID? = nil,
         caretRequest: EditorCaretRequest? = nil,
         externalContentToken: Int = 0,
         onPlainTextDidChange: ((String) -> Void)? = nil,
@@ -414,6 +416,7 @@ struct RichTextEditor: View {
         self.onBoundaryCommand = onBoundaryCommand
         self.onSlashCommandSelected = onSlashCommandSelected
         self.splitsOnReturn = splitsOnReturn
+        self.rowBlockID = rowBlockID
         self.caretRequest = caretRequest
         self.externalContentToken = externalContentToken
         self.onPlainTextDidChange = onPlainTextDidChange
@@ -512,6 +515,7 @@ struct RichTextEditor: View {
                 caretRequest: caretRequest,
                 externalContentToken: externalContentToken,
                 dragSelectionController: dragSelectionController,
+                rowBlockID: rowBlockID,
                 editorInstanceID: overlayEscapeOwnerID
             )
             // Non-scrolling editors report their live height through
@@ -751,6 +755,7 @@ struct RichTextEditor: View {
         }
         slashQuery = query
         let filtered = slashFilteredCommands
+        ConsoleLog.info("[SLASHDBG] handleSlashTrigger query='\(query)' filtered=\(filtered.count) hoisted=\(overlayPresenter != nil) rowFrame=\(frameInOverlaySpace.origin) splitsOnReturn=\(splitsOnReturn)", subsystem: .canvas)
         guard !filtered.isEmpty else {
             // Nothing matches — retire the menu. Deleting back to a matching
             // query reopens it on the next keystroke.

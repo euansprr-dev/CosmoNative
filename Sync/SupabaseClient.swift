@@ -181,9 +181,15 @@ final class SupabaseClient {
     // MARK: - Soft Delete
 
     func softDelete(table: String, uuid: String) async throws {
+        // _source MUST be re-stamped here: a bare PATCH leaves the row tagged
+        // with the LAST writer's source, and each device's pull filters out
+        // its own source — a tombstone still tagged with the OTHER device's
+        // source is invisible to that device, so it never deletes and later
+        // resurrects the row with its next push.
         try await update(table: table, uuid: uuid, data: [
             "is_deleted": true,
-            "updated_at": ISO8601.string(from: Date())
+            "updated_at": ISO8601.string(from: Date()),
+            "_source": SupabaseSyncTrafficPolicy.localSource
         ])
     }
 

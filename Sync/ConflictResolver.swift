@@ -45,6 +45,16 @@ class ConflictResolver {
                     return
                 }
 
+                // Deletes are one-way: a locally-deleted row is never
+                // resurrected by a remote live row (covers Realtime, which
+                // calls this resolver directly and skips SyncEngine's guard).
+                let localDeleted = (local["is_deleted"] as? Int64 ?? Int64(local["is_deleted"] as? Int ?? 0)) != 0
+                let remoteDeleted = (data["is_deleted"] as? Bool) ?? ((data["is_deleted"] as? Int).map { $0 == 1 } ?? false)
+                if localDeleted && !remoteDeleted {
+                    print("[SYNC-RESOLVE] SKIPPED — locally deleted, remote live; deletes are one-way uuid=\(uuid)")
+                    return
+                }
+
                 if localVersion > serverVersion {
                     // Local was modified since last sync — conflict!
                     await handleConflict(

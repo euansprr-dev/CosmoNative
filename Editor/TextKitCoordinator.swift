@@ -407,6 +407,10 @@ final class CosmoTextView: NSTextView {
     /// selection at block boundaries — NSTextView's own loop clamps at the
     /// view's bounds.
     weak var blockDragSelectionController: BlockDragSelectionController?
+    /// The block this row's text view renders — lets drag selection resolve
+    /// blocks by AppKit hit-testing (exact) instead of coordinate-space
+    /// conversion between AppKit and SwiftUI (offset-prone).
+    var rowBlockID: UUID?
     private var disclosureTrackingArea: NSTrackingArea?
 
     override func draw(_ dirtyRect: NSRect) {
@@ -1513,6 +1517,8 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     var externalContentToken: Int = 0
     /// Cross-block drag selection bridge (block rows; set via environment).
     var dragSelectionController: BlockDragSelectionController? = nil
+    /// The block this row renders (block rows only) — for drag hit-testing.
+    var rowBlockID: UUID? = nil
     /// Identifies this editor instance for slash-command notifications —
     /// target IDs are shared across surfaces (focus-mode row vs canvas block
     /// of the same note), instance IDs are not.
@@ -1588,6 +1594,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         // The text view is being aligned with the binding — it's authoritative
         // again, so stale-write-back suppression can lift.
         context.coordinator.awaitingExternalContent = false
+        if splitsOnReturn, hasFreshExternalContent {
+            ConsoleLog.info("[SLASHDBG] row APPLY token=\(externalContentToken) new='\(attributedText.string.prefix(16))' old='\(textView.string.prefix(16))'", subsystem: .canvas)
+        }
         if !textView.attributedString().isEqual(to: attributedText) {
             let selectedRange = textView.selectedRange()
             // The attachment objects the overlay points at are about to be replaced.
@@ -1663,6 +1672,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         textView.scrollsInternally = scrollsInternally
         textView.blockRowMode = splitsOnReturn
         textView.blockDragSelectionController = splitsOnReturn ? dragSelectionController : nil
+        textView.rowBlockID = rowBlockID
         textView.onBlockPaste = { [weak coordinator = context.coordinator] pastedText in
             guard let coordinator, let textView = coordinator.textViewReference else { return false }
             return coordinator.performBlockPaste(pastedText, in: textView)
@@ -2586,6 +2596,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 }
                 if commandSelector == #selector(NSResponder.insertNewline(_:))
                     || commandSelector == #selector(NSResponder.insertTab(_:)) {
+                    ConsoleLog.info("[SLASHDBG] Return routed to menu (slash active)", subsystem: .canvas)
                     if parent.onSlashMenuKey?(.commit) == true {
                         return true
                     }
@@ -2690,6 +2701,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                     }
                     let textLength = (textView.string as NSString).length
                     let caretOffsetFromEnd = max(0, textLength - textView.selectedRange().location)
+                    ConsoleLog.info("[SLASHDBG] RETURN split offsetFromEnd=\(caretOffsetFromEnd) text='\(textView.string.prefix(16))'", subsystem: .canvas)
                     beginAwaitingExternalContent()
                     if parent.onBoundaryCommand?(.splitBlock(
                         caretUTF16OffsetFromEnd: caretOffsetFromEnd,
@@ -2698,6 +2710,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                         dismissMenus()
                         return true
                     }
+                    ConsoleLog.info("[SLASHDBG] RETURN split UNHANDLED — degenerate soft break", subsystem: .canvas)
                     cancelAwaitingExternalContent()
                     // Degenerate split failure — a soft break preserves the
                     // one-block-per-row invariant where a hard \n would not.
@@ -3000,6 +3013,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             if isStartOfDocument || precededByWhitespace {
                 slashStartIndex = cursorLocation - 1
                 menuOpenedAt = CFAbsoluteTimeGetCurrent()
+                ConsoleLog.info("[SLASHDBG] trigger OPEN at=\(cursorLocation - 1) hasCallback=\(parent.onSlashCommand != nil)", subsystem: .canvas)
                 parent.onSlashCommand?(caretPosition(for: cursorLocation - 1, in: textView), "")
             }
         }

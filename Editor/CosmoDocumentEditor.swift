@@ -226,6 +226,8 @@ struct CosmoDocumentEditor: View {
     var onSlashCommandSelected: ((SlashCommand, String) -> Bool)? = nil
     /// Block-row mode: Return splits the block instead of inserting a newline.
     var splitsOnReturn: Bool = false
+    /// The block this row renders (block rows only) — drag hit-testing.
+    var rowBlockID: UUID? = nil
     /// Block-row mode: document sync runs synchronously per keystroke (the
     /// per-block document is one block, so serialization is trivial) — a
     /// debounce here lets stale content race structural edits like merges.
@@ -279,6 +281,7 @@ struct CosmoDocumentEditor: View {
             onBoundaryCommand: onBoundaryCommand,
             onSlashCommandSelected: onSlashCommandSelected,
             splitsOnReturn: splitsOnReturn,
+            rowBlockID: rowBlockID,
             caretRequest: caretRequest,
             externalContentToken: externalContentToken,
             onPlainTextDidChange: { plainText in
@@ -535,6 +538,18 @@ struct CosmoDocumentEditor: View {
     }
 
     private func resolvedDocumentForEditor(preferLivePlainText: Bool = false) -> RichDocument {
+        // Block rows: the document is ALWAYS authoritative. The legacy
+        // plain-text fallbacks below exist for old notes opened before the
+        // structured document existed — in a block row they are poison: a
+        // block that just became empty (Return-at-start split, backspace,
+        // slash transform) reads as an "empty document" while plainTextMirror
+        // still lags ~50ms with the pre-edit text, and migrating the mirror
+        // RESURRECTS that text, which then writes back over the document.
+        // That was the entire duplication class.
+        if splitsOnReturn {
+            return document
+        }
+
         let documentPlainText = resolvedPlainTextForCallbacks(from: document)
         let resolved: RichDocument
 

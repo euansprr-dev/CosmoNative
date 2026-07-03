@@ -45,11 +45,6 @@ final class BlockDragSelectionController {
     /// Session state, managed by the list's handleDrag.
     var originBlockID: UUID?
     var isEscalated = false
-    /// The block list's frame in SwiftUI .global space — lives HERE (plain
-    /// class) instead of view @State because a .global frame changes on
-    /// every scroll tick, and writing it into @State re-rendered the entire
-    /// block list continuously while scrolling.
-    var listGlobalFrame: CGRect = .zero
 }
 
 private struct BlockDragSelectionControllerKey: EnvironmentKey {
@@ -65,37 +60,6 @@ extension EnvironmentValues {
     }
 }
 
-/// Root-block frames in the block list's coordinate space, for hit-testing a
-/// drag point to a block. Plain class (not @Observable) — frame updates must
-/// not invalidate any view body.
-@MainActor
-final class BlockLayoutIndex {
-    private(set) var frames: [UUID: CGRect] = [:]
-
-    func update(_ frame: CGRect, for blockID: UUID) {
-        frames[blockID] = frame
-    }
-
-    func remove(_ blockID: UUID) {
-        frames[blockID] = nil
-    }
-
-    /// The root block under (or nearest to) the given Y, restricted to the
-    /// document's current root order so stale frames of deleted blocks never
-    /// win.
-    func blockID(atY y: CGFloat, rootOrder: [UUID]) -> UUID? {
-        var best: (id: UUID, distance: CGFloat)?
-        for id in rootOrder {
-            guard let frame = frames[id] else { continue }
-            if y >= frame.minY, y <= frame.maxY { return id }
-            let distance = y < frame.minY ? frame.minY - y : y - frame.maxY
-            if best == nil || distance < best!.distance {
-                best = (id, distance)
-            }
-        }
-        return best?.id
-    }
-}
 
 /// Direction of travel for keyboard-driven block selection.
 enum BlockSelectionDirection {

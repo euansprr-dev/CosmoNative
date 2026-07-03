@@ -1599,7 +1599,6 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         // again, so stale-write-back suppression can lift.
         context.coordinator.awaitingExternalContent = false
         if splitsOnReturn, hasFreshExternalContent {
-            ConsoleLog.info("[SLASHDBG] row APPLY token=\(externalContentToken) new='\(attributedText.string.prefix(16))' old='\(textView.string.prefix(16))'", subsystem: .canvas)
         }
         if !textView.attributedString().isEqual(to: attributedText) {
             let selectedRange = textView.selectedRange()
@@ -2652,7 +2651,6 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 }
                 if commandSelector == #selector(NSResponder.insertNewline(_:))
                     || commandSelector == #selector(NSResponder.insertTab(_:)) {
-                    ConsoleLog.info("[SLASHDBG] Return routed to menu (slash active)", subsystem: .canvas)
                     if parent.onSlashMenuKey?(.commit) == true {
                         return true
                     }
@@ -2757,7 +2755,6 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                     }
                     let textLength = (textView.string as NSString).length
                     let caretOffsetFromEnd = max(0, textLength - textView.selectedRange().location)
-                    ConsoleLog.info("[SLASHDBG] RETURN split offsetFromEnd=\(caretOffsetFromEnd) text='\(textView.string.prefix(16))'", subsystem: .canvas)
                     beginAwaitingExternalContent()
                     if parent.onBoundaryCommand?(.splitBlock(
                         caretUTF16OffsetFromEnd: caretOffsetFromEnd,
@@ -2766,7 +2763,6 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                         dismissMenus()
                         return true
                     }
-                    ConsoleLog.info("[SLASHDBG] RETURN split UNHANDLED — degenerate soft break", subsystem: .canvas)
                     cancelAwaitingExternalContent()
                     // Degenerate split failure — a soft break preserves the
                     // one-block-per-row invariant where a hard \n would not.
@@ -3069,7 +3065,6 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             if isStartOfDocument || precededByWhitespace {
                 slashStartIndex = cursorLocation - 1
                 menuOpenedAt = CFAbsoluteTimeGetCurrent()
-                ConsoleLog.info("[SLASHDBG] trigger OPEN at=\(cursorLocation - 1) hasCallback=\(parent.onSlashCommand != nil)", subsystem: .canvas)
                 parent.onSlashCommand?(caretPosition(for: cursorLocation - 1, in: textView), "")
             }
         }

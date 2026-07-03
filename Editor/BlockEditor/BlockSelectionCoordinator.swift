@@ -45,6 +45,12 @@ final class BlockDragSelectionController {
     /// Session state, managed by the list's handleDrag.
     var originBlockID: UUID?
     var isEscalated = false
+    /// Block-row text views snapshotted at drag start. Targets are resolved
+    /// by vertical-band geometry against these — NSView.hitTest is useless
+    /// here because the selection click-catcher overlays make NSHostingView
+    /// claim the hit for itself once the first two blocks are selected
+    /// (which capped drag selection at exactly two blocks).
+    var dragCandidateViews: [CosmoTextView] = []
 }
 
 private struct BlockDragSelectionControllerKey: EnvironmentKey {

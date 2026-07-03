@@ -99,7 +99,6 @@ struct BlockTextEditorRow: View {
     }
 
     private func handleBlockDocumentChange(_ updatedBlockDocument: RichDocument, _: String) {
-        ConsoleLog.info("[SLASHDBG] handleBlockDocumentChange incoming kind=\(String(describing: updatedBlockDocument.blocks.first?.kind)) text='\(updatedBlockDocument.blocks.first?.plainInlineText.prefix(12) ?? "")' curKind=\(String(describing: currentBlock?.kind))", subsystem: .canvas)
         let before = document
         let mergedDocument = applyReplacementBlocks(updatedBlockDocument.blocks)
         if mergedDocument != before {
@@ -522,7 +521,6 @@ struct BlockTextEditorRow: View {
     private func executeSlashCommand(_ command: SlashCommand, livePlainText: String) -> Bool {
         let path = currentPath
         let action = BlockCommandCatalog.action(for: command)
-        ConsoleLog.info("[SLASHDBG] executeSlashCommand blockID=\(blockID.uuidString.prefix(8)) hasBlock=\(currentBlock != nil) hasPath=\(path != nil) action=\(String(describing: action)) live='\(livePlainText.prefix(20))'", subsystem: .canvas)
         guard let block = currentBlock,
               let currentPath,
               let action else {
@@ -544,10 +542,8 @@ struct BlockTextEditorRow: View {
                     triggerAlreadyRemoved: true
                 )
                 apply(result, undoActionName: action.undoActionName)
-                ConsoleLog.info("[SLASHDBG] executeSlashCommand applied OK", subsystem: .canvas)
                 return true
             } catch {
-                ConsoleLog.info("[SLASHDBG] executeSlashCommand apply THREW \(error)", subsystem: .canvas)
                 return false
             }
         case .createElement, .openElementsSubmenu, .openWritingAI:
@@ -571,7 +567,6 @@ struct BlockTextEditorRow: View {
         }
         if let focusPath = result.focusPath,
            let focusedBlock = try? BlockOperations.currentBlock(in: result.document, at: focusPath) {
-            ConsoleLog.info("[SLASHDBG] apply undo='\(undoActionName ?? "")' resultBlockKind=\(focusedBlock.kind) text='\(focusedBlock.plainInlineText.prefix(12))'", subsystem: .canvas)
             focusCoordinator.focus(focusedBlock.id, caretOffsetFromEnd: result.caretOffsetFromEnd(for: focusedBlock))
         }
         onDocumentChange?(result.document, result.document.plainText)

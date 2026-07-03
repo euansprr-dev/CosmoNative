@@ -759,7 +759,6 @@ struct RichTextEditor: View {
         }
         slashQuery = query
         let filtered = slashFilteredCommands
-        ConsoleLog.info("[SLASHDBG] handleSlashTrigger query='\(query)' filtered=\(filtered.count) hoisted=\(overlayPresenter != nil) rowFrame=\(frameInOverlaySpace.origin) splitsOnReturn=\(splitsOnReturn)", subsystem: .canvas)
         guard !filtered.isEmpty else {
             // Nothing matches — retire the menu. Deleting back to a matching
             // query reopens it on the next keystroke.

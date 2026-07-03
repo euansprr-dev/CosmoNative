@@ -347,7 +347,6 @@ struct BlockListView: View {
     private var hoistedSlashMenuOverlay: some View {
         if providesNavigationOrder {
             if let session = ownedOverlayPresenter.slashSession {
-                let _ = ConsoleLog.info("[SLASHDBG] hoisted menu RENDER anchor=\(session.anchorInList) clamped=\(clampedOverlayPosition(for: session.anchorInList, menuSize: CGSize(width: 528, height: 348))) listSize=\(listSize) commands=\(session.commands.count)", subsystem: .canvas)
                 SlashCommandMenu(
                     position: clampedOverlayPosition(for: session.anchorInList, menuSize: CGSize(width: 528, height: 348)),
                     query: session.query,
@@ -416,6 +415,7 @@ struct BlockListView: View {
         case .began:
             controller.originBlockID = ((textView as? CosmoTextView)?.rowBlockID).flatMap(rootBlockID(containing:))
             controller.isEscalated = false
+            controller.dragCandidateViews = Self.collectBlockRowTextViews(in: textView.window?.contentView)
             return .textLocal
         case .changed:
             guard let origin = controller.originBlockID else { return .textLocal }
@@ -430,11 +430,11 @@ struct BlockListView: View {
                 }
                 return .textLocal
             }
-            guard let hit = hitTestBlockID(at: windowPoint, in: textView.window),
+            guard let hit = dragTargetBlockID(at: windowPoint),
                   let target = rootBlockID(containing: hit),
                   target != origin else {
-                // In a gap/gutter or still over the origin — keep whatever
-                // mode we're in (sticky) so the selection doesn't flicker.
+                // Nothing resolvable — keep whatever mode we're in (sticky)
+                // so the selection doesn't flicker.
                 return controller.isEscalated ? .escalated : .textLocal
             }
             if !controller.isEscalated {
@@ -444,7 +444,10 @@ struct BlockListView: View {
             resolvedSelectionCoordinator.selectRange(to: target, in: document)
             return .escalated
         case .ended:
-            defer { controller.originBlockID = nil }
+            defer {
+                controller.originBlockID = nil
+                controller.dragCandidateViews = []
+            }
             if controller.isEscalated {
                 controller.isEscalated = false
                 activateSelectionKeyboard()
@@ -452,6 +455,43 @@ struct BlockListView: View {
             }
             return .textLocal
         }
+    }
+
+    /// Resolves the drag target by VERTICAL-band geometry against the row
+    /// text views snapshotted at drag start: the row whose y-band contains
+    /// the pointer wins; otherwise the nearest row (dragging above the first
+    /// or below the last block clamps, and horizontal position is ignored —
+    /// the Notion model).
+    private func dragTargetBlockID(at windowPoint: NSPoint) -> UUID? {
+        var best: (id: UUID, distance: CGFloat)?
+        for view in ownedDragController.dragCandidateViews {
+            guard view.window != nil, let id = view.rowBlockID else { continue }
+            let local = view.convert(windowPoint, from: nil)
+            if local.y >= 0, local.y <= view.bounds.height {
+                return id
+            }
+            let distance = local.y < 0 ? -local.y : local.y - view.bounds.height
+            if best == nil || distance < best!.distance {
+                best = (id, distance)
+            }
+        }
+        return best?.id
+    }
+
+    /// Every mounted block-row text view in the window (the block list uses
+    /// a plain VStack, so all rows are mounted). Snapshotted once per drag.
+    private static func collectBlockRowTextViews(in root: NSView?) -> [CosmoTextView] {
+        guard let root else { return [] }
+        var result: [CosmoTextView] = []
+        var stack: [NSView] = [root]
+        while let view = stack.popLast() {
+            if let textView = view as? CosmoTextView, textView.rowBlockID != nil {
+                result.append(textView)
+                continue
+            }
+            stack.append(contentsOf: view.subviews)
+        }
+        return result
     }
 
     /// Shift+Click inside a block while ANOTHER block holds focus (or a
@@ -486,22 +526,6 @@ struct BlockListView: View {
               let rootIndex = path.indices.first,
               document.blocks.indices.contains(rootIndex) else { return nil }
         return document.blocks[rootIndex].id
-    }
-
-    /// The block whose text view sits under the window point — exact, no
-    /// coordinate-space conversion. Walks up from the deepest hit view until
-    /// a CosmoTextView with a rowBlockID is found.
-    private func hitTestBlockID(at windowPoint: NSPoint, in window: NSWindow?) -> UUID? {
-        guard let contentView = window?.contentView,
-              let container = contentView.superview else { return nil }
-        var view = contentView.hitTest(container.convert(windowPoint, from: nil))
-        while let current = view {
-            if let textView = current as? CosmoTextView, let blockID = textView.rowBlockID {
-                return blockID
-            }
-            view = current.superview
-        }
-        return nil
     }
 
     // MARK: - Block Selection

@@ -68,134 +68,14 @@ final class CommandCenterComposerTests: XCTestCase {
         XCTAssertNil(IntentBehaviorTemplate(.general))
     }
 
-    @MainActor
-    func testRecurringInstanceMatchParsesPlannerumFractionalDates() throws {
-        let calendar = Calendar(identifier: .gregorian)
-        let occurrence = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 5, day: 2, hour: 8)))
+    // NOTE (July 2026): the TaskRecurrenceEngine tests that lived here were
+    // removed with the engine itself — the materialized-instance model is gone
+    // (replaced by RecurringSeriesEngine's virtual occurrences, tested in
+    // RecurringSeriesEngineTests).
 
-        var metadata = TaskMetadata()
-        metadata.recurrenceParentUUID = "template-1"
-        metadata.focusDate = PlannerumFormatters.iso8601.string(from: occurrence)
 
-        XCTAssertTrue(
-            TaskRecurrenceEngine.recurrenceInstanceMatches(
-                templateUUID: "template-1",
-                date: occurrence,
-                metadata: metadata,
-                calendar: calendar
-            )
-        )
-        XCTAssertFalse(
-            TaskRecurrenceEngine.recurrenceInstanceMatches(
-                templateUUID: "template-1",
-                date: try XCTUnwrap(calendar.date(byAdding: .day, value: 1, to: occurrence)),
-                metadata: metadata,
-                calendar: calendar
-            )
-        )
-    }
 
-    @MainActor
-    func testRecurringCleanupDropsPastRepeat() {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
-        let today = calendar.date(from: DateComponents(year: 2026, month: 5, day: 11, hour: 8))!
-        let yesterday = calendar.date(byAdding: .day, value: -1, to: today)!
-        let tomorrow = calendar.date(byAdding: .day, value: 1, to: today)!
 
-        let deletions = TaskRecurrenceEngine.generatedInstanceCleanupDeletions(
-            from: [
-                .init(uuid: "daily-yesterday", parentUUID: "daily", occurrenceDate: yesterday, isCompleted: false, createdAt: yesterday),
-                .init(uuid: "daily-today", parentUUID: "daily", occurrenceDate: today, isCompleted: false, createdAt: today),
-                .init(uuid: "daily-tomorrow", parentUUID: "daily", occurrenceDate: tomorrow, isCompleted: false, createdAt: tomorrow),
-                .init(uuid: "weekly-yesterday", parentUUID: "weekly", occurrenceDate: yesterday, isCompleted: false, createdAt: yesterday),
-                .init(uuid: "completed-yesterday", parentUUID: "daily", occurrenceDate: yesterday, isCompleted: true, createdAt: yesterday)
-            ],
-            referenceDate: today,
-            calendar: calendar
-        )
-
-        XCTAssertEqual(deletions, ["daily-yesterday"])
-    }
-
-    @MainActor
-    func testRecurringCleanupDropsSameDayDuplicate() {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
-        let today = calendar.date(from: DateComponents(year: 2026, month: 5, day: 11, hour: 8))!
-        let earlyCreate = calendar.date(from: DateComponents(year: 2026, month: 5, day: 11, hour: 8))!
-        let lateCreate = calendar.date(from: DateComponents(year: 2026, month: 5, day: 11, hour: 9))!
-
-        let deletions = TaskRecurrenceEngine.generatedInstanceCleanupDeletions(
-            from: [
-                .init(uuid: "first", parentUUID: "daily", occurrenceDate: today, isCompleted: false, createdAt: earlyCreate),
-                .init(uuid: "second", parentUUID: "daily", occurrenceDate: today, isCompleted: false, createdAt: lateCreate)
-            ],
-            referenceDate: today,
-            calendar: calendar
-        )
-
-        XCTAssertEqual(deletions, ["second"])
-    }
-
-    @MainActor
-    func testRecurringCleanupDropsActiveSameDayDuplicateWhenOccurrenceWasCompleted() {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
-        let today = calendar.date(from: DateComponents(year: 2026, month: 5, day: 11, hour: 8))!
-        let earlyCreate = calendar.date(from: DateComponents(year: 2026, month: 5, day: 11, hour: 8))!
-        let lateCreate = calendar.date(from: DateComponents(year: 2026, month: 5, day: 11, hour: 9))!
-
-        let deletions = TaskRecurrenceEngine.generatedInstanceCleanupDeletions(
-            from: [
-                .init(uuid: "completed", parentUUID: "daily", occurrenceDate: today, isCompleted: true, createdAt: earlyCreate),
-                .init(uuid: "active-duplicate", parentUUID: "daily", occurrenceDate: today, isCompleted: false, createdAt: lateCreate)
-            ],
-            referenceDate: today,
-            calendar: calendar
-        )
-
-        XCTAssertEqual(deletions, ["active-duplicate"])
-    }
-
-    @MainActor
-    func testRecurringCleanupDropsPastActiveRepeatWhenOccurrenceWasCompletedToday() {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
-        let today = calendar.date(from: DateComponents(year: 2026, month: 5, day: 11, hour: 8))!
-        let yesterday = calendar.date(byAdding: .day, value: -1, to: today)!
-
-        let deletions = TaskRecurrenceEngine.generatedInstanceCleanupDeletions(
-            from: [
-                .init(uuid: "missed-yesterday", parentUUID: "daily", occurrenceDate: yesterday, isCompleted: false, createdAt: yesterday),
-                .init(uuid: "completed-today", parentUUID: "daily", occurrenceDate: today, isCompleted: true, createdAt: today)
-            ],
-            referenceDate: today,
-            calendar: calendar
-        )
-
-        XCTAssertEqual(deletions, ["missed-yesterday"])
-    }
-
-    @MainActor
-    func testRecurringCleanupDropsOrphanedGeneratedInstances() {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
-        let today = calendar.date(from: DateComponents(year: 2026, month: 5, day: 11, hour: 8))!
-
-        let deletions = TaskRecurrenceEngine.generatedInstanceCleanupDeletions(
-            from: [
-                .init(uuid: "orphan", parentUUID: "deleted-parent", occurrenceDate: today, isCompleted: false, createdAt: today),
-                .init(uuid: "active", parentUUID: "active-parent", occurrenceDate: today, isCompleted: false, createdAt: today),
-                .init(uuid: "completed-orphan", parentUUID: "deleted-parent", occurrenceDate: today, isCompleted: true, createdAt: today)
-            ],
-            activeTemplateUUIDs: ["active-parent"],
-            referenceDate: today,
-            calendar: calendar
-        )
-
-        XCTAssertEqual(deletions, ["orphan"])
-    }
 
     @MainActor
     func testIntentEngineReturnsExplicitUnassignedPresentation() {
@@ -266,32 +146,6 @@ final class CommandCenterComposerTests: XCTestCase {
         XCTAssertEqual(updatedCustomFuture, "Custom future title")
     }
 
-    @MainActor
-    func testDeletedRecurringInstanceBlocksSameOccurrenceRegeneration() async throws {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
-        let occurrence = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 5, day: 19, hour: 9)))
-
-        let template = try await createRecurringTaskAtom(
-            title: "Repeat tombstone",
-            occurrenceDate: occurrence,
-            recurrence: .weekly(on: [.tuesday])
-        )
-        let instance = try await createRecurringTaskAtom(
-            title: "Repeat tombstone",
-            occurrenceDate: occurrence,
-            parentUUID: template.uuid
-        )
-
-        try await AtomRepository.shared.delete(uuid: instance.uuid)
-
-        let exists = try await TaskRecurrenceEngine.shared.instanceExists(
-            templateUUID: template.uuid,
-            date: occurrence
-        )
-
-        XCTAssertTrue(exists)
-    }
 
     @MainActor
     func testDeletingRecurringTaskDefaultsToCurrentAndFuture() async throws {

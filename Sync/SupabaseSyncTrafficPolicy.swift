@@ -39,6 +39,12 @@ enum SupabaseSyncTrafficPolicy {
     }
 
     static func shouldAttemptPush(isAuthenticated: Bool) -> Bool {
+        shouldAttemptPush(isAuthenticated: isAuthenticated, allowsNetworkSync: allowsNetworkSync)
+    }
+
+    /// Testable core: the production overload injects the live kill-switch
+    /// (which is always false inside a test host).
+    static func shouldAttemptPush(isAuthenticated: Bool, allowsNetworkSync: Bool) -> Bool {
         allowsNetworkSync && isAuthenticated
     }
 }

@@ -92,6 +92,10 @@ class CosmoDatabase: ObservableObject {
             // Run migrations (this will create tables)
             try migrator.migrate(dbQueue)
 
+            // Auto-track local canvas_blocks writes for cloud sync. Registered
+            // AFTER migrations so schema maintenance never enqueues pushes.
+            dbQueue.add(transactionObserver: CanvasBlockSyncObserver.shared, extent: .databaseLifetime)
+
             // Initialize the Sendable actor core for FoundationModels tools
             let core = DatabaseActorCore(queue: dbQueue)
             self.actorCore = core

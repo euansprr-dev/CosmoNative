@@ -619,6 +619,35 @@ final class RecurringSeriesEngine {
         }
     }
 
+    /// Rename a single occurrence ("this occurrence only") without touching the
+    /// template title. An empty/whitespace title, or one equal to the template's,
+    /// clears the override so projection falls back to the series title.
+    func overrideOccurrenceTitle(
+        templateUUID: String,
+        dayKey: String,
+        title: String,
+        calendar: Calendar = .current
+    ) async throws {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        try await mutateSeriesMetadata(
+            templateUUID: templateUUID,
+            context: "RecurringSeriesEngine.overrideOccurrenceTitle(\(templateUUID.prefix(8))#\(dayKey))",
+            requiresSnapshot: false,
+            calendar: calendar
+        ) { meta, snapshot in
+            var overrides = meta.occurrenceOverrides ?? [:]
+            var override = overrides[dayKey] ?? TaskOccurrenceOverride()
+            let matchesSeriesTitle = trimmed == (snapshot?.title ?? "")
+            override.title = (trimmed.isEmpty || matchesSeriesTitle) ? nil : trimmed
+            if override == TaskOccurrenceOverride() {
+                overrides.removeValue(forKey: dayKey)
+            } else {
+                overrides[dayKey] = override
+            }
+            meta.occurrenceOverrides = overrides.isEmpty ? nil : overrides
+        }
+    }
+
     /// Move a single occurrence to a different day without rewriting the template anchor
     /// (which would shift the entire series and its history).
     func rescheduleOccurrence(

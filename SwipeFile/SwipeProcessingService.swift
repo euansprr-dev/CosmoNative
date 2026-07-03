@@ -803,29 +803,47 @@ final class SwipeProcessingService {
 @MainActor
 enum SwipeThumbnailCloudMirror {
 
-    private static let perPassLimit = 15
-    private static var passRanThisLaunch = false
+    private static let perPassLimit = 40
+    /// Swipes whose mirror failed this launch (no local cache AND dead CDN URL).
+    /// Skipped for the rest of the launch so they never block the batch;
+    /// retried automatically on the next launch.
+    private static var failedThisLaunch: Set<String> = []
+    /// Set once a pass finds nothing left to try — stops per-pass scans.
+    private static var backlogDrained = false
 
-    /// Run once per launch (invoked from the sync cycle via SwipeBoardStore's
-    /// neighbor hook). Mirrors up to `perPassLimit` swipes missing a storage URL.
+    /// Runs every sync pass, mirroring up to `perPassLimit` swipes per pass
+    /// until the backlog is drained. Fresh swipes are covered too: their CDN
+    /// URL is still live, so the direct-fetch fallback mirrors them within a
+    /// sync cycle of capture.
     static func runBackfillPassIfNeeded() async {
-        guard !passRanThisLaunch else { return }
-        passRanThisLaunch = true
+        guard !backlogDrained else { return }
+        guard SupabaseSyncTrafficPolicy.allowsNetworkSync else { return }
         guard let client = SupabaseClient.shared, client.isAuthenticated,
               let userId = client.currentUserId else { return }
 
         let atoms = (try? await AtomRepository.shared.fetchAll(type: .research)) ?? []
         var mirrored = 0
+        var attempted = 0
         for atom in atoms {
-            guard mirrored < perPassLimit else { break }
+            // Attempts bound the pass, not successes — when uploads fail
+            // systemically (e.g. a storage policy rejects everything), a
+            // success-only cap walks the ENTIRE backlog in one burst.
+            guard attempted < perPassLimit else { break }
             guard atom.isSwipeFileAtom else { continue }
             if mirrorableStorageURL(from: atom.metadata) != nil { continue }
+            if failedThisLaunch.contains(atom.uuid) { continue }
+            attempted += 1
             if await mirror(atom: atom, client: client, userId: userId) {
                 mirrored += 1
+            } else {
+                failedThisLaunch.insert(atom.uuid)
             }
         }
+        if attempted == 0 {
+            backlogDrained = true
+        }
         if mirrored > 0 {
-            print("SwipeThumbnailCloudMirror: mirrored \(mirrored) thumbnail(s) to Supabase Storage")
+            print("SwipeThumbnailCloudMirror: mirrored \(mirrored) thumbnail(s) to Supabase Storage (\(failedThisLaunch.count) deferred to next launch)")
         }
     }
 
@@ -835,8 +853,9 @@ enum SwipeThumbnailCloudMirror {
         return dict["thumbnailStorageURL"] as? String
     }
 
-    /// Locate the cached JPEG for this swipe (carousel stable key first, then
-    /// the thumbnail URL's cache key) and upload it.
+    /// Locate the JPEG for this swipe — local cache first (carousel stable key,
+    /// then the thumbnail URL's cache key), then a direct CDN fetch for URLs
+    /// that are still live — and upload it.
     private static func mirror(atom: Atom, client: SupabaseClient, userId: String) async -> Bool {
         var keys: [String] = []
         if let instagramId = atom.richContent?.instagramId {
@@ -846,7 +865,6 @@ enum SwipeThumbnailCloudMirror {
         if let thumbnailURLString, let url = URL(string: thumbnailURLString) {
             keys.append(ThumbnailCacheService.shared.cacheKey(for: url, stableKey: nil))
         }
-        guard !keys.isEmpty else { return false }
 
         let cacheDir = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -860,6 +878,26 @@ enum SwipeThumbnailCloudMirror {
                 break
             }
         }
+
+        // No local cache — the CDN URL may still be live (always true for
+        // freshly captured swipes). Fetch and drop a copy into the local cache
+        // so the Mac's own cards benefit too.
+        if jpegData == nil,
+           let thumbnailURLString,
+           let url = URL(string: thumbnailURLString),
+           url.scheme?.hasPrefix("http") == true {
+            if let (data, response) = try? await URLSession.shared.data(from: url),
+               let http = response as? HTTPURLResponse,
+               (200...299).contains(http.statusCode),
+               !data.isEmpty {
+                jpegData = data
+                if let cacheKey = keys.last {
+                    try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
+                    try? data.write(to: cacheDir.appendingPathComponent("thumb-\(cacheKey).jpg"))
+                }
+            }
+        }
+
         guard let jpegData else { return false }
 
         do {

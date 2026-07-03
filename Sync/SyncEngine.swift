@@ -124,6 +124,11 @@ class SyncEngine: ObservableObject {
         // before this fix shipped (they're in GRDB but never became InboxItems).
         await runInboxCatchupMigrationIfNeeded()
 
+        // 4. One-shot cloud reconciliation: full re-push of local truth + sweep
+        // of cloud rows this Mac deleted (or that tests leaked) — runs AFTER a
+        // pull so live iOS-originated rows are in GRDB before comparing.
+        await CloudReconciliationService.runIfNeeded()
+
         // Update state
         lastSyncTime = Date()
         syncState = .idle
@@ -391,16 +396,19 @@ class SyncEngine: ObservableObject {
         // was in flight keeps `_local_pending = 1` and gets its own push instead
         // of being silently claimed as synced.
         do {
+            let keyColumn = item.tableName == "canvas_blocks" ? "id" : "uuid"
             try await database.asyncWrite { db in
-                try db.execute(
-                    sql: """
-                    UPDATE \(item.tableName)
-                    SET _server_version = MAX(_server_version, ?),
-                        _local_pending = CASE WHEN _local_version > ? THEN _local_pending ELSE 0 END
-                    WHERE uuid = ?
-                    """,
-                    arguments: [item.localVersion, item.localVersion, item.uuid]
-                )
+                try CanvasBlockSyncObserver.suppressingSync {
+                    try db.execute(
+                        sql: """
+                        UPDATE \(item.tableName)
+                        SET _server_version = MAX(_server_version, ?),
+                            _local_pending = CASE WHEN _local_version > ? THEN _local_pending ELSE 0 END
+                        WHERE \(keyColumn) = ?
+                        """,
+                        arguments: [item.localVersion, item.localVersion, item.uuid]
+                    )
+                }
             }
         } catch {
             // Push succeeded but bookkeeping failed — shield stays up, the row
@@ -535,12 +543,16 @@ class SyncEngine: ObservableObject {
 
         // Check for local pending changes. If the check itself fails, fail safe:
         // skip the remote apply rather than risk overwriting unpushed local edits.
+        // canvas_blocks: local identity is `id` (== cloud key; the local uuid
+        // column holds the entity uuid on legacy rows).
+        let keyColumn = table == "canvas_blocks" ? "id" : "uuid"
+
         let hasPending: Bool
         do {
             let row = try await database.asyncRead { db in
                 try Row.fetchOne(
                     db,
-                    sql: "SELECT _local_pending FROM \(table) WHERE uuid = ? AND _local_pending = 1",
+                    sql: "SELECT _local_pending FROM \(table) WHERE \(keyColumn) = ? AND _local_pending = 1",
                     arguments: [uuid]
                 )
             }
@@ -587,18 +599,21 @@ class SyncEngine: ObservableObject {
     private func applyRemoteTombstone(table: String, uuid: String, data: [String: Any]) async {
         let remoteVersion = data["_version"] as? Int ?? data["_server_version"] as? Int ?? data["version"] as? Int ?? 0
         let updatedAt = (data["updated_at"] as? String).map(ISO8601.normalize) ?? ISO8601.string(from: Date())
+        let keyColumn = table == "canvas_blocks" ? "id" : "uuid"
         do {
             try await database.asyncWrite { db in
-                try db.execute(
-                    sql: """
-                    UPDATE \(table)
-                    SET is_deleted = 1,
-                        updated_at = ?,
-                        _server_version = MAX(_server_version, ?)
-                    WHERE uuid = ? AND is_deleted = 0
-                    """,
-                    arguments: [updatedAt, remoteVersion, uuid]
-                )
+                try CanvasBlockSyncObserver.suppressingSync {
+                    try db.execute(
+                        sql: """
+                        UPDATE \(table)
+                        SET is_deleted = 1,
+                            updated_at = ?,
+                            _server_version = MAX(_server_version, ?)
+                        WHERE \(keyColumn) = ? AND is_deleted = 0
+                        """,
+                        arguments: [updatedAt, remoteVersion, uuid]
+                    )
+                }
             }
             print("🗑️ Applied remote tombstone: \(table):\(uuid)")
         } catch {

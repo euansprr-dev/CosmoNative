@@ -532,6 +532,12 @@ extension TaskViewModel {
         // Parse metadata
         let metadata = atom.metadataValue(as: TaskMetadata.self)
 
+        // Legacy materialized recurring instances (pre-virtual-occurrence model)
+        // are never rendered. Local copies were purged by the clean-slate
+        // migration; any straggler arriving from the cloud (old devices, rows
+        // whose tombstones never propagated) must not resurface as a task.
+        if metadata?.recurrenceParentUUID != nil { return nil }
+
         // Parse dates
         let dueDate = metadata?.dueDate.flatMap { PlannerumFormatters.iso8601.date(from: $0) }
         let scheduledDate = metadata?.focusDate.flatMap { PlannerumFormatters.iso8601.date(from: $0) }

@@ -358,31 +358,39 @@ class ConflictResolver {
         // FIX 4 [P0]: Replace INSERT OR IGNORE with existence check + conditional insert/update.
         // INSERT OR IGNORE silently drops the entire row if UUID already exists (race between
         // Realtime and batch pull), losing the cloud atom's data and skipping FTS triggers.
+        // canvas_blocks: match local rows by `id` — the local PK always equals
+        // the cloud key (pulled rows set id = cloud uuid; Mac-created rows push
+        // keyed by their id). The local `uuid` column holds the entity uuid on
+        // legacy Mac rows and must not be used for identity.
+        let keyColumn = table == "canvas_blocks" ? "id" : "uuid"
+
         do {
             try await database.asyncWrite { db in
-                let uuidValue = insertData["uuid"] as? String ?? ""
-                let exists = try Row.fetchOne(
-                    db,
-                    sql: "SELECT 1 FROM \(table) WHERE uuid = ?",
-                    arguments: [uuidValue]
-                )
-
-                if exists != nil {
-                    // UUID already exists — treat as update instead of silently dropping
-                    let updateCols = columns.filter { $0 != "uuid" }
-                    let setClause = updateCols.map { "\($0) = ?" }.joined(separator: ", ")
-                    let updateValues = updateCols.compactMap { insertData[$0] }
-                    var updateArgs = updateValues.map { databaseValue(from: $0) }
-                    updateArgs.append(databaseValue(from: uuidValue))
-                    try db.execute(
-                        sql: "UPDATE \(table) SET \(setClause) WHERE uuid = ?",
-                        arguments: StatementArguments(updateArgs)
+                try CanvasBlockSyncObserver.suppressingSync {
+                    let uuidValue = insertData["uuid"] as? String ?? ""
+                    let exists = try Row.fetchOne(
+                        db,
+                        sql: "SELECT 1 FROM \(table) WHERE \(keyColumn) = ?",
+                        arguments: [uuidValue]
                     )
-                    print("📥 Remote insert → update (UUID exists): \(table):\(uuidValue)")
-                } else {
-                    let sql = "INSERT INTO \(table) (\(columns.joined(separator: ", "))) VALUES (\(placeholders))"
-                    try db.execute(sql: sql, arguments: StatementArguments(dbValues))
-                    print("📥 Inserted remote entity: \(table):\(uuidValue)")
+
+                    if exists != nil {
+                        // Key already exists — treat as update instead of silently dropping
+                        let updateCols = columns.filter { $0 != "uuid" && $0 != "id" }
+                        let setClause = updateCols.map { "\($0) = ?" }.joined(separator: ", ")
+                        let updateValues = updateCols.compactMap { insertData[$0] }
+                        var updateArgs = updateValues.map { databaseValue(from: $0) }
+                        updateArgs.append(databaseValue(from: uuidValue))
+                        try db.execute(
+                            sql: "UPDATE \(table) SET \(setClause) WHERE \(keyColumn) = ?",
+                            arguments: StatementArguments(updateArgs)
+                        )
+                        print("📥 Remote insert → update (key exists): \(table):\(uuidValue)")
+                    } else {
+                        let sql = "INSERT INTO \(table) (\(columns.joined(separator: ", "))) VALUES (\(placeholders))"
+                        try db.execute(sql: sql, arguments: StatementArguments(dbValues))
+                        print("📥 Inserted remote entity: \(table):\(uuidValue)")
+                    }
                 }
             }
         } catch {
@@ -424,7 +432,9 @@ class ConflictResolver {
         let setClause = updateColumns.map { "\($0) = ?" }.joined(separator: ", ")
         let values = updateColumns.compactMap { updateData[$0] }
 
-        let sql = "UPDATE \(table) SET \(setClause) WHERE uuid = ?"
+        // canvas_blocks: local identity is `id` (== cloud key), see applyRemoteInsert.
+        let keyColumn = table == "canvas_blocks" ? "id" : "uuid"
+        let sql = "UPDATE \(table) SET \(setClause) WHERE \(keyColumn) = ?"
 
         var dbArgsArray = values.map { databaseValue(from: $0) }
         dbArgsArray.append(databaseValue(from: uuid))
@@ -432,7 +442,9 @@ class ConflictResolver {
 
         do {
             try await database.asyncWrite { db in
-                try db.execute(sql: sql, arguments: StatementArguments(finalArgs))
+                try CanvasBlockSyncObserver.suppressingSync {
+                    try db.execute(sql: sql, arguments: StatementArguments(finalArgs))
+                }
             }
             print("📥 Updated from remote: \(table):\(uuid)")
         } catch {

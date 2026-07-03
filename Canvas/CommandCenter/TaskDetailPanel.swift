@@ -593,7 +593,8 @@ struct TaskDetailPanel: View {
             await viewModel.updateRecurringTaskTitle(
                 uuid: task.uuid,
                 title: editedTitle,
-                scope: titleEditScope
+                scope: titleEditScope,
+                occurrenceDay: task.occurrenceDay
             )
         }
     }

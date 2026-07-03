@@ -28,7 +28,10 @@ final class SupabaseClient {
 
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 30
-        config.timeoutIntervalForResource = 60
+        // Resource timeout caps a task's TOTAL transfer time. Bulk pushes
+        // (reconciliation batches of large atoms over a slow uplink) need far
+        // more than 60s; per-request timeouts still guard individual calls.
+        config.timeoutIntervalForResource = 300
         config.waitsForConnectivity = true
         config.allowsCellularAccess = true
 
@@ -119,6 +122,9 @@ final class SupabaseClient {
 
         let url = try buildURL(table: table)
         var request = URLRequest(url: url)
+        // Bulk payloads (100 large atoms can be megabytes) legitimately take
+        // longer than the 30s default on slow uplinks.
+        request.timeoutInterval = 120
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("return=minimal,resolution=merge-duplicates", forHTTPHeaderField: "Prefer")
@@ -252,7 +258,9 @@ final class SupabaseClient {
             queryItems.append(SupabaseSyncTrafficPolicy.remoteOnlyQueryItem)
         }
 
-        queryItems.append(URLQueryItem(name: "order", value: "updated_at.asc"))
+        // uuid tiebreaker: rows sharing an updated_at second keep a stable
+        // order across pages, so offset pagination can't skip or double them.
+        queryItems.append(URLQueryItem(name: "order", value: "updated_at.asc,uuid.asc"))
         queryItems.append(URLQueryItem(name: "limit", value: "\(limit)"))
         if offset > 0 {
             queryItems.append(URLQueryItem(name: "offset", value: "\(offset)"))

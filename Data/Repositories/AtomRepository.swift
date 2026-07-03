@@ -863,6 +863,15 @@ class AtomRepository: ObservableObject {
         // DELETE op (offline-safe batch retry) and fires an immediate soft
         // delete — the queue row survives the local hard delete below.
         await changeTracker.trackDelete(table: Atom.databaseTableName, uuid: uuid, rowId: nil)
+
+        // Canvas placements: cloud rows are keyed by placement id; legacy rows
+        // were keyed by entity uuid — tombstone both keys.
+        let placementIds = (try? await database.asyncRead { db in
+            try String.fetchAll(db, sql: "SELECT id FROM canvas_blocks WHERE entity_uuid = ?", arguments: [uuid])
+        }) ?? []
+        for placementId in placementIds {
+            await changeTracker.trackDelete(table: CanvasBlockRecord.databaseTableName, uuid: placementId, rowId: nil)
+        }
         await changeTracker.trackDelete(table: CanvasBlockRecord.databaseTableName, uuid: uuid, rowId: nil)
 
         try await database.asyncWrite { db in

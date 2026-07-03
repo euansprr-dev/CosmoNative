@@ -2202,11 +2202,31 @@ class CommandCenterDashboardViewModel: ObservableObject {
     func updateRecurringTaskTitle(
         uuid: String,
         title: String,
-        scope: RecurringTaskTitleEditScope
+        scope: RecurringTaskTitleEditScope,
+        occurrenceDay: Date? = nil
     ) async {
         do {
             guard let current = try await AtomRepository.shared.fetch(uuid: uuid) else { return }
             let currentMetadata = current.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+
+            // Virtual-occurrence series: occurrence rows carry the TEMPLATE uuid.
+            // "This occurrence only" writes a per-day title override; "current and
+            // future" renames the series (projection derives every occurrence's
+            // title from the template + overrides).
+            if currentMetadata.recurrence != nil, currentMetadata.recurrenceParentUUID == nil {
+                if scope == .currentOnly, let occurrenceDay {
+                    try await RecurringSeriesEngine.shared.overrideOccurrenceTitle(
+                        templateUUID: uuid,
+                        dayKey: RecurringSeriesEngine.dayKey(for: occurrenceDay),
+                        title: title
+                    )
+                    await refreshTaskCollectionsAfterMutation()
+                    await loadHabits()
+                    return
+                }
+                await updateTask(uuid: uuid, title: title)
+                return
+            }
 
             guard scope == .currentAndFuture,
                   let parentUUID = currentMetadata.recurrenceParentUUID,

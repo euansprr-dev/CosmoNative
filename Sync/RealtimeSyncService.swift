@@ -148,10 +148,13 @@ final class RealtimeSyncService {
                   !hasSyncFence(uuid: uuid) else { return }
             do {
                 try await database.asyncWrite { db in
-                    try db.execute(
-                        sql: "UPDATE canvas_blocks SET is_deleted = 1, updated_at = ? WHERE uuid = ?",
-                        arguments: [ISO8601.string(from: Date()), uuid]
-                    )
+                    try CanvasBlockSyncObserver.suppressingSync {
+                        // Local identity is `id` (== cloud key), not the entity-uuid column.
+                        try db.execute(
+                            sql: "UPDATE canvas_blocks SET is_deleted = 1, updated_at = ? WHERE id = ?",
+                            arguments: [ISO8601.string(from: Date()), uuid]
+                        )
+                    }
                 }
                 lastEventTime = Date()
             } catch {
@@ -294,11 +297,13 @@ final class RealtimeSyncService {
     /// The local version is authoritative until it's pushed and confirmed.
     /// Fail safe: if the shield can't be verified, behave as if pending.
     private func isLocallyPending(uuid: String, table: String = "atoms") -> Bool {
+        // canvas_blocks: local identity is `id` (== cloud key).
+        let keyColumn = table == "canvas_blocks" ? "id" : "uuid"
         do {
             let hasPending = try CosmoDatabase.shared.dbQueue.read { db in
                 try Row.fetchOne(
                     db,
-                    sql: "SELECT _local_pending FROM \(table) WHERE uuid = ? AND _local_pending = 1",
+                    sql: "SELECT _local_pending FROM \(table) WHERE \(keyColumn) = ? AND _local_pending = 1",
                     arguments: [uuid]
                 )
             }

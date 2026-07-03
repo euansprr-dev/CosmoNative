@@ -250,8 +250,13 @@ struct CloudSyncSettingsTab: View {
 
     private func mirrorRowStatus(lane: SwipeMediaMirrorProgress.Lane, perPass: Int) -> String {
         if lane.isComplete { return "\(lane.done)/\(lane.total) · done" }
+        if lane.remaining == 0 && lane.deferred > 0 {
+            // Everything uploadable is up; the rest have no recoverable media
+            // until the swipe is reopened on the Mac (fresh extraction).
+            return "\(lane.done)/\(lane.total) · \(lane.deferred) need re-extraction"
+        }
         var status = "\(lane.done)/\(lane.total) · \(SwipeCloudMirrorSupport.etaDescription(remaining: lane.remaining, perPass: perPass))"
-        if lane.deferred > 0 { status += " · \(lane.deferred) retry on relaunch" }
+        if lane.deferred > 0 { status += " · \(lane.deferred) deferred" }
         return status
     }
 

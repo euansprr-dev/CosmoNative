@@ -1013,20 +1013,27 @@ enum SwipeMediaMirrorCoordinator {
         drainTask = Task {
             defer { drainTask = nil }
             while !Task.isCancelled {
-                let before = doneCounts()
+                let before = attemptCounts()
                 await SwipeThumbnailCloudMirror.runBackfillPassIfNeeded()
                 await SwipeCarouselCloudMirror.runBackfillPassIfNeeded()
                 await SwipeVideoCloudMirror.runBackfillPassIfNeeded()
-                let after = doneCounts()
-                if after == before { break }   // no forward progress → idle until next kick
+                let after = attemptCounts()
+                if after == before { break }   // nothing left to try → idle until next kick
                 try? await Task.sleep(for: .seconds(1))
             }
         }
     }
 
-    private static func doneCounts() -> [Int] {
+    /// Progress = work consumed, successful OR deferred. Counting successes
+    /// alone stopped the loop after one all-failure round, stranding the rest
+    /// of the backlog untried.
+    private static func attemptCounts() -> [Int] {
         let progress = SwipeMediaMirrorProgress.shared
-        return [progress.thumbnails.done, progress.carousels.done, progress.videos.done]
+        return [
+            progress.thumbnails.done + progress.thumbnails.deferred,
+            progress.carousels.done + progress.carousels.deferred,
+            progress.videos.done + progress.videos.deferred,
+        ]
     }
 }
 

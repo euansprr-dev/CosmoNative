@@ -803,48 +803,50 @@ final class SwipeProcessingService {
 @MainActor
 enum SwipeThumbnailCloudMirror {
 
-    private static let perPassLimit = 40
+    static let perPassLimit = 40
     /// Swipes whose mirror failed this launch (no local cache AND dead CDN URL).
     /// Skipped for the rest of the launch so they never block the batch;
     /// retried automatically on the next launch.
     private static var failedThisLaunch: Set<String> = []
-    /// Set once a pass finds nothing left to try — stops per-pass scans.
-    private static var backlogDrained = false
 
     /// Runs every sync pass, mirroring up to `perPassLimit` swipes per pass
     /// until the backlog is drained. Fresh swipes are covered too: their CDN
     /// URL is still live, so the direct-fetch fallback mirrors them within a
     /// sync cycle of capture.
     static func runBackfillPassIfNeeded() async {
-        guard !backlogDrained else { return }
         guard SupabaseSyncTrafficPolicy.allowsNetworkSync else { return }
         guard let client = SupabaseClient.shared, client.isAuthenticated,
               let userId = client.currentUserId else { return }
 
         let atoms = (try? await AtomRepository.shared.fetchAll(type: .research)) ?? []
+        let eligible = atoms.filter { $0.isSwipeFileAtom }
+        let pending = eligible.filter { mirrorableStorageURL(from: $0.metadata) == nil }
+        // Attempts bound the pass, not successes — when uploads fail
+        // systemically (e.g. a storage policy rejects everything), a
+        // success-only cap walks the ENTIRE backlog in one burst.
+        let workable = pending.filter { !failedThisLaunch.contains($0.uuid) }
+
+        SwipeMediaMirrorProgress.shared.setThumbnails(
+            done: eligible.count - pending.count,
+            total: eligible.count,
+            deferred: failedThisLaunch.count
+        )
+
+        guard !workable.isEmpty else { return }
+
         var mirrored = 0
-        var attempted = 0
-        for atom in atoms {
-            // Attempts bound the pass, not successes — when uploads fail
-            // systemically (e.g. a storage policy rejects everything), a
-            // success-only cap walks the ENTIRE backlog in one burst.
-            guard attempted < perPassLimit else { break }
-            guard atom.isSwipeFileAtom else { continue }
-            if mirrorableStorageURL(from: atom.metadata) != nil { continue }
-            if failedThisLaunch.contains(atom.uuid) { continue }
-            attempted += 1
+        for atom in workable.prefix(perPassLimit) {
             if await mirror(atom: atom, client: client, userId: userId) {
                 mirrored += 1
             } else {
                 failedThisLaunch.insert(atom.uuid)
             }
         }
-        if attempted == 0 {
-            backlogDrained = true
-        }
-        if mirrored > 0 {
-            print("SwipeThumbnailCloudMirror: mirrored \(mirrored) thumbnail(s) to Supabase Storage (\(failedThisLaunch.count) deferred to next launch)")
-        }
+
+        let done = eligible.count - pending.count + mirrored
+        SwipeMediaMirrorProgress.shared.setThumbnails(done: done, total: eligible.count, deferred: failedThisLaunch.count)
+        let remaining = max(0, eligible.count - done - failedThisLaunch.count)
+        print("SwipeThumbnailCloudMirror: \(done)/\(eligible.count) thumbnails in cloud — \(SwipeCloudMirrorSupport.etaDescription(remaining: remaining, perPass: perPassLimit))\(failedThisLaunch.isEmpty ? "" : " (\(failedThisLaunch.count) deferred to next launch)")")
     }
 
     private static func mirrorableStorageURL(from metadata: String?) -> String? {
@@ -906,21 +908,310 @@ enum SwipeThumbnailCloudMirror {
                 path: "\(userId)/swipe-thumbs/\(atom.uuid).jpg",
                 data: jpegData
             )
-            // Key-level metadata merge — every other key survives.
-            guard var dict = atom.metadata
-                .flatMap({ $0.data(using: .utf8) })
-                .flatMap({ try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }) else { return false }
-            dict["thumbnailStorageURL"] = storageURL
-            guard let merged = try? JSONSerialization.data(withJSONObject: dict),
-                  let mergedString = String(data: merged, encoding: .utf8) else { return false }
-
-            var updated = atom
-            updated.metadata = mergedString
-            _ = try await AtomRepository.shared.update(updated)
-            return true
+            return await SwipeCloudMirrorSupport.mergeMetadata(
+                atom: atom,
+                entries: ["thumbnailStorageURL": storageURL],
+                context: "SwipeThumbnailCloudMirror"
+            )
         } catch {
             print("SwipeThumbnailCloudMirror: upload failed for \(atom.uuid): \(error)")
             return false
         }
+    }
+}
+
+// MARK: - Mirror progress (Settings → Cloud Sync shows this)
+
+/// Live backlog counters for the three swipe media mirrors, updated every
+/// backfill pass so the user can see how far along the cloud upload is and
+/// when it will finish — instead of being in the dark behind console logs.
+@MainActor
+@Observable
+final class SwipeMediaMirrorProgress {
+    static let shared = SwipeMediaMirrorProgress()
+
+    struct Lane: Equatable {
+        var done = 0
+        var total = 0
+        var deferred = 0   // failed this launch; retried next launch
+
+        var remaining: Int { max(0, total - done - deferred) }
+        var isComplete: Bool { total > 0 && done >= total }
+    }
+
+    private(set) var thumbnails = Lane()
+    private(set) var carousels = Lane()
+    private(set) var videos = Lane()
+    private(set) var lastPassAt: Date?
+
+    var hasAnyWork: Bool {
+        thumbnails.total + carousels.total + videos.total > 0
+    }
+
+    func setThumbnails(done: Int, total: Int, deferred: Int) {
+        thumbnails = Lane(done: done, total: total, deferred: deferred)
+        lastPassAt = Date()
+    }
+
+    func setCarousels(done: Int, total: Int, deferred: Int) {
+        carousels = Lane(done: done, total: total, deferred: deferred)
+        lastPassAt = Date()
+    }
+
+    func setVideos(done: Int, total: Int, deferred: Int) {
+        videos = Lane(done: done, total: total, deferred: deferred)
+        lastPassAt = Date()
+    }
+}
+
+// MARK: - Shared mirror support
+
+@MainActor
+enum SwipeCloudMirrorSupport {
+    /// Sync cycle cadence — used for "~N min left" estimates in logs + UI.
+    static let passIntervalMinutes = 5
+
+    static func etaDescription(remaining: Int, perPass: Int) -> String {
+        guard remaining > 0 else { return "done" }
+        let passes = Int((Double(remaining) / Double(perPass)).rounded(.up))
+        return "~\(passes * passIntervalMinutes) min left"
+    }
+    /// Key-level metadata merge — every key this build doesn't model survives.
+    static func mergeMetadata(atom: Atom, entries: [String: Any], context: String) async -> Bool {
+        guard var dict = atom.metadata
+            .flatMap({ $0.data(using: .utf8) })
+            .flatMap({ try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }) else { return false }
+        for (key, value) in entries {
+            dict[key] = value
+        }
+        guard let merged = try? JSONSerialization.data(withJSONObject: dict),
+              let mergedString = String(data: merged, encoding: .utf8) else { return false }
+
+        var updated = atom
+        updated.metadata = mergedString
+        do {
+            _ = try await AtomRepository.shared.update(updated)
+            return true
+        } catch {
+            print("\(context): metadata merge failed for \(atom.uuid): \(error)")
+            return false
+        }
+    }
+}
+
+// MARK: - Swipe Video Cloud Mirror
+// Reels/video swipes are watchable on the iPhone only if the MP4 leaves the
+// Mac's local cache (Instagram CDN URLs expire in days). Mirrors cached videos
+// to Supabase Storage (`swipe-videos/<user>/<atomUUID>.mp4`, ~9 MB avg) and
+// records `metadata.videoStorageURL`. Same backlog-drain grammar as the
+// thumbnail mirror: attempts bound each pass, failures memoized per launch.
+
+@MainActor
+enum SwipeVideoCloudMirror {
+
+    static let perPassLimit = 10   // ~90 MB per 5-min pass
+    private static var failedThisLaunch: Set<String> = []
+
+    static func runBackfillPassIfNeeded() async {
+        guard SupabaseSyncTrafficPolicy.allowsNetworkSync else { return }
+        guard let client = SupabaseClient.shared, client.isAuthenticated,
+              let userId = client.currentUserId else { return }
+
+        let atoms = (try? await AtomRepository.shared.fetchAll(type: .research)) ?? []
+        let eligible = atoms.filter { $0.isSwipeFileAtom && isVideoSwipe($0) }
+        let pending = eligible.filter { storageURL(from: $0.metadata) == nil }
+        let workable = pending.filter { !failedThisLaunch.contains($0.uuid) }
+
+        SwipeMediaMirrorProgress.shared.setVideos(
+            done: eligible.count - pending.count,
+            total: eligible.count,
+            deferred: failedThisLaunch.count
+        )
+
+        guard !workable.isEmpty else { return }
+
+        var mirrored = 0
+        for atom in workable.prefix(perPassLimit) {
+            if await mirror(atom: atom, client: client, userId: userId) {
+                mirrored += 1
+            } else {
+                failedThisLaunch.insert(atom.uuid)
+            }
+        }
+
+        let done = eligible.count - pending.count + mirrored
+        SwipeMediaMirrorProgress.shared.setVideos(done: done, total: eligible.count, deferred: failedThisLaunch.count)
+        let remaining = max(0, eligible.count - done - failedThisLaunch.count)
+        print("SwipeVideoCloudMirror: \(done)/\(eligible.count) videos in cloud — \(SwipeCloudMirrorSupport.etaDescription(remaining: remaining, perPass: perPassLimit))\(failedThisLaunch.isEmpty ? "" : " (\(failedThisLaunch.count) deferred to next launch)")")
+    }
+
+    static func storageURL(from metadata: String?) -> String? {
+        guard let metadata, let data = metadata.data(using: .utf8),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return dict["videoStorageURL"] as? String
+    }
+
+    /// Instagram reels / video posts only — the local MP4 cache is Instagram-
+    /// specific (YouTube swipes play via embed and are not cached).
+    private static func isVideoSwipe(_ atom: Atom) -> Bool {
+        guard let igData = atom.richContent?.instagramData else { return false }
+        switch igData.contentType {
+        case .reel, .videoPost:
+            return true
+        default:
+            // Older atoms may be mislabeled — a stored extracted video URL or a
+            // cached MP4 still marks them as video content.
+            if igData.extractedMediaURL != nil { return true }
+            if let shortcode = shortcode(for: atom),
+               InstagramVideoLocalCache.localVideoURL(forShortcode: shortcode) != nil {
+                return true
+            }
+            return false
+        }
+    }
+
+    private static func shortcode(for atom: Atom) -> String? {
+        guard let urlString = atom.url, let url = URL(string: urlString) else { return nil }
+        return InstagramExtractor.shared.extractShortcode(from: url)
+    }
+
+    private static func mirror(atom: Atom, client: SupabaseClient, userId: String) async -> Bool {
+        guard let shortcode = shortcode(for: atom) else { return false }
+
+        // 1) Local cache fast path; 2) re-extract via the resolver (downloads
+        // into the same cache) when the stored CDN URL is still live.
+        var fileURL = InstagramVideoLocalCache.localVideoURL(forShortcode: shortcode)
+        if fileURL == nil, let remote = atom.richContent?.instagramData?.extractedMediaURL {
+            let resolved = await InstagramVideoLocalCache.resolvePlayableURL(from: remote, shortcode: shortcode)
+            if resolved.isFileURL {
+                fileURL = resolved
+            }
+        }
+        guard let fileURL, let videoData = try? Data(contentsOf: fileURL), videoData.count > 10_000 else {
+            return false
+        }
+
+        do {
+            let storageURL = try await client.uploadStorageObject(
+                bucket: "swipe-videos",
+                path: "\(userId)/\(atom.uuid).mp4",
+                data: videoData,
+                contentType: "video/mp4"
+            )
+            return await SwipeCloudMirrorSupport.mergeMetadata(
+                atom: atom,
+                entries: ["videoStorageURL": storageURL],
+                context: "SwipeVideoCloudMirror"
+            )
+        } catch {
+            print("SwipeVideoCloudMirror: upload failed for \(atom.uuid): \(error)")
+            return false
+        }
+    }
+}
+
+// MARK: - Swipe Carousel Cloud Mirror
+// Carousels need EVERY page on the phone, not just the cover. Mirrors each
+// carousel image (local ThumbnailCache first, live CDN fetch fallback with
+// Instagram-friendly headers) to `atom-images/<user>/swipe-carousel/` and
+// records the ordered `metadata.carouselImageStorageURLs`. Written only when
+// every page uploads, so the array is always complete and index-aligned.
+
+@MainActor
+enum SwipeCarouselCloudMirror {
+
+    static let perPassLimit = 6   // atoms per pass (~5-10 images each)
+    private static var failedThisLaunch: Set<String> = []
+
+    static func runBackfillPassIfNeeded() async {
+        guard SupabaseSyncTrafficPolicy.allowsNetworkSync else { return }
+        guard let client = SupabaseClient.shared, client.isAuthenticated,
+              let userId = client.currentUserId else { return }
+
+        let atoms = (try? await AtomRepository.shared.fetchAll(type: .research)) ?? []
+        let eligible = atoms.filter { atom in
+            atom.isSwipeFileAtom && (atom.richContent?.instagramData?.carouselItems?.count ?? 0) > 1
+        }
+        let pending = eligible.filter { atom in
+            let itemCount = atom.richContent?.instagramData?.carouselItems?.count ?? 0
+            return mirroredURLs(from: atom.metadata)?.count != itemCount
+        }
+        let workable = pending.filter { !failedThisLaunch.contains($0.uuid) }
+
+        SwipeMediaMirrorProgress.shared.setCarousels(
+            done: eligible.count - pending.count,
+            total: eligible.count,
+            deferred: failedThisLaunch.count
+        )
+
+        guard !workable.isEmpty else { return }
+
+        var mirrored = 0
+        for atom in workable.prefix(perPassLimit) {
+            guard let items = atom.richContent?.instagramData?.carouselItems else { continue }
+            if await mirror(atom: atom, items: items, client: client, userId: userId) {
+                mirrored += 1
+            } else {
+                failedThisLaunch.insert(atom.uuid)
+            }
+        }
+
+        let done = eligible.count - pending.count + mirrored
+        SwipeMediaMirrorProgress.shared.setCarousels(done: done, total: eligible.count, deferred: failedThisLaunch.count)
+        let remaining = max(0, eligible.count - done - failedThisLaunch.count)
+        print("SwipeCarouselCloudMirror: \(done)/\(eligible.count) carousels in cloud — \(SwipeCloudMirrorSupport.etaDescription(remaining: remaining, perPass: perPassLimit))\(failedThisLaunch.isEmpty ? "" : " (\(failedThisLaunch.count) deferred to next launch)")")
+    }
+
+    static func mirroredURLs(from metadata: String?) -> [String]? {
+        guard let metadata, let data = metadata.data(using: .utf8),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return dict["carouselImageStorageURLs"] as? [String]
+    }
+
+    private static func mirror(atom: Atom, items: [CarouselItem], client: SupabaseClient, userId: String) async -> Bool {
+        let shortcode = atom.richContent?.instagramId
+        let cacheDir = FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("Cosmo/ThumbnailCache", isDirectory: true)
+
+        var uploaded: [String] = []
+        for item in items.sorted(by: { $0.index < $1.index }) {
+            // Videos inside carousels: mirror the poster frame.
+            let sourceURL = item.mediaType == .video ? (item.thumbnailURL ?? item.mediaURL) : item.mediaURL
+            let cacheKey = InstagramCarouselImageCache.cacheKey(shortcode: shortcode, index: item.index, url: sourceURL)
+
+            var imageData: Data?
+            let cachePath = cacheDir.appendingPathComponent("thumb-\(cacheKey).jpg")
+            if let data = try? Data(contentsOf: cachePath), !data.isEmpty {
+                imageData = data
+            } else if let (data, response) = try? await URLSession.shared.data(for: InstagramCarouselImageCache.request(for: sourceURL)),
+                      let http = response as? HTTPURLResponse,
+                      (200...299).contains(http.statusCode),
+                      !data.isEmpty {
+                imageData = data
+                try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
+                try? data.write(to: cachePath)
+            }
+            guard let imageData else { return false }
+
+            do {
+                let storageURL = try await client.uploadStorageObject(
+                    bucket: "atom-images",
+                    path: "\(userId)/swipe-carousel/\(atom.uuid)-\(item.index).jpg",
+                    data: imageData
+                )
+                uploaded.append(storageURL)
+            } catch {
+                print("SwipeCarouselCloudMirror: upload failed for \(atom.uuid) page \(item.index): \(error)")
+                return false
+            }
+        }
+
+        guard uploaded.count == items.count else { return false }
+        return await SwipeCloudMirrorSupport.mergeMetadata(
+            atom: atom,
+            entries: ["carouselImageStorageURLs": uploaded],
+            context: "SwipeCarouselCloudMirror"
+        )
     }
 }

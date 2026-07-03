@@ -112,6 +112,11 @@ class SyncEngine: ObservableObject {
         // Storage (throttled, once per launch) so the iPhone renders real cards.
         await SwipeThumbnailCloudMirror.runBackfillPassIfNeeded()
 
+        // Swipe media v2: reels/videos + every carousel page mirror to Storage
+        // so the iPhone gets the full swipe experience (throttled per pass).
+        await SwipeVideoCloudMirror.runBackfillPassIfNeeded()
+        await SwipeCarouselCloudMirror.runBackfillPassIfNeeded()
+
         syncState = .syncing
 
         // 1. Push local changes

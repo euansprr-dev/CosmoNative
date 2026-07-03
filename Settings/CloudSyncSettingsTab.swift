@@ -19,6 +19,7 @@ struct CloudSyncSettingsTab: View {
 
             authSection
             syncStatusSection
+            mediaMirrorSection
             migrationSection
             cloudAgentSection
 
@@ -201,6 +202,57 @@ struct CloudSyncSettingsTab: View {
         }
         .padding(DS.space16)
         .background(glassCard)
+    }
+
+    // MARK: - Swipe Media Mirror Section
+
+    /// Live backlog progress for the swipe media → cloud uploads (videos,
+    /// carousels, thumbnails) so the user can see when the iPhone will have
+    /// the full library — updated every 5-minute sync pass.
+    @ViewBuilder
+    private var mediaMirrorSection: some View {
+        let progress = SwipeMediaMirrorProgress.shared
+        if authService.isSignedIn, progress.hasAnyWork {
+            VStack(alignment: .leading, spacing: 16) {
+                sectionHeader(title: "SWIPE MEDIA → CLOUD", icon: "film.stack", color: DS.accent)
+
+                VStack(alignment: .leading, spacing: DS.space12) {
+                    mirrorRow(label: "Videos", lane: progress.videos, perPass: SwipeVideoCloudMirror.perPassLimit)
+                    mirrorRow(label: "Carousels", lane: progress.carousels, perPass: SwipeCarouselCloudMirror.perPassLimit)
+                    mirrorRow(label: "Thumbnails", lane: progress.thumbnails, perPass: SwipeThumbnailCloudMirror.perPassLimit)
+
+                    Text("Uploads run every \(SwipeCloudMirrorSupport.passIntervalMinutes) minutes while CosmoOS is open. The iPhone picks media up as it lands.")
+                        .font(DS.footnote)
+                        .foregroundStyle(DS.textMuted)
+                }
+                .padding(DS.space16)
+                .background(glassCard)
+            }
+        }
+    }
+
+    private func mirrorRow(label: String, lane: SwipeMediaMirrorProgress.Lane, perPass: Int) -> some View {
+        VStack(alignment: .leading, spacing: DS.space4) {
+            HStack {
+                Text(label)
+                    .font(DS.callout)
+                    .foregroundStyle(DS.text)
+                Spacer()
+                Text(mirrorRowStatus(lane: lane, perPass: perPass))
+                    .font(DS.footnote.monospacedDigit())
+                    .foregroundStyle(lane.isComplete ? DS.green : DS.textMuted)
+                    .contentTransition(.numericText())
+            }
+            ProgressView(value: Double(lane.done), total: Double(max(1, lane.total)))
+                .tint(lane.isComplete ? DS.green : DS.accent)
+        }
+    }
+
+    private func mirrorRowStatus(lane: SwipeMediaMirrorProgress.Lane, perPass: Int) -> String {
+        if lane.isComplete { return "\(lane.done)/\(lane.total) · done" }
+        var status = "\(lane.done)/\(lane.total) · \(SwipeCloudMirrorSupport.etaDescription(remaining: lane.remaining, perPass: perPass))"
+        if lane.deferred > 0 { status += " · \(lane.deferred) retry on relaunch" }
+        return status
     }
 
     // MARK: - Sync Status Section

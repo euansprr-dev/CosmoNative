@@ -282,6 +282,7 @@ struct CosmoDocumentEditor: View {
             onSlashCommandSelected: onSlashCommandSelected,
             splitsOnReturn: splitsOnReturn,
             rowBlockID: rowBlockID,
+            rowBlockKind: splitsOnReturn ? document.blocks.first?.kind : nil,
             caretRequest: caretRequest,
             externalContentToken: externalContentToken,
             onPlainTextDidChange: { plainText in

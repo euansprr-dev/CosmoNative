@@ -1519,6 +1519,10 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     var dragSelectionController: BlockDragSelectionController? = nil
     /// The block this row renders (block rows only) — for drag hit-testing.
     var rowBlockID: UUID? = nil
+    /// The row's block kind (block rows only) — empty styled blocks need
+    /// their typing attributes seeded, since there is no attributed run for
+    /// the first character to inherit from.
+    var rowBlockKind: RichBlockKind? = nil
     /// Identifies this editor instance for slash-command notifications —
     /// target IDs are shared across surfaces (focus-mode row vs canvas block
     /// of the same note), instance IDs are not.
@@ -1625,6 +1629,13 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         // idempotent regardless.
         if hasFreshExternalContent {
             context.coordinator.notifyContentHeightChange(for: textView)
+            // An EMPTY styled row (fresh heading from the slash menu) has no
+            // attributed run for typing to inherit — seed the typing
+            // attributes for its kind, or the first character comes out
+            // plain and parses back as a paragraph.
+            if splitsOnReturn, textView.string.isEmpty {
+                seedTypingAttributesForEmptyRow(in: textView)
+            }
         }
         context.coordinator.applyCaretRequestIfNeeded(to: textView)
         context.coordinator.navigateIfNeeded(to: navigationTargetID, in: textView)
@@ -1778,6 +1789,42 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             .font: overrideFont ?? resolvedBaseFont(),
             .foregroundColor: resolvedEditorTextColor,
             .paragraphStyle: baseParagraphStyle()
+        ]
+    }
+
+    /// Empty block rows have no attributed run for typing to inherit — seed
+    /// the typing attributes for the row's kind so the first character is
+    /// styled correctly AND round-trips through the serializer with the
+    /// right kind (an empty heading typed with plain attributes parses back
+    /// as a paragraph). Mirrors RichDocumentSerializer's heading styling.
+    func seedTypingAttributesForEmptyRow(in textView: CosmoTextView) {
+        guard let level = rowBlockKind?.headingLevelInt else {
+            textView.typingAttributes = defaultTypingAttributes()
+            return
+        }
+        let size: CGFloat
+        let weight: NSFont.Weight
+        switch level {
+        case 1:
+            size = max(32, fontSize + 16)
+            weight = .bold
+        case 2:
+            size = max(24, fontSize + 8)
+            weight = .semibold
+        default:
+            size = max(20, fontSize + 4)
+            weight = .medium
+        }
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = 4
+        paragraph.paragraphSpacing = 12
+        paragraph.firstLineHeadIndent = 34
+        paragraph.headIndent = 34
+        textView.typingAttributes = [
+            .font: EditorFontPolicy.font(ofSize: size, weight: weight, design: fontDesign),
+            .foregroundColor: resolvedEditorTextColor,
+            RichDocumentAttributeKeys.headingLevel: level,
+            .paragraphStyle: paragraph
         ]
     }
 

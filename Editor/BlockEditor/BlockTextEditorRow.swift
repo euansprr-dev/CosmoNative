@@ -159,11 +159,28 @@ struct BlockTextEditorRow: View {
         var result = nextBlocks
         guard let existingBlock,
               let first = result.first,
-              first.kind == existingBlock.kind,
-              first.kind != .element else {
+              first.kind != .element,
+              existingBlock.kind != .element else {
             return result
         }
-        result[0].id = existingBlock.id
+        if first.kind == existingBlock.kind {
+            result[0].id = existingBlock.id
+            return result
+        }
+        // The row owns its block's KIND — a content sync may upgrade a plain
+        // paragraph (typing "# "/"• " converts via the parser), but it must
+        // never DOWNGRADE a styled block back to a paragraph: an empty
+        // heading has no attributed run for typing to inherit, so the first
+        // character parses as a paragraph and used to silently revert the
+        // heading (and swap the block's identity out from under the row).
+        if existingBlock.kind != .paragraph {
+            result[0].id = existingBlock.id
+            result[0].kind = existingBlock.kind
+            result[0].heading = existingBlock.heading
+            result[0].checked = existingBlock.kind == .checklist
+                ? (result[0].checked ?? existingBlock.checked ?? false)
+                : nil
+        }
         return result
     }
 

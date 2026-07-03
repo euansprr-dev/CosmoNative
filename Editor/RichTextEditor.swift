@@ -287,6 +287,7 @@ struct RichTextEditor: View {
     var onSlashCommandSelected: ((SlashCommand, String) -> Bool)? = nil
     var splitsOnReturn: Bool = false
     var rowBlockID: UUID? = nil
+    var rowBlockKind: RichBlockKind? = nil
     var caretRequest: EditorCaretRequest? = nil
     var externalContentToken: Int = 0
     var onPlainTextDidChange: ((String) -> Void)? = nil
@@ -370,6 +371,7 @@ struct RichTextEditor: View {
         onSlashCommandSelected: ((SlashCommand, String) -> Bool)? = nil,
         splitsOnReturn: Bool = false,
         rowBlockID: UUID? = nil,
+        rowBlockKind: RichBlockKind? = nil,
         caretRequest: EditorCaretRequest? = nil,
         externalContentToken: Int = 0,
         onPlainTextDidChange: ((String) -> Void)? = nil,
@@ -417,6 +419,7 @@ struct RichTextEditor: View {
         self.onSlashCommandSelected = onSlashCommandSelected
         self.splitsOnReturn = splitsOnReturn
         self.rowBlockID = rowBlockID
+        self.rowBlockKind = rowBlockKind
         self.caretRequest = caretRequest
         self.externalContentToken = externalContentToken
         self.onPlainTextDidChange = onPlainTextDidChange
@@ -516,6 +519,7 @@ struct RichTextEditor: View {
                 externalContentToken: externalContentToken,
                 dragSelectionController: dragSelectionController,
                 rowBlockID: rowBlockID,
+                rowBlockKind: rowBlockKind,
                 editorInstanceID: overlayEscapeOwnerID
             )
             // Non-scrolling editors report their live height through

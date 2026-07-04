@@ -22,6 +22,7 @@ import { apifyBudgetAvailable, extractInstagramPost, instagramShortcode } from '
 import { ensureBuckets, mirrorCarousel, mirrorThumbnail, mirrorVideoBuffer, resolveInstantThumbnailURL, downloadBinary } from './media';
 import { transcribeSlides, transcribeSpeech, whisperConfigured } from './transcribe';
 import { annotateSlidesWithVoiceover, deduplicateSlidesJSON, extractAudioTrack, transcribeReel } from './reelPipeline';
+import { clearProgress, setProgress } from './progress';
 import { shouldEscalateToFrames, understandReelVideo } from './reelVideoUnderstanding';
 import { randomUUID as newUUID } from 'crypto';
 import { fetchTweetText, fetchYouTubeTranscript, youtubeVideoId } from './fetchers';
@@ -156,6 +157,7 @@ export async function processSwipe(uuid: string): Promise<void> {
   if (!url || (!isInstagram && !isYouTube && !isTwitter)) return;
 
   console.log(`🌀 processing swipe ${uuid.slice(0, 8)} (${source || 'url'})`);
+  setProgress(uuid, 'extracting', 0.04);
   await setStatus(uuid, 'extracting');
 
   try {
@@ -168,8 +170,10 @@ export async function processSwipe(uuid: string): Promise<void> {
     }
     rolloverDay();
     processedToday += 1;
+    setProgress(uuid, 'complete', 1);
     console.log(`✅ swipe ${uuid.slice(0, 8)} complete`);
   } catch (error) {
+    clearProgress(uuid);
     const permanent = error instanceof SwipeExtractionError && error.permanent;
     console.error(`❌ swipe ${uuid.slice(0, 8)} failed:`, error instanceof Error ? error.message : error);
     await markFailed(uuid, permanent);
@@ -181,8 +185,10 @@ export async function processSwipe(uuid: string): Promise<void> {
 async function processInstagram(uuid: string, url: string): Promise<void> {
   // Quick stage: permanent thumbnail within seconds, before Apify returns.
   await quickThumbnailStage(uuid, url);
+  setProgress(uuid, 'extracting', 0.10);
 
   const media = await extractInstagramPost(url);
+  setProgress(uuid, 'extracting', 0.35);
   const atom = await fetchAtom(uuid);
   if (!atom || atom.is_deleted) return;
 
@@ -197,6 +203,7 @@ async function processInstagram(uuid: string, url: string): Promise<void> {
       console.warn(`⚠️ video download failed for ${uuid.slice(0, 8)}:`, error instanceof Error ? error.message : error);
     }
   }
+  if (videoData) setProgress(uuid, 'extracting', 0.45);
   if (videoData && !atom.metadata?.videoStorageURL) {
     try {
       metadataUpdates.videoStorageURL = await mirrorVideoBuffer(uuid, videoData);
@@ -220,6 +227,7 @@ async function processInstagram(uuid: string, url: string): Promise<void> {
   }
 
   // Transcription.
+  setProgress(uuid, 'transcribing', 0.55);
   await setStatus(uuid, 'transcribing');
   const editedByUser = atom.structured?.swipeAnalysis?.transcriptEditedByUser === true;
 
@@ -262,6 +270,7 @@ async function processInstagram(uuid: string, url: string): Promise<void> {
         understandReelVideo(videoData, media.caption),
       ]);
 
+      setProgress(uuid, 'transcribing', 0.82);
       if (understanding && understanding.modality !== 'empty' && !shouldEscalateToFrames(understanding)) {
         // Slides straight from the model (authored cards only, captions
         // excluded by instruction) + the V2 dedup pass as cheap insurance.
@@ -315,6 +324,7 @@ async function processInstagram(uuid: string, url: string): Promise<void> {
     }
   }
 
+  setProgress(uuid, 'analyzing', 0.86);
   await setStatus(uuid, 'analyzing');
   await persistAndAnalyze(uuid, url, media, { slides, rawSlides, speech, warnings, quality, editedByUser });
 }

@@ -11,6 +11,7 @@ import { supabase, userId } from '../db/client';
 import { config } from '../config';
 import { pendingHealth, processSwipe, refreshEngagement, swipeWorkerStats } from './processor';
 import { apifyRunsThisMonth } from './instagram';
+import { getProgress } from './progress';
 
 export const swipesRouter = Router();
 
@@ -71,6 +72,19 @@ swipesRouter.post('/refresh-stats', async (req: Request, res: Response) => {
   } catch (error) {
     res.status(502).json({ error: error instanceof Error ? error.message : 'refresh failed' });
   }
+});
+
+// Live pipeline progress for the clients' progress bars. `known:false` when
+// this worker instance isn't processing the swipe (restart / Mac fallback) —
+// clients fall back to status-based estimates.
+swipesRouter.get('/progress/:uuid', async (req: Request, res: Response) => {
+  if (!(await authenticate(req, res))) return;
+  const progress = getProgress(req.params.uuid);
+  if (!progress) {
+    res.json({ known: false });
+    return;
+  }
+  res.json({ known: true, stage: progress.stage, progress: progress.progress });
 });
 
 swipesRouter.get('/health', async (_req: Request, res: Response) => {

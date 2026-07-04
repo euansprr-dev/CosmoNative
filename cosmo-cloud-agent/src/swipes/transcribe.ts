@@ -8,8 +8,7 @@ import { randomUUID } from 'crypto';
 import { config } from '../config';
 import { SpeechSegmentJSON, TranscriptSlideJSON } from './types';
 
-// Same model the Mac transcriber uses for slide OCR.
-const GEMINI_VISION_MODEL = 'google/gemini-2.0-flash-001';
+const GEMINI_VISION_MODEL = config.openRouterVisionModel;
 
 // ── Reel speech via Whisper ─────────────────────────────────────────────────
 

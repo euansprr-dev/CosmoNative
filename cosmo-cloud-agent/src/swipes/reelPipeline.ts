@@ -25,7 +25,7 @@ import { randomUUID } from 'crypto';
 import { config } from '../config';
 import { SpeechSegmentJSON, TranscriptSlideJSON } from './types';
 
-const GEMINI_VISION_MODEL = 'google/gemini-2.0-flash-001';
+const GEMINI_VISION_MODEL = config.openRouterVisionModel;
 const GEMINI_FPS = 4.0;          // 4fps to catch short 1-frame text transitions
 const MAX_GEMINI_FRAMES = 240;   // Accuracy-first cap for short reels with fast cuts
 const GEMINI_BATCH_SIZE = 20;    // Frames per API call

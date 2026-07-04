@@ -194,7 +194,7 @@ final class InstagramAutoTranscriber: Sendable {
     private let minStableLineRatio: Double = 0.18
 
     // Gemini Vision pipeline constants
-    private let geminiModel = "google/gemini-2.0-flash-001"
+    private let geminiModel = "google/gemini-2.5-flash" // 2.0-flash-001 was sunset on OpenRouter (404s)
     private let geminiFPS: Double = 4.0           // 4fps to catch short 1-frame text transitions
     private let maxGeminiFrames: Int = 240         // Accuracy-first cap for short reels with fast cuts
     private let geminiBatchSize: Int = 20          // Frames per API call

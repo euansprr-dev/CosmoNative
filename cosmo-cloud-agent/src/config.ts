@@ -81,6 +81,9 @@ export const config = {
   // frame-batch pipeline. All optional.
   geminiApiKey: process.env.GEMINI_API_KEY || '',
   geminiVideoModel: process.env.GEMINI_VIDEO_MODEL || 'gemini-3-flash-preview',
+  // OpenRouter vision model for slide OCR (frame batches + carousel slides).
+  // gemini-2.0-flash-001 was sunset on OpenRouter (404s) — keep this current.
+  openRouterVisionModel: process.env.OPENROUTER_VISION_MODEL || 'google/gemini-2.5-flash',
   // Stable model tried when the preview model 503s under load.
   geminiVideoFallbackModel: process.env.GEMINI_VIDEO_FALLBACK_MODEL || 'gemini-2.5-flash',
   reelVideoFps: parseFloat(process.env.REEL_VIDEO_FPS || '4'),

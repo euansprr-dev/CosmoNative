@@ -348,6 +348,12 @@ async function processInstagram(uuid: string, url: string): Promise<void> {
         rawSlides = reel.rawSlides;
         warnings.push(...reel.warnings);
         if (reel.contentType === 'textOnly') speech = [];
+        // V3 parity: voiceover reels render as timestamped seek rows on the
+        // clients — segments carry the transcript, not one giant slide.
+        if (reel.contentType === 'voiceoverOnly' && speech.length > 0) {
+          slides = [];
+          rawSlides = [];
+        }
         console.log(`🎞 reel ${uuid.slice(0, 8)}: V2-fallback ${reel.contentType}, ${slides.length} slide(s)`);
       }
     } else if (media.videoUrl) {

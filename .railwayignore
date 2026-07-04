@@ -1,0 +1,6 @@
+# Railway builds only the cloud agent (service root directory setting =
+# cosmo-cloud-agent). Exclude the entire Mac app from the upload snapshot.
+/*
+!/cosmo-cloud-agent
+cosmo-cloud-agent/node_modules
+cosmo-cloud-agent/dist

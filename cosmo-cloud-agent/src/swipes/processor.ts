@@ -503,6 +503,8 @@ async function backfillTick(): Promise<void> {
   if (!apifyBudgetAvailable()) return;
   backfillRunning = true;
   try {
+    // Reel filter lives IN the query — deciding from a 10-row window once
+    // declared the library "fully mirrored" while dozens of reels waited.
     const { data } = await supabase
       .from('atoms')
       .select('uuid, metadata')
@@ -513,8 +515,9 @@ async function backfillTick(): Promise<void> {
       .eq('metadata->>processingStatus', 'complete')
       .is('metadata->>videoStorageURL', null)
       .is('metadata->>videoBackfillFailed', null)
+      .like('metadata->>url', '%instagram.com%reel%')
       .order('updated_at', { ascending: false })
-      .limit(10);
+      .limit(5);
 
     const candidate = ((data ?? []) as Atom[]).find(atom => {
       const url: string = atom.metadata?.url ?? '';

@@ -122,11 +122,17 @@ const RESPONSE_SCHEMA = {
 export async function understandReelVideo(videoData: Buffer, caption?: string): Promise<VideoUnderstanding | null> {
   const prompt = promptWithCaption(caption);
   if (config.geminiApiKey) {
-    try {
-      const result = await viaGeminiAPI(videoData, prompt);
-      if (result) return result;
-    } catch (error) {
-      console.warn('⚠️ tier-1 video understanding failed:', error instanceof Error ? error.message : error);
+    // Two attempts: the preview model intermittently 503s under load and a
+    // second try often lands on capacity (otherwise tier 2 takes over).
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const result = await viaGeminiAPI(videoData, prompt);
+        if (result) return result;
+        break; // parse-level null: retrying the same video won't help
+      } catch (error) {
+        console.warn(`⚠️ tier-1 video understanding failed (attempt ${attempt + 1}):`, error instanceof Error ? error.message : error);
+        if (attempt === 0) await new Promise(resolve => setTimeout(resolve, 3_000));
+      }
     }
   }
   if (config.openRouterApiKey && videoData.length <= MAX_OPENROUTER_VIDEO_BYTES) {

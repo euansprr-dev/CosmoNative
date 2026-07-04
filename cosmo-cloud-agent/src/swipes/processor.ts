@@ -117,8 +117,11 @@ async function reclaimOrphanedClaims(): Promise<void> {
       .in('metadata->>processingStatus', ['extracting', 'transcribing', 'analyzing'])
       .limit(25);
     for (const atom of (data ?? []) as Atom[]) {
+      // Back to 'pending' outright — the next tick processes it immediately.
+      // (Setting only an ancient claimedAt failed: epoch 0 parses falsy and
+      // the staleness check fell through to the just-bumped updated_at.)
       await updateAtom(atom.uuid, {
-        metadata: { processingClaimedAt: new Date(0).toISOString() },
+        metadata: { processingStatus: 'pending', processingClaimedAt: null },
       });
       console.log(`♻️ released orphaned claim on ${atom.uuid.slice(0, 8)}`);
     }
@@ -151,7 +154,9 @@ export async function fetchCandidates(): Promise<Atom[]> {
 
     // In-flight statuses: only reclaim stale claims (crashed worker / dead Mac run).
     if (status === 'extracting' || status === 'transcribing' || status === 'analyzing') {
-      const claimedAt = Date.parse(meta.processingClaimedAt ?? '') || Date.parse(atom.updated_at) || 0;
+      // NaN-checked, not truthiness — epoch 0 is a VALID (very stale) claim.
+      const claimParsed = Date.parse(meta.processingClaimedAt ?? '');
+      const claimedAt = Number.isFinite(claimParsed) ? claimParsed : (Date.parse(atom.updated_at) || 0);
       return now - claimedAt > CLAIM_STALE_MINUTES * 60_000;
     }
     // Failed AND partial: exponential-ish backoff via processingRetryAfter,

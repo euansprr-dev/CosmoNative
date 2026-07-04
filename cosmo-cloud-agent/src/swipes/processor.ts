@@ -52,6 +52,10 @@ let processedDay = '';
 export function startSwipeWorker(): void {
   if (workerTask || !config.swipeWorkerEnabled) return;
   void ensureBuckets();
+  // A deploy kills this (single) worker instance mid-swipe; its fresh claims
+  // would otherwise block reprocessing for the 15-min stale window. We are
+  // the only worker — anything still claimed at boot is ours and orphaned.
+  void reclaimOrphanedClaims();
   workerTask = cron.schedule('*/15 * * * * *', () => {
     void tick();
   });
@@ -97,6 +101,29 @@ async function tick(): Promise<void> {
     console.error('❌ Swipe worker tick failed:', error);
   } finally {
     tickRunning = false;
+  }
+}
+
+async function reclaimOrphanedClaims(): Promise<void> {
+  try {
+    const { data } = await supabase
+      .from('atoms')
+      .select('uuid, metadata')
+      .eq('user_id', userId)
+      .eq('type', 'research')
+      .eq('is_deleted', false)
+      .eq('metadata->>isSwipeFile', 'true')
+      .eq('metadata->>processingWorker', 'cloud')
+      .in('metadata->>processingStatus', ['extracting', 'transcribing', 'analyzing'])
+      .limit(25);
+    for (const atom of (data ?? []) as Atom[]) {
+      await updateAtom(atom.uuid, {
+        metadata: { processingClaimedAt: new Date(0).toISOString() },
+      });
+      console.log(`♻️ released orphaned claim on ${atom.uuid.slice(0, 8)}`);
+    }
+  } catch (error) {
+    console.warn('⚠️ reclaimOrphanedClaims failed:', error instanceof Error ? error.message : error);
   }
 }
 

@@ -414,13 +414,14 @@ async function persistAndAnalyze(
     richContent.instagramData = igData;
   }
 
-  // Hook + title from the first non-empty slide (Mac rule: only when the
-  // current title is empty or a placeholder).
+  // Hook + title from the first non-empty slide. Mac rule: refresh whenever
+  // the transcript isn't user-owned (a stale hook must not survive a
+  // retranscribe — e.g. a misread year in the old title).
   const metadataUpdates: Record<string, unknown> = {};
   let title = atom.title;
   const firstText = result.slides.find(s => s.text.trim())?.text
     ?? result.speech[0]?.text;
-  if (firstText && (!atom.title || PLACEHOLDER_TITLES.has(atom.title))) {
+  if (firstText && (!result.editedByUser || !atom.title || PLACEHOLDER_TITLES.has(atom.title))) {
     const hook = firstText.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
     metadataUpdates.hook = hook.slice(0, 500);
     title = hook.slice(0, 120);

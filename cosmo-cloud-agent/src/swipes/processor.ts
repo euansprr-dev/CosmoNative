@@ -18,8 +18,8 @@ import cron from 'node-cron';
 import { supabase, userId } from '../db/client';
 import { config } from '../config';
 import { Atom, fetchAtom, updateAtom } from '../db/queries';
-import { extractInstagramPost, instagramShortcode } from './instagram';
-import { mirrorCarousel, mirrorThumbnail, mirrorVideoBuffer, resolveInstantThumbnailURL, downloadBinary } from './media';
+import { apifyBudgetAvailable, extractInstagramPost, instagramShortcode } from './instagram';
+import { ensureBuckets, mirrorCarousel, mirrorThumbnail, mirrorVideoBuffer, resolveInstantThumbnailURL, downloadBinary } from './media';
 import { transcribeSlides, transcribeSpeech, whisperConfigured } from './transcribe';
 import { annotateSlidesWithVoiceover, deduplicateSlidesJSON, transcribeReel } from './reelPipeline';
 import { shouldEscalateToFrames, understandReelVideo } from './reelVideoUnderstanding';
@@ -50,10 +50,17 @@ let processedDay = '';
 
 export function startSwipeWorker(): void {
   if (workerTask || !config.swipeWorkerEnabled) return;
+  void ensureBuckets();
   workerTask = cron.schedule('*/15 * * * * *', () => {
     void tick();
   });
-  console.log('🌀 Swipe worker started (every 15s, concurrency 3)');
+  // Video backfill: the whole pre-worker library has reels with no
+  // videoStorageURL (the Mac's mirror never uploaded). Slow drip, one per
+  // minute, media-only — transcripts and analysis are never touched.
+  cron.schedule('0 * * * * *', () => {
+    void backfillTick();
+  });
+  console.log('🌀 Swipe worker started (every 15s, concurrency 3; video backfill 1/min)');
 }
 
 export function swipeWorkerStats(): { processedToday: number } {
@@ -242,7 +249,7 @@ async function processInstagram(uuid: string, url: string): Promise<void> {
 
       const [whisperSegments, understanding] = await Promise.all([
         whisperPromise,
-        understandReelVideo(videoData),
+        understandReelVideo(videoData, media.caption),
       ]);
 
       if (understanding && understanding.modality !== 'empty' && !shouldEscalateToFrames(understanding)) {
@@ -484,6 +491,66 @@ async function persistAndAnalyze(
     structured,
     metadata: metadataUpdates,
   });
+}
+
+// ── Video backfill (media-only repair for the pre-worker library) ──────────
+
+let backfillRunning = false;
+let backfillExhausted = false;
+
+async function backfillTick(): Promise<void> {
+  if (backfillRunning || backfillExhausted) return;
+  if (!apifyBudgetAvailable()) return;
+  backfillRunning = true;
+  try {
+    const { data } = await supabase
+      .from('atoms')
+      .select('uuid, metadata')
+      .eq('user_id', userId)
+      .eq('type', 'research')
+      .eq('is_deleted', false)
+      .eq('metadata->>isSwipeFile', 'true')
+      .eq('metadata->>processingStatus', 'complete')
+      .is('metadata->>videoStorageURL', null)
+      .is('metadata->>videoBackfillFailed', null)
+      .order('updated_at', { ascending: false })
+      .limit(10);
+
+    const candidate = ((data ?? []) as Atom[]).find(atom => {
+      const url: string = atom.metadata?.url ?? '';
+      return /instagram\.com\/(reel|reels|tv)\//i.test(url);
+    });
+    if (!candidate) {
+      backfillExhausted = true; // re-checked on next deploy/restart
+      console.log('🎬 video backfill: library fully mirrored');
+      return;
+    }
+
+    const url: string = candidate.metadata?.url ?? '';
+    console.log(`🎬 video backfill: ${candidate.uuid.slice(0, 8)}`);
+    try {
+      const media = await extractInstagramPost(url);
+      if (!media.videoUrl) throw new SwipeExtractionError('no videoUrl for backfill', true);
+      const videoData = await downloadBinary(media.videoUrl, 'video');
+      const videoStorageURL = await mirrorVideoBuffer(candidate.uuid, videoData);
+      const updates: Record<string, unknown> = { videoStorageURL };
+      if (!candidate.metadata?.thumbnailStorageURL && media.thumbnailUrl) {
+        try {
+          updates.thumbnailStorageURL = await mirrorThumbnail(candidate.uuid, media.thumbnailUrl);
+        } catch { /* thumbnail is a bonus here */ }
+      }
+      await updateAtom(candidate.uuid, { metadata: updates });
+      console.log(`🎬 video backfill: ${candidate.uuid.slice(0, 8)} mirrored (${Math.round(videoData.length / 1024 / 1024)}MB)`);
+    } catch (error) {
+      // Mark so we never re-spend Apify runs on a dead/unfetchable post.
+      await updateAtom(candidate.uuid, { metadata: { videoBackfillFailed: new Date().toISOString() } });
+      console.warn(`⚠️ video backfill failed for ${candidate.uuid.slice(0, 8)}:`, error instanceof Error ? error.message : error);
+    }
+  } catch (error) {
+    console.error('❌ backfill tick failed:', error);
+  } finally {
+    backfillRunning = false;
+  }
 }
 
 // ── Engagement refresh (manual, from the apps) ──────────────────────────────

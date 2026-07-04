@@ -544,6 +544,9 @@ final class InstagramAutoTranscriber: Sendable {
         - Watermarks, @handles, brand logos
         - Music credits, audio attribution
         - Text that is part of background photographs (not overlaid by the creator)
+        - App/website UI inside screen recordings (browser pages, dashboards, listings) shown behind or between the creator's text overlays — the recorded screen's own menus, headers, and paragraphs are BACKGROUND; read ONLY the creator's overlay text
+
+        DIGITS AND YEARS: transcribe every number, year, price, and percentage EXACTLY as displayed — verify each digit. Getting "2026" vs "2025" wrong changes the meaning entirely.
 
         OUTPUT FORMAT — return ONLY valid JSON:
         {"slides": [{"text": "Full slide text", "startFrame": 0, "endFrame": 3}]}
@@ -1769,7 +1772,11 @@ final class InstagramAutoTranscriber: Sendable {
 
         if let refined = await cleanupWithClaude(slides: postProcessed, isCarousel: isCarousel) {
             let finalSlides = isCarousel ? trimSlideLines(refined) : refined
-            return renumberedSlides(finalSlides)
+            // CRITICAL: dedup AFTER cleanup. The cleaner maps 1:1 and can
+            // normalize several noisy raw fragments (e.g. per-frame OCR of a
+            // screen recording) into the SAME sentence — the pre-cleanup dedup
+            // in postProcessSlides never sees those duplicates.
+            return renumberedSlides(deduplicateSlides(finalSlides))
         }
 
         return renumberedSlides(postProcessed)

@@ -21,6 +21,29 @@ export function storageObjectURL(bucket: string, path: string): string {
   return `${config.supabaseUrl}/storage/v1/object/${bucket}/${path}`;
 }
 
+/**
+ * The Mac's video mirror silently failed forever because the `swipe-videos`
+ * bucket was never created in the dashboard. The service role can create
+ * buckets — make both required buckets exist at worker startup so uploads
+ * can never fail for that reason again.
+ */
+export async function ensureBuckets(): Promise<void> {
+  for (const bucket of ['atom-images', 'swipe-videos']) {
+    try {
+      const { data } = await supabase.storage.getBucket(bucket);
+      if (data) continue;
+      const { error } = await supabase.storage.createBucket(bucket, { public: false });
+      if (error && !/already exists/i.test(error.message)) {
+        console.warn(`⚠️ createBucket(${bucket}) failed:`, error.message);
+      } else if (!error) {
+        console.log(`🪣 created storage bucket "${bucket}"`);
+      }
+    } catch (error) {
+      console.warn(`⚠️ ensureBuckets(${bucket}):`, error instanceof Error ? error.message : error);
+    }
+  }
+}
+
 export async function downloadBinary(
   url: string,
   kind: 'video' | 'image',

@@ -69,6 +69,8 @@ YOUR TASKS:
 - LAST CARDS MATTER: the final card must be captured. Do not omit ending cards.
 - ANIMATION HANDLING: if text appears gradually (typing/fade-in), use the fully-visible version.
 - TEXT TO IGNORE: Instagram UI (like counts, usernames, buttons, progress bar), watermarks, @handles, brand logos, music/audio attribution, text that is part of background photographs rather than overlaid by the creator, and captions/subtitles of the speech.
+- SCREEN RECORDINGS: reels often show a recorded website or app (a browser page, a dashboard, a listing) behind or between the creator's text cards. The recorded screen's own text (menus, headers, paragraphs of the web page) is BACKGROUND — never emit it as slides. Read ONLY the text the creator overlaid on top of it.
+- DIGITS AND YEARS: transcribe every number, year, price, and percentage EXACTLY as displayed — verify each digit character by character. Getting "2026" vs "2025" wrong changes the meaning entirely.
 - FORMATTING: join visual line breaks into one flowing sentence. Exception: a short year/date header (e.g. "2016", "Age 12") stays on its own line before the body: "2016\\nWe started a new business".
 - startSec/endSec: when the card is first and last visible, in seconds.
 
@@ -117,10 +119,11 @@ const RESPONSE_SCHEMA = {
 
 // ── Entry point ─────────────────────────────────────────────────────────────
 
-export async function understandReelVideo(videoData: Buffer): Promise<VideoUnderstanding | null> {
+export async function understandReelVideo(videoData: Buffer, caption?: string): Promise<VideoUnderstanding | null> {
+  const prompt = promptWithCaption(caption);
   if (config.geminiApiKey) {
     try {
-      const result = await viaGeminiAPI(videoData);
+      const result = await viaGeminiAPI(videoData, prompt);
       if (result) return result;
     } catch (error) {
       console.warn('⚠️ tier-1 video understanding failed:', error instanceof Error ? error.message : error);
@@ -128,13 +131,26 @@ export async function understandReelVideo(videoData: Buffer): Promise<VideoUnder
   }
   if (config.openRouterApiKey && videoData.length <= MAX_OPENROUTER_VIDEO_BYTES) {
     try {
-      const result = await viaOpenRouter(videoData);
+      const result = await viaOpenRouter(videoData, prompt);
       if (result) return result;
     } catch (error) {
       console.warn('⚠️ tier-2 video understanding failed:', error instanceof Error ? error.message : error);
     }
   }
   return null;
+}
+
+/**
+ * The post caption frequently repeats the on-screen hook verbatim — hand it
+ * to the model as a cross-reference for exact wording and digits.
+ */
+export function promptWithCaption(caption?: string): string {
+  const trimmed = caption?.trim();
+  if (!trimmed) return VIDEO_PROMPT;
+  return `${VIDEO_PROMPT}
+
+REFERENCE — the post's caption (it often repeats the opening card's text; use it to verify exact wording and numbers when pixels are ambiguous, but transcribe what is actually ON SCREEN):
+${trimmed.slice(0, 1500)}`;
 }
 
 /**
@@ -150,7 +166,7 @@ export function shouldEscalateToFrames(result: VideoUnderstanding): boolean {
 
 // ── Tier 1: direct Gemini API (Files API + fps control) ────────────────────
 
-async function viaGeminiAPI(videoData: Buffer): Promise<VideoUnderstanding | null> {
+async function viaGeminiAPI(videoData: Buffer, prompt: string): Promise<VideoUnderstanding | null> {
   const fileUri = await uploadToGeminiFiles(videoData);
   try {
     const body = {
@@ -160,7 +176,7 @@ async function viaGeminiAPI(videoData: Buffer): Promise<VideoUnderstanding | nul
             fileData: { fileUri, mimeType: 'video/mp4' },
             videoMetadata: { fps: config.reelVideoFps },
           },
-          { text: VIDEO_PROMPT },
+          { text: prompt },
         ],
       }],
       generationConfig: {
@@ -261,7 +277,7 @@ async function deleteGeminiFile(fileUri: string): Promise<void> {
 
 // ── Tier 2: OpenRouter video_url ────────────────────────────────────────────
 
-async function viaOpenRouter(videoData: Buffer): Promise<VideoUnderstanding | null> {
+async function viaOpenRouter(videoData: Buffer, prompt: string): Promise<VideoUnderstanding | null> {
   const response = await fetch(`${config.openRouterBaseUrl}/chat/completions`, {
     method: 'POST',
     headers: {
@@ -274,7 +290,7 @@ async function viaOpenRouter(videoData: Buffer): Promise<VideoUnderstanding | nu
       messages: [{
         role: 'user',
         content: [
-          { type: 'text', text: VIDEO_PROMPT },
+          { type: 'text', text: prompt },
           { type: 'video_url', video_url: { url: `data:video/mp4;base64,${videoData.toString('base64')}` } },
         ],
       }],

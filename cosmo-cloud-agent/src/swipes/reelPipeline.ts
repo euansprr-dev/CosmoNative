@@ -217,6 +217,9 @@ TEXT TO IGNORE:
 - Watermarks, @handles, brand logos
 - Music credits, audio attribution
 - Text that is part of background photographs (not overlaid by the creator)
+- App/website UI inside screen recordings (browser pages, dashboards, listings) shown behind or between the creator's text overlays — the recorded screen's own menus, headers, and paragraphs are BACKGROUND; read ONLY the creator's overlay text
+
+DIGITS AND YEARS: transcribe every number, year, price, and percentage EXACTLY as displayed — verify each digit. Getting "2026" vs "2025" wrong changes the meaning entirely.
 
 OUTPUT FORMAT — return ONLY valid JSON:
 {"slides": [{"text": "Full slide text", "startFrame": 0, "endFrame": 3}]}
@@ -754,7 +757,7 @@ ${slides.map((s, i) => `[${i + 1}] ${s.text}`).join('\n')}`;
     const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
     const cleaned = parseCleanedSlides(payload.choices?.[0]?.message?.content ?? '', slides.length);
     if (!cleaned) return slides;
-    return slides.map((original, index) => {
+    const refined = slides.map((original, index) => {
       const text = cleaned[index].trim();
       return {
         ...original,
@@ -763,6 +766,10 @@ ${slides.map((s, i) => `[${i + 1}] ${s.text}`).join('\n')}`;
         slideNumber: index + 1,
       };
     });
+    // CRITICAL: dedup AFTER cleanup. The cleaner maps 1:1 and can normalize
+    // several noisy raw fragments (e.g. per-frame OCR of a screen recording)
+    // into the SAME sentence — pre-cleanup dedup never sees those duplicates.
+    return deduplicateSlides(refined);
   } catch {
     return slides;
   }

@@ -159,6 +159,10 @@ final class SwipeProcessingService {
                 return rows.compactMap { row in
                     guard let uuid = row["uuid"] as? String else { return nil }
                     let metadata = (row["metadata"] as? String) ?? ""
+                    // The Railway worker claims swipes (processingWorker:"cloud");
+                    // the Mac is the FALLBACK tier — skip live cloud claims and
+                    // take over only when the claim went stale (worker died).
+                    if Self.hasLiveCloudClaim(metadataJSON: metadata) { return nil }
                     let needsForcedRetry =
                         metadata.contains("\"processingStatus\":\"partial\"") ||
                         metadata.contains("\"processingStatus\":\"extraction_failed\"")
@@ -169,6 +173,25 @@ final class SwipeProcessingService {
             print("SwipeProcessingService: Failed to scan pending swipes: \(error)")
             return []
         }
+    }
+
+    /// A cloud claim is live when the worker stamped it within the last 15
+    /// minutes and the swipe is mid-pipeline. Anything older is fair game.
+    nonisolated static func hasLiveCloudClaim(metadataJSON: String) -> Bool {
+        guard metadataJSON.contains("\"processingWorker\":\"cloud\""),
+              let data = metadataJSON.data(using: .utf8),
+              let meta = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return false
+        }
+        let status = meta["processingStatus"] as? String ?? ""
+        guard ["pending", "extracting", "transcribing", "analyzing"].contains(status) else { return false }
+        guard let claimedStr = meta["processingClaimedAt"] as? String,
+              let claimedAt = ISO8601.date(from: claimedStr) else {
+            // Claimed but unparseable timestamp: treat pending as unclaimed,
+            // in-flight statuses as live (conservative against double work).
+            return status != "pending"
+        }
+        return Date().timeIntervalSince(claimedAt) < 15 * 60
     }
 
     /// Check if a swipe is currently being processed

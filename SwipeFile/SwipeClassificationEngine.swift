@@ -453,6 +453,23 @@ final class SwipeClassificationEngine: ObservableObject {
 
     // MARK: - Creator Resolution
 
+    /// 60s creator-list cache: batch classification resolved creators once
+    /// per swipe with a full-table fetch each time (4 queries/swipe).
+    private static var creatorCache: (atoms: [Atom], fetchedAt: Date)?
+
+    private static func cachedCreators() async throws -> [Atom] {
+        if let cache = creatorCache, Date().timeIntervalSince(cache.fetchedAt) < 60 {
+            return cache.atoms
+        }
+        let fresh = try await AtomRepository.shared.fetchCreators()
+        creatorCache = (fresh, Date())
+        return fresh
+    }
+
+    private static func invalidateCreatorCache() {
+        creatorCache = nil
+    }
+
     /// Find or create a creator atom based on handle/name from the AI response.
     /// Returns the creator's UUID if resolved.
     private func resolveCreator(handle: String?, name: String?, atom: Atom) async -> String? {
@@ -473,8 +490,9 @@ final class SwipeClassificationEngine: ObservableObject {
         await backfillAuthor(normalizedHandle, on: atom)
 
         do {
-            // Search existing creators by handle
-            let existing = try await AtomRepository.shared.fetchCreators()
+            // Search existing creators by handle (60s cache — batch classification
+            // was re-fetching the whole creators table once per swipe).
+            let existing = try await Self.cachedCreators()
             let match = existing.first { creator in
                 guard let meta = creator.metadataValue(as: CreatorMetadata.self) else { return false }
                 return meta.handle?.lowercased() == normalizedHandle.lowercased()
@@ -492,6 +510,7 @@ final class SwipeClassificationEngine: ObservableObject {
                 handle: normalizedHandle,
                 platform: platform
             )
+            Self.invalidateCreatorCache() // next resolve must see the new creator
 
             // Link swipe to creator
             await linkSwipeToCreator(swipeAtom: atom, creatorUUID: newCreator.uuid)

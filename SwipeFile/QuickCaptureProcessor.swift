@@ -159,14 +159,87 @@ final class QuickCaptureProcessor: ObservableObject {
         default: igType = .post
         }
 
-        // Try Instagram extraction (may work for public content)
-        do {
-            let mediaData = try await InstagramMediaCache.shared.getMedia(for: URL(string: url)!)
-            return try await saveInstagramResearch(url: url, mediaData: mediaData, igType: igType)
-        } catch {
-            // Extraction failed - save URL with basic metadata for manual review
-            print("QuickCapture: Instagram extraction failed: \(error)")
-            return try await saveBasicInstagramResearch(url: url, contentId: classification.contentId, igType: igType)
+        // Same URL captured before? Surface the existing swipe — never a duplicate.
+        if let existing = await Self.findExistingLiveSwipe(url: url) {
+            print("QuickCapture: URL already swiped — returning existing \(existing.uuid.prefix(8))")
+            return existing
+        }
+
+        // V2: capture is instant — save a pending atom (with an instantly
+        // resolved thumbnail) and kick the Railway worker, exactly like the
+        // iPhone. The local extraction pipeline remains the fallback tier via
+        // scanForPendingSwipes when the worker doesn't claim the swipe.
+        return try await saveBasicInstagramResearch(url: url, contentId: classification.contentId, igType: igType)
+    }
+
+    /// Instagram serves the post thumbnail at /<p|reel>/<code>/media/?size=l as
+    /// a bare 302 to the CDN JPEG — no auth, sub-second. Resolve WITHOUT
+    /// following the redirect so we capture the CDN URL itself.
+    nonisolated static func resolveInstantThumbnailURL(for url: String) async -> String? {
+        guard let shortcode = SwipeURLClassifier().extractInstagramId(url) else { return nil }
+        for kind in ["p", "reel"] {
+            guard let mediaURL = URL(string: "https://www.instagram.com/\(kind)/\(shortcode)/media/?size=l") else { continue }
+            var request = URLRequest(url: mediaURL)
+            request.timeoutInterval = 3
+            let session = URLSession(configuration: .ephemeral, delegate: RedirectCatcher.shared, delegateQueue: nil)
+            if let (_, response) = try? await session.data(for: request),
+               let http = response as? HTTPURLResponse,
+               (300...399).contains(http.statusCode),
+               let location = http.value(forHTTPHeaderField: "Location"),
+               location.hasPrefix("http"), !location.contains("/accounts/login") {
+                return location
+            }
+        }
+        return nil
+    }
+
+    /// URLSession delegate that refuses redirects so the Location header
+    /// survives into the response.
+    private final class RedirectCatcher: NSObject, URLSessionTaskDelegate, Sendable {
+        static let shared = RedirectCatcher()
+        func urlSession(
+            _ session: URLSession, task: URLSessionTask,
+            willPerformHTTPRedirection response: HTTPURLResponse,
+            newRequest request: URLRequest,
+            completionHandler: @escaping (URLRequest?) -> Void
+        ) {
+            completionHandler(nil)
+        }
+    }
+
+    /// Normalize a swipe URL for dedup: host lowercased, tracking params and
+    /// trailing slash dropped, /reels/ folded into /reel/.
+    nonisolated static func normalizedSwipeURL(_ raw: String) -> String {
+        guard var components = URLComponents(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+            return raw
+        }
+        components.query = nil
+        components.fragment = nil
+        components.host = components.host?.lowercased().replacingOccurrences(of: "www.", with: "")
+        var path = components.path.replacingOccurrences(of: "/reels/", with: "/reel/")
+        if path.hasSuffix("/") { path = String(path.dropLast()) }
+        components.path = path
+        return components.string ?? raw
+    }
+
+    /// Find a live (non-deleted) swipe already saved for this URL.
+    nonisolated static func findExistingLiveSwipe(url: String) async -> Research? {
+        let normalized = normalizedSwipeURL(url)
+        let shortcode = SwipeURLClassifier().extractInstagramId(url)
+        let rows = try? await CosmoDatabase.shared.asyncRead { db in
+            try Atom
+                .filter(Column("type") == AtomType.research.rawValue)
+                .filter(Column("is_deleted") == false)
+                .filter(Column("metadata").like("%\"isSwipeFile\":true%"))
+                .order(Column("created_at").desc)
+                .limit(400)
+                .fetchAll(db)
+        }
+        return rows?.first { atom in
+            guard let existingURL = atom.researchMetadata?.url else { return false }
+            if normalizedSwipeURL(existingURL) == normalized { return true }
+            if let shortcode, existingURL.contains("/\(shortcode)") { return true }
+            return false
         }
     }
 
@@ -223,22 +296,30 @@ final class QuickCaptureProcessor: ObservableObject {
             sourceType: igType == .reel ? .instagramReel : (igType == .carousel ? .instagramCarousel : .instagramPost)
         )
 
-        research.processingStatus = "pending" // Mark for manual review
+        research.processingStatus = "pending" // the cloud worker (or scan fallback) takes it from here
 
         var richContent = research.richContent ?? ResearchRichContent()
         richContent.sourceType = igType == .reel ? .instagramReel : (igType == .carousel ? .instagramCarousel : .instagramPost)
         richContent.instagramId = contentId
         richContent.instagramType = igType.rawValue
 
+        // Instant thumbnail: the grid shows an image the moment the card lands.
+        if let cdnThumbnail = await Self.resolveInstantThumbnailURL(for: url) {
+            richContent.thumbnailUrl = cdnThumbnail
+            research.thumbnailUrl = cdnThumbnail
+        }
+
         // Initialize Instagram data for later extraction
-        var igData = InstagramData(
+        let igData = InstagramData(
             originalURL: URL(string: url)!,
             contentType: mapToInstagramContentType(igType)
         )
         richContent.instagramData = igData
         research.setRichContent(richContent)
 
-        return try await saveResearch(research)
+        let saved = try await saveResearch(research)
+        CloudSwipeAPI.kickProcessing(swipeUUID: saved.uuid)
+        return saved
     }
 
     private func mapToInstagramContentType(_ igType: ResearchRichContent.InstagramContentType) -> InstagramContentType {
@@ -401,4 +482,48 @@ enum QuickCaptureError: LocalizedError {
 extension Notification.Name {
     /// Posted when quick capture creates a new research atom
     static let quickCaptureComplete = Notification.Name("quickCaptureComplete")
+}
+
+// MARK: - Cloud Swipe API (Railway worker)
+
+/// Thin client for the Railway swipe worker (SWIPE_V2_PLAN.md). Both calls
+/// are fire-and-forget from capture paths — the worker's 15s cron catches
+/// anything a failed kick misses.
+enum CloudSwipeAPI {
+    static var baseURL: String {
+        let configured = APIKeys.discoveryApiBaseURL?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let base = configured.isEmpty ? "https://cosmonative-production.up.railway.app" : configured
+        return base.hasSuffix("/") ? String(base.dropLast()) : base
+    }
+
+    /// Start processing a freshly captured swipe immediately (skip the cron wait).
+    static func kickProcessing(swipeUUID: String) {
+        post(path: "/api/swipes/process", swipeUUID: swipeUUID)
+    }
+
+    /// Re-fetch engagement stats for a swipe. Await-able: callers refresh UI after.
+    @discardableResult
+    static func refreshStats(swipeUUID: String) async -> Bool {
+        await postAwaiting(path: "/api/swipes/refresh-stats", swipeUUID: swipeUUID)
+    }
+
+    private static func post(path: String, swipeUUID: String) {
+        Task.detached(priority: .utility) {
+            _ = await postAwaiting(path: path, swipeUUID: swipeUUID)
+        }
+    }
+
+    private static func postAwaiting(path: String, swipeUUID: String) async -> Bool {
+        guard let url = URL(string: baseURL + path),
+              let key = APIKeys.supabaseServiceRoleKey, !key.isEmpty else { return false }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 120
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: ["swipeUUID": swipeUUID])
+        guard let (_, response) = try? await URLSession.shared.data(for: request),
+              let http = response as? HTTPURLResponse else { return false }
+        return (200...299).contains(http.statusCode)
+    }
 }

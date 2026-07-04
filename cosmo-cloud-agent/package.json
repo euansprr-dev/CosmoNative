@@ -1,14 +1,15 @@
 {
   "name": "cosmo-cloud-agent",
   "version": "1.0.0",
-  "description": "CosmoOS Cloud Telegram Agent — works when your Mac is closed",
+  "description": "CosmoOS Cloud Telegram Agent \u2014 works when your Mac is closed",
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
-    "test:capture-lanes": "tsx tests/captureLane.test.ts"
+    "test:capture-lanes": "tsx tests/captureLane.test.ts",
+    "test:swipe-worker": "SUPABASE_SERVICE_ROLE_KEY=test-dummy COSMO_USER_ID=test-user tsx tests/swipeWorker.test.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",

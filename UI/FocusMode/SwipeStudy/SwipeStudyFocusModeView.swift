@@ -528,9 +528,78 @@ struct SwipeStudyFocusModeView: View {
             .italic()
             .foregroundStyle(DS.inkFaded)
 
+            engagementLine
+            processingStatusLine(atom: atom)
+
             Rectangle()
                 .fill(DS.sepiaSubtle)
                 .frame(width: 120, height: 0.5)
+        }
+    }
+
+    /// Quiet engagement stats — only when the worker captured them.
+    @ViewBuilder
+    private var engagementLine: some View {
+        if let analysis, analysis.viewsCount != nil || analysis.likesCount != nil || analysis.commentsCount != nil {
+            HStack(spacing: DS.space10) {
+                if let views = analysis.viewsCount {
+                    Label(Self.compactCount(views), systemImage: "play.fill")
+                }
+                if let likes = analysis.likesCount {
+                    Label(Self.compactCount(likes), systemImage: "heart.fill")
+                }
+                if let comments = analysis.commentsCount {
+                    Label(Self.compactCount(comments), systemImage: "bubble.right.fill")
+                }
+            }
+            .font(DS.caption)
+            .foregroundStyle(DS.inkFaded)
+            .accessibilityLabel("Engagement stats")
+        }
+    }
+
+    /// Status-specific processing copy; a stale swipe (>30 min) gets a Retry.
+    @ViewBuilder
+    private func processingStatusLine(atom: Atom) -> some View {
+        if let copy = Self.processingCopy(for: atom.processingStatus) {
+            HStack(spacing: DS.space8) {
+                ProgressView().controlSize(.small).tint(gold)
+                Text(Self.isProcessingStale(atom) ? "Taking longer than usual" : copy)
+                    .font(DS.footnote)
+                    .foregroundStyle(DS.textMuted)
+                if Self.isProcessingStale(atom) {
+                    Button("Retry") { retranscribeInstagram(atom: atom) }
+                        .buttonStyle(.plain)
+                        .font(DS.footnote.weight(.medium))
+                        .foregroundStyle(gold)
+                        .frame(minHeight: 24)
+                        .accessibilityLabel("Retry processing")
+                }
+            }
+        }
+    }
+
+    static func processingCopy(for status: String?) -> String? {
+        switch status {
+        case "pending", "extracting": return "Getting this post…"
+        case "transcribing": return "This post is transcribing…"
+        case "analyzing": return "Analyzing…"
+        case "extraction_failed": return "Couldn't fetch this post — it retries automatically"
+        default: return nil
+        }
+    }
+
+    static func isProcessingStale(_ atom: Atom) -> Bool {
+        guard processingCopy(for: atom.processingStatus) != nil else { return false }
+        guard let updated = ISO8601.date(from: atom.updatedAt) else { return false }
+        return Date().timeIntervalSince(updated) > 30 * 60
+    }
+
+    static func compactCount(_ value: Int) -> String {
+        switch value {
+        case 1_000_000...: return String(format: value < 10_000_000 ? "%.1fM" : "%.0fM", Double(value) / 1_000_000)
+        case 1_000...: return String(format: value < 10_000 ? "%.1fK" : "%.0fK", Double(value) / 1_000)
+        default: return "\(value)"
         }
     }
 
@@ -1938,6 +2007,31 @@ struct SwipeStudyFocusModeView: View {
                         .padding(.vertical, DS.space4)
                     }
                     .buttonStyle(.plain)
+                }
+
+                // Refresh engagement stats via the Railway worker
+                if isInstagramSwipe(atom) {
+                    Button {
+                        Task {
+                            await CloudSwipeAPI.refreshStats(swipeUUID: atom.uuid)
+                            await SyncEngine.shared.forceSync()
+                            if let fresh = try? await AtomRepository.shared.fetch(uuid: atom.uuid) {
+                                currentAtom = fresh
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: "chart.line.uptrend.xyaxis")
+                                .font(DS.caption2)
+                            Text("Refresh stats")
+                                .font(DS.caption2)
+                        }
+                        .foregroundStyle(DS.textMuted)
+                        .padding(.horizontal, DS.space6)
+                        .padding(.vertical, DS.space4)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Refresh engagement stats")
                 }
 
                 // Copy transcript button

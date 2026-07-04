@@ -12,6 +12,10 @@ RUN npx tsc
 
 FROM node:22-slim
 
+# ffmpeg: reel frame extraction for the swipe worker's multi-slide text
+# transcription (4fps frames → Gemini vision, matching the Mac pipeline).
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 COPY package*.json ./

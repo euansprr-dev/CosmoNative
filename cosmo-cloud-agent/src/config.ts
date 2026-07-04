@@ -67,6 +67,22 @@ export const config = {
     },
   },
   apifyApiKey: process.env.APIFY_API_KEY || '',
+
+  // Swipe worker (cloud-side swipe processing — SWIPE_V2_PLAN.md)
+  // OPENAI_API_KEY is deliberately NOT required: without it the worker still
+  // extracts/mirrors/analyzes and marks reels 'partial' (no speech transcript).
+  openaiApiKey: process.env.OPENAI_API_KEY || '',
+  swipeWorkerEnabled: process.env.SWIPE_WORKER_ENABLED !== 'false',
+  apifyMonthlyRunCap: parseInt(process.env.APIFY_MONTHLY_RUN_CAP || '3000', 10),
+
+  // Reel V3: native-video understanding (SWIPE_REEL_V3_PLAN.md).
+  // GEMINI_API_KEY (direct Google AI API) unlocks tier 1 with fps control;
+  // without it tier 2 rides the existing OpenRouter key; tier 3 is the
+  // frame-batch pipeline. All optional.
+  geminiApiKey: process.env.GEMINI_API_KEY || '',
+  geminiVideoModel: process.env.GEMINI_VIDEO_MODEL || 'gemini-3-flash-preview',
+  reelVideoFps: parseFloat(process.env.REEL_VIDEO_FPS || '4'),
+
   apifyInstagramPostLimit: parseInt(process.env.APIFY_INSTAGRAM_POST_LIMIT || '150', 10),
   apifyInstagramMaxPostLimit: parseInt(process.env.APIFY_INSTAGRAM_MAX_POST_LIMIT || '300', 10),
   apifyInstagramIncrementalPostLimit: parseInt(process.env.APIFY_INSTAGRAM_INCREMENTAL_POST_LIMIT || '50', 10),

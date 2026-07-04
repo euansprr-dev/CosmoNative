@@ -9,6 +9,8 @@ import { startScheduler } from './scheduler/standing';
 import { writingRouter } from './api/writing';
 import { discoveryRouter } from './api/discovery';
 import { startDiscoveryScheduler } from './discovery/scheduler';
+import { swipesRouter } from './swipes/api';
+import { startSwipeWorker } from './swipes/processor';
 
 const app = express();
 app.use(express.json());
@@ -32,6 +34,7 @@ app.get('/health', (_req, res) => {
 
 app.use('/api/writing', writingRouter);
 app.use('/api/discovery', discoveryRouter);
+app.use('/api/swipes', swipesRouter);
 
 // ============================================================
 // Telegram webhook endpoint
@@ -64,6 +67,7 @@ async function start(): Promise<void> {
   // Start standing instruction scheduler
   startScheduler();
   startDiscoveryScheduler();
+  startSwipeWorker();
 
   // Start Express server — extended timeouts for long-running writing sessions
   const server = app.listen(config.port, () => {

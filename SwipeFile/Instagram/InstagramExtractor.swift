@@ -35,6 +35,28 @@ final class InstagramExtractor: Sendable {
             print("InstagramExtractor: Normalized URL \(url.absoluteString) -> \(normalizedURL.absoluteString)")
         }
 
+        // Strategy 0: Apify (paid, most reliable) — PRIMARY as of Swipe V2.
+        // Instagram blocks anonymous routes in waves (July 2026: all of them);
+        // the free strategies below are the fallback tier for when Apify is
+        // unconfigured or errors. This whole Mac path only runs when the
+        // Railway worker didn't claim the swipe.
+        var apifyAttempted = false
+        if ApifyInstagramProvider.shared.isConfigured, shouldEscalateToApify(for: normalizedURL) {
+            apifyAttempted = true
+            do {
+                let importedPost = try await ApifyInstagramProvider.shared.fetchPost(url: normalizedURL)
+                let mediaData = mediaData(from: importedPost, originalURL: normalizedURL, requestedType: contentType)
+                if shouldReturnImmediately(mediaData, requestedType: contentType) {
+                    print("InstagramExtractor: Apify (primary) succeeded")
+                    return mediaData
+                }
+                bestPartialResult = betterPartialResult(current: bestPartialResult, candidate: mediaData)
+                print("InstagramExtractor: Apify (primary) returned partial media, continuing")
+            } catch {
+                print("InstagramExtractor: Apify (primary) failed: \(error.localizedDescription)")
+            }
+        }
+
         // Strategy 1: Cobalt API (server-side proxy — same pattern as SnapInsta)
         do {
             let mediaData = try await extractViaCobalt(url: normalizedURL, contentType: contentType)
@@ -102,8 +124,9 @@ final class InstagramExtractor: Sendable {
             print("InstagramExtractor: yt-dlp fallback failed: \(error.localizedDescription)")
         }
 
-        // Strategy 6: Apify post scraper (paid API, same provider used by creator import)
-        if ApifyInstagramProvider.shared.isConfigured {
+        // Strategy 6: Apify post scraper — only when the primary attempt was
+        // throttled away (shouldEscalateToApify); never a same-URL double spend.
+        if ApifyInstagramProvider.shared.isConfigured, !apifyAttempted {
             do {
                 let importedPost = try await ApifyInstagramProvider.shared.fetchPost(url: normalizedURL)
                 let mediaData = mediaData(from: importedPost, originalURL: normalizedURL, requestedType: contentType)
@@ -401,13 +424,16 @@ final class InstagramExtractor: Sendable {
     // MARK: - Strategy 1: Cobalt API (like SnapInsta server-side proxy)
 
     /// Cobalt instance URLs — tried in order (handles TLS fingerprinting, doc_id rotation, etc.)
+    // Verified against a live Instagram reel on 2026-07-03. Public instances
+    // rot fast (most now demand JWT auth or sit behind Cloudflare); when reels
+    // start failing, re-test this list first — POST the reel URL to each and
+    // expect {"status":"tunnel"} back.
     private static let cobaltInstances = [
-        "https://co.eepy.today/",
-        "https://cobalt-backend.canine.tools/",
-        "https://kityune.imput.net/",
-        "https://cobalt-api.meowing.de/",
-        "https://blossom.imput.net/",
-        "https://capi.3kh0.net/"
+        "https://cobaltapi.cjs.nz/",
+        "https://dog.kittycat.boo/",
+        "https://cobaltapi.kittycat.boo/",
+        "https://rue-cobalt.xenon.zone/",
+        "https://co.eepy.today/"
     ]
 
     /// Uses cobalt API instances — tries multiple with fallback
@@ -451,6 +477,24 @@ final class InstagramExtractor: Sendable {
 
                 if let videoUrlString = json["url"] as? String,
                    let videoURL = URL(string: videoUrlString) {
+                    // When Instagram blocks the video, cobalt silently falls
+                    // back to the poster image — the tunnel serves a JPEG and
+                    // "filename" says "instagram_<code>.jpg". Returning that
+                    // as videoURL short-circuits the whole strategy chain
+                    // (embed/GraphQL/yt-dlp/Apify never run) with a thumbnail
+                    // masquerading as a reel. Detect it and demote to a
+                    // thumbnail-only PARTIAL result instead.
+                    let filename = (json["filename"] as? String ?? "").lowercased()
+                    let imageExtensions = [".jpg", ".jpeg", ".png", ".webp", ".heic", ".gif"]
+                    if imageExtensions.contains(where: filename.hasSuffix) {
+                        return InstagramMediaData(
+                            originalURL: url,
+                            contentType: contentType,
+                            thumbnailURL: videoURL,
+                            extractedAt: Date()
+                        )
+                    }
+
                     let thumbnailURL: URL?
                     if let thumbStr = json["thumb"] as? String {
                         thumbnailURL = URL(string: thumbStr)

@@ -146,6 +146,27 @@ async function probeDuration(videoData: Buffer): Promise<number> {
   }
 }
 
+/**
+ * Extract the audio track as mono 64kbps M4A. Whisper's API caps uploads at
+ * 25MB — a 3-minute reel video blows past it, but its audio is ~1.5MB.
+ */
+export async function extractAudioTrack(videoData: Buffer): Promise<Buffer> {
+  const dir = await mkdtemp(join(tmpdir(), 'reel-audio-'));
+  const videoPath = join(dir, 'video.mp4');
+  const audioPath = join(dir, 'audio.m4a');
+  try {
+    await writeFile(videoPath, videoData);
+    await runProcess('ffmpeg', [
+      '-i', videoPath,
+      '-vn', '-ac', '1', '-b:a', '64k', '-c:a', 'aac',
+      audioPath,
+    ]);
+    return await readFile(audioPath);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
 export async function extractFrames(videoData: Buffer, duration: number): Promise<Frame[]> {
   // Mac contract: 4fps capped at 240 frames — long reels sample evenly.
   const fps = Math.min(GEMINI_FPS, MAX_GEMINI_FRAMES / Math.max(duration, 1));

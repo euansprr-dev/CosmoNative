@@ -21,7 +21,7 @@ import { Atom, fetchAtom, updateAtom } from '../db/queries';
 import { apifyBudgetAvailable, extractInstagramPost, instagramShortcode } from './instagram';
 import { ensureBuckets, mirrorCarousel, mirrorThumbnail, mirrorVideoBuffer, resolveInstantThumbnailURL, downloadBinary } from './media';
 import { transcribeSlides, transcribeSpeech, whisperConfigured } from './transcribe';
-import { annotateSlidesWithVoiceover, deduplicateSlidesJSON, transcribeReel } from './reelPipeline';
+import { annotateSlidesWithVoiceover, deduplicateSlidesJSON, extractAudioTrack, transcribeReel } from './reelPipeline';
 import { shouldEscalateToFrames, understandReelVideo } from './reelVideoUnderstanding';
 import { randomUUID as newUUID } from 'crypto';
 import { fetchTweetText, fetchYouTubeTranscript, youtubeVideoId } from './fetchers';
@@ -126,14 +126,16 @@ export async function fetchCandidates(): Promise<Atom[]> {
       const claimedAt = Date.parse(meta.processingClaimedAt ?? '') || Date.parse(atom.updated_at) || 0;
       return now - claimedAt > CLAIM_STALE_MINUTES * 60_000;
     }
-    // Failed: exponential-ish backoff via processingRetryAfter, capped attempts.
-    if (status === 'extraction_failed') {
+    // Failed AND partial: exponential-ish backoff via processingRetryAfter,
+    // capped attempts (an unthrottled partial reprocesses every 15s tick —
+    // an Apify run each time).
+    if (status === 'extraction_failed' || status === 'partial') {
       const attempts = Number(meta.cloudRetryCount ?? 0);
       if (attempts >= MAX_CLOUD_RETRIES) return false;
       const retryAfter = Date.parse(meta.processingRetryAfter ?? '') || 0;
       return now >= retryAfter;
     }
-    return true; // pending / partial
+    return true; // pending
   });
 }
 
@@ -240,11 +242,19 @@ async function processInstagram(uuid: string, url: string): Promise<void> {
       // native-video understanding call — the model sees the frames AND hears
       // the audio, so modality (voiceover vs text cards vs captions vs music)
       // is a single informed judgment. Tier 3 = the V2 frame-batch pipeline.
+      // Whisper gets the AUDIO TRACK, not the video — its API caps uploads at
+      // 25MB, which a 3-minute reel video exceeds while its audio is ~1.5MB.
       const whisperPromise: Promise<SpeechSegmentJSON[]> = whisperConfigured()
-        ? transcribeSpeech(videoData).catch(error => {
-            console.warn(`⚠️ whisper failed for ${uuid.slice(0, 8)}:`, error instanceof Error ? error.message : error);
-            return [] as SpeechSegmentJSON[];
-          })
+        ? extractAudioTrack(videoData)
+            .then(audio => transcribeSpeech(audio, { filename: 'audio.m4a', mimeType: 'audio/mp4' }))
+            .catch(async error => {
+              console.warn(`⚠️ whisper (audio) failed for ${uuid.slice(0, 8)}:`, error instanceof Error ? error.message : error);
+              // ffmpeg-less or codec edge: original video still works when small.
+              if (videoData.length < 24 << 20) {
+                try { return await transcribeSpeech(videoData); } catch { /* fall through */ }
+              }
+              return [] as SpeechSegmentJSON[];
+            })
         : Promise.resolve([]);
 
       const [whisperSegments, understanding] = await Promise.all([
@@ -477,11 +487,21 @@ async function persistAndAnalyze(
     }
   }
 
-  const isPartial = result.warnings.length > 0 && !speechText && !slideText;
+  // A video reel that ends with NO transcript at all is not "complete" — it
+  // is a transient pile-up (Whisper down + all video tiers failing). Mark it
+  // partial with backoff so it self-heals instead of silently staying empty.
+  const isVideoReel = Boolean(media?.videoUrl);
+  const isPartial = !result.editedByUser && !slideText && !speechText && isVideoReel;
   metadataUpdates.processingStatus = isPartial ? 'partial' : 'complete';
   metadataUpdates.processingWorker = 'cloud';
-  metadataUpdates.cloudRetryCount = 0;
-  metadataUpdates.processingRetryAfter = null;
+  if (isPartial) {
+    const attempts = Number(atom.metadata?.cloudRetryCount ?? 0) + 1;
+    metadataUpdates.cloudRetryCount = attempts;
+    metadataUpdates.processingRetryAfter = new Date(Date.now() + 30 * attempts * 60_000).toISOString();
+  } else {
+    metadataUpdates.cloudRetryCount = 0;
+    metadataUpdates.processingRetryAfter = null;
+  }
 
   structured.swipeAnalysis = existingAnalysis;
   structured.richContent = richContent;

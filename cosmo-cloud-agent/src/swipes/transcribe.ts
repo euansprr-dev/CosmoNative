@@ -17,11 +17,14 @@ export function whisperConfigured(): boolean {
   return config.openaiApiKey.length > 0;
 }
 
-export async function transcribeSpeech(videoData: Buffer): Promise<SpeechSegmentJSON[]> {
+export async function transcribeSpeech(
+  mediaData: Buffer,
+  media: { filename: string; mimeType: string } = { filename: 'video.mp4', mimeType: 'video/mp4' }
+): Promise<SpeechSegmentJSON[]> {
   if (!whisperConfigured()) throw new Error('OPENAI_API_KEY not configured');
 
   const form = new FormData();
-  form.append('file', new Blob([new Uint8Array(videoData)], { type: 'video/mp4' }), 'video.mp4');
+  form.append('file', new Blob([new Uint8Array(mediaData)], { type: media.mimeType }), media.filename);
   form.append('model', 'whisper-1');
   form.append('response_format', 'verbose_json');
 

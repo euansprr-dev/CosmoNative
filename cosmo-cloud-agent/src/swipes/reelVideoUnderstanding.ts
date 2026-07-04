@@ -122,16 +122,18 @@ const RESPONSE_SCHEMA = {
 export async function understandReelVideo(videoData: Buffer, caption?: string): Promise<VideoUnderstanding | null> {
   const prompt = promptWithCaption(caption);
   if (config.geminiApiKey) {
-    // Two attempts: the preview model intermittently 503s under load and a
-    // second try often lands on capacity (otherwise tier 2 takes over).
-    for (let attempt = 0; attempt < 2; attempt += 1) {
+    // The preview model intermittently 503s under load — retry once, then
+    // try the stable fallback model before dropping a tier.
+    const models = [config.geminiVideoModel, config.geminiVideoModel, config.geminiVideoFallbackModel]
+      .filter((m, i, all) => m && all.indexOf(m) === i || i === 1);
+    for (let attempt = 0; attempt < models.length; attempt += 1) {
       try {
-        const result = await viaGeminiAPI(videoData, prompt);
+        const result = await viaGeminiAPI(videoData, prompt, models[attempt]);
         if (result) return result;
         break; // parse-level null: retrying the same video won't help
       } catch (error) {
-        console.warn(`⚠️ tier-1 video understanding failed (attempt ${attempt + 1}):`, error instanceof Error ? error.message : error);
-        if (attempt === 0) await new Promise(resolve => setTimeout(resolve, 3_000));
+        console.warn(`⚠️ tier-1 video understanding failed (${models[attempt]}, attempt ${attempt + 1}):`, error instanceof Error ? error.message : error);
+        if (attempt < models.length - 1) await new Promise(resolve => setTimeout(resolve, 3_000));
       }
     }
   }
@@ -172,7 +174,7 @@ export function shouldEscalateToFrames(result: VideoUnderstanding): boolean {
 
 // ── Tier 1: direct Gemini API (Files API + fps control) ────────────────────
 
-async function viaGeminiAPI(videoData: Buffer, prompt: string): Promise<VideoUnderstanding | null> {
+async function viaGeminiAPI(videoData: Buffer, prompt: string, model: string): Promise<VideoUnderstanding | null> {
   const fileUri = await uploadToGeminiFiles(videoData);
   try {
     const body = {
@@ -194,7 +196,7 @@ async function viaGeminiAPI(videoData: Buffer, prompt: string): Promise<VideoUnd
     };
 
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${config.geminiVideoModel}:generateContent?key=${encodeURIComponent(config.geminiApiKey)}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(config.geminiApiKey)}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

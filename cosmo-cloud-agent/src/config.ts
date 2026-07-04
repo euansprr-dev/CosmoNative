@@ -81,6 +81,8 @@ export const config = {
   // frame-batch pipeline. All optional.
   geminiApiKey: process.env.GEMINI_API_KEY || '',
   geminiVideoModel: process.env.GEMINI_VIDEO_MODEL || 'gemini-3-flash-preview',
+  // Stable model tried when the preview model 503s under load.
+  geminiVideoFallbackModel: process.env.GEMINI_VIDEO_FALLBACK_MODEL || 'gemini-2.5-flash',
   reelVideoFps: parseFloat(process.env.REEL_VIDEO_FPS || '4'),
 
   apifyInstagramPostLimit: parseInt(process.env.APIFY_INSTAGRAM_POST_LIMIT || '150', 10),

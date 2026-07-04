@@ -48,11 +48,26 @@ final class CaptureDestinationRepository: ObservableObject {
 
     @discardableResult
     func create(_ destination: CaptureDestination) async throws -> CaptureDestination {
-        try await database.asyncWrite { db in
-            let mutable = destination
+        let saved = try await database.asyncWrite { db in
+            var mutable = destination
+            mutable.syncUpdatedAt = ISO8601.string(from: Date())
             try mutable.insert(db)
             return mutable
         }
+        await ChangeTracker.shared.trackInsert(table: CaptureDestination.databaseTableName, entity: saved)
+        return saved
+    }
+
+    /// Refetch + track after a raw-SQL mutation. The SQL is expected to have
+    /// bumped `_local_version` itself so the tracked payload carries the
+    /// post-bump version (push bookkeeping is scoped to it).
+    private func trackAfterRawWrite(uuid: String) async {
+        guard let fresh = try? await fetch(uuid: uuid) else { return }
+        await ChangeTracker.shared.trackUpdate(
+            table: CaptureDestination.databaseTableName,
+            entity: fresh,
+            skipVersionIncrement: true
+        )
     }
 
     @discardableResult
@@ -64,11 +79,20 @@ final class CaptureDestinationRepository: ObservableObject {
     }
 
     func update(_ destination: CaptureDestination) async throws {
-        try await database.asyncWrite { db in
+        let saved = try await database.asyncWrite { db in
             var mutable = destination
-            mutable.updatedAt = ISO8601.string(from: Date())
+            let now = ISO8601.string(from: Date())
+            mutable.updatedAt = now
+            mutable.syncUpdatedAt = now
+            mutable.localVersion += 1
             try mutable.update(db)
+            return mutable
         }
+        await ChangeTracker.shared.trackUpdate(
+            table: CaptureDestination.databaseTableName,
+            entity: saved,
+            skipVersionIncrement: true
+        )
     }
 
     func archive(uuid: String) async throws {
@@ -77,12 +101,14 @@ final class CaptureDestinationRepository: ObservableObject {
             try db.execute(
                 sql: """
                     UPDATE capture_destinations
-                    SET isArchived = 1, isEnabled = 0, updatedAt = ?
+                    SET isArchived = 1, isEnabled = 0, updatedAt = ?,
+                        updated_at = ?, _local_version = _local_version + 1
                     WHERE uuid = ?
                     """,
-                arguments: [now, uuid]
+                arguments: [now, now, uuid]
             )
         }
+        await trackAfterRawWrite(uuid: uuid)
         NotificationCenter.default.post(
             name: CosmoNotification.Inbox.captureLaneChanged,
             object: nil,
@@ -96,12 +122,14 @@ final class CaptureDestinationRepository: ObservableObject {
             try db.execute(
                 sql: """
                     UPDATE capture_destinations
-                    SET isArchived = 0, isEnabled = 1, updatedAt = ?
+                    SET isArchived = 0, isEnabled = 1, updatedAt = ?,
+                        updated_at = ?, _local_version = _local_version + 1
                     WHERE uuid = ?
                     """,
-                arguments: [now, uuid]
+                arguments: [now, now, uuid]
             )
         }
+        await trackAfterRawWrite(uuid: uuid)
         NotificationCenter.default.post(
             name: CosmoNotification.Inbox.captureLaneChanged,
             object: nil,
@@ -115,12 +143,14 @@ final class CaptureDestinationRepository: ObservableObject {
             try db.execute(
                 sql: """
                     UPDATE capture_destinations
-                    SET lastUsedAt = ?, updatedAt = ?, itemCount = itemCount + 1
+                    SET lastUsedAt = ?, updatedAt = ?, itemCount = itemCount + 1,
+                        updated_at = ?, _local_version = _local_version + 1
                     WHERE uuid = ?
                     """,
-                arguments: [now, now, uuid]
+                arguments: [now, now, now, uuid]
             )
         }
+        await trackAfterRawWrite(uuid: uuid)
     }
 
     func fetch(uuid: String) async throws -> CaptureDestination? {

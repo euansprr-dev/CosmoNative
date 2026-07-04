@@ -19,7 +19,7 @@ enum CapturedItemStatus: String, Codable, CaseIterable, Sendable {
     case failed
 }
 
-struct CapturedItem: Identifiable, Codable, Equatable, FetchableRecord, PersistableRecord, Sendable {
+struct CapturedItem: Identifiable, Codable, Equatable, FetchableRecord, PersistableRecord, Sendable, Syncable, HasUUID {
     static let databaseTableName = "captured_items"
 
     var id: Int64?
@@ -47,6 +47,28 @@ struct CapturedItem: Identifiable, Codable, Equatable, FetchableRecord, Persista
     var provenanceMetadata: String?
     var createdAt: String
     var updatedAt: String
+
+    // Sync bookkeeping — lane captures sync Mac ↔ iPhone (July 2026). Snake
+    // columns feed the shared pipeline; `updatedAt` above stays app data.
+    var isDeleted: Bool
+    var syncUpdatedAt: String?
+    var localVersion: Int64
+    var serverVersion: Int64
+    var syncVersion: Int64
+
+    enum CodingKeys: String, CodingKey, ColumnExpression {
+        case id, uuid, rawText, caption, cleanText, source
+        case telegramMessageId, telegramMediaGroupId, telegramChatId, sender, timestamp
+        case captureDestinationId, parsedCommand, parsedIntent
+        case mediaAttachmentIdsJSON, createdObjectIdsJSON, routingConfidence, status
+        case parentDeepDiveId, parentInquirySessionId, parentQuestionId, parentProjectId
+        case provenanceMetadata, createdAt, updatedAt
+        case isDeleted = "is_deleted"
+        case syncUpdatedAt = "updated_at"
+        case localVersion = "_local_version"
+        case serverVersion = "_server_version"
+        case syncVersion = "_sync_version"
+    }
 
     var mediaAttachmentIds: [String] {
         decodeCapturedStringArray(mediaAttachmentIdsJSON)
@@ -91,7 +113,12 @@ struct CapturedItem: Identifiable, Codable, Equatable, FetchableRecord, Persista
             parentProjectId: nil,
             provenanceMetadata: metadata,
             createdAt: now,
-            updatedAt: now
+            updatedAt: now,
+            isDeleted: false,
+            syncUpdatedAt: now,
+            localVersion: 1,
+            serverVersion: 0,
+            syncVersion: 0
         )
     }
 }

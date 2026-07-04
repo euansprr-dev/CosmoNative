@@ -111,7 +111,7 @@ enum CaptureMediaKind: String, Codable, CaseIterable, Sendable {
     }
 }
 
-struct CaptureDestination: Identifiable, Codable, Equatable, FetchableRecord, PersistableRecord, Sendable {
+struct CaptureDestination: Identifiable, Codable, Equatable, FetchableRecord, PersistableRecord, Sendable, Syncable, HasUUID {
     static let databaseTableName = "capture_destinations"
 
     var id: Int64?
@@ -136,6 +136,26 @@ struct CaptureDestination: Identifiable, Codable, Equatable, FetchableRecord, Pe
     var lastUsedAt: String?
     var itemCount: Int
     var conflictStatus: CaptureDestinationConflictStatus
+
+    // Sync bookkeeping — lanes sync Mac ↔ iPhone (July 2026). Snake-cased
+    // columns feed the shared pipeline; `updatedAt` above stays app data.
+    var isDeleted: Bool
+    var syncUpdatedAt: String?
+    var localVersion: Int64
+    var serverVersion: Int64
+    var syncVersion: Int64
+
+    enum CodingKeys: String, CodingKey, ColumnExpression {
+        case id, uuid, name, destinationDescription, type, aliasesJSON, icon
+        case colorAccentToken, defaultObjectType, defaultParentTarget, defaultReviewBehavior
+        case telegramCommandPatternsJSON, acceptedMediaTypesJSON, processingRulesJSON, routingRulesJSON
+        case isArchived, isEnabled, createdAt, updatedAt, lastUsedAt, itemCount, conflictStatus
+        case isDeleted = "is_deleted"
+        case syncUpdatedAt = "updated_at"
+        case localVersion = "_local_version"
+        case serverVersion = "_server_version"
+        case syncVersion = "_sync_version"
+    }
 
     var aliases: [String] {
         decodeStringArray(aliasesJSON)
@@ -185,7 +205,12 @@ struct CaptureDestination: Identifiable, Codable, Equatable, FetchableRecord, Pe
             updatedAt: now,
             lastUsedAt: nil,
             itemCount: 0,
-            conflictStatus: .clear
+            conflictStatus: .clear,
+            isDeleted: false,
+            syncUpdatedAt: now,
+            localVersion: 1,
+            serverVersion: 0,
+            syncVersion: 0
         )
     }
 

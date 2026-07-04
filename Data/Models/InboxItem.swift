@@ -7,7 +7,7 @@ import GRDB
 
 // MARK: - InboxItem Model
 
-struct InboxItem: Identifiable, Codable, Equatable, FetchableRecord, PersistableRecord {
+struct InboxItem: Identifiable, Codable, Equatable, FetchableRecord, PersistableRecord, Syncable, HasUUID {
     static let databaseTableName = "inbox_items"
 
     var id: Int64?
@@ -49,6 +49,31 @@ struct InboxItem: Identifiable, Codable, Equatable, FetchableRecord, Persistable
 
     // Source-specific metadata (JSON)
     var metadata: String?
+
+    // Sync bookkeeping (mirrors Atom's snake-cased sync columns). The inbox
+    // is a synced, local-first domain since July 2026 — captures made on the
+    // iPhone and triage/classification updates flow both ways through the
+    // standard pipeline (sync_queue → push → pull → ConflictResolver).
+    var isDeleted: Bool
+    /// Server-cursor mirror — snake `updated_at` is what pull cursors and
+    /// tombstone comparisons read; the camelCase timestamps stay app data.
+    var syncUpdatedAt: String?
+    var localVersion: Int64
+    var serverVersion: Int64
+    var syncVersion: Int64
+
+    enum CodingKeys: String, CodingKey, ColumnExpression {
+        case id, uuid, source, rawText, title, classification, confidence
+        case mergeTargetUuid, mergeTargetTitle, mergeTargetType, mergePreview
+        case placeThinkspaceId, placeThinkspaceName, placeAtomType
+        case recommendations, primaryRouteKind, destinationPath, rationale, placementPlanSummary
+        case status, isRead, createdAt, classifiedAt, actionedAt, metadata
+        case isDeleted = "is_deleted"
+        case syncUpdatedAt = "updated_at"
+        case localVersion = "_local_version"
+        case serverVersion = "_server_version"
+        case syncVersion = "_sync_version"
+    }
 
     // MARK: - Factory
 
@@ -99,7 +124,12 @@ struct InboxItem: Identifiable, Codable, Equatable, FetchableRecord, Persistable
             createdAt: ISO8601.string(from: Date()),
             classifiedAt: nil,
             actionedAt: nil,
-            metadata: metadata
+            metadata: metadata,
+            isDeleted: false,
+            syncUpdatedAt: ISO8601.string(from: Date()),
+            localVersion: 1,
+            serverVersion: 0,
+            syncVersion: 0
         )
     }
 }

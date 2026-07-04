@@ -49,11 +49,33 @@ final class CapturedItemRepository: ObservableObject {
 
     @discardableResult
     func create(_ item: CapturedItem) async throws -> CapturedItem {
-        try await database.asyncWrite { db in
-            let mutable = item
+        let saved = try await database.asyncWrite { db in
+            var mutable = item
+            mutable.syncUpdatedAt = ISO8601.string(from: Date())
             try mutable.insert(db)
             return mutable
         }
+        await ChangeTracker.shared.trackInsert(table: CapturedItem.databaseTableName, entity: saved)
+        return saved
+    }
+
+    /// Version-bump + stamp shared by tracked mutations (the Atom pattern:
+    /// the write and the ChangeTracker payload carry the same post-bump
+    /// `_local_version`, so push bookkeeping can mark the queue row synced).
+    private nonisolated static func prepareTrackedUpdate(_ item: inout CapturedItem) {
+        item.localVersion += 1
+        let now = ISO8601.string(from: Date())
+        item.updatedAt = now
+        item.syncUpdatedAt = now
+    }
+
+    private func track(_ item: CapturedItem?) async {
+        guard let item else { return }
+        await ChangeTracker.shared.trackUpdate(
+            table: CapturedItem.databaseTableName,
+            entity: item,
+            skipVersionIncrement: true
+        )
     }
 
     func fetch(uuid: String) async throws -> CapturedItem? {
@@ -61,6 +83,16 @@ final class CapturedItemRepository: ObservableObject {
             try CapturedItem
                 .filter(Column("uuid") == uuid)
                 .fetchOne(db)
+        }
+    }
+
+    /// Newest captures across all lanes — used by the one-shot cloud backfill.
+    func fetchRecent(limit: Int = 500) async throws -> [CapturedItem] {
+        try await database.asyncRead { db in
+            try CapturedItem
+                .order(Column("createdAt").desc)
+                .limit(limit)
+                .fetchAll(db)
         }
     }
 
@@ -95,10 +127,10 @@ final class CapturedItemRepository: ObservableObject {
         parentQuestionId: String? = nil,
         parentProjectId: String? = nil
     ) async throws {
-        try await database.asyncWrite { db in
+        let updated = try await database.asyncWrite { db -> CapturedItem? in
             guard var item = try CapturedItem
                 .filter(Column("uuid") == uuid)
-                .fetchOne(db) else { return }
+                .fetchOne(db) else { return nil }
 
             item.captureDestinationId = destinationId
             item.parsedCommand = parsedCommand
@@ -110,21 +142,25 @@ final class CapturedItemRepository: ObservableObject {
             item.parentInquirySessionId = parentInquirySessionId
             item.parentQuestionId = parentQuestionId
             item.parentProjectId = parentProjectId
-            item.updatedAt = ISO8601.string(from: Date())
+            Self.prepareTrackedUpdate(&item)
             try item.update(db)
+            return item
         }
+        await track(updated)
     }
 
     func attachMedia(capturedItemId: String, mediaIds: [String]) async throws {
-        try await database.asyncWrite { db in
+        let updated = try await database.asyncWrite { db -> CapturedItem? in
             guard var item = try CapturedItem
                 .filter(Column("uuid") == capturedItemId)
-                .fetchOne(db) else { return }
+                .fetchOne(db) else { return nil }
             let merged = Array(NSOrderedSet(array: item.mediaAttachmentIds + mediaIds)) as? [String] ?? item.mediaAttachmentIds + mediaIds
             item.mediaAttachmentIdsJSON = encodeCapturedItemArray(merged)
-            item.updatedAt = ISO8601.string(from: Date())
+            Self.prepareTrackedUpdate(&item)
             try item.update(db)
+            return item
         }
+        await track(updated)
     }
 }
 

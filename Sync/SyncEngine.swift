@@ -53,7 +53,12 @@ class SyncEngine: ObservableObject {
     // and appear on the canvas via SpatialEngine's thinkspace_id query on open.
     // graph_edges are derived from atom.links and rebuilt by NodeGraphEngine — no sync needed
     private let pushTables = ["atoms", "canvas_blocks", "canvas_drawings"]
-    private let pullTables = ["atoms", "canvas_blocks", "swipe_boards", "canvas_drawings"]
+    private let pullTables = [
+        "atoms", "canvas_blocks", "swipe_boards", "canvas_drawings",
+        // Inbox domain (July 2026): iPhone captures, lanes, and lane captures
+        // flow in; classification/triage updates flow back out via the queue.
+        "inbox_items", "capture_destinations", "captured_items",
+    ]
 
     private init() {
         supabaseClient = SupabaseClient.shared

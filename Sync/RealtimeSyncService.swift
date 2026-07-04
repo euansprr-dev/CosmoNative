@@ -108,10 +108,32 @@ final class RealtimeSyncService {
             filter: SupabaseSyncTrafficPolicy.remoteOnlyRealtimeFilter
         )
 
+        // Inbox domain (July 2026): iPhone captures, lane edits, and lane
+        // captures arrive live; this Mac's classification/triage pushes are
+        // filtered out as own echo.
+        let inboxItemChanges = atoms.postgresChange(
+            AnyAction.self,
+            schema: "public",
+            table: "inbox_items",
+            filter: SupabaseSyncTrafficPolicy.remoteOnlyRealtimeFilter
+        )
+        let laneChanges = atoms.postgresChange(
+            AnyAction.self,
+            schema: "public",
+            table: "capture_destinations",
+            filter: SupabaseSyncTrafficPolicy.remoteOnlyRealtimeFilter
+        )
+        let laneCaptureChanges = atoms.postgresChange(
+            AnyAction.self,
+            schema: "public",
+            table: "captured_items",
+            filter: SupabaseSyncTrafficPolicy.remoteOnlyRealtimeFilter
+        )
+
         await atoms.subscribe()
 
         isConnected = true
-        print("✅ Realtime sync connected — listening for cloud-originated atom + canvas block changes")
+        print("✅ Realtime sync connected — listening for cloud-originated atom + canvas block + inbox changes")
 
         Task { [weak self] in
             for await action in atomChanges {
@@ -126,6 +148,73 @@ final class RealtimeSyncService {
                 await self.handleCanvasBlockChange(action)
             }
         }
+
+        Task { [weak self] in
+            for await action in inboxItemChanges {
+                guard let self, !self.isPaused else { continue }
+                await self.handleInboxDomainChange(action, table: "inbox_items")
+            }
+        }
+
+        Task { [weak self] in
+            for await action in laneChanges {
+                guard let self, !self.isPaused else { continue }
+                await self.handleInboxDomainChange(action, table: "capture_destinations")
+            }
+        }
+
+        Task { [weak self] in
+            for await action in laneCaptureChanges {
+                guard let self, !self.isPaused else { continue }
+                await self.handleInboxDomainChange(action, table: "captured_items")
+            }
+        }
+    }
+
+    // MARK: - Inbox Domain Changes (iPhone captures, lanes, lane captures)
+
+    /// Same shields as canvas blocks (own-echo, pending, fence), applied
+    /// through the shared ConflictResolver. Local repositories observe GRDB,
+    /// so applied rows surface in the Inbox UI (and the ingest service
+    /// enqueues freshly-arrived pending captures for classification).
+    private func handleInboxDomainChange(_ action: AnyAction, table: String) async {
+        let data: [String: Any]
+        switch action {
+        case .insert(let insert): data = convertRecord(insert.record)
+        case .update(let update): data = convertRecord(update.record)
+        case .delete(let delete):
+            // These tables only ever soft-delete (UPDATE events); a hard
+            // DELETE means manual server cleanup — mirror it as a tombstone.
+            let oldData = convertRecord(delete.oldRecord)
+            guard let uuid = oldData["uuid"] as? String, !uuid.isEmpty else { return }
+            if let source = oldData[SupabaseSyncTrafficPolicy.sourceColumn] as? String,
+               source == SupabaseSyncTrafficPolicy.localSource {
+                return
+            }
+            guard !isLocallyPending(uuid: uuid, table: table),
+                  !hasSyncFence(uuid: uuid) else { return }
+            do {
+                try await database.asyncWrite { db in
+                    try db.execute(
+                        sql: "UPDATE \(table) SET is_deleted = 1, updated_at = ? WHERE uuid = ?",
+                        arguments: [ISO8601.string(from: Date()), uuid]
+                    )
+                }
+                lastEventTime = Date()
+            } catch {
+                PersistenceHealth.note(.writeFailure, context: "RealtimeSync.inboxDelete(\(uuid.prefix(8)))", detail: String(describing: error))
+            }
+            return
+        }
+
+        guard let uuid = data["uuid"] as? String, !uuid.isEmpty else { return }
+        guard isFromCloud(data) else { return }
+        guard !isLocallyPending(uuid: uuid, table: table) else { return }
+        guard !hasSyncFence(uuid: uuid) else { return }
+
+        let localData = convertJSONFieldsFromPostgres(data)
+        await conflictResolver.applyRemoteChange(table: table, uuid: uuid, data: localData)
+        lastEventTime = Date()
     }
 
     // MARK: - Canvas Block Changes (iPhone-placed blocks)

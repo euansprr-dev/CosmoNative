@@ -103,11 +103,31 @@ class InboxRepository: ObservableObject {
 
     @discardableResult
     func create(_ item: InboxItem) async throws -> InboxItem {
-        try await database.asyncWrite { db in
+        let saved = try await database.asyncWrite { db in
             var mutable = item
+            mutable.syncUpdatedAt = ISO8601.string(from: Date())
             try mutable.insert(db)
             return mutable
         }
+        await ChangeTracker.shared.trackInsert(table: InboxItem.databaseTableName, entity: saved)
+        return saved
+    }
+
+    /// Version-bump + stamp shared by every tracked mutation: the write and
+    /// the ChangeTracker call must carry the SAME post-bump `_local_version`
+    /// so push bookkeeping can mark the queue row synced (the Atom pattern).
+    private nonisolated static func prepareTrackedUpdate(_ item: inout InboxItem) {
+        item.localVersion += 1
+        item.syncUpdatedAt = ISO8601.string(from: Date())
+    }
+
+    private func track(_ item: InboxItem?) async {
+        guard let item else { return }
+        await ChangeTracker.shared.trackUpdate(
+            table: InboxItem.databaseTableName,
+            entity: item,
+            skipVersionIncrement: true
+        )
     }
 
     // MARK: - Update Classification
@@ -130,11 +150,11 @@ class InboxRepository: ObservableObject {
         rationale: String? = nil,
         placementPlanSummary: String? = nil
     ) async throws {
-        try await database.asyncWrite { db in
-            guard var item = try InboxItem.filter(Column("uuid") == uuid).fetchOne(db) else { return }
+        let updated = try await database.asyncWrite { db -> InboxItem? in
+            guard var item = try InboxItem.filter(Column("uuid") == uuid).fetchOne(db) else { return nil }
             // Never resurrect a dismissed/actioned item — a slow classifier
             // result landing after the user triaged must not clobber status.
-            guard item.status == .pending || item.status == .classified else { return }
+            guard item.status == .pending || item.status == .classified else { return nil }
             item.classification = classification
             item.confidence = confidence
             item.title = title ?? item.title
@@ -152,43 +172,55 @@ class InboxRepository: ObservableObject {
             item.placementPlanSummary = placementPlanSummary
             item.status = .classified
             item.classifiedAt = ISO8601.string(from: Date())
+            Self.prepareTrackedUpdate(&item)
             try item.update(db)
+            return item
         }
+        await track(updated)
     }
 
     // MARK: - Actions
 
     func markActioned(uuid: String) async throws {
-        try await database.asyncWrite { db in
-            guard var item = try InboxItem.filter(Column("uuid") == uuid).fetchOne(db) else { return }
+        let updated = try await database.asyncWrite { db -> InboxItem? in
+            guard var item = try InboxItem.filter(Column("uuid") == uuid).fetchOne(db) else { return nil }
             item.status = .actioned
             item.actionedAt = ISO8601.string(from: Date())
+            Self.prepareTrackedUpdate(&item)
             try item.update(db)
+            return item
         }
+        await track(updated)
     }
 
     func dismiss(uuid: String) async throws {
-        try await database.asyncWrite { db in
-            guard var item = try InboxItem.filter(Column("uuid") == uuid).fetchOne(db) else { return }
+        let updated = try await database.asyncWrite { db -> InboxItem? in
+            guard var item = try InboxItem.filter(Column("uuid") == uuid).fetchOne(db) else { return nil }
             item.status = .dismissed
             item.actionedAt = ISO8601.string(from: Date())
+            Self.prepareTrackedUpdate(&item)
             try item.update(db)
+            return item
         }
+        await track(updated)
     }
 
     func markRead(uuid: String) async throws {
-        try await database.asyncWrite { db in
-            guard var item = try InboxItem.filter(Column("uuid") == uuid).fetchOne(db) else { return }
+        let updated = try await database.asyncWrite { db -> InboxItem? in
+            guard var item = try InboxItem.filter(Column("uuid") == uuid).fetchOne(db) else { return nil }
             item.isRead = true
+            Self.prepareTrackedUpdate(&item)
             try item.update(db)
+            return item
         }
+        await track(updated)
     }
 
     /// Merge keys into the item's JSON metadata column — used to persist a
     /// durable undo source (e.g. the pre-merge target body) before a merge.
     func updateMetadata(uuid: String, merging fields: [String: String]) async throws {
-        try await database.asyncWrite { db in
-            guard var item = try InboxItem.filter(Column("uuid") == uuid).fetchOne(db) else { return }
+        let updated = try await database.asyncWrite { db -> InboxItem? in
+            guard var item = try InboxItem.filter(Column("uuid") == uuid).fetchOne(db) else { return nil }
             var dict: [String: Any] = [:]
             if let existing = item.metadata,
                let data = existing.data(using: .utf8),
@@ -198,12 +230,14 @@ class InboxRepository: ObservableObject {
             for (key, value) in fields {
                 dict[key] = value
             }
-            if let data = try? JSONSerialization.data(withJSONObject: dict),
-               let merged = String(data: data, encoding: .utf8) {
-                item.metadata = merged
-                try item.update(db)
-            }
+            guard let data = try? JSONSerialization.data(withJSONObject: dict),
+                  let merged = String(data: data, encoding: .utf8) else { return nil }
+            item.metadata = merged
+            Self.prepareTrackedUpdate(&item)
+            try item.update(db)
+            return item
         }
+        await track(updated)
     }
 
     func fetch(uuid: String) async throws -> InboxItem? {
@@ -215,13 +249,30 @@ class InboxRepository: ObservableObject {
     }
 
     func restore(_ item: InboxItem) async throws {
-        try await database.asyncWrite { db in
-            if try InboxItem.filter(Column("uuid") == item.uuid).fetchOne(db) != nil {
-                try item.update(db)
+        let (saved, wasInsert) = try await database.asyncWrite { db -> (InboxItem, Bool) in
+            if var existing = try InboxItem.filter(Column("uuid") == item.uuid).fetchOne(db) {
+                // Carry the LIVE row's sync bookkeeping — the caller's snapshot
+                // may hold a stale _local_version from before later triage writes.
+                var restored = item
+                restored.id = existing.id
+                restored.localVersion = existing.localVersion
+                restored.serverVersion = existing.serverVersion
+                restored.syncVersion = existing.syncVersion
+                Self.prepareTrackedUpdate(&restored)
+                try restored.update(db)
+                existing = restored
+                return (existing, false)
             } else {
                 var mutable = item
+                mutable.syncUpdatedAt = ISO8601.string(from: Date())
                 try mutable.insert(db)
+                return (mutable, true)
             }
+        }
+        if wasInsert {
+            await ChangeTracker.shared.trackInsert(table: InboxItem.databaseTableName, entity: saved)
+        } else {
+            await track(saved)
         }
     }
 

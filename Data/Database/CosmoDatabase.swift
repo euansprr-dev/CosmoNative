@@ -2036,6 +2036,33 @@ class CosmoDatabase: ObservableObject {
             print("✅ canvas_drawings sync columns ensured")
         }
 
+        migrator.registerMigration("inbox_sync_columns") { db in
+            // The Inbox becomes a synced, local-first domain (July 2026): the
+            // triage queue, capture lanes, and lane captures sync Mac ↔ iPhone
+            // through the standard pipeline, which needs the version-tracking
+            // columns plus snake created_at/updated_at (pull cursors, tombstone
+            // comparisons, and ConflictResolver raw inserts read those).
+            for table in ["inbox_items", "capture_destinations", "captured_items"] {
+                for column in [
+                    "is_deleted INTEGER NOT NULL DEFAULT 0",
+                    "created_at TEXT",
+                    "updated_at TEXT",
+                    "synced_at TEXT",
+                    "_local_version INTEGER NOT NULL DEFAULT 1",
+                    "_server_version INTEGER NOT NULL DEFAULT 0",
+                    "_sync_version INTEGER NOT NULL DEFAULT 0",
+                    "_local_pending INTEGER NOT NULL DEFAULT 0",
+                ] {
+                    do {
+                        try db.execute(sql: "ALTER TABLE \(table) ADD COLUMN \(column)")
+                    } catch {
+                        // Column already exists
+                    }
+                }
+            }
+            print("✅ inbox sync columns ensured")
+        }
+
         return migrator
     }
 

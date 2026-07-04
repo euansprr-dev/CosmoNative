@@ -14,6 +14,7 @@
 
 import Foundation
 import GRDB
+import Combine
 
 @MainActor
 final class InboxIngestService {
@@ -42,7 +43,57 @@ final class InboxIngestService {
     private var taxonomyPassTask: Task<Void, Never>?
     private let taxonomyPassThrottle: TimeInterval = 10 * 60
 
+    // MARK: - Synced-in captures
+
+    private var syncObservationCancellable: AnyCancellable?
+
     private init() {}
+
+    /// Classification stays owned by this service's queue: captures created on
+    /// the iPhone arrive via sync as `.pending` rows written straight into
+    /// GRDB (never through `ingest`). Observe the repository and funnel them
+    /// into the same queue — idempotent, the drain re-fetches and re-checks
+    /// `.pending` before classifying, so stale or duplicate enqueues no-op.
+    private func startObservingSyncedCaptures() {
+        guard syncObservationCancellable == nil else { return }
+        syncObservationCancellable = inboxRepo.$items
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] items in
+                guard let self else { return }
+                for item in items where item.status == .pending {
+                    self.enqueueForClassification(item.uuid)
+                }
+            }
+    }
+
+    /// One-shot cloud backfill: rows created before the inbox became a synced
+    /// domain (July 2026) never went through tracked writes — queue them once
+    /// so the iPhone starts populated. Queue rows survive offline; the sync
+    /// engine retries until the Supabase tables exist.
+    private func backfillCloudSyncIfNeeded() {
+        let key = "inboxCloudBackfill_v1"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        Task { @MainActor in
+            do {
+                for item in try await self.inboxRepo.fetchActive() {
+                    await ChangeTracker.shared.trackInsert(table: InboxItem.databaseTableName, entity: item)
+                }
+                let lanes = try await CaptureDestinationRepository.shared.fetchActive()
+                let archived = (try? await CaptureDestinationRepository.shared.fetchArchived()) ?? []
+                for lane in lanes + archived {
+                    await ChangeTracker.shared.trackInsert(table: CaptureDestination.databaseTableName, entity: lane)
+                }
+                for capture in try await CapturedItemRepository.shared.fetchRecent(limit: 500) {
+                    await ChangeTracker.shared.trackInsert(table: CapturedItem.databaseTableName, entity: capture)
+                }
+                UserDefaults.standard.set(true, forKey: key)
+                print("📥 [InboxIngest] Cloud backfill queued (inbox items, lanes, lane captures)")
+            } catch {
+                // Flag stays unset — retried on next launch.
+                print("⚠️ [InboxIngest] Cloud backfill failed: \(error)")
+            }
+        }
+    }
 
     // MARK: - Ingest
 
@@ -249,6 +300,8 @@ final class InboxIngestService {
     /// match with ≥ 6 tokens on an atom created within the last 7 days —
     /// the old any-text/14-day rule false-positively killed real captures.
     func reconcileOnLaunch() {
+        startObservingSyncedCaptures()
+        backfillCloudSyncIfNeeded()
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {

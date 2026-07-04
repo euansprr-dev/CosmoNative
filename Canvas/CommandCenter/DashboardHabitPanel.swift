@@ -33,6 +33,13 @@ struct DashboardHabitPanel: View {
                 Text("Habits")
                     .font(DS.smallCaps)
                     .foregroundStyle(DS.commandCenterOrnamentText)
+                if !viewModel.habits.isEmpty {
+                    Text("\(viewModel.habits.filter(\.isTodayComplete).count) of \(viewModel.habits.count)")
+                        .font(DS.caption2.weight(.medium))
+                        .monospacedDigit()
+                        .foregroundStyle(DS.textMuted)
+                        .contentTransition(.numericText())
+                }
             }
 
             Spacer()

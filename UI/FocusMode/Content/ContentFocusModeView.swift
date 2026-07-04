@@ -1409,6 +1409,8 @@ struct ContentFocusModeView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .marginaliaLinkHover()
+            .help("Open the Cosmo Writing assistant")
             .accessibilityLabel("Open Cosmo Writing assistant")
 
             if !selectedText.isEmpty {
@@ -1489,6 +1491,8 @@ struct ContentFocusModeView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .marginaliaLinkHover()
+                .help("Pick a swipe to write against")
             }
 
             if !supportingSwipeAtoms.isEmpty {
@@ -1519,6 +1523,8 @@ struct ContentFocusModeView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .marginaliaLinkHover()
+            .help("Attach reference swipes to this piece")
         }
     }
 
@@ -1803,10 +1809,14 @@ struct ContentFocusModeView: View {
         let chars = counterValues.chars
         let isSelection = !selectedText.isEmpty
         return VStack(alignment: .center, spacing: 2) {
+            // The writer's odometer — numerals tick as you type instead of
+            // re-laying out (the surface system's living-count rule).
             HStack(spacing: DS.space8) {
                 Text("\(words)")
                     .font(DS.footnote.monospaced())
                     .foregroundStyle(focusTextMuted)
+                    .contentTransition(.numericText())
+                    .animation(ProMotionSprings.gentle, value: words)
                 Text(words == 1 ? "word" : "words")
                     .font(DS.dateSerif)
                     .italic()
@@ -1817,6 +1827,8 @@ struct ContentFocusModeView: View {
                 Text("\(chars)")
                     .font(DS.footnote.monospaced())
                     .foregroundStyle(focusTextMuted)
+                    .contentTransition(.numericText())
+                    .animation(ProMotionSprings.gentle, value: chars)
                 Text(chars == 1 ? "char" : "chars")
                     .font(DS.dateSerif)
                     .italic()

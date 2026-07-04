@@ -180,13 +180,20 @@ struct CommandCenterTodayTaskSections: Equatable {
 }
 
 enum CommandCenterTodayTaskSectioning {
+    /// Sections tasks for a single day page. Overdue is anchored to the *actual*
+    /// today (`today`), never the viewed day: tasks planned before today ride
+    /// along as Overdue only on today's page (matching iOS TodayEngine's
+    /// grammar). Any other day — past or future — shows only its own tasks, so
+    /// browsing ahead never brands today's still-live tasks as overdue.
     static func sectionTasks(
         _ tasks: [TaskViewModel],
         selectedDate: Date,
+        today: Date = Date(),
         calendar: Calendar = .current
     ) -> CommandCenterTodayTaskSections {
         let dayStart = calendar.startOfDay(for: selectedDate)
         let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart) ?? dayStart
+        let isViewingToday = calendar.isDate(selectedDate, inSameDayAs: today)
 
         var overdue: [TaskViewModel] = []
         var scheduled: [TaskViewModel] = []
@@ -205,7 +212,7 @@ enum CommandCenterTodayTaskSectioning {
             if let calendarStart = task.calendarStart(using: calendar) {
                 if calendarStart >= dayStart && calendarStart < dayEnd {
                     scheduled.append(task)
-                } else if calendarStart < dayStart,
+                } else if isViewingToday, calendarStart < dayStart,
                           !isSuppressedRecurringOverdue(task, repeatedTodayParents: recurrenceParentsWithSelectedDayInstance) {
                     overdue.append(task)
                 }
@@ -215,7 +222,7 @@ enum CommandCenterTodayTaskSectioning {
             guard let plannedDate = plannedDate(for: task) else { continue }
             let plannedDay = calendar.startOfDay(for: plannedDate)
 
-            if plannedDay < dayStart,
+            if isViewingToday, plannedDay < dayStart,
                !isSuppressedRecurringOverdue(task, repeatedTodayParents: recurrenceParentsWithSelectedDayInstance) {
                 overdue.append(task)
             } else if plannedDay >= dayStart && plannedDay < dayEnd {
@@ -978,6 +985,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
         let sections = CommandCenterTodayTaskSectioning.sectionTasks(
             activeTasks,
             selectedDate: selectedDate,
+            today: Date(),
             calendar: Calendar.current
         )
 

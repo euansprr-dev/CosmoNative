@@ -61,14 +61,13 @@ struct CommandCenterMasthead: View {
                         .foregroundStyle(DS.commandCenterTitleText)
 
                     HStack(spacing: DS.space8) {
-                        Image(systemName: viewModel.viewMode.icon)
-                            .font(DS.caption)
-                            .foregroundStyle(DS.commandCenterOrnamentText)
-
+                        // The editorial marginalia voice — the phone's serif
+                        // date line; counts tick instead of re-laying out.
                         Text(summaryText)
-                            .font(DS.callout)
-                            .foregroundStyle(DS.commandCenterSecondaryText)
+                            .font(DS.dateSerif)
+                            .foregroundStyle(DS.giltMuted)
                             .lineLimit(1)
+                            .contentTransition(.numericText())
 
                         if viewModel.viewMode == .today {
                             CommandCenterInboxChip()
@@ -79,8 +78,8 @@ struct CommandCenterMasthead: View {
 
                 VStack(alignment: .trailing, spacing: DS.space6) {
                     Text(dateContext)
-                        .font(DS.callout)
-                        .foregroundStyle(DS.commandCenterMutedText)
+                        .font(DS.dateSerif)
+                        .foregroundStyle(DS.giltMuted)
 
                     if viewModel.viewMode == .today {
                         todayDayNavigation
@@ -154,14 +153,11 @@ struct CommandCenterMasthead: View {
                         .foregroundStyle(DS.commandCenterTitleText)
 
                     HStack(spacing: DS.space8) {
-                        Image(systemName: viewModel.viewMode.icon)
-                            .font(DS.caption)
-                            .foregroundStyle(DS.commandCenterOrnamentText)
-
                         Text(summaryText)
-                            .font(DS.callout)
-                            .foregroundStyle(DS.commandCenterSecondaryText)
+                            .font(DS.dateSerif)
+                            .foregroundStyle(DS.giltMuted)
                             .lineLimit(1)
+                            .contentTransition(.numericText())
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -171,8 +167,9 @@ struct CommandCenterMasthead: View {
 
                 VStack(alignment: .trailing, spacing: DS.space6) {
                     Text(dateContext)
-                        .font(DS.callout)
-                        .foregroundStyle(DS.commandCenterMutedText)
+                        .font(DS.dateSerif)
+                        .foregroundStyle(DS.giltMuted)
+                        .contentTransition(.numericText())
 
                     upcomingRangeNavigation
                 }
@@ -194,14 +191,23 @@ struct CommandCenterMasthead: View {
                         viewModel.setUpcomingCalendarScope(scope)
                     }
                 } label: {
+                    // Selection is a soft accent wash + hairline (the pill
+                    // law) — never a gray fill.
+                    let isSelected = viewModel.upcomingCalendarScope == scope
                     Text(scope.label)
-                        .font(DS.subheadline).fontWeight(viewModel.upcomingCalendarScope == scope ? .semibold : .medium)
-                        .foregroundStyle(viewModel.upcomingCalendarScope == scope ? DS.text : DS.textSecondary)
+                        .font(DS.subheadline).fontWeight(isSelected ? .semibold : .medium)
+                        .foregroundStyle(isSelected ? DS.accent : DS.textSecondary)
                         .frame(width: 56, height: 28)
                         .background(
-                            viewModel.upcomingCalendarScope == scope ? DS.surfaceHover : Color.clear,
+                            isSelected ? DS.accent.opacity(0.12) : Color.clear,
                             in: .rect(cornerRadius: 8)
                         )
+                        .overlay {
+                            if isSelected {
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .stroke(DS.accent.opacity(0.3), lineWidth: 1)
+                            }
+                        }
                 }
                 .buttonStyle(.plain)
             }

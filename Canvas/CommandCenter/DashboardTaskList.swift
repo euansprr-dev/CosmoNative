@@ -128,11 +128,16 @@ struct DashboardTaskList: View {
             batchActionBar
         }
 
+        if !timedTodayEvents.isEmpty {
+            scheduleSection
+        }
+
         if !viewModel.overdueTasks.isEmpty {
             taskSection(
                 title: "Overdue",
                 tasks: viewModel.overdueTasks,
                 headerColor: DS.red,
+                isSemantic: true,
                 showReschedule: true,
                 section: .overdue
             )
@@ -147,9 +152,11 @@ struct DashboardTaskList: View {
             )
         }
 
+        // "To do", not "Today" — the page title already says Today; a section
+        // must never echo it (the duplicate-word law).
         if !viewModel.unscheduledTasks.isEmpty {
             taskSection(
-                title: "Today",
+                title: "To do",
                 tasks: viewModel.unscheduledTasks,
                 headerColor: DS.textSecondary,
                 section: .unscheduled
@@ -180,8 +187,9 @@ struct DashboardTaskList: View {
             ForEach(viewModel.completedTasksByDay, id: \.date) { dayGroup in
                 sectionHeader(
                     title: completedDayLabel(dayGroup.date),
-                    color: Calendar.current.isDateInToday(dayGroup.date) ? DS.green : DS.textSecondary,
-                    trailing: "\(dayGroup.tasks.count)"
+                    color: DS.green,
+                    trailing: "\(dayGroup.tasks.count)",
+                    isSemantic: Calendar.current.isDateInToday(dayGroup.date)
                 )
 
                 ForEach(dayGroup.tasks) { task in
@@ -316,6 +324,7 @@ struct DashboardTaskList: View {
         title: String,
         tasks: [TaskViewModel],
         headerColor: Color,
+        isSemantic: Bool = false,
         showReschedule: Bool = false,
         showAddRow: Bool = false,
         section: CommandCenterDashboardViewModel.TaskSection? = nil
@@ -324,6 +333,7 @@ struct DashboardTaskList: View {
             title: title,
             color: headerColor,
             trailing: tasks.isEmpty ? nil : "\(tasks.count)",
+            isSemantic: isSemantic,
             showReschedule: showReschedule
         )
 
@@ -402,35 +412,79 @@ struct DashboardTaskList: View {
         Spacer().frame(height: DS.space16)
     }
 
+    // MARK: - Schedule (fixed before flexible — today's calendar givens
+    // anchor the day before the tasks you choose; the iOS CalendarStrip
+    // grammar at desktop density. Events only: scheduled tasks have their
+    // own section below, and the CosmoOS mirror calendar is already skipped
+    // by CalendarSyncService.)
+
+    private var timedTodayEvents: [CalendarEvent] {
+        guard viewModel.viewMode == .today else { return [] }
+        return viewModel.todayEvents.filter { !$0.isAllDay }
+    }
+
+    @ViewBuilder
+    private var scheduleSection: some View {
+        sectionHeader(
+            title: "Schedule",
+            color: DS.textSecondary,
+            trailing: "\(timedTodayEvents.count)"
+        )
+
+        ForEach(timedTodayEvents) { event in
+            scheduleRow(event)
+        }
+    }
+
+    private func scheduleRow(_ event: CalendarEvent) -> some View {
+        let isNow = (event.startDate...event.endDate).contains(Date())
+        return HStack(spacing: DS.space10) {
+            RoundedRectangle(cornerRadius: 1.5)
+                .fill(Color(nsColor: event.calendarColor))
+                .frame(width: 3, height: 24)
+
+            Text(event.title)
+                .font(DS.callout.weight(.medium))
+                .foregroundStyle(DS.text)
+                .lineLimit(1)
+
+            Text("\(event.startDate, format: .dateTime.hour().minute()) – \(event.endDate, format: .dateTime.hour().minute())")
+                .font(DS.caption2)
+                .foregroundStyle(DS.textMuted)
+                .monospacedDigit()
+
+            if isNow {
+                Text("Now")
+                    .font(DS.caption2.weight(.semibold))
+                    .foregroundStyle(Color(nsColor: event.calendarColor))
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, DS.space10)
+        .padding(.vertical, DS.space4)
+        .help("\(event.calendarName) · \(event.durationMinutes)m")
+        .accessibilityElement(children: .combine)
+    }
+
     // MARK: - Section Header
 
+    /// The one header voice (peakui): small-caps label — gilt by default,
+    /// tinted for semantic sections (Overdue red) — live count, ledger rule,
+    /// and section actions docked in the trailing slot.
     @ViewBuilder
     private func sectionHeader(
         title: String,
         color: Color,
         trailing: String? = nil,
+        isSemantic: Bool = false,
         showReschedule: Bool = false
     ) -> some View {
-        HStack(spacing: 6) {
-            Text(title)
-                .font(DS.caption).fontWeight(.semibold)
-                .foregroundStyle(color)
-
-            if let trailing {
-                Text(trailing)
-                    .font(DS.caption2).fontWeight(.medium)
-                    .monospacedDigit()
-                    .foregroundStyle(color.opacity(0.62))
-            }
-
-            // Anchoring line — extends to right edge like a ledger rule
-            Rectangle()
-                .fill(DS.commandCenterSeparator)
-                .frame(height: 0.5)
-                .padding(.leading, DS.space8)
-
-            Spacer(minLength: 0)
-
+        CosmoSectionHeader(
+            label: title,
+            detail: trailing,
+            tint: isSemantic ? color : nil
+        ) {
             if showReschedule {
                 CommandCenterComposerTrigger(composer: composer, alignment: .trailing) { anchor in
                     // Row ids ("uuid" or "uuid#day") so recurring occurrences reschedule via
@@ -525,6 +579,9 @@ struct DashboardTaskList: View {
             .padding(.horizontal, rowChromeInset)
         )
         .overlay(alignment: .bottom) { rowPriorityWash(task, isAnimatingCompletion: isAnimatingCompletion) }
+        // Completed work recedes as a group on Today — remaining tasks own
+        // the list. (Logbook keeps full strength; it's a list OF completed.)
+        .opacity(task.isCompleted && !isAnimatingCompletion && viewModel.viewMode == .today ? 0.7 : 1)
         .animation(.easeOut(duration: 0.12), value: isHovered)
         .animation(.easeOut(duration: 0.12), value: isKeyboardSelected)
         .scaleEffect(completionState?.rowScale ?? 1)

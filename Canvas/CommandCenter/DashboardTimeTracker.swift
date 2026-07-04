@@ -1,6 +1,8 @@
 // Canvas/CommandCenter/DashboardTimeTracker.swift
-// Compact macOS command strip for time tracking
-// March 2026
+// The Today hero: the Books-grammar deep-work gauge, laid out for a wide
+// desktop column — arc left, week/streak/actions right. Same semantics as the
+// iPhone's FocusGaugeCard (same synced goal atom, same streak math via
+// FocusStreakEngine), Mac manners: hover lift, tooltips, Space to start.
 
 import SwiftUI
 
@@ -8,87 +10,261 @@ struct DashboardTimeTracker: View {
 
     @ObservedObject var viewModel: CommandCenterDashboardViewModel
     @ObservedObject private var sessionEngine = DeepWorkSessionEngine.shared
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    @State private var goalMinutes = FocusStreakEngine.defaultGoalMinutes
+    @State private var week: [FocusDay] = []
+    @State private var streak: (current: Int, best: Int) = (0, 0)
+    @State private var startHovered = false
+
+    /// Books' arc: just past a half circle, open at the bottom — desktop scale.
+    private static let arcSpan = 0.56
+    private static let arcDiameter: CGFloat = 180
+    private static let arcStroke: CGFloat = 8
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DS.space8) {
-            compactCommandStrip
-
-            if let session = sessionEngine.activeSession {
-                activeTimerCard(session)
-            }
+        HStack(alignment: .center, spacing: DS.space24) {
+            gauge
+            rightColumn
+        }
+        .padding(.horizontal, DS.space16)
+        .padding(.vertical, DS.space12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .animation(ProMotionSprings.focusTransition, value: sessionEngine.activeSession != nil)
+        .task { await loadStreaks() }
+        .onChange(of: viewModel.todayTrackedMinutes) { _, _ in
+            Task { await loadStreaks() }
         }
     }
 
-    private var compactCommandStrip: some View {
-        HStack(spacing: DS.space12) {
-            HStack(spacing: DS.space8) {
-                Image(systemName: "timer")
-                    .font(DS.caption)
-                    .foregroundStyle(DS.commandCenterOrnamentText)
+    // MARK: - Live math
 
-                Text("Time Tracking")
-                    .font(DS.smallCaps)
-                    .foregroundStyle(DS.commandCenterOrnamentText)
+    /// Today's total in seconds — persisted history plus the running sitting.
+    private var liveTotalSeconds: Int {
+        var total = viewModel.todayTrackedMinutes * 60
+        if let session = sessionEngine.activeSession {
+            total += Int(session.elapsedActiveSeconds)
+        }
+        return total
+    }
 
-                Text(formattedTodayTotal)
-                    .font(DS.callout).fontWeight(.semibold).monospacedDigit()
+    private var liveGoalMet: Bool {
+        goalMinutes > 0 && liveTotalSeconds >= goalMinutes * 60
+    }
+
+    private var arcProgress: Double {
+        guard goalMinutes > 0 else { return 0 }
+        return min(1, Double(liveTotalSeconds) / Double(goalMinutes * 60))
+    }
+
+    // MARK: - Gauge (arc + numerals)
+
+    private var gauge: some View {
+        TimelineView(.periodic(from: .now, by: sessionEngine.isTimerRunning ? 1 : 60)) { _ in
+            ZStack {
+                gaugeCircle(trim: Self.arcSpan)
+                    .stroke(DS.borderSubtle, style: StrokeStyle(lineWidth: Self.arcStroke, lineCap: .round))
+                gaugeCircle(trim: Self.arcSpan * arcProgress)
+                    .stroke(DS.accent, style: StrokeStyle(lineWidth: Self.arcStroke, lineCap: .round))
+                    .animation(reduceMotion ? nil : ProMotionSprings.gentle, value: arcProgress)
+
+                centerContent
+            }
+            .frame(width: Self.arcDiameter, height: Self.arcDiameter * 0.72)
+        }
+    }
+
+    /// An arc of `trim` of the circle, centered on 12 o'clock.
+    private func gaugeCircle(trim: Double) -> some Shape {
+        Circle()
+            .trim(from: 0, to: trim)
+            .rotation(.degrees(-90 - Self.arcSpan * 360 / 2))
+            .offsetShape(dy: Self.arcDiameter * 0.14)
+    }
+
+    private var centerContent: some View {
+        VStack(spacing: DS.space2) {
+            HStack(alignment: .firstTextBaseline, spacing: DS.space4) {
+                Text(formattedLiveTotal)
+                    .font(.system(size: 30, weight: .medium, design: .serif))
+                    .monospacedDigit()
                     .foregroundStyle(DS.text)
+                    .contentTransition(.numericText())
+                if liveGoalMet {
+                    Image(systemName: "checkmark")
+                        .font(DS.caption.weight(.semibold))
+                        .foregroundStyle(DS.gilt)
+                        .transition(.scale(scale: 0.5).combined(with: .opacity))
+                }
+            }
 
-                Text("today")
+            Button {
+                withAnimation(ProMotionSprings.snappy) { viewModel.showReports = true }
+            } label: {
+                HStack(spacing: DS.space2) {
+                    Text("of your \(goalLabel) goal")
+                        .lineLimit(1)
+                    Image(systemName: "chevron.right")
+                        .font(DS.caption2.weight(.semibold))
+                }
+                .font(DS.caption)
+                .foregroundStyle(DS.textSecondary)
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .help("Open reports")
+        }
+        // Hard-cap the column well inside the stroke and shrink before ever
+        // touching it — the text block always keeps air from the arc.
+        .minimumScaleFactor(0.7)
+        .allowsTightening(true)
+        .frame(maxWidth: Self.arcDiameter - 64)
+        .offset(y: Self.arcDiameter * 0.10)
+    }
+
+    private var goalLabel: String {
+        if goalMinutes % 60 == 0 {
+            return goalMinutes == 60 ? "1-hour" : "\(goalMinutes / 60)-hour"
+        }
+        return "\(goalMinutes)-minute"
+    }
+
+    private var formattedLiveTotal: String {
+        let total = liveTotalSeconds
+        let hours = total / 3600
+        let mins = (total % 3600) / 60
+        let secs = total % 60
+        if sessionEngine.isTimerRunning {
+            return hours > 0
+                ? String(format: "%d:%02d:%02d", hours, mins, secs)
+                : String(format: "%d:%02d", mins, secs)
+        }
+        return hours > 0 ? "\(hours)h \(mins)m" : "\(mins)m"
+    }
+
+    // MARK: - Right column (label, week, streak, actions)
+
+    private var rightColumn: some View {
+        VStack(alignment: .leading, spacing: DS.space10) {
+            Text("Today's Deep Work")
+                .font(DS.smallCaps)
+                .foregroundStyle(DS.giltMuted)
+
+            HStack(spacing: DS.space8) {
+                weekDots
+                Text(streakLine)
                     .font(DS.caption)
                     .foregroundStyle(DS.textMuted)
+                    .contentTransition(.numericText())
             }
+
+            actionRow
 
             if !viewModel.todayIntentSummaries.isEmpty {
                 intentBreakdownBar
-                    .frame(width: 140)
+                    .frame(width: 180)
             }
-
-            Spacer(minLength: DS.space16)
-
-            primaryAction
         }
-        .padding(.horizontal, DS.space10)
-        .padding(.vertical, DS.space8)
-        .background {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(DS.commandChromePanelFill)
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(DS.commandChromeBorder, lineWidth: 0.5)
-        }
-        .dsRestingShadow()
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    @ViewBuilder
-    private var primaryAction: some View {
-        if sessionEngine.activeSession != nil {
-            if sessionEngine.isTimerRunning {
-                commandButton(title: "Pause", icon: "pause.fill", isProminent: false) {
-                    sessionEngine.pauseSession()
-                }
-            } else {
-                commandButton(title: "Resume", icon: "play.fill", isProminent: true) {
-                    sessionEngine.resumeSession()
-                }
+    private var weekDots: some View {
+        HStack(spacing: DS.space6) {
+            ForEach(week) { day in
+                weekDot(day)
             }
+        }
+    }
+
+    private func weekDot(_ day: FocusDay) -> some View {
+        let isToday = Calendar.current.isDateInToday(day.date)
+        let met = day.met || (isToday && liveGoalMet)
+        return Button {
+            withAnimation(ProMotionSprings.snappy) { viewModel.showReports = true }
+        } label: {
+            Text(weekdayInitial(day.date))
+                .font(DS.caption2.weight(isToday ? .bold : .medium))
+                .foregroundStyle(met ? DS.textOnAccent : (isToday ? DS.text : DS.textMuted))
+                .frame(width: 22, height: 22)
+                .background(met ? AnyShapeStyle(DS.accent) : AnyShapeStyle(DS.glassSectionFill))
+                .clipShape(.circle)
+                .overlay {
+                    if isToday && !met {
+                        Circle().stroke(DS.text.opacity(0.5), lineWidth: 1)
+                    } else if !met {
+                        Circle().stroke(DS.borderSubtle, lineWidth: 0.5)
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+        .help("\(day.date.formatted(.dateTime.weekday(.wide))) — \(day.minutes)m focused")
+        .animation(ProMotionSprings.snappy, value: met)
+    }
+
+    private func weekdayInitial(_ date: Date) -> String {
+        let symbols = Calendar.current.veryShortWeekdaySymbols
+        let index = Calendar.current.component(.weekday, from: date) - 1
+        return symbols.indices.contains(index) ? symbols[index] : ""
+    }
+
+    private var streakLine: String {
+        if streak.current > 0 {
+            let days = streak.current == 1 ? "day" : "days"
+            return streak.best > streak.current
+                ? "\(streak.current)-day streak · best \(streak.best)"
+                : "\(streak.current) \(days) and counting"
+        }
+        if streak.best > 0 {
+            return "Best streak \(streak.best) days"
+        }
+        return "Meet your goal to start a streak"
+    }
+
+    // MARK: - Action row
+
+    @ViewBuilder
+    private var actionRow: some View {
+        if let session = sessionEngine.activeSession {
+            activeSessionRow(session)
         } else {
-            commandButton(
-                title: focusCandidate == nil ? "Select a task" : "Start focus",
-                icon: "play.fill",
-                isProminent: focusCandidate != nil
-            ) {
-                guard let task = focusCandidate else { return }
-                viewModel.startFocusSession(for: task)
-            }
-            .disabled(focusCandidate == nil)
-            .opacity(focusCandidate == nil ? 0.55 : 1)
+            startFocusButton
         }
     }
 
+    private var startFocusButton: some View {
+        Button {
+            guard let task = focusCandidate else { return }
+            viewModel.startFocusSession(for: task)
+        } label: {
+            HStack(spacing: DS.space6) {
+                Image(systemName: "play.fill")
+                    .font(DS.caption2)
+                Text(focusCandidate == nil ? "Select a task" : "Start focus")
+                    .font(DS.caption.weight(.semibold))
+            }
+            .foregroundStyle(focusCandidate == nil ? DS.textSecondary : DS.textOnAccent)
+            .padding(.horizontal, DS.space12)
+            .padding(.vertical, DS.space8)
+            .background(focusCandidate == nil ? DS.glassInputFill : DS.accent, in: Capsule())
+            .overlay(
+                Capsule().stroke(
+                    focusCandidate == nil ? DS.glassBorder : DS.accent.opacity(0.25),
+                    lineWidth: 0.5
+                )
+            )
+            .scaleEffect(startHovered && focusCandidate != nil ? 1.02 : 1)
+        }
+        .buttonStyle(.plain)
+        .disabled(focusCandidate == nil)
+        .opacity(focusCandidate == nil ? 0.6 : 1)
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) { startHovered = hovering }
+        }
+        .help("Start a focus session on the selected task (Space)")
+    }
+
     @ViewBuilder
-    private func activeTimerCard(_ session: ActiveDeepWorkSession) -> some View {
+    private func activeSessionRow(_ session: ActiveDeepWorkSession) -> some View {
         let intentPresentation = viewModel.resolvedIntentPresentation(
             intentUUID: session.intentUUID,
             legacyIntentRaw: session.intent.rawValue
@@ -98,108 +274,70 @@ struct DashboardTimeTracker: View {
         let categoryIcon = habit?.icon ?? intentPresentation.icon
         let categoryAccent = habit?.accent ?? intentPresentation.accent
         let categoryTitle = habit?.title ?? intentPresentation.title
-        let secondaryTitle: String? = (habit != nil && !intentPresentation.isUnassigned) ? intentPresentation.title : nil
 
-        VStack(alignment: .leading, spacing: DS.space10) {
-            HStack(spacing: DS.space8) {
-                Image(systemName: categoryIcon)
-                    .font(DS.caption)
-                    .foregroundStyle(categoryAccent)
-                    .frame(width: 18)
+        HStack(spacing: DS.space10) {
+            Image(systemName: categoryIcon)
+                .font(DS.caption)
+                .foregroundStyle(categoryAccent)
+                .frame(width: 18)
 
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(session.taskTitle)
-                        .font(DS.callout)
-                        .foregroundStyle(DS.text)
-                        .lineLimit(1)
-
-                    HStack(spacing: DS.space6) {
-                        Text(categoryTitle)
-                            .font(DS.caption2)
-                            .foregroundStyle(categoryAccent)
-
-                        if let secondaryTitle {
-                            Text(secondaryTitle)
-                                .font(DS.caption2)
-                                .foregroundStyle(DS.textMuted)
-                        }
-                    }
-                }
-
-                Spacer()
-
+            VStack(alignment: .leading, spacing: 1) {
+                Text(session.taskTitle)
+                    .font(DS.callout.weight(.medium))
+                    .foregroundStyle(DS.text)
+                    .lineLimit(1)
                 HStack(spacing: DS.space6) {
+                    Text(categoryTitle)
+                        .font(DS.caption2)
+                        .foregroundStyle(categoryAccent)
                     Circle()
                         .fill(focusScoreColor)
-                        .frame(width: 6, height: 6)
-
+                        .frame(width: 5, height: 5)
                     Text("\(Int(sessionEngine.focusScore))%")
                         .font(DS.caption2)
                         .foregroundStyle(DS.textSecondary)
                 }
             }
 
-            HStack(spacing: DS.space12) {
-                TimelineView(.periodic(from: .now, by: 1)) { _ in
-                    Text(formattedElapsedTime)
-                        .font(DS.monoTabular)
-                        .foregroundStyle(DS.text)
-                }
+            Spacer(minLength: DS.space12)
 
-                Spacer()
-
-                HStack(spacing: DS.space8) {
-                    if sessionEngine.isTimerRunning {
-                        iconControlButton(icon: "pause.fill", color: DS.text, bg: DS.commandChromeControlFill) {
-                            sessionEngine.pauseSession()
-                        }
-                    } else {
-                        iconControlButton(icon: "play.fill", color: DS.textOnAccent, bg: DS.accent) {
-                            sessionEngine.resumeSession()
-                        }
-                    }
-
-                    iconControlButton(icon: "stop.fill", color: DS.red, bg: DS.redSoft.opacity(0.7)) {
-                        Task { await sessionEngine.endSession() }
-                    }
-                }
-            }
-        }
-        .padding(DS.space12)
-        .background(DS.glassCardFill, in: .rect(cornerRadius: 10))
-        .commandCenterCardLift(cornerRadius: 10, restingBorder: DS.glassBorder)
-    }
-
-    private func commandButton(title: String, icon: String, isProminent: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
             HStack(spacing: DS.space6) {
-                Image(systemName: icon)
-                    .font(DS.caption2)
-                Text(title)
-                    .font(DS.caption)
+                if sessionEngine.isTimerRunning {
+                    iconControlButton(icon: "pause.fill", color: DS.text, bg: DS.glassInputFill, help: "Pause (Space)") {
+                        sessionEngine.pauseSession()
+                    }
+                } else {
+                    iconControlButton(icon: "play.fill", color: DS.textOnAccent, bg: DS.accent, help: "Resume (Space)") {
+                        sessionEngine.resumeSession()
+                    }
+                }
+                iconControlButton(icon: "stop.fill", color: DS.red, bg: DS.redSoft.opacity(0.7), help: "End session") {
+                    Task { await sessionEngine.endSession() }
+                }
             }
-            .foregroundStyle(isProminent ? DS.textOnAccent : DS.textSecondary)
-            .padding(.horizontal, DS.space10)
-            .padding(.vertical, DS.space6)
-            .background(isProminent ? DS.accent : DS.glassInputFill, in: Capsule())
-            .overlay(
-                Capsule()
-                    .stroke(isProminent ? DS.accent.opacity(0.25) : DS.glassBorder, lineWidth: 0.5)
-            )
         }
-        .buttonStyle(.plain)
+        .frame(maxWidth: 420, alignment: .leading)
     }
 
-    private func iconControlButton(icon: String, color: Color, bg: Color, action: @escaping () -> Void) -> some View {
+    private func iconControlButton(
+        icon: String,
+        color: Color,
+        bg: Color,
+        help: String,
+        action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
             Image(systemName: icon)
                 .font(DS.caption)
                 .foregroundStyle(color)
-                .frame(width: 28, height: 28)
+                .frame(width: 26, height: 26)
                 .background(bg, in: Circle())
         }
         .buttonStyle(.plain)
+        .help(help)
     }
+
+    // MARK: - Intent breakdown
 
     private var intentBreakdownBar: some View {
         GeometryReader { geo in
@@ -212,8 +350,8 @@ struct DashboardTimeTracker: View {
                 }
             }
         }
-        .frame(height: 5)
-        .clipShape(.rect(cornerRadius: 2.5))
+        .frame(height: 4)
+        .clipShape(.rect(cornerRadius: 2))
     }
 
     private var sortedIntentEntries: [(key: IntentSummary, value: Int)] {
@@ -230,7 +368,6 @@ struct DashboardTimeTracker: View {
                 return selected
             }
         }
-
         return viewModel.currentVisibleTasks.first { !$0.isCompleted }
     }
 
@@ -241,31 +378,31 @@ struct DashboardTimeTracker: View {
         return DS.red
     }
 
-    private var formattedElapsedTime: String {
-        let totalSeconds: Int
-        if let session = sessionEngine.activeSession {
-            totalSeconds = Int(session.elapsedActiveSeconds)
-        } else {
-            totalSeconds = 0
-        }
+    // MARK: - Data
 
-        let hours = totalSeconds / 3600
-        let mins = (totalSeconds % 3600) / 60
-        let secs = totalSeconds % 60
-
-        if hours > 0 {
-            return String(format: "%d:%02d:%02d", hours, mins, secs)
-        }
-        return String(format: "%02d:%02d", mins, secs)
+    private func loadStreaks() async {
+        let engine = FocusStreakEngine()
+        goalMinutes = ((try? await engine.dailyFocusGoalMinutes()) ?? nil) ?? FocusStreakEngine.defaultGoalMinutes
+        week = (try? await engine.focusWeek(goal: goalMinutes)) ?? []
+        streak = (try? await engine.focusStreaks(goal: goalMinutes)) ?? (0, 0)
     }
+}
 
-    private var formattedTodayTotal: String {
-        let total = viewModel.todayTrackedMinutes
-        let hours = total / 60
-        let mins = total % 60
-        if hours > 0 {
-            return "\(hours)h \(mins)m"
-        }
-        return "\(mins)m"
+// MARK: - Shape offset helper
+
+private extension Shape {
+    /// Translate a shape vertically inside its frame — pulls the open-bottom
+    /// arc down so its visual weight centers in the band.
+    func offsetShape(dy: CGFloat) -> some Shape {
+        OffsetShape(shape: AnyShape(self), dy: dy)
+    }
+}
+
+private struct OffsetShape: Shape {
+    let shape: AnyShape
+    let dy: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        shape.path(in: rect).offsetBy(dx: 0, dy: dy)
     }
 }

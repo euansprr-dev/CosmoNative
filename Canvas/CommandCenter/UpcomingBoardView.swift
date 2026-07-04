@@ -647,7 +647,7 @@ private struct UpcomingTimelineCalendarView: View {
             ForEach(0...24, id: \.self) { hour in
                 HStack(spacing: 0) {
                     Text(hourLabel(hour))
-                        .font(DS.caption).monospacedDigit()
+                        .font(DS.caption2.weight(.medium)).monospacedDigit()
                         .foregroundStyle(DS.textMuted)
                         .frame(width: CommandCenterCalendarLayout.timeRailWidth - DS.space8, alignment: .trailing)
                         .padding(.trailing, DS.space8)
@@ -742,21 +742,23 @@ private struct UpcomingTimelineCalendarView: View {
             if let todayIndex = dates.firstIndex(where: { Calendar.current.isDateInToday($0) }) {
                 let today = Calendar.current.startOfDay(for: context.date)
                 let y = CommandCenterCalendarLayout.yOffset(for: context.date, dayStart: today)
+                // Accent, not red — red is reserved for overdue. The now line
+                // is the same voice as the iPhone planner's.
                 HStack(spacing: 0) {
                     Text(nowLabel(context.date))
                         .font(DS.caption2).fontWeight(.bold).monospacedDigit()
                         .foregroundStyle(DS.textOnAccent)
                         .padding(.horizontal, DS.space4)
                         .frame(height: 18)
-                        .background(DS.red, in: Capsule())
+                        .background(DS.accent, in: Capsule())
 
                     Circle()
-                        .fill(DS.red)
+                        .fill(DS.accent)
                         .frame(width: 7, height: 7)
 
                     Rectangle()
-                        .fill(DS.red.opacity(0.9))
-                        .frame(width: dayWidth - DS.space8, height: 1.2)
+                        .fill(DS.accent.opacity(0.9))
+                        .frame(width: dayWidth - DS.space8, height: 1.5)
                 }
                 .offset(
                     x: CommandCenterCalendarLayout.timeRailWidth - 38 + CGFloat(todayIndex) * dayWidth,
@@ -828,9 +830,10 @@ private struct CalendarDayHeaderCell: View {
 
     var body: some View {
         VStack(spacing: DS.space2) {
+            // The iPhone week-strip voice: quiet weekday above the numeral.
             Text(weekdayText)
-                .font(DS.subheadline).fontWeight(.semibold)
-                .foregroundStyle(isToday ? DS.accent : DS.textSecondary)
+                .font(DS.caption2).fontWeight(.medium)
+                .foregroundStyle(isToday ? DS.accent : DS.textMuted)
 
             Text(dayText)
                 .font(DS.headline)
@@ -1031,9 +1034,10 @@ private struct CalendarEntryBlock: View {
             VStack(alignment: .leading, spacing: density == .compact ? 0 : DS.space2) {
                 HStack(spacing: DS.space4) {
                     if entry.isCompletedTask {
-                        Image(systemName: "checkmark.circle.fill")
+                        // The seal — the day's small win, same stamp as the phone.
+                        Image(systemName: "checkmark.seal.fill")
                             .font(DS.caption2)
-                            .foregroundStyle(entry.accent.opacity(0.7))
+                            .foregroundStyle(entry.accent.opacity(0.8))
                             .accessibilityLabel("Completed")
                     }
 
@@ -1072,8 +1076,11 @@ private struct CalendarEntryBlock: View {
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .fill(blockFill)
 
+            // Vellum wash: external events carry their calendar's color a
+            // touch stronger (the iPhone planner's event fill); Cosmo blocks
+            // stay quieter — the accent hairline carries their identity.
             RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(entry.accent.opacity(entry.source == .draft ? 0.10 : 0.045))
+                .fill(entry.accent.opacity(washOpacity))
         }
         .overlay(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
@@ -1088,6 +1095,11 @@ private struct CalendarEntryBlock: View {
     private var blockFill: Color {
         if entry.source == .draft { return DS.glassSectionFill }
         return DS.glassCardFill
+    }
+
+    private var washOpacity: Double {
+        if entry.source == .draft { return 0.10 }
+        return entry.event?.isExternal == true ? 0.10 : 0.06
     }
 
     private var borderColor: Color {

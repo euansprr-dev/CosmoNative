@@ -196,6 +196,7 @@ final class CommandCenterCalendarLayoutTests: XCTestCase {
         let sections = CommandCenterTodayTaskSectioning.sectionTasks(
             [plannedToday, plannedTomorrow, noPlannedDay],
             selectedDate: today,
+            today: today,
             calendar: calendar
         )
 
@@ -250,6 +251,7 @@ final class CommandCenterCalendarLayoutTests: XCTestCase {
         let sections = CommandCenterTodayTaskSectioning.sectionTasks(
             [staleTimedTask],
             selectedDate: today,
+            today: today,
             calendar: calendar
         )
 
@@ -271,6 +273,7 @@ final class CommandCenterCalendarLayoutTests: XCTestCase {
         let sections = CommandCenterTodayTaskSectioning.sectionTasks(
             [todayTask, scheduled, overdue, future],
             selectedDate: today,
+            today: today,
             calendar: calendar
         )
 
@@ -308,11 +311,57 @@ final class CommandCenterCalendarLayoutTests: XCTestCase {
         let sections = CommandCenterTodayTaskSectioning.sectionTasks(
             [oldRecurring, todayRecurring, normalOverdue, otherRecurring],
             selectedDate: today,
+            today: today,
             calendar: calendar
         )
 
         XCTAssertEqual(sections.scheduled.map(\.uuid), ["today-recurring"])
         XCTAssertEqual(Set(sections.overdue.map(\.uuid)), ["other-recurring", "normal-overdue"])
+    }
+
+    func testFutureDaySectionsNeverMarkTodayTasksOverdue() throws {
+        let today = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 5, day: 2)))
+        let yesterday = try XCTUnwrap(calendar.date(byAdding: .day, value: -1, to: today))
+        let tomorrow = try XCTUnwrap(calendar.date(byAdding: .day, value: 1, to: today))
+
+        let plannedToday = task("today", title: "Untimed today", whenDate: today)
+        let timedToday = task(
+            "timed-today",
+            title: "Timed today",
+            scheduledStart: try XCTUnwrap(calendar.date(byAdding: .hour, value: 9, to: today))
+        )
+        let trulyOverdue = task("overdue", title: "Untimed yesterday", whenDate: yesterday)
+        let plannedTomorrow = task("tomorrow", title: "Untimed tomorrow", whenDate: tomorrow)
+
+        let sections = CommandCenterTodayTaskSectioning.sectionTasks(
+            [plannedToday, timedToday, trulyOverdue, plannedTomorrow],
+            selectedDate: tomorrow,
+            today: today,
+            calendar: calendar
+        )
+
+        XCTAssertTrue(sections.overdue.isEmpty, "Browsing a future day must never brand live tasks as overdue")
+        XCTAssertTrue(sections.scheduled.isEmpty)
+        XCTAssertEqual(sections.unscheduled.map(\.uuid), ["tomorrow"])
+    }
+
+    func testPastDaySectionsShowOnlyThatDaysTasksWithoutOverdue() throws {
+        let today = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 5, day: 2)))
+        let yesterday = try XCTUnwrap(calendar.date(byAdding: .day, value: -1, to: today))
+        let twoDaysAgo = try XCTUnwrap(calendar.date(byAdding: .day, value: -2, to: today))
+
+        let onThatDay = task("yesterday", title: "Yesterday task", whenDate: yesterday)
+        let older = task("older", title: "Older task", whenDate: twoDaysAgo)
+
+        let sections = CommandCenterTodayTaskSectioning.sectionTasks(
+            [onThatDay, older],
+            selectedDate: yesterday,
+            today: today,
+            calendar: calendar
+        )
+
+        XCTAssertTrue(sections.overdue.isEmpty, "Overdue belongs to today's page only")
+        XCTAssertEqual(sections.unscheduled.map(\.uuid), ["yesterday"])
     }
 
     func testDateSelectionAdvancesWhenViewingPreviousCurrentDayAtMidnight() throws {

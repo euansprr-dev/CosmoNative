@@ -53,15 +53,43 @@ struct MarginaliaLabel: View {
                 .fill(marginaliaRuleColor)
                 .frame(height: 0.5)
             if let countText {
+                // Counts are alive (the surface-system reward loop): they tick
+                // with the work instead of re-laying out.
                 Text(countText)
                     .font(.system(size: 9, weight: .regular, design: .monospaced))
                     .foregroundStyle(DS.inkFaded)
+                    .contentTransition(.numericText())
+                    .animation(ProMotionSprings.gentle, value: countText)
             }
         }
     }
 
     private var marginaliaRuleColor: Color {
         DS.usesImmersiveFocusAppearance ? DS.focusImmersiveBorder.opacity(0.9) : DS.sepiaSubtle
+    }
+}
+
+// MARK: - Marginalia link hover
+
+/// The one hover treatment for the serif arrow-links in the gutters
+/// ("open assistant →", "select blueprint →"): ink deepens and the link leans
+/// forward a hair — life without chrome, per the manners pass.
+struct MarginaliaLinkHover: ViewModifier {
+    @State private var isHovered = false
+
+    func body(content: Content) -> some View {
+        content
+            .brightness(isHovered ? -0.06 : 0)
+            .offset(x: isHovered ? 1 : 0)
+            .onHover { hovering in
+                withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+            }
+    }
+}
+
+extension View {
+    func marginaliaLinkHover() -> some View {
+        modifier(MarginaliaLinkHover())
     }
 }
 

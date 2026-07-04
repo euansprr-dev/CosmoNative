@@ -11,6 +11,8 @@ struct CommandCenterDashboard: View {
     @State private var contextProvider: CommandCenterContextProvider
     @State private var composer = CommandCenterComposerController()
     @State private var selectedTaskForDetail: TaskViewModel?
+    /// First-load arrival choreography — the page assembles once, never loops.
+    @State private var hasAppeared = false
     @Environment(\.isPaneContext) private var isPaneContext
     @Environment(\.isPaneContextOwner) private var isPaneContextOwner
     private let showsInternalSidebar: Bool
@@ -43,6 +45,12 @@ struct CommandCenterDashboard: View {
                 await viewModel.loadAnytimeTasks()
                 await viewModel.loadSomedayTasks()
                 publishCommandCenterContext()
+                if !hasAppeared {
+                    // One frame at rest, then the cascade — flipped in the
+                    // same update, sections would mount already-visible.
+                    try? await Task.sleep(for: .milliseconds(16))
+                    hasAppeared = true
+                }
             }
             .onAppear(perform: publishCommandCenterContext)
             .onChange(of: isPaneContextOwner) { _, _ in publishCommandCenterContext() }
@@ -127,6 +135,7 @@ struct CommandCenterDashboard: View {
             CommandCenterMasthead(viewModel: viewModel)
 
             DashboardTimeTracker(viewModel: viewModel)
+                .cascadeIn(hasAppeared, index: 0)
 
             gradientDivider
 
@@ -136,6 +145,7 @@ struct CommandCenterDashboard: View {
                     viewModel.showReports = false
                 }
             }
+            .cascadeIn(hasAppeared, index: 1)
         }
     }
 

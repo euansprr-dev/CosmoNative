@@ -781,6 +781,7 @@
 		C29677A9D2E8AD27CD2F4EB6 /* InboxOverrideSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A693766772ACAB90D2713AB /* InboxOverrideSheet.swift */; };
 		C2A499778471F44F849AD3EC /* TextKitCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 822FA55EE6312CAE3957FEAE /* TextKitCoordinator.swift */; };
 		C3F8BFE426ABCE3CFFCC9942 /* Atom.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9A0D143F0ED8C9B6CF721D0 /* Atom.swift */; };
+		F0C05A11FE00000000000002 /* FocusStreakEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0C05A11FE00000000000001 /* FocusStreakEngine.swift */; };
 		C4228548433DCEDDCD24DCC8 /* CreateBlockAction.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5BBA86E29A405E1701DEB91 /* CreateBlockAction.swift */; };
 		C48C6B38A8B379A931A39334 /* InboxCaptureConverter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FE9A9961BA1446E197AFFCA /* InboxCaptureConverter.swift */; };
 		C4B25E8FD51F2DE8D45DEF99 /* InsightExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BB050A4359F78D4D63F62DA /* InsightExtractor.swift */; };
@@ -810,6 +811,7 @@
 		C9AA52367D623592A0EFFD6E /* FilmGrainOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09E7B5E6ADAA2F96E31FD3DA /* FilmGrainOverlay.swift */; };
 		C9ABD41A41844D163D48974A /* GreenhousePalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49BC9E954C8FC24862480D98 /* GreenhousePalette.swift */; };
 		C9D7B8A13F6E42D9A5C0B7E1 /* CosmoGlassPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9D7B8A03F6E42D9A5C0B7E1 /* CosmoGlassPanel.swift */; };
+		F0C05A11FE00000000000004 /* CommandCenterSurfaceKit.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0C05A11FE00000000000003 /* CommandCenterSurfaceKit.swift */; };
 		CA6AE0A210257B00D59AC7AE /* DashboardFocusTimer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F5DCAB576D9C69F4DD5C196 /* DashboardFocusTimer.swift */; };
 		CA916E54EB6AFE1FE5B066C8 /* MediaBlockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46F79B315CA097EF40740B40 /* MediaBlockView.swift */; };
 		CAE248B32041D7409B2035E6 /* CosmoInlineAssistantBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCB52C7883336CC421621904 /* CosmoInlineAssistantBar.swift */; };
@@ -1776,6 +1778,7 @@
 		C8D7314DE04F2F6C538A8CE6 /* CosmoMentionPillKit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmoMentionPillKit.swift; sourceTree = "<group>"; };
 		C985AC462D0C2430560C27AF /* CommandCenterComposerTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CommandCenterComposerTests.swift; sourceTree = "<group>"; };
 		C9D7B8A03F6E42D9A5C0B7E1 /* CosmoGlassPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmoGlassPanel.swift; sourceTree = "<group>"; };
+		F0C05A11FE00000000000003 /* CommandCenterSurfaceKit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandCenterSurfaceKit.swift; sourceTree = "<group>"; };
 		C9FBF087E5192BE99DF3AF4C /* DimensionConfigs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DimensionConfigs.swift; sourceTree = "<group>"; };
 		CAABA65C2A13078B2F929FFC /* NELORegressionEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NELORegressionEngine.swift; sourceTree = "<group>"; };
 		CAC0AB8CE3B9F5E1B7668CFB /* ProvocationOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProvocationOverlay.swift; sourceTree = "<group>"; };
@@ -1961,6 +1964,7 @@
 		F881964D933F0F9550264625 /* ConnectionDiscoveryEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionDiscoveryEngine.swift; sourceTree = "<group>"; };
 		F924B1C4BCB1BA3DB56B3767 /* RealtimeSyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeSyncService.swift; sourceTree = "<group>"; };
 		F9A0D143F0ED8C9B6CF721D0 /* Atom.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Atom.swift; sourceTree = "<group>"; };
+		F0C05A11FE00000000000001 /* FocusStreakEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusStreakEngine.swift; sourceTree = "<group>"; };
 		F9CEC225144718973F675F40 /* CosmoInlineAssistantPaneView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CosmoInlineAssistantPaneView.swift; sourceTree = "<group>"; };
 		F9F24CA80D439FA74A26D759 /* CanvasViewportTransform.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasViewportTransform.swift; sourceTree = "<group>"; };
 		FA676F005BD2AE33F5AEAD79 /* InlineUndoAction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineUndoAction.swift; sourceTree = "<group>"; };
@@ -2869,6 +2873,7 @@
 			isa = PBXGroup;
 			children = (
 				C9D7B8A03F6E42D9A5C0B7E1 /* CosmoGlassPanel.swift */,
+				F0C05A11FE00000000000003 /* CommandCenterSurfaceKit.swift */,
 				46CD2F587BE475711F2399AE /* CosmicShimmer.swift */,
 				E5B707E399F1A8983B3A921D /* CosmoGradientDivider.swift */,
 				FFEAC446A385A68CC665887D /* CosmoKeyboardFooter.swift */,
@@ -3241,6 +3246,7 @@
 			children = (
 				89F8180F21E7BD6969602D05 /* SwipeBoard.swift */,
 				F9A0D143F0ED8C9B6CF721D0 /* Atom.swift */,
+				F0C05A11FE00000000000001 /* FocusStreakEngine.swift */,
 				2E4C77E9B327B0945155C95E /* AtomExtensions.swift */,
 				1A4DBA9A1957BB24CEAD7C1B /* CanvasBlockRecord.swift */,
 				227559B36BA19282F06B89BA /* CanvasDrawingRecord.swift */,
@@ -4235,6 +4241,7 @@
 				0F95C4E60D3D5D6D5E154DEB /* AsyncSemaphore.swift in Sources */,
 				A613179393DD45369E4DC0F0 /* AtelierPrimitives.swift in Sources */,
 				C3F8BFE426ABCE3CFFCC9942 /* Atom.swift in Sources */,
+				F0C05A11FE00000000000002 /* FocusStreakEngine.swift in Sources */,
 				ED9D1210BA702213DA73B37B /* SwipeBoardsHubPage.swift in Sources */,
 				ED0A958492D2B385A89523AF /* SwipeCreatorsPage.swift in Sources */,
 				58816808B7372E43B4700859 /* SwipeQuickLookDiscoverContent.swift in Sources */,
@@ -4548,6 +4555,7 @@
 				F77AF55A4DECD0358DA41CCB /* DeepWorkSessionEngine.swift in Sources */,
 				47AED86EF3F1A170B5312A38 /* DeepWorkVoiceCommands.swift in Sources */,
 				C9D7B8A13F6E42D9A5C0B7E1 /* CosmoGlassPanel.swift in Sources */,
+				F0C05A11FE00000000000004 /* CommandCenterSurfaceKit.swift in Sources */,
 				F24E8A6F73C8945B5179ADAD /* DeleteBlockAction.swift in Sources */,
 				6ECF07433041ABFF228107C8 /* DeleteConnectionAction.swift in Sources */,
 				DA4AA8D524C250DE003B8248 /* DeleteDrawingAction.swift in Sources */,

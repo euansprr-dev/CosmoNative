@@ -350,6 +350,10 @@ struct CanvasView: View {
                 .opacity(canvasContentOpacity)
                 .scaleEffect(canvasContentScale)
                 .blur(radius: canvasContentBlur)
+                // In library mode the world is only a backdrop behind the
+                // browser overlay — kill hit-testing so covered blocks can't
+                // capture right-clicks and show another document's menu.
+                .allowsHitTesting(thinkspaceMode == .canvas)
 
                 // Screen-space layers (outside the scaled container to
                 // prevent frame clipping at non-100% zoom). The reader hands
@@ -379,9 +383,11 @@ struct CanvasView: View {
                         transform: liveTransform
                     )
                 }
+                .allowsHitTesting(thinkspaceMode == .canvas)
 
                 // Provocation markers overlay (screen coordinates, on top of blocks)
                 ProvocationOverlay(provocationEngine: provocationEngine)
+                    .allowsHitTesting(thinkspaceMode == .canvas)
 
                 if thinkspaceMode == .library {
                     thinkspaceLibraryView
@@ -442,6 +448,8 @@ struct CanvasView: View {
                 if thinkspaceMode == .canvas {
                     VStack(alignment: .trailing, spacing: 12) {
                         CanvasDrawingToolbar(drawingState: drawingState)
+                            // Sub-tool dropdown overlays the inspector slot below
+                            .zIndex(1)
 
                         // Unified inspector slot (block OR cluster)
                         canvasInspectorPanel
@@ -3220,7 +3228,7 @@ struct CanvasView: View {
                 case .content: atomType = .content; fallbackTitle = "New Content"
                 case .task: atomType = .task; fallbackTitle = "New Task"
                 case .research: atomType = .research; fallbackTitle = "New Research"
-                case .connection: atomType = .connection; fallbackTitle = "New Connection"
+                case .connection: atomType = .connection; fallbackTitle = "New Concept"
                 default: atomType = nil; fallbackTitle = ""
                 }
 
@@ -5026,7 +5034,7 @@ struct CanvasView: View {
                 // Create connection in database
                 print("🔗 Creating connection in database...")
                 let savedConnection = try await CosmoDatabase.shared.asyncWrite { db -> Atom in
-                    var connection = Atom.new(type: .connection, title: "New Connection")
+                    var connection = Atom.new(type: .connection, title: "New Concept")
                     try connection.insert(db)
                     connection.id = db.lastInsertedRowID
                     print("🔗 Connection inserted with id: \(connection.id ?? -999)")
@@ -5042,7 +5050,7 @@ struct CanvasView: View {
                     entityType: .connection,
                     entityId: savedConnection.id ?? -1,
                     entityUuid: savedConnection.uuid,
-                    title: "New Connection",
+                    title: "New Concept",
                     subtitle: "Define your mental model...",
                     metadata: ["created": ISO8601.string(from: Date())]
                 )
@@ -5063,7 +5071,7 @@ struct CanvasView: View {
                     entityType: .connection,
                     entityId: -1,
                     entityUuid: UUID().uuidString,
-                    title: "New Connection",
+                    title: "New Concept",
                     subtitle: "Define your mental model...",
                     metadata: ["created": ISO8601.string(from: Date())]
                 )

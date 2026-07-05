@@ -277,35 +277,43 @@ struct MainView: View {
             // The view model lives in MainView, so the palette can preserve
             // search/domain state without keeping a full-window invisible
             // hosting view above panes while hidden.
-            if showCommandK {
-                CommandKView(
-                    initialTab: commandKReturnTab ?? .database,
-                    isActive: showCommandK,
-                    searchFocusRequest: commandKSearchFocusRequest,
-                    viewModel: commandKViewModel
-                )
-                    .opacity(showCommandK ? 1 : 0)
-                    .allowsHitTesting(showCommandK)
-                    .background {
-                        // Mirrors the palette's visible lifetime: this tracker
-                        // is removed with the same fade as the opacity drop,
-                        // so its onDisappear marks the true end of the
-                        // fade-out. Guarded:
-                        // if a re-present interrupted the fade, a stale
-                        // instance's disappearance must not clear it.
-                        if showCommandK {
-                            Color.clear
-                                .onDisappear {
-                                    if !showCommandK {
-                                        CommandKPalettePresentationState.shared.setOnScreen(false)
+            //
+            // The hit-test gate MUST live on this persistent Group, not inside
+            // the conditional: a removal-transition snapshot keeps its
+            // last-rendered modifier values, so a gate inside the branch stays
+            // `true` while the palette fades out — and if that removal is ever
+            // interrupted, the invisible full-window backdrop swallows every
+            // click until the palette is presented again. The ancestor gate
+            // re-evaluates live and clamps the lingering subtree.
+            Group {
+                if showCommandK {
+                    CommandKView(
+                        initialTab: commandKReturnTab ?? .database,
+                        isActive: showCommandK,
+                        searchFocusRequest: commandKSearchFocusRequest,
+                        viewModel: commandKViewModel
+                    )
+                        .background {
+                            // Mirrors the palette's visible lifetime: this tracker
+                            // is removed with the same fade as the opacity drop,
+                            // so its onDisappear marks the true end of the
+                            // fade-out. Guarded:
+                            // if a re-present interrupted the fade, a stale
+                            // instance's disappearance must not clear it.
+                            if showCommandK {
+                                Color.clear
+                                    .onDisappear {
+                                        if !showCommandK {
+                                            CommandKPalettePresentationState.shared.setOnScreen(false)
+                                        }
                                     }
-                                }
+                            }
                         }
-                    }
-                    .transition(.opacity)
-                    .zIndex(200)
-                    .animation(.spring(response: 0.2), value: showCommandK)
+                        .transition(.opacity)
+                }
             }
+            .allowsHitTesting(showCommandK)
+            .zIndex(200)
 
             // Instagram Swipe File Modal (manual entry for Instagram content)
             if swipeFileEngine.showInstagramModal {
@@ -511,7 +519,10 @@ struct MainView: View {
             }
         }
         // Global keyboard shortcuts handled via NSEvent monitor (doesn't steal focus from text fields)
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: showCommandK)
+        // Command-K insert/removal is animated solely by the withAnimation
+        // transaction in applyCommandKPresentation — a second implicit driver
+        // here (with a different curve) can interrupt the removal transition
+        // and strand the palette's invisible click-catching snapshot.
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: showRadialMenu)
         .animation(.spring(response: 0.2, dampingFraction: 0.75), value: showBlockContextMenu)
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: glassCenter.isVisible)
@@ -730,7 +741,6 @@ struct MainView: View {
             withAnimation(ProMotionSprings.snappy) {
                 paneManager.openOrActivateCosmoWindow()
             }
-            CosmoWindowPanelController.shared.hide()
         }
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.openCollaboratorPane)) { notification in
             guard let payload = CosmoNotification.Navigation.CollaboratorPanePayload(from: notification) else { return }
@@ -1941,7 +1951,6 @@ struct MainView: View {
                 paneManager.pushContextOwnerToVoiceStore()
 
                 await CosmoWindowViewModel.shared.activateCollaborator(target: target, presetID: presetId)
-                CosmoWindowPanelController.shared.hide()
             } catch {
                 print("MainView: handleOpenCollaboratorPane failed: \(error)")
             }

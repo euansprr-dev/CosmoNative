@@ -28,6 +28,10 @@ struct ConnectionFocusModeView: View {
     @State private var workspace = ConnectionWorkspaceModel()
     @State private var coDevEngine = ConnectionCoDevEngine()
     @State private var showCommandK = false
+    /// The view OWNS its context provider — the editable-surface registry holds
+    /// it weakly; the old single global slot deallocated it on any other view's
+    /// registration, unbinding this surface from the assistant.
+    @State private var ownedContextProvider: ConnectionContextProvider?
     @State private var wellSources: [Atom] = []
     @State private var suggestedWellSources: [Atom] = []
     @State private var isLoadingSuggestedSources = false
@@ -56,6 +60,7 @@ struct ConnectionFocusModeView: View {
     var body: some View {
         workspaceView
             .background(DS.bg.ignoresSafeArea())
+            .cosmoSurfaceKeyWindowActivation(surfaceID: "connection:\(atom.uuid)")
             .focusImmersiveEntryTransition()
             .overlay(alignment: .topTrailing) { paneCloseButton }
             .onAppear(perform: handleAppear)
@@ -106,7 +111,7 @@ struct ConnectionFocusModeView: View {
             .buttonStyle(.plain)
             .padding(.trailing, DS.space16)
             .padding(.top, DS.space16)
-            .accessibilityLabel("Close connection")
+            .accessibilityLabel("Close concept")
         }
     }
 
@@ -211,9 +216,10 @@ struct ConnectionFocusModeView: View {
             atom: atom,
             viewModel: viewModel,
             titleProvider: { [weak viewModel] in
-                viewModel?.editableTitle ?? "Untitled Connection"
+                viewModel?.editableTitle ?? "Untitled Concept"
             }
         )
+        ownedContextProvider = provider
         CosmoWindowViewModel.shared.updateContext(provider: provider)
     }
 
@@ -507,7 +513,7 @@ final class ConnectionFocusModeViewModel {
         let initialTitleDocument = RichDocumentPersistence.loadAtomDocument(
             field: .title,
             metadata: atom.metadata,
-            fallbackPlainText: atom.title ?? "New Connection"
+            fallbackPlainText: atom.title ?? "New Concept"
         )
         self.titleDocument = initialTitleDocument
         self.editableTitle = RichDocumentPersistence.titlePlainText(from: initialTitleDocument)

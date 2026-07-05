@@ -1,185 +1,318 @@
 // CosmoOS/Editor/SelectionFormattingMenu.swift
-// Floating menu for formatting text selection
-// Dual-mode: formatting (Bold/Italic/etc) ↔ AI (Expand/Condense/Rephrase)
-// Animated slide transition between modes.
+// The quill bar — floating formatting capsule for text selections.
+// One glass capsule: B I U S̶ · Aa ▾ · ✦, with a styles panel (headings + lists)
+// and an AI mode (Expand/Condense/Rephrase + custom prompt).
+//
+// Positioning is owned here: the host passes the selection rect (`anchor`) and
+// its own bounds (`container`); the bar measures itself, clamps horizontally,
+// and flips below the selection when there is no headroom above — so it can
+// never be cut off by margins, rails, or container edges.
 
 import SwiftUI
 
 struct SelectionFormattingMenu: View {
-    let position: CGPoint
+    /// Selection rect in the host's coordinate space.
+    let anchor: CGRect
+    /// Host bounds the bar must stay inside.
+    let container: CGSize
+    var traits: SelectionFormattingTraits = .none
     var compact: Bool = false
+    var darkMode: Bool = false
     let onDismiss: () -> Void
     var onAIAction: ((AIWritingAction) -> Void)? = nil
     var onCustomPrompt: ((String) -> Void)? = nil
     var onWritingAIRequest: (() -> Void)? = nil
 
     @State private var mode: MenuMode = .formatting
+    @State private var showStylePanel = false
     @State private var showCustomPrompt = false
     @State private var customPromptText = ""
+    @State private var barSize: CGSize = .zero
 
     private enum MenuMode {
         case formatting, ai
     }
 
-    private var menuHeight: CGFloat { 52 }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 4) {
-                if mode == .formatting {
-                    formattingContent
-                        .transition(.asymmetric(
-                            insertion: .move(edge: .leading).combined(with: .opacity),
-                            removal: .move(edge: .leading).combined(with: .opacity)
-                        ))
-                } else {
-                    aiContent
-                        .transition(.asymmetric(
-                            insertion: .move(edge: .trailing).combined(with: .opacity),
-                            removal: .move(edge: .trailing).combined(with: .opacity)
-                        ))
-                }
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .frame(height: menuHeight)
-            .background(CosmoColors.softWhite)
-            .clipShape(Capsule(style: .continuous))
-            .overlay(
-                Capsule(style: .continuous)
-                    .stroke(CosmoColors.glassGrey.opacity(0.5), lineWidth: 1)
-            )
-            .shadow(color: CosmoColors.glassGrey.opacity(0.3), radius: 10, y: 4)
-            .shadow(color: Color.black.opacity(0.1), radius: 5, y: 2)
-
-            if showCustomPrompt {
-                customPromptField
-                    .padding(.top, 6)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-        }
-        .fixedSize()
-        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: mode)
-        .animation(.spring(response: 0.25, dampingFraction: 0.9), value: showCustomPrompt)
-        .position(x: position.x, y: position.y)
+    /// Estimated size before the first geometry pass lands.
+    private var effectiveBarSize: CGSize {
+        barSize == .zero ? CGSize(width: compact ? 220 : 300, height: 44) : barSize
     }
 
-    // MARK: - Formatting Mode
+    /// Clamp into the container; flip below the selection when the bar would
+    /// rise past the container's top edge (Google-Docs behavior). The clamp
+    /// padding reserves room for the chrome's drop shadow — the container is
+    /// usually a clipped column, and a body-only clamp slices the shadow into
+    /// a hard line at the clip edge.
+    private var resolvedPosition: CGPoint {
+        let pad: CGFloat = CosmoMenuChrome.shadowClearance
+        let gap: CGFloat = 10
+        let size = effectiveBarSize
+        let half = size.width / 2
+
+        let x: CGFloat
+        if container.width < size.width + pad * 2 {
+            x = container.width / 2
+        } else {
+            x = min(max(anchor.midX, half + pad), container.width - half - pad)
+        }
+
+        let fitsAbove = anchor.minY - size.height - gap >= 0
+        let y = fitsAbove
+            ? anchor.minY - size.height / 2 - gap
+            : anchor.maxY + size.height / 2 + gap
+        return CGPoint(x: x, y: y)
+    }
+
+    /// Attached panels (styles, custom prompt) grow away from the selection.
+    private var panelsGrowDownward: Bool {
+        anchor.minY - effectiveBarSize.height - 10 >= 0
+    }
+
+    var body: some View {
+        VStack(spacing: DS.space6) {
+            if !panelsGrowDownward { attachedPanels }
+            bar
+                .onGeometryChange(for: CGSize.self) { proxy in
+                    proxy.size
+                } action: { newValue in
+                    barSize = newValue
+                }
+            if panelsGrowDownward { attachedPanels }
+        }
+        .fixedSize()
+        .animation(ProMotionSprings.snappy, value: mode)
+        .animation(ProMotionSprings.snappy, value: showStylePanel)
+        .animation(ProMotionSprings.snappy, value: showCustomPrompt)
+        .position(resolvedPosition)
+        .animation(ProMotionSprings.snappy, value: anchor)
+    }
+
+    // MARK: - The capsule
+
+    private var bar: some View {
+        HStack(spacing: 2) {
+            if mode == .formatting {
+                formattingContent
+                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
+            } else {
+                aiContent
+                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
+            }
+        }
+        .padding(.horizontal, DS.space8)
+        .frame(height: 44)
+        .cosmoMenuChrome(cornerRadius: 22, darkMode: darkMode)
+    }
+
+    @ViewBuilder
+    private var attachedPanels: some View {
+        if showStylePanel && mode == .formatting {
+            stylePanel
+                .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: panelsGrowDownward ? .top : .bottom)))
+        }
+        if showCustomPrompt && mode == .ai {
+            customPromptField
+                .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: panelsGrowDownward ? .top : .bottom)))
+        }
+    }
+
+    // MARK: - Formatting mode
 
     @ViewBuilder
     private var formattingContent: some View {
-        FormattingButton(icon: "bold", type: .bold)
-        FormattingButton(icon: "italic", type: .italic)
-        FormattingButton(icon: "underline", type: .underline)
-
+        QuillGlyphButton(
+            icon: "bold", isActive: traits.isBold, hint: "Bold (⌘B)"
+        ) { EditorCommandBus.shared.toggleFormatting(.bold) }
+        QuillGlyphButton(
+            icon: "italic", isActive: traits.isItalic, hint: "Italic (⌘I)"
+        ) { EditorCommandBus.shared.toggleFormatting(.italic) }
+        QuillGlyphButton(
+            icon: "underline", isActive: traits.isUnderline, hint: "Underline (⌘U)"
+        ) { EditorCommandBus.shared.toggleFormatting(.underline) }
         if !compact {
-            FormattingButton(icon: "strikethrough", type: .strikethrough)
-
-            Divider()
-                .frame(height: 20)
-                .background(CosmoColors.glassGrey.opacity(0.5))
-
-            FormattingButton(icon: "h1", customLabel: "H1", type: .heading1)
-            FormattingButton(icon: "h2", customLabel: "H2", type: .heading2)
-            FormattingButton(icon: "h3", customLabel: "H3", type: .heading3)
+            QuillGlyphButton(
+                icon: "strikethrough", isActive: traits.isStrikethrough, hint: "Strikethrough"
+            ) { EditorCommandBus.shared.toggleFormatting(.strikethrough) }
         }
 
-        Divider()
-            .frame(height: 20)
-            .background(CosmoColors.glassGrey.opacity(0.5))
+        quillDividerDot
 
-        FormattingButton(icon: "list.bullet", type: .bulletList)
-        if !compact {
-            FormattingButton(icon: "list.number", type: .numberedList)
-            FormattingButton(icon: "checklist", type: .checklist)
-        }
+        styleChip
 
-        // AI sparkle button — opens the writing assistant when available, otherwise legacy inline AI.
         if onWritingAIRequest != nil || onAIAction != nil {
-            Divider()
-                .frame(height: 20)
-                .background(CosmoColors.glassGrey.opacity(0.5))
-
-            BarIconButton(icon: "sparkles", tint: DS.accent) {
+            quillDividerDot
+            QuillGlyphButton(
+                icon: "sparkles", isActive: mode == .ai, tint: DS.accent, hint: "Writing AI"
+            ) {
                 if let onWritingAIRequest {
                     onWritingAIRequest()
                 } else {
+                    showStylePanel = false
                     mode = .ai
                 }
             }
         }
     }
 
-    // MARK: - AI Mode
+    /// The Aa chip — names the current block style and opens the styles panel.
+    private var styleChip: some View {
+        QuillChipButton(
+            label: currentStyleLabel,
+            isActive: showStylePanel || traits.headingLevel != nil || traits.listKind != .none,
+            hint: "Text style"
+        ) {
+            showStylePanel.toggle()
+        }
+    }
+
+    private var currentStyleLabel: String {
+        if let level = traits.headingLevel { return "H\(level)" }
+        switch traits.listKind {
+        case .bullet: return "• List"
+        case .numbered: return "1. List"
+        case .checklist: return "☑ List"
+        case .quote, .none: return "Aa"
+        }
+    }
+
+    // MARK: - Styles panel (headings + lists)
+
+    private var stylePanel: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            styleRow("Body", active: traits.headingLevel == nil && traits.listKind == .none) {
+                // Re-applying the current heading level toggles it off.
+                if let level = traits.headingLevel {
+                    EditorCommandBus.shared.toggleFormatting(headingType(for: level))
+                }
+            }
+            styleRow("Heading 1", active: traits.headingLevel == 1, glyphFont: DS.headline) {
+                EditorCommandBus.shared.toggleFormatting(.heading1)
+            }
+            styleRow("Heading 2", active: traits.headingLevel == 2, glyphFont: DS.callout.weight(.semibold)) {
+                EditorCommandBus.shared.toggleFormatting(.heading2)
+            }
+            styleRow("Heading 3", active: traits.headingLevel == 3, glyphFont: DS.subheadline.weight(.medium)) {
+                EditorCommandBus.shared.toggleFormatting(.heading3)
+            }
+
+            Rectangle()
+                .fill(DS.glassBorder)
+                .frame(height: 0.5)
+                .padding(.vertical, DS.space4)
+
+            listRow("Bulleted list", icon: "list.bullet", active: traits.listKind == .bullet) {
+                EditorCommandBus.shared.toggleFormatting(.bulletList)
+            }
+            listRow("Numbered list", icon: "list.number", active: traits.listKind == .numbered) {
+                EditorCommandBus.shared.toggleFormatting(.numberedList)
+            }
+            listRow("Checklist", icon: "checklist", active: traits.listKind == .checklist) {
+                EditorCommandBus.shared.toggleFormatting(.checklist)
+            }
+        }
+        .padding(DS.space6)
+        .frame(width: 190)
+        .cosmoMenuChrome(cornerRadius: 14, darkMode: darkMode)
+    }
+
+    private func headingType(for level: Int) -> FormattingType {
+        switch level {
+        case 1: return .heading1
+        case 2: return .heading2
+        default: return .heading3
+        }
+    }
+
+    private func styleRow(
+        _ label: String,
+        active: Bool,
+        glyphFont: Font = DS.callout,
+        action: @escaping () -> Void
+    ) -> some View {
+        QuillPanelRow(active: active) {
+            action()
+            showStylePanel = false
+        } content: {
+            Text(label)
+                .font(glyphFont)
+        }
+    }
+
+    private func listRow(
+        _ label: String,
+        icon: String,
+        active: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        QuillPanelRow(active: active) {
+            action()
+            showStylePanel = false
+        } content: {
+            HStack(spacing: DS.space8) {
+                Image(systemName: icon)
+                    .font(DS.caption)
+                    .frame(width: 16)
+                Text(label)
+                    .font(DS.callout)
+            }
+        }
+    }
+
+    // MARK: - AI mode
 
     @ViewBuilder
     private var aiContent: some View {
-        BarIconButton(icon: "chevron.left", tint: CosmoColors.textSecondary) {
+        QuillGlyphButton(icon: "chevron.left", hint: "Back to formatting") {
             showCustomPrompt = false
             mode = .formatting
         }
 
-        Divider()
-            .frame(height: 20)
-            .background(CosmoColors.glassGrey.opacity(0.5))
+        quillDividerDot
 
-        AIBarButton(icon: "arrow.up.left.and.arrow.down.right", label: "Expand") {
+        QuillChipButton(label: "Expand", icon: "arrow.up.left.and.arrow.down.right", hint: "Expand selection") {
             onAIAction?(.expand)
         }
-        AIBarButton(icon: "arrow.down.right.and.arrow.up.left", label: "Condense") {
+        QuillChipButton(label: "Condense", icon: "arrow.down.right.and.arrow.up.left", hint: "Condense selection") {
             onAIAction?(.condense)
         }
-        AIBarButton(icon: "arrow.triangle.2.circlepath", label: "Rephrase") {
+        QuillChipButton(label: "Rephrase", icon: "arrow.triangle.2.circlepath", hint: "Rephrase selection") {
             onAIAction?(.rephrase)
         }
 
         if onCustomPrompt != nil {
-            Divider()
-                .frame(height: 20)
-                .background(CosmoColors.glassGrey.opacity(0.5))
-
-            BarIconButton(icon: "ellipsis", tint: CosmoColors.textSecondary) {
+            quillDividerDot
+            QuillGlyphButton(icon: "ellipsis", isActive: showCustomPrompt, hint: "Custom instruction") {
                 showCustomPrompt.toggle()
             }
         }
     }
 
-    // MARK: - Custom Prompt
+    // MARK: - Custom prompt
 
-    @ViewBuilder
     private var customPromptField: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: DS.space6) {
             Image(systemName: "text.bubble")
-                .font(.system(size: 11))
-                .foregroundColor(DS.accent.opacity(0.7))
+                .font(DS.caption)
+                .foregroundStyle(DS.accent.opacity(0.7))
 
-            TextField("Custom instruction...", text: $customPromptText)
+            TextField("Custom instruction…", text: $customPromptText)
                 .textFieldStyle(.plain)
-                .font(.system(size: 12))
-                .foregroundColor(DS.text)
-                .onSubmit {
-                    submitCustomPrompt()
-                }
+                .font(DS.callout)
+                .foregroundStyle(DS.text)
+                .onSubmit { submitCustomPrompt() }
 
-            Button(action: { submitCustomPrompt() }) {
+            Button(action: submitCustomPrompt) {
                 Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: 16))
-                    .foregroundColor(DS.accent)
+                    .font(DS.headline)
+                    .foregroundStyle(DS.accent)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Send custom instruction")
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .padding(.horizontal, DS.space10)
+        .padding(.vertical, DS.space8)
         .frame(width: 260)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(CosmoColors.softWhite)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(DS.accent.opacity(0.3), lineWidth: 1)
-                )
-                .shadow(color: .black.opacity(0.15), radius: 8, y: 4)
-        )
+        .cosmoMenuChrome(cornerRadius: 14, darkMode: darkMode)
     }
 
     private func submitCustomPrompt() {
@@ -189,13 +322,22 @@ struct SelectionFormattingMenu: View {
         customPromptText = ""
         showCustomPrompt = false
     }
+
+    private var quillDividerDot: some View {
+        Circle()
+            .fill(DS.glassBorder)
+            .frame(width: 3, height: 3)
+            .padding(.horizontal, DS.space4)
+    }
 }
 
-// MARK: - Bar Icon Button (circle, icon-only)
+// MARK: - Glyph button (icon, circle wash)
 
-private struct BarIconButton: View {
+private struct QuillGlyphButton: View {
     let icon: String
-    let tint: Color
+    var isActive: Bool = false
+    var tint: Color = DS.textSecondary
+    let hint: String
     let action: () -> Void
 
     @State private var isHovered = false
@@ -203,78 +345,99 @@ private struct BarIconButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: icon)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(isHovered ? tint : tint.opacity(0.8))
-                .frame(width: 32, height: 32)
-                .background(isHovered ? tint.opacity(0.1) : Color.clear)
-                .clipShape(Circle())
+                .font(DS.buttonText.weight(.semibold))
+                .foregroundStyle(isActive ? DS.accent : (isHovered ? DS.text : tint))
+                .frame(width: 30, height: 30)
+                .background(
+                    isActive ? AnyShapeStyle(DS.accentSoft) :
+                        (isHovered ? AnyShapeStyle(DS.glassCardFill) : AnyShapeStyle(.clear)),
+                    in: Circle()
+                )
         }
         .buttonStyle(.plain)
-        .onHover { isHovered = $0 }
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+        }
+        .help(hint)
+        .accessibilityLabel(hint)
+        .accessibilityAddTraits(isActive ? .isSelected : [])
     }
 }
 
-// MARK: - AI Bar Button (pill, icon + label)
+// MARK: - Chip button (label pill — the Aa chip and AI actions)
 
-private struct AIBarButton: View {
-    let icon: String
+private struct QuillChipButton: View {
     let label: String
+    var icon: String? = nil
+    var isActive: Bool = false
+    let hint: String
     let action: () -> Void
 
     @State private var isHovered = false
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 4) {
-                Image(systemName: icon)
-                    .font(.system(size: 11, weight: .medium))
+            HStack(spacing: DS.space4) {
+                if let icon {
+                    Image(systemName: icon)
+                        .font(DS.caption2.weight(.medium))
+                }
                 Text(label)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(DS.caption.weight(.medium))
             }
-            .foregroundColor(isHovered ? CosmoColors.lavender : CosmoColors.textSecondary)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
+            .foregroundStyle(isActive ? DS.accent : (isHovered ? DS.text : DS.textSecondary))
+            .padding(.horizontal, DS.space8)
+            .frame(height: 30)
             .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(isHovered ? CosmoColors.lavender.opacity(0.08) : CosmoColors.glassGrey.opacity(0.15))
+                isActive ? AnyShapeStyle(DS.accentSoft) :
+                    (isHovered ? AnyShapeStyle(DS.glassCardFill) : AnyShapeStyle(.clear)),
+                in: Capsule(style: .continuous)
             )
-            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .onHover { isHovered = $0 }
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+        }
+        .help(hint)
+        .accessibilityLabel(hint)
+        .accessibilityAddTraits(isActive ? .isSelected : [])
     }
 }
 
-// MARK: - Formatting Button
+// MARK: - Panel row (styles panel)
 
-struct FormattingButton: View {
-    let icon: String
-    var customLabel: String? = nil
-    let type: FormattingType
+private struct QuillPanelRow<Content: View>: View {
+    let active: Bool
+    let action: () -> Void
+    @ViewBuilder let content: () -> Content
 
     @State private var isHovered = false
 
     var body: some View {
-        Button(action: {
-            EditorCommandBus.shared.toggleFormatting(type)
-        }) {
-            ZStack {
-                if let label = customLabel {
-                    Text(label)
-                        .font(.system(size: 13, weight: .bold))
-                } else {
-                    Image(systemName: icon)
-                        .font(.system(size: 14, weight: .semibold))
+        Button(action: action) {
+            HStack {
+                content()
+                    .foregroundStyle(active ? DS.accent : DS.text)
+                Spacer(minLength: DS.space8)
+                if active {
+                    Image(systemName: "checkmark")
+                        .font(DS.caption2.weight(.semibold))
+                        .foregroundStyle(DS.accent)
                 }
             }
-            .foregroundColor(isHovered ? CosmoColors.lavender : CosmoColors.textSecondary)
-            .frame(width: 32, height: 32)
+            .padding(.horizontal, DS.space8)
+            .frame(height: 28)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                isHovered ? CosmoColors.lavender.opacity(0.1) : Color.clear
+                isHovered ? AnyShapeStyle(DS.glassCardFill) : AnyShapeStyle(.clear),
+                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
             )
-            .clipShape(Circle())
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .onHover { isHovered = $0 }
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+        }
+        .accessibilityAddTraits(active ? .isSelected : [])
     }
 }

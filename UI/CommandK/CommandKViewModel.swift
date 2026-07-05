@@ -609,25 +609,85 @@ enum CommandKSearchMatcher {
         return matches(normalizedQuery: normalizedQuery, inNormalizedText: searchableText(from: values))
     }
 
-    /// Match-quality score in 0...1 shared by every Command-K source so
-    /// relevance is comparable across atoms, swipes, ideas, and books.
-    /// 0 means no match; title matches always outrank body-only matches.
+    /// Lexical tier + match-quality score shared by every Command-K source so
+    /// ranking is comparable across atoms, swipes, ideas, and books. The tier
+    /// is the primary sort key (keyword evidence first); quality orders
+    /// results within a tier. `.semanticOnly` with quality 0 means no match.
+    static func lexicalMatch(
+        normalizedQuery: String,
+        normalizedTitle: String,
+        normalizedFullText: String
+    ) -> (tier: LexicalTier, quality: Double) {
+        guard matches(normalizedQuery: normalizedQuery, inNormalizedText: normalizedFullText) else {
+            return (.semanticOnly, 0)
+        }
+        if normalizedTitle == normalizedQuery { return (.exactTitle, 1.0) }
+        if normalizedTitle.hasPrefix(normalizedQuery) { return (.titlePrefix, 0.88) }
+        if normalizedTitle.contains(normalizedQuery) { return (.titleMatch, 0.72) }
+        let queryTokens = normalizedQuery.split(separator: " ")
+        if !queryTokens.isEmpty, queryTokens.allSatisfy({ normalizedTitle.contains($0) }) {
+            return (.titleMatch, 0.64)
+        }
+        return (.keywordInBody, 0.42)
+    }
+
+    /// Match-quality score in 0...1; 0 means no match. Kept for callers that
+    /// only need the scalar — the ladder lives in `lexicalMatch`.
     static func matchQuality(
         normalizedQuery: String,
         normalizedTitle: String,
         normalizedFullText: String
     ) -> Double {
-        guard matches(normalizedQuery: normalizedQuery, inNormalizedText: normalizedFullText) else {
-            return 0
-        }
-        if normalizedTitle == normalizedQuery { return 1.0 }
-        if normalizedTitle.hasPrefix(normalizedQuery) { return 0.88 }
-        if normalizedTitle.contains(normalizedQuery) { return 0.72 }
-        let queryTokens = normalizedQuery.split(separator: " ")
-        if !queryTokens.isEmpty, queryTokens.allSatisfy({ normalizedTitle.contains($0) }) {
-            return 0.64
-        }
-        return 0.42
+        lexicalMatch(
+            normalizedQuery: normalizedQuery,
+            normalizedTitle: normalizedTitle,
+            normalizedFullText: normalizedFullText
+        ).quality
+    }
+}
+
+// MARK: - CommandKHybridResultMapper
+
+/// Maps HybridSearchEngine results into RankedResults, assigning the lexical
+/// tier so keyword evidence survives into tier-first ordering.
+enum CommandKHybridResultMapper {
+    static func rankedResult(
+        from result: HybridSearchEngine.SearchResult,
+        atomType: AtomType,
+        normalizedQuery: String
+    ) -> RankedResult {
+        RankedResult(
+            atomUUID: result.entityUUID ?? "\(result.entityType.rawValue)-\(result.entityId)",
+            atomType: atomType,
+            title: result.title,
+            snippet: result.preview,
+            semanticWeight: result.vectorSimilarity,
+            structuralWeight: result.bm25Score / 25.0,  // Normalize
+            recencyWeight: result.updatedAt.map(WeightCalculator.recencyWeight(fromISO8601:)) ?? 0.5,
+            usageWeight: 0.5,  // No usage data collected yet — constant, ordering-neutral
+            lexicalTier: lexicalTier(for: result, normalizedQuery: normalizedQuery),
+            updatedAt: result.updatedAt ?? ISO8601.string(from: Date()),
+            accessCount: 0
+        )
+    }
+
+    static func lexicalTier(
+        for result: HybridSearchEngine.SearchResult,
+        normalizedQuery: String
+    ) -> LexicalTier {
+        // Pure-vector results (bm25Score == 0) can carry a chunk field name as
+        // their title — no keyword evidence, so never award title tiers.
+        guard result.bm25Score > 0 else { return .semanticOnly }
+        let (tier, _) = CommandKSearchMatcher.lexicalMatch(
+            normalizedQuery: normalizedQuery,
+            normalizedTitle: CommandKSearchMatcher.normalize(result.title),
+            normalizedFullText: CommandKSearchMatcher.searchableText(from: [result.title, result.preview])
+        )
+        if tier != .semanticOnly { return tier }
+        // BM25 matched the body beyond the 200-char preview. Only the strict
+        // all-terms pass counts as keyword evidence — broad any-term partials
+        // rank with the semantic layer.
+        return result.matchedAllTerms ? .keywordInBody : .semanticOnly
     }
 }
 
@@ -691,6 +751,8 @@ struct UnifiedSearchResult: Identifiable {
     let icon: String
     let accentColor: Color
     let relevance: Double
+    /// Keyword-evidence tier — primary sort key within and across groups.
+    let lexicalTier: LexicalTier
     let atomUUID: String?
     let atomType: AtomType?
     let thinkspaceId: String?
@@ -711,6 +773,7 @@ struct UnifiedSearchResult: Identifiable {
         icon: String,
         accentColor: Color,
         relevance: Double,
+        lexicalTier: LexicalTier = .semanticOnly,
         atomUUID: String?,
         atomType: AtomType?,
         thinkspaceId: String?,
@@ -730,6 +793,7 @@ struct UnifiedSearchResult: Identifiable {
         self.icon = icon
         self.accentColor = accentColor
         self.relevance = relevance
+        self.lexicalTier = lexicalTier
         self.atomUUID = atomUUID
         self.atomType = atomType
         self.thinkspaceId = thinkspaceId
@@ -758,6 +822,15 @@ struct UnifiedSearchResult: Identifiable {
         case .browserPin:
             return nil
         }
+    }
+
+    /// Tier-first ordering shared by within-group sorting and section
+    /// ordering: keyword evidence beats relevance across every source.
+    static func ranksHigher(_ lhs: UnifiedSearchResult, _ rhs: UnifiedSearchResult) -> Bool {
+        if lhs.lexicalTier != rhs.lexicalTier {
+            return lhs.lexicalTier < rhs.lexicalTier
+        }
+        return lhs.relevance > rhs.relevance
     }
 }
 
@@ -826,14 +899,22 @@ enum CommandKUnifiedSearchComposer {
 
             if result.atomType == .idea {
                 if let ideaItem = ideaItemsByUUID[result.atomUUID] {
-                    allResults.append(ideaResult(for: ideaItem, relevance: max(result.relevance, ideaRelevance(for: ideaItem, normalizedQuery: normalizedQuery))))
+                    let rank = bestRank(
+                        (result.lexicalTier, result.relevance),
+                        ideaRelevance(for: ideaItem, normalizedQuery: normalizedQuery)
+                    )
+                    allResults.append(ideaResult(for: ideaItem, relevance: rank.relevance, lexicalTier: rank.tier))
                 } else {
                     // Gallery not loaded yet — surface the engine match directly
                     // instead of dropping an exact hit.
                     allResults.append(ideaResult(for: result))
                 }
             } else if result.atomType == .research, let swipeItem = swipeItemsByUUID[result.atomUUID] {
-                allResults.append(swipeResult(for: swipeItem, relevance: max(result.relevance, swipeRelevance(for: swipeItem, normalizedQuery: normalizedQuery))))
+                let rank = bestRank(
+                    (result.lexicalTier, result.relevance),
+                    swipeRelevance(for: swipeItem, normalizedQuery: normalizedQuery)
+                )
+                allResults.append(swipeResult(for: swipeItem, relevance: rank.relevance, lexicalTier: rank.tier))
             } else {
                 allResults.append(atomResult(for: result))
             }
@@ -841,9 +922,9 @@ enum CommandKUnifiedSearchComposer {
 
         var addedSwipes = 0
         for item in swipeGalleryItems where !includedAtomUUIDs.contains(item.atomUUID) {
-            let relevance = swipeRelevance(for: item, normalizedQuery: normalizedQuery)
+            let (tier, relevance) = swipeRelevance(for: item, normalizedQuery: normalizedQuery)
             guard relevance > 0 else { continue }
-            allResults.append(swipeResult(for: item, relevance: relevance))
+            allResults.append(swipeResult(for: item, relevance: relevance, lexicalTier: tier))
             includedAtomUUIDs.insert(item.atomUUID)
             addedSwipes += 1
             if addedSwipes >= swipeLimit { break }
@@ -852,7 +933,8 @@ enum CommandKUnifiedSearchComposer {
         var addedIdeas = 0
         for item in ideaGalleryItems where !includedAtomUUIDs.contains(item.atomUUID) {
             guard IdeasTab.matchesSearch(item, query: query) else { continue }
-            allResults.append(ideaResult(for: item, relevance: ideaRelevance(for: item, normalizedQuery: normalizedQuery)))
+            let (tier, relevance) = ideaRelevance(for: item, normalizedQuery: normalizedQuery)
+            allResults.append(ideaResult(for: item, relevance: relevance, lexicalTier: tier))
             includedAtomUUIDs.insert(item.atomUUID)
             addedIdeas += 1
             if addedIdeas >= ideaLimit { break }
@@ -865,11 +947,15 @@ enum CommandKUnifiedSearchComposer {
             }
             let snippet = matchingHighlight?.text.prefix(120).description
                 ?? "\(book.numHighlights) highlight\(book.numHighlights == 1 ? "" : "s")"
-            let titleQuality = CommandKSearchMatcher.matchQuality(
+            let (titleTier, titleQuality) = CommandKSearchMatcher.lexicalMatch(
                 normalizedQuery: normalizedQuery,
                 normalizedTitle: CommandKSearchMatcher.normalize(book.title),
                 normalizedFullText: CommandKSearchMatcher.searchableText(from: [book.title, book.author])
             )
+            // The book matched ReadwiseBookStore.matchesSearch, so a
+            // non-title match still carries keyword evidence (highlight or
+            // metadata) — a within-tier floor, never a cross-tier lift.
+            let tier = min(titleTier, .keywordInBody)
 
             allResults.append(UnifiedSearchResult(
                 id: "readwise-\(book.id)",
@@ -881,6 +967,7 @@ enum CommandKUnifiedSearchComposer {
                 icon: book.category.icon,
                 accentColor: DS.entityReadwise,
                 relevance: max(titleQuality, matchingHighlight != nil ? 0.5 : 0.35),
+                lexicalTier: tier,
                 atomUUID: nil,
                 atomType: nil,
                 thinkspaceId: nil,
@@ -937,13 +1024,15 @@ enum CommandKUnifiedSearchComposer {
         }
 
         for key in grouped.keys {
-            grouped[key]?.sort { $0.relevance > $1.relevance }
+            grouped[key]?.sort(by: UnifiedSearchResult.ranksHigher)
         }
 
+        // Order sections by their best result, tier first — one fuzzy
+        // semantic hit must not lift a whole section above keyword matches.
         return grouped.sorted { lhs, rhs in
-            let lhsBest = lhs.value.first?.relevance ?? 0
-            let rhsBest = rhs.value.first?.relevance ?? 0
-            return lhsBest > rhsBest
+            guard let lhsBest = lhs.value.first else { return false }
+            guard let rhsBest = rhs.value.first else { return true }
+            return UnifiedSearchResult.ranksHigher(lhsBest, rhsBest)
         }.map { (source: $0.key, results: $0.value) }
     }
 
@@ -957,6 +1046,7 @@ enum CommandKUnifiedSearchComposer {
                 return nil
             }
 
+            let rank = browserPinRelevance(for: pin, normalizedQuery: normalizedQuery)
             return UnifiedSearchResult(
                 id: "browser-pin-\(pin.id.uuidString)",
                 source: .browser,
@@ -966,7 +1056,8 @@ enum CommandKUnifiedSearchComposer {
                 snippet: pin.url.absoluteString,
                 icon: "star.fill",
                 accentColor: DS.entityResearch,
-                relevance: browserPinRelevance(for: pin, normalizedQuery: normalizedQuery),
+                relevance: rank.relevance,
+                lexicalTier: rank.tier,
                 atomUUID: nil,
                 atomType: nil,
                 thinkspaceId: nil,
@@ -978,32 +1069,37 @@ enum CommandKUnifiedSearchComposer {
                 browserTitle: pin.displayName
             )
         }
-        .sorted { $0.relevance > $1.relevance }
+        .sorted(by: UnifiedSearchResult.ranksHigher)
         .prefix(browserPinLimit)
         .map { $0 }
     }
 
-    private static func browserPinRelevance(for pin: CosmoBrowserPinnedSite, normalizedQuery: String) -> Double {
+    /// Pins score 1.0 within their tier so an exact custom name still wins
+    /// ties against atoms — but never jumps a tier on relevance alone.
+    private static func browserPinRelevance(
+        for pin: CosmoBrowserPinnedSite,
+        normalizedQuery: String
+    ) -> (tier: LexicalTier, relevance: Double) {
         let normalizedName = CommandKSearchMatcher.normalize(pin.displayName)
         let normalizedTitle = CommandKSearchMatcher.normalize(pin.title)
         let normalizedHost = CommandKSearchMatcher.normalize(pin.host)
 
         if normalizedName == normalizedQuery {
-            return 1.4
+            return (.exactTitle, 1.0)
         }
         if normalizedName.hasPrefix(normalizedQuery) {
-            return 1.32
+            return (.titlePrefix, 1.0)
         }
         if normalizedName.contains(normalizedQuery) {
-            return 1.22
+            return (.titleMatch, 1.0)
         }
         if normalizedTitle.hasPrefix(normalizedQuery) {
-            return 1.12
+            return (.titlePrefix, 0.9)
         }
         if normalizedHost.contains(normalizedQuery) {
-            return 1.08
+            return (.keywordInBody, 0.8)
         }
-        return 1.02
+        return (.keywordInBody, 0.6)
     }
 
     private static func atomResult(for result: RankedResult) -> UnifiedSearchResult {
@@ -1017,6 +1113,7 @@ enum CommandKUnifiedSearchComposer {
             icon: result.atomType.iconName,
             accentColor: accentColor(for: result.atomType),
             relevance: result.relevance,
+            lexicalTier: result.lexicalTier,
             atomUUID: result.atomUUID,
             atomType: result.atomType,
             thinkspaceId: nil,
@@ -1027,7 +1124,11 @@ enum CommandKUnifiedSearchComposer {
         )
     }
 
-    private static func swipeResult(for item: SwipeGalleryItem, relevance: Double) -> UnifiedSearchResult {
+    private static func swipeResult(
+        for item: SwipeGalleryItem,
+        relevance: Double,
+        lexicalTier: LexicalTier
+    ) -> UnifiedSearchResult {
         let scoreText = item.hookScore.map { "Score: \(Int($0))" }
         return UnifiedSearchResult(
             id: "swipe-\(item.atomUUID)",
@@ -1039,6 +1140,7 @@ enum CommandKUnifiedSearchComposer {
             icon: "bolt.fill",
             accentColor: DS.entitySwipe,
             relevance: relevance,
+            lexicalTier: lexicalTier,
             atomUUID: item.atomUUID,
             atomType: .research,
             thinkspaceId: nil,
@@ -1049,7 +1151,11 @@ enum CommandKUnifiedSearchComposer {
         )
     }
 
-    private static func ideaResult(for item: IdeaGalleryItem, relevance: Double) -> UnifiedSearchResult {
+    private static func ideaResult(
+        for item: IdeaGalleryItem,
+        relevance: Double,
+        lexicalTier: LexicalTier
+    ) -> UnifiedSearchResult {
         UnifiedSearchResult(
             id: "idea-\(item.atomUUID)",
             source: .ideas,
@@ -1060,6 +1166,7 @@ enum CommandKUnifiedSearchComposer {
             icon: "lightbulb.fill",
             accentColor: DS.entityIdea,
             relevance: relevance,
+            lexicalTier: lexicalTier,
             atomUUID: item.atomUUID,
             atomType: .idea,
             thinkspaceId: nil,
@@ -1083,6 +1190,7 @@ enum CommandKUnifiedSearchComposer {
             icon: "lightbulb.fill",
             accentColor: DS.entityIdea,
             relevance: result.relevance,
+            lexicalTier: result.lexicalTier,
             atomUUID: result.atomUUID,
             atomType: .idea,
             thinkspaceId: nil,
@@ -1093,7 +1201,11 @@ enum CommandKUnifiedSearchComposer {
         )
     }
 
-    static func thinkspaceResult(for item: LibraryItem, relevance: Double) -> UnifiedSearchResult {
+    static func thinkspaceResult(
+        for item: LibraryItem,
+        relevance: Double,
+        lexicalTier: LexicalTier
+    ) -> UnifiedSearchResult {
         UnifiedSearchResult(
             id: "thinkspace-\(item.uuid)",
             source: .atoms,
@@ -1104,6 +1216,7 @@ enum CommandKUnifiedSearchComposer {
             icon: item.icon,
             accentColor: item.color,
             relevance: relevance,
+            lexicalTier: lexicalTier,
             atomUUID: nil,
             atomType: .thinkspace,
             thinkspaceId: item.uuid,
@@ -1116,16 +1229,23 @@ enum CommandKUnifiedSearchComposer {
 
     /// Swipes are all curated, high-quality captures — rank them by how well
     /// they match the query, never by hook score.
-    private static func swipeRelevance(for item: SwipeGalleryItem, normalizedQuery: String) -> Double {
-        CommandKSearchMatcher.matchQuality(
+    private static func swipeRelevance(
+        for item: SwipeGalleryItem,
+        normalizedQuery: String
+    ) -> (tier: LexicalTier, relevance: Double) {
+        let (tier, quality) = CommandKSearchMatcher.lexicalMatch(
             normalizedQuery: normalizedQuery,
             normalizedTitle: CommandKSearchMatcher.normalize(item.title),
             normalizedFullText: item.searchableText
         )
+        return (tier, quality)
     }
 
-    private static func ideaRelevance(for item: IdeaGalleryItem, normalizedQuery: String) -> Double {
-        let quality = CommandKSearchMatcher.matchQuality(
+    private static func ideaRelevance(
+        for item: IdeaGalleryItem,
+        normalizedQuery: String
+    ) -> (tier: LexicalTier, relevance: Double) {
+        let (tier, quality) = CommandKSearchMatcher.lexicalMatch(
             normalizedQuery: normalizedQuery,
             normalizedTitle: CommandKSearchMatcher.normalize(item.title),
             normalizedFullText: CommandKSearchMatcher.searchableText(
@@ -1133,8 +1253,18 @@ enum CommandKUnifiedSearchComposer {
             )
         )
         // Items can reach this path via IdeasTab.matchesSearch with field-level
-        // matches the joined text scorer might miss — keep a floor.
-        return max(quality, 0.4)
+        // matches the joined text scorer might miss — keep a floor, but within
+        // the keyword-in-body tier so it never lifts above title matches.
+        return (min(tier, .keywordInBody), max(quality, 0.4))
+    }
+
+    /// The better of two (tier, relevance) rankings — tier first.
+    private static func bestRank(
+        _ lhs: (tier: LexicalTier, relevance: Double),
+        _ rhs: (tier: LexicalTier, relevance: Double)
+    ) -> (tier: LexicalTier, relevance: Double) {
+        if lhs.tier != rhs.tier { return lhs.tier < rhs.tier ? lhs : rhs }
+        return lhs.relevance >= rhs.relevance ? lhs : rhs
     }
     private static func accentColor(for type: AtomType) -> Color {
         switch type {
@@ -1971,21 +2101,27 @@ public final class CommandKViewModel {
     }
 
     /// Merge two ranked result lists, deduping by atom UUID and keeping the
-    /// higher-relevance entry, sorted by relevance.
+    /// entry that ranks higher (lexical tier first, then relevance), sorted.
     static func mergeRankedResults(primary: [RankedResult], additional: [RankedResult]) -> [RankedResult] {
         guard !additional.isEmpty else { return primary }
         var merged = primary
-        var bestRelevanceByUUID: [String: Double] = [:]
+        var bestByUUID: [String: RankedResult] = [:]
         for result in primary {
-            bestRelevanceByUUID[result.atomUUID] = max(bestRelevanceByUUID[result.atomUUID] ?? 0, result.relevance)
+            if let existing = bestByUUID[result.atomUUID], existing < result {
+                continue
+            }
+            bestByUUID[result.atomUUID] = result
         }
         for result in additional {
-            if let existing = bestRelevanceByUUID[result.atomUUID], existing >= result.relevance {
+            // `<` ranks better-first: only replace when the additional entry
+            // is strictly better (better tier, or same tier + relevance) —
+            // ties keep the primary entry.
+            if let existing = bestByUUID[result.atomUUID], !(result < existing) {
                 continue
             }
             merged.removeAll { $0.atomUUID == result.atomUUID }
             merged.append(result)
-            bestRelevanceByUUID[result.atomUUID] = result.relevance
+            bestByUUID[result.atomUUID] = result
         }
         return merged.sorted()
     }
@@ -2255,28 +2391,16 @@ public final class CommandKViewModel {
                 CommandKPerformanceInstrumentation.signposter.endInterval("hybrid-search", hybridSignpost)
                 try Task.checkCancellation()
 
-                // Convert HybridSearchEngine.SearchResult to RankedResult
+                // Convert HybridSearchEngine.SearchResult to RankedResult,
+                // assigning each result's lexical tier from the query.
+                let normalizedQueryForTiers = CommandKSearchMatcher.normalizeQuery(queryForSearch)
                 var rankedResults: [RankedResult] = []
                 for result in hybridResults {
                     try Task.checkCancellation()
-                    // Map EntityType to AtomType
-                    let atomType = entityTypeToAtomType(result.entityType)
-
-                    // Use UUID directly from atoms_fts (no legacy ID resolution needed)
-                    let atomUUID = result.entityUUID ?? "\(result.entityType.rawValue)-\(result.entityId)"
-
-                    let updatedAt = result.updatedAt ?? ISO8601.string(from: Date())
-                    rankedResults.append(RankedResult(
-                        atomUUID: atomUUID,
-                        atomType: atomType,
-                        title: result.title,
-                        snippet: result.preview,
-                        semanticWeight: result.vectorSimilarity,
-                        structuralWeight: result.bm25Score / 25.0,  // Normalize
-                        recencyWeight: result.updatedAt.map(WeightCalculator.recencyWeight(fromISO8601:)) ?? 0.5,
-                        usageWeight: 0.5,    // Default
-                        updatedAt: updatedAt,
-                        accessCount: 0
+                    rankedResults.append(CommandKHybridResultMapper.rankedResult(
+                        from: result,
+                        atomType: entityTypeToAtomType(result.entityType),
+                        normalizedQuery: normalizedQueryForTiers
                     ))
                 }
 
@@ -2292,13 +2416,21 @@ public final class CommandKViewModel {
                 // Sort by combined score
                 rankedResults.sort()
 
+                // Merge instant keyword matches instead of replacing them —
+                // an exact-title hit outside BM25's candidate window must not
+                // vanish when the hybrid pass lands.
+                let mergedResults = Self.mergeRankedResults(
+                    primary: rankedResults,
+                    additional: instantIndexedResults
+                )
+
                 // Update state
                 if !Task.isCancelled,
                    isSurfaceActive,
                    isCurrentLiveQueryGeneration(queryGeneration),
                    await searchPipeline.isCurrent(requestID) {
                     isAIRanked = false
-                    unfilteredResults = rankedResults
+                    unfilteredResults = mergedResults
                     computeFilterCounts()
                     applyFiltersToResults()
                     await performInstantUnifiedSearch(
@@ -2315,20 +2447,26 @@ public final class CommandKViewModel {
                     )
                     setCurrentPhase(.complete)
 
-                    // Cache unfiltered results
-                    await QueryResultCache.shared.set(rankedResults, for: cacheKey)
+                    // Cache the merged list so cache hits carry the
+                    // instant-derived lexical tiers too.
+                    await QueryResultCache.shared.set(mergedResults, for: cacheKey)
 
-                    // Fire AI re-ranker asynchronously (results reorder after 1-2s)
+                    // Fire AI re-ranker asynchronously (results reorder after
+                    // 1-2s). Only body/semantic tiers go to the model — title
+                    // matches are ordered lexically and must not be demoted.
                     let queryForReRank = queryForSearch
-                    let reRankInputs = rankedResults.prefix(25).map { r in
-                        ReRankInput(
-                            uuid: r.atomUUID,
-                            type: r.atomType.rawValue,
-                            title: r.title,
-                            preview: r.snippet ?? "",
-                            score: r.relevance
-                        )
-                    }
+                    let reRankInputs = mergedResults
+                        .filter { $0.lexicalTier >= .keywordInBody }
+                        .prefix(25)
+                        .map { r in
+                            ReRankInput(
+                                uuid: r.atomUUID,
+                                type: r.atomType.rawValue,
+                                title: r.title,
+                                preview: r.snippet ?? "",
+                                score: r.relevance
+                            )
+                        }
                     Task { @MainActor in
                         guard !Task.isCancelled,
                               isSurfaceActive,
@@ -2356,6 +2494,7 @@ public final class CommandKViewModel {
                                         structuralWeight: r.structuralWeight,
                                         recencyWeight: r.recencyWeight,
                                         usageWeight: r.usageWeight,
+                                        lexicalTier: r.lexicalTier,
                                         updatedAt: r.updatedAt,
                                         accessCount: r.accessCount
                                     )
@@ -2443,17 +2582,28 @@ public final class CommandKViewModel {
                 return
             }
 
+            let normalizedQuery = CommandKSearchMatcher.normalizeQuery(query)
             var rankedResults: [RankedResult] = []
             for atom in atoms {
+                let title = atom.title ?? "Untitled"
+                let (tier, quality) = CommandKSearchMatcher.lexicalMatch(
+                    normalizedQuery: normalizedQuery,
+                    normalizedTitle: CommandKSearchMatcher.normalize(title),
+                    normalizedFullText: CommandKSearchMatcher.searchableText(from: [title, atom.body])
+                )
                 rankedResults.append(RankedResult(
                     atomUUID: atom.uuid,
                     atomType: atom.type,
-                    title: atom.title ?? "Untitled",
+                    title: title,
                     snippet: atom.body?.prefix(100).description,
                     semanticWeight: 0.0,
-                    structuralWeight: 0.5,
+                    structuralWeight: max(quality, 0.42),
                     recencyWeight: WeightCalculator.recencyWeight(fromISO8601: atom.updatedAt),
                     usageWeight: 0.5,
+                    // These atoms came from a keyword search — even when the
+                    // match is in body text beyond the snippet, floor at
+                    // keyword-in-body rather than semantic-only.
+                    lexicalTier: min(tier, .keywordInBody),
                     updatedAt: atom.updatedAt,
                     accessCount: 0
                 ))
@@ -2583,11 +2733,12 @@ public final class CommandKViewModel {
             groups[key]?.sort()
         }
 
-        // Order sections by highest-scoring result in each group
+        // Order sections by each group's best result — tier first, so a
+        // fuzzy semantic hit can't lift its section above keyword matches.
         let sorted = groups.sorted { lhs, rhs in
-            let lhsBest = lhs.value.first?.relevance ?? 0
-            let rhsBest = rhs.value.first?.relevance ?? 0
-            return lhsBest > rhsBest
+            guard let lhsBest = lhs.value.first else { return false }
+            guard let rhsBest = rhs.value.first else { return true }
+            return lhsBest < rhsBest
         }
 
         let nextGroupedResults = sorted.map { (type: $0.key, results: $0.value) }
@@ -3126,13 +3277,14 @@ public final class CommandKViewModel {
             finishAction()
 
         case .openCosmoWindow:
-            CosmoWindowPanelController.shared.show()
+            // One Cosmo: the floating chat window is gone — open the assistant pane.
+            CosmoInlineAssistantStore.shared.openPane()
             finishAction()
 
         case .askCosmo:
             guard let body = action.payload.body else { return }
-            CosmoWindowPanelController.shared.show()
-            await CosmoWindowViewModel.shared.sendMessage(body)
+            CosmoInlineAssistantStore.shared.openPane()
+            CosmoInlineAssistantStore.shared.submitPrompt(body)
             finishAction()
         }
     }
@@ -4396,9 +4548,11 @@ public final class CommandKViewModel {
                 .filter { matchesUnifiedLibrarySearch($0, query: trimmed) }
                 .prefix(8)
                 .map { item in
-                    CommandKUnifiedSearchComposer.thinkspaceResult(
+                    let rank = thinkspaceRelevance(for: item, query: trimmed)
+                    return CommandKUnifiedSearchComposer.thinkspaceResult(
                         for: item,
-                        relevance: thinkspaceRelevance(for: item, query: trimmed)
+                        relevance: rank.relevance,
+                        lexicalTier: rank.tier
                     )
                 }
         } else {
@@ -4510,16 +4664,23 @@ public final class CommandKViewModel {
         CommandKSearchMatcher.matches(query, inAny: [item.title, item.preview, item.typeName, item.provenanceSummary])
     }
 
-    private func thinkspaceRelevance(for item: LibraryItem, query: String) -> Double {
+    private func thinkspaceRelevance(
+        for item: LibraryItem,
+        query: String
+    ) -> (tier: LexicalTier, relevance: Double) {
         let normalizedQuery = CommandKSearchMatcher.normalizeQuery(query)
         let normalizedTitle = CommandKSearchMatcher.normalize(item.title)
         if normalizedTitle == normalizedQuery {
-            return 0.98
+            return (.exactTitle, 0.98)
         }
         if normalizedTitle.hasPrefix(normalizedQuery) {
-            return 0.82
+            return (.titlePrefix, 0.82)
         }
-        return 0.62
+        if normalizedTitle.contains(normalizedQuery) {
+            return (.titleMatch, 0.62)
+        }
+        // Matched via matchesUnifiedLibrarySearch on preview/type text.
+        return (.keywordInBody, 0.62)
     }
 
     private func enrichUnifiedSearchResult(_ result: UnifiedSearchResult, with item: LibraryItem?) -> UnifiedSearchResult {
@@ -4545,6 +4706,7 @@ public final class CommandKViewModel {
             icon: result.icon,
             accentColor: item.color,
             relevance: result.relevance,
+            lexicalTier: result.lexicalTier,
             atomUUID: result.atomUUID,
             atomType: result.atomType,
             thinkspaceId: result.thinkspaceId ?? (item.kind == .thinkspace ? item.uuid : nil),

@@ -99,7 +99,7 @@ struct ConnectionBlockView: View {
 
     private var displayTitle: String {
         let trimmed = editableTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "Untitled Connection" : trimmed
+        return trimmed.isEmpty ? "Untitled Concept" : trimmed
     }
 
     // MARK: - Connection Content (at-a-glance preview)
@@ -191,7 +191,7 @@ struct ConnectionBlockView: View {
             document: $titleDocument,
             fontSize: 15,
             compact: true,
-            placeholder: "Untitled Connection",
+            placeholder: "Untitled Concept",
             allowSlashCommands: false,
             allowMentions: true,
             allowSelectionMenu: false,

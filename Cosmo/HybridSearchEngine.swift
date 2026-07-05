@@ -66,6 +66,10 @@ final class HybridSearchEngine: ObservableObject {
         let combinedScore: Double
         let matchReason: MatchReason
         var updatedAt: String? = nil
+        /// True when the strict all-terms BM25 pass produced this result.
+        /// False for the broad any-term fallback and pure-vector results, so
+        /// downstream ranking can tell real keyword evidence from partials.
+        var matchedAllTerms: Bool = false
 
         enum MatchReason: String, Sendable {
             case keywordMatch = "Keyword match"
@@ -113,7 +117,7 @@ final class HybridSearchEngine: ObservableObject {
         print("🔍 Hybrid search: \"\(query)\" (weight: \(Int(weight * 100))% vector)")
 
         // Stage 1: BM25 pre-filter for fast candidate retrieval
-        let bm25Candidates = try await bm25Search(
+        let (bm25Candidates, matchedAllTerms) = try await bm25Search(
             query: query,
             limit: maxBM25Candidates,
             entityTypes: entityTypes,
@@ -164,7 +168,8 @@ final class HybridSearchEngine: ObservableObject {
                     vectorSimilarity: 0,
                     combinedScore: candidate.bm25Score,
                     matchReason: .keywordMatch,
-                    updatedAt: candidate.updatedAt
+                    updatedAt: candidate.updatedAt,
+                    matchedAllTerms: matchedAllTerms
                 ))
             }
             return fallbackResults
@@ -214,7 +219,8 @@ final class HybridSearchEngine: ObservableObject {
                 vectorSimilarity: Double(vectorSimilarity),
                 combinedScore: combinedScore,
                 matchReason: matchReason,
-                updatedAt: candidate.updatedAt
+                updatedAt: candidate.updatedAt,
+                matchedAllTerms: matchedAllTerms
             )
 
             // Every candidate already matched the query by keyword — keep it
@@ -300,7 +306,7 @@ final class HybridSearchEngine: ObservableObject {
         limit: Int,
         entityTypes: [EntityType]?,
         excludedEntityUUIDs: Set<String>
-    ) async throws -> [BM25Candidate] {
+    ) async throws -> (candidates: [BM25Candidate], matchedAllTerms: Bool) {
         try Task.checkCancellation()
         // Spotlight semantics: require every term first, then broaden to
         // any-term matching only when the strict query finds nothing.
@@ -312,18 +318,19 @@ final class HybridSearchEngine: ObservableObject {
             excludedEntityUUIDs: excludedEntityUUIDs
         )
         if !candidates.isEmpty {
-            return candidates
+            return (candidates, true)
         }
 
         let broadQuery = Self.prepareFTS5Query(query, matchAnyTerm: true)
-        guard broadQuery != strictQuery else { return candidates }
+        guard broadQuery != strictQuery else { return (candidates, false) }
         try Task.checkCancellation()
-        return try await runBM25Query(
+        let broadCandidates = try await runBM25Query(
             ftsQuery: broadQuery,
             limit: limit,
             entityTypes: entityTypes,
             excludedEntityUUIDs: excludedEntityUUIDs
         )
+        return (broadCandidates, false)
     }
 
     private func runBM25Query(
@@ -656,7 +663,8 @@ final class HybridSearchEngine: ObservableObject {
                     vectorSimilarity: result.vectorSimilarity,
                     combinedScore: result.combinedScore + boost,
                     matchReason: .contextRelevant,
-                    updatedAt: result.updatedAt
+                    updatedAt: result.updatedAt,
+                    matchedAllTerms: result.matchedAllTerms
                 ))
             } else {
                 boostedResults.append(result)

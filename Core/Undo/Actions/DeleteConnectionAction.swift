@@ -4,7 +4,7 @@ import Foundation
 
 @MainActor
 final class DeleteConnectionAction: UndoableAction {
-    let actionDescription = "Delete Connection"
+    let actionDescription = "Delete Concept"
     let timestamp: Date
 
     private let sourceUUID: String

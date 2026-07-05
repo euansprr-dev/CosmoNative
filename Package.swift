@@ -44,23 +44,35 @@ let package = Package(
             exclude: [
                 "Tests",
                 "Daemon/main.swift",  // XPC service entry point (Xcode only)
-                "Daemon/DaemonTypes.swift",  // Duplicate types for XPC target (Xcode only)
                 "Daemon/Info.plist",  // XPC service Info.plist
+                "scripts",  // Python tooling (.venv contains C sources SPM chokes on)
+                "marketing",  // Video tooling (node_modules contains C sources)
+                "cosmo-cloud-agent",  // Railway worker (TS/JS + node_modules — breaks `swift test`)
+                "build",  // xcodebuild artifacts
+                "CosmoOS.app",  // build output bundle
             ],
             resources: [
                 // Runtime-compiled Metal shaders (SwiftPM resource bundle)
                 .process("Canvas/Shaders.metal"),
             ],
             swiftSettings: [
-                // Use minimal concurrency checking to allow the app to compile
-                // while Foundation Models integration is stabilized
+                // Match the Xcode project: Swift 5 language mode with targeted
+                // concurrency checking. Tools-version 6.0 otherwise defaults to
+                // the Swift 6 mode, which fails app-wide with strict-concurrency
+                // errors xcodebuild does not enforce.
+                .swiftLanguageMode(.v5),
+                .enableUpcomingFeature("BareSlashRegexLiterals"),
                 .unsafeFlags(["-Xfrontend", "-strict-concurrency=targeted"])
             ]
         ),
         .testTarget(
             name: "CosmoOSTests",
             dependencies: ["CosmoOS"],
-            path: "Tests/CosmoOSTests"
+            path: "Tests/CosmoOSTests",
+            swiftSettings: [
+                .swiftLanguageMode(.v5),
+                .enableUpcomingFeature("BareSlashRegexLiterals")
+            ]
         )
     ]
 )

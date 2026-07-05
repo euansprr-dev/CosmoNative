@@ -75,6 +75,43 @@ struct InboxItem: Identifiable, Codable, Equatable, FetchableRecord, Persistable
         case syncVersion = "_sync_version"
     }
 
+    // MARK: - Explicit routing
+
+    /// Metadata key stamped when the destination was the USER'S choice
+    /// (Telegram topic alias, deep-dive accept) — never a classifier guess.
+    static let explicitDestinationMetadataKey = "explicitDestination"
+    /// Metadata key listing deep-dive UUIDs the user removed this capture
+    /// from (comma-joined) — those topics stop suggesting it.
+    static let suppressedTopicsMetadataKey = "suppressedTopicUUIDs"
+
+    var metadataDictionary: [String: Any] {
+        guard let metadata,
+              let data = metadata.data(using: .utf8),
+              let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [:] }
+        return parsed
+    }
+
+    /// True when this capture's placement is user-confirmed, not an AI
+    /// recommendation. A topic's inbox shows only these; everything else is
+    /// at most a suggestion the user can accept or dismiss.
+    var isExplicitlyRouted: Bool {
+        if (metadataDictionary[Self.explicitDestinationMetadataKey] as? String) == "true" { return true }
+        // Legacy pre-marker alias captures: the preset path wrote a
+        // full-confidence .place with no recommendation bundle and no
+        // rationale — a signature no classifier or taxonomy write produces.
+        return classification == .place
+            && confidence >= 0.999
+            && recommendations == nil
+            && rationale == nil
+    }
+
+    /// True when the user removed this capture from the given topic —
+    /// that deep dive must not resurface it as a suggestion.
+    func isSuppressed(forTopic topicUUID: String) -> Bool {
+        guard let joined = metadataDictionary[Self.suppressedTopicsMetadataKey] as? String else { return false }
+        return joined.split(separator: ",").map(String.init).contains(topicUUID)
+    }
+
     // MARK: - Factory
 
     /// True when the item's predicted destination is a task atom.

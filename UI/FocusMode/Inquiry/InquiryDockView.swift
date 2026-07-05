@@ -1,12 +1,8 @@
 // CosmoOS/UI/FocusMode/Inquiry/InquiryDockView.swift
-// Shared dock components: prefix-command suggestion catalog + popover and
-// ephemeral AI reply cards. The dock surface itself lives in Dock/InquiryAssistantDock.swift.
+// Shared dock vocabulary: the prefix-command suggestion catalog and its
+// slash-menu popover. The dock surface itself is Study/StudyThinkingBar.swift.
 
 import SwiftUI
-
-// Legacy dock retired: InquiryAssistantDock (Dock/InquiryAssistantDock.swift)
-// is the permanent assistant-styled replacement. This file keeps the shared
-// suggestion catalog, suggestions popover, and ephemeral AI reply cards.
 
 // MARK: - Suggestion model
 
@@ -68,8 +64,9 @@ struct InquiryDockSuggestion: Identifiable, Equatable, Sendable {
 
 // MARK: - Slash command menu
 
-/// Command-K-style glass menu listing every dock command. Opened intentionally
-/// with "/" only, and rendered above the dock by its host.
+/// The dock's command menu: a small floating glass panel listing every
+/// prefix command. Opened intentionally with "/" only; rendered above the
+/// thinking bar by its host.
 @MainActor
 struct InquiryDockSuggestionsView: View {
     let suggestions: [InquiryDockSuggestion]
@@ -90,47 +87,39 @@ struct InquiryDockSuggestionsView: View {
         }
         .padding(.vertical, DS.space6)
         .frame(width: 380, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
-                .fill(.ultraThinMaterial)
-        )
-        .background(
-            RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
-                .fill(DS.surfaceElevated.opacity(0.55))
-        )
+        .background(DS.surfaceCard.opacity(0.98), in: .rect(cornerRadius: 16))
         .overlay(
-            RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
-                .stroke(DS.glassBorder, lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(DS.glassBorder, lineWidth: 1)
         )
-        .clipShape(RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous))
-        .dsFloatingShadow()
+        .shadow(color: .black.opacity(0.16), radius: 24, y: 14)
     }
 
     private func suggestionRow(_ suggestion: InquiryDockSuggestion) -> some View {
         Button { onSelect(suggestion) } label: {
             HStack(spacing: DS.space10) {
                 Image(systemName: suggestion.icon)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(DS.caption)
                     .foregroundStyle(DS.accent)
                     .frame(width: 20, height: 20)
                     .background(DS.accentSoft.opacity(0.6), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
                     .accessibilityHidden(true)
                 Text(suggestion.label)
-                    .font(CosmoTypography.label)
-                    .foregroundStyle(CosmoColors.textPrimary)
+                    .font(DS.footnote.weight(.medium))
+                    .foregroundStyle(DS.text)
                 Text(suggestion.detail)
-                    .font(CosmoTypography.caption)
-                    .foregroundStyle(CosmoColors.textTertiary)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
                     .lineLimit(1)
                 Spacer(minLength: DS.space8)
                 Text(suggestion.token)
                     .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(CosmoColors.textTertiary)
+                    .foregroundStyle(DS.textMuted)
             }
             .padding(.horizontal, DS.space10)
             .padding(.vertical, 6)
             .background(
-                hoveredToken == suggestion.token ? DS.surfaceHover.opacity(0.8) : Color.clear,
+                hoveredToken == suggestion.token ? DS.glassSectionFill : Color.clear,
                 in: RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous)
             )
             .contentShape(Rectangle())
@@ -139,72 +128,5 @@ struct InquiryDockSuggestionsView: View {
         .padding(.horizontal, DS.space6)
         .onHover { hoveredToken = $0 ? suggestion.token : (hoveredToken == suggestion.token ? nil : hoveredToken) }
         .accessibilityLabel("\(suggestion.label). \(suggestion.detail)")
-    }
-}
-
-// MARK: - Ephemeral AI cards stack
-
-@MainActor
-struct InquiryEphemeralAICardsStack: View {
-    @Bindable var viewModel: InquiryWorkspaceViewModel
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: DS.space6) {
-            ForEach(viewModel.ephemeralAIReplies.suffix(3).reversed()) { card in
-                EphemeralAIReplyCardView(card: card) {
-                    viewModel.dismissEphemeralReply(card.id)
-                }
-                .transition(.opacity.combined(with: .move(edge: .bottom)))
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-@MainActor
-struct EphemeralAIReplyCardView: View {
-    let card: EphemeralAIReplyCard
-    let onDismiss: () -> Void
-
-    var body: some View {
-        HStack(alignment: .top, spacing: DS.space8) {
-            Image(systemName: icon)
-                .font(.system(size: 11))
-                .foregroundStyle(DS.accent)
-                .frame(width: 18, height: 18)
-                .accessibilityHidden(true)
-            Text(card.text)
-                .font(.system(.callout, design: .serif))
-                .foregroundStyle(CosmoColors.textPrimary)
-                .lineLimit(6)
-                .multilineTextAlignment(.leading)
-            Spacer(minLength: DS.space8)
-            Button(action: onDismiss) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 10))
-                    .foregroundStyle(CosmoColors.textTertiary)
-                    .frame(width: 18, height: 18)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Dismiss AI reply")
-        }
-        .padding(.horizontal, DS.space12)
-        .padding(.vertical, DS.space10)
-        .background(DS.vellum, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.radiusMedium)
-                .stroke(DS.sepiaBorder, lineWidth: 0.5)
-        )
-        .shadow(color: .black.opacity(0.06), radius: 12, y: 4)
-    }
-
-    private var icon: String {
-        switch card.kind {
-        case .reply: return "sparkles"
-        case .summary: return "text.book.closed"
-        case .challenge: return "exclamationmark.triangle"
-        case .routing: return "arrow.branch"
-        }
     }
 }

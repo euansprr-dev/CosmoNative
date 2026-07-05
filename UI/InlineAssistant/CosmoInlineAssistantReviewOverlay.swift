@@ -109,7 +109,7 @@ private struct CosmoInlineDiffChangeRow: View {
                     CosmoInlineDiffLineView(text: line, kind: .removed)
                 }
                 ForEach(Array(change.addedLines.enumerated()), id: \.offset) { _, line in
-                    CosmoInlineDiffLineView(text: line, kind: .added)
+                    CosmoInlineDiffLineView(text: line, kind: .added, formatMark: change.formatMark)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -158,24 +158,39 @@ private struct CosmoInlineDiffLineView: View {
 
     let text: String
     let kind: Kind
+    /// For formatting changes: render the line with the mark ACTUALLY applied —
+    /// a real bold line reads as the result, not a description of it.
+    var formatMark: CosmoAssistantFormatMark? = nil
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(kind == .removed ? "−" : "+")
-                .font(.system(size: 14, weight: .bold, design: .monospaced))
+            Text(kind == .removed ? "−" : (formatMark == nil ? "+" : "Aa"))
+                .font(.system(size: formatMark == nil ? 14 : 11, weight: .bold, design: .monospaced))
                 .foregroundStyle(accent)
-                .frame(width: 12, alignment: .center)
+                .frame(width: formatMark == nil ? 12 : 18, alignment: .center)
 
             Text(text)
-                .font(.system(size: 15))
+                .font(styledFont)
+                .italic(formatMark == .italic)
+                .underline(formatMark == .underline, color: accent.opacity(0.8))
                 .foregroundStyle(accent)
-                .strikethrough(kind == .removed, color: accent.opacity(0.7))
+                .strikethrough(kind == .removed || formatMark == .strikethrough, color: accent.opacity(0.7))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(fill, in: .rect(cornerRadius: 8))
+    }
+
+    private var styledFont: Font {
+        switch formatMark {
+        case .bold: return .system(size: 15, weight: .bold)
+        case .heading1: return .system(size: 22, weight: .bold)
+        case .heading2: return .system(size: 18, weight: .semibold)
+        case .heading3: return .system(size: 16, weight: .medium)
+        default: return .system(size: 15)
+        }
     }
 
     private var accent: Color {
@@ -216,6 +231,9 @@ struct CosmoInlineAssistantReviewOverlay: View {
                 Text("\(proposal.reviewableOperationCount) changes to review")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(DS.text)
+                    .monospacedDigit()
+                    .contentTransition(.numericText())
+                    .animation(ProMotionSprings.gentle, value: proposal.reviewableOperationCount)
                 if !proposal.title.isEmpty {
                     Text(proposal.title)
                         .font(.system(size: 12))
@@ -252,10 +270,10 @@ struct CosmoInlineAssistantReviewOverlay: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 11)
         .frame(maxWidth: 640)
-        .background(DS.surfaceElevated, in: .rect(cornerRadius: 18))
-        .overlay { RoundedRectangle(cornerRadius: 18).stroke(DS.borderSubtle, lineWidth: 1) }
-        .dsFloatingShadow()
-        .padding(.horizontal, 28)
+        // Same instrument family as the quill bar and slash menu — one glass
+        // chrome for every floating editor instrument.
+        .cosmoMenuChrome(cornerRadius: 22)
+        .padding(.horizontal, max(28, CosmoMenuChrome.shadowClearance))
     }
 
     private func pillLabel(_ title: String, systemImage: String) -> some View {

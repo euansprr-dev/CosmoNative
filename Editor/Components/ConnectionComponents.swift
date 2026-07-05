@@ -122,7 +122,7 @@ struct CoreIdeaHero: View {
             
             ZStack(alignment: .topLeading) {
                 if content.isEmpty {
-                    Text("What is the central concept? Describe the essence of this connection...")
+                    Text("What is the central concept? Describe the essence of this concept...")
                         .font(CosmoTypography.displaySmall) // 24pt
                         .foregroundColor(DS.documentTextMuted.opacity(0.5))
                         .allowsHitTesting(false)
@@ -208,7 +208,7 @@ struct ReferencesSection: View {
             
             if references.isEmpty {
                 Button(action: onAdd) {
-                    Text("Add research, ideas, or other connections...")
+                    Text("Add research, ideas, or other concepts...")
                         .font(CosmoTypography.bodySmall)
                         .foregroundColor(DS.documentTextMuted)
                         .padding()

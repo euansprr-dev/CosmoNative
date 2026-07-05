@@ -18,6 +18,9 @@ struct DeepDiveOverviewView: View {
     @State private var renamingSessionUUID: String?
     @State private var sessionRenameDraft = ""
     @State private var deletingSessionUUID: String?
+    @State private var renamingQuestionUUID: String?
+    @State private var questionRenameDraft = ""
+    @State private var deletingQuestionUUID: String?
     @State private var lexiconPopoverUUID: String?
     @AppStorage("deepDiveMapShowsQuestions") private var mapShowsQuestions = true
     @State private var hasAppeared = false
@@ -96,6 +99,24 @@ struct DeepDiveOverviewView: View {
             }
         } message: {
             Text("The session atom will move to Recently Deleted. Questions and extracts remain as atoms.")
+        }
+        .sheet(isPresented: questionRenameSheetBinding) {
+            if let questionUUID = renamingQuestionUUID {
+                questionRenameSheet(questionUUID)
+            }
+        }
+        .confirmationDialog("Delete question?", isPresented: deleteQuestionDialogBinding, titleVisibility: .visible) {
+            Button("Delete Question", role: .destructive) {
+                if let uuid = deletingQuestionUUID {
+                    Task { await viewModel.deleteQuestion(uuid) }
+                }
+                deletingQuestionUUID = nil
+            }
+            Button("Cancel", role: .cancel) {
+                deletingQuestionUUID = nil
+            }
+        } message: {
+            Text("Child questions are kept and promoted to this question's parent. Notes routed here remain as atoms.")
         }
     }
 
@@ -204,6 +225,89 @@ struct DeepDiveOverviewView: View {
             if shouldShowTopicInbox {
                 inboxSection
                     .studyCascade(hasAppeared, index: 4)
+            }
+        }
+    }
+
+    private struct TopicInboxRow: View {
+        let item: InboxItem
+        let isSuggestion: Bool
+        let onAccept: () -> Void
+        let onRemove: () -> Void
+        let onDismiss: () -> Void
+
+        @State private var isHovered = false
+
+        var body: some View {
+            HStack(alignment: .top, spacing: DS.space8) {
+                Circle()
+                    .fill(isSuggestion ? CosmoColors.textTertiary.opacity(0.5) : DS.accent.opacity(0.6))
+                    .frame(width: 6, height: 6)
+                    .padding(.top, 7)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(String(item.rawText.prefix(120)))
+                        .font(CosmoTypography.body)
+                        .foregroundStyle(CosmoColors.textPrimary)
+                        .lineLimit(2)
+                    if let suggested = item.primaryRecommendationValue?.suggestedAtomType {
+                        Text(suggested.capitalized)
+                            .font(CosmoTypography.caption)
+                            .foregroundStyle(CosmoColors.textTertiary)
+                    }
+                }
+                Spacer(minLength: 0)
+                if isSuggestion && isHovered {
+                    suggestionControls
+                }
+            }
+            .padding(.horizontal, DS.space12)
+            .padding(.vertical, DS.space8)
+            .background(isHovered ? DS.surface.opacity(0.7) : .clear)
+            .contentShape(Rectangle())
+            .onHover { hovering in
+                withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+            }
+            .contextMenu {
+                if isSuggestion {
+                    Button("Accept into this topic") { onAccept() }
+                    Button("Not this topic") { onRemove() }
+                } else {
+                    Button("Remove from this topic") { onRemove() }
+                }
+                Divider()
+                Button("Dismiss capture", role: .destructive) { onDismiss() }
+            }
+            .accessibilityLabel(
+                isSuggestion
+                    ? "Suggested capture: \(item.rawText.prefix(80)). Right-click to accept or remove."
+                    : "Inbox capture: \(item.rawText.prefix(80)). Right-click for actions."
+            )
+        }
+
+        /// Hover-revealed accept/decline for suggestions — one click each way.
+        private var suggestionControls: some View {
+            HStack(spacing: DS.space6) {
+                Button(action: onAccept) {
+                    Image(systemName: "checkmark.circle")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(DS.green)
+                        .frame(width: 22, height: 22)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help("Accept into this topic")
+                .accessibilityLabel("Accept into this topic")
+                Button(action: onRemove) {
+                    Image(systemName: "xmark.circle")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(CosmoColors.textTertiary)
+                        .frame(width: 22, height: 22)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help("Not this topic")
+                .accessibilityLabel("Not this topic")
             }
         }
     }
@@ -347,45 +451,42 @@ struct DeepDiveOverviewView: View {
         .accessibilityLabel(viewModel.currentQuestionTitle.map { "Continue inquiry: \($0)" } ?? "Start your first inquiry")
     }
 
+    @ViewBuilder
     private var inboxSection: some View {
-        StudySection(label: "INBOX", count: viewModel.topicInboxItems.count) {
-            let visible = inboxExpanded ? viewModel.topicInboxItems : Array(viewModel.topicInboxItems.prefix(4))
-            ForEach(Array(visible.enumerated()), id: \.element.id) { index, item in
-                if index > 0 { StudyPaneDivider() }
-                topicInboxRow(item)
+        if !viewModel.topicInboxItems.isEmpty {
+            StudySection(label: "INBOX", count: viewModel.topicInboxItems.count) {
+                let visible = inboxExpanded ? viewModel.topicInboxItems : Array(viewModel.topicInboxItems.prefix(4))
+                ForEach(Array(visible.enumerated()), id: \.element.id) { index, item in
+                    if index > 0 { StudyPaneDivider() }
+                    topicInboxRow(item, isSuggestion: false)
+                }
+                if viewModel.topicInboxItems.count > 4 {
+                    StudyPaneDivider()
+                    StudyOverflowRow(
+                        hiddenCount: viewModel.topicInboxItems.count - 4,
+                        isExpanded: $inboxExpanded
+                    )
+                }
             }
-            if viewModel.topicInboxItems.count > 4 {
-                StudyPaneDivider()
-                StudyOverflowRow(
-                    hiddenCount: viewModel.topicInboxItems.count - 4,
-                    isExpanded: $inboxExpanded
-                )
+        }
+        if !viewModel.suggestedInboxItems.isEmpty {
+            StudySection(label: "SUGGESTED FOR THIS TOPIC", count: viewModel.suggestedInboxItems.count) {
+                ForEach(Array(viewModel.suggestedInboxItems.prefix(4).enumerated()), id: \.element.id) { index, item in
+                    if index > 0 { StudyPaneDivider() }
+                    topicInboxRow(item, isSuggestion: true)
+                }
             }
         }
     }
 
-    private func topicInboxRow(_ item: InboxItem) -> some View {
-        HStack(alignment: .top, spacing: DS.space8) {
-            Circle()
-                .fill(DS.accent.opacity(0.6))
-                .frame(width: 6, height: 6)
-                .padding(.top, 7)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(String(item.rawText.prefix(120)))
-                    .font(CosmoTypography.body)
-                    .foregroundStyle(CosmoColors.textPrimary)
-                    .lineLimit(2)
-                if let suggested = item.primaryRecommendationValue?.suggestedAtomType {
-                    Text(suggested.capitalized)
-                        .font(CosmoTypography.caption)
-                        .foregroundStyle(CosmoColors.textTertiary)
-                }
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, DS.space12)
-        .padding(.vertical, DS.space8)
+    private func topicInboxRow(_ item: InboxItem, isSuggestion: Bool) -> some View {
+        TopicInboxRow(
+            item: item,
+            isSuggestion: isSuggestion,
+            onAccept: { Task { await viewModel.acceptSuggestedItem(item) } },
+            onRemove: { Task { await viewModel.removeItemFromTopic(item) } },
+            onDismiss: { Task { await viewModel.dismissInboxItem(item) } }
+        )
     }
 
     private var questionsSection: some View {
@@ -431,7 +532,39 @@ struct DeepDiveOverviewView: View {
             },
             action: { launchInquiry(mainQuestionTitle: q.title, rootQuestionUUID: q.uuid) }
         )
+        .contextMenu { questionContextMenu(q) }
         .accessibilityLabel("Open inquiry for \(q.title ?? "question")")
+    }
+
+    @ViewBuilder
+    private func questionContextMenu(_ question: Atom) -> some View {
+        Button("Start inquiry") {
+            launchInquiry(mainQuestionTitle: question.title, rootQuestionUUID: question.uuid)
+        }
+        Button("Rename…") {
+            renamingQuestionUUID = question.uuid
+            questionRenameDraft = question.title ?? ""
+        }
+        Menu("Mark as") {
+            ForEach([QuestionStatus.open, .researching, .partiallyAnswered, .answered], id: \.self) { status in
+                Button {
+                    Task { await viewModel.updateQuestionStatus(question.uuid, status: status) }
+                } label: {
+                    if (question.questionMetadata?.status ?? .open) == status {
+                        Label(status.displayName, systemImage: "checkmark")
+                    } else {
+                        Text(status.displayName)
+                    }
+                }
+            }
+        }
+        Button("Archive") {
+            Task { await viewModel.updateQuestionStatus(question.uuid, status: .archived) }
+        }
+        Divider()
+        Button("Delete…", role: .destructive) {
+            deletingQuestionUUID = question.uuid
+        }
     }
 
     private var sourcesSection: some View {
@@ -733,7 +866,9 @@ struct DeepDiveOverviewView: View {
     // MARK: - Helpers
 
     private var shouldShowQuestion: Bool { viewModel.currentQuestionTitle != nil }
-    private var shouldShowTopicInbox: Bool { !viewModel.topicInboxItems.isEmpty }
+    private var shouldShowTopicInbox: Bool {
+        !viewModel.topicInboxItems.isEmpty || !viewModel.suggestedInboxItems.isEmpty
+    }
     private var shouldShowQuestions: Bool {
         let m = atom.deepDiveMetadata?.maturity ?? .spark
         return m != .spark || !viewModel.questions.isEmpty
@@ -846,6 +981,55 @@ struct DeepDiveOverviewView: View {
             get: { deletingSessionUUID != nil },
             set: { if !$0 { deletingSessionUUID = nil } }
         )
+    }
+
+    private var questionRenameSheetBinding: Binding<Bool> {
+        Binding(
+            get: { renamingQuestionUUID != nil },
+            set: { if !$0 { renamingQuestionUUID = nil } }
+        )
+    }
+
+    private var deleteQuestionDialogBinding: Binding<Bool> {
+        Binding(
+            get: { deletingQuestionUUID != nil },
+            set: { if !$0 { deletingQuestionUUID = nil } }
+        )
+    }
+
+    private func questionRenameSheet(_ questionUUID: String) -> some View {
+        VStack(alignment: .leading, spacing: DS.space16) {
+            Text("Rename Question")
+                .font(CosmoTypography.titleSmall)
+                .foregroundStyle(CosmoColors.textPrimary)
+            TextField("Question title", text: $questionRenameDraft)
+                .textFieldStyle(.plain)
+                .font(CosmoTypography.body)
+                .padding(DS.space12)
+                .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+                .overlay(RoundedRectangle(cornerRadius: DS.radiusSmall).stroke(DS.borderActive, lineWidth: 1))
+                .onSubmit {
+                    Task { await viewModel.renameQuestion(questionUUID, title: questionRenameDraft) }
+                    renamingQuestionUUID = nil
+                }
+            HStack {
+                Spacer()
+                Button("Cancel") {
+                    renamingQuestionUUID = nil
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(CosmoColors.textSecondary)
+                Button("Save") {
+                    Task { await viewModel.renameQuestion(questionUUID, title: questionRenameDraft) }
+                    renamingQuestionUUID = nil
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(DS.accent)
+            }
+        }
+        .padding(DS.space20)
+        .frame(width: 420)
+        .background(DS.bg)
     }
 
     private func sessionRenameSheet(_ sessionUUID: String) -> some View {

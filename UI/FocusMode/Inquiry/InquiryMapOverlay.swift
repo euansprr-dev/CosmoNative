@@ -1,5 +1,8 @@
 // CosmoOS/UI/FocusMode/Inquiry/InquiryMapOverlay.swift
-// Full-screen overlay (Cmd+M) showing the question/branch tree for the current session.
+// The SESSION map (⌘M): this session's question tree, scoped to the inquiry
+// at hand. The topic-wide map (crystallized concepts) lives on the Deep Dive
+// overview's Map tab. Presents as a materializing glass panel over a
+// whisper-dimmed page.
 
 import SwiftUI
 
@@ -9,8 +12,10 @@ struct InquiryMapOverlay: View {
 
     var body: some View {
         ZStack {
-            Color.black.opacity(0.45).ignoresSafeArea()
+            // A whisper, not a wall — the glass needs the page alive behind it.
+            Color.black.opacity(0.10).ignoresSafeArea()
                 .onTapGesture { viewModel.dismissMap() }
+                .accessibilityLabel("Dismiss session map")
             mapPanel
         }
         .accessibilityAddTraits(.isModal)
@@ -19,7 +24,6 @@ struct InquiryMapOverlay: View {
     private var mapPanel: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            Divider().background(DS.borderSubtle)
             InquiryMindMapView(root: sessionRoot) { node in
                 if node.atomUUID != nil || node.branchNodeId != nil {
                     viewModel.setActiveQuestion(node.atomUUID, branchNodeId: node.branchNodeId)
@@ -28,12 +32,8 @@ struct InquiryMapOverlay: View {
             }
         }
         .frame(maxWidth: 880, maxHeight: 620)
-        .background(DS.vellum, in: RoundedRectangle(cornerRadius: DS.radiusLarge))
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.radiusLarge)
-                .stroke(DS.sepiaBorder, lineWidth: 0.5)
-        )
-        .shadow(color: .black.opacity(0.20), radius: 32, y: 16)
+        .cosmoGlassPanel(role: .floatingAssistant, cornerRadius: 24)
+        .padding(DS.space24)
     }
 
     private var sessionRoot: MindMapNode {
@@ -51,30 +51,34 @@ struct InquiryMapOverlay: View {
 
     private var header: some View {
         HStack(spacing: DS.space8) {
-            Image(systemName: "map")
-                .font(.system(size: 12, weight: .medium))
+            Image(systemName: "circle.hexagongrid")
+                .font(DS.caption.weight(.medium))
                 .foregroundStyle(DS.accent)
                 .accessibilityHidden(true)
-            Text("Branch map")
-                .font(.system(.title3, design: .serif))
-                .foregroundStyle(CosmoColors.textPrimary)
+            Text("Session map")
+                .font(DS.headline)
+                .foregroundStyle(DS.text)
+            Text("this session's questions")
+                .font(DS.caption)
+                .foregroundStyle(DS.textMuted)
             Spacer()
             Button {
                 viewModel.dismissMap()
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(CosmoColors.textSecondary)
+                    .font(DS.caption.weight(.semibold))
+                    .foregroundStyle(DS.textSecondary)
                     .frame(width: 24, height: 24)
-                    .background(DS.surface, in: Circle())
+                    .background(DS.glassSectionFill, in: Circle())
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
-            .keyboardShortcut(.escape, modifiers: [])
-            .accessibilityLabel("Close branch map")
+            .help("Close (Esc)")
+            .accessibilityLabel("Close session map")
         }
         .padding(.horizontal, DS.space20)
         .padding(.vertical, DS.space12)
+        .background(DS.glassSectionFill)
     }
 
 }

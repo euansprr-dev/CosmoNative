@@ -1,5 +1,6 @@
 // CosmoOS/UI/FocusMode/Inquiry/InquiryCrystallizeSheet.swift
-// Modal sheet wrapping the Inquiry v2 crystallization review.
+// Modal sheet wrapping the Inquiry crystallization review. Thin shell —
+// the review owns the masthead, content, and sticky action bar.
 
 import SwiftUI
 
@@ -9,45 +10,17 @@ struct InquiryCrystallizeSheet: View {
     let onDismiss: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-            Divider().background(DS.borderSubtle)
-            InquiryCrystallizationReviewV2(viewModel: viewModel)
-        }
-        .frame(minWidth: 880, minHeight: 620)
-        .background(DS.bg)
-    }
-
-    private var header: some View {
-        HStack(spacing: DS.space12) {
-            Image(systemName: "sparkles")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(DS.accent)
-                .accessibilityHidden(true)
-            Text("Crystallize")
-                .font(.system(.title2, design: .serif))
-                .foregroundStyle(CosmoColors.textPrimary)
-            Spacer()
-            Button {
-                onDismiss()
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 10, weight: .semibold))
-                    Text("Back to Explore")
-                        .font(CosmoTypography.label)
-                }
-                .foregroundStyle(CosmoColors.textSecondary)
-                .padding(.horizontal, DS.space10)
-                .padding(.vertical, 6)
-                .background(DS.surface, in: Capsule())
-                .contentShape(Capsule())
-            }
-            .buttonStyle(.plain)
-            .keyboardShortcut(.escape, modifiers: [])
-            .accessibilityLabel("Back to Explore phase")
-        }
-        .padding(.horizontal, DS.space20)
-        .padding(.vertical, DS.space16)
+        InquiryCrystallizationReviewV2(viewModel: viewModel, onDismiss: onDismiss)
+            .frame(minWidth: 880, minHeight: 620)
+            .background(DS.bg)
+            .background(
+                // Esc returns to Explore without promoting anything.
+                Button("", action: onDismiss)
+                    .keyboardShortcut(.escape, modifiers: [])
+                    .buttonStyle(.plain)
+                    .opacity(0)
+                    .frame(width: 0, height: 0)
+                    .accessibilityHidden(true)
+            )
     }
 }

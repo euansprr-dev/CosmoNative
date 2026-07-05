@@ -159,7 +159,7 @@ struct FloatingPanelTypeConfig {
             return FloatingPanelTypeConfig(
                 accentColor: CosmoColors.blockConnection,
                 icon: "link.circle.fill",
-                label: "Connection"
+                label: "Concept"
             )
         case .idea:
             return FloatingPanelTypeConfig(

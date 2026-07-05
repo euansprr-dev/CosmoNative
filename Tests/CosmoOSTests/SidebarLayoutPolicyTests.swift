@@ -378,12 +378,20 @@ final class SidebarLayoutPolicyTests: XCTestCase {
         )
 
         XCTAssertTrue(
-            mainView.contains("if showCommandK {\n                CommandKView("),
+            mainView.contains("if showCommandK {\n                    CommandKView("),
             "Only the visible Command-K presentation should mount the full-window CommandKView host."
         )
         XCTAssertFalse(
-            mainView.contains("if showCommandK || commandKBehindFocusMode {\n                CommandKView("),
+            mainView.contains("if showCommandK || commandKBehindFocusMode {\n                    CommandKView("),
             "Preserving Command-K behind focus mode must not preserve a full-screen invisible host above browser panes."
+        )
+        XCTAssertTrue(
+            mainView.contains("\n            .allowsHitTesting(showCommandK)\n            .zIndex(200)"),
+            "The Command-K hit-test gate must live on the persistent wrapper outside the conditional — a gate inside the branch goes stale during the removal transition and a stranded snapshot swallows every click (dead-clicks-after-dismiss bug)."
+        )
+        XCTAssertFalse(
+            mainView.contains(".animation(.spring(response: 0.3, dampingFraction: 0.8), value: showCommandK)"),
+            "Command-K insert/removal must have a single animation driver (applyCommandKPresentation's withAnimation); a competing implicit driver can interrupt the removal transition and strand the click-catching snapshot."
         )
     }
 

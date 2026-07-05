@@ -278,6 +278,9 @@ struct StudyThinkspaceModeSwitcher: View {
             name: CosmoNotification.Canvas.setThinkspaceMode,
             userInfo: ["mode": mode.rawValue]
         )
-        NotificationCenter.default.post(name: .exitFocusMode, object: nil)
+        // Direct close, not `.exitFocusMode`: this is an explicit "go to
+        // canvas/library", never a "step back" — the trail must not replay
+        // the deep dive we are deliberately leaving.
+        FocusNavigationCoordinator.shared.close()
     }
 }

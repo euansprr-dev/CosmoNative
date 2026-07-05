@@ -218,7 +218,7 @@ struct ConnectionEditorView: View {
                 VStack(spacing: 12) {
                     ProgressView()
                         .scaleEffect(0.8)
-                    Text("Loading connection...")
+                    Text("Loading concept...")
                         .font(CosmoTypography.caption)
                         .foregroundColor(DS.documentTextMuted)
                 }
@@ -659,7 +659,7 @@ struct ReferencePickerSheet: View {
             .padding()
 
             // Search
-            TextField("Search ideas, research, connections...", text: $searchQuery)
+            TextField("Search ideas, research, concepts...", text: $searchQuery)
                 .textFieldStyle(.plain)
                 .padding(12)
                 .background(CosmoColors.glassGrey.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))

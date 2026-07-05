@@ -317,7 +317,7 @@ struct ContentContextPanel: View {
     @ViewBuilder
     private var inheritedConnectionsSection: some View {
         if !inheritedConnectionAtoms.isEmpty {
-            sectionHeader(title: "CONNECTIONS", icon: "link.circle.fill")
+            sectionHeader(title: "CONCEPTS", icon: "link.circle.fill")
 
             VStack(spacing: 6) {
                 ForEach(inheritedConnectionAtoms.prefix(3), id: \.uuid) { conn in
@@ -341,7 +341,7 @@ struct ContentContextPanel: View {
             )
         } label: {
             HStack(spacing: 8) {
-                Text(conn.title ?? "Connection")
+                Text(conn.title ?? "Concept")
                     .font(DS.caption2)
                     .fontWeight(.medium)
                     .foregroundStyle(DS.text)

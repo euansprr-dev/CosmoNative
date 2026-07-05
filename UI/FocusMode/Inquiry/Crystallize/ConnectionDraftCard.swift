@@ -35,18 +35,17 @@ struct ConnectionDraftCard: View {
             RoundedRectangle(cornerRadius: DS.radiusMedium)
                 .stroke(candidate.accepted ? DS.accent.opacity(0.42) : DS.borderSubtle, lineWidth: 1)
         )
+        // A deselected draft recedes but stays reviewable.
+        .opacity(candidate.accepted ? 1 : 0.6)
+        .animation(ProMotionSprings.gentle, value: candidate.accepted)
     }
 
     private var header: some View {
         HStack(alignment: .top, spacing: DS.space12) {
-            Image(systemName: candidate.accepted ? "largecircle.fill.circle" : "circle")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(candidate.accepted ? DS.accent : CosmoColors.textTertiary)
-                .padding(.top, 8)
-                .accessibilityHidden(true)
+            selectionToggle
 
             VStack(alignment: .leading, spacing: 6) {
-                TextField("Connection title", text: titleBinding)
+                TextField("Concept title", text: titleBinding)
                     .textFieldStyle(.plain)
                     .font(.system(.title3, design: .serif).weight(.semibold))
                     .foregroundStyle(CosmoColors.textPrimary)
@@ -62,12 +61,25 @@ struct ConnectionDraftCard: View {
             }
 
             Spacer(minLength: DS.space12)
-
-            Toggle("Skip", isOn: skippedBinding)
-                .toggleStyle(.switch)
-                .font(CosmoTypography.caption)
-                .foregroundStyle(CosmoColors.textSecondary)
         }
+    }
+
+    /// One tap includes/excludes the draft — the checkmark IS the selection.
+    private var selectionToggle: some View {
+        Button {
+            candidate.accepted.toggle()
+        } label: {
+            Image(systemName: candidate.accepted ? "checkmark.circle.fill" : "circle")
+                .font(.system(size: 18, weight: .medium))
+                .foregroundStyle(candidate.accepted ? DS.accent : CosmoColors.textTertiary)
+                .frame(width: 28, height: 28)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .padding(.top, 4)
+        .help(candidate.accepted ? "Skip this draft" : "Include this draft")
+        .accessibilityLabel(candidate.accepted ? "Deselect draft \(candidate.proposedTitle)" : "Select draft \(candidate.proposedTitle)")
+        .accessibilityAddTraits(candidate.accepted ? .isSelected : [])
     }
 
     // MARK: - Destination control
@@ -169,7 +181,7 @@ struct ConnectionDraftCard: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(DS.orange)
                 .accessibilityHidden(true)
-            Text("Not enough material for an automatic Connection.")
+            Text("Not enough material for an automatic Concept.")
                 .font(.system(.caption, design: .serif))
                 .foregroundStyle(CosmoColors.textSecondary)
             Spacer()
@@ -300,13 +312,6 @@ struct ConnectionDraftCard: View {
                 candidate.proposedTitle = $0
                 candidate.name = $0
             }
-        )
-    }
-
-    private var skippedBinding: Binding<Bool> {
-        Binding(
-            get: { !candidate.accepted },
-            set: { candidate.accepted = !$0 }
         )
     }
 

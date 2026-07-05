@@ -343,6 +343,30 @@ public enum StructuralRelationType: Sendable {
     case none
 }
 
+// MARK: - Lexical Tier
+
+/// Keyword-evidence tier for search ranking. Ordering is tier-first: a result
+/// with stronger lexical evidence always outranks one with weaker evidence,
+/// regardless of semantic similarity. Semantic/blended scores order results
+/// within a tier, and fully govern when nothing matches lexically (all
+/// results are `.semanticOnly`).
+public enum LexicalTier: Int, Comparable, Sendable {
+    /// Title equals the query exactly (after normalization).
+    case exactTitle = 0
+    /// Title starts with the query.
+    case titlePrefix = 1
+    /// Query phrase appears in the title, or every query token does.
+    case titleMatch = 2
+    /// Lexical evidence only in body/metadata (e.g. strict BM25 hit).
+    case keywordInBody = 3
+    /// No keyword evidence — vector similarity only.
+    case semanticOnly = 4
+
+    public static func < (lhs: LexicalTier, rhs: LexicalTier) -> Bool {
+        lhs.rawValue < rhs.rawValue
+    }
+}
+
 // MARK: - Ranked Result
 
 /// A search result with relevance scoring breakdown
@@ -362,6 +386,10 @@ public struct RankedResult: Identifiable, Sendable {
     // Combined relevance
     public let relevance: Double
 
+    /// Keyword-evidence tier — the primary sort key. Defaults to
+    /// `.semanticOnly` (the conservative "no lexical evidence" claim).
+    public let lexicalTier: LexicalTier
+
     // Metadata
     public let updatedAt: String
     public let accessCount: Int
@@ -375,6 +403,7 @@ public struct RankedResult: Identifiable, Sendable {
         structuralWeight: Double = 0.0,
         recencyWeight: Double = 1.0,
         usageWeight: Double = 0.0,
+        lexicalTier: LexicalTier = .semanticOnly,
         updatedAt: String,
         accessCount: Int = 0
     ) {
@@ -387,6 +416,7 @@ public struct RankedResult: Identifiable, Sendable {
         self.structuralWeight = structuralWeight
         self.recencyWeight = recencyWeight
         self.usageWeight = usageWeight
+        self.lexicalTier = lexicalTier
         self.relevance = WeightCalculator.combine(
             semantic: semanticWeight,
             structural: structuralWeight,
@@ -407,26 +437,32 @@ public struct RankedResult: Identifiable, Sendable {
 
 extension RankedResult: Comparable {
     /// Compare results for ranking with tie-breaking
-    /// Order: relevance (desc) → recency (desc) → type priority → alphabetical → ID
+    /// Order: lexical tier (keyword evidence first) → relevance (desc) →
+    /// recency (desc) → type priority → alphabetical → ID
     public static func < (lhs: RankedResult, rhs: RankedResult) -> Bool {
-        // Primary: relevance (higher is better)
+        // Primary: lexical tier — keyword matches always beat semantic-only
+        if lhs.lexicalTier != rhs.lexicalTier {
+            return lhs.lexicalTier < rhs.lexicalTier
+        }
+
+        // Secondary: relevance (higher is better)
         if abs(lhs.relevance - rhs.relevance) > 0.001 {
             return lhs.relevance > rhs.relevance
         }
 
-        // Secondary: recency (more recent is better)
+        // Then: recency (more recent is better)
         if abs(lhs.recencyWeight - rhs.recencyWeight) > 0.001 {
             return lhs.recencyWeight > rhs.recencyWeight
         }
 
-        // Tertiary: type priority
+        // Then: type priority
         let lhsPriority = typePriority(lhs.atomType)
         let rhsPriority = typePriority(rhs.atomType)
         if lhsPriority != rhsPriority {
             return lhsPriority < rhsPriority // Lower number = higher priority
         }
 
-        // Quaternary: alphabetical by title
+        // Then: alphabetical by title
         if lhs.title != rhs.title {
             return lhs.title < rhs.title
         }

@@ -516,18 +516,35 @@ private struct CortexSwipeVideoSurface: View {
         ZStack {
             if let player {
                 VideoPlayer(player: player)
-            } else if let thumbnailURL {
-                CortexSwipeImageSurface(url: thumbnailURL, stableKey: stableKey)
-                playOverlay
             } else {
-                CortexSwipeMediaPlaceholder(iconName: "play.rectangle.fill")
-                playOverlay
+                // Thumbnail-only preview with a tap-to-play affordance. The AVKit
+                // `VideoPlayer` view is instantiated *only* on an explicit play tap,
+                // never eagerly (e.g. onAppear). Building it eagerly put AVKit view
+                // creation on the Command-K typing hot path: as each keystroke re-selects
+                // the previewed result, a fresh `VideoPlayer` was created, and its
+                // generic-metadata instantiation intermittently aborts the whole app
+                // (`getSuperclassMetadata` fatalError in _AVKit_SwiftUI). Keeping the
+                // transient previews as static thumbnails removes that trigger entirely.
+                Button(action: startPlayback) {
+                    ZStack {
+                        if let thumbnailURL {
+                            CortexSwipeImageSurface(url: thumbnailURL, stableKey: stableKey)
+                        } else {
+                            CortexSwipeMediaPlaceholder(iconName: "play.rectangle.fill")
+                        }
+                        playOverlay
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(url == nil)
+                .accessibilityLabel("Play video")
             }
         }
         .background(DS.inkWash)
-        .onAppear(perform: configurePlayer)
-        .onChange(of: url) { _, _ in configurePlayer() }
-        .onDisappear { player?.pause() }
+        // A new preview (different swipe / carousel slide) resets to the thumbnail
+        // instead of auto-loading another player on the typing hot path.
+        .onChange(of: url) { _, _ in resetPlayback() }
+        .onDisappear { resetPlayback() }
     }
 
     private var playOverlay: some View {
@@ -538,12 +555,16 @@ private struct CortexSwipeVideoSurface: View {
             .accessibilityHidden(true)
     }
 
-    private func configurePlayer() {
-        guard let url else {
-            player = nil
-            return
-        }
-        player = AVPlayer(url: url)
+    private func startPlayback() {
+        guard let url else { return }
+        let player = AVPlayer(url: url)
+        self.player = player
+        player.play()
+    }
+
+    private func resetPlayback() {
+        player?.pause()
+        player = nil
     }
 }
 

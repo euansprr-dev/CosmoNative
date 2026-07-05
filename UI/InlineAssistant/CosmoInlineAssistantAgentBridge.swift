@@ -62,6 +62,10 @@ struct CosmoInlineAssistantAgentBridge {
         executor.onInquiryQuestionProposal = { proposal in
             store.receive(inquiryProposal: proposal)
         }
+        // The surface bound at submit is the truth for edit targeting — the
+        // executor stamps it over model-authored IDs so proposals always bind
+        // to the editor the user was actually in.
+        executor.workspaceEditBoundSurface = snapshot.map { ($0.surfaceID, $0.targetID) }
 
         let paneAnswerCount = store.paneMessages.filter {
             $0.role == .assistant && $0.proposalID == nil
@@ -71,6 +75,7 @@ struct CosmoInlineAssistantAgentBridge {
             executor.onWorkspaceEditProposal = nil
             executor.onAssistantPaneAnswer = nil
             executor.onInquiryQuestionProposal = nil
+            executor.workspaceEditBoundSurface = nil
             executor.contextAtomUUIDs = []
             executor.contextSourceIDs = []
             executor.contextConversationID = nil

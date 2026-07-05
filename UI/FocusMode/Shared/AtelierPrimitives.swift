@@ -69,6 +69,107 @@ struct MarginaliaLabel: View {
     }
 }
 
+// MARK: - Marginalia rail policy (shared calm rules)
+
+/// The shared "quiet margins" rules both focus modes obey.
+enum MarginaliaRailPolicy {
+    /// Rails fall to a whisper while the user is actively typing.
+    static let whisperOpacity: Double = 0.25
+}
+
+// MARK: - Marginalia disclosure section
+
+/// The one section container for margin rails: the header (small-caps label +
+/// hair-rule + live count) is itself the disclosure toggle. Collapsed, a
+/// section is a single quiet line; a 3pt gilt diamond at the rule's end marks
+/// that there is more (and appears on hover as the affordance). Expansion
+/// persists per section via AppStorage.
+struct MarginaliaDisclosureSection<Content: View>: View {
+    let label: String
+    var countText: String?
+    var spacing: CGFloat = DS.space10
+
+    @AppStorage private var isExpanded: Bool
+    @State private var isHovered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    init(
+        _ label: String,
+        countText: String? = nil,
+        storageKey: String,
+        defaultExpanded: Bool = false,
+        spacing: CGFloat = DS.space10,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.label = label
+        self.countText = countText
+        self.spacing = spacing
+        self._isExpanded = AppStorage(wrappedValue: defaultExpanded, "marginalia.\(storageKey)")
+        self.content = content
+    }
+
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: spacing) {
+            header
+            if isExpanded {
+                content()
+                    .transition(reduceMotion
+                        ? AnyTransition.opacity
+                        : AnyTransition.opacity.combined(with: .offset(y: -4)))
+            }
+        }
+        .animation(reduceMotion ? nil : ProMotionSprings.snappy, value: isExpanded)
+    }
+
+    private var header: some View {
+        Button {
+            isExpanded.toggle()
+        } label: {
+            HStack(spacing: DS.space8) {
+                MarginaliaLabel(label, countText: countText)
+                if isHovered || !isExpanded {
+                    Rectangle()
+                        .fill(isHovered ? DS.gilt : DS.giltMuted)
+                        .frame(width: 3, height: 3)
+                        .rotationEffect(.degrees(45))
+                        .transition(.opacity)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+        }
+        .help(isExpanded ? "Collapse \(label.lowercased())" : "Expand \(label.lowercased())")
+        .accessibilityLabel("\(label) section")
+        .accessibilityAddTraits(isExpanded ? .isSelected : [])
+    }
+}
+
+// MARK: - Marginalia hover reveal
+
+/// Row-level controls (remove ✕, edit links) stay invisible until the rail is
+/// hovered — at rest the margins are pure typography.
+struct MarginaliaHoverReveal: ViewModifier {
+    let visible: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(visible ? 1 : 0)
+            .animation(ProMotionSprings.hover, value: visible)
+            .allowsHitTesting(visible)
+    }
+}
+
+extension View {
+    func marginaliaHoverReveal(_ visible: Bool) -> some View {
+        modifier(MarginaliaHoverReveal(visible: visible))
+    }
+}
+
 // MARK: - Marginalia link hover
 
 /// The one hover treatment for the serif arrow-links in the gutters

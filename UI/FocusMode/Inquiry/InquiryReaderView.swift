@@ -10,101 +10,27 @@ struct InquiryReaderView: View {
     let tab: SourceTab
 
     @State private var lastSelectedText: String = ""
-    @State private var readerMode: Bool = true
     @State private var loadState: WebSourceLoadState = .loading
 
     var body: some View {
-        VStack(spacing: 0) {
-            readerBar
-            Divider().background(DS.borderSubtle)
-            ZStack(alignment: .bottom) {
-                content
-                if !lastSelectedText.isEmpty {
-                    SelectionMiniMenu(viewModel: viewModel, tab: tab, selection: lastSelectedText) {
-                        lastSelectedText = ""
-                    }
-                    .padding(DS.space12)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+        // Pure content: chrome (back / title / browser / reader toggle) lives
+        // in the Study's center island; the shell frames this view as a
+        // document sheet.
+        ZStack(alignment: .bottom) {
+            content
+            if !lastSelectedText.isEmpty {
+                SelectionMiniMenu(viewModel: viewModel, tab: tab, selection: lastSelectedText) {
+                    lastSelectedText = ""
                 }
+                .padding(DS.space12)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
-            .animation(ProMotionSprings.gentle, value: lastSelectedText.isEmpty)
         }
+        .animation(ProMotionSprings.gentle, value: lastSelectedText.isEmpty)
     }
 
-    private var readerBar: some View {
-        HStack(spacing: DS.space8) {
-            Button {
-                viewModel.dismissReader()
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 11, weight: .semibold))
-                    Text("Back")
-                        .font(CosmoTypography.label)
-                }
-                .foregroundStyle(CosmoColors.textSecondary)
-                .padding(.horizontal, DS.space10)
-                .padding(.vertical, 6)
-                .background(DS.surface, in: Capsule())
-                .contentShape(Capsule())
-            }
-            .buttonStyle(.plain)
-            .keyboardShortcut(.escape, modifiers: [])
-            .accessibilityLabel("Back to question")
-
-            Text(tab.title)
-                .font(CosmoTypography.label)
-                .foregroundStyle(CosmoColors.textPrimary)
-                .lineLimit(1)
-
-            Spacer()
-
-            if let urlString = tab.url, let url = URL(string: urlString) {
-                openInBrowserButton(url)
-            }
-            if tab.kind == .web {
-                readerToggle
-            }
-        }
-        .padding(.horizontal, DS.space16)
-        .padding(.vertical, DS.space10)
-        .background(DS.surface)
-    }
-
-    private func openInBrowserButton(_ url: URL) -> some View {
-        Button {
-            NSWorkspace.shared.open(url)
-        } label: {
-            Image(systemName: "safari")
-                .font(.system(size: 11))
-                .foregroundStyle(CosmoColors.textSecondary)
-                .frame(width: 24, height: 24)
-                .overlay(Circle().stroke(DS.borderSubtle, lineWidth: 1))
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Open in browser")
-    }
-
-    private var readerToggle: some View {
-        Button {
-            readerMode.toggle()
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: readerMode ? "doc.text.fill" : "doc.text")
-                    .font(.system(size: 10))
-                    .accessibilityHidden(true)
-                Text(readerMode ? "Reader" : "Raw")
-                    .font(CosmoTypography.caption)
-            }
-            .padding(.horizontal, DS.space8)
-            .padding(.vertical, 4)
-            .overlay(Capsule().stroke(DS.borderSubtle, lineWidth: 1))
-            .foregroundStyle(CosmoColors.textSecondary)
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Toggle reader mode")
+    private var readerMode: Bool {
+        viewModel.readerPrefersReaderMode
     }
 
     @ViewBuilder
@@ -261,9 +187,7 @@ struct SelectionMiniMenu: View {
         }
         .padding(.horizontal, DS.space12)
         .padding(.vertical, DS.space8)
-        .background(DS.surfaceElevated, in: Capsule())
-        .overlay(Capsule().stroke(DS.sepiaBorder, lineWidth: 0.5))
-        .shadow(color: .black.opacity(0.08), radius: 14, y: 6)
+        .glassEffect(.regular, in: .capsule)
     }
 
     private func actionButton(label: String, kind: ExtractKind) -> some View {

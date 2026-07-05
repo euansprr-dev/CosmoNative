@@ -44,7 +44,7 @@ enum CosmoContextType: String, Codable, Sendable {
         case .swipeGallery: return "Swipe Gallery"
         case .swipeStudy: return "Swipe Study"
         case .researchFocusMode: return "Research"
-        case .connectionFocusMode: return "Connection"
+        case .connectionFocusMode: return "Concept"
         case .ideaFocusMode: return "Idea"
         case .noteFocusMode: return "Note"
         case .library: return "Library"

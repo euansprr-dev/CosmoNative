@@ -240,7 +240,7 @@ struct AtomWindowChromeTrailingControls: View {
             Button("Research", systemImage: AtomType.research.iconName) {
                 context.actions.createAtom(.research)
             }
-            Button("Connection", systemImage: AtomType.connection.iconName) {
+            Button("Concept", systemImage: AtomType.connection.iconName) {
                 context.actions.createAtom(.connection)
             }
         } label: {

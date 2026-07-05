@@ -566,7 +566,7 @@ struct ResearchFocusModeView: View {
         RadialAction(icon: "doc.text.fill", label: "Content", color: DS.entityContent, type: .createContent),
         RadialAction(icon: "note.text", label: "Note", color: DS.entityNote, type: .createNote),
         RadialAction(icon: "square.and.pencil", label: "Sticky", color: DS.entityStickyNote, type: .createStickyNote),
-        RadialAction(icon: "person.2.fill", label: "Connection", color: DS.entityConnection, type: .createConnection),
+        RadialAction(icon: "person.2.fill", label: "Concept", color: DS.entityConnection, type: .createConnection),
         RadialAction(icon: "tray.full.fill", label: "Database", color: DS.textSecondary, type: .fromDatabase),
     ]
 
@@ -1088,7 +1088,7 @@ class ResearchFocusModeViewModel: ObservableObject {
     func createConnection() async -> Atom? {
         let connection = Atom.new(
             type: .connection,
-            title: "New Connection",
+            title: "New Concept",
             body: ""
         )
         return try? await AtomRepository.shared.create(connection)

@@ -79,7 +79,11 @@ final class CosmoInlineAssistantSessionPersistence {
     static let live = CosmoInlineAssistantSessionPersistence.userDefaults()
 
     static func defaultForRuntime() -> CosmoInlineAssistantSessionPersistence {
-        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+        // `swift test` (SPM) does not set XCTestConfigurationFilePath the way
+        // xcodebuild test does — without the class check, test stores restored
+        // the USER'S real persisted sessions and every count assertion drifted.
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+            || NSClassFromString("XCTestCase") != nil {
             return inMemory()
         }
         return live
@@ -144,13 +148,30 @@ final class CosmoInlineAssistantSessionPersistence {
 enum CosmoInlineAssistantPromptClassifier {
     static func route(
         for prompt: String,
-        previousRoute: CosmoInlineAssistantRoute? = nil
+        previousRoute: CosmoInlineAssistantRoute? = nil,
+        hasSelection: Bool = false
     ) -> CosmoInlineAssistantRoute {
         if CosmoInlineAssistantWorkingContextCache.isFollowUp(prompt),
            let previousRoute {
             return previousRoute
         }
+        // A live selection plus a short imperative ("shorten this", "punchier")
+        // is an edit on the selection — keyword planning would otherwise scatter
+        // these across routes.
+        if hasSelection, isShortImperative(prompt) {
+            return .action
+        }
         return CosmoInlineAssistantSkillRuntime.plan(for: prompt, surfaceKind: nil).route
+    }
+
+    static func isShortImperative(_ prompt: String) -> Bool {
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.hasSuffix("?") else { return false }
+        let words = trimmed.split(separator: " ")
+        guard words.count <= 8 else { return false }
+        let lower = trimmed.lowercased()
+        let interrogatives = ["what", "why", "how", "who", "when", "where", "which", "does", "is ", "are ", "can you explain", "tell me"]
+        return !interrogatives.contains { lower.hasPrefix($0) }
     }
 }
 
@@ -502,6 +523,14 @@ final class CosmoInlineAssistantStore: ObservableObject {
     }
     @Published var isPaneRequested = false
     @Published var errorText: String?
+    /// Contextual quick replies after a run — one tap prefills and sends.
+    /// Transient: cleared on submit, clear, and session switches.
+    @Published var followUpSuggestions: [String] = []
+    /// The live text selection on the focused editor — the bar quotes it in a
+    /// chip so the user sees what "shorten this" will target before sending.
+    /// Equality-guarded so caret churn doesn't re-render the bar.
+    @Published private(set) var currentSelection: CosmoEditableSelection?
+    private var currentSelectionSurfaceID: String?
     /// Embedding-routed skill suggestion shown as a ghost chip (Tab to confirm).
     @Published var skillSuggestion: CosmoInlineSkillAutoRouter.Suggestion?
     /// The in-flight run's tool calls, in order — drives the live working
@@ -512,6 +541,9 @@ final class CosmoInlineAssistantStore: ObservableObject {
     /// Kind of the active surface — lets the empty state suggest starters that
     /// fit what the user is looking at.
     @Published private(set) var activeSurfaceKind: CosmoEditableSurfaceKind?
+    /// The entity prefix of the bound surface ("content", "note", "idea",
+    /// "connection") — drives the scope chip's tint in the pane header.
+    @Published private(set) var activeSurfaceEntity: String?
 
     private var skillSuggestionTask: Task<Void, Never>?
     /// The in-flight agent run, held so the stop button can actually cancel it.
@@ -581,6 +613,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
 
         composerText = ""
         errorText = nil
+        followUpSuggestions = []
         skillSuggestionTask?.cancel()
         skillSuggestion = nil
         isProcessing = true
@@ -600,7 +633,8 @@ final class CosmoInlineAssistantStore: ObservableObject {
         }
         let route = selectedSkillPlan?.route ?? CosmoInlineAssistantPromptClassifier.route(
             for: prompt,
-            previousRoute: lastSubmissionRoute
+            previousRoute: lastSubmissionRoute,
+            hasSelection: activeEditableSnapshot()?.selection?.isEmpty == false
         )
         activeSubmissionSkillID = effectiveSkillID
         activeSubmissionRoute = route
@@ -714,6 +748,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
             isPaneRequested = false
         }
         phase = .reviewing
+        followUpSuggestions = Self.followUps(afterProposal: stamped)
         CosmoInlineAssistantMetrics.shared.proposalStaged()
         persistActiveSession()
     }
@@ -825,6 +860,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
                 paneMessages[index].activitySteps = takeFinalizedRunSteps()
             }
             streamingPaneMessageID = nil
+            followUpSuggestions = Self.followUps(afterAnswerRoute: effectiveRoute)
             persistActiveSession()
             return
         }
@@ -838,7 +874,24 @@ final class CosmoInlineAssistantStore: ObservableObject {
             sourceRefs: currentSourceRefs,
             activitySteps: takeFinalizedRunSteps()
         ))
+        followUpSuggestions = Self.followUps(afterAnswerRoute: effectiveRoute)
         persistActiveSession()
+    }
+
+    // MARK: - Follow-up suggestions
+
+    /// Contextual quick replies after a run — one tap prefills and sends.
+    /// Transient by design: cleared on the next submit or session switch.
+    static func followUps(afterProposal proposal: CosmoAssistantProposal) -> [String] {
+        let hasFormatting = proposal.operations.contains { $0.kind == .formatMarks }
+        var suggestions = ["Explain the changes"]
+        suggestions.append(hasFormatting ? "Do the same for the rest" : "Push it further")
+        suggestions.append("Try a different angle")
+        return suggestions
+    }
+
+    static func followUps(afterAnswerRoute route: CosmoInlineAssistantRoute?) -> [String] {
+        ["Stage that as an edit", "Go deeper", "Give me an example"]
     }
 
     /// Whether this message is still receiving streamed deltas — streaming rows
@@ -1183,6 +1236,44 @@ final class CosmoInlineAssistantStore: ObservableObject {
         isPaneRequested = false
     }
 
+    /// THE single entry point for every "ask Cosmo" affordance (✦ in the quill
+    /// bar, ⌥A, the margins' "ask cosmo →", Command-K, the Notes rail card):
+    /// scope the assistant to the calling surface and open the pane.
+    func openPane(forSurfaceID surfaceID: String? = nil) {
+        if let surfaceID {
+            CosmoEditableSurfaceRegistry.shared.activateIfNeeded(surfaceID: surfaceID)
+            activateSessionIfIdle(surfaceID: surfaceID)
+        }
+        isPaneRequested = true
+    }
+
+    /// Submit a prompt programmatically on behalf of a surface affordance
+    /// ("improve selected text") — binds, fills the composer, and sends.
+    func submitPrompt(_ prompt: String, forSurfaceID surfaceID: String? = nil) {
+        if let surfaceID {
+            CosmoEditableSurfaceRegistry.shared.activateIfNeeded(surfaceID: surfaceID)
+        }
+        composerText = prompt
+        Task { await submit() }
+    }
+
+    /// Focus modes report their live selection here (from the same handlers
+    /// that feed the surface snapshot). Editors report nil/empty on deselection;
+    /// an editor that is NOT the current selection's owner can't wipe another
+    /// editor's chip by clearing its own stale selection.
+    func reportSelection(_ selection: CosmoEditableSelection?, forSurfaceID surfaceID: String) {
+        let normalized = (selection?.isEmpty == false) ? selection : nil
+        if normalized == nil {
+            guard currentSelectionSurfaceID == surfaceID || currentSelectionSurfaceID == nil else { return }
+            currentSelectionSurfaceID = nil
+            if currentSelection != nil { currentSelection = nil }
+            return
+        }
+        currentSelectionSurfaceID = surfaceID
+        guard currentSelection != normalized else { return }
+        currentSelection = normalized
+    }
+
     func activateSession(surfaceID rawSurfaceID: String?) {
         let surfaceID = CosmoInlineAssistantSessionScope.surfaceID(for: rawSurfaceID)
         guard surfaceID != activeSessionSurfaceID else {
@@ -1192,6 +1283,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
 
         persistActiveSession()
         activeSessionSurfaceID = surfaceID
+        followUpSuggestions = []
         restoreSession(for: surfaceID)
         refreshActiveSurfaceTitle()
     }
@@ -1247,11 +1339,13 @@ final class CosmoInlineAssistantStore: ObservableObject {
                 .editableSnapshot() else {
             activeSurfaceTitle = nil
             activeSurfaceKind = nil
+            activeSurfaceEntity = nil
             return
         }
         let title = snapshot.title.trimmingCharacters(in: .whitespacesAndNewlines)
         activeSurfaceTitle = title.isEmpty ? nil : title
         activeSurfaceKind = snapshot.kind
+        activeSurfaceEntity = snapshot.surfaceID.split(separator: ":").first.map(String.init)
     }
 
     var activeConversationID: String {

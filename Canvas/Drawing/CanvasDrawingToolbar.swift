@@ -9,17 +9,25 @@ struct CanvasDrawingToolbar: View {
     @State private var toolsVisible = true
     @State private var customColor: Color = .black
 
-    // Tool items in display order (right-to-left when collapsed)
+    // Tool items in display order (right-to-left when collapsed).
+    // Tools with sub-modes show the selected sub-mode as their icon.
     private var toolItems: [(CanvasToolMode, String, String)] {
         [
             (.select, "cursorarrow", "Select (V)"),
             (.lasso, drawingState.currentLassoSubMode == .zone ? "rectangle.dashed" : "lasso", "Lasso (L)"),
-            (.shape, "square", "Shape (S)"),
+            (.shape, shapeIcon(drawingState.currentShapeKind), "Shape (S)"),
             (.draw, "pencil.tip", "Draw (D)"),
             (.text, "textformat", "Text (T)"),
             (.erase, "eraser", "Erase (E)"),
         ]
     }
+
+    // MARK: - Fixed metrics (dropdown anchoring depends on these)
+
+    private let toolButtonWidth: CGFloat = 28
+    private let toolRowHeight: CGFloat = 28
+    private let gripWidth: CGFloat = 20
+    private let dropdownWidth: CGFloat = 36
 
     // MARK: - Preset Colors (expanded to 12)
 
@@ -51,14 +59,16 @@ struct CanvasDrawingToolbar: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            // Secondary picker (shape/weight/stroke) — appears further left
-            secondaryPicker
-
             // Tool icons + style button
             toolRow
 
             // Divider grip handle (clickable toggle)
             dividerToggle
+        }
+        // Sub-tool pickers drop DOWN below the active tool button; the overlay
+        // doesn't affect toolbar layout, it floats over the canvas.
+        .overlay(alignment: .topTrailing) {
+            secondaryDropdown
         }
     }
 
@@ -140,7 +150,7 @@ struct CanvasDrawingToolbar: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .popover(isPresented: $showStylePanel) {
+        .popover(isPresented: $showStylePanel, arrowEdge: .bottom) {
             stylePanel
         }
     }
@@ -160,146 +170,172 @@ struct CanvasDrawingToolbar: View {
                         .frame(width: 3, height: 3)
                 }
             }
-            .padding(.horizontal, 8)
-            .frame(height: 28)
-            .contentShape(Rectangle().size(width: 20, height: 28))
+            .frame(width: gripWidth, height: toolRowHeight)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
 
-    // MARK: - Secondary Picker
+    // MARK: - Secondary Dropdown (drops below the active tool button)
+
+    /// Enumerated toolItems index of the active tool, when it has sub-options.
+    private var activeDropdownIndex: Int? {
+        guard [.shape, .draw, .text, .lasso].contains(drawingState.toolMode) else { return nil }
+        return toolItems.firstIndex { $0.0 == drawingState.toolMode }
+    }
+
+    /// Distance from the toolbar's trailing edge to the center of the tool button
+    /// at `index`. All widths are fixed, so this is pure arithmetic.
+    private func trailingDistanceToButtonCenter(_ index: Int) -> CGFloat {
+        gripWidth + CGFloat(toolItems.count - 1 - index) * toolButtonWidth + toolButtonWidth / 2
+    }
 
     @ViewBuilder
-    private var secondaryPicker: some View {
+    private var secondaryDropdown: some View {
         Group {
-            if toolsVisible && drawingState.toolMode == .shape {
-                HStack(spacing: 0) {
-                    strokeWidthPicker
-                    pickerSeparator
-                    shapePicker
-                }
-                .transition(.move(edge: .trailing).combined(with: .opacity))
-            } else if toolsVisible && drawingState.toolMode == .draw {
-                HStack(spacing: 0) {
-                    strokeWidthPicker
-                }
-                .transition(.move(edge: .trailing).combined(with: .opacity))
-            } else if toolsVisible && drawingState.toolMode == .text {
-                weightPicker
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
-            } else if toolsVisible && drawingState.toolMode == .lasso {
-                lassoSubModePicker
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            if toolsVisible, let index = activeDropdownIndex {
+                dropdownContent
+                    .padding(4)
+                    .frame(width: dropdownWidth)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(CosmoColors.thinkspaceTertiary)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(DS.textMuted.opacity(0.15), lineWidth: 1)
+                    )
+                    .offset(
+                        x: -(trailingDistanceToButtonCenter(index) - dropdownWidth / 2),
+                        y: toolRowHeight + 6
+                    )
+                    .transition(.opacity.combined(with: .offset(y: -6)))
             }
         }
         .animation(ProMotionSprings.snappy, value: drawingState.toolMode)
         .animation(ProMotionSprings.snappy, value: toolsVisible)
     }
 
-    // MARK: - Stroke Width Picker
-
-    private var strokeWidthPicker: some View {
-        HStack(spacing: 2) {
-            ForEach(strokePresets, id: \.1) { name, width in
-                Button {
-                    drawingState.currentStrokeWidth = width
-                } label: {
-                    strokeWidthPreviewLabel(width: width, isSelected: drawingState.currentStrokeWidth == width)
-                }
-                .buttonStyle(.plain)
-                .help(name)
+    @ViewBuilder
+    private var dropdownContent: some View {
+        VStack(spacing: 2) {
+            switch drawingState.toolMode {
+            case .shape:
+                shapeColumn
+                dropdownDivider
+                strokeWidthColumn
+            case .draw:
+                strokeWidthColumn
+            case .text:
+                weightColumn
+            case .lasso:
+                lassoColumn
+            default:
+                EmptyView()
             }
+        }
+    }
 
-            pickerSeparator
+    private var dropdownDivider: some View {
+        Rectangle()
+            .fill(DS.textMuted.opacity(0.25))
+            .frame(width: 12, height: 1)
+            .padding(.vertical, 3)
+    }
+
+    // MARK: - Dropdown Columns
+
+    private var shapeColumn: some View {
+        ForEach(ShapeKind.allCases, id: \.self) { kind in
+            dropdownIconButton(
+                icon: shapeIcon(kind),
+                isSelected: drawingState.currentShapeKind == kind,
+                tooltip: shapeTooltip(kind)
+            ) {
+                drawingState.currentShapeKind = kind
+            }
+        }
+    }
+
+    private var strokeWidthColumn: some View {
+        ForEach(strokePresets, id: \.1) { name, width in
+            Button {
+                drawingState.currentStrokeWidth = width
+            } label: {
+                let isSelected = drawingState.currentStrokeWidth == width
+                RoundedRectangle(cornerRadius: width / 2)
+                    .fill(isSelected ? DS.text : DS.textMuted.opacity(0.6))
+                    .frame(width: 14, height: max(width, 1))
+                    .frame(width: 28, height: 24)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(isSelected ? DS.accent.opacity(0.1) : Color.clear)
+                    )
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(name)
+        }
+    }
+
+    private var weightColumn: some View {
+        ForEach(DrawingTextWeight.allCases, id: \.self) { weight in
+            Button {
+                drawingState.currentTextWeight = weight
+            } label: {
+                let isSelected = drawingState.currentTextWeight == weight
+                Text(weight.rawValue)
+                    .font(.system(size: 11, weight: isSelected ? .bold : .regular))
+                    .foregroundColor(isSelected ? DS.text : DS.textMuted)
+                    .frame(width: 28, height: 24)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(isSelected ? DS.accent.opacity(0.1) : Color.clear)
+                    )
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         }
     }
 
     @ViewBuilder
-    private func strokeWidthPreviewLabel(width: CGFloat, isSelected: Bool) -> some View {
-        // Visual line at the actual weight
-        RoundedRectangle(cornerRadius: width / 2)
-            .fill(isSelected ? DS.text : DS.textMuted.opacity(0.6))
-            .frame(width: 14, height: max(width, 1))
-            .frame(width: 22, height: 28)
-            .contentShape(Rectangle())
-    }
+    private var lassoColumn: some View {
+        dropdownIconButton(
+            icon: "lasso",
+            isSelected: drawingState.currentLassoSubMode == .lasso,
+            tooltip: "Freeform Lasso"
+        ) {
+            drawingState.currentLassoSubMode = .lasso
+        }
 
-    private var shapePicker: some View {
-        HStack(spacing: 0) {
-            ForEach(ShapeKind.allCases, id: \.self) { kind in
-                Button {
-                    drawingState.currentShapeKind = kind
-                } label: {
-                    Image(systemName: shapeIcon(kind))
-                        .font(.system(size: 12, weight: .regular))
-                        .foregroundColor(drawingState.currentShapeKind == kind ? DS.text : DS.textMuted)
-                        .frame(width: 24, height: 28)
-                        .background(
-                            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                .fill(drawingState.currentShapeKind == kind ? DS.accent.opacity(0.1) : Color.clear)
-                        )
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help(shapeTooltip(kind))
-            }
-
-            pickerSeparator
+        dropdownIconButton(
+            icon: "rectangle.dashed",
+            isSelected: drawingState.currentLassoSubMode == .zone,
+            tooltip: "Zone Select"
+        ) {
+            drawingState.currentLassoSubMode = .zone
         }
     }
 
-    private var weightPicker: some View {
-        HStack(spacing: 0) {
-            ForEach(DrawingTextWeight.allCases, id: \.self) { weight in
-                Button {
-                    drawingState.currentTextWeight = weight
-                } label: {
-                    Text(weight.rawValue)
-                        .font(.system(size: 11, weight: drawingState.currentTextWeight == weight ? .bold : .regular))
-                        .foregroundColor(drawingState.currentTextWeight == weight ? DS.text : DS.textMuted)
-                        .frame(width: 22, height: 28)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-
-            pickerSeparator
+    private func dropdownIconButton(
+        icon: String,
+        isSelected: Bool,
+        tooltip: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .regular))
+                .foregroundColor(isSelected ? DS.text : DS.textMuted)
+                .frame(width: 28, height: 24)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(isSelected ? DS.accent.opacity(0.1) : Color.clear)
+                )
+                .contentShape(Rectangle())
         }
-    }
-
-    private var lassoSubModePicker: some View {
-        HStack(spacing: 0) {
-            Button {
-                drawingState.currentLassoSubMode = .lasso
-            } label: {
-                Image(systemName: "lasso")
-                    .font(.system(size: 12, weight: .regular))
-                    .foregroundColor(drawingState.currentLassoSubMode == .lasso ? DS.text : DS.textMuted)
-                    .frame(width: 24, height: 28)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            Button {
-                drawingState.currentLassoSubMode = .zone
-            } label: {
-                Image(systemName: "rectangle.dashed")
-                    .font(.system(size: 12, weight: .regular))
-                    .foregroundColor(drawingState.currentLassoSubMode == .zone ? DS.text : DS.textMuted)
-                    .frame(width: 24, height: 28)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            pickerSeparator
-        }
-    }
-
-    private var pickerSeparator: some View {
-        Rectangle()
-            .fill(DS.textMuted.opacity(0.25))
-            .frame(width: 1, height: 12)
-            .padding(.horizontal, 4)
+        .buttonStyle(.plain)
+        .help(tooltip)
     }
 
     // MARK: - Style Panel (replaces basic color picker)

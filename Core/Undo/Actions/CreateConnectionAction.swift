@@ -4,7 +4,7 @@ import Foundation
 
 @MainActor
 final class CreateConnectionAction: UndoableAction {
-    let actionDescription = "Create Connection"
+    let actionDescription = "Create Concept"
     let timestamp: Date
 
     private let sourceUUID: String

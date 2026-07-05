@@ -104,6 +104,12 @@ public struct CommandKView: View {
                     searchText = viewModel.query
                 }
             }
+            .onChange(of: isSearchFocused) { _, focused in
+                // Drain the field editor's undo stack the moment editing ends so
+                // no undo action can outlive the field's backing (see
+                // clearSearchFieldUndoStack — prevents the ⌘Z use-after-free crash).
+                if !focused { clearSearchFieldUndoStack() }
+            }
             .onChange(of: viewModel.cortexMode) { _, mode in
                 switch mode {
                 case .expandedDomain(let tab):
@@ -118,6 +124,7 @@ public struct CommandKView: View {
             }
             .onDisappear {
                 searchFocusTask?.cancel()
+                clearSearchFieldUndoStack()
             }
         }
         .onKeyPress(.escape) { handleEscape() }
@@ -175,6 +182,27 @@ public struct CommandKView: View {
             guard !Task.isCancelled, isActive else { return }
             isSearchFocused = true
         }
+    }
+
+    /// Clears the shared field editor's undo stack when the Command-K search
+    /// field gives up focus or the overlay tears down.
+    ///
+    /// The search field is a SwiftUI `TextField` backed by the window's shared
+    /// field editor (an `NSTextView`). `NSUndoManager` does **not** retain the
+    /// targets of registered undo actions, so if that backing is deallocated
+    /// during the overlay's focus/dismissal churn while typed-text undo actions
+    /// remain registered, a later ⌘Z (`undo:` → `-[NSUndoManager undoNestedGroup]`
+    /// → `-[_NSUndoStack popAndInvoke]`) messages a freed target and hard-crashes
+    /// the app (EXC_BAD_ACCESS). Draining the field editor's undo stack the moment
+    /// Command-K is done editing removes that dangling state.
+    ///
+    /// This only touches the shared *field editor* (used by single-line text
+    /// fields); the document editor is its own `NSTextView` with a separate undo
+    /// manager and is unaffected.
+    private func clearSearchFieldUndoStack() {
+        guard let window = NSApp.keyWindow ?? NSApp.mainWindow,
+              let fieldEditor = window.fieldEditor(false, for: nil) as? NSTextView else { return }
+        fieldEditor.undoManager?.removeAllActions()
     }
 
     // MARK: - Search Bar Pill (Spotlight-style)

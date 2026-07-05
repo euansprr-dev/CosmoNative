@@ -444,7 +444,7 @@ struct SynthesisWorkspaceView: View {
                 HStack(spacing: 4) {
                     Image(systemName: "link.badge.plus")
                         .font(.system(size: 11, weight: .medium))
-                    Text("Create Connection")
+                    Text("Create Concept")
                         .font(.system(size: 12, weight: .medium))
                 }
                 .foregroundStyle(DS.textOnAccent)

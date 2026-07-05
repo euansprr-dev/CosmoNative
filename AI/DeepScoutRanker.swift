@@ -57,6 +57,60 @@ enum DeepScoutRanker {
         var score: Double
     }
 
+    // MARK: - LLM judgment blend (pure — testable without a model)
+
+    /// Blends LLM usefulness judgments and learned creator taste into
+    /// heuristic scores, drops judged junk, and re-diversifies by lane.
+    /// With no judgments (model offline/failed) taste still applies and the
+    /// heuristic order stands.
+    static func blend(
+        _ candidates: [InquirySourceCandidate],
+        judgments: [String: DeepScoutLLMRanker.Judgment],
+        taste: DeepScoutTasteProfile,
+        limit: Int = 20
+    ) -> [InquirySourceCandidate] {
+        let favorites = Set(taste.favoriteCreators.map { $0.creator.lowercased() })
+        let avoided = Set(taste.avoidedCreators.map { $0.creator.lowercased() })
+
+        let rescored = candidates.compactMap { candidate -> InquirySourceCandidate? in
+            var copy = candidate
+            var score = candidate.score
+            if let judgment = judgments[candidate.id] {
+                // The judge read the actual titles against the actual question —
+                // its opinion outweighs token arithmetic.
+                if judgment.score < 0.15 { return nil }
+                score = judgment.score * 0.7 + score * 0.3
+                if let reason = judgment.reason, !reason.isEmpty {
+                    copy.reason = reason
+                }
+            }
+            if let creator = DeepScoutTasteStore.creatorName(for: candidate)?.lowercased() {
+                if favorites.contains(creator) { score += 0.08 }
+                if avoided.contains(creator) { score -= 0.15 }
+            }
+            copy.score = max(0.05, min(0.99, score))
+            return copy
+        }
+        return diversifyByLane(rescored, limit: limit)
+    }
+
+    /// Lane-diversified cut: repeated picks from one lane pay a growing
+    /// penalty so the final list mixes lectures, books, and context instead
+    /// of one lane sweeping the board.
+    static func diversifyByLane(
+        _ candidates: [InquirySourceCandidate],
+        limit: Int
+    ) -> [InquirySourceCandidate] {
+        let scored = candidates.map { candidate in
+            ScoredCandidate(
+                candidate: candidate,
+                lane: candidate.sourceLane ?? .webResource,
+                score: candidate.score
+            )
+        }
+        return diversified(scored, limit: limit).map(\.candidate)
+    }
+
     private static func diversified(_ candidates: [ScoredCandidate], limit: Int) -> [ScoredCandidate] {
         var remaining = candidates.sorted {
             if $0.score == $1.score {

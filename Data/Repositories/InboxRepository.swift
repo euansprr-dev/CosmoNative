@@ -216,6 +216,68 @@ class InboxRepository: ObservableObject {
         await track(updated)
     }
 
+    /// User confirmed a suggested topic placement: stamp the destination as
+    /// explicit so the deep dive's inbox owns it from now on.
+    func confirmPlacement(uuid: String, thinkspaceId: String, thinkspaceName: String?) async throws {
+        let updated = try await database.asyncWrite { db -> InboxItem? in
+            guard var item = try InboxItem.filter(Column("uuid") == uuid).fetchOne(db) else { return nil }
+            guard item.status == .pending || item.status == .classified else { return nil }
+            item.placeThinkspaceId = thinkspaceId
+            item.placeThinkspaceName = thinkspaceName ?? item.placeThinkspaceName
+            item.classification = .place
+            item.status = .classified
+            Self.mergeMetadata(&item, fields: [InboxItem.explicitDestinationMetadataKey: "true"])
+            Self.prepareTrackedUpdate(&item)
+            try item.update(db)
+            return item
+        }
+        await track(updated)
+    }
+
+    /// User removed a capture from a topic's inbox: drop the placement if it
+    /// pointed there and suppress the topic so suggestions don't resurface it.
+    /// The capture itself stays alive in the main inbox.
+    func removeFromTopic(uuid: String, topicUUID: String) async throws {
+        let updated = try await database.asyncWrite { db -> InboxItem? in
+            guard var item = try InboxItem.filter(Column("uuid") == uuid).fetchOne(db) else { return nil }
+            if item.placeThinkspaceId == topicUUID {
+                item.placeThinkspaceId = nil
+                item.placeThinkspaceName = nil
+                // A .place with no target would strand the main-inbox action;
+                // without a recommendation bundle the item is honestly unsorted.
+                if item.classification == .place && item.recommendations == nil {
+                    item.classification = .unsorted
+                }
+                var metadata = item.metadataDictionary
+                metadata.removeValue(forKey: InboxItem.explicitDestinationMetadataKey)
+                if let data = try? JSONSerialization.data(withJSONObject: metadata),
+                   let encoded = String(data: data, encoding: .utf8) {
+                    item.metadata = encoded
+                }
+            }
+            var suppressed = (item.metadataDictionary[InboxItem.suppressedTopicsMetadataKey] as? String)?
+                .split(separator: ",").map(String.init) ?? []
+            if !suppressed.contains(topicUUID) {
+                suppressed.append(topicUUID)
+            }
+            Self.mergeMetadata(&item, fields: [InboxItem.suppressedTopicsMetadataKey: suppressed.joined(separator: ",")])
+            Self.prepareTrackedUpdate(&item)
+            try item.update(db)
+            return item
+        }
+        await track(updated)
+    }
+
+    private nonisolated static func mergeMetadata(_ item: inout InboxItem, fields: [String: String]) {
+        var dict = item.metadataDictionary
+        for (key, value) in fields {
+            dict[key] = value
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: dict),
+              let merged = String(data: data, encoding: .utf8) else { return }
+        item.metadata = merged
+    }
+
     /// Merge keys into the item's JSON metadata column — used to persist a
     /// durable undo source (e.g. the pre-merge target body) before a merge.
     func updateMetadata(uuid: String, merging fields: [String: String]) async throws {

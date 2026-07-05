@@ -846,7 +846,7 @@ enum LexiconMaturity: String, Codable, CaseIterable, Sendable {
         case .mention: return "Mention"
         case .term: return "Term"
         case .entry: return "Entry"
-        case .promotedToConnection: return "Connection"
+        case .promotedToConnection: return "Concept"
         case .promotedToDeepDive: return "Deep Dive"
         }
     }
@@ -1531,17 +1531,25 @@ struct InquiryWorkspaceUIState: Codable, Sendable {
     var collapsedBranchNodeIds: [String]
     var pinnedNoteDraftsByQuestionUUID: [String: String]
     var selectedInspectorQuestionUUID: String?
+    /// Study-shell panel visibility (nil = default visible). Optional so
+    /// sessions saved before the Study shell keep decoding.
+    var showTrailPanel: Bool?
+    var showReadingPanel: Bool?
 
     init(
         pinnedQuestionUUIDs: [String] = [],
         collapsedBranchNodeIds: [String] = [],
         pinnedNoteDraftsByQuestionUUID: [String: String] = [:],
-        selectedInspectorQuestionUUID: String? = nil
+        selectedInspectorQuestionUUID: String? = nil,
+        showTrailPanel: Bool? = nil,
+        showReadingPanel: Bool? = nil
     ) {
         self.pinnedQuestionUUIDs = pinnedQuestionUUIDs
         self.collapsedBranchNodeIds = collapsedBranchNodeIds
         self.pinnedNoteDraftsByQuestionUUID = pinnedNoteDraftsByQuestionUUID
         self.selectedInspectorQuestionUUID = selectedInspectorQuestionUUID
+        self.showTrailPanel = showTrailPanel
+        self.showReadingPanel = showReadingPanel
     }
 }
 

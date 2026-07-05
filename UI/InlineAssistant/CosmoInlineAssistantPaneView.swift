@@ -31,8 +31,8 @@ struct CosmoInlineAssistantPaneView: View {
     var body: some View {
         VStack(spacing: 0) {
             CosmoInlineAssistantPaneHeader(store: store, onClose: onClose)
-            Divider().overlay(DS.borderSubtle)
             CosmoInlineAssistantPaneMessages(store: store)
+            CosmoInlineAssistantPaneFollowUps(store: store)
             CosmoInlineAssistantPaneComposer(store: store)
         }
         .background(DS.bg)
@@ -71,22 +71,53 @@ private struct CosmoInlineAssistantPaneHeader: View {
             .accessibilityHidden(true)
     }
 
-    /// "Cosmo" plus what it's looking at — the pane names its scope.
+    /// "Cosmo" plus the scope chip — the pane always SHOWS what "this
+    /// document" means, in the surface's entity tint. Visible context truth.
     private var titleBlock: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 2) {
             Text("Cosmo")
                 .font(DS.headline)
                 .foregroundStyle(DS.text)
 
-            if let surfaceTitle = store.activeSurfaceTitle {
-                Text(surfaceTitle)
-                    .font(DS.caption)
-                    .foregroundStyle(DS.textMuted)
-                    .lineLimit(1)
-                    .transition(.opacity)
-            }
+            scopeChip
         }
         .animation(ProMotionSprings.gentle, value: store.activeSurfaceTitle)
+    }
+
+    @ViewBuilder
+    private var scopeChip: some View {
+        if let surfaceTitle = store.activeSurfaceTitle {
+            HStack(spacing: DS.space4) {
+                Circle()
+                    .fill(scopeTint)
+                    .frame(width: 5, height: 5)
+                Text(surfaceTitle)
+                    .font(DS.caption)
+                    .foregroundStyle(DS.textSecondary)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, DS.space6)
+            .padding(.vertical, 2)
+            .background(scopeTint.opacity(0.08), in: Capsule(style: .continuous))
+            .transition(.opacity)
+            .help("Cosmo is scoped to this document")
+        } else {
+            Text("no document in focus")
+                .font(DS.caption)
+                .italic()
+                .foregroundStyle(DS.textMuted)
+                .transition(.opacity)
+        }
+    }
+
+    private var scopeTint: Color {
+        switch store.activeSurfaceEntity {
+        case "content": return DS.entityContent
+        case "note": return DS.entityNote
+        case "idea": return DS.entityIdea
+        case "connection": return DS.entityConnection
+        default: return DS.accent
+        }
     }
 
     private var closeButton: some View {
@@ -106,6 +137,64 @@ private struct CosmoInlineAssistantPaneHeader: View {
         .keyboardShortcut(.escape, modifiers: [])
         .help("Close assistant pane (Esc)")
         .accessibilityLabel("Close assistant pane")
+    }
+}
+
+// MARK: - Follow-up chips
+
+/// Contextual quick replies after a run — one tap prefills and sends. The
+/// cadence of a colleague asking "want me to keep going?" without the typing.
+private struct CosmoInlineAssistantPaneFollowUps: View {
+    @ObservedObject var store: CosmoInlineAssistantStore
+
+    var body: some View {
+        if !store.followUpSuggestions.isEmpty, !store.isProcessing {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: DS.space6) {
+                    ForEach(store.followUpSuggestions, id: \.self) { suggestion in
+                        FollowUpChip(label: suggestion) {
+                            store.followUpSuggestions = []
+                            store.submitPrompt(suggestion)
+                        }
+                    }
+                }
+                .padding(.horizontal, DS.space16)
+            }
+            .padding(.vertical, DS.space6)
+            .transition(.opacity.combined(with: .move(edge: .bottom)))
+        }
+    }
+
+    private struct FollowUpChip: View {
+        let label: String
+        let action: () -> Void
+
+        @State private var isHovered = false
+
+        var body: some View {
+            Button(action: action) {
+                Text(label)
+                    .font(DS.caption)
+                    .foregroundStyle(isHovered ? DS.text : DS.textSecondary)
+                    .padding(.horizontal, DS.space10)
+                    .padding(.vertical, DS.space6)
+                    .background(
+                        isHovered ? AnyShapeStyle(DS.glassCardFill) : AnyShapeStyle(.clear),
+                        in: Capsule(style: .continuous)
+                    )
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .stroke(DS.glassBorder, lineWidth: 0.5)
+                    )
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .cosmoClickCursor()
+            .onHover { hovering in
+                withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+            }
+            .accessibilityLabel("Send follow-up: \(label)")
+        }
     }
 }
 

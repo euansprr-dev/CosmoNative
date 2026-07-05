@@ -1,77 +1,94 @@
 // CosmoOS/UI/FocusMode/Inquiry/Crystallize/InquiryCrystallizationReviewV2.swift
-// Branch-to-Connection review surface for Inquiry crystallization v2.
+// Branch-to-Concept review for Inquiry crystallization. Editorial takeover,
+// not a utility modal: the run starts on arrival, draft cards cascade in,
+// selection is a checkmark, and one sticky bar holds the single primary action.
 
 import SwiftUI
 
 @MainActor
 struct InquiryCrystallizationReviewV2: View {
     @Bindable var viewModel: InquiryWorkspaceViewModel
+    var onDismiss: () -> Void = {}
 
     @State private var output: CrystallizationOutput?
     @State private var status: Status = .idle
     @State private var statusMessage: String = ""
     @State private var promotionResult: ConnectionPromotionResult?
     @State private var existingPages: [ConnectionDraftCard.PageRef] = []
+    @State private var hasAppeared = false
 
     var body: some View {
         VStack(spacing: 0) {
-            toolbar
-            Divider().background(DS.borderSubtle)
+            masthead
             content
+            if status == .ready, !candidates.isEmpty {
+                actionBar
+            }
+        }
+        // The review IS the crystallization — arriving here starts the run.
+        .task {
+            guard status == .idle else { return }
+            await runCrystallization()
         }
     }
 
-    private var toolbar: some View {
-        HStack(spacing: DS.space12) {
+    // MARK: - Masthead
+
+    private var masthead: some View {
+        HStack(alignment: .firstTextBaseline, spacing: DS.space12) {
+            Button(action: onDismiss) {
+                HStack(spacing: 4) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 10, weight: .semibold))
+                        .accessibilityHidden(true)
+                    Text("Explore")
+                        .font(CosmoTypography.label)
+                }
+                .foregroundStyle(CosmoColors.textSecondary)
+                .padding(.horizontal, DS.space10)
+                .padding(.vertical, 6)
+                .background(DS.surface, in: Capsule())
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Back to Explore")
+
             VStack(alignment: .leading, spacing: 2) {
-                Text("Branch to Connection")
+                Text("Crystallize")
                     .font(.system(.title2, design: .serif).weight(.semibold))
                     .foregroundStyle(CosmoColors.textPrimary)
-                Text("Review each branch draft before it becomes a structured Connection.")
+                Text(mastheadSubtitle)
                     .font(CosmoTypography.caption)
                     .foregroundStyle(CosmoColors.textSecondary)
+                    .contentTransition(.numericText())
             }
             Spacer()
-            if status == .ready {
-                Button("Skip all") {
-                    skipAll()
-                }
-                .buttonStyle(.plain)
-                .font(CosmoTypography.label)
-                .foregroundStyle(CosmoColors.textSecondary)
-
-                Button("Promote selected") {
-                    Task {
-                        if let output {
-                            await apply(output)
-                        }
-                    }
-                }
-                .buttonStyle(.plain)
-                .font(CosmoTypography.label)
-                .foregroundStyle(DS.accent)
-
-                Button("Accept all") {
-                    Task { await acceptAll() }
-                }
-                .buttonStyle(.plain)
-                .font(CosmoTypography.label)
-                .padding(.horizontal, DS.space12)
-                .padding(.vertical, 7)
-                .background(DS.accent, in: Capsule())
-                .foregroundStyle(DS.textOnAccent)
-            }
         }
         .padding(.horizontal, DS.space24)
         .padding(.vertical, DS.space16)
     }
 
+    private var mastheadSubtitle: String {
+        switch status {
+        case .idle, .running:
+            return "Reading the session…"
+        case .ready:
+            let count = candidates.count
+            guard count > 0 else { return "Nothing new to crystallize yet." }
+            return "\(count) branch\(count == 1 ? "" : "es") ready to become Concept\(count == 1 ? "" : "s") — review, then promote."
+        case .failed:
+            return "The run hit a problem."
+        case .applied:
+            return "This session's knowledge is now first-class."
+        }
+    }
+
+    // MARK: - Content
+
     @ViewBuilder
     private var content: some View {
         switch status {
-        case .idle:
-            idleState
-        case .running:
+        case .idle, .running:
             runningState
         case .ready:
             reviewState
@@ -82,43 +99,17 @@ struct InquiryCrystallizationReviewV2: View {
         }
     }
 
-    private var idleState: some View {
+    private var runningState: some View {
         VStack(spacing: DS.space16) {
             Image(systemName: "point.3.connected.trianglepath.dotted")
-                .font(.system(size: 34, weight: .light))
-                .foregroundStyle(DS.accent.opacity(0.75))
+                .font(.system(size: 30, weight: .light))
+                .foregroundStyle(DS.accent.opacity(0.7))
+                .symbolEffect(.pulse, options: .repeating)
                 .accessibilityHidden(true)
-            Text("Crystallize branches")
-                .font(.system(.title3, design: .serif).weight(.semibold))
-                .foregroundStyle(CosmoColors.textPrimary)
-            Text("Each branch with enough routed material becomes one Connection draft. Captures stay verbatim inside sections.")
-                .font(CosmoTypography.body)
+            Text(statusMessage.isEmpty ? "Routing branches…" : statusMessage)
+                .font(.system(.body, design: .serif))
                 .foregroundStyle(CosmoColors.textSecondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 500)
-            Button {
-                Task { await runCrystallization() }
-            } label: {
-                Text("Crystallize Session")
-                    .font(CosmoTypography.label)
-                    .padding(.horizontal, DS.space20)
-                    .padding(.vertical, 10)
-                    .background(DS.accent, in: Capsule())
-                    .foregroundStyle(DS.textOnAccent)
-            }
-            .buttonStyle(.plain)
-            .keyboardShortcut(.return, modifiers: [.command])
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private var runningState: some View {
-        VStack(spacing: DS.space12) {
-            ProgressView()
-                .controlSize(.large)
-            Text(statusMessage.isEmpty ? "Routing branches..." : statusMessage)
-                .font(CosmoTypography.body)
-                .foregroundStyle(CosmoColors.textSecondary)
+                .contentTransition(.opacity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -164,11 +155,13 @@ struct InquiryCrystallizationReviewV2: View {
                                 foldCandidate(candidates[index].id, into: targetId)
                             }
                         )
+                        .studyCascade(hasAppeared, index: index)
                     }
                 }
 
                 if let output, hasSupportingOutput(output) {
                     supportingOutput(output)
+                        .studyCascade(hasAppeared, index: candidates.count)
                 }
             }
             .padding(.horizontal, DS.space32)
@@ -176,31 +169,103 @@ struct InquiryCrystallizationReviewV2: View {
             .frame(maxWidth: 860)
             .frame(maxWidth: .infinity, alignment: .top)
         }
+        .scrollEdgeEffectStyle(.soft, for: .all)
+    }
+
+    // MARK: - Sticky action bar
+
+    private var actionBar: some View {
+        HStack(spacing: DS.space12) {
+            Button("Skip all") {
+                skipAll()
+            }
+            .buttonStyle(.plain)
+            .font(CosmoTypography.label)
+            .foregroundStyle(CosmoColors.textSecondary)
+            .accessibilityLabel("Skip all drafts")
+
+            Spacer()
+
+            Text(selectionSummary)
+                .font(CosmoTypography.caption)
+                .foregroundStyle(CosmoColors.textTertiary)
+                .contentTransition(.numericText())
+
+            Button {
+                Task {
+                    if let output {
+                        await apply(output)
+                    }
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 11, weight: .semibold))
+                        .accessibilityHidden(true)
+                    Text(promoteButtonTitle)
+                        .font(CosmoTypography.label)
+                }
+                .padding(.horizontal, DS.space16)
+                .padding(.vertical, 8)
+                .background(acceptedCount == 0 ? DS.surfaceHover : DS.accent, in: Capsule())
+                .foregroundStyle(acceptedCount == 0 ? CosmoColors.textTertiary : DS.textOnAccent)
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .disabled(acceptedCount == 0)
+            .keyboardShortcut(.return, modifiers: [.command])
+            .accessibilityLabel(promoteButtonTitle)
+        }
+        .padding(.horizontal, DS.space24)
+        .padding(.vertical, DS.space12)
+        .background(.ultraThinMaterial)
+        .overlay(alignment: .top) {
+            Divider().background(DS.borderSubtle)
+        }
+    }
+
+    private var acceptedCount: Int {
+        candidates.filter(\.accepted).count
+    }
+
+    private var promoteButtonTitle: String {
+        acceptedCount == 0
+            ? "Promote"
+            : "Promote \(acceptedCount) Concept\(acceptedCount == 1 ? "" : "s")"
+    }
+
+    private var selectionSummary: String {
+        let total = candidates.count
+        guard total > 0 else { return "" }
+        return "\(acceptedCount) of \(total) selected"
     }
 
     private var appliedState: some View {
         VStack(spacing: DS.space16) {
-            Image(systemName: "checkmark.seal.fill")
-                .font(.system(size: 36))
-                .foregroundStyle(DS.green)
-                .accessibilityHidden(true)
-            Text("Connections crystallized")
+            CrystallizedSeal()
+            Text("Concepts crystallized")
                 .font(.system(.title3, design: .serif).weight(.semibold))
                 .foregroundStyle(CosmoColors.textPrimary)
             if let promotionResult {
                 VStack(alignment: .leading, spacing: 5) {
-                    resultLine("\(promotionResult.created) Connections created")
-                    resultLine("\(promotionResult.updated) Connections updated")
+                    resultLine("\(promotionResult.created) Concepts created")
+                    resultLine("\(promotionResult.updated) Concepts updated")
                     resultLine("\(promotionResult.linked) links added")
                     resultLine("\(promotionResult.canvasBlocksCreated) canvas blocks placed")
                 }
                 .padding(DS.space16)
                 .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
             }
-            Text("Accepted branch drafts are now first-class Connections in the Library and on the canvas.")
+            Text("Accepted branch drafts are now first-class Concepts in the Library and on the canvas.")
                 .font(CosmoTypography.body)
                 .foregroundStyle(CosmoColors.textSecondary)
                 .multilineTextAlignment(.center)
+            Button("Back to Explore") {
+                onDismiss()
+            }
+            .buttonStyle(.plain)
+            .font(CosmoTypography.label)
+            .foregroundStyle(DS.accent)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -220,7 +285,7 @@ struct InquiryCrystallizationReviewV2: View {
 
     private func supportingOutput(_ output: CrystallizationOutput) -> some View {
         VStack(alignment: .leading, spacing: DS.space8) {
-            Text("Other accepted outputs")
+            Text("Also riding this crystallization")
                 .font(CosmoTypography.label)
                 .foregroundStyle(CosmoColors.textPrimary)
             HStack(spacing: DS.space8) {
@@ -234,9 +299,12 @@ struct InquiryCrystallizationReviewV2: View {
         .background(DS.surface, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
     }
 
+    // MARK: - Run + apply
+
     private func runCrystallization() async {
         status = .running
-        statusMessage = "Reading session..."
+        hasAppeared = false
+        statusMessage = "Reading the session…"
         let session = viewModel.session
         let dd = viewModel.deepDive
         let extracts = (try? await InquiryRepository.shared.fetchExtracts(forDeepDive: dd?.uuid ?? "")) ?? []
@@ -248,7 +316,7 @@ struct InquiryCrystallizationReviewV2: View {
         }
 
         do {
-            statusMessage = "Routing branches..."
+            statusMessage = "Routing branches…"
             var crystallized = try await InquiryCrystallizationEngine.shared.crystallize(
                 session: session,
                 deepDive: dd,
@@ -258,6 +326,12 @@ struct InquiryCrystallizationReviewV2: View {
             for i in crystallized.newQuestions.indices { crystallized.newQuestions[i].accepted = true }
             for i in crystallized.modelUpdates.indices { crystallized.modelUpdates[i].accepted = true }
             for i in crystallized.outputCandidates.indices { crystallized.outputCandidates[i].accepted = true }
+            // Substantial drafts start selected — reviewing means deselecting
+            // the ones you don't want, not re-approving every card.
+            for i in crystallized.possibleConnections.indices
+            where crystallized.possibleConnections[i].materialCount >= 3 {
+                crystallized.possibleConnections[i].accepted = true
+            }
             output = crystallized
             if let dd {
                 let connections = (try? await InquiryRepository.shared.fetchConnections(forDeepDive: dd)) ?? []
@@ -267,6 +341,8 @@ struct InquiryCrystallizationReviewV2: View {
                 }
             }
             status = .ready
+            try? await Task.sleep(for: .milliseconds(16))
+            hasAppeared = true
         } catch {
             statusMessage = error.localizedDescription
             status = .failed
@@ -315,17 +391,9 @@ struct InquiryCrystallizationReviewV2: View {
         output = current
     }
 
-    private func acceptAll() async {
-        guard var current = output else { return }
-        for index in current.possibleConnections.indices where current.possibleConnections[index].materialCount >= 3 {
-            current.possibleConnections[index].accepted = true
-        }
-        await apply(current)
-    }
-
     private func apply(_ current: CrystallizationOutput) async {
         status = .running
-        statusMessage = "Promoting Connections..."
+        statusMessage = "Promoting Concepts…"
         do {
             let appliedOutput = current
             let promoted = try await ConnectionPromotionService.shared.applyAcceptedCandidates(
@@ -413,5 +481,40 @@ struct InquiryCrystallizationReviewV2: View {
         case ready
         case failed
         case applied
+    }
+}
+
+// MARK: - The earned delight
+
+/// The workspace's one custom moment: knowledge crystallizing. The seal
+/// springs in and a gilt ring flares once — then everything is still again.
+/// Reduce Motion gets a plain fade.
+@MainActor
+private struct CrystallizedSeal: View {
+    @State private var arrived = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(DS.gilt.opacity(arrived ? 0 : 0.55), lineWidth: 2)
+                .frame(width: 56, height: 56)
+                .scaleEffect(arrived ? 1.7 : 0.8)
+                .accessibilityHidden(true)
+            Image(systemName: "checkmark.seal.fill")
+                .font(.system(size: 36))
+                .foregroundStyle(DS.green)
+                .scaleEffect(arrived || reduceMotion ? 1 : 0.6)
+                .opacity(arrived ? 1 : 0)
+                .accessibilityHidden(true)
+        }
+        .onAppear {
+            guard !reduceMotion else {
+                arrived = true
+                return
+            }
+            withAnimation(ProMotionSprings.snappy) { arrived = true }
+        }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.5), value: arrived)
     }
 }

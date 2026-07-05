@@ -203,7 +203,7 @@ enum CosmoInlineInquiryQuestionStarter {
         var errorDescription: String? {
             switch self {
             case .connectionMissing:
-                return "The connection that sparked this question no longer exists."
+                return "The concept that sparked this question no longer exists."
             }
         }
     }
@@ -287,7 +287,7 @@ enum CosmoInlineInquiryQuestionStarter {
         } else {
             resolved = try await InquiryRepository.shared.createDeepDive(
                 title: connection.title ?? "Untitled Deep Dive",
-                about: "Opened from Connection: \(connection.title ?? "Untitled")"
+                about: "Opened from Concept: \(connection.title ?? "Untitled")"
             )
         }
 

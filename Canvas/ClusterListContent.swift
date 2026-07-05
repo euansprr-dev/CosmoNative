@@ -385,7 +385,7 @@ struct ClusterListRow: View {
             let platform = block.metadata["platform"] ?? "Research"
             return (platform.capitalized, CosmoMentionColors.research)
         case .connection:
-            return ("Connection", CosmoMentionColors.connection)
+            return ("Concept", CosmoMentionColors.connection)
         case .project:
             let status = block.metadata["status"] ?? "active"
             return (status.capitalized, CosmoMentionColors.project)

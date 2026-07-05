@@ -521,6 +521,34 @@ final class InquiryRepository {
         return (created, true)
     }
 
+    /// Delete a question atom, promoting its child questions to the deleted
+    /// question's parent so no branch is orphaned. Shared by the inquiry
+    /// workspace and the Deep Dive overview — the atom-side contract lives
+    /// here; session research-tree surgery stays with the open workspace.
+    /// Returns the UUIDs of the reparented children.
+    @discardableResult
+    func deleteQuestion(uuid: String) async throws -> [String] {
+        guard let question = try await atoms.fetch(uuid: uuid),
+              question.type == .question else { return [] }
+        let parentUUID = question.questionMetadata?.parentQuestionUUID
+        let deepDiveUUID = question.questionMetadata?.parentDeepDiveUUID
+
+        var reparented: [String] = []
+        if let deepDiveUUID {
+            let siblings = try await fetchQuestions(forDeepDive: deepDiveUUID)
+            for child in siblings where child.questionMetadata?.parentQuestionUUID == uuid {
+                guard var meta = child.questionMetadata else { continue }
+                meta.parentQuestionUUID = parentUUID
+                meta.questionRole = parentUUID == nil ? .rootQuestion : .branchQuestion
+                meta.relationshipToParent = parentUUID == nil ? .rootUnderTopic : .childOf
+                _ = try? await atoms.update(child.withMetadata(meta))
+                reparented.append(child.uuid)
+            }
+        }
+        try await atoms.delete(uuid: uuid)
+        return reparented
+    }
+
     // MARK: - Extract
 
     @discardableResult

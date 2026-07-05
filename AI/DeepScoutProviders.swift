@@ -106,7 +106,7 @@ enum DeepScoutProviders {
         guard let url = searchURL(base: "https://www.googleapis.com/youtube/v3/search", queryItems: [
             URLQueryItem(name: "part", value: "snippet"),
             URLQueryItem(name: "type", value: "video"),
-            URLQueryItem(name: "maxResults", value: "8"),
+            URLQueryItem(name: "maxResults", value: "15"),
             URLQueryItem(name: "order", value: "relevance"),
             URLQueryItem(name: "q", value: query),
             URLQueryItem(name: "key", value: apiKey)
@@ -121,12 +121,90 @@ enum DeepScoutProviders {
             }
             let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
             let items = object?["items"] as? [[String: Any]] ?? []
-            let candidates = items.compactMap {
+            var candidates = items.compactMap {
                 youtubeCandidate(from: $0, lane: lane, intent: intent, profile: profile)
             }
+            candidates = await enrichYouTubeCandidates(candidates, apiKey: apiKey)
             return (InquiryProviderStatus(provider: .youtube, state: .succeeded, count: candidates.count), candidates)
         } catch {
             return (InquiryProviderStatus(provider: .youtube, state: .failed, message: error.localizedDescription), [])
+        }
+    }
+
+    /// One cheap videos.list call attaches duration + view count to each hit,
+    /// then drops sub-4-minute videos — shorts and motivation edits are the
+    /// noise the user keeps dismissing, and real lectures/podcasts run long.
+    /// The signals also ride into ranking as qualitySignals.
+    private static func enrichYouTubeCandidates(
+        _ candidates: [InquirySourceCandidate],
+        apiKey: String
+    ) async -> [InquirySourceCandidate] {
+        let videoIds = candidates.compactMap { candidate -> String? in
+            guard let url = candidate.url,
+                  let id = URLComponents(string: url)?.queryItems?.first(where: { $0.name == "v" })?.value else { return nil }
+            return id
+        }
+        guard !videoIds.isEmpty,
+              let url = searchURL(base: "https://www.googleapis.com/youtube/v3/videos", queryItems: [
+                  URLQueryItem(name: "part", value: "contentDetails,statistics"),
+                  URLQueryItem(name: "id", value: videoIds.joined(separator: ",")),
+                  URLQueryItem(name: "key", value: apiKey)
+              ]),
+              let (data, _) = try? await URLSession.shared.data(from: url),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let items = object["items"] as? [[String: Any]] else { return candidates }
+
+        var detailsById: [String: (seconds: Int, views: Int?)] = [:]
+        for item in items {
+            guard let id = item["id"] as? String else { continue }
+            let duration = ((item["contentDetails"] as? [String: Any])?["duration"] as? String)
+                .map(parseISO8601Duration) ?? 0
+            let views = ((item["statistics"] as? [String: Any])?["viewCount"] as? String).flatMap(Int.init)
+            detailsById[id] = (duration, views)
+        }
+
+        return candidates.compactMap { candidate in
+            guard let url = candidate.url,
+                  let id = URLComponents(string: url)?.queryItems?.first(where: { $0.name == "v" })?.value,
+                  let details = detailsById[id] else { return candidate }
+            if details.seconds > 0 && details.seconds < 240 { return nil }
+            var copy = candidate
+            if details.seconds > 0 {
+                copy.qualitySignals.append("\(details.seconds / 60) min")
+            }
+            if let views = details.views {
+                copy.qualitySignals.append("\(formattedCount(views)) views")
+            }
+            return copy
+        }
+    }
+
+    /// "PT1H23M45S" → seconds.
+    static func parseISO8601Duration(_ raw: String) -> Int {
+        var seconds = 0
+        var number = ""
+        for character in raw {
+            if character.isNumber {
+                number.append(character)
+            } else {
+                let value = Int(number) ?? 0
+                switch character {
+                case "H": seconds += value * 3600
+                case "M": seconds += value * 60
+                case "S": seconds += value
+                default: break
+                }
+                number = ""
+            }
+        }
+        return seconds
+    }
+
+    private static func formattedCount(_ count: Int) -> String {
+        switch count {
+        case 1_000_000...: return String(format: "%.1fM", Double(count) / 1_000_000)
+        case 1_000...: return String(format: "%.0fK", Double(count) / 1_000)
+        default: return "\(count)"
         }
     }
 
@@ -159,7 +237,7 @@ enum DeepScoutProviders {
                 return (InquiryProviderStatus(provider: .youtube, state: .failed, message: "Could not parse results page"), [])
             }
             let renderers = collectDictionaries(named: "videoRenderer", in: initialData)
-            let candidates = renderers.prefix(8).compactMap {
+            let candidates = renderers.prefix(12).compactMap {
                 youtubeScrapedCandidate(from: $0, lane: lane, intent: intent, profile: profile)
             }
             return (InquiryProviderStatus(provider: .youtube, state: .succeeded, count: candidates.count), Array(candidates))
@@ -208,6 +286,12 @@ enum DeepScoutProviders {
         let published = simpleText(renderer["publishedTimeText"])
         let views = simpleText(renderer["viewCountText"])
         let length = simpleText(renderer["lengthText"])
+        // Shorts and minute-long edits are noise — a "M:SS" length under
+        // four minutes never survives.
+        if let length {
+            let parts = length.split(separator: ":").compactMap { Int($0) }
+            if parts.count == 2, parts[0] < 4 { return nil }
+        }
         let snippet = runsText((renderer["detailedMetadataSnippets"] as? [[String: Any]])?.first?["snippetText"])
 
         return InquirySourceCandidate(
@@ -248,26 +332,107 @@ enum DeepScoutProviders {
         intent: InquiryResearchIntent,
         profile: InquiryBranchResearchProfile
     ) async -> (InquiryProviderStatus, [InquirySourceCandidate]) {
+        // Episodes AND shows in parallel: episode search finds the exact
+        // conversation; show search finds the podcast whose whole beat is the
+        // topic (or the favorite creator the query names).
+        async let episodes = fetchPodcastEntity("podcastEpisode", query: query, lane: lane, intent: intent, profile: profile)
+        async let shows = fetchPodcastEntity("podcast", query: query, lane: lane, intent: intent, profile: profile)
+        let (episodeResult, showResult) = await (episodes, shows)
+
+        switch (episodeResult, showResult) {
+        case (.failure(let message), .failure):
+            return (InquiryProviderStatus(provider: .podcast, state: .failed, message: message), [])
+        case (.success(let episodeCandidates), .failure):
+            return (InquiryProviderStatus(provider: .podcast, state: .succeeded, count: episodeCandidates.count), episodeCandidates)
+        case (.failure, .success(let showCandidates)):
+            return (InquiryProviderStatus(provider: .podcast, state: .succeeded, count: showCandidates.count), showCandidates)
+        case (.success(let episodeCandidates), .success(let showCandidates)):
+            var seen = Set(episodeCandidates.map(\.id))
+            var merged = episodeCandidates
+            for candidate in showCandidates where !seen.contains(candidate.id) {
+                seen.insert(candidate.id)
+                merged.append(candidate)
+            }
+            return (InquiryProviderStatus(provider: .podcast, state: .succeeded, count: merged.count), merged)
+        }
+    }
+
+    private enum PodcastFetchResult {
+        case success([InquirySourceCandidate])
+        case failure(String)
+    }
+
+    private static func fetchPodcastEntity(
+        _ entity: String,
+        query: String,
+        lane: InquirySourceLane,
+        intent: InquiryResearchIntent,
+        profile: InquiryBranchResearchProfile
+    ) async -> PodcastFetchResult {
         guard let url = searchURL(base: "https://itunes.apple.com/search", queryItems: [
             URLQueryItem(name: "media", value: "podcast"),
-            URLQueryItem(name: "entity", value: "podcastEpisode"),
+            URLQueryItem(name: "entity", value: entity),
             URLQueryItem(name: "term", value: query),
-            URLQueryItem(name: "limit", value: "8")
+            URLQueryItem(name: "limit", value: entity == "podcast" ? "5" : "10")
         ]) else {
-            return (InquiryProviderStatus(provider: .podcast, state: .failed, message: "Invalid query"), [])
+            return .failure("Invalid query")
         }
 
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
             let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
             let results = object?["results"] as? [[String: Any]] ?? []
-            let candidates = results.compactMap {
-                podcastCandidate(from: $0, lane: lane, intent: intent, profile: profile)
+            let candidates: [InquirySourceCandidate]
+            if entity == "podcast" {
+                candidates = results.compactMap {
+                    podcastShowCandidate(from: $0, lane: lane, intent: intent, profile: profile)
+                }
+            } else {
+                candidates = results.compactMap {
+                    podcastCandidate(from: $0, lane: lane, intent: intent, profile: profile)
+                }
             }
-            return (InquiryProviderStatus(provider: .podcast, state: .succeeded, count: candidates.count), candidates)
+            return .success(candidates)
         } catch {
-            return (InquiryProviderStatus(provider: .podcast, state: .failed, message: error.localizedDescription), [])
+            return .failure(error.localizedDescription)
         }
+    }
+
+    private static func podcastShowCandidate(
+        from result: [String: Any],
+        lane: InquirySourceLane,
+        intent: InquiryResearchIntent,
+        profile: InquiryBranchResearchProfile
+    ) -> InquirySourceCandidate? {
+        guard let title = result["collectionName"] as? String, !title.isEmpty,
+              let pageURL = result["collectionViewUrl"] as? String else {
+            return nil
+        }
+        let artist = result["artistName"] as? String
+        let genre = result["primaryGenreName"] as? String
+        let episodeCount = result["trackCount"] as? Int
+        let key = (result["collectionId"] as? Int).map(String.init) ?? pageURL
+
+        return InquirySourceCandidate(
+            id: stableID(provider: .podcast, key: "show-\(key)"),
+            provider: .podcast,
+            sourceKind: .video,
+            title: decodeHTMLEntities(title),
+            subtitle: artist ?? title,
+            url: pageURL,
+            abstract: genre,
+            evidenceRole: .lecture,
+            reason: "Podcast show whose beat covers this topic.",
+            qualitySignals: [
+                artist,
+                episodeCount.map { "\($0) episodes" },
+                "Podcast show"
+            ].compactMap { $0 },
+            branchQuestionUUID: profile.activeQuestionUUID,
+            branchNodeId: profile.branchNodeId,
+            researchIntent: intent,
+            sourceLane: lane
+        )
     }
 
     private static func podcastCandidate(

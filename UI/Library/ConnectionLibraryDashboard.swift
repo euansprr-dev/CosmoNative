@@ -140,10 +140,10 @@ struct ConnectionLibraryDashboard: View {
             }
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Connection Library")
+                Text("Concept Library")
                     .font(.system(size: 18, weight: .bold))
                     .foregroundColor(DS.text)
-                Text("\(viewModel.allItems.count) connections")
+                Text("\(viewModel.allItems.count) concepts")
                     .font(.system(size: 13))
                     .foregroundColor(DS.textMuted)
             }
@@ -155,7 +155,7 @@ struct ConnectionLibraryDashboard: View {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 13))
                     .foregroundColor(DS.textMuted)
-                TextField("Search connections...", text: $searchText)
+                TextField("Search concepts...", text: $searchText)
                     .textFieldStyle(.plain)
                     .font(.system(size: 13))
                     .foregroundColor(DS.text)
@@ -294,7 +294,7 @@ struct ConnectionLibraryDashboard: View {
                 Image(systemName: "sparkles")
                     .font(.system(size: 14))
                     .foregroundColor(Color(hex: "#F59E0B"))
-                Text("Connections to Develop")
+                Text("Concepts to Develop")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(DS.text)
                 Spacer()
@@ -460,10 +460,10 @@ struct ConnectionLibraryDashboard: View {
             Image(systemName: "link.circle")
                 .font(.system(size: 48))
                 .foregroundColor(Color(hex: "#8B5CF6").opacity(0.2))
-            Text("No connections yet")
+            Text("No concepts yet")
                 .font(.system(size: 16, weight: .medium))
                 .foregroundColor(DS.textSecondary)
-            Text("Create connections to build your knowledge framework")
+            Text("Create concepts to build your knowledge framework")
                 .font(.system(size: 13))
                 .foregroundColor(DS.textMuted)
         }
@@ -792,7 +792,7 @@ final class ConnectionLibraryViewModel: ObservableObject {
         return ConnectionLibraryItem(
             id: atom.uuid,
             uuid: atom.uuid,
-            title: atom.title ?? "Untitled Connection",
+            title: atom.title ?? "Untitled Concept",
             maturity: maturity,
             filledSections: filledSections,
             totalSections: 8,

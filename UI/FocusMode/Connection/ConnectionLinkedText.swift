@@ -85,7 +85,7 @@ struct ConnectionLinkPill: View {
             withAnimation(ProMotionSprings.hover) { isHovered = hovering }
         }
         .help("Open \(title) as a pane")
-        .accessibilityLabel("Open linked connection \(title)")
+        .accessibilityLabel("Open linked concept \(title)")
     }
 }
 

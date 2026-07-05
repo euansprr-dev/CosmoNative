@@ -905,8 +905,10 @@ struct CosmoWebBrowserPane: View {
             }
         case .askCosmo:
             Task { @MainActor in
-                CosmoWindowPanelController.shared.show()
-                await CosmoWindowViewModel.shared.sendMessage("""
+                // One Cosmo: route to the assistant pane instead of the old
+                // floating chat window.
+                CosmoInlineAssistantStore.shared.openPane()
+                CosmoInlineAssistantStore.shared.submitPrompt("""
                 Analyze this selected passage from \(capture.title):
 
                 \(capture.body)

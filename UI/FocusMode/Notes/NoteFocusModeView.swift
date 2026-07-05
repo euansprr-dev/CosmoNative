@@ -294,6 +294,14 @@ struct NoteFocusModeView: View {
     // V2 "Scholar's Carrel" rail state
     @AppStorage("noteFocusV2.leftRail") private var leftRailVisible: Bool = true
     @AppStorage("noteFocusV2.rightRail") private var rightRailVisible: Bool = true
+    /// Measured rail content heights — the glass panels hug their content
+    /// instead of running full-height.
+    @State private var outlineRailContentHeight: CGFloat = 0
+    @State private var carrelRailContentHeight: CGFloat = 0
+    /// The view OWNS its context provider — the editable-surface registry holds
+    /// it weakly, and the old single global slot deallocated it whenever any
+    /// other view registered, silently unbinding this note from the assistant.
+    @State private var ownedContextProvider: NoteContextProvider?
     @State private var graphOverlayVisible: Bool = false
     @State private var backlinkPreviews: [NoteBacklinkPreview] = []
     @State private var mentionedInCounts: [AtomType: Int] = [:]
@@ -367,6 +375,10 @@ struct NoteFocusModeView: View {
                         .padding(.leading, DS.space16)
                         .padding(.top, noteToolbarClearance)
                         .padding(.bottom, DS.space16)
+                        .opacity(railRestOpacity)
+                        .onHover { hovering in
+                            if hovering { wakeChrome() }
+                        }
                         .transition(.move(edge: .leading).combined(with: .opacity))
                 }
 
@@ -379,9 +391,14 @@ struct NoteFocusModeView: View {
                         .padding(.trailing, DS.space16)
                         .padding(.top, noteToolbarClearance)
                         .padding(.bottom, DS.space16)
+                        .opacity(railRestOpacity)
+                        .onHover { hovering in
+                            if hovering { wakeChrome() }
+                        }
                         .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
             }
+            .animation(reduceMotion ? nil : ProMotionSprings.gentle, value: isActivelyTyping)
             .overlay(alignment: .top) {
                 topBar
             }
@@ -420,6 +437,7 @@ struct NoteFocusModeView: View {
             ownerAtomUUID: atom.uuid
         )
         .focusBlockInspector(manager: floatingBlocksManager)
+        .cosmoSurfaceKeyWindowActivation(surfaceID: "note:\(atom.uuid)")
         .focusImmersiveEntryTransition()
         .onAppear {
             AtomRepository.shared.acquireEditingLock(uuid: atom.uuid)
@@ -446,6 +464,7 @@ struct NoteFocusModeView: View {
                 }
             )
             if !isPaneContext || isPaneContextOwner {
+                ownedContextProvider = provider
                 CosmoWindowViewModel.shared.updateContext(provider: provider)
             }
             // Safety fallback: ensure isInitialLoad clears even if GRDB observation
@@ -468,6 +487,7 @@ struct NoteFocusModeView: View {
                         try await self.applyInlineAssistantBodyEdit(operation)
                     }
                 )
+                ownedContextProvider = provider
                 CosmoWindowViewModel.shared.updateContext(provider: provider)
             }
         }
@@ -552,6 +572,19 @@ struct NoteFocusModeView: View {
         rightRailVisible && !typewriterMode
     }
 
+    /// Rails whisper while the user is writing and wake on hover.
+    private var railRestOpacity: Double {
+        isActivelyTyping ? MarginaliaRailPolicy.whisperOpacity : 1
+    }
+
+    /// The heading section the focused block sits under — lights its outline row.
+    private var activeBodyHeadingID: UUID? {
+        guard let focusedID = bodyFocusCoordinator.focusedBlockID,
+              let index = bodyDocument.blocks.firstIndex(where: { $0.id == focusedID })
+        else { return nil }
+        return bodyHeadingOutline.last(where: { $0.blockIndex <= index })?.id
+    }
+
     private var isEmptyNote: Bool {
         titleChromeMode == .emptyEditableTitle
     }
@@ -609,33 +642,28 @@ struct NoteFocusModeView: View {
     }
 
     private func atomWindowTopBar(_ atomChrome: AtomWindowChromePayload) -> some View {
-        HStack(spacing: DS.space12) {
-            AtomWindowChromeLeadingControls(context: atomChrome)
-
-            if saveState != .idle {
-                noteSaveBadge
-                    .transition(.opacity)
+        // Chrome islands on the shared baseline — nav (window controls) · view
+        // controls · actions — never a full-width bar. Same island grammar as the
+        // Content workspace toolbar (CosmoChromeRow / CosmoChromeIsland). The
+        // center island stays truly centered regardless of the side islands' width.
+        CosmoChromeRow(insetsEnabled: false) {
+            CosmoChromeIsland {
+                AtomWindowChromeLeadingControls(context: atomChrome)
+                if saveState != .idle {
+                    noteSaveBadge
+                        .transition(.opacity)
+                }
             }
-
-            // Balanced rail: nav (left) · view controls (center) · actions (right).
-            // Two equal spacers absorb window-width changes symmetrically, so the
-            // center pill stays visually anchored and the bar never reads lopsided.
-            Spacer(minLength: DS.space12)
-
-            atomViewControlsCluster
-
-            Spacer(minLength: DS.space12)
-
-            AtomWindowChromeTrailingControls(context: atomChrome)
+        } center: {
+            CosmoChromeIsland { atomViewControlsCluster }
+        } trailing: {
+            CosmoChromeIsland {
+                AtomWindowChromeTrailingControls(context: atomChrome)
+            }
         }
-        .padding(.horizontal, DS.space12)
-        .frame(height: AtomWindowMetrics.focusToolbarHeight)
-        .cosmoGlassPanel(role: .floatingAssistant, cornerRadius: 22)
         .padding(.horizontal, DS.space16)
         .padding(.top, DS.space12)
         .padding(.bottom, DS.space8)
-        .frame(maxWidth: .infinity, alignment: .top)
-        .fixedSize(horizontal: false, vertical: true)
         .opacity(isActivelyTyping ? 0.25 : 1)
         .animation(reduceMotion ? nil : ProMotionSprings.gentle, value: isActivelyTyping)
         .onHover { hovering in
@@ -644,26 +672,26 @@ struct NoteFocusModeView: View {
     }
 
     private var nativeFocusTopBar: some View {
-        HStack(spacing: DS.space12) {
-            if !isPaneContext {
-                backButton
+        // Chrome islands on the shared baseline — nav + identity · tools — never a
+        // full-width bar. Same island grammar as the Content workspace toolbar
+        // (CosmoChromeRow / CosmoChromeIsland): glass hugs each control group.
+        CosmoChromeRow(insetsEnabled: false) {
+            CosmoChromeIsland {
+                if !isPaneContext {
+                    backButton
+                }
+                noteTypeBadge
+                if saveState != .idle {
+                    noteSaveBadge
+                        .transition(.opacity)
+                }
             }
-
-            noteTypeBadge
-
-            if saveState != .idle {
-                noteSaveBadge
-                    .transition(.opacity)
-            }
-
-            Spacer()
-
-            topBarChromeButtons
+        } center: {
+            EmptyView()
+        } trailing: {
+            CosmoChromeIsland { topBarChromeButtons }
         }
-        .padding(.horizontal, DS.space12)
-        .padding(.vertical, DS.space6)
         .background(FocusModeEditorBlurTapLayer())
-        .cosmoGlassPanel(role: .floatingAssistant, cornerRadius: 22)
         .padding(.horizontal, DS.space16)
         .padding(.top, DS.space12)
         .padding(.bottom, DS.space8)
@@ -675,6 +703,7 @@ struct NoteFocusModeView: View {
     }
 
     private var backButton: some View {
+        // No inner capsule — the enclosing CosmoChromeIsland provides the glass.
         Button(action: onClose) {
             HStack(spacing: DS.space6) {
                 Image(systemName: "chevron.left")
@@ -684,15 +713,16 @@ struct NoteFocusModeView: View {
                     .font(DS.callout)
             }
             .foregroundStyle(focusTextSecondary)
-            .padding(.horizontal, DS.space12)
-            .padding(.vertical, DS.space8)
-            .frame(minWidth: 44, minHeight: 32)
-            .background(focusBorder.opacity(0.5), in: Capsule())
+            .frame(minHeight: 32)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .help("Back (Esc)")
     }
 
     private var noteTypeBadge: some View {
+        // Note identity + vitals as tinted text on the leading island — no inner
+        // capsule; the enclosing CosmoChromeIsland provides the glass.
         HStack(spacing: DS.space6) {
             Image(systemName: "note.text")
                 .font(DS.caption2)
@@ -708,9 +738,6 @@ struct NoteFocusModeView: View {
             }
         }
         .foregroundStyle(DS.entityNote)
-        .padding(.horizontal, DS.space10)
-        .padding(.vertical, DS.space6)
-        .background(DS.entityNote.opacity(DS.opacitySubtle), in: Capsule())
     }
 
     private var topBarChromeButtons: some View {
@@ -918,6 +945,11 @@ struct NoteFocusModeView: View {
                             focusCoordinator: bodyFocusCoordinator,
                             onSelectionChanged: { snapshot in
                                 selectedText = snapshot.text
+                                let trimmed = snapshot.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                                CosmoInlineAssistantStore.shared.reportSelection(
+                                    trimmed.isEmpty ? nil : CosmoEditableSelection(text: trimmed, containingLine: nil),
+                                    forSurfaceID: "note:\(atom.uuid)"
+                                )
                                 refreshCosmoContextIfActive()
                             },
                             onDocumentChange: handleBodyDocumentChange
@@ -978,65 +1010,108 @@ struct NoteFocusModeView: View {
     // MARK: - Outline Rail (left)
 
     private var outlineRail: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            VStack(alignment: .leading, spacing: DS.space20) {
-                railSectionLabel("❡  ON THIS NOTE")
-
-                if bodyHeadingOutline.isEmpty {
-                    Text(isEmptyNote ? "No headings yet" : "No sections — use Heading 1, 2, or 3 to create sections")
-                        .font(DS.caption)
-                        .foregroundStyle(focusTextMuted)
-                        .fixedSize(horizontal: false, vertical: true)
-                } else {
-                    VStack(alignment: .leading, spacing: DS.space6) {
-                        ForEach(bodyHeadingOutline) { entry in
-                            outlineEntryRow(entry)
-                        }
-                    }
-                }
-
-                Rectangle()
-                    .fill(DS.gilt.opacity(0.2))
-                    .frame(height: 0.5)
-
-                railSectionLabel("LINKS")
-                VStack(alignment: .leading, spacing: DS.space4) {
-                    linkCountRow(label: "backlinks", count: inLinkCount, tint: DS.gilt)
-                    linkCountRow(label: "out links", count: outLinkCount, tint: DS.entityNote)
-                }
-
-                if !tags.isEmpty {
-                    Rectangle()
-                        .fill(DS.gilt.opacity(0.2))
-                        .frame(height: 0.5)
-
-                    railSectionLabel("TAGS")
-                    FlowTagCloud(tags: tags)
-                }
-
-                Spacer(minLength: DS.space24)
+        railPanel(contentHeight: $outlineRailContentHeight) {
+            noteOutlineSection
+            noteLinksSection
+            if !tags.isEmpty {
+                noteTagsSection
             }
-            .padding(.horizontal, DS.space20)
-            .padding(.top, DS.space24)
-            .padding(.bottom, DS.space24)
         }
-        .scrollEdgeEffectStyle(.soft, for: .vertical)
-        .frame(maxHeight: .infinity)
-        .cosmoGlassPanel(role: .focusSidebar, cornerRadius: 22)
     }
 
-    private func outlineEntryRow(_ entry: RichHeadingOutlineEntry) -> some View {
+    /// A study rail: glass, top-aligned, hugging its content instead of
+    /// running the full window height — the parchment breathes around it.
+    private func railPanel<Content: View>(
+        contentHeight: Binding<CGFloat>,
+        @ViewBuilder content: @escaping () -> Content
+    ) -> some View {
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: DS.space20) {
+                content()
+            }
+            .padding(.horizontal, DS.space20)
+            .padding(.vertical, DS.space20)
+            .onGeometryChange(for: CGFloat.self) { proxy in
+                proxy.size.height
+            } action: { newValue in
+                contentHeight.wrappedValue = newValue
+            }
+        }
+        .scrollEdgeEffectStyle(.soft, for: .vertical)
+        .frame(
+            maxHeight: contentHeight.wrappedValue > 0 ? contentHeight.wrappedValue : .infinity,
+            alignment: .top
+        )
+        .cosmoGlassPanel(role: .focusSidebar, cornerRadius: 22)
+        .animation(reduceMotion ? nil : ProMotionSprings.snappy, value: contentHeight.wrappedValue)
+    }
+
+    private var noteOutlineSection: some View {
+        MarginaliaDisclosureSection(
+            "ON THIS NOTE",
+            countText: bodyHeadingOutline.isEmpty ? nil : "\(bodyHeadingOutline.count)",
+            storageKey: "note.outline",
+            defaultExpanded: true
+        ) {
+            if bodyHeadingOutline.isEmpty {
+                Text(isEmptyNote ? "no headings yet" : "headings create sections")
+                    .font(DS.dateSerif)
+                    .italic()
+                    .foregroundStyle(focusTextMuted.opacity(0.7))
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                VStack(alignment: .leading, spacing: DS.space6) {
+                    ForEach(bodyHeadingOutline) { entry in
+                        outlineEntryRow(entry, isActive: entry.id == activeBodyHeadingID)
+                    }
+                }
+            }
+        }
+    }
+
+    private var noteLinksSection: some View {
+        MarginaliaDisclosureSection(
+            "LINKS",
+            countText: "\(inLinkCount + outLinkCount)",
+            storageKey: "note.links"
+        ) {
+            VStack(alignment: .leading, spacing: DS.space4) {
+                linkCountRow(label: "backlinks", count: inLinkCount, tint: DS.gilt)
+                linkCountRow(label: "out links", count: outLinkCount, tint: DS.entityNote)
+            }
+        }
+    }
+
+    private var noteTagsSection: some View {
+        MarginaliaDisclosureSection(
+            "TAGS",
+            countText: "\(tags.count)",
+            storageKey: "note.tags"
+        ) {
+            FlowTagCloud(tags: tags)
+        }
+    }
+
+    private func outlineEntryRow(_ entry: RichHeadingOutlineEntry, isActive: Bool) -> some View {
         Button {
             navigateToBodyHeading(entry)
         } label: {
             HStack(alignment: .firstTextBaseline, spacing: DS.space6) {
-                Text(entry.level == 1 ? "¶" : "›")
-                    .font(DS.caption2)
-                    .foregroundStyle(DS.gilt.opacity(0.6))
-                    .frame(width: 10, alignment: .leading)
+                if isActive {
+                    Rectangle()
+                        .fill(DS.gilt)
+                        .frame(width: 3, height: 3)
+                        .rotationEffect(.degrees(45))
+                        .frame(width: 10, alignment: .leading)
+                } else {
+                    Text(entry.level == 1 ? "¶" : "›")
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.gilt.opacity(0.6))
+                        .frame(width: 10, alignment: .leading)
+                }
                 Text(entry.title)
                     .font(entry.level == 1 ? DS.subheadline : DS.caption)
-                    .foregroundStyle(entry.level == 1 ? focusText : focusTextSecondary)
+                    .foregroundStyle(isActive ? focusText : (entry.level == 1 ? focusTextSecondary : focusTextMuted))
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1046,14 +1121,17 @@ struct NoteFocusModeView: View {
         }
         .buttonStyle(.plain)
         .contentShape(Rectangle())
+        .animation(ProMotionSprings.gentle, value: isActive)
+        .accessibilityAddTraits(isActive ? .isSelected : [])
     }
 
     private func linkCountRow(label: String, count: Int, tint: Color) -> some View {
         HStack(spacing: DS.space6) {
             Text("\(count)")
-                .font(DS.title3)
+                .font(DS.callout)
                 .foregroundStyle(count > 0 ? tint : focusTextMuted)
                 .monospacedDigit()
+                .contentTransition(.numericText())
             Text(label)
                 .font(DS.caption)
                 .foregroundStyle(focusTextMuted)
@@ -1061,51 +1139,29 @@ struct NoteFocusModeView: View {
         }
     }
 
-    private func railSectionLabel(_ text: String) -> some View {
-        Text(text)
-            .font(DS.smallCaps)
-            .tracking(0.8)
-            .foregroundStyle(DS.gilt.opacity(0.85))
-            .accessibilityAddTraits(.isHeader)
-    }
-
     // MARK: - Carrel Rail (right)
 
     private var carrelRail: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            VStack(alignment: .leading, spacing: DS.space24) {
-                railSectionLabel("⟡  CARREL")
-
-                backlinksSection
-                mentionedInSection
-                resonanceSection
-                askCosmoSection
-
-                Spacer(minLength: DS.space24)
-            }
-            .padding(.horizontal, DS.space20)
-            .padding(.top, DS.space24)
-            .padding(.bottom, DS.space24)
+        railPanel(contentHeight: $carrelRailContentHeight) {
+            backlinksSection
+            mentionedInSection
+            resonanceSection
+            askCosmoSection
         }
-        .scrollEdgeEffectStyle(.soft, for: .vertical)
-        .frame(maxHeight: .infinity)
-        .cosmoGlassPanel(role: .focusSidebar, cornerRadius: 22)
     }
 
     private var backlinksSection: some View {
-        VStack(alignment: .leading, spacing: DS.space10) {
-            HStack(spacing: DS.space6) {
-                railSectionLabel("BACKLINKS")
-                Text("\(inLinkCount)")
-                    .font(DS.caption)
-                    .foregroundStyle(focusTextMuted)
-                    .monospacedDigit()
-            }
-
+        MarginaliaDisclosureSection(
+            "BACKLINKS",
+            countText: "\(inLinkCount)",
+            storageKey: "note.backlinks",
+            defaultExpanded: true
+        ) {
             if backlinkPreviews.isEmpty {
-                Text("No backlinks yet")
-                    .font(DS.caption)
-                    .foregroundStyle(focusTextMuted)
+                Text("no backlinks yet")
+                    .font(DS.dateSerif)
+                    .italic()
+                    .foregroundStyle(focusTextMuted.opacity(0.7))
             } else {
                 VStack(spacing: DS.space8) {
                     ForEach(Array(backlinkPreviews.prefix(8).enumerated()), id: \.element.atomUUID) { index, preview in
@@ -1119,12 +1175,17 @@ struct NoteFocusModeView: View {
     }
 
     private var mentionedInSection: some View {
-        VStack(alignment: .leading, spacing: DS.space8) {
-            railSectionLabel("MENTIONED IN")
-            if mentionedInCounts.isEmpty || mentionedInCounts.values.reduce(0, +) == 0 {
-                Text("Not yet referenced")
-                    .font(DS.caption)
-                    .foregroundStyle(focusTextMuted)
+        MarginaliaDisclosureSection(
+            "MENTIONED IN",
+            countText: mentionedInTotal > 0 ? "\(mentionedInTotal)" : nil,
+            storageKey: "note.mentions",
+            spacing: DS.space8
+        ) {
+            if mentionedInTotal == 0 {
+                Text("not yet referenced")
+                    .font(DS.dateSerif)
+                    .italic()
+                    .foregroundStyle(focusTextMuted.opacity(0.7))
             } else {
                 VStack(alignment: .leading, spacing: DS.space4) {
                     ForEach(Array(mentionedInCounts.keys.sorted(by: { $0.rawValue < $1.rawValue })), id: \.self) { type in
@@ -1145,26 +1206,23 @@ struct NoteFocusModeView: View {
         }
     }
 
+    private var mentionedInTotal: Int {
+        mentionedInCounts.values.reduce(0, +)
+    }
+
     private var resonanceSection: some View {
-        VStack(alignment: .leading, spacing: DS.space8) {
-            HStack(spacing: DS.space6) {
-                railSectionLabel("∿  RESONANCE")
-                Text("ai")
-                    .font(DS.caption2)
-                    .foregroundStyle(DS.gilt.opacity(0.6))
-                    .italic()
-            }
-
-            Text("Ambient adjacencies — notes that sit near this one by tag, theme, and connection graph.")
-                .font(DS.caption)
-                .foregroundStyle(focusTextMuted)
-                .fixedSize(horizontal: false, vertical: true)
-
+        MarginaliaDisclosureSection(
+            "RESONANCE",
+            countText: resonantThemes.isEmpty ? nil : "\(resonantThemes.count)",
+            storageKey: "note.resonance",
+            spacing: DS.space8
+        ) {
             if resonantThemes.isEmpty {
-                Text("Tag this note to surface resonances")
-                    .font(DS.caption2)
-                    .foregroundStyle(focusTextMuted.opacity(0.7))
+                Text("tag this note to surface resonances")
+                    .font(DS.dateSerif)
                     .italic()
+                    .foregroundStyle(focusTextMuted.opacity(0.7))
+                    .fixedSize(horizontal: false, vertical: true)
             } else {
                 VStack(alignment: .leading, spacing: DS.space4) {
                     ForEach(resonantThemes, id: \.self) { theme in
@@ -1270,8 +1328,11 @@ struct NoteFocusModeView: View {
                 try await self.applyInlineAssistantBodyEdit(operation)
             }
         )
+        ownedContextProvider = provider
         CosmoWindowViewModel.shared.updateContext(provider: provider)
-        CosmoWindowPanelController.shared.show()
+        // One Cosmo: the floating chat window is gone — open the assistant
+        // pane scoped to this note.
+        CosmoInlineAssistantStore.shared.openPane(forSurfaceID: provider.surfaceID)
     }
 
     private func refreshCosmoContextIfActive() {
@@ -1306,6 +1367,10 @@ struct NoteFocusModeView: View {
             nextPlainText: plainText
         )
         NoteFocusLog.debug("[FOCUS-NOTE] onDocumentChange(body) — changed=\(changed) len=\(plainText.count) isInitialLoad=\(isInitialLoad) uuid=\(atom.uuid)")
+        if changed {
+            // Typing is the strongest "this is what I'm working on" signal.
+            CosmoEditableSurfaceRegistry.shared.activateIfNeeded(surfaceID: "note:\(atom.uuid)")
+        }
         bodyDocument = document
         plainContent = plainText
         updateBodyHeadingOutline(from: document)
@@ -1860,6 +1925,21 @@ struct NoteFocusModeView: View {
             }
             plainContent.replaceSubrange(placement.range, with: placement.replacementText)
             bodyDocument = RichDocument.migrateLegacy(plainContent)
+
+        case .formatMarks:
+            guard let mark = operation.formatMark else {
+                return CosmoEditableOperationResult(operationID: operation.id, status: .rejected, message: "No formatting mark specified")
+            }
+            guard let formatted = CosmoInlineFormatMarksApplier.apply(
+                mark: mark,
+                originalText: operation.originalText,
+                to: bodyDocument
+            ) else {
+                // Honest skip, never a blocking conflict.
+                return CosmoEditableOperationResult(operationID: operation.id, status: .rejected, message: "Couldn't find that text anymore — skipped")
+            }
+            bodyDocument = formatted
+            plainContent = bodyDocument.plainText
 
         case .canvasPlan:
             return CosmoEditableOperationResult(operationID: operation.id, status: .conflicted, message: "Canvas edits need a canvas provider")
@@ -2848,6 +2928,16 @@ class NoteContextProvider: CosmoContextProvider, CosmoEditableSurfaceProvider {
 
     func editableSnapshot() -> CosmoEditableSourceSnapshot {
         let content = contentRef()
+        let selectedText = selectedTextRef().trimmingCharacters(in: .whitespacesAndNewlines)
+        let selection: CosmoEditableSelection? = selectedText.isEmpty ? nil : CosmoEditableSelection(
+            text: selectedText,
+            // Block rows cage selection to one block; the containing line is the
+            // first body line holding the selection's lead.
+            containingLine: content
+                .components(separatedBy: .newlines)
+                .first { $0.contains(selectedText.components(separatedBy: .newlines).first ?? selectedText) }?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        )
         return CosmoEditableSourceSnapshot(
             surfaceID: surfaceID,
             targetID: Self.targetID(for: atom.uuid),
@@ -2857,7 +2947,8 @@ class NoteContextProvider: CosmoContextProvider, CosmoEditableSurfaceProvider {
             sourceHash: CosmoEditableSurfaceHasher.hash(content),
             anchors: [
                 .init(id: "body", label: "Body", utf16Start: 0, utf16Length: content.utf16.count)
-            ]
+            ],
+            selection: selection
         )
     }
 

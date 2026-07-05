@@ -311,7 +311,7 @@ struct CommandKVisualIdentity: Equatable {
         case .content:
             return CommandKVisualIdentity(style: .content, symbolName: "paperplane.fill", title: "Content", subtitle: "Writing", badge: "POST")
         case .connection:
-            return CommandKVisualIdentity(style: .connection, symbolName: "link.circle.fill", title: "Connection", subtitle: "Relationship", badge: "LINK")
+            return CommandKVisualIdentity(style: .connection, symbolName: "link.circle.fill", title: "Concept", subtitle: "Relationship", badge: "LINK")
         case .image:
             return CommandKVisualIdentity(style: .image, symbolName: "photo.fill", title: "Image", subtitle: "Visual", badge: "IMG")
         case .thinkspace:
@@ -964,7 +964,7 @@ struct CommandKSearchIndex: Sendable {
 
         for entry in entries {
             if shouldCancel() { return [] }
-            let structural = CommandKSearchMatcher.matchQuality(
+            let (tier, structural) = CommandKSearchMatcher.lexicalMatch(
                 normalizedQuery: normalizedQuery,
                 normalizedTitle: entry.normalizedTitle,
                 normalizedFullText: entry.searchableText
@@ -980,6 +980,7 @@ struct CommandKSearchIndex: Sendable {
                 structuralWeight: structural,
                 recencyWeight: entry.recencyWeight,
                 usageWeight: 0.5,
+                lexicalTier: tier,
                 updatedAt: entry.updatedAt
             ))
         }

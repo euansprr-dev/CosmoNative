@@ -97,6 +97,12 @@ class AgentToolExecutor {
     var onWorkspaceEditProposal: (@MainActor (CosmoAssistantProposal) -> Void)?
     var onAssistantPaneAnswer: (@MainActor (_ title: String?, _ answer: String) -> Void)?
     var onInquiryQuestionProposal: (@MainActor (CosmoAssistantInquiryQuestionProposal) -> Void)?
+    /// The surface the inline request was bound to at submit time. When set,
+    /// `workspaceEditProposal` stamps this identity over whatever surfaceID/
+    /// targetID strings the model authored — a stale or typoed ID from the
+    /// model must never unbind a proposal from the editor the user was in
+    /// (the in-editor diff only renders when the proposal matches the surface).
+    var workspaceEditBoundSurface: (surfaceID: String, targetID: String)?
     var inlineSkillStore: CosmoInlineSkillStore = .defaultForRuntime()
 
     private init() {}
@@ -2022,22 +2028,38 @@ class AgentToolExecutor {
 
     func workspaceEditProposal(arguments args: [String: Any]) -> (proposal: CosmoAssistantProposal?, error: String?) {
         guard let prompt = trimmedString(args["prompt"]),
-              let surfaceID = trimmedString(args["surfaceID"]),
+              let modelSurfaceID = trimmedString(args["surfaceID"]),
               let title = trimmedString(args["title"]),
               let summary = trimmedString(args["summary"]),
               let rawOperations = args["operations"] as? [[String: Any]] else {
             return (nil, "Missing required workspace edit proposal fields")
         }
 
+        // The bound surface (captured at submit) is authoritative — model-authored
+        // IDs are only kept when they already point inside that surface (structured
+        // surfaces expose several targets under one surfaceID prefix).
+        let boundSurface = workspaceEditBoundSurface
+        let surfaceID = boundSurface?.surfaceID ?? modelSurfaceID
+
         let operations = rawOperations.map { raw in
+            let modelTargetID = raw["targetID"] as? String ?? ""
+            let targetID: String
+            if let boundSurface {
+                targetID = modelTargetID.hasPrefix(boundSurface.surfaceID)
+                    ? modelTargetID
+                    : boundSurface.targetID
+            } else {
+                targetID = modelTargetID
+            }
             let operation = CosmoAssistantProposalOperation(
                 kind: CosmoAssistantProposalOperationKind(rawValue: raw["kind"] as? String ?? "") ?? .textReplacement,
-                targetID: raw["targetID"] as? String ?? "",
+                targetID: targetID,
                 anchorID: raw["anchorID"] as? String,
                 originalText: raw["originalText"] as? String,
                 proposedText: raw["proposedText"] as? String,
                 sourceHash: raw["sourceHash"] as? String ?? "",
-                rationale: raw["rationale"] as? String ?? "Proposed by Cosmo."
+                rationale: raw["rationale"] as? String ?? "Proposed by Cosmo.",
+                formatMark: (raw["formatMark"] as? String).flatMap(CosmoAssistantFormatMark.init(rawValue:))
             )
             return CosmoInlineAssistantOutlineBodyInsertionNormalizer.normalized(
                 operation: operation,

@@ -420,7 +420,7 @@ final class InboxViewModel {
         } catch {
             print("⚠️ [InboxVM] Connect failed: \(error)")
             PersistenceHealth.note(.writeFailure, context: "InboxVM.connectCapture", detail: error.localizedDescription)
-            presentErrorToast("Couldn't create the connection — the capture is still in your inbox.")
+            presentErrorToast("Couldn't create the concept — the capture is still in your inbox.")
         }
     }
 

@@ -89,7 +89,7 @@ public enum QuestRequirement: Codable, Sendable {
         case .researchAdded(let count):
             return "Add \(count) research items"
         case .connectionsCreated(let count):
-            return "Create \(count) connections"
+            return "Create \(count) concepts"
         case .routineBlocks(let count):
             return "Complete \(count) routine blocks"
         case .ideasCaptured(let count):
@@ -229,7 +229,7 @@ public final class DailyQuestEngine: Sendable {
         static let knowledge: [(String, String, QuestRequirement, Int)] = [
             ("Note Taker", "Create 3 notes", .notesCreated(count: 3), 30),
             ("Researcher", "Add 2 research items", .researchAdded(count: 2), 40),
-            ("Connection Maker", "Create 5 connections", .connectionsCreated(count: 5), 50),
+            ("Concept Maker", "Create 5 concepts", .connectionsCreated(count: 5), 50),
         ]
 
         // Reflection quests

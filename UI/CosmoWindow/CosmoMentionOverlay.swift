@@ -23,7 +23,7 @@ struct CosmoMentionOverlay: View {
         (.research, "Research", "magnifyingglass"),
         (swipeFilterTag, "Swipe", "bookmark.fill"),
         (.idea, "Idea", "lightbulb"),
-        (.connection, "Connection", "link"),
+        (.connection, "Concept", "link"),
         (.note, "Note", "note.text"),
         (.clientProfile, "Profile", "person.crop.circle"),
         (.task, "Task", "checkmark.circle")

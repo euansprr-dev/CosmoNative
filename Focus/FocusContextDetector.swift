@@ -42,7 +42,7 @@ public enum FocusContextType: String, CaseIterable, Sendable {
         case .plannerum: return "Plannerum"
         case .dimension: return "Sanctuary"
         case .research: return "Research"
-        case .client: return "Connections"
+        case .client: return "Concepts"
         case .thread: return "Writing"
         case .idea: return "Idea"
         case .task: return "Task"
@@ -470,6 +470,7 @@ public struct ContextAwareSearchAdapter: Sendable {
                 structuralWeight: result.structuralWeight,
                 recencyWeight: result.recencyWeight,
                 usageWeight: result.usageWeight * Double(typeBoost),
+                lexicalTier: result.lexicalTier,
                 updatedAt: result.updatedAt,
                 accessCount: result.accessCount
             )

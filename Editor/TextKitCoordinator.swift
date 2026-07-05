@@ -2055,6 +2055,31 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             lastObservedFrameWidth = newWidth
             notifyContentHeightChange(for: textView)
             repositionImageResizeOverlay()
+            scheduleIntrinsicHeightReconcile()
+        }
+
+        /// Frame-change notifications fire synchronously while SwiftUI is
+        /// mid-layout (SwiftUI positions the scroll view, AppKit posts the
+        /// notification), so the `invalidateIntrinsicContentSize` inside
+        /// `notifyContentHeightChange` above can land inside the very layout
+        /// pass that is consuming the OLD intrinsic height — and SwiftUI
+        /// sometimes drops that invalidation. When it does, the row keeps the
+        /// stale height: a freshly split row is measured at ~1pt width before
+        /// its first layout, so its seeded intrinsic is paragraph-tall and a
+        /// dropped invalidation leaves a huge gap under the block (the
+        /// intermittent "Return creates a big gap" bug). Re-measure after the
+        /// pass settles, and if the hosting frame never caught up to the
+        /// intrinsic height, re-issue the invalidation outside the pass.
+        private func scheduleIntrinsicHeightReconcile() {
+            guard !parent.scrollsInternally else { return }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let textView = self.textViewReference else { return }
+                self.notifyContentHeightChange(for: textView)
+                guard let scrollView = textView.enclosingScrollView as? CosmoScrollView,
+                      let intrinsicHeight = scrollView.intrinsicHeight,
+                      abs(scrollView.frame.height - intrinsicHeight) > 1.0 else { return }
+                scrollView.invalidateIntrinsicContentSize()
+            }
         }
 
         // MARK: - Image resize overlay (content editor)
@@ -2564,7 +2589,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 let snapshot = EditorSelectionSnapshot(
                     range: selectedRange,
                     text: selectedText,
-                    rectInEditor: localRect
+                    rectInEditor: localRect,
+                    traits: self.formattingTraits(in: textView, range: selectedRange),
+                    nearestHeadingBlockID: self.nearestHeadingBlockID(in: textView, before: selectedRange.location)
                 )
                 self.parent.onSelectionChange?(snapshot)
             }
@@ -2600,7 +2627,88 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             } else {
                 localRect = textViewRect
             }
-            return EditorSelectionSnapshot(range: selectedRange, text: "", rectInEditor: localRect)
+            return EditorSelectionSnapshot(
+                range: selectedRange,
+                text: "",
+                rectInEditor: localRect,
+                traits: formattingTraits(in: textView, range: selectedRange),
+                nearestHeadingBlockID: nearestHeadingBlockID(in: textView, before: selectedRange.location)
+            )
+        }
+
+        /// The heading section the caret sits under: the nearest heading
+        /// attribute at or before the caret. Reverse run enumeration stops at
+        /// the first heading run, so this is cheap on typical documents.
+        private func nearestHeadingBlockID(in textView: NSTextView, before location: Int) -> UUID? {
+            guard let storage = textView.textStorage, storage.length > 0 else { return nil }
+            let end = min(location + 1, storage.length)
+            guard end > 0 else { return nil }
+            var found: UUID?
+            storage.enumerateAttribute(
+                RichDocumentAttributeKeys.headingBlockID,
+                in: NSRange(location: 0, length: end),
+                options: [.reverse]
+            ) { value, _, stop in
+                if let idString = value as? String, let id = UUID(uuidString: idString) {
+                    found = id
+                    stop.pointee = true
+                }
+            }
+            return found
+        }
+
+        /// Formatting state at the selection, for the formatting bar's active
+        /// states. Inline traits count as active only when they cover the whole
+        /// range; a caret reads the typing attributes instead.
+        private func formattingTraits(in textView: NSTextView, range: NSRange) -> SelectionFormattingTraits {
+            var traits = SelectionFormattingTraits()
+
+            if range.length > 0, let storage = textView.textStorage, NSMaxRange(range) <= storage.length {
+                var allBold = true, allItalic = true
+                storage.enumerateAttribute(.font, in: range, options: []) { value, _, _ in
+                    let symbolic = ((value as? NSFont) ?? NSFont.systemFont(ofSize: parent.fontSize))
+                        .fontDescriptor.symbolicTraits
+                    if !symbolic.contains(.bold) { allBold = false }
+                    if !symbolic.contains(.italic) { allItalic = false }
+                }
+                traits.isBold = allBold
+                traits.isItalic = allItalic
+                traits.isUnderline = attributeCoversRange(.underlineStyle, in: storage, range: range)
+                traits.isStrikethrough = attributeCoversRange(.strikethroughStyle, in: storage, range: range)
+                traits.headingLevel = storage.attribute(
+                    RichDocumentAttributeKeys.headingLevel, at: range.location, effectiveRange: nil
+                ) as? Int
+            } else {
+                let attributes = textView.typingAttributes
+                let symbolic = ((attributes[.font] as? NSFont) ?? NSFont.systemFont(ofSize: parent.fontSize))
+                    .fontDescriptor.symbolicTraits
+                traits.isBold = symbolic.contains(.bold)
+                traits.isItalic = symbolic.contains(.italic)
+                traits.isUnderline = (attributes[.underlineStyle] as? Int ?? 0) != 0
+                traits.isStrikethrough = (attributes[.strikethroughStyle] as? Int ?? 0) != 0
+                traits.headingLevel = attributes[RichDocumentAttributeKeys.headingLevel] as? Int
+            }
+
+            switch activeBlockMode {
+            case .none: traits.listKind = .none
+            case .quote: traits.listKind = .quote
+            case .bulletList: traits.listKind = .bullet
+            case .numberedList: traits.listKind = .numbered
+            case .checklist: traits.listKind = .checklist
+            }
+            return traits
+        }
+
+        private func attributeCoversRange(
+            _ key: NSAttributedString.Key,
+            in storage: NSTextStorage,
+            range: NSRange
+        ) -> Bool {
+            var covered = true
+            storage.enumerateAttribute(key, in: range, options: []) { value, _, _ in
+                if (value as? Int ?? 0) == 0 { covered = false }
+            }
+            return covered
         }
 
         func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {

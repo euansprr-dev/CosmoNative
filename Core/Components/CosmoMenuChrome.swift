@@ -5,6 +5,13 @@
 import SwiftUI
 
 struct CosmoMenuChrome: ViewModifier {
+    /// How far the panel's drop shadow visibly extends past the panel body
+    /// (globalSidebar role: blur radius 18 + y-offset 6). Anything positioning
+    /// a menu inside a clipped container (editor columns, scroll viewports)
+    /// must clamp the BODY this far from the clip edge, or the shadow gets
+    /// sliced into a hard line at the boundary.
+    static let shadowClearance: CGFloat = 40
+
     var cornerRadius: CGFloat = 14
     var darkMode: Bool = false
 

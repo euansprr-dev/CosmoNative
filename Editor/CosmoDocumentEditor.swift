@@ -1,10 +1,38 @@
 import SwiftUI
 import AppKit
 
+/// List/block context of the current selection's line, mirrored from the
+/// coordinator's prefix detection so the formatting bar can light its controls.
+enum SelectionListKind: Equatable {
+    case none
+    case bullet
+    case numbered
+    case checklist
+    case quote
+}
+
+/// Formatting state of the current selection. An inline trait is active only
+/// when it covers the *entire* selected range (NSTextView convention); for a
+/// caret it reflects the typing attributes.
+struct SelectionFormattingTraits: Equatable {
+    var isBold = false
+    var isItalic = false
+    var isUnderline = false
+    var isStrikethrough = false
+    var headingLevel: Int? = nil
+    var listKind: SelectionListKind = .none
+
+    static let none = SelectionFormattingTraits()
+}
+
 struct EditorSelectionSnapshot: Equatable {
     var range: NSRange
     var text: String
     var rectInEditor: CGRect
+    var traits: SelectionFormattingTraits = .none
+    /// The heading section the caret currently sits under (nearest heading at
+    /// or before the caret) — drives the live outline in the margin rails.
+    var nearestHeadingBlockID: UUID? = nil
 
     static let empty = EditorSelectionSnapshot(
         range: NSRange(location: NSNotFound, length: 0),

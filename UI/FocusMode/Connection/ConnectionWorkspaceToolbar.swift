@@ -125,7 +125,7 @@ struct ConnectionWorkspaceToolbar: View {
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(searchFocused ? DS.accent : DS.textMuted)
                 .accessibilityHidden(true)
-            TextField("Find in connection", text: searchBinding)
+            TextField("Find in concept", text: searchBinding)
                 .textFieldStyle(.plain)
                 .font(DS.callout)
                 .foregroundStyle(DS.text)

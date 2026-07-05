@@ -506,7 +506,7 @@ class CosmoCore: ObservableObject {
         else if lowered.contains("canvas") { section = .canvas }
         else if lowered.contains("research") { section = .research }
         else if lowered.contains("project") { section = .projects }
-        else if lowered.contains("connection") { section = .connections }
+        else if lowered.contains("connection") || lowered.contains("concept") { section = .connections }
 
         NotificationCenter.default.post(
             name: .navigateToSection,
@@ -515,7 +515,7 @@ class CosmoCore: ObservableObject {
         )
 
         return CosmoResponse(
-            message: "📍 Navigating to \(section.rawValue)",
+            message: "📍 Navigating to \(section.displayName)",
             entities: [],
             suggestedActions: []
         )

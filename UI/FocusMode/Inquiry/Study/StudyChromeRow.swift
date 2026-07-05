@@ -1,0 +1,228 @@
+// CosmoOS/UI/FocusMode/Inquiry/Study/StudyChromeRow.swift
+// The Study's top chrome: three glass islands on the shared app baseline —
+// navigate · question · actions. Crystallize is the screen's ONE tinted glass
+// element (tint marks the primary action). Islands recede while the user is
+// thinking in the dock or reading a source, and wake on hover.
+
+import SwiftUI
+
+@MainActor
+struct StudyChromeRow: View {
+    @Bindable var viewModel: InquiryWorkspaceViewModel
+    let breakpoint: StudyBreakpoint
+    let isReceded: Bool
+    let onClose: () -> Void
+
+    var body: some View {
+        CosmoChromeRow {
+            CosmoChromeIsland(recede: isReceded) { navigateControls }
+        } center: {
+            // One center island: the question pill at the desk, the reader
+            // controls while a source is open — never both.
+            CosmoChromeIsland(recede: isReceded) {
+                if let tab = activeReaderTab {
+                    readerControls(tab)
+                } else {
+                    questionControl
+                }
+            }
+        } trailing: {
+            CosmoChromeIsland(recede: isReceded) { actionControls }
+            crystallizeIsland
+        }
+    }
+
+    private var activeReaderTab: SourceTab? {
+        guard let id = viewModel.activeReaderSourceId else { return nil }
+        return viewModel.structured.sourceTabs.first { $0.id == id }
+    }
+
+    // MARK: - Reader controls (the center island while reading)
+
+    @ViewBuilder
+    private func readerControls(_ tab: SourceTab) -> some View {
+        Button {
+            withAnimation(ProMotionSprings.focusTransition) { viewModel.dismissReader() }
+        } label: {
+            HStack(spacing: DS.space4) {
+                Image(systemName: "chevron.left")
+                    .font(DS.caption.weight(.semibold))
+                    .accessibilityHidden(true)
+                Text("Study")
+                    .font(DS.buttonText)
+            }
+            .foregroundStyle(DS.textSecondary)
+            .padding(.horizontal, DS.space6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Back to the study (Esc)")
+        .accessibilityLabel("Back to the study")
+
+        Text(tab.title)
+            .font(DS.buttonText.weight(.semibold))
+            .foregroundStyle(DS.text)
+            .lineLimit(1)
+            .frame(maxWidth: breakpoint == .narrow ? 180 : 320)
+
+        if let urlString = tab.url, let url = URL(string: urlString) {
+            toolbarButton(icon: "safari", help: "Open in browser") {
+                NSWorkspace.shared.open(url)
+            }
+        }
+        if tab.kind == .web {
+            toolbarButton(
+                icon: viewModel.readerPrefersReaderMode ? "doc.text.fill" : "doc.text",
+                help: viewModel.readerPrefersReaderMode ? "Show original page" : "Show reader view",
+                isActive: viewModel.readerPrefersReaderMode
+            ) {
+                viewModel.readerPrefersReaderMode.toggle()
+            }
+        }
+    }
+
+    // MARK: - Navigate island
+
+    @ViewBuilder
+    private var navigateControls: some View {
+        toolbarButton(icon: "chevron.left", help: "Back (Esc)", action: onClose)
+        toolbarButton(
+            icon: "sidebar.left",
+            help: viewModel.isTrailShowing ? "Hide trail (⌘0)" : "Show trail (⌘0)",
+            isActive: viewModel.isTrailShowing
+        ) {
+            withAnimation(ProMotionSprings.focusTransition) { viewModel.toggleTrail() }
+        }
+    }
+
+    // MARK: - Question island (the orientation pill)
+
+    private var questionControl: some View {
+        Menu {
+            questionMenuContent
+        } label: {
+            HStack(spacing: DS.space6) {
+                Image(systemName: "questionmark.bubble")
+                    .font(DS.caption.weight(.semibold))
+                    .foregroundStyle(DS.accent)
+                    .accessibilityHidden(true)
+                Text(viewModel.activeQuestionTitle)
+                    .font(DS.buttonText.weight(.semibold))
+                    .foregroundStyle(DS.text)
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(DS.caption2.weight(.semibold))
+                    .foregroundStyle(DS.textMuted)
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, DS.space6)
+            .frame(maxWidth: breakpoint == .narrow ? 220 : 400)
+            .contentShape(Capsule())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Switch question (⌘] cycles)")
+        .accessibilityLabel("Active question: \(viewModel.activeQuestionTitle). Click to switch.")
+    }
+
+    @ViewBuilder
+    private var questionMenuContent: some View {
+        // The breadcrumb lives here, not in the chrome — one-line islands.
+        Text(viewModel.activeQuestionBreadcrumb)
+        Divider()
+        ForEach(viewModel.orderedQuestionNodes(), id: \.id) { node in
+            Button {
+                withAnimation(ProMotionSprings.focusTransition) {
+                    viewModel.setActiveQuestion(node.atomUUID, branchNodeId: node.id)
+                }
+            } label: {
+                let counts = viewModel.counts(for: node.atomUUID)
+                if node.atomUUID == viewModel.activeQuestionUUID {
+                    Label("\(viewModel.questionTitle(for: node.atomUUID))  \(counts.compactLabel)", systemImage: "checkmark")
+                } else {
+                    Text("\(viewModel.questionTitle(for: node.atomUUID))  \(counts.compactLabel)")
+                }
+            }
+        }
+        Divider()
+        Button("New branch question…") { viewModel.focusDock() }
+        Button("Pin active question") { viewModel.togglePinActiveQuestion() }
+        Menu("Mark active question") {
+            Button("Researching") {
+                Task { await viewModel.updateQuestionStatus(viewModel.activeQuestionUUID, status: .researching) }
+            }
+            Button("Answered") {
+                Task { await viewModel.updateQuestionStatus(viewModel.activeQuestionUUID, status: .answered) }
+            }
+        }
+    }
+
+    // MARK: - Actions island
+
+    @ViewBuilder
+    private var actionControls: some View {
+        toolbarButton(
+            icon: "circle.hexagongrid",
+            help: "Session map — this session's question tree (⌘M)",
+            isActive: viewModel.isMapOverlayPresented
+        ) {
+            withAnimation(ProMotionSprings.focusTransition) { viewModel.toggleMap() }
+        }
+        toolbarButton(
+            icon: "sidebar.right",
+            help: viewModel.isReadingShowing ? "Hide reading panel (⌘⌥I)" : "Show reading panel (⌘⌥I)",
+            isActive: viewModel.isReadingShowing
+        ) {
+            withAnimation(ProMotionSprings.focusTransition) { viewModel.toggleReading() }
+        }
+    }
+
+    /// The one tinted glass element on the screen — the primary action.
+    private var crystallizeIsland: some View {
+        Button {
+            viewModel.setPhase(.crystallize)
+        } label: {
+            HStack(spacing: DS.space4) {
+                Image(systemName: "sparkles")
+                    .font(DS.caption.weight(.semibold))
+                    .accessibilityHidden(true)
+                if breakpoint != .narrow {
+                    Text("Crystallize")
+                        .font(DS.buttonText.weight(.semibold))
+                }
+            }
+            .foregroundStyle(DS.accent)
+            .padding(.horizontal, DS.space12)
+            .frame(height: CosmoChromeMetrics.height)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .glassEffect(.regular.tint(DS.accentSoft).interactive(), in: .capsule)
+        .keyboardShortcut(.return, modifiers: [.command])
+        .help("Turn this session's branches into Concepts (⌘⏎)")
+        .accessibilityLabel("Crystallize inquiry session")
+    }
+
+    // MARK: - Button factory (the Connection toolbar anatomy)
+
+    private func toolbarButton(
+        icon: String,
+        help: String,
+        isActive: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(isActive ? DS.text : DS.textSecondary)
+                .frame(width: 28, height: 28)
+                .background(isActive ? AnyShapeStyle(DS.surfaceElevated) : AnyShapeStyle(.clear), in: Circle())
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(help)
+        .accessibilityAddTraits(isActive ? .isSelected : [])
+    }
+}

@@ -703,7 +703,16 @@ final class InquirySourceRecommendationEngine: @unchecked Sendable {
     ) async -> InquiryRecommendationBatch {
         let localCandidates = Self.localCandidates(from: localSources, profile: profile)
 
-        let deepScoutPlan = DeepScoutIntentPlanner.plan(for: profile, mode: searchMode)
+        // The LLM planner writes human-quality, creator-aware queries; the
+        // keyword templates are only the offline fallback.
+        let taste = await DeepScoutTasteStore.shared.profile()
+        let deepScoutPlan: DeepScoutPlan
+        if searchMode == .deepScout,
+           let llmPlan = await DeepScoutLLMPlanner.shared.plan(for: profile, taste: taste) {
+            deepScoutPlan = llmPlan
+        } else {
+            deepScoutPlan = DeepScoutIntentPlanner.plan(for: profile, mode: searchMode)
+        }
         let queries = searchMode == .deepScout ? deepScoutPlan.queries.map(\.query) : [profile.query]
         let academicQueries: [String]
         if searchMode == .deepScout {
@@ -763,9 +772,26 @@ final class InquirySourceRecommendationEngine: @unchecked Sendable {
         }
 
         let merged = Self.mergeCandidates(rawCandidates)
-        let ranked = searchMode == .deepScout
-            ? DeepScoutRanker.rank(merged, profile: profile, plan: deepScoutPlan, existingSourceRefs: existingSourceRefs)
+        var ranked = searchMode == .deepScout
+            ? DeepScoutRanker.rank(
+                merged,
+                profile: profile,
+                plan: deepScoutPlan,
+                existingSourceRefs: existingSourceRefs,
+                limit: DeepScoutLLMRanker.maxCandidates
+            )
             : Self.rankCandidates(merged, profile: profile, existingSourceRefs: existingSourceRefs)
+        if searchMode == .deepScout {
+            // One judging call reads the survivors against the actual question;
+            // learned creator taste applies even when the judge is offline.
+            let judgments = await DeepScoutLLMRanker.shared.judge(
+                candidates: ranked,
+                profile: profile,
+                intent: deepScoutPlan.intent,
+                taste: taste
+            )
+            ranked = DeepScoutRanker.blend(ranked, judgments: judgments, taste: taste)
+        }
 
         statuses = statuses.map { status in
             var copy = status

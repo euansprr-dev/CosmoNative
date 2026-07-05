@@ -1591,7 +1591,7 @@ enum CosmoInlineAssistantSkillRuntime {
             return CosmoInlineAssistantSkill(
                 id: .concept,
                 name: "Concept",
-                description: "Concept-development partner: develops a Connection through one-question-at-a-time socratic dialogue, observations, and staged section drafts.",
+                description: "Concept-development partner: develops a Concept through one-question-at-a-time socratic dialogue, observations, and staged section drafts.",
                 route: .answer,
                 requiredContext: [.activeSurface, .currentFocus, .workspaceMemory],
                 toolBundles: [.workspaceEditing, .contentSearch],
@@ -1613,7 +1613,7 @@ enum CosmoInlineAssistantSkillRuntime {
                 tokenBudget: 2200,
                 requiresReviewedDiff: false,
                 icon: "diamond",
-                summary: "Develops a concept with you — socratic questions, sharp observations, drafts staged into Connection sections.",
+                summary: "Develops a concept with you — socratic questions, sharp observations, drafts staged into Concept sections.",
                 triggerPhrases: ["concept", "develop concept", "crystallize", "deepen"],
                 preferredModelTier: .strategist,
                 panePolicy: .openForAnswer
@@ -1932,6 +1932,20 @@ struct CosmoEditableAnchor: Identifiable, Codable, Equatable, Sendable {
     var utf16Length: Int
 }
 
+/// The user's live text selection on an editable surface — the referent of
+/// "this / it / that line" in inline requests ("shorten this", "punchier").
+/// Location is conveyed by text, matching the locator's text-anchoring model.
+struct CosmoEditableSelection: Codable, Equatable, Sendable {
+    var text: String
+    /// The full line(s) containing the selection — the anchor the edit should
+    /// set as originalText so the change lands exactly where the selection lives.
+    var containingLine: String?
+
+    var isEmpty: Bool {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
 struct CosmoEditableSourceSnapshot: Codable, Equatable, Sendable {
     var surfaceID: String
     var targetID: String
@@ -1940,6 +1954,9 @@ struct CosmoEditableSourceSnapshot: Codable, Equatable, Sendable {
     var text: String
     var sourceHash: String
     var anchors: [CosmoEditableAnchor]
+    /// The user's current selection, when the surface tracks one — decodes nil
+    /// from older payloads.
+    var selection: CosmoEditableSelection? = nil
 
     func withSourceHash(_ nextHash: String) -> CosmoEditableSourceSnapshot {
         var copy = self
@@ -1953,6 +1970,52 @@ enum CosmoAssistantProposalOperationKind: String, Codable, Equatable, Sendable {
     case textInsertion
     case structuredFieldReplacement
     case canvasPlan
+    /// Apply rich-text formatting (bold/italic/underline/strikethrough/heading)
+    /// to existing text located by `originalText` — the words don't change,
+    /// how they look does.
+    case formatMarks
+}
+
+/// The formatting a `formatMarks` operation applies to its located target.
+enum CosmoAssistantFormatMark: String, Codable, Equatable, Sendable, CaseIterable {
+    case bold
+    case italic
+    case underline
+    case strikethrough
+    case heading1
+    case heading2
+    case heading3
+
+    var richTextMark: RichTextMark? {
+        switch self {
+        case .bold: return .bold
+        case .italic: return .italic
+        case .underline: return .underline
+        case .strikethrough: return .strikethrough
+        case .heading1, .heading2, .heading3: return nil
+        }
+    }
+
+    var headingBlockKind: RichBlockKind? {
+        switch self {
+        case .heading1: return .heading1
+        case .heading2: return .heading2
+        case .heading3: return .heading3
+        default: return nil
+        }
+    }
+
+    var displayName: String {
+        switch self {
+        case .bold: return "Bold"
+        case .italic: return "Italic"
+        case .underline: return "Underline"
+        case .strikethrough: return "Strikethrough"
+        case .heading1: return "Heading 1"
+        case .heading2: return "Heading 2"
+        case .heading3: return "Heading 3"
+        }
+    }
 }
 
 struct CosmoAssistantProposalOperation: Identifiable, Codable, Equatable, Sendable {
@@ -1966,6 +2029,8 @@ struct CosmoAssistantProposalOperation: Identifiable, Codable, Equatable, Sendab
     var rationale: String
     var status: CosmoProposalStatus
     var canvasPayload: [String: String]
+    /// Set for `.formatMarks` operations — decodes nil from older payloads.
+    var formatMark: CosmoAssistantFormatMark? = nil
 
     init(
         id: UUID = UUID(),
@@ -1977,7 +2042,8 @@ struct CosmoAssistantProposalOperation: Identifiable, Codable, Equatable, Sendab
         sourceHash: String,
         rationale: String,
         status: CosmoProposalStatus = .pending,
-        canvasPayload: [String: String] = [:]
+        canvasPayload: [String: String] = [:],
+        formatMark: CosmoAssistantFormatMark? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -1989,6 +2055,7 @@ struct CosmoAssistantProposalOperation: Identifiable, Codable, Equatable, Sendab
         self.rationale = rationale
         self.status = status
         self.canvasPayload = canvasPayload
+        self.formatMark = formatMark
     }
 
     static func textReplacement(
@@ -2018,6 +2085,12 @@ struct CosmoAssistantProposalOperation: Identifiable, Codable, Equatable, Sendab
 
     func canApply(against source: CosmoEditableSourceSnapshot) -> Bool {
         guard (status == .pending || status == .conflicted), targetID == source.targetID else { return false }
+        if kind == .formatMarks {
+            // Formatting applies when its target still exists; the apply path
+            // reports an honest skip otherwise.
+            guard let originalText, formatMark != nil else { return false }
+            return CosmoInlineDiffLocator.range(of: originalText, in: source.text) != nil
+        }
         if sourceHash == source.sourceHash { return true }
         return canApplyByMatchingOriginalText(in: source.text)
     }
@@ -2299,19 +2372,21 @@ enum CosmoInlineAssistantInstructionPrompt {
 
     static let defaultPersonality = """
     ## Cosmo Personality Layer
-    Sound like a sharp, chill creative friend who knows the user's work. Be direct, specific, and casual without becoming fluffy. Voice is taught by example — match the register of the Cosmo replies below, not just the rules.
+    You are the user's editor — a sharp, chill creative collaborator who knows their work cold. You speak content natively: hooks, slides, retention beats, CTAs, the difference between a stopper and a throat-clear. Direct, specific, casual without fluff. Voice is taught by example — match the register of the Cosmo replies below, not just the rules.
 
     Do:
-    - Start from the user's actual ask and the active workspace.
-    - Give concrete judgments, examples, and rewrites before abstract advice.
-    - Push back plainly when evidence is thin or an idea is weak — say why in one line, then offer the stronger move.
-    - Keep the final response tight unless the task genuinely needs depth.
+    - Start from the user's actual ask and the active surface. When a selection exists, "this" means the selection — act on it without asking.
+    - Edit like an editor: smallest change that wins. Keep the user's rhythm, slang, and line breaks unless they asked for a rewrite.
+    - After staging edits, give a receipt — one line, what changed and the result state ("Bolded all 26 headers — numbering runs clean 1–26."). Never narrate tools or process.
+    - Push back plainly when a line is weak or evidence is thin — one line on why, then the stronger move, ideally already staged.
+    - Give concrete judgments, examples, and rewrites before abstract advice. Think in what stops the scroll.
     - For minor choices (a word, an ordering, a default), pick the best option and note it — don't ask.
 
     Avoid:
-    - AI disclaimers, generic praise, corporate framing, and filler.
+    - AI disclaimers, generic praise, corporate framing, filler, and emoji.
     - Inventing client facts, metrics, examples, or voice traits.
     - Saying you analyzed context if you did not actually use the available tools or active surface.
+    - Asking questions the surface already answers ("which post?" when the draft is right there).
 
     Voice calibration (generic reply → Cosmo reply):
     <example>
@@ -2321,6 +2396,14 @@ enum CosmoInlineAssistantInstructionPrompt {
     <example>
     <generic>I've made the changes you requested! Let me know if you'd like any adjustments or have other questions.</generic>
     <cosmo>Done — tightened both lines, kept your rhythm. The second one reads faster now.</cosmo>
+    </example>
+    <example>
+    <generic>I have applied bold formatting to all of the slide headers in your document as requested!</generic>
+    <cosmo>Bolded all 9 slide headers. Slide 4's header was mid-paragraph — moved it to its own line while I was in there.</cosmo>
+    </example>
+    <example>
+    <generic>Here is a shortened version of your selected sentence. I focused on making it more concise while preserving the meaning.</generic>
+    <cosmo>Cut it from 24 words to 11 — the number does the talking now.</cosmo>
     </example>
     <example>
     <generic>That's an interesting idea! It has a lot of potential. You might want to consider developing it further by...</generic>
@@ -2347,11 +2430,15 @@ enum CosmoInlineAssistantInstructionPrompt {
 
             Stage ALL the edits in a SINGLE propose_workspace_edit call with one operation per change — do not split changes across multiple tool calls or multiple turns; that is slower and worse.
 
+            When a "## User Selection" block is present, the request targets that selection: "this", "it", or a bare instruction ("shorten", "punchier") means edit the selected text and nothing else. Anchor the operation on the full line(s) containing the selection.
+
             For each change to existing text, set originalText to the ENTIRE line or sentence that contains the target, copied verbatim from the active surface text, and set proposedText to that same line with ONLY the requested change applied. This guarantees the edit is located and woven in exactly where it lives, and shows a clean before/after. Never use a short fragment (like just a number) as originalText — it may not match or may be ambiguous, which dumps the change at the bottom and flags it as outdated. Use textInsertion only for brand-new content, anchored via originalText to the existing line it should follow.
+
+            Formatting requests (bold, italic, underline, strikethrough, turn into a heading) use kind formatMarks with formatMark set and originalText = the exact text to format, one operation per target. The words must stay identical — never express formatting by rewriting text or adding asterisks/markdown symbols, and never use textReplacement for a pure formatting change.
 
             When inserting outline points into existing slide bodies, anchor each insertion to the existing SLIDE N heading but do not include another SLIDE N heading in proposedText. Insert only the body text that should live under that already-existing slide header. Do not create new slide headers unless the requested destination slide does not already exist.
 
-            If this is edit-only work, do not force the assistant pane open. The proposal summary will still be recorded in pane history. Use answer_in_assistant_pane only when the user also asked for an explanation, the edit cannot be staged, or there is a substantive non-edit result.
+            If this is edit-only work, do not force the assistant pane open. The proposal summary will still be recorded in pane history. Use answer_in_assistant_pane only when the user also asked for an explanation, the edit cannot be staged, or there is a substantive non-edit result. Proposal summaries are receipts: one tight line in Cosmo's voice saying what changed and the resulting state ("Bolded all 9 slide headers"), never process narration.
             \(paneExplanation)
             """
         case .answer:
@@ -2371,7 +2458,7 @@ enum CosmoInlineAssistantInstructionPrompt {
             .map { "\($0.id):\($0.label)" }
             .joined(separator: ", ")
 
-        return """
+        var sections = ["""
         Active editable surface:
         surfaceID: \(snapshot.surfaceID)
         targetID: \(snapshot.targetID)
@@ -2381,6 +2468,58 @@ enum CosmoInlineAssistantInstructionPrompt {
         anchors: \(anchors)
         text:
         \(snapshot.text)
+        """]
+
+        if let outline = documentOutline(for: snapshot.text) {
+            sections.append(outline)
+        }
+
+        if let selection = snapshot.selection, !selection.isEmpty {
+            var selectionBlock = """
+            ## User Selection
+            The user currently has this text selected on the active surface. When the request is an edit and says "this", "it", or gives a bare instruction ("shorten", "punchier"), it refers to THIS selection — edit exactly this, nothing else.
+            Selected text:
+            \(selection.text)
+            """
+            if let line = selection.containingLine,
+               !line.isEmpty,
+               line != selection.text {
+                selectionBlock += """
+
+
+                The full line containing the selection (use this as originalText so the edit lands in place):
+                \(line)
+                """
+            }
+            sections.append(selectionBlock)
+        }
+
+        return sections.joined(separator: "\n\n")
+    }
+
+    /// A computed structural digest of the surface — slide headers and heading
+    /// lines in document order — so structural asks ("fix the numbering",
+    /// "reorder slides 4 and 5") are answerable in one shot with no tool calls.
+    static func documentOutline(for text: String) -> String? {
+        var entries: [String] = []
+        var lineNumber = 0
+        text.enumerateLines { line, stop in
+            lineNumber += 1
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            let isSlideHeader = trimmed.range(
+                of: #"^SLIDE\s+\d+\b"#,
+                options: [.regularExpression, .caseInsensitive]
+            ) != nil
+            let isMarkdownHeading = trimmed.hasPrefix("#")
+            if isSlideHeader || isMarkdownHeading {
+                entries.append("- line \(lineNumber): \(trimmed.prefix(80))")
+                if entries.count >= 48 { stop = true }
+            }
+        }
+        guard entries.count >= 2 else { return nil }
+        return """
+        Document structure (slide headers / headings, in order):
+        \(entries.joined(separator: "\n"))
         """
     }
 }

@@ -397,7 +397,7 @@ class AppState: ObservableObject {
         case .content: atomType = .content; title = "New Content"
         case .task: atomType = .task; title = "New Task"
         case .research: atomType = .research; title = "New Research"
-        case .connection: atomType = .connection; title = "New Connection"
+        case .connection: atomType = .connection; title = "New Concept"
         default: atomType = nil; title = ""
         }
         guard let atomType else { return nil }
@@ -428,6 +428,12 @@ public enum NavigationSection: String, CaseIterable, Identifiable, Sendable {
     case cosmo = "Cosmo"
 
     public var id: String { rawValue }
+
+    /// User-facing name. Raw values are persisted (StatePersistence) and
+    /// routed on, so the connections→Concepts rename lives here only.
+    public var displayName: String {
+        self == .connections ? "Concepts" : rawValue
+    }
 
     public static var allCases: [NavigationSection] {
         [.home, .today, .ideas, .content, .connections, .research, .calendar, .canvas, .library, .cosmo]

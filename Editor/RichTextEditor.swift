@@ -202,8 +202,32 @@ final class EditorOverlayPresenter {
         var onDismiss: () -> Void
     }
 
+    /// Selection formatting bar for block rows — hoisted for the same reason
+    /// as the slash menu: inside a one-line row it draws under the rows below
+    /// it and clamps to nonsense positions.
+    struct SelectionMenuSession {
+        /// Selection rect in the block list's coordinate space.
+        var anchorInList: CGRect
+        var traits: SelectionFormattingTraits
+        var compact: Bool
+        var darkMode: Bool
+        /// Identifies the publishing row so a stale row can't clear a newer session.
+        var ownerID: UUID
+        var onAIAction: ((AIWritingAction) -> Void)?
+        var onCustomPrompt: ((String) -> Void)?
+        var onWritingAIRequest: (() -> Void)?
+        var onDismiss: () -> Void
+    }
+
     var slashSession: SlashMenuSession?
     var elementCreationSession: ElementCreationSession?
+    var selectionSession: SelectionMenuSession?
+
+    func clearSelectionSession(ownedBy ownerID: UUID) {
+        if selectionSession?.ownerID == ownerID {
+            selectionSession = nil
+        }
+    }
 }
 
 private struct BlockEditorOverlayPresenterKey: EnvironmentKey {
@@ -241,7 +265,8 @@ struct RichTextEditor: View {
     @Environment(\.blockEditorOverlayPresenter) private var overlayPresenter
     @Environment(\.blockDragSelectionController) private var dragSelectionController
     @State private var mentionMenuPosition: CGPoint = .zero
-    @State private var selectionMenuPosition: CGPoint = .zero
+    @State private var selectionAnchor: CGRect = .zero
+    @State private var selectionTraits: SelectionFormattingTraits = .none
     @State private var elementCreationMenuPosition: CGPoint = .zero
     @State private var mentionSearchQuery = ""
     @State private var cursorPosition: Int = 0
@@ -479,16 +504,20 @@ struct RichTextEditor: View {
                     onSelectionChanged?(adjustedSnapshot)
                     if adjustedSnapshot.range.length > 0 {
                         if allowSelectionMenu && !showSlashMenu && !showMentionMenu {
-                            let menuHeight: CGFloat = 52
-                            // Y: place menu center above selection top
-                            let menuY = adjustedSnapshot.rectInEditor.minY - (menuHeight / 2) - 8
-                            // X: center on selection midpoint (no clamping — menu uses .fixedSize())
-                            selectionMenuPosition = CGPoint(x: adjustedSnapshot.rectInEditor.midX, y: menuY)
+                            selectionAnchor = adjustedSnapshot.rectInEditor
+                            selectionTraits = adjustedSnapshot.traits
+                            // showSelectionMenu also drives Esc handling and the
+                            // click-away dismiss layer, so it's set even when the
+                            // bar itself renders hoisted in the block list.
                             showSelectionMenu = true
+                            if overlayPresenter != nil {
+                                publishSelectionSessionIfHoisted()
+                            }
                         }
                     } else {
                         DispatchQueue.main.async {
                             showSelectionMenu = false
+                            overlayPresenter?.clearSelectionSession(ownedBy: overlayEscapeOwnerID)
                         }
                     }
                 },
@@ -626,17 +655,24 @@ struct RichTextEditor: View {
                 .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .topLeading)))
             }
 
-            // Selection formatting menu
-            if showSelectionMenu && !showSlashMenu && !showMentionMenu {
+            // Selection formatting menu — inline only when no block-list
+            // presenter is hoisting it (block rows publish a session so the
+            // bar renders above every row's text view, never caged by a row).
+            if showSelectionMenu && !showSlashMenu && !showMentionMenu, overlayPresenter == nil {
                 SelectionFormattingMenu(
-                    position: selectionMenuPosition,
+                    anchor: selectionAnchor,
+                    container: containerSize,
+                    traits: selectionTraits,
                     compact: compact,
+                    darkMode: darkMode,
                     onDismiss: { showSelectionMenu = false },
                     onAIAction: onAIAction,
                     onCustomPrompt: onCustomPrompt,
-                    onWritingAIRequest: {
-                        dismissAllOverlays()
-                        onWritingAIRequest?()
+                    onWritingAIRequest: onWritingAIRequest.map { request in
+                        {
+                            dismissAllOverlays()
+                            request()
+                        }
                     }
                 )
                 .zIndex(900)
@@ -668,6 +704,7 @@ struct RichTextEditor: View {
             if showSlashMenu {
                 overlayPresenter?.slashSession = nil
             }
+            overlayPresenter?.clearSelectionSession(ownedBy: overlayEscapeOwnerID)
         }
         .onChange(of: autoFocus) { _, shouldFocus in
             if shouldFocus {
@@ -731,7 +768,35 @@ struct RichTextEditor: View {
         return EditorSelectionSnapshot(
             range: snapshot.range,
             text: snapshot.text,
-            rectInEditor: snapshot.rectInEditor.offsetBy(dx: padding.leading, dy: padding.top)
+            rectInEditor: snapshot.rectInEditor.offsetBy(dx: padding.leading, dy: padding.top),
+            traits: snapshot.traits,
+            nearestHeadingBlockID: snapshot.nearestHeadingBlockID
+        )
+    }
+
+    /// Publishes/updates the hoisted selection bar session for block rows.
+    private func publishSelectionSessionIfHoisted() {
+        guard let overlayPresenter else { return }
+        overlayPresenter.selectionSession = EditorOverlayPresenter.SelectionMenuSession(
+            anchorInList: selectionAnchor.offsetBy(
+                dx: frameInOverlaySpace.minX,
+                dy: frameInOverlaySpace.minY
+            ),
+            traits: selectionTraits,
+            compact: compact,
+            darkMode: darkMode,
+            ownerID: overlayEscapeOwnerID,
+            onAIAction: onAIAction,
+            onCustomPrompt: onCustomPrompt,
+            onWritingAIRequest: onWritingAIRequest.map { request in
+                {
+                    dismissAllOverlays()
+                    request()
+                }
+            },
+            onDismiss: {
+                overlayPresenter.clearSelectionSession(ownedBy: overlayEscapeOwnerID)
+            }
         )
     }
 
@@ -741,6 +806,7 @@ struct RichTextEditor: View {
         showElementCreationMenu = false
         if includeSelection {
             showSelectionMenu = false
+            overlayPresenter?.clearSelectionSession(ownedBy: overlayEscapeOwnerID)
         }
         slashQuery = ""
         slashSelectedIndex = 0
@@ -909,23 +975,30 @@ struct RichTextEditor: View {
         }
     }
 
-    /// Clamp menu position so it stays within visible bounds
+    /// Clamp menu position so it stays within visible bounds. The horizontal
+    /// clamp reserves shadow clearance: the editor column is a clipped
+    /// container, and a body-only clamp slices the menu's drop shadow into a
+    /// hard line at the column edge.
     private func clampMenuPosition(_ raw: CGPoint, menuSize: CGSize, in containerSize: CGSize) -> CGPoint {
-        let padding: CGFloat = 8
+        let hPadding: CGFloat = min(
+            CosmoMenuChrome.shadowClearance,
+            max(8, (containerSize.width - menuSize.width) / 2)
+        )
+        let vPadding: CGFloat = 8
         var x = raw.x
         var y = raw.y
 
         // Clamp horizontally
-        if x + menuSize.width > containerSize.width - padding {
-            x = containerSize.width - menuSize.width - padding
+        if x + menuSize.width > containerSize.width - hPadding {
+            x = containerSize.width - menuSize.width - hPadding
         }
-        if x < padding { x = padding }
+        if x < hPadding { x = hPadding }
 
         // Clamp vertically (prefer showing below cursor; flip above if needed)
-        if y + menuSize.height > containerSize.height - padding {
-            y = max(padding, raw.y - menuSize.height - 24)
+        if y + menuSize.height > containerSize.height - vPadding {
+            y = max(vPadding, raw.y - menuSize.height - 24)
         }
-        if y < padding { y = padding }
+        if y < vPadding { y = vPadding }
 
         return CGPoint(x: x, y: y)
     }

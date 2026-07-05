@@ -554,16 +554,13 @@ struct FocusCanvasView: View {
             }
         }
 
-        // Listen for exit focus mode command
-        NotificationCenter.default.addObserver(
-            forName: .exitFocusMode,
-            object: nil,
-            queue: .main
-        ) { [self] _ in
-            Task { @MainActor in
-            closeFocusMode()
-            }
-        }
+        // Note: `.exitFocusMode` is deliberately NOT observed here. That
+        // notification means "hard-exit to the underlying destination" and is
+        // owned by MainView (→ FocusNavigationCoordinator.close()). Observing
+        // it here would route through closeFocusMode()'s surface-specific
+        // navigation (deep dive → trail back, inquiry → parent deep dive) and
+        // re-open the very surface the user just exited. Routed closes belong
+        // to the explicit onClose / ESC chrome path only.
 
         // Listen for @mention clicks to open as floating blocks
         NotificationCenter.default.addObserver(
@@ -634,7 +631,6 @@ struct FocusCanvasView: View {
         NotificationCenter.default.removeObserver(self, name: .voiceRecordingStateChanged, object: nil)
         NotificationCenter.default.removeObserver(self, name: .voiceTranscription, object: nil)
         NotificationCenter.default.removeObserver(self, name: .bringRelatedBlocks, object: nil)
-        NotificationCenter.default.removeObserver(self, name: .exitFocusMode, object: nil)
         NotificationCenter.default.removeObserver(self, name: .openMentionAsFloatingBlock, object: nil)
         NotificationCenter.default.removeObserver(self, name: .createEntityInFocusMode, object: nil)
         NotificationCenter.default.removeObserver(self, name: CosmoNotification.Canvas.createCosmoAIBlock, object: nil)

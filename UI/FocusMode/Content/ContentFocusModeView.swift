@@ -119,7 +119,6 @@ struct ContentFocusModeView: View {
     @State private var draftHeadingOutline: [RichHeadingOutlineEntry] = []
     @State private var draftNavigationTargetID: UUID?
     @StateObject private var writingEngine = UnifiedWritingEngine()
-    @StateObject private var writingAIAssistant = ContentWritingAssistant()
 
     /// Local draft content — decoupled from @Published viewModel to avoid full view re-renders on every keystroke
     @State private var localDraftContent: String = ""
@@ -145,7 +144,6 @@ struct ContentFocusModeView: View {
     @StateObject private var inlineAssistant = AIWritingAssistant()
     @State private var draftEditorOrigin: CGPoint = .zero
     @State private var selectedRephraseIndex: Int = 0
-    @State private var showWritingAICard = false
     @State private var focusBandRange: NSRange?
     @State private var manuscriptScrollView: NSScrollView?
     @State private var manuscriptScrollMetrics = ManuscriptScrollMetrics()
@@ -184,6 +182,17 @@ struct ContentFocusModeView: View {
     @State private var expandedOutlineItemIDs: Set<UUID> = []
     @State private var hoveredOutlineItemID: UUID?
     @State private var brandExpanded = false
+    /// Rail-level hover — row controls (✕, edit links) stay hidden until the
+    /// pointer is over the rail, so the margins rest as pure typography.
+    @State private var leftRailHovered = false
+    @State private var rightRailHovered = false
+    /// The heading the caret currently sits under — lights its SECTIONS row.
+    @State private var activeDraftHeadingID: UUID?
+    /// The view OWNS its context provider. The editable-surface registry holds
+    /// providers weakly, and the old single global strong slot
+    /// (CosmoWindowViewModel.contextProvider) silently deallocated this the
+    /// moment any other view registered — the assistant then lost this surface.
+    @State private var ownedContextProvider: ContentContextProvider?
 
     // Inherited context for the right marginalia (source / swipes / framework / brand / hooks)
     @State private var sourceIdeaAtom: Atom?
@@ -287,7 +296,7 @@ struct ContentFocusModeView: View {
 
     private var sideRailOpacity: Double {
         if zenMode { return 0 }
-        return isActivelyTyping ? 0.34 : 1
+        return isActivelyTyping ? MarginaliaRailPolicy.whisperOpacity : 1
     }
 
     private var editorHorizontalPadding: CGFloat {
@@ -414,6 +423,7 @@ struct ContentFocusModeView: View {
         .animation(ProMotionSprings.gentle, value: viewModel.xpAwarded)
         .animation(ProMotionSprings.snappy, value: zenMode)
         .animation(ProMotionSprings.snappy, value: isPolishModeActive)
+        .cosmoSurfaceKeyWindowActivation(surfaceID: "content:\(atom.uuid)")
         .focusImmersiveEntryTransition()
         .onAppear {
             AtomRepository.shared.acquireEditingLock(uuid: atom.uuid)
@@ -460,11 +470,13 @@ struct ContentFocusModeView: View {
                 stateRef: { [viewModel] in viewModel.state },
                 phaseRef: { [viewModel] in viewModel.displayPhase },
                 draftTextRef: { [self] in self.localDraftContent },
+                selectionRef: { [self] in self.currentEditableSelection() },
                 applyDraftEdit: { [self] operation in
                     try await self.applyInlineAssistantDraftEdit(operation)
                 }
             )
             if !isPaneContext || isPaneContextOwner {
+                ownedContextProvider = provider
                 CosmoWindowViewModel.shared.updateContext(provider: provider)
             }
             ContentFocusWritingAIScope.shared.activate(atomUUID: atom.uuid) {
@@ -478,10 +490,12 @@ struct ContentFocusModeView: View {
                     stateRef: { [viewModel] in viewModel.state },
                     phaseRef: { [viewModel] in viewModel.displayPhase },
                     draftTextRef: { [self] in self.localDraftContent },
+                    selectionRef: { [self] in self.currentEditableSelection() },
                     applyDraftEdit: { [self] operation in
                         try await self.applyInlineAssistantDraftEdit(operation)
                     }
                 )
+                ownedContextProvider = provider
                 CosmoWindowViewModel.shared.updateContext(provider: provider)
             }
         }
@@ -589,10 +603,6 @@ struct ContentFocusModeView: View {
             }
         }
         .onKeyPress(.escape) {
-            if showWritingAICard {
-                showWritingAICard = false
-                return .handled
-            }
             if !cosmoWindowEnabled && showAICollaborator {
                 showAICollaborator = false
                 return .handled
@@ -702,6 +712,10 @@ struct ContentFocusModeView: View {
                                     scriptoriumLeftMargin
                                 }
                                     .opacity(sideRailOpacity)
+                                    .onHover { hovering in
+                                        withAnimation(ProMotionSprings.hover) { leftRailHovered = hovering }
+                                        if hovering { wakeChrome() }
+                                    }
                                     .atelierStaggerIn(delay: continuationStagger(0.28), appeared: hasAppeared)
                             }
 
@@ -735,6 +749,10 @@ struct ContentFocusModeView: View {
                                     scriptoriumRightMargin
                                 }
                                     .opacity(sideRailOpacity)
+                                    .onHover { hovering in
+                                        withAnimation(ProMotionSprings.hover) { rightRailHovered = hovering }
+                                        if hovering { wakeChrome() }
+                                    }
                                     .atelierStaggerIn(delay: continuationStagger(0.44), appeared: hasAppeared)
                             }
                         }
@@ -765,11 +783,6 @@ struct ContentFocusModeView: View {
 
                     // Word & character counter — bottom left, updates on text selection
                     wordCharCounter
-
-                    if showWritingAICard {
-                        writingAICardOverlay(in: geo.size)
-                            .zIndex(150)
-                    }
                 }
                 .coordinateSpace(name: "editorOverlay")
                 .onPreferenceChange(DraftEditorFrameKey.self) { frame in
@@ -785,23 +798,22 @@ struct ContentFocusModeView: View {
 
     // MARK: - Scriptorium manuscript (title hero + step ledger + rich editor)
 
-    /// Margins scroll silently — the manuscript's scrollbar is the only one on
-    /// the page; margin overflow fades at the edges instead of growing chrome.
+    /// Margins scroll silently — no fat legacy scroller (which macOS's "always
+    /// show scroll bars" setting otherwise forces straight through
+    /// `.scrollIndicators(.hidden)`). Instead they borrow the manuscript's slim
+    /// capsule scrollbar, which fades in only when the rail actually overflows.
     /// Like the manuscript, they rest below the toolbar and slide under its glass.
     private func scriptoriumMarginScroll<Content: View>(
         width: CGFloat,
         height: CGFloat,
-        @ViewBuilder content: () -> Content
+        @ViewBuilder content: @escaping () -> Content
     ) -> some View {
-        ScrollView {
-            content()
-                .frame(width: width, alignment: .leading)
-                .padding(.bottom, DS.space20)
-        }
-        .scrollIndicators(.hidden)
-        .scrollEdgeEffectStyle(.soft, for: .vertical)
-        .contentMargins(.top, scriptoriumToolbarClearance, for: .scrollContent)
-        .frame(width: width, height: height, alignment: .top)
+        MarginRailScroll(
+            width: width,
+            height: height,
+            topInset: scriptoriumToolbarClearance,
+            content: content
+        )
     }
 
     private func scriptoriumManuscript(height: CGFloat, availableWidth: CGFloat) -> some View {
@@ -866,6 +878,7 @@ struct ContentFocusModeView: View {
                 typewriterMode: typewriterMode,
                 polishHighlights: viewModel.state.currentStep.enablesPolishHighlights ? polishAnalysis : nil,
                 onSelectionChanged: { snapshot in
+                    activeDraftHeadingID = snapshot.nearestHeadingBlockID
                     handleSelectionChange(
                         DraftSelectionInfo(
                             text: snapshot.text,
@@ -1038,7 +1051,7 @@ struct ContentFocusModeView: View {
         Button {
             openWritingAI()
         } label: {
-            surfaceControlIcon("sparkles", isActive: showWritingAICard)
+            surfaceControlIcon("sparkles", isActive: false)
         }
         .buttonStyle(.plain)
         .help("Writing AI (Option+A)")
@@ -1222,39 +1235,69 @@ struct ContentFocusModeView: View {
     }
 
     private var draftSectionsMarginaliaSection: some View {
-        VStack(alignment: .leading, spacing: DS.space10) {
-            MarginaliaLabel("SECTIONS", countText: "\(draftHeadingOutline.count)")
+        MarginaliaDisclosureSection(
+            "SECTIONS",
+            countText: "\(draftHeadingOutline.count)",
+            storageKey: "content.sections",
+            defaultExpanded: true
+        ) {
             VStack(alignment: .leading, spacing: DS.space6) {
                 ForEach(draftHeadingOutline) { entry in
-                    Button {
-                        navigateToDraftHeading(entry)
-                    } label: {
-                        HStack(alignment: .firstTextBaseline, spacing: DS.space6) {
-                            Text(entry.level == 1 ? "¶" : "›")
-                                .font(DS.caption2)
-                                .foregroundStyle(DS.giltMuted)
-                                .frame(width: 10, alignment: .leading)
-                            Text(entry.title)
-                                .font(entry.level == 1 ? DS.caption : DS.caption2)
-                                .foregroundStyle(entry.level == 1 ? focusText : focusTextMuted)
-                                .lineLimit(2)
-                                .multilineTextAlignment(.leading)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .padding(.leading, CGFloat(entry.level - 1) * DS.space8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .buttonStyle(.plain)
-                    .contentShape(Rectangle())
-                    .accessibilityLabel("Go to \(entry.title)")
+                    draftSectionRow(entry, isActive: entry.id == activeDraftHeadingID)
                 }
             }
         }
     }
 
+    /// One live outline row — the section the caret sits under carries the
+    /// gilt diamond and full ink; the rest rest muted.
+    private func draftSectionRow(_ entry: RichHeadingOutlineEntry, isActive: Bool) -> some View {
+        Button {
+            navigateToDraftHeading(entry)
+        } label: {
+            HStack(alignment: .firstTextBaseline, spacing: DS.space6) {
+                if isActive {
+                    Rectangle()
+                        .fill(DS.gilt)
+                        .frame(width: 3, height: 3)
+                        .rotationEffect(.degrees(45))
+                        .frame(width: 10, alignment: .leading)
+                } else {
+                    Text(entry.level == 1 ? "¶" : "›")
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.giltMuted)
+                        .frame(width: 10, alignment: .leading)
+                }
+                Text(entry.title)
+                    .font(entry.level == 1 ? DS.caption : DS.caption2)
+                    .foregroundStyle(isActive ? focusText : (entry.level == 1 ? focusTextSecondary : focusTextMuted))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.leading, CGFloat(entry.level - 1) * DS.space8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .buttonStyle(.plain)
+        .contentShape(Rectangle())
+        .animation(ProMotionSprings.gentle, value: isActive)
+        .accessibilityLabel("Go to \(entry.title)")
+        .accessibilityAddTraits(isActive ? .isSelected : [])
+    }
+
     private var outlineMarginaliaSection: some View {
-        VStack(alignment: .leading, spacing: DS.space10) {
-            MarginaliaLabel("OUTLINE", countText: viewModel.state.outline.isEmpty ? nil : "\(viewModel.state.outline.count)")
+        MarginaliaDisclosureSection(
+            "OUTLINE",
+            countText: viewModel.state.outline.isEmpty ? nil : "\(viewModel.state.outline.count)",
+            storageKey: "content.outline",
+            defaultExpanded: true
+        ) {
+            outlineMarginaliaRows
+        }
+    }
+
+    @ViewBuilder
+    private var outlineMarginaliaRows: some View {
             if viewModel.state.outline.isEmpty {
                 Text("no outline yet")
                     .font(DS.dateSerif)
@@ -1300,7 +1343,6 @@ struct ContentFocusModeView: View {
                     }
                 }
             }
-        }
     }
 
     private func toggleOutlineItemExpansion(_ id: UUID) {
@@ -1310,8 +1352,11 @@ struct ContentFocusModeView: View {
     }
 
     private var coreIdeaMarginaliaSection: some View {
-        VStack(alignment: .leading, spacing: DS.space6) {
-            MarginaliaLabel("CORE IDEA")
+        MarginaliaDisclosureSection(
+            "CORE IDEA",
+            storageKey: "content.coreIdea",
+            spacing: DS.space6
+        ) {
             TextField("Core idea", text: marginaliaCoreIdeaBinding, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(DS.dateSerif)
@@ -1351,8 +1396,11 @@ struct ContentFocusModeView: View {
     }
 
     private var scoreMarginaliaSection: some View {
-        VStack(alignment: .leading, spacing: DS.space10) {
-            MarginaliaLabel("SCORE")
+        MarginaliaDisclosureSection(
+            "SCORE",
+            storageKey: "content.score",
+            defaultExpanded: true
+        ) {
             Text("analyzing…")
                 .font(DS.dateSerif)
                 .italic()
@@ -1375,20 +1423,21 @@ struct ContentFocusModeView: View {
     @ViewBuilder
     private var rightMarginaliaSections: some View {
         Group {
-            if sourceIdeaAtom != nil {
-                sourceMarginaliaSection
-            }
-            if sourceIdeaAtom != nil || !matchedSwipeAtoms.isEmpty {
-                swipesMarginaliaSection
-            }
-            if let framework = inheritedFramework, !framework.isEmpty {
-                frameworkMarginaliaSection(framework)
-            }
-            if clientProfileAtom != nil || !availableClientProfiles.isEmpty {
-                brandMarginaliaSection
+            referencesMarginaliaSection
+            if hasVoiceMarginalia {
+                voiceMarginaliaSection
             }
             cosmoWritingMarginaliaSection
         }
+    }
+
+    private var hasVoiceMarginalia: Bool {
+        if let framework = inheritedFramework, !framework.isEmpty { return true }
+        return clientProfileAtom != nil || !availableClientProfiles.isEmpty
+    }
+
+    private var referencesCount: Int {
+        (sourceIdeaAtom == nil ? 0 : 1) + matchedSwipeAtoms.count
     }
 
     /// Marginalia are typographic columns on the paper — no boxes; grouping is
@@ -1401,20 +1450,20 @@ struct ContentFocusModeView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// Not a section — a single quiet affordance at the rail's end.
     private var cosmoWritingMarginaliaSection: some View {
-        VStack(alignment: .leading, spacing: DS.space8) {
-            MarginaliaLabel("COSMO WRITING")
+        VStack(alignment: .leading, spacing: DS.space6) {
             Button {
                 openWritingAI()
             } label: {
                 HStack(spacing: DS.space6) {
                     Image(systemName: "sparkles")
                         .font(DS.caption.weight(.semibold))
-                    Text("open assistant →")
+                    Text("ask cosmo →")
                         .font(DS.dateSerif)
                         .italic()
                 }
-                .foregroundStyle(DS.gilt.opacity(0.78))
+                .foregroundStyle(DS.gilt.opacity(0.7))
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -1424,7 +1473,7 @@ struct ContentFocusModeView: View {
 
             if !selectedText.isEmpty {
                 Button {
-                    submitWritingAI(action: .tighten)
+                    improveSelectedTextViaCosmo()
                 } label: {
                     Text("improve selected text")
                         .font(DS.caption2)
@@ -1434,111 +1483,108 @@ struct ContentFocusModeView: View {
                 .buttonStyle(.plain)
             }
         }
+        .padding(.top, DS.space8)
     }
 
-    @ViewBuilder
-    private var sourceMarginaliaSection: some View {
-        if let idea = sourceIdeaAtom {
-            Button {
-                NotificationCenter.default.post(
-                    name: CosmoNotification.Navigation.openBlockInFocusMode,
-                    object: nil,
-                    userInfo: ["atomUUID": idea.uuid]
-                )
-            } label: {
-                VStack(alignment: .leading, spacing: DS.space10) {
-                    MarginaliaLabel("SOURCE")
-                    HStack(alignment: .top, spacing: DS.space8) {
-                        Rectangle()
-                            .fill(DS.entityIdea.opacity(0.25))
-                            .frame(width: 3)
-                            .frame(maxHeight: .infinity)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(idea.title ?? "untitled idea")
-                                .font(DS.dateSerif)
-                                .foregroundStyle(focusText)
-                                .lineLimit(3)
-                            if let body = idea.body, !body.isEmpty {
-                                Text(body)
-                                    .font(DS.dateSerif)
-                                    .italic()
-                                    .foregroundStyle(focusTextMuted)
-                                    .lineLimit(3)
-                            }
+    /// SOURCE + BLUEPRINT + RELATED SWIPES, consolidated: one section holds all
+    /// the working material. The blueprint row leads with a gilt diamond; the
+    /// edit link surfaces on rail hover (always, when the section is empty).
+    private var referencesMarginaliaSection: some View {
+        MarginaliaDisclosureSection(
+            "REFERENCES",
+            countText: referencesCount > 0 ? "\(referencesCount)" : nil,
+            storageKey: "content.references",
+            defaultExpanded: true
+        ) {
+            VStack(alignment: .leading, spacing: DS.space10) {
+                if let idea = sourceIdeaAtom {
+                    sourceIdeaRow(idea)
+                }
+
+                if let blueprint = currentBlueprintAtom {
+                    swipeMarginaliaRow(blueprint, isBlueprint: true, removeLabel: "Remove blueprint") {
+                        Task {
+                            let remaining = matchedSwipeAtoms.filter { $0.uuid != blueprint.uuid }.map(\.uuid)
+                            await viewModel.saveSwipeAttachments(swipeUUIDs: remaining, blueprintUUID: remaining.first)
+                            await loadInheritedContext()
                         }
                     }
-                    .fixedSize(horizontal: false, vertical: true)
                 }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Open source idea")
-            .help("Open source idea")
-        }
-    }
 
-    private var swipesMarginaliaSection: some View {
-        VStack(alignment: .leading, spacing: DS.space10) {
-            if let blueprint = currentBlueprintAtom {
-                MarginaliaLabel("BLUEPRINT")
-                swipeMarginaliaRow(blueprint, removeLabel: "Remove blueprint") {
-                    Task {
-                        let remaining = matchedSwipeAtoms.filter { $0.uuid != blueprint.uuid }.map(\.uuid)
-                        await viewModel.saveSwipeAttachments(swipeUUIDs: remaining, blueprintUUID: remaining.first)
-                        await loadInheritedContext()
+                ForEach(supportingSwipeAtoms, id: \.uuid) { swipe in
+                    swipeMarginaliaRow(swipe, removeLabel: "Remove swipe \(swipe.title ?? "untitled")") {
+                        Task {
+                            let remaining = matchedSwipeAtoms.filter { $0.uuid != swipe.uuid }.map(\.uuid)
+                            let blueprintUUID = currentBlueprintAtom?.uuid == swipe.uuid
+                                ? remaining.first
+                                : currentBlueprintAtom?.uuid
+                            await viewModel.saveSwipeAttachments(swipeUUIDs: remaining, blueprintUUID: blueprintUUID)
+                            await loadInheritedContext()
+                        }
                     }
                 }
-            } else {
-                MarginaliaLabel("BLUEPRINT")
+
                 Button {
                     showSwipeAttachmentEditor = true
                 } label: {
-                    Text("select blueprint →")
+                    Text(referencesCount == 0 ? "add references →" : "edit references →")
                         .font(DS.dateSerif)
                         .italic()
-                        .foregroundStyle(focusTextMuted.opacity(0.7))
+                        .foregroundStyle(DS.gilt.opacity(0.7))
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .marginaliaLinkHover()
-                .help("Pick a swipe to write against")
+                .marginaliaHoverReveal(rightRailHovered || referencesCount == 0)
+                .help("Attach reference swipes to this piece")
             }
+        }
+    }
 
-            if !supportingSwipeAtoms.isEmpty {
-                VStack(alignment: .leading, spacing: DS.space8) {
-                    MarginaliaLabel("RELATED SWIPES", countText: "\(supportingSwipeAtoms.count)")
-                    ForEach(supportingSwipeAtoms, id: \.uuid) { swipe in
-                        swipeMarginaliaRow(swipe, removeLabel: "Remove swipe \(swipe.title ?? "untitled")") {
-                            Task {
-                                let remaining = matchedSwipeAtoms.filter { $0.uuid != swipe.uuid }.map(\.uuid)
-                                let blueprintUUID = currentBlueprintAtom?.uuid == swipe.uuid
-                                    ? remaining.first
-                                    : currentBlueprintAtom?.uuid
-                                await viewModel.saveSwipeAttachments(swipeUUIDs: remaining, blueprintUUID: blueprintUUID)
-                                await loadInheritedContext()
-                            }
-                        }
+    private func sourceIdeaRow(_ idea: Atom) -> some View {
+        let isHovered = hoveredSwipeUUID == idea.uuid
+        return Button {
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.openBlockInFocusMode,
+                object: nil,
+                userInfo: ["atomUUID": idea.uuid]
+            )
+        } label: {
+            HStack(alignment: .top, spacing: DS.space8) {
+                Rectangle()
+                    .fill(DS.entityIdea.opacity(isHovered ? 0.55 : 0))
+                    .frame(width: 3)
+                    .frame(maxHeight: .infinity)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(idea.title ?? "untitled idea")
+                        .font(DS.dateSerif)
+                        .foregroundStyle(isHovered ? focusText : focusTextSecondary)
+                        .lineLimit(3)
+                    if let body = idea.body, !body.isEmpty {
+                        Text(body)
+                            .font(DS.dateSerif)
+                            .italic()
+                            .foregroundStyle(focusTextMuted)
+                            .lineLimit(2)
                     }
                 }
             }
-
-            Button {
-                showSwipeAttachmentEditor = true
-            } label: {
-                Text(matchedSwipeAtoms.isEmpty ? "add references →" : "edit references →")
-                    .font(DS.dateSerif)
-                    .italic()
-                    .foregroundStyle(DS.gilt.opacity(0.7))
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .marginaliaLinkHover()
-            .help("Attach reference swipes to this piece")
+            .fixedSize(horizontal: false, vertical: true)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) {
+                hoveredSwipeUUID = hovering ? idea.uuid : nil
+            }
+        }
+        .accessibilityLabel("Open source idea")
+        .help("Open source idea")
     }
 
     private func swipeMarginaliaRow(
         _ swipe: Atom,
+        isBlueprint: Bool = false,
         removeLabel: String,
         onRemove: @escaping () -> Void
     ) -> some View {
@@ -1549,18 +1595,29 @@ struct ContentFocusModeView: View {
             } label: {
                 HStack(alignment: .top, spacing: DS.space8) {
                     Rectangle()
-                        .fill(DS.entitySwipe.opacity(isHovered ? 0.55 : 0.18))
+                        .fill(DS.entitySwipe.opacity(isHovered ? 0.55 : 0))
                         .frame(width: 3)
                         .frame(maxHeight: .infinity)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(swipe.title ?? "untitled")
-                            .font(DS.callout)
-                            .foregroundStyle(focusText)
-                            .fixedSize(horizontal: false, vertical: true)
+                        HStack(alignment: .firstTextBaseline, spacing: DS.space6) {
+                            if isBlueprint {
+                                // The blueprint is the one reference being written
+                                // against — the gilt diamond marks it.
+                                Rectangle()
+                                    .fill(DS.gilt)
+                                    .frame(width: 3, height: 3)
+                                    .rotationEffect(.degrees(45))
+                            }
+                            Text(swipe.title ?? "untitled")
+                                .font(DS.callout)
+                                .foregroundStyle(isHovered ? focusText : focusTextSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                         if let hook = swipe.researchMetadata?.hook {
                             Text(hook)
                                 .font(DS.caption2)
                                 .foregroundStyle(focusTextMuted)
+                                .lineLimit(2)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
@@ -1590,6 +1647,7 @@ struct ContentFocusModeView: View {
                     .frame(width: 18, height: 18)
             }
             .buttonStyle(.plain)
+            .marginaliaHoverReveal(rightRailHovered)
             .accessibilityLabel(removeLabel)
         }
     }
@@ -1613,47 +1671,53 @@ struct ContentFocusModeView: View {
         )
     }
 
-    private func frameworkMarginaliaSection(_ framework: String) -> some View {
-        VStack(alignment: .leading, spacing: DS.space8) {
-            MarginaliaLabel("FRAMEWORK")
-            Text(framework)
-                .font(DS.dateSerif)
-                .foregroundStyle(focusText)
-                .lineLimit(3)
-        }
-    }
-
-    @ViewBuilder
-    private var brandMarginaliaSection: some View {
-        VStack(alignment: .leading, spacing: DS.space8) {
-            MarginaliaLabel("BRAND")
-            HStack(spacing: DS.space6) {
-                brandPickerMenu
-                // The profile details are a disclosure, not a dump — Cosmo reads
-                // the full profile on demand, so the margin only needs the name.
-                if clientProfileAtom?.metadataValue(as: ClientProfileMetadata.self) != nil {
-                    Button {
-                        withAnimation(ProMotionSprings.snappy) {
-                            brandExpanded.toggle()
+    /// FRAMEWORK + BRAND, consolidated: the piece's voice. Collapsed by
+    /// default — the header alone says a voice is set.
+    private var voiceMarginaliaSection: some View {
+        MarginaliaDisclosureSection(
+            "VOICE",
+            storageKey: "content.voice",
+            spacing: DS.space8
+        ) {
+            VStack(alignment: .leading, spacing: DS.space8) {
+                if clientProfileAtom != nil || !availableClientProfiles.isEmpty {
+                    HStack(spacing: DS.space6) {
+                        brandPickerMenu
+                        // The profile details are a disclosure, not a dump — Cosmo reads
+                        // the full profile on demand, so the margin only needs the name.
+                        if clientProfileAtom?.metadataValue(as: ClientProfileMetadata.self) != nil {
+                            Button {
+                                withAnimation(ProMotionSprings.snappy) {
+                                    brandExpanded.toggle()
+                                }
+                            } label: {
+                                Image(systemName: "chevron.down")
+                                    .font(DS.microIcon)
+                                    .foregroundStyle(focusTextMuted)
+                                    .rotationEffect(.degrees(brandExpanded ? 180 : 0))
+                                    .frame(width: 18, height: 18)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .help(brandExpanded ? "Hide brand notes" : "Show brand notes")
+                            .accessibilityLabel(brandExpanded ? "Hide brand notes" : "Show brand notes")
                         }
-                    } label: {
-                        Image(systemName: "chevron.down")
-                            .font(DS.microIcon)
-                            .foregroundStyle(focusTextMuted)
-                            .rotationEffect(.degrees(brandExpanded ? 180 : 0))
-                            .frame(width: 18, height: 18)
-                            .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
-                    .help(brandExpanded ? "Hide brand notes" : "Show brand notes")
-                    .accessibilityLabel(brandExpanded ? "Hide brand notes" : "Show brand notes")
+                    if brandExpanded,
+                       let profile = clientProfileAtom,
+                       let meta = profile.metadataValue(as: ClientProfileMetadata.self) {
+                        brandVoiceBullets(meta)
+                            .transition(.opacity.combined(with: .offset(y: -4)))
+                    }
                 }
-            }
-            if brandExpanded,
-               let profile = clientProfileAtom,
-               let meta = profile.metadataValue(as: ClientProfileMetadata.self) {
-                brandVoiceBullets(meta)
-                    .transition(.opacity.combined(with: .offset(y: -4)))
+
+                if let framework = inheritedFramework, !framework.isEmpty {
+                    Text(framework)
+                        .font(DS.dateSerif)
+                        .italic()
+                        .foregroundStyle(focusTextSecondary)
+                        .lineLimit(3)
+                }
             }
         }
     }
@@ -1758,14 +1822,17 @@ struct ContentFocusModeView: View {
     }
 
     private var hooksMarginaliaSection: some View {
-        VStack(alignment: .leading, spacing: DS.space10) {
-            MarginaliaLabel("HOOKS", countText: "\(viewModel.state.hooks.count)")
+        MarginaliaDisclosureSection(
+            "HOOKS",
+            countText: "\(viewModel.state.hooks.count)",
+            storageKey: "content.hooks"
+        ) {
             ForEach(Array(viewModel.state.hooks.enumerated()), id: \.offset) { idx, _ in
                 HStack(alignment: .top, spacing: DS.space8) {
-                    Text(romanNumeral(for: idx + 1) + ".")
-                        .font(DS.caption2.monospaced())
-                        .foregroundStyle(DS.giltMuted)
-                        .frame(width: 22, alignment: .leading)
+                    Text("\(idx + 1).")
+                        .font(DS.caption2)
+                        .foregroundStyle(focusTextMuted)
+                        .frame(width: 16, alignment: .leading)
                         .padding(.top, 2)
                     TextField("Hook", text: marginaliaHookBinding(at: idx), axis: .vertical)
                         .textFieldStyle(.plain)
@@ -1856,42 +1923,6 @@ struct ContentFocusModeView: View {
         .opacity(localDraftContent.isEmpty ? 0 : 1)
         .allowsHitTesting(false)
         .animation(ProMotionSprings.snappy, value: isSelection)
-    }
-
-    private func writingAICardOverlay(in size: CGSize) -> some View {
-        WritingAICardView(
-            isPresented: $showWritingAICard,
-            assistant: writingAIAssistant,
-            contextTitle: writingAIContextTitle,
-            baseContextChips: writingAIBaseChips,
-            hasSelection: !selectedText.isEmpty,
-            isPolishMode: isPolishModeActive,
-            onSubmitPrompt: { prompt in submitWritingAI(prompt: prompt, action: nil) },
-            onQuickAction: { action in submitWritingAI(action: action) },
-            onReplaceSelection: { replacement in applyWritingAIReplacement(replacement) },
-            onInsertBelow: { text in insertWritingAITextBelow(text) },
-            onOpenReference: { reference in openWritingAIReference(reference) }
-        )
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-        .padding(.top, DS.space8)
-        .padding(.trailing, zenMode ? DS.space24 : max(DS.space24, (size.width - 1_244) / 2 + DS.space24))
-    }
-
-    private var writingAIContextTitle: String {
-        let client = clientProfileAtom?.metadataValue(as: ClientProfileMetadata.self)?.clientName
-            ?? clientProfileAtom?.title
-            ?? "No client"
-        return "\(client) · \(WritingContentFormat.detect(from: atom).displayName) · \(viewModel.state.currentStep.label)"
-    }
-
-    private var writingAIBaseChips: [WritingAIReferenceSource] {
-        var chips: [WritingAIReferenceSource] = [.currentDraft]
-        if !selectedText.isEmpty { chips.append(.currentDraft) }
-        if clientProfileAtom != nil { chips.append(.clientProfile) }
-        if !matchedSwipeAtoms.isEmpty { chips.append(.bestPosts) }
-        if sourceIdeaAtom != nil { chips.append(.source) }
-        if inheritedFramework != nil { chips.append(.blueprint) }
-        return chips
     }
 
     // MARK: - CTA
@@ -2237,78 +2268,49 @@ struct ContentFocusModeView: View {
     private func handleSelectionChange(_ info: DraftSelectionInfo) {
         selectionInfo = info
         selectedText = info.text
+        CosmoInlineAssistantStore.shared.reportSelection(
+            currentEditableSelection(),
+            forSurfaceID: inlineAssistantContentSurfaceID
+        )
         updateFocusBand()
     }
 
-    private func openWritingAI() {
-        withAnimation(ProMotionSprings.snappy) {
-            showWritingAICard = true
-        }
-    }
-
-    private func submitWritingAI(action: WritingAIQuickAction) {
-        submitWritingAI(prompt: action.prompt, action: action)
-    }
-
-    private func submitWritingAI(prompt: String, action: WritingAIQuickAction?) {
-        openWritingAI()
-        let request = makeWritingAIRequest(prompt: prompt, action: action)
-        Task {
-            await writingAIAssistant.submit(request)
-        }
-    }
-
-    private func makeWritingAIRequest(prompt: String, action: WritingAIQuickAction?) -> WritingAIRequest {
-        WritingAIRequest(
-            prompt: prompt,
-            action: action,
-            selectedText: selectedText,
-            selectionContext: surroundingContext() ?? "",
-            draftText: localDraftContent,
-            contentTitle: editableTitle,
-            contentDescription: viewModel.state.contentDescription,
-            contentFormat: WritingContentFormat.detect(from: atom),
-            currentStep: viewModel.state.currentStep,
-            clientProfileAtom: clientProfileAtom,
-            sourceIdeaAtom: sourceIdeaAtom,
-            matchedSwipeAtoms: matchedSwipeAtoms,
-            framework: inheritedFramework,
-            outline: viewModel.state.outline,
-            hooks: viewModel.state.hooks
+    /// The live selection as the assistant sees it — the referent of
+    /// "shorten this" style requests.
+    private func currentEditableSelection() -> CosmoEditableSelection? {
+        let info = selectionInfo
+        guard !info.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return CosmoEditableSelection(
+            text: info.text,
+            containingLine: Self.containingLine(for: info.range, in: localDraftContent)
         )
     }
 
-    private func applyWritingAIReplacement(_ replacement: String) {
-        guard !replacement.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        draftDocument = draftDocumentByReplacingSelection(with: replacement, originalText: selectedText)
-        localDraftContent = draftDocument.plainText
-        viewModel.state.richDraftDocument = draftDocument
-        updateDraftHeadingOutline(from: draftDocument)
-        draftEditedLocally = true
-        triggerAutoSave()
-        withAnimation(ProMotionSprings.snappy) {
-            writingAIAssistant.reset()
-        }
+    private static func containingLine(for range: NSRange, in text: String) -> String? {
+        guard range.location != NSNotFound else { return nil }
+        let ns = text as NSString
+        guard range.location <= ns.length else { return nil }
+        let clamped = NSRange(location: range.location, length: min(range.length, ns.length - range.location))
+        let line = ns.substring(with: ns.lineRange(for: clamped))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return line.isEmpty ? nil : line
     }
 
-    private func insertWritingAITextBelow(_ text: String) {
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        draftDocument = draftDocumentByInsertingTextBelowSelection(text)
-        localDraftContent = draftDocument.plainText
-        viewModel.state.richDraftDocument = draftDocument
-        updateDraftHeadingOutline(from: draftDocument)
-        draftEditedLocally = true
-        triggerAutoSave()
+    /// Every "ask Cosmo" affordance in this workspace (✦, ⌥A, the margins'
+    /// "ask cosmo →", slash "Writing AI") lands in the ONE inline assistant
+    /// pane, scoped to this draft. The selection travels via the surface
+    /// snapshot automatically.
+    private func openWritingAI() {
+        CosmoInlineAssistantStore.shared.openPane(forSurfaceID: inlineAssistantContentSurfaceID)
     }
 
-    private func openWritingAIReference(_ reference: WritingAIReference) {
-        if let atomUUID = reference.atomUUID {
-            openAtomInPane(atomUUID)
-            return
-        }
-        if let urlString = reference.url, let url = URL(string: urlString) {
-            NSWorkspace.shared.open(url)
-        }
+    /// The margins' "improve selected text" — a one-tap inline-assistant submit
+    /// against the current selection.
+    private func improveSelectedTextViaCosmo() {
+        CosmoInlineAssistantStore.shared.submitPrompt(
+            "Tighten the selected text — keep my voice and meaning.",
+            forSurfaceID: inlineAssistantContentSurfaceID
+        )
     }
 
     private func markTypingActive() {
@@ -2620,6 +2622,22 @@ struct ContentFocusModeView: View {
             )
             localDraftContent = draftDocument.plainText
 
+        case .formatMarks:
+            guard let mark = operation.formatMark else {
+                return CosmoEditableOperationResult(operationID: operation.id, status: .rejected, message: "No formatting mark specified")
+            }
+            guard let formatted = CosmoInlineFormatMarksApplier.apply(
+                mark: mark,
+                originalText: operation.originalText,
+                to: draftDocument
+            ) else {
+                // Honest skip, never a blocking conflict — the target moved or
+                // was already edited away.
+                return CosmoEditableOperationResult(operationID: operation.id, status: .rejected, message: "Couldn't find that text anymore — skipped")
+            }
+            draftDocument = formatted
+            localDraftContent = draftDocument.plainText
+
         case .canvasPlan:
             return CosmoEditableOperationResult(operationID: operation.id, status: .conflicted, message: "Canvas edits need a canvas provider")
         }
@@ -2667,6 +2685,7 @@ struct ContentFocusModeView: View {
             stateRef: { [viewModel] in viewModel.state },
             phaseRef: { [viewModel] in viewModel.displayPhase },
             draftTextRef: { [self] in self.localDraftContent },
+            selectionRef: { [self] in self.currentEditableSelection() },
             applyDraftEdit: { [self] operation in
                 try await self.applyInlineAssistantDraftEdit(operation)
             }
@@ -2850,6 +2869,8 @@ struct ContentFocusModeView: View {
         print("[FOCUS-CONTENT] onPlainTextChange(draft) — len=\(plainText.count) preview=\"\(String(plainText.prefix(60)))\" uuid=\(atom.uuid)")
         localDraftContent = plainText
         draftEditedLocally = true
+        // Typing is the strongest "this is what I'm working on" signal.
+        CosmoEditableSurfaceRegistry.shared.activateIfNeeded(surfaceID: "content:\(atom.uuid)")
         markTypingActive()
         updateFocusBand()
         scheduleTypewriterScroll()
@@ -2957,6 +2978,42 @@ private struct PremiumManuscriptScrollbar: View {
             .allowsHitTesting(false)
         }
         .frame(width: 8)
+    }
+}
+
+/// A pinned side rail (outline · context) that suppresses the native scroller —
+/// so macOS's "Show scroll bars: Always" setting can't force a fat legacy bar
+/// through `.scrollIndicators(.hidden)` — and replaces it with the same slim
+/// capsule the manuscript uses, which fades in only when the rail overflows.
+private struct MarginRailScroll<Content: View>: View {
+    let width: CGFloat
+    let height: CGFloat
+    let topInset: CGFloat
+    @ViewBuilder var content: () -> Content
+
+    @State private var metrics = ManuscriptScrollMetrics()
+
+    var body: some View {
+        ScrollView {
+            content()
+                .frame(width: width, alignment: .leading)
+                .padding(.bottom, DS.space20)
+                .background(
+                    ScrollViewIntrospector(onResolve: { _ in }) { newMetrics in
+                        metrics = newMetrics
+                    }
+                )
+        }
+        .scrollIndicators(.hidden)
+        .scrollEdgeEffectStyle(.soft, for: .vertical)
+        .contentMargins(.top, topInset, for: .scrollContent)
+        .overlay(alignment: .trailing) {
+            PremiumManuscriptScrollbar(metrics: metrics)
+                .padding(.trailing, DS.space2)
+                .padding(.top, topInset + DS.space8)
+                .padding(.bottom, DS.space8)
+        }
+        .frame(width: width, height: height, alignment: .top)
     }
 }
 
@@ -4254,6 +4311,7 @@ class ContentContextProvider: CosmoContextProvider, CosmoEditableSurfaceProvider
     private let stateRef: () -> ContentFocusModeState
     private let phaseRef: () -> ContentPhase
     private let draftTextRef: (() -> String)?
+    private let selectionRef: (() -> CosmoEditableSelection?)?
     private let applyDraftEdit: ((CosmoAssistantProposalOperation) async throws -> CosmoEditableOperationResult)?
 
     init(
@@ -4261,12 +4319,14 @@ class ContentContextProvider: CosmoContextProvider, CosmoEditableSurfaceProvider
         stateRef: @escaping () -> ContentFocusModeState,
         phaseRef: @escaping () -> ContentPhase,
         draftTextRef: (() -> String)? = nil,
+        selectionRef: (() -> CosmoEditableSelection?)? = nil,
         applyDraftEdit: ((CosmoAssistantProposalOperation) async throws -> CosmoEditableOperationResult)? = nil
     ) {
         self.atom = atom
         self.stateRef = stateRef
         self.phaseRef = phaseRef
         self.draftTextRef = draftTextRef
+        self.selectionRef = selectionRef
         self.applyDraftEdit = applyDraftEdit
     }
 
@@ -4327,7 +4387,8 @@ class ContentContextProvider: CosmoContextProvider, CosmoEditableSurfaceProvider
             sourceHash: CosmoEditableSurfaceHasher.hash(draftText),
             anchors: [
                 .init(id: "draft", label: "Draft", utf16Start: 0, utf16Length: draftText.utf16.count)
-            ]
+            ],
+            selection: selectionRef?()
         )
     }
 

@@ -1256,7 +1256,7 @@ final class CosmoInlineAssistantRoutingTests: XCTestCase {
         XCTAssertTrue(prompt.contains("## Inline Skill Runtime"))
         XCTAssertTrue(prompt.contains("Active skill: Voice Variations"))
         XCTAssertTrue(prompt.contains("## Cosmo Personality Layer"))
-        XCTAssertTrue(prompt.contains("sharp, chill creative friend"))
+        XCTAssertTrue(prompt.contains("sharp, chill creative collaborator"))
         XCTAssertTrue(prompt.contains("Load the client voice/profile before writing variations"))
         XCTAssertTrue(prompt.contains("answer_in_assistant_pane"))
     }

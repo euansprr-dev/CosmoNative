@@ -120,7 +120,7 @@ struct DeepDivePortalBlockView: View {
         if questionCount > 0 { parts.append("\(questionCount) question\(questionCount == 1 ? "" : "s")") }
         if sourceCount > 0 { parts.append("\(sourceCount) source\(sourceCount == 1 ? "" : "s")") }
         if lexiconCount > 0 { parts.append("\(lexiconCount) lexicon") }
-        if connectionCount > 0 { parts.append("\(connectionCount) connection\(connectionCount == 1 ? "" : "s")") }
+        if connectionCount > 0 { parts.append("\(connectionCount) concept\(connectionCount == 1 ? "" : "s")") }
         if sessionCount > 0 { parts.append("\(sessionCount) session\(sessionCount == 1 ? "" : "s")") }
         return parts.isEmpty ? "Just sparked — no captures yet" : parts.joined(separator: " · ")
     }

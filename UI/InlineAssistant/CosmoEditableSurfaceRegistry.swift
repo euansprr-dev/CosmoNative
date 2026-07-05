@@ -1,4 +1,6 @@
 import Foundation
+import SwiftUI
+import AppKit
 
 @MainActor
 final class CosmoEditableSurfaceRegistry {
@@ -34,6 +36,13 @@ final class CosmoEditableSurfaceRegistry {
         activationOrder.append(surfaceID)
     }
 
+    /// Hot-path activation (typing, focus events): no-op when the surface is
+    /// already frontmost, so per-keystroke callers cost two array reads.
+    func activateIfNeeded(surfaceID: String) {
+        guard activationOrder.last != surfaceID else { return }
+        activate(surfaceID: surfaceID)
+    }
+
     func unregister(surfaceID: String) {
         providers.removeValue(forKey: surfaceID)
         activationOrder.removeAll { $0 == surfaceID }
@@ -55,6 +64,75 @@ private final class WeakEditableSurfaceProvider {
 
     init(_ provider: any CosmoEditableSurfaceProvider) {
         self.provider = provider
+    }
+}
+
+// MARK: - Key-Window Activation
+
+/// Re-activates a surface whenever the window hosting it becomes key — the
+/// missing signal that made multi-window context go stale (activation order
+/// previously only changed on `onAppear`, so switching back to an atom window
+/// never told the registry "this document is what the user is looking at").
+struct CosmoSurfaceKeyWindowActivation: ViewModifier {
+    let surfaceID: String
+
+    func body(content: Content) -> some View {
+        content.background(KeyWindowProbe(surfaceID: surfaceID))
+    }
+
+    private struct KeyWindowProbe: NSViewRepresentable {
+        let surfaceID: String
+
+        func makeNSView(context: Context) -> ProbeView {
+            let view = ProbeView()
+            view.surfaceID = surfaceID
+            return view
+        }
+
+        func updateNSView(_ nsView: ProbeView, context: Context) {
+            nsView.surfaceID = surfaceID
+        }
+
+        final class ProbeView: NSView {
+            var surfaceID: String = ""
+            private var observer: NSObjectProtocol?
+
+            override func viewDidMoveToWindow() {
+                super.viewDidMoveToWindow()
+                if let observer {
+                    NotificationCenter.default.removeObserver(observer)
+                    self.observer = nil
+                }
+                guard window != nil else { return }
+                observer = NotificationCenter.default.addObserver(
+                    forName: NSWindow.didBecomeKeyNotification,
+                    object: nil,
+                    queue: .main
+                ) { [weak self] notification in
+                    MainActor.assumeIsolated {
+                        guard let self,
+                              let keyWindow = notification.object as? NSWindow,
+                              keyWindow === self.window,
+                              !self.surfaceID.isEmpty else { return }
+                        CosmoEditableSurfaceRegistry.shared.activateIfNeeded(surfaceID: self.surfaceID)
+                    }
+                }
+            }
+
+            deinit {
+                if let observer {
+                    NotificationCenter.default.removeObserver(observer)
+                }
+            }
+        }
+    }
+}
+
+extension View {
+    /// Attach at a focus-mode root: whenever this view's window becomes key,
+    /// its surface becomes the assistant's active surface.
+    func cosmoSurfaceKeyWindowActivation(surfaceID: String) -> some View {
+        modifier(CosmoSurfaceKeyWindowActivation(surfaceID: surfaceID))
     }
 }
 
@@ -243,29 +321,46 @@ final class CosmoAtomBackedEditableSurface: CosmoEditableSurfaceProvider {
             )
         }
 
-        var bodyText = RichDocumentPersistence.loadAtomDocument(
+        let document = RichDocumentPersistence.loadAtomDocument(
             field: .body,
             metadata: atom.metadata,
             fallbackPlainText: atom.body
-        ).plainText
+        )
 
-        guard let placement = CosmoInlineTextEditResolver.placement(for: operation, in: bodyText) else {
-            return CosmoEditableOperationResult(
-                operationID: operation.id, status: .conflicted, message: "Original text not found"
-            )
+        let nextDocument: RichDocument
+        if operation.kind == .formatMarks {
+            guard let mark = operation.formatMark,
+                  let formatted = CosmoInlineFormatMarksApplier.apply(
+                    mark: mark,
+                    originalText: operation.originalText,
+                    to: document
+                  ) else {
+                return CosmoEditableOperationResult(
+                    operationID: operation.id, status: .rejected, message: "Couldn't find that text anymore — skipped"
+                )
+            }
+            nextDocument = formatted
+        } else {
+            var bodyText = document.plainText
+            guard let placement = CosmoInlineTextEditResolver.placement(for: operation, in: bodyText) else {
+                return CosmoEditableOperationResult(
+                    operationID: operation.id, status: .conflicted, message: "Original text not found"
+                )
+            }
+            bodyText.replaceSubrange(placement.range, with: placement.replacementText)
+            nextDocument = RichDocument.migrateLegacy(bodyText)
         }
-        bodyText.replaceSubrange(placement.range, with: placement.replacementText)
 
         let written = RichDocumentPersistence.writeAtomDocuments(
             existingMetadata: atom.metadata,
-            bodyDocument: RichDocument.migrateLegacy(bodyText)
+            bodyDocument: nextDocument
         )
         var updated = atom
         updated.body = written.body
         updated.metadata = written.metadata
         _ = try await AtomRepository.shared.update(updated)
 
-        loadedText = bodyText
+        loadedText = nextDocument.plainText
         return CosmoEditableOperationResult(operationID: operation.id, status: .applied, message: "Applied")
     }
 

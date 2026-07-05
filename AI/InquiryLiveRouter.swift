@@ -215,6 +215,9 @@ actor InquiryLiveRouter {
        it, and tag concepts.
     5. Propose newBranchTitle (with targetQuestionUUID null) ONLY when a unit is a substantial research
        question that no existing question covers. At most ONE new branch per capture.
+       A capture that IS a standalone research question ("How to make better choices?") must get kind
+       "question" AND a newBranchTitle (a cleaned-up phrasing of it) — the user is parking a question
+       to revisit, and without the branch it strands as a note-shaped orphan.
     6. conceptNames: pick from LEXICON/CONCEPTS when one clearly applies; you may add at most one new
        noun-phrase concept when the unit is clearly about a durable concept not yet listed. Otherwise [].
     7. PAST USER CORRECTIONS in the input are learned rules — when a capture resembles one, follow the

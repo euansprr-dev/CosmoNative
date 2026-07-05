@@ -170,7 +170,7 @@ struct ResearchSidebarView: View {
         VStack(alignment: .leading, spacing: 8) {
             // Connections (cached)
             if !filteredConnections.isEmpty {
-                sectionLabel(title: "CONNECTIONS", icon: "link.circle.fill")
+                sectionLabel(title: "CONCEPTS", icon: "link.circle.fill")
                 ForEach(filteredConnections) { item in
                     relatedItemCard(item)
                 }
@@ -327,7 +327,7 @@ struct ResearchSidebarView: View {
             Button {
                 Task { await createConnectionFromAnnotation(annotation) }
             } label: {
-                actionButtonLabel(text: "Create Connection", icon: "plus.circle")
+                actionButtonLabel(text: "Create Concept", icon: "plus.circle")
             }
             .buttonStyle(.plain)
         }
@@ -495,7 +495,7 @@ struct ResearchSidebarView: View {
 
         // Connection Suggestions
         if !analysis.connectionSuggestions.isEmpty {
-            analysisSubsection(title: "CONNECTION SUGGESTIONS", icon: "link.circle.fill", color: Color(hex: "#8B5CF6"))
+            analysisSubsection(title: "CONCEPT SUGGESTIONS", icon: "link.circle.fill", color: Color(hex: "#8B5CF6"))
             ForEach(analysis.connectionSuggestions) { suggestion in
                 connectionSuggestionCard(suggestion)
             }
@@ -591,7 +591,7 @@ struct ResearchSidebarView: View {
                 Button {
                     Task { await createNewConnection(title: suggestion.connectionTitle, reasoning: suggestion.reasoning) }
                 } label: {
-                    actionButtonLabel(text: "Create Connection", icon: "plus.circle")
+                    actionButtonLabel(text: "Create Concept", icon: "plus.circle")
                 }
                 .buttonStyle(.plain)
             }
@@ -606,7 +606,7 @@ struct ResearchSidebarView: View {
     private var linkedItemsSection: some View {
         // Connections this research feeds into
         if !linkedConnections.isEmpty {
-            sectionLabel(title: "CONNECTIONS", icon: "link.circle.fill")
+            sectionLabel(title: "CONCEPTS", icon: "link.circle.fill")
             ForEach(linkedConnections, id: \.uuid) { connection in
                 linkedItemRow(connection, removable: true)
             }
@@ -632,7 +632,7 @@ struct ResearchSidebarView: View {
             emptyState(
                 icon: "link",
                 message: "No linked items",
-                detail: "Link this research to connections and content pieces"
+                detail: "Link this research to concepts and content pieces"
             )
         }
 
@@ -712,7 +712,7 @@ struct ResearchSidebarView: View {
     private var connectionPickerSheet: some View {
         VStack(spacing: 16) {
             HStack {
-                Text("Link to Connection")
+                Text("Link to Concept")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(DS.text)
                 Spacer()
@@ -722,7 +722,7 @@ struct ResearchSidebarView: View {
             }
 
             if allConnections.isEmpty {
-                Text("No connections found")
+                Text("No concepts found")
                     .font(.system(size: 12))
                     .foregroundColor(DS.textMuted)
                     .padding(.vertical, 20)
@@ -993,7 +993,7 @@ struct ResearchSidebarView: View {
 
     private func createConnectionFromAnnotation(_ annotation: ResearchAnnotation) async {
         let title = annotation.content.isEmpty
-            ? "New Connection"
+            ? "New Concept"
             : String(annotation.content.prefix(60))
 
         let connection = Atom.new(

@@ -85,10 +85,15 @@ struct CosmoInlineAssistantPaneEmptyState: View {
                 .font(DS.headline)
                 .foregroundStyle(DS.text)
 
-            Text("Answers cite your documents as pills you can open. Edit requests stage as reviewable diffs in place.")
-                .font(DS.subheadline)
-                .foregroundStyle(DS.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: DS.space4) {
+                Text("Select a sentence and tell me what to do with it — \"shorten this\" just works.")
+                Text("Edits stage as reviewable diffs in place; formatting too (\"bold the headers\").")
+                Text("Answers cite your documents as pills you can open.")
+            }
+            .font(DS.subheadline)
+            .italic()
+            .foregroundStyle(DS.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
         }
     }
 

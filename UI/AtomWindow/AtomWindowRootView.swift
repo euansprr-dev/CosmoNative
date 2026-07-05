@@ -351,7 +351,7 @@ struct AtomWindowHeaderBar: View {
                 Button("Research", systemImage: AtomType.research.iconName) {
                     Task { await viewModel.createNewAtom(type: .research) }
                 }
-                Button("Connection", systemImage: AtomType.connection.iconName) {
+                Button("Concept", systemImage: AtomType.connection.iconName) {
                     Task { await viewModel.createNewAtom(type: .connection) }
                 }
             } label: {

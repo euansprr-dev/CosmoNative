@@ -351,7 +351,7 @@ struct LibraryView: View {
             // Create button
             Menu {
                 Button { viewModel.createAtom(type: .connection) } label: {
-                    Label("Connection", systemImage: "link.circle")
+                    Label("Concept", systemImage: "link.circle")
                 }
                 Button { viewModel.createAtom(type: .idea) } label: {
                     Label("Idea", systemImage: "lightbulb")
@@ -812,7 +812,7 @@ struct LibraryItem: Identifiable {
         case .connection:
             self.icon = "link.circle.fill"
             self.color = Color(hex: "#8B5CF6")
-            self.typeName = "Connection"
+            self.typeName = "Concept"
         case .project:
             self.icon = "folder.fill"
             self.color = Color(hex: "#6366F1")

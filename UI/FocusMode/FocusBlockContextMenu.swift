@@ -39,9 +39,9 @@ struct FocusBlockContextMenuModifier: ViewModifier {
                     }
 
                     Button {
-                        createAndAddBlock(type: .connection, title: "New Connection")
+                        createAndAddBlock(type: .connection, title: "New Concept")
                     } label: {
-                        Label("Add Connection", systemImage: "person.2.fill")
+                        Label("Add Concept", systemImage: "person.2.fill")
                     }
                 }
 

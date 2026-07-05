@@ -323,7 +323,7 @@ struct LibraryTab: View {
                 typeFilter = .connection
             } label: {
                 HStack {
-                    Label("Connection", systemImage: "link.circle.fill")
+                    Label("Concept", systemImage: "link.circle.fill")
                     if typeFilter == .connection {
                         Image(systemName: "checkmark")
                     }
@@ -373,7 +373,7 @@ struct LibraryTab: View {
         Button {
             libraryViewModel.createAtom(type: .connection)
         } label: {
-            Label("New Connection", systemImage: "link.circle.fill")
+            Label("New Concept", systemImage: "link.circle.fill")
         }
 
         Button {

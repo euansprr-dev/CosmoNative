@@ -77,7 +77,7 @@ enum ConnectionSurfaceSerializer {
     ) -> ConnectionSurfaceModel {
         var rendered: [(text: String, kind: ConnectionSurfaceModel.LineKind)] = []
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        rendered.append(("# \(trimmedTitle.isEmpty ? "Untitled Connection" : trimmedTitle)", .title))
+        rendered.append(("# \(trimmedTitle.isEmpty ? "Untitled Concept" : trimmedTitle)", .title))
         rendered.append(("Type: \(conceptType.displayName)", .meta))
 
         let ordered = sections.sorted { $0.type.sortOrder < $1.type.sortOrder }
@@ -199,7 +199,7 @@ final class ConnectionContextProvider: CosmoContextProvider, CosmoEditableSurfac
     ) {
         self.atom = atom
         self.viewModel = viewModel
-        self.titleProvider = titleProvider ?? { atom.title ?? "Untitled Connection" }
+        self.titleProvider = titleProvider ?? { atom.title ?? "Untitled Concept" }
     }
 
     var contextType: CosmoContextType { .connectionFocusMode }
@@ -266,6 +266,10 @@ final class ConnectionContextProvider: CosmoContextProvider, CosmoEditableSurfac
             return applyInsertion(operation, model: model, viewModel: viewModel)
         case .textReplacement, .structuredFieldReplacement:
             return applyReplacement(operation, model: model, viewModel: viewModel)
+        case .formatMarks:
+            // Connection sections are structured plain-text fields — no rich
+            // marks to apply. Honest skip, never a blocking conflict.
+            return result(operation, .rejected, "Formatting doesn't apply to connection sections — skipped")
         case .canvasPlan:
             return result(operation, .conflicted, "Canvas plans don't apply to a connection")
         }

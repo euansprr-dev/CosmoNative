@@ -1,8 +1,9 @@
 // CosmoOS/UI/FocusMode/Ideas/IdeaWorkspaceToolbar.swift
 // June 2026 — Idea Focus Mode v2 (Greenhouse clean).
-// Floating glass toolbar: back, idea status, client picker, the Begin Writing
-// hero action, and the inspector toggle. Same chrome family as the Connection
-// workspace toolbar (cosmoGlassPanel .floatingAssistant).
+// Floating chrome islands: back, idea status, client picker, the Begin Writing
+// hero action, and the inspector toggle. Same island grammar as the Content &
+// Connection workspace toolbars (CosmoChromeRow / CosmoChromeIsland) — glass
+// hugs each control group, never a full-width bar.
 
 import SwiftUI
 
@@ -20,20 +21,18 @@ struct IdeaWorkspaceToolbar: View {
     }
 
     var body: some View {
-        HStack(spacing: DS.space10) {
-            leadingControls
-            Spacer(minLength: DS.space8)
+        // Chrome islands, not a full-width bar: nav | primary action | tools,
+        // grouped by function on the shared chrome baseline. Same grammar as the
+        // Content & Connection workspace toolbars (CosmoChromeIsland). The parent
+        // safeAreaInset already provides the row insets.
+        CosmoChromeRow(insetsEnabled: false) {
+            CosmoChromeIsland { leadingControls }
+        } center: {
+            EmptyView()
+        } trailing: {
             beginWritingButton
-            inspectorToggle
-            if let atomChrome {
-                AtomWindowChromeTrailingControls(context: atomChrome)
-            } else if isPaneContext {
-                closeButton
-            }
+            CosmoChromeIsland { trailingControls }
         }
-        .padding(.horizontal, DS.space12)
-        .padding(.vertical, DS.space6)
-        .cosmoGlassPanel(role: .floatingAssistant, cornerRadius: 22)
     }
 
     // MARK: - Leading
@@ -136,6 +135,17 @@ struct IdeaWorkspaceToolbar: View {
     }
 
     // MARK: - Trailing
+
+    /// The tools island: inspector toggle plus the window/pane close affordance.
+    @ViewBuilder
+    private var trailingControls: some View {
+        inspectorToggle
+        if let atomChrome {
+            AtomWindowChromeTrailingControls(context: atomChrome)
+        } else if isPaneContext {
+            closeButton
+        }
+    }
 
     /// The single accent affordance on this screen.
     private var beginWritingButton: some View {

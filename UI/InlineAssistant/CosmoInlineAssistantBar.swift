@@ -292,6 +292,8 @@ struct CosmoInlineAssistantBar: View {
         HStack(spacing: 12) {
             activeSkillChip
             skillSuggestionChip
+            selectionChip
+                .animation(ProMotionSprings.snappy, value: store.currentSelection)
             if store.isProcessing {
                 CosmoInlineAssistantWorkingStatusView(
                     leadingText: CosmoInlineAssistantBarProcessingPolicy.leadingText(isProcessing: store.isProcessing),
@@ -368,6 +370,50 @@ struct CosmoInlineAssistantBar: View {
                 }
             }
         }
+    }
+
+    /// Quiet chip quoting the live editor selection — the referent of
+    /// "shorten this". The user sees exactly what a bare instruction will
+    /// target before hitting return.
+    @ViewBuilder
+    private var selectionChip: some View {
+        if !store.isProcessing, let selection = store.currentSelection {
+            HStack(spacing: DS.space4) {
+                Image(systemName: "text.cursor")
+                    .font(DS.caption2.weight(.medium))
+                    .accessibilityHidden(true)
+                Text("„\(Self.selectionQuote(selection.text))\u{201C}")
+                    .font(DS.caption)
+                    .italic()
+                    .lineLimit(1)
+                Text("· \(Self.wordCount(selection.text)) words")
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
+                    .monospacedDigit()
+            }
+            .foregroundStyle(DS.textSecondary)
+            .padding(.horizontal, DS.space8)
+            .padding(.vertical, DS.space4)
+            .background(.quaternary.opacity(0.5), in: Capsule())
+            .frame(maxWidth: 260, alignment: .leading)
+            .transition(.scale(scale: 0.9, anchor: .leading).combined(with: .opacity))
+            .help("Bare instructions (\"shorten this\") edit this selection")
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Selection: \(Self.selectionQuote(selection.text))")
+        }
+    }
+
+    static func selectionQuote(_ text: String, limit: Int = 36) -> String {
+        let flattened = text
+            .components(separatedBy: .newlines)
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard flattened.count > limit else { return flattened }
+        return String(flattened.prefix(limit)).trimmingCharacters(in: .whitespaces) + "…"
+    }
+
+    static func wordCount(_ text: String) -> Int {
+        text.split { $0.isWhitespace || $0.isNewline }.count
     }
 
     /// Ghost chip for the embedding-routed skill suggestion. Tab (or click)

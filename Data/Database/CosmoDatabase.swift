@@ -2063,6 +2063,26 @@ class CosmoDatabase: ObservableObject {
             print("✅ inbox sync columns ensured")
         }
 
+        migrator.registerMigration("create_deep_scout_taste") { db in
+            // Learned source taste: Deep Scout import/dismiss decisions build
+            // creator affinities that feed the query planner and ranker.
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS deep_scout_taste (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    decision TEXT NOT NULL,
+                    creator TEXT,
+                    provider TEXT NOT NULL,
+                    lane TEXT,
+                    title TEXT NOT NULL,
+                    deep_dive_uuid TEXT,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_deep_scout_taste_recency
+                    ON deep_scout_taste(created_at DESC);
+            """)
+            print("✅ deep_scout_taste table created")
+        }
+
         return migrator
     }
 

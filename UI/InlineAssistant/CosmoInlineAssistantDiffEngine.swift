@@ -336,6 +336,10 @@ enum CosmoInlineTextEditResolver {
             edit = insertionPlacement(for: operation, proposed: proposed, in: sourceText)
         case .canvasPlan:
             return nil
+        case .formatMarks:
+            // Formatting never resolves as a text edit — it applies marks via
+            // CosmoInlineFormatMarksApplier, keeping the words untouched.
+            return nil
         }
         return slideHeaderReconciled(edit, in: sourceText)
     }
@@ -587,6 +591,9 @@ struct CosmoInlineDiffChange: Identifiable, Equatable {
     /// plans, empty proposals) — dismiss-only. Drifted text edits are never
     /// conflicted: they relocate or append, and stay acceptable.
     let isConflicted: Bool
+    /// Set for formatting changes — the review renders the added lines with the
+    /// mark actually applied (real bold, real heading scale), not a text diff.
+    var formatMark: CosmoAssistantFormatMark? = nil
 }
 
 /// An ordered slice of the document review: untouched prose or a change block.
@@ -626,6 +633,21 @@ enum CosmoInlineDiffReviewBuilder {
                 continue
             }
 
+            if operation.kind == .formatMarks {
+                // Formatting keeps the words — locate the target and render the
+                // styled result in place (no red lines, no replacement text).
+                if let target = operation.originalText,
+                   let range = CosmoInlineDiffLocator.range(of: target, in: sourceText) {
+                    positioned.append(PositionedChange(
+                        operation: operation,
+                        edit: CosmoInlineResolvedTextEdit(range: range, replacementText: String(sourceText[range]))
+                    ))
+                } else {
+                    unplaceable.append(operation)
+                }
+                continue
+            }
+
             if let edit = CosmoInlineTextEditResolver.placement(for: operation, in: sourceText) {
                 positioned.append(PositionedChange(operation: operation, edit: edit))
             } else {
@@ -649,13 +671,15 @@ enum CosmoInlineDiffReviewBuilder {
             if range.lowerBound > cursor {
                 appendUnchanged(String(sourceText[cursor..<range.lowerBound]), to: &segments)
             }
+            let isFormatting = change.operation.kind == .formatMarks
             segments.append(.change(CosmoInlineDiffChange(
                 id: change.operation.id,
-                removedLines: range.isEmpty ? [] : displayLines(String(sourceText[range])),
+                removedLines: (isFormatting || range.isEmpty) ? [] : displayLines(String(sourceText[range])),
                 addedLines: displayLines(change.edit.replacementText),
                 rationale: change.operation.rationale,
                 status: change.operation.status,
-                isConflicted: false
+                isConflicted: false,
+                formatMark: isFormatting ? change.operation.formatMark : nil
             )))
             cursor = range.upperBound
         }

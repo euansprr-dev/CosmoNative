@@ -293,7 +293,7 @@ struct CollaborationTarget: Equatable, Codable, Sendable {
 
     var displayTypeLabel: String {
         switch entityType {
-        case .connection: return "Connection"
+        case .connection: return "Concept"
         case .content: return "Content"
         case .idea: return "Idea"
         case .note: return "Note"

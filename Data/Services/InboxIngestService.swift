@@ -155,6 +155,11 @@ final class InboxIngestService {
         if let sourceAtomUuid = capture.sourceAtomUuid {
             metadata = mergedMetadata(metadata, adding: ["sourceAtomUuid": sourceAtomUuid])
         }
+        if capture.preset != nil {
+            // The user chose this destination (topic alias) — stamp it so topic
+            // inboxes can tell user-routed captures from classifier suggestions.
+            metadata = mergedMetadata(metadata, adding: [InboxItem.explicitDestinationMetadataKey: "true"])
+        }
 
         var item = InboxItem.new(
             source: capture.source,

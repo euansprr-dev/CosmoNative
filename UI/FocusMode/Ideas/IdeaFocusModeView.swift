@@ -25,6 +25,10 @@ struct IdeaFocusModeView: View {
     @State private var viewModel: IdeaFocusModeViewModel
     @State private var workspace = IdeaWorkspaceModel()
     @State private var newHookText: String = ""
+    /// The view OWNS its context provider — the editable-surface registry holds
+    /// it weakly; the old single global slot deallocated it on any other view's
+    /// registration, unbinding this surface from the assistant.
+    @State private var ownedContextProvider: IdeaContextProvider?
     @State private var isPromoting: Bool = false
     @State private var showProfileEditor: Bool = false
     @State private var showBlueprintPicker: Bool = false
@@ -66,6 +70,7 @@ struct IdeaFocusModeView: View {
                 clearManuscriptEditingFocus()
             }
         }
+        .cosmoSurfaceKeyWindowActivation(surfaceID: "idea:\(atom.uuid)")
         .focusImmersiveEntryTransition()
         .onAppear(perform: handleAppear)
         .onChange(of: isPaneContextOwner) { _, isOwner in
@@ -198,6 +203,7 @@ struct IdeaFocusModeView: View {
     private func registerContextProvider() {
         guard !isPaneContext || isPaneContextOwner else { return }
         let provider = IdeaContextProvider(atom: atom, viewModel: viewModel)
+        ownedContextProvider = provider
         CosmoWindowViewModel.shared.updateContext(provider: provider)
     }
 

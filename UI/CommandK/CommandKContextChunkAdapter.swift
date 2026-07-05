@@ -12,6 +12,7 @@ enum CommandKContextChunkAdapter {
             structuralWeight: result.matchType == "keyword" ? 0.8 : 0.55,
             recencyWeight: WeightCalculator.recencyWeight(fromISO8601: updatedAt),
             usageWeight: result.source.pinState == .pinned || result.source.pinState == .active ? 0.8 : 0.35,
+            lexicalTier: result.matchType == "keyword" ? .keywordInBody : .semanticOnly,
             updatedAt: updatedAt,
             accessCount: 0
         )

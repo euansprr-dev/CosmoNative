@@ -73,7 +73,7 @@ struct LinkConnectionsOverlay: View {
                 .font(.system(size: 14))
                 .foregroundStyle(accentColor)
 
-            Text("Link Connections")
+            Text("Link Concepts")
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(DS.text)
 
@@ -111,7 +111,7 @@ struct LinkConnectionsOverlay: View {
                 .font(.system(size: 13))
                 .foregroundStyle(DS.textMuted)
 
-            TextField("Search connections by name, topic...", text: $searchText)
+            TextField("Search concepts by name, topic...", text: $searchText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .foregroundStyle(DS.text)
@@ -128,7 +128,7 @@ struct LinkConnectionsOverlay: View {
             if isLoading {
                 VStack(spacing: 12) {
                     ProgressView().tint(accentColor)
-                    Text("Loading connections...")
+                    Text("Loading concepts...")
                         .font(.system(size: 12))
                         .foregroundStyle(DS.textMuted)
                 }
@@ -139,7 +139,7 @@ struct LinkConnectionsOverlay: View {
                     Image(systemName: "point.3.connected.trianglepath.dotted")
                         .font(.system(size: 28))
                         .foregroundStyle(DS.textMuted)
-                    Text(searchText.isEmpty ? "No connections found" : "No connections match '\(searchText)'")
+                    Text(searchText.isEmpty ? "No concepts found" : "No concepts match '\(searchText)'")
                         .font(.system(size: 13))
                         .foregroundStyle(DS.textMuted)
                 }
@@ -212,7 +212,7 @@ struct LinkConnectionsOverlay: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     // Name
-                    Text(connection.title ?? "Untitled Connection")
+                    Text(connection.title ?? "Untitled Concept")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(DS.text)
                         .lineLimit(1)
@@ -302,7 +302,7 @@ struct LinkConnectionsOverlay: View {
 
     private var overlayFooter: some View {
         HStack(spacing: 12) {
-            Text("\(allConnections.count) connections in library")
+            Text("\(allConnections.count) concepts in library")
                 .font(.system(size: 11))
                 .foregroundStyle(DS.textMuted)
 

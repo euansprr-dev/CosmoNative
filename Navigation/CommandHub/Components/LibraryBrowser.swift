@@ -479,7 +479,7 @@ struct FilterTabsBar: View {
         (.idea, "Ideas", "lightbulb.fill", CosmoColors.lavender),
         (.content, "Content", "doc.text.fill", CosmoColors.skyBlue),
         (.research, "Research", "magnifyingglass", CosmoColors.emerald),
-        (.connection, "Connections", "link.circle.fill", CosmoMentionColors.connection),
+        (.connection, "Concepts", "link.circle.fill", CosmoMentionColors.connection),
         (.task, "Tasks", "checkmark.circle.fill", CosmoColors.coral),
         (.swipeFile, "Swipe File", "bookmark.fill", CosmoColors.coral)
     ]
@@ -621,7 +621,7 @@ struct EmptyLibraryView: View {
         case .idea: return "No ideas yet"
         case .content: return "No content yet"
         case .research: return "No research saved"
-        case .connection: return "No connections yet"
+        case .connection: return "No concepts yet"
         case .project: return "No projects yet"
         case .task: return "No tasks yet"
         case .swipeFile: return "No swipe files saved"

@@ -362,7 +362,10 @@ final class CommandKSearchPipelineTests: XCTestCase {
         XCTAssertEqual(result?.subtitle, "instagram.com · Browser Favorite")
         XCTAssertEqual(result?.browserURL, URL(string: "https://www.instagram.com/josh")!)
         XCTAssertEqual(result?.browserTitle, "Instagram Josh")
-        XCTAssertGreaterThan(result?.relevance ?? 0, 1.0)
+        // Custom-name matches score 1.0 inside a title tier so pins win ties
+        // against atoms without jumping tiers.
+        XCTAssertEqual(result?.lexicalTier, .titleMatch)
+        XCTAssertEqual(result?.relevance, 1.0)
     }
 
     func testUnifiedSearchReturnsMultipleBrowserFavoritesOnSameHost() {
@@ -415,7 +418,8 @@ final class CommandKSearchPipelineTests: XCTestCase {
         XCTAssertEqual(result?.title, "Josh Instagram")
         XCTAssertEqual(result?.browserURL, url)
         XCTAssertEqual(result?.browserTitle, "Josh Instagram")
-        XCTAssertGreaterThan(result?.relevance ?? 0, 1.0)
+        XCTAssertEqual(result?.lexicalTier, .exactTitle)
+        XCTAssertEqual(result?.relevance, 1.0)
     }
 
     @MainActor
@@ -1213,6 +1217,274 @@ final class CommandKSearchPipelineTests: XCTestCase {
         XCTAssertEqual(merged.first { $0.atomUUID == "cached-atom" }?.relevance, cached.relevance)
     }
 
+    // MARK: - Lexical tier invariants
+
+    func testLexicalMatchTierLadder() {
+        func match(_ query: String, title: String, extra: String? = nil) -> (tier: LexicalTier, quality: Double) {
+            CommandKSearchMatcher.lexicalMatch(
+                normalizedQuery: CommandKSearchMatcher.normalizeQuery(query),
+                normalizedTitle: CommandKSearchMatcher.normalize(title),
+                normalizedFullText: CommandKSearchMatcher.searchableText(from: [title, extra])
+            )
+        }
+
+        XCTAssertEqual(match("seller financing", title: "Seller Financing").tier, .exactTitle)
+        XCTAssertEqual(match("seller", title: "Seller financing playbook").tier, .titlePrefix)
+        XCTAssertEqual(match("financing", title: "Seller financing playbook").tier, .titleMatch)
+        XCTAssertEqual(match("playbook seller", title: "Seller financing playbook").tier, .titleMatch)
+        XCTAssertEqual(
+            match("mortgage", title: "Seller financing", extra: "mortgage rates commentary").tier,
+            .keywordInBody
+        )
+
+        let none = match("quantum", title: "Seller financing", extra: "mortgage rates")
+        XCTAssertEqual(none.tier, .semanticOnly)
+        XCTAssertEqual(none.quality, 0)
+    }
+
+    func testExactTitleMatchOutranksHigherSemanticScore() {
+        let exact = RankedResult(
+            atomUUID: "exact",
+            atomType: .idea,
+            title: "Greenhouse ritual",
+            semanticWeight: 0.0,
+            structuralWeight: 1.0,
+            recencyWeight: 0.2,
+            usageWeight: 0.5,
+            lexicalTier: .exactTitle,
+            updatedAt: "2026-01-01T00:00:00Z"
+        )
+        let fuzzy = RankedResult(
+            atomUUID: "fuzzy",
+            atomType: .research,
+            title: "Morning routines reel",
+            semanticWeight: 0.95,
+            structuralWeight: 0.0,
+            recencyWeight: 1.0,
+            usageWeight: 0.5,
+            lexicalTier: .semanticOnly,
+            updatedAt: ISO8601.string(from: Date())
+        )
+
+        // The blended score still favors the fuzzy semantic match — the tier
+        // is what puts the exact keyword match first.
+        XCTAssertGreaterThan(fuzzy.relevance, exact.relevance)
+        XCTAssertEqual([fuzzy, exact].sorted().map(\.atomUUID), ["exact", "fuzzy"])
+    }
+
+    func testSemanticOnlyQueryOrdersBySemanticScore() {
+        let results = [0.3, 0.9, 0.6].enumerated().map { index, semantic in
+            RankedResult(
+                atomUUID: "semantic-\(index)",
+                atomType: .idea,
+                title: "Result \(index)",
+                semanticWeight: semantic,
+                structuralWeight: 0.0,
+                recencyWeight: 0.5,
+                usageWeight: 0.5,
+                lexicalTier: .semanticOnly,
+                updatedAt: "2026-05-01T00:00:00Z"
+            )
+        }
+
+        // Natural-language recall: with no keyword evidence anywhere, ordering
+        // is purely the blended semantic score.
+        XCTAssertEqual(results.sorted().map(\.atomUUID), ["semantic-1", "semantic-2", "semantic-0"])
+    }
+
+    func testHybridMapperAssignsTitleTiersAndBM25BodyTier() {
+        func searchResult(
+            title: String,
+            bm25: Double,
+            matchedAllTerms: Bool
+        ) -> HybridSearchEngine.SearchResult {
+            HybridSearchEngine.SearchResult(
+                entityType: .idea,
+                entityId: 1,
+                entityUUID: "uuid",
+                title: title,
+                preview: "",
+                bm25Score: bm25,
+                vectorSimilarity: 0.4,
+                combinedScore: 0.4,
+                matchReason: .keywordMatch,
+                updatedAt: "2026-05-01T00:00:00Z",
+                matchedAllTerms: matchedAllTerms
+            )
+        }
+        let query = CommandKSearchMatcher.normalizeQuery("greenhouse ritual")
+
+        XCTAssertEqual(
+            CommandKHybridResultMapper.lexicalTier(
+                for: searchResult(title: "Greenhouse ritual", bm25: 8, matchedAllTerms: true),
+                normalizedQuery: query
+            ),
+            .exactTitle
+        )
+        // Strict BM25 hit whose keywords live in the body beyond the preview.
+        XCTAssertEqual(
+            CommandKHybridResultMapper.lexicalTier(
+                for: searchResult(title: "Weekly notes", bm25: 6, matchedAllTerms: true),
+                normalizedQuery: query
+            ),
+            .keywordInBody
+        )
+        // Broad any-term partials carry no full keyword evidence.
+        XCTAssertEqual(
+            CommandKHybridResultMapper.lexicalTier(
+                for: searchResult(title: "Greenhouse only", bm25: 4, matchedAllTerms: false),
+                normalizedQuery: query
+            ),
+            .semanticOnly
+        )
+        // Pure-vector results can carry a chunk field name as title — never
+        // award title tiers without keyword evidence.
+        XCTAssertEqual(
+            CommandKHybridResultMapper.lexicalTier(
+                for: searchResult(title: "Greenhouse ritual", bm25: 0, matchedAllTerms: false),
+                normalizedQuery: query
+            ),
+            .semanticOnly
+        )
+    }
+
+    @MainActor
+    func testMergeRankedResultsPrefersBetterTierForSameAtom() {
+        let hybridSemantic = RankedResult(
+            atomUUID: "atom-1",
+            atomType: .idea,
+            title: "Greenhouse ritual",
+            semanticWeight: 0.9,
+            structuralWeight: 0.1,
+            recencyWeight: 1.0,
+            usageWeight: 0.5,
+            lexicalTier: .semanticOnly,
+            updatedAt: "2026-05-01T00:00:00Z"
+        )
+        let instantExact = RankedResult(
+            atomUUID: "atom-1",
+            atomType: .idea,
+            title: "Greenhouse ritual",
+            semanticWeight: 0.0,
+            structuralWeight: 1.0,
+            recencyWeight: 0.2,
+            usageWeight: 0.5,
+            lexicalTier: .exactTitle,
+            updatedAt: "2026-05-01T00:00:00Z"
+        )
+
+        let merged = CommandKViewModel.mergeRankedResults(
+            primary: [hybridSemantic],
+            additional: [instantExact]
+        )
+
+        XCTAssertEqual(merged.count, 1)
+        XCTAssertEqual(merged.first?.lexicalTier, .exactTitle)
+    }
+
+    func testComposerOrdersGroupsByTierBeforeRelevance() {
+        // A title-prefix atom with modest blended relevance…
+        let titleMatchAtom = RankedResult(
+            atomUUID: "atom-title",
+            atomType: .content,
+            title: "Greenhouse ritual",
+            semanticWeight: 0.1,
+            structuralWeight: 0.88,
+            recencyWeight: 0.3,
+            usageWeight: 0.5,
+            lexicalTier: .titlePrefix,
+            updatedAt: "2026-01-01T00:00:00Z"
+        )
+        // …versus a semantically-similar swipe with a much higher score.
+        let fuzzySwipeHybrid = RankedResult(
+            atomUUID: "swipe-fuzzy",
+            atomType: .research,
+            title: "Morning light reel",
+            semanticWeight: 0.9,
+            structuralWeight: 0.0,
+            recencyWeight: 1.0,
+            usageWeight: 0.5,
+            lexicalTier: .semanticOnly,
+            updatedAt: ISO8601.string(from: Date())
+        )
+        let fuzzySwipeItem = SwipeGalleryItem(
+            atomUUID: "swipe-fuzzy",
+            title: "Morning light reel",
+            hookText: nil,
+            hookScore: 90,
+            platform: "instagram",
+            thumbnailUrl: nil,
+            author: nil
+        )
+
+        let output = CommandKUnifiedSearchComposer.buildOutput(
+            query: "greenhouse",
+            hybridResults: [fuzzySwipeHybrid, titleMatchAtom],
+            swipeGalleryItems: [fuzzySwipeItem],
+            ideaGalleryItems: [],
+            readwiseBooks: [],
+            browserPins: []
+        )
+
+        // The atoms group leads because its best result has keyword evidence —
+        // one fuzzy semantic swipe cannot lift the swipes section above it.
+        XCTAssertEqual(output.groupedResults.first?.source, .atoms)
+        XCTAssertEqual(output.flatResults.first?.atomUUID, "atom-title")
+        XCTAssertGreaterThan(
+            fuzzySwipeHybrid.relevance,
+            titleMatchAtom.relevance,
+            "regression guard: the old relevance-only ordering would have put the swipe first"
+        )
+    }
+
+    func testIdeaFieldMatchFloorStaysWithinKeywordTier() {
+        let bodyMatchIdea = IdeaGalleryItem(
+            id: "idea-body",
+            atomUUID: "idea-body",
+            entityId: 3,
+            title: "Studio revamp",
+            body: "Notes about the greenhouse build",
+            status: .spark,
+            contentFormat: nil,
+            platform: nil,
+            clientName: nil,
+            clientUUID: nil,
+            tags: [],
+            insightScore: nil,
+            matchingSwipeCount: nil,
+            suggestedFramework: nil,
+            isPinned: false,
+            contentCount: 0,
+            createdAt: "2026-05-09T00:00:00Z",
+            updatedAt: "2026-05-09T00:00:00Z"
+        )
+        let titleMatchAtom = RankedResult(
+            atomUUID: "atom-title",
+            atomType: .content,
+            title: "Greenhouse ritual",
+            semanticWeight: 0.05,
+            structuralWeight: 0.88,
+            recencyWeight: 0.2,
+            usageWeight: 0.5,
+            lexicalTier: .titlePrefix,
+            updatedAt: "2026-01-01T00:00:00Z"
+        )
+
+        let output = CommandKUnifiedSearchComposer.buildOutput(
+            query: "greenhouse",
+            hybridResults: [titleMatchAtom],
+            swipeGalleryItems: [],
+            ideaGalleryItems: [bodyMatchIdea],
+            readwiseBooks: [],
+            browserPins: []
+        )
+
+        let ideaResult = output.flatResults.first { $0.atomUUID == "idea-body" }
+        XCTAssertEqual(ideaResult?.lexicalTier, .keywordInBody)
+        XCTAssertEqual(output.groupedResults.first?.source, .atoms)
+        XCTAssertEqual(output.flatResults.first?.atomUUID, "atom-title")
+    }
+
     func testHybridFTS5QueryRequiresAllTermsAndQuotesTokens() {
         XCTAssertEqual(
             HybridSearchEngine.prepareFTS5Query("seller financing"),
@@ -1727,6 +1999,10 @@ final class CommandKSearchPipelineTests: XCTestCase {
         )
         defer { viewModel.setSurfaceActive(false) }
 
+        // Set the query through the public path first — clearing only takes
+        // effect when the view model knows a non-empty query is on screen —
+        // then run the search directly so the test stays deterministic.
+        viewModel.updateQuery("idea Euan: stable draft")
         await viewModel.performSearch(query: "idea Euan: stable draft")
         XCTAssertEqual(viewModel.primaryAction?.kind, .createIdea)
 

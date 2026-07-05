@@ -675,11 +675,9 @@ struct CosmoWindowView: View {
     }
 
     private func closeSurface() {
-        if let onClose {
-            onClose()
-        } else {
-            CosmoWindowPanelController.shared.hide()
-        }
+        // The floating panel host is gone (One Cosmo) — this view only renders
+        // in pane contexts now, which always supply onClose.
+        onClose?()
     }
 
     private func runContextAction(_ action: CosmoWindowAction) {

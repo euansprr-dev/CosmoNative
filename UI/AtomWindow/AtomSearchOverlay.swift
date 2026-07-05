@@ -82,7 +82,7 @@ struct AtomSearchOverlay: View {
                 filterChip(label: "Ideas", icon: AtomType.idea.iconName, type: .idea)
                 filterChip(label: "Research", icon: AtomType.research.iconName, type: .research)
                 filterChip(label: "Content", icon: AtomType.content.iconName, type: .content)
-                filterChip(label: "Connections", icon: AtomType.connection.iconName, type: .connection)
+                filterChip(label: "Concepts", icon: AtomType.connection.iconName, type: .connection)
                 filterChip(label: "Notes", icon: AtomType.note.iconName, type: .note)
                 filterChip(label: "Tasks", icon: AtomType.task.iconName, type: .task)
             }

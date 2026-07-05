@@ -40,7 +40,25 @@ final class InquiryWorkspaceViewModel {
 
     // New shell ("Stele" redesign) UI state
     var activeReaderSourceId: String?           // when non-nil, center morphs into reader
-    var isMapOverlayPresented: Bool = false     // Cmd+M full-screen map overlay
+    var isMapOverlayPresented: Bool = false     // Cmd+M session-map overlay
+
+    // Study shell: floating panel visibility (persisted per session) and the
+    // tick that drives dock focus from keyboard shortcuts.
+    var isTrailShowing: Bool {
+        get { structured.uiState.showTrailPanel ?? true }
+        set { structured.uiState.showTrailPanel = newValue; scheduleSave() }
+    }
+    var isReadingShowing: Bool {
+        get { structured.uiState.showReadingPanel ?? true }
+        set { structured.uiState.showReadingPanel = newValue; scheduleSave() }
+    }
+    var dockFocusTick: Int = 0
+    /// Reader-mode preference for the open source (chrome-row toggle).
+    var readerPrefersReaderMode: Bool = true
+
+    func toggleTrail() { isTrailShowing.toggle() }
+    func toggleReading() { isReadingShowing.toggle() }
+    func focusDock() { dockFocusTick += 1 }
     var ephemeralAIReplies: [EphemeralAIReplyCard] = []
     var liveUnderstandingIsForming: Bool = false
     var liveUnderstandingError: String?
@@ -711,15 +729,13 @@ final class InquiryWorkspaceViewModel {
               let nodeId = questionNodeId(for: questionUUID),
               let node = structured.researchTree.nodes[nodeId] else { return }
         let promoteParentId = node.parentNodeId
-        let promoteParentQuestionUUID = promoteParentId.flatMap { structured.researchTree.nodes[$0]?.atomUUID }
-        let childQuestionUUIDs = node.childNodeIds.compactMap { structured.researchTree.nodes[$0]?.atomUUID }
         do {
-            try await AtomRepository.shared.delete(uuid: questionUUID)
+            // The repository owns the atom-side contract (delete + child
+            // reparenting); the open workspace only mirrors it in memory.
+            try await InquiryRepository.shared.deleteQuestion(uuid: questionUUID)
             questions.removeAll { $0.uuid == questionUUID }
             structured.researchTree.removeNode(nodeId, promoteChildrenTo: promoteParentId)
-            for childUUID in childQuestionUUIDs {
-                await updateQuestionParent(childUUID, newParentQuestionUUID: promoteParentQuestionUUID, relationship: promoteParentQuestionUUID == nil ? .rootUnderTopic : .childOf)
-            }
+            await reloadDeepDiveScopedAtoms()
             if rootQuestion?.uuid == questionUUID {
                 rootQuestion = questions.first { $0.questionMetadata?.parentQuestionUUID == nil }
                 metadata.mainQuestionUUID = rootQuestion?.uuid
@@ -915,10 +931,31 @@ final class InquiryWorkspaceViewModel {
     }
 
     func refreshSourceRecommendationsIfNeeded() async {
-        guard activeRecommendationBatch == nil else { return }
         // Full Deep Scout by default: diverse lanes (primary texts, books,
         // lectures, practice guides, web) instead of academic-only quick mode.
-        await refreshSourceRecommendations(mode: .deepScout)
+        guard let batch = activeRecommendationBatch else {
+            await refreshSourceRecommendations(mode: .deepScout)
+            return
+        }
+        if batchIsStale(batch) {
+            await refreshSourceRecommendations(mode: .deepScout)
+        }
+    }
+
+    /// The scout re-runs on its own: a day-old batch is stale, and so is one
+    /// the question has outgrown (three or more captures since it ran) —
+    /// fresh notes change what's worth finding.
+    private func batchIsStale(_ batch: InquiryRecommendationBatch) -> Bool {
+        if let generated = ISO8601.date(from: batch.generatedAt),
+           Date().timeIntervalSince(generated) > 24 * 3600 {
+            return true
+        }
+        let newExtracts = extracts.filter { atom in
+            guard let meta = atom.extractMetadata,
+                  meta.parentQuestionUUID == activeQuestionUUID else { return false }
+            return (meta.committedAt ?? atom.createdAt) > batch.generatedAt
+        }
+        return newExtracts.count >= 3
     }
 
     func refreshSourceRecommendations(
@@ -973,6 +1010,7 @@ final class InquiryWorkspaceViewModel {
     }
 
     func importSourceCandidate(_ candidate: InquirySourceCandidate) async {
+        recordTasteDecision(.imported, candidate: candidate)
         if let sourceUUID = candidate.importedSourceUUID,
            let source = try? await AtomRepository.shared.fetch(uuid: sourceUUID) {
             let tab = openSourceAtom(source, url: source.url ?? candidate.url, title: candidate.title, kind: candidate.sourceKind == .localNote ? .internalAtom : .web)
@@ -1073,7 +1111,21 @@ final class InquiryWorkspaceViewModel {
         scheduleSave()
     }
 
+    /// Every import/dismiss teaches the taste store which creators this user
+    /// actually learns from — future scouts search for them by name.
+    private func recordTasteDecision(_ decision: DeepScoutTasteStore.Decision, candidate: InquirySourceCandidate) {
+        let deepDiveUUID = deepDive?.uuid
+        Task.detached(priority: .utility) {
+            await DeepScoutTasteStore.shared.record(
+                decision: decision,
+                candidate: candidate,
+                deepDiveUUID: deepDiveUUID
+            )
+        }
+    }
+
     func dismissSourceCandidate(_ candidate: InquirySourceCandidate) {
+        recordTasteDecision(.dismissed, candidate: candidate)
         updateActiveRecommendationBatch { batch in
             if !batch.dismissedCandidateIds.contains(candidate.id) {
                 batch.dismissedCandidateIds.append(candidate.id)
@@ -1422,28 +1474,13 @@ final class InquiryWorkspaceViewModel {
             // route the capture but never re-type it.
             await saveDockExtract(body, kind: kind, originType: parsed.intent.rawValue, kindLocked: true)
         case .ask:
-            let intent = CaptureIntentClassifier.classifyHeuristic(
-                text: body,
-                context: InquiryPlacementEngine.Context(
-                    deepDiveTitle: deepDive?.title,
-                    activeQuestion: activeQuestion,
-                    activeQuestionUUID: activeQuestionUUID,
-                    activeBranchNodeId: activeBranchNodeId,
-                    sourceTabId: activeSourceTabId,
-                    originExtractUUID: nil,
-                    originAction: .manualAdd,
-                    questions: questions,
-                    claims: claims(for: activeQuestionUUID)
-                )
-            )
-            if intent.kind == .question && intent.confidence >= 0.7 {
-                addCapture(body, source: .type, suggestedKind: .question)
-                showToast("Captured question", detail: "Make it a branch from the notes rail.")
-            } else {
-                // No keyword pre-classification: the capture lands pending and
-                // the LLM classifier assigns its kind from scratch.
-                await saveDockExtract(body, kind: .note, originType: "dock", kindLocked: false)
-            }
+            // ONE pipeline for every free thought — including question-shaped
+            // ones. The old path parked "looks like a question" captures as
+            // pending SessionCaptures waiting for a manual "Make branch" tap,
+            // which stranded them forever ("awaiting route"). The LLM router
+            // already knows how to type a question unit and propose its
+            // branch (newBranchTitle) — let it.
+            await saveDockExtract(body, kind: .note, originType: "dock", kindLocked: false)
         }
     }
 
@@ -2585,6 +2622,11 @@ struct InquiryQuestionCounts: Equatable {
 
     var compactLabel: String {
         "S\(sources) · N\(notes) · C\(claims) · Ev\(evidence) · T\(tasks) · Q\(children)"
+    }
+
+    /// Everything routed to the question — the one number a row can show.
+    var total: Int {
+        sources + extracts + notes + claims + evidence
     }
 }
 

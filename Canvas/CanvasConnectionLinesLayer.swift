@@ -391,8 +391,10 @@ struct CanvasConnectionLinesLayer: View {
             )
         }
         .buttonStyle(.plain)
+        // Transition must wrap the pill BEFORE .position — after it, the scale
+        // anchors to the full-canvas frame and the button flies in from screen center.
+        .transition(.scale(scale: 0.85, anchor: .bottom).combined(with: .opacity))
         .position(x: midpoint.x, y: midpoint.y - 20)
-        .transition(.scale.combined(with: .opacity))
     }
 
     // MARK: - Bezier Control Point

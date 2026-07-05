@@ -11,7 +11,9 @@ extension Notification.Name {
 // MARK: - Environment Key
 
 private struct CodexLookupKey: EnvironmentKey {
-    static let defaultValue: CodexConceptLookup? = nil
+    // Computed, not stored: a stored nil of a non-Sendable type is a mutable
+    // global under Swift 6 strict concurrency and breaks `swift test`.
+    static var defaultValue: CodexConceptLookup? { nil }
 }
 
 extension EnvironmentValues {

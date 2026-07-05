@@ -662,7 +662,7 @@ enum CircleAppType: String, CaseIterable {
         case .calendar: return "Calendar"
         case .ideas: return "Ideas"
         case .content: return "Content"
-        case .connections: return "Connections"
+        case .connections: return "Concepts"
         case .research: return "Research"
         }
     }

@@ -178,9 +178,14 @@ struct SwipeShelfRow<Content: View>: View {
     /// Arrows sit fully beyond the clip boundary, over clean page background.
     private var arrowOffset: CGFloat { clipOutset + 4 + arrowWidth }
     private let arrowWidth: CGFloat = 28
+    /// The hit box runs from the glyph's outer edge all the way back to the
+    /// shelf boundary, so the pointer never crosses dead space that would drop
+    /// the hover and hide the arrow before it can be clicked.
+    private var arrowHitWidth: CGFloat { arrowOffset }
 
     @State private var scrollPosition = ScrollPosition()
     @State private var isHovering = false
+    @State private var isHoveringArrow = false
     @State private var canPageBack = false
     @State private var canPageForward = false
     @State private var metrics = SwipeShelfScrollMetrics()
@@ -252,26 +257,39 @@ struct SwipeShelfRow<Content: View>: View {
                 .offset(x: arrowOffset)
         }
         .onHover { isHovering = $0 }
+        .onDisappear {
+            isHovering = false
+            isHoveringArrow = false
+        }
     }
 
     /// Tall thin chevrons in the margins — the App Store grammar. Washed out
     /// (never hidden) when the direction is unavailable, invisible until hover.
+    /// The glyph hugs the outer edge of a hit box that spans the full shelf
+    /// height and reaches back into the shelf, and each arrow tracks its own
+    /// hover — the shelf's hover region ends at the clip boundary, so without
+    /// this the arrow would vanish the moment the pointer reached it.
     private func pagingChevron(_ icon: String, canPage: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+        let isLeft = icon.contains("left")
+        let visible = isHovering || isHoveringArrow
+        return Button(action: action) {
             Image(systemName: icon)
-                .font(DS.pageTitle.weight(.regular))
+                .font(.system(size: 44, weight: .light))
                 .foregroundStyle(DS.textSecondary)
-                .frame(width: arrowWidth, height: 88)
+                .frame(width: arrowWidth)
+                .frame(maxHeight: .infinity)
+                .frame(width: arrowHitWidth, alignment: isLeft ? .leading : .trailing)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .opacity(isHovering ? (canPage ? 0.9 : 0.22) : 0)
-        .animation(ProMotionSprings.hover, value: isHovering)
+        .opacity(visible ? (canPage ? 0.9 : 0.22) : 0)
+        .animation(ProMotionSprings.hover, value: visible)
         .animation(ProMotionSprings.hover, value: canPage)
-        .allowsHitTesting(isHovering && canPage)
-        .help(icon.contains("left") ? "Previous" : "Next")
-        .accessibilityLabel(icon.contains("left") ? "Scroll back" : "Scroll forward")
-        .accessibilityHidden(!isHovering)
+        .allowsHitTesting(canPage)
+        .onHover { isHoveringArrow = $0 }
+        .help(isLeft ? "Previous" : "Next")
+        .accessibilityLabel(isLeft ? "Scroll back" : "Scroll forward")
+        .accessibilityHidden(!visible)
     }
 
     private func page(_ direction: CGFloat) {

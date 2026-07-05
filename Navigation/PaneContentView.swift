@@ -75,15 +75,12 @@ struct PaneContentView: View {
                 .environment(\.isPaneContextOwner, isContextOwner)
 
         case .cosmoWindow:
-            CosmoWindowView(
-                isVisible: .constant(true),
-                isPaneMode: true,
-                onClose: onClose,
-                showsPlaceAsPaneButton: false
-            )
-            .environment(\.isPaneContext, true)
-            .environment(\.isPaneActive, isActive)
-            .environment(\.isPaneContextOwner, isContextOwner)
+            // One Cosmo: the legacy chat-window pane kind now renders the same
+            // inline assistant pane (persisted pane layouts keep working).
+            CosmoInlineAssistantPaneView(store: CosmoInlineAssistantStore.shared, onClose: onClose)
+                .environment(\.isPaneContext, true)
+                .environment(\.isPaneActive, isActive)
+                .environment(\.isPaneContextOwner, isContextOwner)
 
         case .collaborator(let target, let presetId):
             CosmoCollaboratorPaneView(target: target, presetId: presetId, onClose: onClose)

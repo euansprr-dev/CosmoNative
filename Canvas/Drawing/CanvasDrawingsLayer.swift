@@ -955,7 +955,7 @@ struct CanvasDrawingsLayer: View {
                 drawingDeleteButton(for: drawing)
             }
         }
-        .animation(ProMotionSprings.snappy, value: drawingState.selectedDrawingIds)
+        .animation(ProMotionSprings.menuAppear, value: drawingState.selectedDrawingIds)
     }
 
     @ViewBuilder
@@ -986,8 +986,10 @@ struct CanvasDrawingsLayer: View {
             )
         }
         .buttonStyle(.plain)
+        // Transition must wrap the pill BEFORE .position — after it, the scale
+        // anchors to the full-canvas frame and the button flies in from screen center.
+        .transition(.scale(scale: 0.85, anchor: .bottom).combined(with: .opacity))
         .position(x: screenCenter.x, y: screenCenter.y - Constants.deleteButtonOffset)
-        .transition(.scale.combined(with: .opacity))
     }
 
     // MARK: - Drag-to-Move Gesture

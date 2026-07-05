@@ -371,6 +371,22 @@ struct BlockListView: View {
                 .zIndex(1001)
                 .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .topLeading)))
             }
+            if ownedOverlayPresenter.slashSession == nil,
+               let session = ownedOverlayPresenter.selectionSession {
+                SelectionFormattingMenu(
+                    anchor: session.anchorInList,
+                    container: listSize,
+                    traits: session.traits,
+                    compact: session.compact,
+                    darkMode: session.darkMode,
+                    onDismiss: session.onDismiss,
+                    onAIAction: session.onAIAction,
+                    onCustomPrompt: session.onCustomPrompt,
+                    onWritingAIRequest: session.onWritingAIRequest
+                )
+                .zIndex(990)
+                .transition(.opacity)
+            }
         }
     }
 

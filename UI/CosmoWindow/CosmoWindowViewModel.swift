@@ -1387,14 +1387,21 @@ final class CosmoWindowViewModel: ObservableObject {
 
         await ensurePinnedContextForCurrentTurn()
 
+        // The surface snapshot in the volatile layer is the ONE "what the user
+        // is looking at" statement for inline requests. The old single-slot
+        // `<active_cosmo_context>` block (CosmoWindowViewModel.activeContext,
+        // last-registered-view-wins) could describe a DIFFERENT view than the
+        // snapshot in the same request — the agent then refused or edited the
+        // wrong thing. Only the note-structure planning payload survives here;
+        // it has no home in the snapshot.
         var enrichedText: String
-        let contextBlock = buildContextBlock()
-        if !contextBlock.isEmpty {
+        let structureBlock = noteStructurePlanningBlock()
+        if !structureBlock.isEmpty {
             enrichedText = """
             \(prompt)
 
             <active_cosmo_context>
-            \(contextBlock)
+            \(structureBlock)
             </active_cosmo_context>
             """
         } else {
@@ -1554,17 +1561,9 @@ final class CosmoWindowViewModel: ObservableObject {
         if !contextBlock.isEmpty {
             lines.append(contextBlock)
         }
-        if let noteSnapshot = activeNoteStructureSnapshot() {
-            lines.append("""
-
-            Active source note for structure planning:
-            sourceNoteUUID: \(noteSnapshot.sourceNoteUUID.uuidString)
-            sourceTitle: \(noteSnapshot.sourceTitle)
-            sourceBodyHash: \(noteSnapshot.bodyHash)
-            targetThinkspaceUUID: \(resolvedTargetThinkspaceForNoteStructure()?.uuidString ?? "unresolved")
-            keepOriginalVisible: true
-            Use UTF-16 ranges into the exact noteBody above. Do not rewrite module bodies.
-            """)
+        let structureBlock = noteStructurePlanningBlock()
+        if !structureBlock.isEmpty {
+            lines.append("\n" + structureBlock)
         }
 
         if !activeContext.actions.isEmpty {
@@ -1572,6 +1571,22 @@ final class CosmoWindowViewModel: ObservableObject {
         }
 
         return lines.joined(separator: "\n")
+    }
+
+    /// The note-structure planning payload (source note + target thinkspace) —
+    /// used by canvas plan flows; travels with inline requests independently of
+    /// the view-registration context block.
+    private func noteStructurePlanningBlock() -> String {
+        guard let noteSnapshot = activeNoteStructureSnapshot() else { return "" }
+        return """
+        Active source note for structure planning:
+        sourceNoteUUID: \(noteSnapshot.sourceNoteUUID.uuidString)
+        sourceTitle: \(noteSnapshot.sourceTitle)
+        sourceBodyHash: \(noteSnapshot.bodyHash)
+        targetThinkspaceUUID: \(resolvedTargetThinkspaceForNoteStructure()?.uuidString ?? "unresolved")
+        keepOriginalVisible: true
+        Use UTF-16 ranges into the exact noteBody above. Do not rewrite module bodies.
+        """
     }
 
     private func runtimePromptLayer(

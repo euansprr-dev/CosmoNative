@@ -44,13 +44,13 @@ struct ConnectionNavigatorView: View {
 
     private var titleRow: some View {
         VStack(alignment: .leading, spacing: DS.space2) {
-            TextField("Untitled Connection", text: $title, axis: .vertical)
+            TextField("Untitled Concept", text: $title, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 16, weight: .semibold, design: .serif))
                 .foregroundStyle(DS.text)
                 .lineLimit(1...3)
                 .onSubmit { actions.onTitleCommit() }
-                .accessibilityLabel("Connection title")
+                .accessibilityLabel("Concept title")
             Text(viewModel.state.conceptType.displayName)
                 .font(DS.caption)
                 .foregroundStyle(DS.textMuted)

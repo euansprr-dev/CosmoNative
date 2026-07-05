@@ -1219,6 +1219,17 @@ extension Atom {
 
         thumbnailUrl = meta?.thumbnailUrl
 
+        // Prefer the durable Supabase mirror (SwipeThumbnailCloudMirror writes
+        // metadata.thumbnailStorageURL) over the expiring CDN URL — Instagram
+        // links die within weeks; the mirror is forever.
+        if let metadata = self.metadata,
+           let metadataData = metadata.data(using: .utf8),
+           let metadataDict = try? JSONSerialization.jsonObject(with: metadataData) as? [String: Any],
+           let storageURL = metadataDict["thumbnailStorageURL"] as? String,
+           !storageURL.isEmpty {
+            thumbnailUrl = storageURL
+        }
+
         // Fallback to metadata contentSource
         if platform == nil || platform?.isEmpty == true {
             platform = meta?.contentSource

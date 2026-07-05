@@ -28,9 +28,16 @@ enum SwipeQuickLookGeometry {
 /// Click-to-preview: the panel grows out of the clicked card's frame into a centered
 /// glass panel ("the card becomes the page"). The page owns `expanded` so Esc, the
 /// scrim, the close button, and Open Study all collapse through one path.
+///
+/// Continuity: `heroModel` renders the card's media inside the panel while it is
+/// collapsed, crossfading with the real content as the frame springs — so the
+/// thumbnail is what grows out of the grid and what lands back in it, never an
+/// empty glass shell. The page hides the source card while the panel is up, so
+/// the thumbnail visibly returns into the gap it left.
 struct SwipeQuickLook<Content: View>: View {
     @Binding var expanded: Bool
     let sourceFrame: CGRect?
+    var heroModel: SwipeCardModel?
     let onRequestClose: () -> Void
     @ViewBuilder let content: () -> Content
 
@@ -38,11 +45,15 @@ struct SwipeQuickLook<Content: View>: View {
 
     var body: some View {
         GeometryReader { proxy in
+            let bounds = CGRect(origin: .zero, size: proxy.size)
             let target = SwipeQuickLookGeometry.panelFrame(in: proxy.size)
-            let collapsed = sourceFrame ?? target.insetBy(
+            let fallback = target.insetBy(
                 dx: target.width * 0.04,
                 dy: target.height * 0.04
             )
+            // A card frame that scrolled out of the viewport is stale — fall
+            // back to a centered fade rather than flying to a wrong point.
+            let collapsed = sourceFrame.flatMap { $0.intersects(bounds) ? $0 : nil } ?? fallback
             let frame = expanded ? target : collapsed
 
             ZStack(alignment: .topLeading) {
@@ -51,11 +62,18 @@ struct SwipeQuickLook<Content: View>: View {
                     .contentShape(Rectangle())
                     .onTapGesture(perform: onRequestClose)
 
-                content()
-                    .opacity(expanded ? 1 : 0)
-                    .frame(width: frame.width, height: frame.height)
-                    .cosmoGlassPanel(role: .floatingAssistant, cornerRadius: 24)
-                    .position(x: frame.midX, y: frame.midY)
+                ZStack {
+                    content()
+                        .opacity(expanded ? 1 : 0)
+                    if let heroModel {
+                        SwipeQuickLookHeroThumbnail(model: heroModel)
+                            .opacity(expanded ? 0 : 1)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .frame(width: frame.width, height: frame.height)
+                .cosmoGlassPanel(role: .floatingAssistant, cornerRadius: expanded ? 24 : 14)
+                .position(x: frame.midX, y: frame.midY)
             }
         }
         .onAppear(perform: expandOnMount)
@@ -69,6 +87,38 @@ struct SwipeQuickLook<Content: View>: View {
             return
         }
         withAnimation(ProMotionSprings.modal) { expanded = true }
+    }
+}
+
+/// The continuity layer: the card's media (already cached by the grid, so it
+/// mounts without a flash) filling the collapsed panel.
+private struct SwipeQuickLookHeroThumbnail: View {
+    let model: SwipeCardModel
+
+    var body: some View {
+        Group {
+            if model.aspect == .paper {
+                Text(model.paperText ?? model.hookText)
+                    .font(DS.callout)
+                    .foregroundStyle(DS.textSecondary)
+                    .lineSpacing(3)
+                    .padding(14)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .background(DS.glassSectionFill)
+            } else {
+                CachedAsyncImage(url: model.mediaURL, stableKey: model.mediaStableKey) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image.resizable().scaledToFill()
+                    case .empty, .failure:
+                        Rectangle().fill(DS.glassSectionFill)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipped()
+        .accessibilityHidden(true)
     }
 }
 
@@ -98,25 +148,45 @@ struct SwipeQuickLookLibraryContent: View {
         }
     }
 
+    /// Creator identity leads — the quick look is the sanctioned identity
+    /// surface, so the platform glyph keeps its brand color here.
     private var header: some View {
         HStack(spacing: 8) {
-            HStack(spacing: 6) {
+            HStack(spacing: 7) {
                 if let glyph = model.platformGlyph {
                     Image(systemName: glyph)
                         .font(DS.caption.weight(.semibold))
                         .foregroundStyle(model.platformColor ?? DS.textMuted)
                         .accessibilityHidden(true)
                 }
-                Text(SocialPlatform.fromLibraryKey(item.platform)?.displayName ?? "Swipe")
+                Text(identityLine)
                     .font(DS.subheadline.weight(.medium))
                     .foregroundStyle(DS.textSecondary)
+                    .lineLimit(1)
+                if let age = model.ageLabel {
+                    Text("· \(age)")
+                        .font(DS.caption)
+                        .foregroundStyle(DS.textMuted)
+                }
             }
             Spacer()
+            SwipeQuickLookIconButton(systemImage: "chevron.left", help: "Previous (←)", action: onPrevious)
+                .disabled(!hasPrevious)
+                .opacity(hasPrevious ? 1 : 0.35)
+            SwipeQuickLookIconButton(systemImage: "chevron.right", help: "Next (→)", action: onNext)
+                .disabled(!hasNext)
+                .opacity(hasNext ? 1 : 0.35)
             SwipeQuickLookIconButton(systemImage: "square.grid.2x2", help: "Add to Canvas", action: onAddToCanvas)
             SwipeQuickLookIconButton(systemImage: "xmark", help: "Close (Esc)", action: onClose)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
+    }
+
+    private var identityLine: String {
+        model.creatorLine
+            ?? SocialPlatform.fromLibraryKey(item.platform)?.displayName
+            ?? "Swipe"
     }
 
     private var footer: some View {
@@ -127,9 +197,6 @@ struct SwipeQuickLookLibraryContent: View {
                         .font(DS.caption.weight(.bold))
                     Text("Open Study")
                         .font(DS.callout.weight(.semibold))
-                    Text("⏎")
-                        .font(DS.caption)
-                        .opacity(0.7)
                 }
                 .foregroundStyle(DS.textOnAccent)
                 .padding(.horizontal, 16)
@@ -141,10 +208,6 @@ struct SwipeQuickLookLibraryContent: View {
             .help("Open in Swipe Study (⏎)")
 
             Spacer()
-
-            Text("← → next · esc close")
-                .font(DS.caption)
-                .foregroundStyle(DS.textMuted)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -185,43 +248,26 @@ private struct SwipeQuickLookBody: View {
                 .frame(maxWidth: .infinity, alignment: .topLeading)
                 .background(DS.glassSectionFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         } else {
-            CachedAsyncImage(url: model.mediaURL, stableKey: model.mediaStableKey) { phase in
-                switch phase {
-                case .success(let image):
-                    image.resizable().scaledToFit()
-                case .empty, .failure:
-                    Rectangle()
-                        .fill(DS.glassSectionFill)
-                        .overlay {
-                            Image(systemName: model.platformGlyph ?? "photo")
-                                .font(DS.title2)
-                                .foregroundStyle(DS.textMuted)
-                        }
-                }
-            }
-            .frame(maxWidth: .infinity)
-            .frame(height: 320)
-            .background(Color.black.opacity(0.85))
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            SwipeQuickLookMedia(
+                url: model.mediaURL,
+                stableKey: model.mediaStableKey,
+                aspect: model.aspect,
+                fallbackGlyph: model.platformGlyph
+            )
             .accessibilityLabel("Swipe media preview")
         }
     }
 
+    /// The hook IS the headline — no label needed above the one line the
+    /// swipe exists for.
     @ViewBuilder
     private var hookSection: some View {
         if model.aspect != .paper {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Hook")
-                    .font(DS.caption.weight(.bold))
-                    .foregroundStyle(DS.textMuted)
-                    .textCase(.uppercase)
-                    .tracking(0.6)
-                Text(model.hookText)
-                    .font(DS.body)
-                    .foregroundStyle(DS.text)
-                    .lineSpacing(3)
-                    .textSelection(.enabled)
-            }
+            Text(model.hookText)
+                .font(DS.headline)
+                .foregroundStyle(DS.text)
+                .lineSpacing(3)
+                .textSelection(.enabled)
         }
     }
 
@@ -253,6 +299,49 @@ private struct SwipeQuickLookBody: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
         }
+    }
+}
+
+// MARK: - Media well (natural aspect)
+
+/// Quick-look media at the post's own aspect ratio — width-fit, height-capped,
+/// edge-to-edge fill on a warm well. No black letterbox.
+struct SwipeQuickLookMedia: View {
+    let url: URL?
+    let stableKey: String?
+    let aspect: SwipeCardAspect
+    var fallbackGlyph: String?
+
+    /// The well breathes with the medium: reels get a tall stage, posts a
+    /// squarer one, videos a wide one.
+    private var wellHeight: CGFloat {
+        switch aspect {
+        case .wide: 320
+        case .portrait: 380
+        case .vertical: 440
+        case .paper: 320
+        }
+    }
+
+    var body: some View {
+        CachedAsyncImage(url: url, stableKey: stableKey) { phase in
+            switch phase {
+            case .success(let image):
+                image.resizable().scaledToFit()
+            case .empty, .failure:
+                Rectangle()
+                    .fill(.clear)
+                    .overlay {
+                        Image(systemName: fallbackGlyph ?? "photo")
+                            .font(DS.title2)
+                            .foregroundStyle(DS.textMuted)
+                    }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: wellHeight)
+        .background(DS.glassSectionFill)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }
 

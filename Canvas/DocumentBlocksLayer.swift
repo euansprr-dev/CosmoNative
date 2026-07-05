@@ -16,7 +16,7 @@ struct DocumentBlocksLayer: View {
     /// Pinned blocks move with the canvas, unpinned blocks stay fixed on screen
     var canvasOffset: CGSize = .zero
 
-    @StateObject private var spatialEngine: SpatialEngine
+    @State private var spatialEngine: SpatialEngine
     @EnvironmentObject var database: CosmoDatabase
 
     // Drag state
@@ -32,7 +32,7 @@ struct DocumentBlocksLayer: View {
         self.documentId = documentId
         self.canvasCenter = canvasCenter
         self.canvasOffset = canvasOffset
-        _spatialEngine = StateObject(wrappedValue: SpatialEngine())
+        _spatialEngine = State(initialValue: SpatialEngine())
     }
 
     var body: some View {

@@ -6,11 +6,12 @@ import SwiftUI
 import GRDB
 
 @MainActor
-class SpatialEngine: ObservableObject {
-    @Published var blocks: [CanvasBlock] = [] {
+@Observable
+class SpatialEngine {
+    var blocks: [CanvasBlock] = [] {
         didSet { blocksDataRevision &+= 1 }
     }
-    @Published var isLoading = false
+    var isLoading = false
     private(set) var blocksDataRevision = 0
 
     private let database: CosmoDatabase

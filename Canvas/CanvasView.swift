@@ -143,15 +143,19 @@ struct CanvasView: View {
     // (let properties captured by closures would be stale after the struct is re-created)
     @State private var canvasIsActive = true
 
-    @StateObject private var spatialEngine = SpatialEngine()
-    @StateObject private var connectManager = DragToConnectManager()
-    @StateObject private var drawingState = DrawingStateManager()
-    @StateObject private var clusterEngine = CanvasClusterEngine()
-    @StateObject private var renderPipeline = CanvasRenderPipeline()
+    @State private var spatialEngine = SpatialEngine()
+    @State private var connectManager = DragToConnectManager()
+    @State private var drawingState = DrawingStateManager()
+    @State private var clusterEngine = CanvasClusterEngine()
+    @State private var renderPipeline = CanvasRenderPipeline()
     @EnvironmentObject var voiceEngine: VoiceEngine
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var blockFrameTracker: CanvasBlockFrameTracker
     @EnvironmentObject var crossDragManager: CrossThinkspaceDragManager
+
+    /// 120Hz viewport state — gestures write here so CanvasView's body never
+    /// re-evaluates on a pan/zoom frame. See CanvasViewportEngine.
+    @State private var viewportState = CanvasViewportEngine()
 
     @State private var canvasSize: CGSize = .zero
     @State private var selectedBlockId: String?
@@ -160,19 +164,23 @@ struct CanvasView: View {
     @State private var selectedBlockEditableSurface: CanvasBlockEditableSurface?
     @State private var dragOffset: CGSize = .zero
 
-    // Canvas panning state
-    @State private var canvasOffset: CGSize = .zero
-    @GestureState private var panOffset: CGSize = .zero
+    // Canvas pan/zoom values live on viewportState (single source of truth).
+    // These compatibility accessors keep the many existing commit sites
+    // (jumps, zoom buttons, session restore) reading naturally; writes route
+    // through the state object so the quantized mirror stays in sync.
+    private var canvasOffset: CGSize {
+        get { viewportState.committedOffset }
+        nonmutating set { viewportState.setCommittedOffset(newValue) }
+    }
+    private var canvasScale: CGFloat {
+        get { viewportState.committedScale }
+        nonmutating set { viewportState.setCommittedScale(newValue) }
+    }
 
-    // Canvas zoom state - smooth, Apple Silicon optimized
-    @State private var canvasScale: CGFloat = 1.0
-    @GestureState private var magnificationState: CGFloat = 1.0
-    @State private var clusterMagnification: CGFloat = 1.0
     @State private var scrollWheelMonitor: Any?
     @State private var keyMonitor: Any?
     @State private var isSpaceHeld = false
     @State private var spaceDownAt: Date?
-    @State private var spacePanOffset: CGSize = .zero
 
     // Places — saved camera positions (Cmd+D capture, Cmd+Opt+1…9 jump)
     @State private var canvasPlaces: [CanvasPlace] = []
@@ -204,14 +212,20 @@ struct CanvasView: View {
     private let maxScale: CGFloat = 3.0
     private let zoomSensitivity: CGFloat = 0.012  // For scroll wheel
 
-    // PERFORMANCE: Track the active drag without mutating the published block array.
-    @State private var blockDragState = ActiveCanvasDragState<String>()
+    // PERFORMANCE: Block + cluster drags live on an @Observable so a drag
+    // frame invalidates only the hosts that are actually moving — never this
+    // body. See CanvasInteractionState.
+    @State private var interactionState = CanvasInteractionState()
     @State private var canvasClusterDropPreview: ActiveCanvasClusterDropPreview?
     @State private var clusterResizeSession: ActiveClusterResizeSession?
+    /// Bumped whenever resize preview geometries change so the render
+    /// pipeline can keep its cheap revision-keyed path during a resize
+    /// session instead of re-signing every block (metadata dicts included).
+    @State private var clusterResizeRevision = 0
 
-    // PERFORMANCE: Dedicated cluster drag state — avoids N writes to blockDragOffsets per frame,
-    // preventing connection line recomputation and linear search cascades during drag.
-    @State private var clusterDragTranslation: CGSize = .zero
+    /// Stable (start/end-only) read of the dragged cluster id for body-side
+    /// consumers — never touches the per-frame translation.
+    private var draggingClusterId: UUID? { interactionState.draggingClusterId }
 
     // Inbox blocks state
     @State private var inboxBlocks: [InboxViewBlock] = []
@@ -265,13 +279,12 @@ struct CanvasView: View {
     @State private var isModeSwitcherExpanded = false
     @State private var libraryInventory: [ChildDoc] = []
     @State private var libraryLoadTask: Task<Void, Never>?
+    /// Library folder currently open — hoisted here so the navigation trail
+    /// can drive it (back/forward walks in and out of folders).
+    @State private var librarySelectedFolderID: UUID?
 
     // Provocation engine (AI devil's advocate)
     @StateObject private var provocationEngine = ProvocationEngine.shared
-
-    // Cluster drag state
-    @State private var draggingClusterId: UUID? = nil
-    @State private var draggingClusterMemberUUIDs: Set<String> = []
 
     // Notification observer management - prevent duplicate registrations
     @State private var observersRegistered = false
@@ -280,54 +293,30 @@ struct CanvasView: View {
     // PERF: Cached set of block IDs with media content — avoids string ops per block per render
     @State private var mediaContentBlockIds: Set<String> = []
 
+    /// Full live transform — for handlers and gesture closures only. Reading
+    /// this inside a body makes that body re-evaluate on every gesture frame;
+    /// body-side consumers go through `CanvasWorldTransformHost` /
+    /// `CanvasLiveTransformReader` or `viewportState.quantizedTransform`.
     private var viewportTransform: CanvasViewportTransform {
-        // Combine regular pan gesture with space+drag pan
-        let combinedPan = CGSize(
-            width: panOffset.width + spacePanOffset.width,
-            height: panOffset.height + spacePanOffset.height
-        )
-        return CanvasViewportTransform(
-            viewportSize: canvasSize,
-            committedOffset: canvasOffset,
-            gesturePanOffset: combinedPan,
-            committedScale: canvasScale,
-            gestureMagnification: magnificationState * clusterMagnification,
-            minScale: minScale,
-            maxScale: maxScale
-        )
-    }
-
-    private var compositorTransform: CanvasCompositorTransform {
-        CanvasCompositorTransform(viewportTransform: viewportTransform)
-    }
-
-    private var hasLiveViewportGesture: Bool {
-        panOffset != .zero ||
-            spacePanOffset != .zero ||
-            abs(magnificationState - 1) > 0.0001 ||
-            abs(clusterMagnification - 1) > 0.0001
-    }
-
-    private var renderSnapshotTransform: CanvasViewportTransform {
-        CanvasViewportSnapshotPolicy.snapshotTransform(
-            for: viewportTransform,
-            isLiveGesture: hasLiveViewportGesture
-        )
-    }
-
-    private var visibilityIndex: CanvasVisibilityIndex {
-        CanvasVisibilityIndex(transform: viewportTransform)
+        viewportState.transform
     }
 
     private func renderSnapshot(for blocks: [CanvasBlock]) -> CanvasRenderSnapshot {
         let signpost = CanvasPerformanceInstrumentation.signposter.beginInterval("render-snapshot")
+        // During a resize session the preview geometries replace block frames,
+        // so fold the resize tick into the revision — the pipeline rebuilds
+        // its data snapshot per preview change but never falls back to the
+        // expensive full-signature path (which copies every metadata dict).
+        let blockRevision = clusterResizeSession == nil
+            ? spatialEngine.blocksDataRevision
+            : spatialEngine.blocksDataRevision &+ (clusterResizeRevision &* 1_000_000_007)
         let snapshot = renderPipeline.snapshot(
             blocks: blocks,
-            blockDataRevision: clusterResizeSession == nil ? spatialEngine.blocksDataRevision : nil,
-            transform: renderSnapshotTransform,
+            blockDataRevision: blockRevision,
+            transform: viewportState.quantizedTransform,
             preloadInset: CanvasViewportSnapshotPolicy.preloadInset(
                 viewportSize: canvasSize,
-                isLiveGesture: hasLiveViewportGesture,
+                isLiveGesture: viewportState.isLiveGesture,
                 blockCount: blocks.count
             ),
             userClusters: clusterEngine.userClusters,
@@ -352,40 +341,44 @@ struct CanvasView: View {
                 // Background always fills the screen (infinite canvas)
                 canvasBackground
 
-                canvasWorldLayer(snapshot: snapshot)
-                    .offset(
-                        x: compositorTransform.contentOffset.width,
-                        y: compositorTransform.contentOffset.height
+                // World layer: content is built here (bucket-quantized
+                // snapshot), but the live pan/zoom transform is applied by
+                // the host so gesture frames never re-enter this body.
+                CanvasWorldTransformHost(viewportState: viewportState) {
+                    canvasWorldLayer(snapshot: snapshot)
+                }
+                .opacity(canvasContentOpacity)
+                .scaleEffect(canvasContentScale)
+                .blur(radius: canvasContentBlur)
+
+                // Screen-space layers (outside the scaled container to
+                // prevent frame clipping at non-100% zoom). The reader hands
+                // them the live transform so only their bodies track it.
+                CanvasLiveTransformReader(viewportState: viewportState) { liveTransform in
+                    // Connection lines layer
+                    CanvasConnectionLinesLayer(
+                        blocks: currentRenderedBlocks,
+                        geometryInvalidationKey: CanvasConnectionGeometryInvalidationKey(
+                            blockDataRevision: spatialEngine.blocksDataRevision
+                        ),
+                        transform: liveTransform,
+                        interaction: interactionState,
+                        isActive: canvasIsActive,
+                        isLiveGesture: viewportState.isLiveGesture
                     )
-                    .opacity(canvasContentOpacity)
-                    .scaleEffect(canvasContentScale)
-                    .blur(radius: canvasContentBlur)
-                    .scaleEffect(compositorTransform.effectiveScale, anchor: compositorTransform.anchor)
 
-                // Connection lines layer (screen coordinates, outside scaled container
-                // to prevent frame clipping at non-100% zoom levels)
-                CanvasConnectionLinesLayer(
-                    blocks: currentRenderedBlocks,
-                    geometryInvalidationKey: CanvasConnectionGeometryInvalidationKey(
-                        blockDataRevision: spatialEngine.blocksDataRevision
-                    ),
-                    transform: viewportTransform,
-                    activeBlockDrag: blockDragState,
-                    isActive: canvasIsActive
-                )
+                    // Drawing elements layer
+                    CanvasDrawingsLayer(
+                        drawingState: drawingState,
+                        transform: liveTransform
+                    )
 
-                // Drawing elements layer (screen coordinates, outside scaled container
-                // to prevent frame clipping at non-100% zoom levels)
-                CanvasDrawingsLayer(
-                    drawingState: drawingState,
-                    transform: viewportTransform
-                )
-
-                // Drawing gesture capture (screen coordinates, outside scaled container)
-                CanvasDrawingGestureLayer(
-                    drawingState: drawingState,
-                    transform: viewportTransform
-                )
+                    // Drawing gesture capture
+                    CanvasDrawingGestureLayer(
+                        drawingState: drawingState,
+                        transform: liveTransform
+                    )
+                }
 
                 // Provocation markers overlay (screen coordinates, on top of blocks)
                 ProvocationOverlay(provocationEngine: provocationEngine)
@@ -404,18 +397,19 @@ struct CanvasView: View {
                         .gesture(
                             DragGesture(minimumDistance: 1)
                                 .onChanged { value in
-                                    spacePanOffset = value.translation
+                                    viewportState.setSpacePan(value.translation)
                                 }
                                 .onEnded { value in
-                                    canvasOffset.width += value.translation.width / effectiveScale
-                                    canvasOffset.height += value.translation.height / effectiveScale
-                                    spacePanOffset = .zero
+                                    let scale = viewportState.transform.effectiveScale
+                                    canvasOffset.width += value.translation.width / scale
+                                    canvasOffset.height += value.translation.height / scale
+                                    viewportState.setSpacePan(.zero)
                                 }
                         )
                         .onAppear { NSCursor.openHand.push() }
                         .onDisappear {
                             NSCursor.pop()
-                            spacePanOffset = .zero
+                            viewportState.setSpacePan(.zero)
                         }
                 }
             }
@@ -433,12 +427,14 @@ struct CanvasView: View {
                 bottomCanvasControls
             }
             .overlay(alignment: .bottomLeading) {
-                CanvasPerformanceOverlay(
-                    transform: viewportTransform,
-                    blockCount: spatialEngine.blocks.count,
-                    visibleBlockCount: snapshot.visibleBlockCount,
-                    activeDragLabel: blockDragState.activeId ?? draggingClusterId?.uuidString
-                )
+                CanvasLiveTransformReader(viewportState: viewportState) { liveTransform in
+                    CanvasPerformanceOverlay(
+                        transform: liveTransform,
+                        blockCount: spatialEngine.blocks.count,
+                        visibleBlockCount: snapshot.visibleBlockCount,
+                        activeDragLabel: interactionState.activeBlockDragId ?? draggingClusterId?.uuidString
+                    )
+                }
             }
             .overlay(alignment: .topTrailing) {
                 // Drawing tools + view layers + unified inspector — canvas-mode chrome
@@ -602,40 +598,43 @@ struct CanvasView: View {
 
     // MARK: - Zoom Indicator
     private var zoomIndicator: some View {
-        Group {
-            if effectiveScale != 1.0 && thinkspaceMode == .canvas {
-                HStack(spacing: 8) {
-                    // Zoom level display
-                    Text("\(Int(effectiveScale * 100))%")
-                        .font(DS.subheadline.weight(.medium).monospacedDigit())
-                        .foregroundStyle(DS.textSecondary)
-
-                    // Reset zoom button
-                    Button {
-                        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-                            canvasScale = 1.0
-                        }
-                    } label: {
-                        Image(systemName: "1.magnifyingglass")
-                            .font(DS.footnote.weight(.semibold))
+        CanvasLiveTransformReader(viewportState: viewportState) { liveTransform in
+            let scale = liveTransform.effectiveScale
+            Group {
+                if scale != 1.0 && thinkspaceMode == .canvas {
+                    HStack(spacing: 8) {
+                        // Zoom level display
+                        Text("\(Int(scale * 100))%")
+                            .font(DS.subheadline.weight(.medium).monospacedDigit())
                             .foregroundStyle(DS.textSecondary)
-                            .frame(width: 22, height: 22)
-                            .contentShape(Circle())
+
+                        // Reset zoom button
+                        Button {
+                            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                                canvasScale = 1.0
+                            }
+                        } label: {
+                            Image(systemName: "1.magnifyingglass")
+                                .font(DS.footnote.weight(.semibold))
+                                .foregroundStyle(DS.textSecondary)
+                                .frame(width: 22, height: 22)
+                                .contentShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Reset zoom to 100 percent")
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Reset zoom to 100 percent")
+                    .padding(.horizontal, 12)
+                    .frame(height: bottomControlHeight)
+                    .background(DS.glassInputFill, in: Capsule())
+                    .overlay(Capsule().strokeBorder(DS.glassBorder, lineWidth: 1))
+                    .clipShape(Capsule())
+                    .dsFloatingShadow()
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
                 }
-                .padding(.horizontal, 12)
-                .frame(height: bottomControlHeight)
-                .background(DS.glassInputFill, in: Capsule())
-                .overlay(Capsule().strokeBorder(DS.glassBorder, lineWidth: 1))
-                .clipShape(Capsule())
-                .dsFloatingShadow()
-                .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
+            .animation(ProMotionSprings.gentle, value: scale != 1.0)
+            .animation(ProMotionSprings.gentle, value: thinkspaceMode)
         }
-        .animation(ProMotionSprings.gentle, value: effectiveScale != 1.0)
-        .animation(ProMotionSprings.gentle, value: thinkspaceMode)
     }
 
     private var selectedInspectableBlock: CanvasBlock? {
@@ -798,10 +797,13 @@ struct CanvasView: View {
             }
             .drawingGroup()
 
-            // Layer 3: Infinite tiling grid — warm gray dots
-            GridPatternView(
-                transform: viewportTransform
-            )
+            // Layer 3: Infinite tiling grid — warm gray dots. Reads the live
+            // transform through the reader so pan frames re-draw only the grid.
+            CanvasLiveTransformReader(viewportState: viewportState) { liveTransform in
+                GridPatternView(
+                    transform: liveTransform
+                )
+            }
                 .ignoresSafeArea()
 
             // Layer 4: Film grain overlay — static pre-rendered texture (zero per-frame cost)
@@ -813,17 +815,43 @@ struct CanvasView: View {
         }
     }
 
+    /// Clusters whose zone intersects the preload rect, plus any cluster the
+    /// user is actively touching (drag/resize/selection/drop target — their
+    /// rects may be stale mid-gesture or needed by chrome). Offscreen
+    /// clusters unmount entirely: no glass material, no member content.
+    private var renderableClusters: [CanvasCluster] {
+        let visibility = CanvasVisibilityIndex(
+            transform: viewportState.quantizedTransform,
+            preloadInset: CanvasViewportSnapshotPolicy.preloadInset(
+                viewportSize: canvasSize,
+                isLiveGesture: viewportState.isLiveGesture,
+                blockCount: spatialEngine.blocks.count
+            )
+        )
+        return clusterEngine.allClusters.filter { cluster in
+            cluster.id == draggingClusterId ||
+                cluster.id == clusterEngine.resizingClusterId ||
+                cluster.id == clusterEngine.selectedClusterId ||
+                cluster.id == clusterEngine.dropTargetClusterId ||
+                cluster.id == canvasClusterDropPreview?.targetClusterId ||
+                visibility.intersects(cluster.boundingRect)
+        }
+    }
+
     private func canvasWorldLayer(snapshot: CanvasRenderSnapshot) -> some View {
         ZStack {
             // Cluster zones (auto-chunked + user-created, behind blocks)
             CanvasClusterLayer(
-                clusters: clusterEngine.allClusters,
+                clusters: renderableClusters,
                 blocks: spatialEngine.blocks,
-                effectiveScale: effectiveScale,
+                // Quantized: label/zone thresholds update on 0.125 zoom
+                // buckets during a live pinch (exact again at commit) so the
+                // cluster subtree stops re-evaluating on every gesture frame.
+                effectiveScale: viewportState.quantizedTransform.effectiveScale,
                 dropTargetClusterId: clusterEngine.dropTargetClusterId,
                 selectedClusterId: clusterEngine.selectedClusterId,
                 resizingClusterId: clusterEngine.resizingClusterId,
-                clusterDragOffset: draggingClusterId != nil ? clusterDragTranslation : nil,
+                interaction: interactionState,
                 onRenameCluster: { id, newName in
                     clusterEngine.renameUserCluster(id: id, to: newName)
                 },
@@ -901,15 +929,18 @@ struct CanvasView: View {
                     }
                 },
                 onMagnify: { magnification in
-                    clusterMagnification = magnification
+                    viewportState.setClusterMagnification(magnification)
                 },
                 onMagnifyEnd: { magnification in
                     let newScale = canvasScale * magnification
                     canvasScale = min(max(newScale, minScale), maxScale)
-                    clusterMagnification = 1.0
+                    viewportState.setClusterMagnification(1.0)
                 },
                 expandedBlockUUIDs: clusterEngine.expandedBlockUUIDs
             )
+            // Skip the whole cluster subtree unless its render inputs changed
+            // (the action closures above are excluded from equality).
+            .equatable()
 
             // Flows — ink lines from clusters to their outputs (Living Workflows)
             FlowLineLayer(
@@ -932,6 +963,7 @@ struct CanvasView: View {
                     discardFlowProposal(flow)
                 }
             )
+            .equatable()
 
             canvasClusterDropPreviewLayer
             blocksLayer(snapshot: snapshot)
@@ -956,7 +988,9 @@ struct CanvasView: View {
     private var thinkspaceLibraryView: some View {
         ThinkspaceLibraryModeView(
             thinkspaceName: thinkspaceManager.currentThinkspace?.name ?? "Thinkspace",
+            thinkspaceId: thinkspaceManager.currentThinkspace?.id ?? "",
             snapshot: thinkspaceLibrarySnapshot,
+            selectedFolderID: $librarySelectedFolderID,
             actions: ThinkspaceLibraryActions(
                 openItem: { openLibraryItem($0) },
                 revealOnCanvas: { revealLibraryItemOnCanvas($0) },
@@ -1015,7 +1049,7 @@ struct CanvasView: View {
     /// "Reveal on Canvas" — flip back to canvas mode, then glide the camera to the block.
     private func revealLibraryItemOnCanvas(_ item: ThinkspaceLibraryItem) {
         guard item.isOnCanvas else { return }
-        withAnimation(modeSwitcherAnimation) {
+        withAnimation(ProMotionSprings.focusTransition) {
             thinkspaceMode = .canvas
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
@@ -1032,7 +1066,9 @@ struct CanvasView: View {
             return
         }
 
-        withAnimation(modeSwitcherAnimation) {
+        // The surface swap speaks the document dialect (focusTransition);
+        // only the switcher pill itself keeps its snappier collapse.
+        withAnimation(ProMotionSprings.focusTransition) {
             thinkspaceMode = mode
             isModeSwitcherExpanded = false
         }
@@ -1092,13 +1128,6 @@ struct CanvasView: View {
         }
     }
 
-    private func blockDragOffset(for block: CanvasBlock) -> CGSize {
-        if draggingClusterMemberUUIDs.contains(block.entityUuid) {
-            return clusterDragTranslation
-        }
-        return blockDragState.translation(for: block.id)
-    }
-
     @ViewBuilder
     private var canvasClusterDropPreviewLayer: some View {
         if let preview = canvasClusterDropPreview,
@@ -1133,18 +1162,15 @@ struct CanvasView: View {
         ForEach(snapshot.renderableBlocks, id: \.id) { block in
             CanvasBlockTransformHost(
                 block: block,
-                dragOffset: blockDragOffset(for: block),
-                isDragTarget: blockDragState.activeId == block.id,
+                interaction: interactionState,
                 isClusterMember: selectedClusterMemberUUIDs.contains(block.entityUuid),
-                isDraggingClusterMember: draggingClusterMemberUUIDs.contains(block.entityUuid),
                 heatmapOpacity: heatmapOpacity(for: block),
                 isCrossThinkspaceDragging: crossDragManager.isOverSidebar && crossDragManager.draggedBlock?.id == block.id,
                 staticContent: CanvasBlockStaticView(
                     block: block,
                     isMediaContent: snapshot.mediaContentBlockIds.contains(block.id),
                     isViewportActive: snapshot.visibleBlockIds.contains(block.id)
-                )
-                .equatable(),
+                ),
                 onDragChanged: { translation in
                     if NSEvent.modifierFlags.contains(.option) {
                         let blockCanvasX = block.position.x
@@ -1177,6 +1203,7 @@ struct CanvasView: View {
                 },
                 onDoubleTap: { openBlockInFocusMode(block) }
             )
+            .equatable()
         }
     }
 
@@ -1292,6 +1319,7 @@ struct CanvasView: View {
 
     private func refreshLibraryInventoryForThinkspaceSwitch() {
         libraryInventory = []
+        librarySelectedFolderID = nil
         if thinkspaceMode == .library {
             refreshLibraryInventory()
         }
@@ -1373,33 +1401,36 @@ struct CanvasView: View {
                 // Pan gesture — regular (not simultaneous) so ScrollViews inside
                 // clusters and block drag gestures take priority over canvas panning.
                 // Tap-to-deselect is a separate .onTapGesture and is unaffected.
+                // Writes go to viewportState (not @GestureState) so each tick
+                // invalidates only the transform hosts, never this body.
                 DragGesture(minimumDistance: 10)
-                    .updating($panOffset) { value, state, _ in
+                    .onChanged { value in
                         // Store raw translation - will be scaled when applied
-                        state = value.translation
+                        viewportState.setGesturePan(value.translation)
                     }
                     .onEnded { value in
                         // Scale by 1/effectiveScale so panning feels natural at any zoom level
                         // When zoomed out, a 100px drag should move the canvas 100px on screen
-                        canvasOffset.width += value.translation.width / viewportTransform.effectiveScale
-                        canvasOffset.height += value.translation.height / viewportTransform.effectiveScale
+                        let scale = viewportState.transform.effectiveScale
+                        canvasOffset.width += value.translation.width / scale
+                        canvasOffset.height += value.translation.height / scale
+                        viewportState.setGesturePan(.zero)
                     }
             )
             .simultaneousGesture(
                 // Trackpad pinch-to-zoom gesture
                 MagnifyGesture()
-                    .updating($magnificationState) { value, state, _ in
-                        state = value.magnification
-                    }
                     .onChanged { value in
+                        viewportState.setGestureMagnification(value.magnification)
                         handleZoomOutGestureProgress(rawScale: canvasScale * value.magnification)
                     }
                     .onEnded { value in
-                        // Commit pinch scale without extra animation. The gesture state's
+                        // Commit pinch scale without extra animation. The gesture
                         // magnification resets to 1.0 at end; animating this commit can
                         // produce a visible snap/bounce in drawing overlays.
                         let newScale = canvasScale * value.magnification
                         canvasScale = min(max(newScale, minScale), maxScale)
+                        viewportState.setGestureMagnification(1.0)
                         finishZoomOutGesture(rawScale: newScale)
                     }
             )
@@ -1509,6 +1540,7 @@ struct CanvasView: View {
     private func updateCanvasSize(_ size: CGSize) {
         guard size.width > 0, size.height > 0, canvasSize != size else { return }
         canvasSize = size
+        viewportState.setViewportSize(size)
         scheduleFrameUpdate()
     }
 
@@ -1521,9 +1553,14 @@ struct CanvasView: View {
                     updateCanvasSize(geometry.size)
                     canvasIsActive = isActive
 
-                // Register context provider for global Cosmo window
-                let provider = CanvasContextProvider(spatialEngine: spatialEngine, thinkspaceId: thinkspaceId)
-                CosmoWindowViewModel.shared.updateContext(provider: provider)
+                // Register context provider for global Cosmo window. A hidden
+                // launch prewarm must not claim the context — the user is
+                // looking at another destination; registration happens when
+                // the canvas becomes active instead.
+                if isActive {
+                    let provider = CanvasContextProvider(spatialEngine: spatialEngine, thinkspaceId: thinkspaceId)
+                    CosmoWindowViewModel.shared.updateContext(provider: provider)
+                }
 
                 // Load persisted blocks from database for this ThinkSpace
                 Task { @MainActor in
@@ -1536,9 +1573,7 @@ struct CanvasView: View {
                     }
                     CosmoWindowViewModel.shared.refreshContext()
                     drawingState.loadDrawings(thinkspaceId: thinkspaceId)
-                    await repairLegacyBlocksIfNeeded()
                     rebuildMediaContentCache()
-                    
 
                     // First visit in an app session opens at 100%; later visits
                     // restore the viewport remembered in this session.
@@ -1556,6 +1591,25 @@ struct CanvasView: View {
                         thinkspaceId: thinkspaceId,
                         userClusters: clusterEngine.userClusters
                     )
+
+                    // Non-critical work trails the interactive path so the
+                    // first presented frame never competes with it. A hidden
+                    // launch prewarm additionally yields to remaining launch
+                    // work before running it.
+                    if !canvasIsActive {
+                        try? await Task.sleep(for: .seconds(1))
+                    }
+                    if await repairLegacyBlocksIfNeeded() > 0 {
+                        // Repairs rewrote entity ids — don't leave a stale
+                        // snapshot for the next visit.
+                        ThinkspaceCanvasSnapshotCache.shared.store(
+                            blocks: spatialEngine.blocks,
+                            zoomLevel: canvasScale,
+                            panOffset: canvasOffset,
+                            thinkspaceId: thinkspaceId,
+                            userClusters: clusterEngine.userClusters
+                        )
+                    }
                     refreshLibraryInventory()
                 }
 
@@ -2193,6 +2247,7 @@ struct CanvasView: View {
                 }
             }
             .onDisappear {
+                viewportState.resetLiveGesture()
                 rememberCurrentSessionViewport()
                 captureCanvasScreenshot()
                 // Clean up event monitors
@@ -2218,8 +2273,20 @@ struct CanvasView: View {
             }
             .onChange(of: isActive) { _, newValue in
                 canvasIsActive = newValue
+                if !newValue {
+                    // Gestures can't finish once the canvas is hidden —
+                    // replaces @GestureState auto-reset for interrupted pans.
+                    viewportState.resetLiveGesture()
+                }
                 if !newValue && isSpaceHeld {
                     isSpaceHeld = false
+                }
+                if newValue {
+                    // The canvas just became the visible destination — claim
+                    // the Cosmo window context now (a hidden prewarm mount
+                    // deliberately skipped this in onAppear).
+                    let provider = CanvasContextProvider(spatialEngine: spatialEngine, thinkspaceId: thinkspaceId)
+                    CosmoWindowViewModel.shared.updateContext(provider: provider)
                 }
                 if newValue, observersRegistered {
                     CanvasPendingPlacementQueue.shared.markCanvasReady()
@@ -2229,6 +2296,9 @@ struct CanvasView: View {
             }
             .onChange(of: thinkspaceId) { _, newId in
                 thinkspaceSwitchTask?.cancel()
+                // A switch mid-gesture must not carry the live pan into the
+                // next space (replaces @GestureState auto-reset).
+                viewportState.resetLiveGesture()
                 let currentThinkspaceId = spatialEngine.currentThinkspaceId
                 rememberCurrentSessionViewport(for: currentThinkspaceId)
                 guard newId != spatialEngine.currentThinkspaceId else {
@@ -2375,6 +2445,28 @@ struct CanvasView: View {
                 guard let placeUUID = notification.userInfo?["placeUUID"] as? String,
                       let place = canvasPlaces.first(where: { $0.uuid == placeUUID }) else { return }
                 flyToPlace(place)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.showLibraryFolder)) { notification in
+                if let folderID = notification.userInfo?["folderID"] as? UUID {
+                    withAnimation(ProMotionSprings.focusTransition) {
+                        thinkspaceMode = .library
+                        librarySelectedFolderID = folderID
+                    }
+                } else if librarySelectedFolderID != nil {
+                    withAnimation(ProMotionSprings.focusTransition) {
+                        librarySelectedFolderID = nil
+                    }
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Canvas.setThinkspaceMode)) { notification in
+                // The study's bottom switcher lands here when the user picks
+                // Canvas or Library while leaving the deep dive.
+                guard let raw = notification.userInfo?["mode"] as? String,
+                      let mode = ThinkspaceCanvasMode(rawValue: raw),
+                      mode != .deepDive, thinkspaceMode != mode else { return }
+                withAnimation(ProMotionSprings.focusTransition) {
+                    thinkspaceMode = mode
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Automation.flowDidRun)) { notification in
                 guard let tsId = notification.userInfo?["thinkspaceId"] as? String,
@@ -2709,10 +2801,17 @@ struct CanvasView: View {
 
     @ViewBuilder
     private var minimapOverlay: some View {
+        CanvasLiveTransformReader(viewportState: viewportState) { liveTransform in
+            minimapOverlayContent(currentViewport: liveTransform.visibleCanvasRect)
+        }
+    }
+
+    @ViewBuilder
+    private func minimapOverlayContent(currentViewport: CGRect) -> some View {
         CanvasMinimapOverlay(
             blocks: spatialEngine.blocks,
             clusters: clusterEngine.allClusters,
-            currentViewport: computeCurrentViewport(),
+            currentViewport: currentViewport,
             onNavigate: { canvasPosition, animated in
                 navigateTo(canvasPosition: canvasPosition, animated: animated)
             },
@@ -3088,15 +3187,17 @@ struct CanvasView: View {
 
     /// Repairs persisted canvas blocks that have invalid entity IDs (<= 0) by creating
     /// corresponding DB rows and updating the canvas_blocks record in-place.
+    /// Returns the number of blocks that needed repair.
     @MainActor
-    private func repairLegacyBlocksIfNeeded() async {
+    @discardableResult
+    private func repairLegacyBlocksIfNeeded() async -> Int {
         let repairableTypes: Set<EntityType> = [.idea, .content, .research, .task, .connection]
         let indicesToRepair = spatialEngine.blocks.indices.filter { idx in
             let b = spatialEngine.blocks[idx]
             return repairableTypes.contains(b.entityType) && b.entityId <= 0
         }
 
-        guard !indicesToRepair.isEmpty else { return }
+        guard !indicesToRepair.isEmpty else { return 0 }
 
         print("🛠️ Repairing \(indicesToRepair.count) legacy canvas blocks with invalid entity IDs...")
 
@@ -3140,6 +3241,7 @@ struct CanvasView: View {
                 print("❌ Failed to repair block \(block.id) (\(block.entityType.rawValue)): \(error)")
             }
         }
+        return indicesToRepair.count
     }
 
     // MARK: - Computed Properties
@@ -3753,19 +3855,17 @@ struct CanvasView: View {
         // inside the scaled container), so use it directly — no scale division needed.
         // Dividing by effectiveScale would double-scale since scaleEffect already transforms
         // the gesture coordinate space.
-        blockDragState.begin(id: blockId, translation: translation)
+        interactionState.updateBlockDrag(id: blockId, translation: translation)
 
         // Deselect cluster during block drag, but don't open inspector —
         // selection (and inspector) is handled by handleTap on click only.
         clusterEngine.selectCluster(nil)
 
-        // Cross-thinkspace drag detection: check if cursor is over the sidebar
         if let block = spatialEngine.blocks.first(where: { $0.id == blockId }) {
+            // Cross-thinkspace drag detection: check if cursor is over the sidebar
             checkCrossThinkspaceDrag(block: block, translation: translation)
-        }
 
-        // Check if dragged block is near a cluster zone (for drop highlight)
-        if let block = spatialEngine.blocks.first(where: { $0.id == blockId }) {
+            // Check if dragged block is near a cluster zone (for drop highlight)
             let draggedPosition = CGPoint(
                 x: block.position.x + translation.width,
                 y: block.position.y + translation.height
@@ -3825,7 +3925,7 @@ struct CanvasView: View {
         // Cross-thinkspace drag: if block is over the sidebar or we've already spring-loaded
         // into another thinkspace, let the shared manager finish the transfer.
         if isCrossThinkspaceDrop {
-            blockDragState.clear()
+            interactionState.clearBlockDrag()
             // The crossDragManager's NSEvent mouseUp handler or completeDrop will handle the rest
             let fallbackPosition = crossDragManager.floatingPosition
             if let window = NSApp.keyWindow ?? NSApp.mainWindow {
@@ -3876,7 +3976,7 @@ struct CanvasView: View {
             newPosition = resolvedPreview?.previewPosition ?? rawDropPosition
             // Batch: commit position + clear drag state in one pass
             spatialEngine.blocks[index].position = newPosition
-            blockDragState.clear()
+            interactionState.clearBlockDrag()
 
             // Fire-and-forget position save to database
             spatialEngine.updateBlockPosition(blockId, position: newPosition)
@@ -3889,7 +3989,7 @@ struct CanvasView: View {
             }
         } else {
             // Block not found — still clear drag state
-            blockDragState.clear()
+            interactionState.clearBlockDrag()
         }
 
         // Update frame tracker after position change
@@ -3991,6 +4091,7 @@ struct CanvasView: View {
             edge: edge,
             members: session.memberGeometries
         )
+        clusterResizeRevision &+= 1
     }
 
     private func handleClusterResizeEnd(clusterId: UUID) {
@@ -4022,11 +4123,13 @@ struct CanvasView: View {
         // Don't drag while a resize gesture is active (handles fire both)
         guard clusterEngine.resizingClusterId == nil else { return }
 
-        if draggingClusterId != clusterId {
-            draggingClusterId = clusterId
-            draggingClusterMemberUUIDs = Set(clusterEngine.memberBlockUUIDs(for: clusterId))
+        if interactionState.draggingClusterId != clusterId {
+            interactionState.beginClusterDrag(
+                id: clusterId,
+                memberUUIDs: Set(clusterEngine.memberBlockUUIDs(for: clusterId))
+            )
         }
-        clusterDragTranslation = translation
+        interactionState.updateClusterDrag(translation: translation)
     }
 
     /// Commit cluster drag — move all member blocks to their new positions
@@ -4035,8 +4138,9 @@ struct CanvasView: View {
         guard clusterEngine.resizingClusterId == nil else { return }
 
         let memberUUIDs: Set<String> = {
-            if draggingClusterId == clusterId, !draggingClusterMemberUUIDs.isEmpty {
-                return draggingClusterMemberUUIDs
+            if interactionState.draggingClusterId == clusterId,
+               !interactionState.draggingClusterMemberUUIDs.isEmpty {
+                return interactionState.draggingClusterMemberUUIDs
             }
             return Set(clusterEngine.memberBlockUUIDs(for: clusterId))
         }()
@@ -4059,9 +4163,7 @@ struct CanvasView: View {
         clusterEngine.offsetClusterRect(id: clusterId, by: translation)
 
         // Clear cluster drag state
-        clusterDragTranslation = .zero
-        draggingClusterId = nil
-        draggingClusterMemberUUIDs = []
+        interactionState.clearClusterDrag()
 
         // Persist moved cluster + member block positions
         clusterEngine.persistAfterMove()
@@ -4069,10 +4171,9 @@ struct CanvasView: View {
 
     /// Clears any live drag preview offsets for a specific cluster.
     private func clearClusterDragPreview(clusterId: UUID) {
-        clusterDragTranslation = .zero
-        if draggingClusterId == clusterId {
-            draggingClusterId = nil
-            draggingClusterMemberUUIDs = []
+        interactionState.updateClusterDrag(translation: .zero)
+        if interactionState.draggingClusterId == clusterId {
+            interactionState.clearClusterDrag()
         }
     }
 
@@ -4082,8 +4183,8 @@ struct CanvasView: View {
     }
 
     private func handleDragEnd(blockId: String) {
-        if blockDragState.activeId == blockId {
-            handleDragEndOptimized(blockId: blockId, translation: blockDragState.translation)
+        if interactionState.activeBlockDragId == blockId {
+            handleDragEndOptimized(blockId: blockId, translation: interactionState.blockDragTranslation)
         }
     }
 
@@ -5626,7 +5727,7 @@ struct FloatingBlockView: View {
 
 // MARK: - Canvas Controls
 struct CanvasControls: View {
-    @ObservedObject var spatialEngine: SpatialEngine
+    var spatialEngine: SpatialEngine
 
     var body: some View {
         Button(action: { spatialEngine.clearCanvas() }) {
@@ -5645,11 +5746,6 @@ struct CanvasControls: View {
 // MARK: - Grid Pattern View
 struct GridPatternView: View {
     let transform: CanvasViewportTransform
-    private let dotColor = Color(
-        red: 216.0 / 255.0,
-        green: 215.0 / 255.0,
-        blue: 211.0 / 255.0
-    ).opacity(0.5)
 
     var body: some View {
         GeometryReader { geometry in
@@ -5658,59 +5754,31 @@ struct GridPatternView: View {
                 viewportSize: geometry.size
             )
 
-            Canvas(opaque: false, colorMode: .linear, rendersAsynchronously: true) { context, size in
-                guard metrics.screenSpacing.isFinite,
-                      metrics.screenSpacing > 0,
-                      metrics.screenDotSize.isFinite,
-                      metrics.screenDotSize > 0,
-                      size.width > 0,
-                      size.height > 0 else {
-                    return
-                }
-
-                var dots = Path()
-                let dotSize = metrics.screenDotSize
-                let spacing = metrics.screenSpacing
-                let startX = Self.firstGridPosition(
-                    atOrBefore: -dotSize,
-                    origin: metrics.screenGridOrigin.x,
-                    spacing: spacing
-                )
-                let startY = Self.firstGridPosition(
-                    atOrBefore: -dotSize,
-                    origin: metrics.screenGridOrigin.y,
-                    spacing: spacing
-                )
-                let maxX = size.width + dotSize
-                let maxY = size.height + dotSize
-
-                var x = startX
-                while x <= maxX {
-                    var y = startY
-                    while y <= maxY {
-                        dots.addEllipse(in: CGRect(
-                            x: x - dotSize / 2,
-                            y: y - dotSize / 2,
-                            width: dotSize,
-                            height: dotSize
-                        ))
-                        y += spacing
-                    }
-                    x += spacing
-                }
-
-                context.fill(dots, with: .color(dotColor))
+            // Tiled-image grid: panning moves a cached tile pattern (pure
+            // compositor translation) instead of rebuilding a ~1,400-ellipse
+            // Path on the CPU every gesture frame. The tile only regenerates
+            // when zoom crosses a ~2% spacing bucket; the correction scale
+            // keeps dot geometry exact in between.
+            if let plan = CanvasGridTilePlan(
+                screenSpacing: metrics.screenSpacing,
+                screenDotSize: metrics.screenDotSize,
+                screenGridOrigin: metrics.screenGridOrigin,
+                viewportSize: geometry.size
+            ) {
+                Image(nsImage: CanvasGridPatternCache.shared.image(
+                    spacing: plan.tileSpacing,
+                    dotSize: plan.tileDotSize,
+                    tileMultiplier: plan.tileMultiplier
+                ))
+                .resizable(resizingMode: .tile)
+                .interpolation(.medium)
+                .frame(width: plan.frameSize.width, height: plan.frameSize.height)
+                .scaleEffect(plan.correctionScale, anchor: .topLeading)
+                .offset(x: plan.origin.x, y: plan.origin.y)
             }
         }
         .allowsHitTesting(false)
-    }
-
-    private static func firstGridPosition(
-        atOrBefore limit: CGFloat,
-        origin: CGFloat,
-        spacing: CGFloat
-    ) -> CGFloat {
-        origin + floor((limit - origin) / spacing) * spacing
+        .clipped()
     }
 }
 
@@ -5813,10 +5881,11 @@ struct CanvasBlockStaticView: View, Equatable {
 // MARK: - Per-Block Transform Host
 struct CanvasBlockTransformHost<StaticContent: View>: View {
     let block: CanvasBlock
-    let dragOffset: CGSize
-    let isDragTarget: Bool
+    /// Drag offsets are read inside this body (not passed as values) so a
+    /// drag frame invalidates only the hosts that are actually moving —
+    /// every other block reads just the stable start/end fields.
+    let interaction: CanvasInteractionState
     let isClusterMember: Bool
-    let isDraggingClusterMember: Bool
     let heatmapOpacity: CGFloat
     let isCrossThinkspaceDragging: Bool
     let staticContent: StaticContent
@@ -5827,6 +5896,11 @@ struct CanvasBlockTransformHost<StaticContent: View>: View {
     var onDoubleTap: (() -> Void)?
 
     var body: some View {
+        let dragOffset = interaction.dragOffset(forBlockId: block.id, entityUuid: block.entityUuid)
+        let isDragTarget = interaction.activeBlockDragId == block.id
+        let isDraggingClusterMember = interaction.draggingClusterId != nil &&
+            interaction.draggingClusterMemberUUIDs.contains(block.entityUuid)
+
         staticContent
             .position(
                 x: block.position.x + dragOffset.width,
@@ -5858,6 +5932,21 @@ struct CanvasBlockTransformHost<StaticContent: View>: View {
                     tx.animation = nil
                 }
             }
+    }
+}
+
+/// Used via `.equatable()` in the blocks ForEach: dragging one block (or any
+/// unrelated canvas invalidation) skips every host whose render data is
+/// unchanged — the recreated gesture closures no longer defeat diffing.
+extension CanvasBlockTransformHost: Equatable where StaticContent: Equatable {
+    static func == (lhs: CanvasBlockTransformHost, rhs: CanvasBlockTransformHost) -> Bool {
+        // interaction is a shared reference read inside body via observation;
+        // it never participates in parent-driven diffing.
+        lhs.block == rhs.block &&
+            lhs.isClusterMember == rhs.isClusterMember &&
+            lhs.heatmapOpacity == rhs.heatmapOpacity &&
+            lhs.isCrossThinkspaceDragging == rhs.isCrossThinkspaceDragging &&
+            lhs.staticContent == rhs.staticContent
     }
 }
 

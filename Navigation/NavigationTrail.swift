@@ -22,6 +22,10 @@ final class NavigationTrail {
         enum Destination: Equatable {
             case sidebar(SidebarDestination)
             case focusMode(EntitySelection)
+            /// A folder opened inside a thinkspace's library mode — a real
+            /// place in the trail, so the universal arrows walk in and out
+            /// of folders instead of a bespoke breadcrumb.
+            case libraryFolder(thinkspaceId: String, folderID: UUID)
         }
 
         let id: UUID

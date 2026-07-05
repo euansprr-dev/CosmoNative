@@ -34,9 +34,21 @@ struct TaskDetailPanel: View {
     @State private var showDeleteConfirmation = false
     @State private var seriesCompletionCount = 0
 
+    // Cross-fade for switching between tasks — the panel stays mounted
+    @State private var contentOpacity: Double = 1
+    @State private var taskSwitchGeneration = 0
+
     var body: some View {
+        ScrollViewReader { scrollProxy in
+            panelScrollView(scrollProxy: scrollProxy)
+        }
+    }
+
+    private func panelScrollView(scrollProxy: ScrollViewProxy) -> some View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: DS.space16) {
+                Color.clear.frame(height: 0).id("detail-top")
+
                 // Title
                 titleSection
 
@@ -79,18 +91,36 @@ struct TaskDetailPanel: View {
             .padding(DS.space16)
         }
         .scrollIndicators(.hidden)
+        .opacity(contentOpacity)
         .onAppear {
             syncStateFromTask()
             Task { await loadRecurrence() }
         }
-        .onChange(of: task) {
+        .onChange(of: task) { oldTask, newTask in
+            // Same-task external updates only — uuid changes cross-fade below
+            guard oldTask.uuid == newTask.uuid else { return }
             syncStateFromTask()
         }
         .onChange(of: task.uuid) {
+            crossFadeToCurrentTask(scrollProxy: scrollProxy)
+        }
+    }
+
+    private func crossFadeToCurrentTask(scrollProxy: ScrollViewProxy) {
+        taskSwitchGeneration += 1
+        let generation = taskSwitchGeneration
+
+        withAnimation(.easeOut(duration: 0.1)) { contentOpacity = 0 }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            guard generation == taskSwitchGeneration else { return }
             syncStateFromTask()
             recurrenceHasLoaded = false
             recurrenceRule = nil
+            showDeleteConfirmation = false
             Task { await loadRecurrence() }
+            scrollProxy.scrollTo("detail-top", anchor: .top)
+            withAnimation(.easeIn(duration: 0.16)) { contentOpacity = 1 }
         }
     }
 

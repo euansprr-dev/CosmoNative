@@ -103,14 +103,13 @@ struct ConnectionWorkspaceView: View {
         centerContent
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .safeAreaInset(edge: .top, spacing: 0) {
+                // The chrome row owns its own insets (CosmoChromeMetrics).
                 ConnectionWorkspaceToolbar(
                     workspace: workspace,
                     breakpoint: breakpoint,
                     isPaneContext: isPaneContext,
                     actions: actions
                 )
-                .padding(.horizontal, DS.space16)
-                .padding(.top, DS.space10)
                 .padding(.bottom, DS.space6)
             }
     }

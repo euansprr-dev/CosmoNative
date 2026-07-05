@@ -182,9 +182,6 @@ struct MainView: View {
     // Cross-thinkspace drag manager (sidebar spring-loaded folders)
     @StateObject private var crossDragManager = CrossThinkspaceDragManager()
 
-    // Activation loading overlay (shown during idea→content navigation)
-    @State private var showActivationLoading = false
-    @State private var activationLoadingMessage = ""
     @State private var focusModeNavigationTask: Task<Void, Never>?
     @State private var focusModeNavigationRequestID = UUID()
     @State private var thinkspaceSwitchTask: Task<Void, Never>?
@@ -485,9 +482,9 @@ struct MainView: View {
                                 showCreatorDatabase = false
                                 creatorProfileAtom = nil
                             }
-                            withAnimation(.spring(response: 0.3)) {
-                                appState.focusedEntity = EntitySelection(id: entityId, type: .research)
-                            }
+                            FocusNavigationCoordinator.shared.open(
+                                entity: EntitySelection(id: entityId, type: .research)
+                            )
                         }
                     )
                     .frame(maxWidth: 1000, maxHeight: 750)
@@ -504,28 +501,6 @@ struct MainView: View {
                     .zIndex(287)
             }
 
-            // Activation loading overlay (idea → content transition)
-            if showActivationLoading {
-                ZStack {
-                    Color.black.opacity(0.4)
-                        .ignoresSafeArea()
-
-                    VStack(spacing: 16) {
-                        ProgressView()
-                            .scaleEffect(1.3)
-                            .tint(DS.text)
-
-                        Text(activationLoadingMessage)
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundStyle(DS.text.opacity(0.9))
-                    }
-                    .padding(32)
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
-                }
-                .transition(.opacity)
-                .zIndex(290)
-            }
-
             // Loading overlay
             if !database.isReady {
                 LoadingView()
@@ -539,10 +514,8 @@ struct MainView: View {
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: showCommandK)
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: showRadialMenu)
         .animation(.spring(response: 0.2, dampingFraction: 0.75), value: showBlockContextMenu)
-        .animation(ProMotionSprings.focusTransition, value: appState.focusedEntity != nil)
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: glassCenter.isVisible)
         .animation(.spring(response: 0.25, dampingFraction: 0.85), value: swipeFileEngine.showInstagramModal)
-        .animation(.easeInOut(duration: 0.25), value: showActivationLoading)
         .animation(.spring(response: 0.25, dampingFraction: 0.85), value: showSettings)
         .onChange(of: inlineAssistantStore.isPaneRequested) { _, isRequested in
             guard isRequested else { return }
@@ -611,15 +584,15 @@ struct MainView: View {
                 } else {
                     commandKReturnTab = nil
                 }
-                withAnimation(.spring(response: 0.3)) {
-                    appState.focusedEntity = EntitySelection(id: id, type: type)
-                }
+                let sourceFrame = (notification.userInfo?["sourceFrame"] as? NSValue)?.rectValue
+                FocusNavigationCoordinator.shared.open(
+                    entity: EntitySelection(id: id, type: type),
+                    sourceFrame: sourceFrame
+                )
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .exitFocusMode)) { _ in
-            withAnimation(.spring(response: 0.3)) {
-                appState.focusedEntity = nil
-            }
+            FocusNavigationCoordinator.shared.close()
         }
         // MARK: - Workbenches
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.applyWorkbench)) { notification in
@@ -632,6 +605,24 @@ struct MainView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.composeWorkbench)) { _ in
             showWorkbenchComposer = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.trailStepBack)) { _ in
+            // Esc/back from a study surface: retrace the trail like the back
+            // arrow; with no history left, settle back onto the canvas.
+            if NavigationTrail.shared.canGoBack {
+                navigateTrailBack()
+            } else {
+                FocusNavigationCoordinator.shared.close()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.trailStepForward)) { _ in
+            navigateTrailForward()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.trailJump)) { notification in
+            guard let momentId = notification.userInfo?["momentId"] as? String,
+                  let uuid = UUID(uuidString: momentId),
+                  let moment = NavigationTrail.shared.backStack.first(where: { $0.id == uuid }) else { return }
+            jumpTrail(to: moment)
         }
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.presentConstellation)) { _ in
             presentConstellation()
@@ -783,11 +774,7 @@ struct MainView: View {
         }
         .onChange(of: currentDestination) { _, newDest in
             // Dismiss focus mode when navigating via sidebar
-            if appState.focusedEntity != nil {
-                withAnimation(ProMotionSprings.snappy) {
-                    appState.focusedEntity = nil
-                }
-            }
+            FocusNavigationCoordinator.shared.close()
             // Track last-used thinkspace for T-key navigation
             if case .thinkspace(let id) = newDest {
                 lastThinkspaceId = id
@@ -934,6 +921,7 @@ struct MainView: View {
         .animation(.spring(response: 0.25, dampingFraction: 0.85), value: showCreatorDatabase)
         .animation(.spring(response: 0.25, dampingFraction: 0.85), value: showCreatorProfile)
         .onAppear {
+            FocusNavigationCoordinator.shared.appState = appState
             setupRightClickMonitor()
             setupGlobalKeyMonitor()
             configureProMotion()
@@ -957,7 +945,7 @@ struct MainView: View {
             currentDestination = .commandCenter
         }
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.openSwipeGallery)) { _ in
-            currentDestination = .swipeFile(section: .all)
+            currentDestination = .swipeFile(section: .home)
             closeCommandK()
         }
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.navigateToThinkspaceById)) { notification in
@@ -1001,7 +989,9 @@ struct MainView: View {
                 }
                 .frame(width: geo.size.width, height: geo.size.height)
                 .zIndex(appState.focusedEntity != nil ? 195 : 10)
-                .animation(.spring(response: 0.3, dampingFraction: 0.8), value: appState.focusedEntity != nil)
+                // The one implicit driver for focus enter/exit AND doc→doc
+                // swaps (full value, not `!= nil`, so swaps retrigger it).
+                .animation(ProMotionSprings.focusTransition, value: appState.focusedEntity)
                 .animation(sidebarAnimation, value: contentPushOffset)
 
                 if isSidebarVisible {
@@ -1038,13 +1028,16 @@ struct MainView: View {
                         .allowsHitTesting(false)
                 }
 
+                // Study surfaces draw the trail island inside their own chrome
+                // row (DeepDiveStudyBar) so it shares the islands' baseline —
+                // the global copy shows only outside focus modes.
                 if appState.focusedEntity == nil {
                     NavigationTrailChrome(
                         onBack: { navigateTrailBack() },
                         onForward: { navigateTrailForward() },
                         onJump: { jumpTrail(to: $0) }
                     )
-                    .padding(.top, 8)
+                    .padding(.top, CosmoChromeMetrics.topInset)
                     .padding(.leading, isSidebarVisible ? sidebarLayout.reservedWidth + 8 : 44)
                     .zIndex(201)
                     .transition(.opacity)
@@ -1126,9 +1119,7 @@ struct MainView: View {
                 // Peek — Quick Look-style preview overlay (above panes, below Command-K)
                 PeekOverlayView(
                     onOpenFocus: { entity in
-                        withAnimation(ProMotionSprings.snappy) {
-                            appState.focusedEntity = entity
-                        }
+                        FocusNavigationCoordinator.shared.open(entity: entity)
                     },
                     onOpenPane: { entity in
                         guard paneManager.canOpen(entityId: entity.id, appState: appState) else { return }
@@ -1164,6 +1155,7 @@ struct MainView: View {
                 }
                 guard database.isReady else { return }
                 await commandKViewModel.prewarmForAppLaunch()
+                await prewarmCanvasForAppLaunch()
             }
             .onDisappear {
                 cancelSidebarHoverClose()
@@ -1304,6 +1296,48 @@ struct MainView: View {
             cornerRadius: allowsInset ? UnifiedSidebarMetrics.panelCornerRadius : 0,
             reservedWidth: sidebarPanelWidth + horizontalInset + horizontalInset
         )
+    }
+
+    /// Mount the canvas hidden with the last-visited thinkspace so the first
+    /// real visit presents an already-built tree (blocks, glass materials,
+    /// text layout all warm) instead of paying the full cold mount on click.
+    /// Every visit after the first already relies on this "always alive"
+    /// behavior — this just makes the first visit look like the rest.
+    ///
+    /// Deliberately does NOT go through `thinkspaceManager.switchTo` — a
+    /// hidden prewarm must not touch recency or `currentThinkspace`.
+    private func prewarmCanvasForAppLaunch() async {
+        // The user may have already opened a thinkspace — canvas is mounted.
+        guard canvasThinkspaceId == nil else { return }
+
+        // Let launch work settle before paying the one-time mount cost.
+        try? await Task.sleep(for: .milliseconds(800))
+
+        // ThinkspaceManager loads its list in its own init task.
+        for _ in 0..<10 where thinkspaceManager.sidebarThinkspaces.isEmpty {
+            try? await Task.sleep(for: .milliseconds(300))
+        }
+        guard canvasThinkspaceId == nil else { return }
+
+        // Recency-sorted; prefer the persisted last-opened space.
+        let candidates = thinkspaceManager.sidebarThinkspaces
+        let persistedId = thinkspaceManager.persistedLastThinkspaceId
+        guard let targetId = candidates.first(where: { $0.id == persistedId })?.id
+                ?? candidates.first?.id else { return }
+
+        canvasThinkspaceId = targetId
+
+        // Once the hidden mount has loaded its own space, warm the snapshot
+        // cache for the next most-recent spaces so their first open is
+        // instant too (CanvasView's prewarm guard never clobbers real visits).
+        try? await Task.sleep(for: .milliseconds(1500))
+        for thinkspace in candidates.prefix(3) where thinkspace.id != targetId {
+            NotificationCenter.default.post(
+                name: CosmoNotification.Canvas.prewarmThinkspace,
+                object: nil,
+                userInfo: ["thinkspaceId": thinkspace.id]
+            )
+        }
     }
 
     private func switchToThinkspaceForDestination(id: String) {
@@ -1616,7 +1650,14 @@ struct MainView: View {
                     .transition(.opacity)
             } else if case .swipeFile(let section) = currentDestination {
                 Group {
-                    if section == .boards {
+                    if section == .home {
+                        SwipeHomePage(
+                            viewModel: swipeLibraryViewModel,
+                            discoverModel: swipeDiscoverModel
+                        ) { destination in
+                            currentDestination = destination
+                        }
+                    } else if section == .boards {
                         SwipeBoardsHubPage(viewModel: swipeLibraryViewModel) { boardID in
                             currentDestination = .swipeFile(section: .board(boardID))
                         }
@@ -1632,17 +1673,37 @@ struct MainView: View {
         }
     }
 
+    /// True when the focused entity is a study surface (deep dive / inquiry):
+    /// these keep the navigation trail and swap in like destinations, not modals.
+    private var isStudyFocus: Bool {
+        appState.focusedEntity?.type == .deepDive || appState.focusedEntity?.type == .inquirySession
+    }
+
     @ViewBuilder
     private func focusModeOverlay(contentPushOffset: CGFloat) -> some View {
         if let focusEntity = appState.focusedEntity {
+            let isStudy = focusEntity.type == .deepDive || focusEntity.type == .inquirySession
             FocusModeView(entity: focusEntity)
                 .id(focusEntity)
                 .environmentObject(appState)
                 .environmentObject(database)
                 .environmentObject(voiceEngine)
-                .offset(x: contentPushOffset)
-                .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                // Full-screen surface: never rides the sidebar push offset,
+                // so the entrance doesn't slide sideways while it fades.
+                // Study surfaces arrive like a destination change (content
+                // crossfade); other focus modes bloom from the click point.
+                .transition(isStudy ? .opacity : focusModeBloomTransition)
         }
+    }
+
+    /// The document bloom: grows from the click point on entry and recedes
+    /// toward it on exit (FocusNavigationCoordinator captures the anchor at
+    /// open time). Reduce Motion gets a plain crossfade.
+    private var focusModeBloomTransition: AnyTransition {
+        reduceMotion
+            ? .opacity
+            : .scale(scale: 0.97, anchor: FocusNavigationCoordinator.shared.entranceAnchor)
+                .combined(with: .opacity)
     }
 
     /// Handle voice navigation to Command Center, Thinkspace, etc.
@@ -1671,12 +1732,6 @@ struct MainView: View {
         focusModeNavigationRequestID = requestID
 
         if asPane {
-            if showActivationLoading {
-                withAnimation(.easeOut(duration: 0.2)) {
-                    showActivationLoading = false
-                }
-            }
-
             focusModeNavigationTask = Task { @MainActor in
                 do {
                     guard let atom = try await AtomRepository.shared.fetch(uuid: atomUUID) else {
@@ -1707,12 +1762,6 @@ struct MainView: View {
             return
         }
 
-        // Show loading overlay
-        withAnimation(.easeOut(duration: 0.2)) {
-            activationLoadingMessage = "Opening content..."
-            showActivationLoading = true
-        }
-
         // Close any overlays that might be open
         commandKReturnTab = CommandKFocusRestorePolicy.returnTab(
             commandKReturnTab,
@@ -1720,47 +1769,10 @@ struct MainView: View {
         )
         closeCommandK(clearViewModel: false)
 
-        focusModeNavigationTask = Task { @MainActor in
-            do {
-                if let atom = try await AtomRepository.shared.fetch(uuid: atomUUID) {
-                    guard focusModeNavigationRequestID == requestID, !Task.isCancelled else { return }
-                    let entityType = mapAtomTypeToEntityType(atom.type)
-                    let entityId = atom.id ?? 0
-
-                    // Brief delay for the loading overlay to be visible
-                    try await Task.sleep(for: .milliseconds(300))
-                    guard focusModeNavigationRequestID == requestID, !Task.isCancelled else { return }
-
-                    // Dismiss current focus mode if one is open, then navigate
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                        appState.focusedEntity = nil
-                    }
-
-                    // Small delay to allow the previous focus mode to close
-                    try await Task.sleep(for: .milliseconds(200))
-                    guard focusModeNavigationRequestID == requestID, !Task.isCancelled else { return }
-
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                        appState.focusedEntity = EntitySelection(id: entityId, type: entityType)
-                        showActivationLoading = false
-                    }
-                } else {
-                    guard focusModeNavigationRequestID == requestID, !Task.isCancelled else { return }
-                    print("MainView: handleOpenBlockInFocusMode — atom not found: \(atomUUID)")
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        showActivationLoading = false
-                    }
-                }
-            } catch is CancellationError {
-                return
-            } catch {
-                guard focusModeNavigationRequestID == requestID, !Task.isCancelled else { return }
-                print("MainView: handleOpenBlockInFocusMode failed: \(error)")
-                withAnimation(.easeOut(duration: 0.2)) {
-                    showActivationLoading = false
-                }
-            }
-        }
+        // Preload-then-present: the coordinator fetches the atom first (the
+        // current screen stays live — no loading chrome), then plays one
+        // focusTransition. Covers fresh opens and doc→doc swaps alike.
+        FocusNavigationCoordinator.shared.open(atomUUID: atomUUID)
     }
 
     private func recordFocusModeAccess(for selection: EntitySelection) {
@@ -1829,11 +1841,7 @@ struct MainView: View {
     /// Restore a workbench: main content settles first, panes cascade in,
     /// focus and pin land last. Whole choreography under ~600ms.
     private func applyWorkbench(_ bench: Workbench) {
-        if appState.focusedEntity != nil {
-            withAnimation(ProMotionSprings.snappy) {
-                appState.focusedEntity = nil
-            }
-        }
+        FocusNavigationCoordinator.shared.close()
         currentDestination = bench.snapshot.sidebarDestination
 
         paneManager.closeAllPanes()
@@ -1870,14 +1878,26 @@ struct MainView: View {
         NavigationTrail.shared.applyingJump {
             switch moment.destination {
             case .sidebar(let destination):
-                if appState.focusedEntity != nil {
-                    withAnimation(ProMotionSprings.snappy) {
-                        appState.focusedEntity = nil
-                    }
-                }
+                FocusNavigationCoordinator.shared.close()
                 currentDestination = destination
+                // Landing on a thinkspace moment means its library root —
+                // any folder opened after that moment closes with the jump.
+                if case .thinkspace = destination {
+                    NotificationCenter.default.post(
+                        name: CosmoNotification.Navigation.showLibraryFolder,
+                        object: nil
+                    )
+                }
             case .focusMode(let entity):
-                appState.focusedEntity = entity
+                FocusNavigationCoordinator.shared.open(entity: entity)
+            case .libraryFolder(let thinkspaceId, let folderID):
+                FocusNavigationCoordinator.shared.close()
+                currentDestination = .thinkspace(id: thinkspaceId)
+                NotificationCenter.default.post(
+                    name: CosmoNotification.Navigation.showLibraryFolder,
+                    object: nil,
+                    userInfo: ["folderID": folderID]
+                )
             }
         }
     }
@@ -2201,9 +2221,7 @@ struct MainView: View {
 
                 // 8. Focus mode
                 if appState.focusedEntity != nil {
-                    withAnimation(.spring(response: 0.2)) {
-                        appState.focusedEntity = nil
-                    }
+                    FocusNavigationCoordinator.shared.close()
                     return nil
                 }
 
@@ -2723,7 +2741,7 @@ struct MainView: View {
                     showSettings = false
                 }
             })
-            .frame(width: 720, height: 560)
+            .frame(width: 780, height: 600)
             .settingsGlassPanel()
         }
     }
@@ -2738,33 +2756,10 @@ struct MainView: View {
         // Hide Command-K behind focus mode (keep alive for state preservation)
         preserveCommandKBehindFocusMode()
 
-        // Fetch atom and open in appropriate mode
-        commandKNavigationTask = Task { @MainActor in
-            do {
-                // Look up atom by UUID to get its type and ID
-                if let atom = try await AtomRepository.shared.fetch(uuid: atomUUID) {
-                    guard commandKNavigationRequestID == requestID, !Task.isCancelled else { return }
-
-                    // Map AtomType to EntityType for navigation
-                    let entityType = mapAtomTypeToEntityType(atom.type)
-
-                    // Always open in focus mode — works from any view
-                    try await Task.sleep(for: .milliseconds(150))
-                    guard commandKNavigationRequestID == requestID, !Task.isCancelled else { return }
-
-                    NotificationCenter.default.post(
-                        name: .enterFocusMode,
-                        object: nil,
-                        userInfo: ["type": entityType, "id": atom.id ?? 0, "commandKTab": "library"]
-                    )
-                }
-            } catch is CancellationError {
-                return
-            } catch {
-                guard commandKNavigationRequestID == requestID, !Task.isCancelled else { return }
-                print("⚠️ Failed to open atom from Command-K: \(error)")
-            }
-        }
+        // Always open in focus mode — works from any view. The coordinator
+        // preloads the atom before presenting, so no artificial delay needed.
+        commandKReturnTab = .database
+        FocusNavigationCoordinator.shared.open(atomUUID: atomUUID)
     }
 
     /// Routes Command-K "Go to Object" to the atom's spatial home.

@@ -1,81 +1,156 @@
 // CosmoOS/Core/Theming/ThemeManager.swift
-// Central theme manager — persists selection, swaps DS palette, triggers re-render.
+// Theme = family × appearance, in lockstep with the iOS ThemeStore. Two
+// identities (Mono, Greenhouse), each with a day and a night face; the
+// appearance switch (system/light/dark) picks the face. Persists selection,
+// swaps the DS palette, and posts Theme.changed for a full re-render.
 
 import SwiftUI
 
-/// All available themes in CosmoOS.
-enum CosmoAppTheme: String, CaseIterable, Identifiable {
+/// A theme identity with a day and a night face.
+enum ThemeFamily: String, CaseIterable, Identifiable {
+    case mono
     case greenhouse
-    case codexMono
-    case blackMono
-    case midnightStudy
-    case nordicFrost
-    case terracotta
-    case obsidian
 
     var id: String { rawValue }
 
-    var palette: ThemePalette {
+    var label: String {
         switch self {
-        case .greenhouse: GreenhousePalette()
-        case .codexMono: CodexMonoPalette()
-        case .blackMono: BlackMonoPalette()
-        case .midnightStudy: MidnightStudyPalette()
-        case .nordicFrost: NordicFrostPalette()
-        case .terracotta: TerracottaPalette()
-        case .obsidian: ObsidianPalette()
+        case .mono: return "Mono"
+        case .greenhouse: return "Greenhouse"
         }
     }
-
-    var displayName: String {
-        switch self {
-        case .greenhouse: "Greenhouse"
-        case .codexMono: "Codex Mono"
-        case .blackMono: "Black Mono"
-        case .midnightStudy: "Midnight Study"
-        case .nordicFrost: "Nordic Frost"
-        case .terracotta: "Terracotta"
-        case .obsidian: "Obsidian"
-        }
-    }
-
-    var icon: String { palette.icon }
-    var isDark: Bool { palette.isDark }
 
     var tagline: String {
         switch self {
-        case .greenhouse: "Morning coffee in a sunlit studio"
-        case .codexMono: "Black and white workspace with colored signal cues"
-        case .blackMono: "Black mono workspace with white signal"
-        case .midnightStudy: "Late-night deep work by lamplight"
-        case .nordicFrost: "Scandinavian clarity on a winter morning"
-        case .terracotta: "Mediterranean creative studio at golden hour"
-        case .obsidian: "Deep focus cave with electric clarity"
+        case .mono: return "Ink on paper — pure black and white"
+        case .greenhouse: return "Parchment and forest green, lamplit at night"
+        }
+    }
+
+    var lightPalette: ThemePalette {
+        switch self {
+        case .mono: return CodexMonoPalette()
+        case .greenhouse: return GreenhousePalette()
+        }
+    }
+
+    var darkPalette: ThemePalette {
+        switch self {
+        case .mono: return BlackMonoPalette()
+        case .greenhouse: return GreenhouseNightPalette()
         }
     }
 }
 
-/// Manages the active theme. Swaps the DS palette and posts a notification for full re-render.
+/// System follows macOS; light/dark pin one face.
+enum ThemeAppearance: String, CaseIterable, Identifiable {
+    case system
+    case light
+    case dark
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .system: return "System"
+        case .light: return "Light"
+        case .dark: return "Dark"
+        }
+    }
+}
+
+/// Manages the active theme. Swaps the DS palette and posts a notification
+/// for full re-render. Legacy single-theme selections ("cosmoTheme") migrate
+/// to the nearest family × appearance on first launch.
 @Observable @MainActor
 final class ThemeManager {
     static let shared = ThemeManager()
 
-    var currentTheme: CosmoAppTheme {
+    private static let familyKey = "theme.family"
+    private static let appearanceKey = "theme.appearance"
+    private static let legacyKey = "cosmoTheme"
+
+    var family: ThemeFamily {
         didSet {
-            DS.palette = currentTheme.palette
-            UserDefaults.standard.set(currentTheme.rawValue, forKey: "cosmoTheme")
-            NotificationCenter.default.post(name: CosmoNotification.Theme.changed, object: nil)
+            UserDefaults.standard.set(family.rawValue, forKey: Self.familyKey)
+            refresh()
         }
     }
 
-    private init() {
-        let saved = UserDefaults.standard.string(forKey: "cosmoTheme") ?? "greenhouse"
-        self.currentTheme = CosmoAppTheme(rawValue: saved) ?? .greenhouse
-        DS.palette = currentTheme.palette
+    var appearance: ThemeAppearance {
+        didSet {
+            UserDefaults.standard.set(appearance.rawValue, forKey: Self.appearanceKey)
+            refresh()
+        }
     }
 
-    func setTheme(_ theme: CosmoAppTheme) {
-        guard theme != currentTheme else { return }
-        currentTheme = theme
+    /// The resolved face — what every surface actually wears.
+    private(set) var palette: ThemePalette
+
+    var isDark: Bool { palette.isDark }
+
+    private init() {
+        let defaults = UserDefaults.standard
+        var family = defaults.string(forKey: Self.familyKey).flatMap(ThemeFamily.init(rawValue:))
+        var appearance = defaults.string(forKey: Self.appearanceKey).flatMap(ThemeAppearance.init(rawValue:))
+
+        // Migrate the legacy single-theme selection to family × appearance.
+        if family == nil, appearance == nil, let legacy = defaults.string(forKey: Self.legacyKey) {
+            switch legacy {
+            case "codexMono": (family, appearance) = (.mono, .light)
+            case "blackMono": (family, appearance) = (.mono, .dark)
+            case "greenhouse": (family, appearance) = (.greenhouse, .light)
+            case "midnightStudy", "obsidian": (family, appearance) = (.greenhouse, .dark)
+            default: (family, appearance) = (.greenhouse, .light) // nordicFrost, terracotta
+            }
+        }
+
+        let resolvedFamily = family ?? .greenhouse
+        let resolvedAppearance = appearance ?? .system
+        self.family = resolvedFamily
+        self.appearance = resolvedAppearance
+        self.palette = Self.resolve(family: resolvedFamily, appearance: resolvedAppearance)
+        defaults.set(resolvedFamily.rawValue, forKey: Self.familyKey)
+        defaults.set(resolvedAppearance.rawValue, forKey: Self.appearanceKey)
+        DS.palette = palette
+
+        // System mode follows the macOS appearance live.
+        DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name("AppleInterfaceThemeChangedNotification"),
+            object: nil,
+            queue: .main
+        ) { _ in
+            Task { @MainActor in
+                guard ThemeManager.shared.appearance == .system else { return }
+                ThemeManager.shared.refresh()
+            }
+        }
+    }
+
+    func setFamily(_ family: ThemeFamily) {
+        guard family != self.family else { return }
+        self.family = family
+    }
+
+    func setAppearance(_ appearance: ThemeAppearance) {
+        guard appearance != self.appearance else { return }
+        self.appearance = appearance
+    }
+
+    private static var systemIsDark: Bool {
+        UserDefaults.standard.string(forKey: "AppleInterfaceStyle") == "Dark"
+    }
+
+    private static func resolve(family: ThemeFamily, appearance: ThemeAppearance) -> ThemePalette {
+        let dark = appearance == .dark || (appearance == .system && systemIsDark)
+        return dark ? family.darkPalette : family.lightPalette
+    }
+
+    private func refresh() {
+        let next = Self.resolve(family: family, appearance: appearance)
+        guard next.name != palette.name else { return }
+        palette = next
+        DS.palette = next
+        NotificationCenter.default.post(name: CosmoNotification.Theme.changed, object: nil)
     }
 }

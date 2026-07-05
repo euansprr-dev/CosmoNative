@@ -456,11 +456,19 @@ final class SidebarLayoutPolicyTests: XCTestCase {
             )
         )
         XCTAssertTrue(openAtom.contains("commandKNavigationTask?.cancel()"))
-        XCTAssertTrue(openAtom.contains("let requestID = UUID()"))
-        XCTAssertTrue(openAtom.contains("commandKNavigationRequestID = requestID"))
-        XCTAssertTrue(openAtom.contains("try await Task.sleep(for: .milliseconds(150))"))
-        XCTAssertTrue(openAtom.contains("guard commandKNavigationRequestID == requestID, !Task.isCancelled else { return }"))
+        // July 2026: the open is delegated to FocusNavigationCoordinator, which
+        // preloads the atom before presenting (no artificial delay) and owns
+        // cancellation + staleness for every focus-mode entry.
+        XCTAssertTrue(openAtom.contains("FocusNavigationCoordinator.shared.open(atomUUID: atomUUID)"))
+        XCTAssertFalse(openAtom.contains("Task.sleep"))
         XCTAssertFalse(openAtom.contains("DispatchQueue.main.asyncAfter"))
+
+        let coordinator = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Navigation/FocusNavigationCoordinator.swift"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(coordinator.contains("openTask?.cancel()"))
+        XCTAssertTrue(coordinator.contains("guard requestID == request, !Task.isCancelled else { return }"))
 
         let goToObject = try XCTUnwrap(
             mainView.slice(

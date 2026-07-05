@@ -6,7 +6,7 @@
 import SwiftUI
 
 struct DragToConnectOverlay: View {
-    @ObservedObject var connectManager: DragToConnectManager
+    var connectManager: DragToConnectManager
     let blocks: [CanvasBlock]
 
     // MARK: - Bezier Control Point (matches KnowledgePulseLineView / CanvasConnectionLinesLayer)

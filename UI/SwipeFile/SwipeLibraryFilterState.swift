@@ -58,8 +58,9 @@ enum SwipeLibrarySmartPreset: String, CaseIterable, Identifiable {
 }
 
 enum SwipeLibrarySectionSelection: Equatable, Hashable {
+    /// The editorial magazine — hero + shelves. The swipe context's landing page.
+    case home
     case all
-    case recentlyAdded
     case highHookScore
     case unstudied
     case boards
@@ -67,8 +68,8 @@ enum SwipeLibrarySectionSelection: Equatable, Hashable {
 
     var title: String {
         switch self {
-        case .all: return "All Swipes"
-        case .recentlyAdded: return "Recently Added"
+        case .home: return "Swipes"
+        case .all: return "Library"
         case .highHookScore: return "High Hook Score"
         case .unstudied: return "Unstudied"
         case .boards: return "Boards"

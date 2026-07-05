@@ -39,6 +39,11 @@ struct FocusCanvasView: View {
 
     init(entity: EntitySelection) {
         self.entity = entity
+        // Warm path: the coordinator preloaded this atom before presenting,
+        // so the real document renders on frame 1 of the entrance — no
+        // loading state. The async fetch remains as a cold-path fallback
+        // (trail restore, workbenches, direct focusedEntity sets).
+        _loadedAtom = State(initialValue: FocusNavigationCoordinator.shared.consumePreloadedAtom(for: entity))
     }
 
     /// Whether this entity type uses a full-canvas focus mode (no wrapper needed)
@@ -75,7 +80,9 @@ struct FocusCanvasView: View {
 
                             editorView
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                                .scaleEffect(editorAppeared ? 1.0 : 0.98)
+                                // Opacity-only stagger: the overlay's bloom owns
+                                // the one scale (two compounding 0.98s read as a
+                                // deeper 0.96 zoom with doubled motion).
                                 .opacity(editorAppeared ? 1.0 : 0)
 
                             // Minimal bottom padding - text extends to bottom
@@ -178,124 +185,72 @@ struct FocusCanvasView: View {
     }
 
     // MARK: - Full Canvas Mode View
-    /// Renders full-canvas focus modes (Connection, Research) directly without wrapper
-    @ViewBuilder
+    /// Renders full-canvas focus modes (Connection, Research) directly without wrapper.
+    /// The warm path mounts the real mode view on frame 1 (atom preloaded by
+    /// FocusNavigationCoordinator); the cold path shows a quiet parchment
+    /// placeholder and cross-fades to the document when the fetch lands.
     private var fullCanvasModeView: some View {
+        ZStack {
+            if let atom = loadedAtom {
+                loadedModeView(atom: atom)
+                    .transition(.opacity)
+            } else {
+                loadingFallback
+                    .transition(.opacity)
+            }
+        }
+        .animation(ProMotionSprings.gentle, value: loadedAtom == nil)
+    }
+
+    @ViewBuilder
+    private func loadedModeView(atom: Atom) -> some View {
         switch entity.type {
         case .idea:
-            if let atom = loadedAtom {
-                IdeaFocusModeView(atom: atom, onClose: closeFocusMode)
+            IdeaFocusModeView(atom: atom, onClose: closeFocusMode)
+                .ignoresSafeArea()
+        case .research:
+            if atom.isSwipeFileAtom {
+                SwipeStudyFocusModeView(atom: atom, onClose: closeFocusMode)
                     .ignoresSafeArea()
             } else {
-                ZStack {
-                    CosmoColors.thinkspaceVoid.ignoresSafeArea()
-                    ProgressView("Loading...")
-                        .tint(.white)
-                }
-                .onAppear { loadAtomForFocusMode() }
-            }
-        case .research:
-            if let atom = loadedAtom {
-                if atom.isSwipeFileAtom {
-                    SwipeStudyFocusModeView(atom: atom, onClose: closeFocusMode)
-                        .ignoresSafeArea()
-                } else {
-                    ResearchFocusModeView(atom: atom, onClose: closeFocusMode)
-                        .ignoresSafeArea()
-                }
-            } else {
-                ZStack {
-                    CosmoColors.thinkspaceVoid.ignoresSafeArea()
-                    ProgressView("Loading...")
-                        .tint(.white)
-                }
-                .onAppear { loadAtomForFocusMode() }
+                ResearchFocusModeView(atom: atom, onClose: closeFocusMode)
+                    .ignoresSafeArea()
             }
         case .connection:
-            if let atom = loadedAtom {
-                ConnectionFocusModeView(atom: atom, onClose: closeFocusMode)
-                    .ignoresSafeArea()
-            } else {
-                ZStack {
-                    CosmoColors.thinkspaceVoid.ignoresSafeArea()
-                    ProgressView("Loading...")
-                        .tint(.white)
-                }
-                .onAppear { loadAtomForFocusMode() }
-            }
+            ConnectionFocusModeView(atom: atom, onClose: closeFocusMode)
+                .ignoresSafeArea()
         case .content:
-            if let atom = loadedAtom {
-                ContentFocusModeView(atom: atom, onClose: closeFocusMode)
-                    .ignoresSafeArea()
-            } else {
-                ZStack {
-                    CosmoColors.thinkspaceVoid.ignoresSafeArea()
-                    ProgressView("Loading...")
-                        .tint(.white)
-                }
-                .onAppear { loadAtomForFocusMode() }
-            }
+            ContentFocusModeView(atom: atom, onClose: closeFocusMode)
+                .ignoresSafeArea()
         case .note:
-            if let atom = loadedAtom {
-                NoteFocusModeView(atom: atom, onClose: closeFocusMode)
-                    .ignoresSafeArea()
-            } else {
-                ZStack {
-                    CosmoColors.thinkspaceVoid.ignoresSafeArea()
-                    ProgressView("Loading...")
-                        .tint(.white)
-                }
-                .onAppear { loadAtomForFocusMode() }
-            }
+            NoteFocusModeView(atom: atom, onClose: closeFocusMode)
+                .ignoresSafeArea()
         case .cosmoAI:
-            if let atom = loadedAtom {
-                CosmoAIFocusModeView(atom: atom, onClose: closeFocusMode)
-                    .ignoresSafeArea()
-            } else {
-                ZStack {
-                    CosmoColors.thinkspaceVoid.ignoresSafeArea()
-                    ProgressView("Loading...")
-                        .tint(.white)
-                }
-                .onAppear { loadAtomForFocusMode() }
-            }
+            CosmoAIFocusModeView(atom: atom, onClose: closeFocusMode)
+                .ignoresSafeArea()
         case .template:
-            if let atom = loadedAtom {
-                TemplateFocusModeView(atom: atom, onClose: closeFocusMode)
-                    .ignoresSafeArea()
-            } else {
-                ZStack {
-                    CosmoColors.thinkspaceVoid.ignoresSafeArea()
-                    ProgressView("Loading...")
-                        .tint(.white)
-                }
-                .onAppear { loadAtomForFocusMode() }
-            }
+            TemplateFocusModeView(atom: atom, onClose: closeFocusMode)
+                .ignoresSafeArea()
         case .deepDive:
-            if let atom = loadedAtom {
-                DeepDiveOverviewView(atom: atom, onClose: closeFocusMode)
-                    .ignoresSafeArea()
-            } else {
-                ZStack {
-                    DS.bg.ignoresSafeArea()
-                    ProgressView("Loading Deep Dive…")
-                }
-                .onAppear { loadAtomForFocusMode() }
-            }
+            DeepDiveOverviewView(atom: atom, onClose: closeFocusMode)
+                .ignoresSafeArea()
         case .inquirySession:
-            if let atom = loadedAtom {
-                InquiryWorkspaceView(sessionAtom: atom, onClose: closeFocusMode)
-                    .ignoresSafeArea()
-            } else {
-                ZStack {
-                    DS.bg.ignoresSafeArea()
-                    ProgressView("Loading Inquiry Workspace…")
-                }
-                .onAppear { loadAtomForFocusMode() }
-            }
+            InquiryWorkspaceView(sessionAtom: atom, onClose: closeFocusMode)
+                .ignoresSafeArea()
         default:
             EmptyView()
         }
+    }
+
+    /// Cold-path placeholder: parchment (never a dark void on a parchment
+    /// app), and the spinner holds back for a beat so a fast local fetch
+    /// never flashes loading chrome.
+    private var loadingFallback: some View {
+        ZStack {
+            DS.bg.ignoresSafeArea()
+            FocusDelayedLoadingIndicator()
+        }
+        .onAppear { loadAtomForFocusMode() }
     }
 
     // MARK: - Editor View
@@ -342,9 +297,35 @@ struct FocusCanvasView: View {
 
     // MARK: - Actions
     private func closeFocusMode() {
-        // Block persistence is automatic via DocumentBlocksLayer/SpatialEngine
-        withAnimation(.spring(response: 0.3)) {
-            appState.focusedEntity = nil
+        // Block persistence is automatic via DocumentBlocksLayer/SpatialEngine.
+        // Study surfaces navigate, they don't dismiss:
+        // - closing an inquiry session lands back in its deep dive,
+        // - closing a deep dive retraces the navigation trail.
+        switch entity.type {
+        case .inquirySession:
+            closeInquiryIntoDeepDive()
+        case .deepDive:
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.trailStepBack,
+                object: nil
+            )
+        default:
+            FocusNavigationCoordinator.shared.close()
+        }
+    }
+
+    /// Leaving an inquiry falls back into the deep dive it belongs to — the
+    /// study is the session's home, not the canvas.
+    private func closeInquiryIntoDeepDive() {
+        Task { @MainActor in
+            if let session = try? await AtomRepository.shared.fetch(id: entity.id),
+               let deepDiveUUID = session.inquirySessionMetadata?.parentDeepDiveUUID,
+               let deepDive = try? await AtomRepository.shared.fetch(uuid: deepDiveUUID),
+               let deepDiveId = deepDive.id {
+                FocusNavigationCoordinator.shared.open(entity: EntitySelection(id: deepDiveId, type: .deepDive))
+            } else {
+                FocusNavigationCoordinator.shared.close()
+            }
         }
     }
 
@@ -502,11 +483,13 @@ struct FocusCanvasView: View {
     }
 
     private func setupFocusMode() {
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) {
+        withAnimation(ProMotionSprings.focusTransition) {
             isAppearing = true
         }
 
-        withAnimation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.1)) {
+        // Editor content settles in just behind the overlay bloom — same
+        // spring family, one beat later, opacity only.
+        withAnimation(ProMotionSprings.gentle.delay(0.08)) {
             editorAppeared = true
         }
 
@@ -1037,5 +1020,23 @@ struct FocusBlockView: View {
             editedContent = block.content ?? ""
             isEditing = true
         }
+    }
+}
+
+// MARK: - Delayed Loading Indicator
+/// A spinner that holds back for a beat before appearing, so the cold-path
+/// atom fetch (local GRDB, usually tens of milliseconds) never flashes
+/// loading chrome mid-transition.
+private struct FocusDelayedLoadingIndicator: View {
+    @State private var showSpinner = false
+
+    var body: some View {
+        ProgressView()
+            .controlSize(.small)
+            .opacity(showSpinner ? 1 : 0)
+            .task {
+                try? await Task.sleep(for: .milliseconds(250))
+                withAnimation(ProMotionSprings.gentle) { showSpinner = true }
+            }
     }
 }

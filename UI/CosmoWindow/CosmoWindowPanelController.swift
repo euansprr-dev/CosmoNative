@@ -164,14 +164,14 @@ final class CosmoWindowPanelController: NSWindowController {
         let contentView = NSHostingView(
             rootView: CosmoWindowView(isVisible: isVisible)
                 .environment(\.cosmoWindowIsFloating, true)
-                .preferredColorScheme(ThemeManager.shared.currentTheme.isDark ? .dark : .light)
+                .preferredColorScheme(ThemeManager.shared.isDark ? .dark : .light)
         )
         contentView.wantsLayer = true
         contentView.layer?.masksToBounds = false
         panel.contentView = contentView
 
         // Match panel appearance to active theme
-        panel.appearance = NSAppearance(named: ThemeManager.shared.currentTheme.isDark ? .darkAqua : .aqua)
+        panel.appearance = NSAppearance(named: ThemeManager.shared.isDark ? .darkAqua : .aqua)
 
         // Listen for theme changes to update panel appearance
         NotificationCenter.default.addObserver(
@@ -180,7 +180,7 @@ final class CosmoWindowPanelController: NSWindowController {
             queue: .main
         ) { [weak self] _ in
             guard let self else { return }
-            let isDark = ThemeManager.shared.currentTheme.isDark
+            let isDark = ThemeManager.shared.isDark
             self.panel.appearance = NSAppearance(named: isDark ? .darkAqua : .aqua)
             // Rebuild hosting view with updated color scheme
             let updatedView = NSHostingView(

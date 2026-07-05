@@ -8,10 +8,10 @@ import AppKit
 struct PaneCanvasView: View {
     let thinkspaceId: String
 
-    @StateObject private var spatialEngine = SpatialEngine()
-    @StateObject private var clusterEngine = CanvasClusterEngine()
+    @State private var spatialEngine = SpatialEngine()
+    @State private var clusterEngine = CanvasClusterEngine()
     @StateObject private var frameTracker = CanvasBlockFrameTracker()
-    @StateObject private var renderPipeline = CanvasRenderPipeline()
+    @State private var renderPipeline = CanvasRenderPipeline()
 
     // Canvas panning
     @State private var canvasOffset: CGSize = .zero

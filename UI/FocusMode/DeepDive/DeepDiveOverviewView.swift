@@ -19,6 +19,12 @@ struct DeepDiveOverviewView: View {
     @State private var sessionRenameDraft = ""
     @State private var deletingSessionUUID: String?
     @State private var lexiconPopoverUUID: String?
+    @AppStorage("deepDiveMapShowsQuestions") private var mapShowsQuestions = true
+    @State private var hasAppeared = false
+    @State private var mastheadVisible = true
+    @State private var scrollHomeTick = 0
+    @State private var questionsExpanded = false
+    @State private var inboxExpanded = false
 
     init(atom: Atom, onClose: @escaping () -> Void) {
         self.atom = atom
@@ -28,17 +34,28 @@ struct DeepDiveOverviewView: View {
 
     var body: some View {
         ZStack {
-            CosmoColors.softWhite
+            DS.bg
                 .ignoresSafeArea()
-            VStack(spacing: 0) {
-                header
-                tabBar
-                Divider()
-                    .background(DS.borderSubtle)
-                tabContent
-            }
+            tabContent
         }
-        .task { await viewModel.load() }
+        .overlay(alignment: .top) { studyBar }
+        .overlay(alignment: .bottomTrailing) {
+            // The thinkspace's mode switcher lives here too — Canvas, Library,
+            // and Deep Dive stay siblings of one place.
+            StudyThinkspaceModeSwitcher(
+                thinkspaceUUID: viewModel.atom.deepDiveMetadata?.primaryThinkspaceUUID
+                    ?? viewModel.atom.deepDiveMetadata?.parentThinkspaceUUIDs?.first
+            )
+            .padding(.trailing, 20)
+            .padding(.bottom, 20)
+        }
+        .task {
+            await viewModel.load()
+            // One-frame rule: flip the cascade flag after data lands so the
+            // dossier assembles on arrival instead of mounting pre-visible.
+            try? await Task.sleep(for: .milliseconds(16))
+            hasAppeared = true
+        }
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Inquiry.sessionEnded)) { _ in
             Task { await viewModel.load() }
         }
@@ -82,75 +99,28 @@ struct DeepDiveOverviewView: View {
         }
     }
 
-    // MARK: - Header
+    // MARK: - Study Bar (the one piece of chrome)
 
-    private var header: some View {
-        HStack(spacing: DS.space12) {
-            Button(action: onClose) {
-                HStack(spacing: 4) {
-                    Image(systemName: "chevron.left")
-                    Text("Back")
-                }
-                .font(CosmoTypography.label)
-                .foregroundStyle(CosmoColors.textSecondary)
-                .padding(.horizontal, DS.space10)
-                .padding(.vertical, 6)
-                .background(DS.surface, in: Capsule())
-            }
-            .buttonStyle(.plain)
-            .keyboardShortcut(.escape)
-
-            Spacer()
-
-            Button(action: { startInquiry() }) {
-                HStack(spacing: DS.space6) {
-                    Image(systemName: "rectangle.split.3x1")
-                        .font(.system(size: 11, weight: .semibold))
-                    Text("Start Inquiry")
-                        .font(CosmoTypography.label)
-                }
-                .padding(.horizontal, DS.space12)
-                .padding(.vertical, 7)
-                .background(DS.accent, in: Capsule())
-                .foregroundStyle(DS.textOnAccent)
-            }
-            .buttonStyle(.plain)
-            .keyboardShortcut("i", modifiers: [.command, .shift])
+    private var studyBar: some View {
+        DeepDiveStudyBar(
+            title: viewModel.atom.title ?? "Deep Dive",
+            maturityLabel: (viewModel.atom.deepDiveMetadata?.maturity ?? .spark).displayName,
+            selectedTab: $selectedTab,
+            showsTitle: selectedTab != .overview || !mastheadVisible,
+            recede: selectedTab == .overview && !mastheadVisible,
+            mapShowsQuestions: $mapShowsQuestions,
+            onTitleTap: { scrollHomeTick += 1 },
+            onStartInquiry: { startInquiry() }
+        )
+        .background {
+            // Esc retraces the trail (routed through onClose → trailStepBack).
+            Button("", action: onClose)
+                .keyboardShortcut(.escape, modifiers: [])
+                .buttonStyle(.plain)
+                .opacity(0)
+                .frame(width: 0, height: 0)
+                .accessibilityHidden(true)
         }
-        .padding(.horizontal, DS.space24)
-        .padding(.top, DS.space20)
-        .padding(.bottom, DS.space12)
-    }
-
-    // MARK: - Tab Bar
-
-    private var tabBar: some View {
-        HStack(spacing: DS.space24) {
-            ForEach(DeepDiveOverviewTab.allCases, id: \.self) { tab in
-                tabButton(tab)
-            }
-            Spacer()
-        }
-        .padding(.horizontal, DS.space24)
-        .padding(.bottom, DS.space10)
-    }
-
-    @ViewBuilder
-    private func tabButton(_ tab: DeepDiveOverviewTab) -> some View {
-        let isActive = selectedTab == tab
-        Button {
-            withAnimation(.easeOut(duration: 0.15)) { selectedTab = tab }
-        } label: {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(tab.title)
-                    .font(CosmoTypography.label)
-                    .foregroundStyle(isActive ? CosmoColors.textPrimary : CosmoColors.textSecondary)
-                Rectangle()
-                    .fill(isActive ? DS.accent : Color.clear)
-                    .frame(height: 1.5)
-            }
-        }
-        .buttonStyle(.plain)
     }
 
     // MARK: - Tab Content
@@ -159,32 +129,102 @@ struct DeepDiveOverviewView: View {
     private var tabContent: some View {
         switch selectedTab {
         case .overview: overviewTab
-        case .research: researchTab
+        case .sessions: sessionsTab
         case .map: mapTab
         }
     }
 
-    // MARK: - Overview Tab
+    // MARK: - Overview: the Dossier
 
     private var overviewTab: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: DS.space24) {
-                titleBlock
-                if shouldShowQuestion { currentQuestionBlock }
-                currentUnderstandingBlock
-                if shouldShowTopicInbox { topicInboxBlock }
-                if shouldShowQuestions { questionsBlock }
-                if shouldShowSources { sourcesBlock }
-                if shouldShowLexicon { lexiconBlock }
-                if shouldShowConnections { connectionsBlock }
-                if shouldShowOutputs { outputsBlock }
-                if shouldShowSessions { sessionsBlock }
-                Spacer(minLength: DS.space40)
+        GeometryReader { proxy in
+            // Wide = room for ghost flank + column + rail (280+680+280 + gaps),
+            // so the reading column can center on the TRUE page axis.
+            let isWide = proxy.size.width >= 1280
+            ScrollViewReader { scrollProxy in
+                ScrollView {
+                    dossierLayout(isWide: isWide)
+                        .padding(.horizontal, DS.space40)
+                        .padding(.top, 76)   // Breathing room under the floating bar
+                        .padding(.bottom, DS.space40)
+                        .frame(maxWidth: .infinity, alignment: .top)
+                }
+                .scrollEdgeEffectStyle(.soft, for: .all)
+                .onScrollGeometryChange(for: Bool.self) { geometry in
+                    geometry.contentOffset.y < 96
+                } action: { _, isAtTop in
+                    mastheadVisible = isAtTop
+                }
+                .onChange(of: scrollHomeTick) {
+                    withAnimation(ProMotionSprings.gentle) {
+                        scrollProxy.scrollTo("dossier-top", anchor: .top)
+                    }
+                }
             }
-            .padding(.horizontal, DS.space40)
-            .padding(.vertical, DS.space24)
-            .frame(maxWidth: 760, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .top)
+        }
+    }
+
+    @ViewBuilder
+    private func dossierLayout(isWide: Bool) -> some View {
+        if isWide {
+            HStack(alignment: .top, spacing: DS.space32) {
+                // Ghost flank mirrors the rail's width so the reading column
+                // sits on the page's true center axis, like the other tabs.
+                Color.clear
+                    .frame(width: 280, height: 1)
+                    .accessibilityHidden(true)
+                readingColumn
+                    .frame(maxWidth: 680)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                knowledgeRail
+                    .frame(width: 280)
+            }
+        } else {
+            VStack(alignment: .leading, spacing: DS.space24) {
+                readingColumn
+                knowledgeRail
+            }
+            .frame(maxWidth: 680)
+            .frame(maxWidth: .infinity, alignment: .center)
+        }
+    }
+
+    /// The working column: hero masthead, the understanding you're building,
+    /// the one call to action, then the questions driving the work.
+    private var readingColumn: some View {
+        VStack(alignment: .leading, spacing: DS.space24) {
+            titleBlock
+                .id("dossier-top")
+            currentUnderstandingBlock
+                .studyCascade(hasAppeared, index: 1)
+            continueStrip
+                .studyCascade(hasAppeared, index: 2)
+            questionsSection
+                .studyCascade(hasAppeared, index: 3)
+            if shouldShowTopicInbox {
+                inboxSection
+                    .studyCascade(hasAppeared, index: 4)
+            }
+        }
+    }
+
+    /// The knowledge shelf: what this study has crystallized so far.
+    private var knowledgeRail: some View {
+        VStack(alignment: .leading, spacing: DS.space20) {
+            conceptsSection
+                .studyCascade(hasAppeared, index: 2)
+            if shouldShowLexicon {
+                lexiconSection
+                    .studyCascade(hasAppeared, index: 3)
+            }
+            if shouldShowSources {
+                sourcesSection
+                    .studyCascade(hasAppeared, index: 4)
+            }
+            if shouldShowOutputs {
+                outputsSection
+                    .studyCascade(hasAppeared, index: 5)
+            }
         }
     }
 
@@ -221,23 +261,15 @@ struct DeepDiveOverviewView: View {
         return parts.joined(separator: " · ")
     }
 
-    @ViewBuilder
-    private var currentQuestionBlock: some View {
-        if let q = viewModel.currentQuestionTitle {
-            VStack(alignment: .leading, spacing: DS.space6) {
-                sectionLabel("CURRENT QUESTION")
-                Text(q)
-                    .font(.system(size: 18, weight: .regular, design: .serif).italic())
-                    .foregroundStyle(CosmoColors.textPrimary)
-            }
-        }
-    }
-
+    /// The editorial heart of the dossier: the understanding you're building,
+    /// read as a manuscript. Edit reveals on hover; history stays quiet below.
     private var currentUnderstandingBlock: some View {
         VStack(alignment: .leading, spacing: DS.space10) {
             HStack {
-                sectionLabel("CURRENT UNDERSTANDING")
-                Spacer()
+                StudySectionHeader(
+                    label: "UNDERSTANDING",
+                    count: viewModel.understandingRevisions.count + viewModel.understanding.recentUpdates.count
+                )
                 Button {
                     viewModel.isEditingUnderstanding.toggle()
                 } label: {
@@ -247,6 +279,7 @@ struct DeepDiveOverviewView: View {
                 }
                 .buttonStyle(.plain)
                 .keyboardShortcut("u", modifiers: [.command])
+                .help("Edit understanding (⌘U)")
             }
 
             if viewModel.isEditingUnderstanding {
@@ -264,17 +297,69 @@ struct DeepDiveOverviewView: View {
         }
     }
 
-    @ViewBuilder
-    private var topicInboxBlock: some View {
-        VStack(alignment: .leading, spacing: DS.space10) {
-            sectionLabel("TOPIC INBOX (\(viewModel.topicInboxItems.count))")
-            ForEach(viewModel.topicInboxItems.prefix(5), id: \.id) { item in
+    /// The one call to action on the page: pick the thread back up.
+    private var continueStrip: some View {
+        Button {
+            if let question = viewModel.currentQuestionTitle {
+                launchInquiry(mainQuestionTitle: question)
+            } else {
+                startInquiry()
+            }
+        } label: {
+            HStack(spacing: DS.space12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    if let question = viewModel.currentQuestionTitle {
+                        Text(question)
+                            .font(.system(.body, design: .serif).italic())
+                            .foregroundStyle(CosmoColors.textPrimary)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                        Text("Pick the thread back up")
+                            .font(CosmoTypography.caption)
+                            .foregroundStyle(CosmoColors.textTertiary)
+                    } else {
+                        Text("Ask your first question to open the study.")
+                            .font(.system(.body, design: .serif).italic())
+                            .foregroundStyle(CosmoColors.textSecondary)
+                    }
+                }
+                Spacer(minLength: DS.space12)
+                HStack(spacing: DS.space4) {
+                    Text(viewModel.currentQuestionTitle == nil ? "Start inquiry" : "Continue inquiry")
+                        .font(CosmoTypography.label)
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .accessibilityHidden(true)
+                }
+                .foregroundStyle(DS.accent)
+            }
+            .padding(.horizontal, DS.space16)
+            .padding(.vertical, DS.space12)
+            .background(DS.accentSoft.opacity(0.55), in: .rect(cornerRadius: 14))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(DS.accent.opacity(0.22), lineWidth: 1)
+            )
+            .contentShape(.rect(cornerRadius: 14))
+        }
+        .buttonStyle(.plain)
+        .help("Resume the inquiry on this question")
+        .accessibilityLabel(viewModel.currentQuestionTitle.map { "Continue inquiry: \($0)" } ?? "Start your first inquiry")
+    }
+
+    private var inboxSection: some View {
+        StudySection(label: "INBOX", count: viewModel.topicInboxItems.count) {
+            let visible = inboxExpanded ? viewModel.topicInboxItems : Array(viewModel.topicInboxItems.prefix(4))
+            ForEach(Array(visible.enumerated()), id: \.element.id) { index, item in
+                if index > 0 { StudyPaneDivider() }
                 topicInboxRow(item)
             }
-            if viewModel.topicInboxItems.count > 5 {
-                Text("+ \(viewModel.topicInboxItems.count - 5) more")
-                    .font(CosmoTypography.caption)
-                    .foregroundStyle(CosmoColors.textTertiary)
+            if viewModel.topicInboxItems.count > 4 {
+                StudyPaneDivider()
+                StudyOverflowRow(
+                    hiddenCount: viewModel.topicInboxItems.count - 4,
+                    isExpanded: $inboxExpanded
+                )
             }
         }
     }
@@ -285,6 +370,7 @@ struct DeepDiveOverviewView: View {
                 .fill(DS.accent.opacity(0.6))
                 .frame(width: 6, height: 6)
                 .padding(.top, 7)
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(String(item.rawText.prefix(120)))
                     .font(CosmoTypography.body)
@@ -296,20 +382,27 @@ struct DeepDiveOverviewView: View {
                         .foregroundStyle(CosmoColors.textTertiary)
                 }
             }
+            Spacer(minLength: 0)
         }
+        .padding(.horizontal, DS.space12)
+        .padding(.vertical, DS.space8)
     }
 
-    @ViewBuilder
-    private var questionsBlock: some View {
+    private var questionsSection: some View {
         let deduped = viewModel.dedupedQuestions
-        sectionContainer(title: "QUESTIONS (\(deduped.count))") {
-            ForEach(deduped.prefix(8), id: \.uuid) { q in
-                questionRow(q)
-            }
+        let visible = questionsExpanded ? deduped : Array(deduped.prefix(6))
+        return StudySection(label: "QUESTIONS", count: deduped.count) {
             if deduped.isEmpty {
-                Text("No questions yet — start an inquiry to spark some.")
-                    .font(CosmoTypography.caption)
-                    .foregroundStyle(CosmoColors.textTertiary)
+                StudyTeachingRow(text: "Start an inquiry to spark your first question.")
+            } else {
+                ForEach(Array(visible.enumerated()), id: \.element.uuid) { index, q in
+                    if index > 0 { StudyPaneDivider() }
+                    questionRow(q)
+                }
+                if deduped.count > 6 {
+                    StudyPaneDivider()
+                    StudyOverflowRow(hiddenCount: deduped.count - 6, isExpanded: $questionsExpanded)
+                }
             }
         }
     }
@@ -317,58 +410,71 @@ struct DeepDiveOverviewView: View {
     private func questionRow(_ q: Atom) -> some View {
         let status = q.questionMetadata?.status ?? .open
         let counts = viewModel.questionCounts(q)
-        return Button {
-            launchInquiry(mainQuestionTitle: q.title, rootQuestionUUID: q.uuid)
-        } label: {
-            HStack(spacing: DS.space8) {
+        return StudyPaneRow(
+            leading: {
                 Circle()
                     .fill(statusColor(status))
                     .frame(width: 7, height: 7)
-                Text(q.title ?? "Untitled question")
-                    .font(CosmoTypography.body)
-                    .foregroundStyle(CosmoColors.textPrimary)
-                    .lineLimit(1)
-                Spacer()
+                    .accessibilityHidden(true)
+            },
+            title: q.title ?? "Untitled question",
+            trailing: {
                 if counts.extracts > 0 {
                     Text("\(counts.extracts) notes")
                         .font(CosmoTypography.caption)
+                        .monospacedDigit()
                         .foregroundStyle(CosmoColors.textTertiary)
                 }
                 Text(status.displayName.lowercased())
                     .font(CosmoTypography.caption)
                     .foregroundStyle(CosmoColors.textTertiary)
-                Image(systemName: "chevron.right")
-                    .font(CosmoTypography.caption)
-                    .foregroundStyle(CosmoColors.textTertiary)
-                    .accessibilityHidden(true)
-            }
-            .padding(.vertical, DS.space4)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
+            },
+            action: { launchInquiry(mainQuestionTitle: q.title, rootQuestionUUID: q.uuid) }
+        )
         .accessibilityLabel("Open inquiry for \(q.title ?? "question")")
     }
 
-    @ViewBuilder
-    private var sourcesBlock: some View {
-        sectionContainer(title: "SOURCES (\(viewModel.sources.count))") {
-            ForEach(viewModel.sources.prefix(6), id: \.uuid) { s in
-                Text("· \(s.title ?? "Untitled source")")
-                    .font(CosmoTypography.body)
-                    .foregroundStyle(CosmoColors.textPrimary)
-                    .lineLimit(1)
+    private var sourcesSection: some View {
+        StudySection(label: "SOURCES", count: viewModel.sources.count) {
+            ForEach(Array(viewModel.sources.prefix(6).enumerated()), id: \.element.uuid) { index, source in
+                if index > 0 { StudyPaneDivider() }
+                sourceRow(source)
             }
         }
     }
 
-    @ViewBuilder
-    private var lexiconBlock: some View {
-        sectionContainer(title: "LEXICON (\(viewModel.lexicon.count))") {
+    private func sourceRow(_ source: Atom) -> some View {
+        HStack(spacing: DS.space8) {
+            Image(systemName: "doc.text")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(CosmoColors.textTertiary)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(source.title ?? "Untitled source")
+                    .font(CosmoTypography.bodySmall)
+                    .foregroundStyle(CosmoColors.textPrimary)
+                    .lineLimit(1)
+                if let host = source.researchMetadata?.url.flatMap({ URL(string: $0)?.host }) {
+                    Text(host)
+                        .font(CosmoTypography.caption)
+                        .foregroundStyle(CosmoColors.textTertiary)
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, DS.space12)
+        .padding(.vertical, DS.space8)
+    }
+
+    private var lexiconSection: some View {
+        StudySection(label: "LEXICON", count: viewModel.lexicon.count) {
             FlowLayout(spacing: DS.space8) {
                 ForEach(viewModel.conceptEntries, id: \.lexicon.uuid) { entry in
                     lexiconChip(entry.lexicon, connection: entry.connection)
                 }
             }
+            .padding(DS.space12)
         }
     }
 
@@ -432,172 +538,163 @@ struct DeepDiveOverviewView: View {
         )
     }
 
-    @ViewBuilder
-    private var connectionsBlock: some View {
-        sectionContainer(title: "CONCEPTS (\(viewModel.connections.count))") {
-            ForEach(viewModel.connections.prefix(6), id: \.uuid) { c in
-                Button {
-                    openConceptPage(c)
-                } label: {
-                    HStack(spacing: DS.space8) {
-                        Text("· \(c.title ?? "Untitled concept")")
-                            .font(CosmoTypography.body)
-                            .foregroundStyle(CosmoColors.textPrimary)
-                            .lineLimit(1)
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(CosmoTypography.caption)
-                            .foregroundStyle(CosmoColors.textTertiary)
-                            .accessibilityHidden(true)
-                    }
-                    .padding(.vertical, DS.space4)
-                    .contentShape(Rectangle())
+    private var conceptsSection: some View {
+        StudySection(label: "CONCEPTS", count: viewModel.connections.count) {
+            if viewModel.connections.isEmpty {
+                StudyTeachingRow(text: "Crystallize a session to grow concepts.")
+            } else {
+                ForEach(Array(viewModel.connections.prefix(8).enumerated()), id: \.element.uuid) { index, connection in
+                    if index > 0 { StudyPaneDivider() }
+                    conceptRow(connection)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Open concept page \(c.title ?? "")")
             }
         }
     }
 
-    @ViewBuilder
-    private var outputsBlock: some View {
-        sectionContainer(title: "OUTPUTS (\(viewModel.outputAngles.count))") {
-            ForEach(viewModel.outputAngles, id: \.id) { angle in
-                HStack {
-                    Text("· \(angle.title)")
-                        .font(CosmoTypography.body)
+    private func conceptRow(_ connection: Atom) -> some View {
+        let notes = viewModel.extracts.filter { $0.extractMetadata?.promotedToUUID == connection.uuid }.count
+        return StudyPaneRow(
+            leading: {
+                Image(systemName: "point.3.connected.trianglepath.dotted")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(CosmoMentionColors.connection)
+                    .accessibilityHidden(true)
+            },
+            title: connection.title ?? "Untitled concept",
+            subtitle: notes > 0 ? "\(notes) notes" : nil,
+            trailing: { EmptyView() },
+            action: { openConceptPage(connection) }
+        )
+        .accessibilityLabel("Open concept page \(connection.title ?? "")")
+    }
+
+    private var outputsSection: some View {
+        StudySection(label: "OUTPUTS", count: viewModel.outputAngles.count) {
+            ForEach(Array(viewModel.outputAngles.enumerated()), id: \.element.id) { index, angle in
+                if index > 0 { StudyPaneDivider() }
+                HStack(spacing: DS.space8) {
+                    Text(angle.title)
+                        .font(CosmoTypography.bodySmall)
                         .foregroundStyle(CosmoColors.textPrimary)
-                        .lineLimit(1)
-                    Spacer()
+                        .lineLimit(2)
+                    Spacer(minLength: DS.space8)
                     if let format = angle.format {
                         Text(format)
-                            .font(CosmoTypography.caption)
+                            .font(CosmoTypography.labelSmall)
                             .foregroundStyle(CosmoColors.textTertiary)
+                            .padding(.horizontal, DS.space6)
+                            .padding(.vertical, 2)
+                            .background(DS.surface, in: Capsule())
                     }
                 }
+                .padding(.horizontal, DS.space12)
+                .padding(.vertical, DS.space8)
             }
         }
     }
 
-    @ViewBuilder
-    private var sessionsBlock: some View {
-        sectionContainer(title: "RESEARCH SESSIONS (\(visibleSessions.count))") {
-            ForEach(visibleSessions.prefix(8), id: \.uuid) { session in
-                sessionRow(session)
+    // MARK: - Sessions Tab
+
+    private var sessionsTab: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: DS.space8) {
+                HStack(spacing: DS.space8) {
+                    StudySectionHeader(label: "SESSIONS", count: visibleSessions.count)
+                    Toggle("Show archived", isOn: $showArchivedSessions)
+                        .font(CosmoTypography.caption)
+                        .foregroundStyle(CosmoColors.textSecondary)
+                        .toggleStyle(.checkbox)
+                }
+                StudyPane {
+                    if visibleSessions.isEmpty {
+                        StudyTeachingRow(text: "Start an inquiry to begin your first session.")
+                    } else {
+                        ForEach(Array(visibleSessions.enumerated()), id: \.element.uuid) { index, session in
+                            if index > 0 { StudyPaneDivider() }
+                            sessionRow(session)
+                        }
+                    }
+                }
             }
+            .padding(.horizontal, DS.space40)
+            .padding(.top, 76)
+            .padding(.bottom, DS.space40)
+            .frame(maxWidth: 680, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .top)
         }
+        .scrollEdgeEffectStyle(.soft, for: .all)
     }
 
     private func sessionRow(_ session: Atom) -> some View {
         let meta = session.inquirySessionMetadata
         let status = meta?.status ?? .paused
-        return HStack(spacing: DS.space8) {
-            Circle()
-                .fill(sessionStatusColor(status))
-                .frame(width: 7, height: 7)
-            Text(session.title ?? "Untitled session")
-                .font(CosmoTypography.body)
-                .foregroundStyle(CosmoColors.textPrimary)
-                .lineLimit(1)
-            Spacer()
-            Text(status.rawValue)
-                .font(CosmoTypography.caption)
-                .foregroundStyle(CosmoColors.textTertiary)
-        }
-        .contentShape(Rectangle())
-        .onTapGesture {
-            resumeSession(session)
-        }
-        .contextMenu {
-            sessionContextMenu(session)
-        }
-    }
-
-    // MARK: - Research Tab (placeholder grid of sessions)
-
-    private var researchTab: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: DS.space16) {
-                Text("Inquiry Sessions")
-                    .font(.system(size: 22, weight: .semibold, design: .serif))
-                    .foregroundStyle(CosmoColors.textPrimary)
-                Toggle("Show archived", isOn: $showArchivedSessions)
-                    .font(CosmoTypography.caption)
-                    .foregroundStyle(CosmoColors.textSecondary)
-                    .toggleStyle(.checkbox)
-                if visibleSessions.isEmpty {
-                    Text("No sessions yet. Click Start Inquiry to open the workspace.")
-                        .font(CosmoTypography.body)
-                        .foregroundStyle(CosmoColors.textSecondary)
-                } else {
-                    ForEach(visibleSessions, id: \.uuid) { session in
-                        sessionCard(session)
-                    }
-                }
-            }
-            .padding(.horizontal, DS.space40)
-            .padding(.vertical, DS.space24)
-            .frame(maxWidth: 760, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .top)
-        }
-    }
-
-    private func sessionCard(_ session: Atom) -> some View {
-        let meta = session.inquirySessionMetadata
-        let status = meta?.status ?? .paused
-        return VStack(alignment: .leading, spacing: DS.space8) {
-            HStack {
-                Text(session.title ?? "Untitled session")
-                    .font(CosmoTypography.titleSmall)
-                    .foregroundStyle(CosmoColors.textPrimary)
-                Spacer()
+        let updated = ISO8601.date(from: meta?.lastActiveAt ?? session.updatedAt)
+            .map { RelativeDateTimeFormatter().localizedString(for: $0, relativeTo: Date()) }
+        return StudyPaneRow(
+            leading: {
+                Circle()
+                    .fill(sessionStatusColor(status))
+                    .frame(width: 7, height: 7)
+                    .accessibilityHidden(true)
+            },
+            title: session.title ?? "Untitled session",
+            subtitle: updated,
+            trailing: {
                 Text(status.rawValue)
                     .font(CosmoTypography.caption)
                     .foregroundStyle(sessionStatusColor(status))
-            }
-            if let body = session.body, !body.isEmpty {
-                Text(body)
-                    .font(CosmoTypography.bodySmall)
-                    .foregroundStyle(CosmoColors.textSecondary)
-                    .lineLimit(3)
-            }
-            HStack(spacing: DS.space12) {
-                Button("Resume") { resumeSession(session) }
-                    .buttonStyle(.plain)
-                    .font(CosmoTypography.label)
-                    .foregroundStyle(DS.accent)
-            }
-        }
-        .padding(DS.space16)
-        .background(DS.surface, in: RoundedRectangle(cornerRadius: DS.radiusMedium))
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.radiusMedium)
-                .stroke(DS.borderSubtle, lineWidth: 1)
+            },
+            action: { resumeSession(session) }
         )
-        .onTapGesture { resumeSession(session) }
-        .contextMenu {
-            sessionContextMenu(session)
-        }
+        .contextMenu { sessionContextMenu(session) }
+        .accessibilityLabel("Resume session \(session.title ?? "")")
     }
 
     // MARK: - Map Tab
 
     @ViewBuilder
     private var mapTab: some View {
-        let root = MindMapBuilder.buildDeepDive(
+        let graph = MindMapBuilder.buildDeepDive(
             deepDive: viewModel.atom,
             questions: viewModel.questions,
             connections: viewModel.connections,
-            extracts: viewModel.extracts
+            extracts: viewModel.extracts,
+            includeQuestions: mapShowsQuestions
         )
-        if root.children.isEmpty {
+        if graph.root.children.isEmpty {
             mapEmptyState
         } else {
-            InquiryMindMapView(root: root) { node in
+            InquiryMindMapView(
+                root: graph.root,
+                conceptLinks: graph.conceptLinks,
+                reparentTargets: mapReparentTargets,
+                onReparent: { child, parent in
+                    Task { await reparentConnection(child, under: parent) }
+                }
+            ) { node in
                 handleMapSelection(node)
             }
             .filmGrain()
         }
+    }
+
+    private var mapReparentTargets: [(uuid: String, title: String)] {
+        viewModel.connections.compactMap { connection in
+            guard let title = connection.title, !title.isEmpty else { return nil }
+            return (connection.uuid, title)
+        }
+    }
+
+    /// User-pinned reparent: writes the hierarchy metadata (pinned, so
+    /// crystallization never overrides it) and reloads the map.
+    private func reparentConnection(_ childUUID: String, under parentUUID: String?) async {
+        guard var atom = try? await AtomRepository.shared.fetch(uuid: childUUID) else { return }
+        atom = atom.mergingMetadataKeys(ConnectionHierarchyMetadata(
+            parentConnectionUUID: parentUUID,
+            parentPinnedByUser: true
+        ))
+        _ = try? await AtomRepository.shared.update(atom)
+        await viewModel.load()
     }
 
     private var mapEmptyState: some View {
@@ -606,10 +703,10 @@ struct DeepDiveOverviewView: View {
                 .font(.system(size: 36))
                 .foregroundStyle(DS.accent.opacity(0.5))
                 .accessibilityHidden(true)
-            Text("The map grows with your questions")
+            Text("The map grows as knowledge crystallizes")
                 .font(CosmoTypography.titleSmall)
                 .foregroundStyle(CosmoColors.textPrimary)
-            Text("Start an inquiry — each question becomes a branch, and crystallized concepts become leaves.")
+            Text("Crystallized concepts become branches; questions hang beneath the concept they explore.")
                 .font(CosmoTypography.body)
                 .foregroundStyle(CosmoColors.textSecondary)
                 .multilineTextAlignment(.center)
@@ -624,11 +721,11 @@ struct DeepDiveOverviewView: View {
             guard let uuid = node.atomUUID,
                   let question = viewModel.questions.first(where: { $0.uuid == uuid }) else { return }
             launchInquiry(mainQuestionTitle: question.title, rootQuestionUUID: question.uuid)
-        case .concept:
+        case .coreConcept, .childConcept:
             guard let uuid = node.atomUUID,
                   let connection = viewModel.connections.first(where: { $0.uuid == uuid }) else { return }
             openConceptPage(connection)
-        case .root:
+        case .root, .questionGroup:
             break
         }
     }
@@ -913,12 +1010,19 @@ private struct RootQuestionComposerSheet: View {
 // MARK: - Tabs
 
 enum DeepDiveOverviewTab: CaseIterable {
-    case overview, research, map
+    case overview, sessions, map
     var title: String {
         switch self {
         case .overview: return "Overview"
-        case .research: return "Research"
+        case .sessions: return "Sessions"
         case .map: return "Map"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .overview: return "doc.text"
+        case .sessions: return "rectangle.stack"
+        case .map: return "point.3.connected.trianglepath.dotted"
         }
     }
 }

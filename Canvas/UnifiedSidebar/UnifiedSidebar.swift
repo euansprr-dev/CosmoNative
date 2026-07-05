@@ -320,6 +320,8 @@ struct UnifiedSidebar: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var hoveredFooterItem: String?
+    @State private var showCompanionPicker = false
+    @State private var companionVitality: CompanionVitality = .resting
     @State private var hoveredHeaderItem: String?
     @State private var hoveredContext: SidebarContext?
     @State private var isResizeHandleHovered = false
@@ -339,10 +341,6 @@ struct UnifiedSidebar: View {
 
     private var userFirstName: String {
         NSFullUserName().components(separatedBy: " ").first ?? "User"
-    }
-
-    private var monogram: String {
-        String(userFirstName.prefix(1)).uppercased()
     }
 
     var body: some View {
@@ -485,7 +483,7 @@ struct UnifiedSidebar: View {
                     Label("Open Discover", systemImage: "safari")
                 }
                 Button {
-                    currentDestination = .swipeFile(section: .all)
+                    currentDestination = .swipeFile(section: .home)
                     onNavigate()
                 } label: {
                     Label("Open Swipe File", systemImage: "rectangle.stack")
@@ -607,19 +605,41 @@ struct UnifiedSidebar: View {
                 .padding(.horizontal, outerPadding)
 
             HStack(spacing: 10) {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(DS.accentSoft)
-                    .frame(width: 32, height: 32)
-                    .overlay(
-                        Text(monogram)
-                            .font(.system(size: 13, weight: .semibold, design: .rounded))
-                            .foregroundStyle(DS.accent)
-                    )
+                // The companion IS the profile mark — click to choose another.
+                Button {
+                    showCompanionPicker = true
+                } label: {
+                    HStack(spacing: 10) {
+                        CompanionMark(
+                            companion: CompanionStore.shared.companion,
+                            size: 32,
+                            vitality: companionVitality
+                        )
 
-                Text(userFirstName)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(DS.text)
-                    .lineLimit(1)
+                        Text(userFirstName)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(DS.text)
+                            .lineLimit(1)
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 4)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(hoveredFooterItem == "companion" ? DS.surfaceHover : Color.clear)
+                    )
+                    .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .onHover { hoveredFooterItem = $0 ? "companion" : nil }
+                .help("\(CompanionStore.shared.companion.name) \(CompanionStore.shared.companion.species) — choose your companion")
+                .popover(isPresented: $showCompanionPicker, arrowEdge: .top) {
+                    CompanionPickerPopover()
+                }
+                .accessibilityLabel("Your companion, \(CompanionStore.shared.companion.accessibilityDescription). Choose a companion.")
+                .task {
+                    await CompanionStore.shared.hydrate()
+                    companionVitality = await CompanionVitality.current()
+                }
 
                 Spacer(minLength: 8)
 
@@ -1201,8 +1221,8 @@ private struct SidebarSwipeFileContext: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 SidebarContextLabel(title: "Swipe File")
+                sectionRow(.home, icon: "sparkles", subtitle: "Up next & new saves")
                 sectionRow(.all, icon: "rectangle.stack", subtitle: "Everything saved")
-                sectionRow(.recentlyAdded, icon: "clock.arrow.circlepath", subtitle: "Latest saves")
             }
 
             VStack(alignment: .leading, spacing: 4) {

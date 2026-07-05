@@ -176,6 +176,8 @@ struct SwipeScopeChip: View {
                     Text("\(count)")
                         .font(DS.caption.monospacedDigit())
                         .foregroundStyle(isSelected ? DS.textSecondary : DS.textMuted)
+                        .contentTransition(.numericText())
+                        .animation(ProMotionSprings.gentle, value: count)
                 }
             }
             .padding(.horizontal, 13)

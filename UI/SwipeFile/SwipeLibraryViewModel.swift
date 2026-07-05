@@ -11,8 +11,9 @@ final class SwipeLibraryViewModel {
     private(set) var visibleCardModels: [SwipeCardModel] = []
     private(set) var cardModelsByID: [String: SwipeCardModel] = [:]
     private(set) var visibleItemsIdentity = SwipeLibraryVisibleItemsIdentity(items: [])
-    /// Date-bucketed sections, populated only for the Recently Added scope.
-    private(set) var recentBuckets: [SwipeLibraryDateBucket] = []
+    /// Month-rhythm sections for the catalog — populated only when browsing the
+    /// full library newest-first with no query/filters (finding beats rhythm).
+    private(set) var dateSections: [SwipeLibraryDateBucket] = []
     private(set) var shelves: [SwipeLibraryShelf] = []
     private(set) var summary = SwipeLibraryFacetSummary.empty
     private(set) var availableCreators: [String] = []
@@ -207,8 +208,12 @@ final class SwipeLibraryViewModel {
         visibleItems = items
         visibleCardModels = items.map(SwipeCardModel.init(item:))
         cardModelsByID = Dictionary(zip(items.map(\.id), visibleCardModels), uniquingKeysWith: { first, _ in first })
-        recentBuckets = scope == .recentlyAdded
-            ? SwipeLibraryDateBucket.buckets(items: items, models: visibleCardModels)
+        let wantsDateSections = scope == .all
+            && sortMode == .recent
+            && query.isEmpty
+            && !filterState.hasActiveFilters
+        dateSections = wantsDateSections
+            ? SwipeLibraryDateBucket.monthBuckets(items: items, models: visibleCardModels)
             : []
         shelves = SwipeLibraryFiltering.shelves(from: items)
         summary = SwipeLibraryFiltering.facetSummary(allItems: allItems, filteredItems: items)

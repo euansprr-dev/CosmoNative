@@ -71,9 +71,6 @@ struct SwipeQuickLookDiscoverContent: View {
                         .font(DS.caption.weight(.bold))
                     Text("Transcript & Study")
                         .font(DS.callout.weight(.semibold))
-                    Text("⏎")
-                        .font(DS.caption)
-                        .opacity(0.7)
                 }
                 .foregroundStyle(DS.text)
                 .padding(.horizontal, 14)
@@ -87,10 +84,6 @@ struct SwipeQuickLookDiscoverContent: View {
             .help("Save and open in Swipe Study (⏎)")
 
             Spacer()
-
-            Text("← → next · esc close")
-                .font(DS.caption)
-                .foregroundStyle(DS.textMuted)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -163,32 +156,20 @@ private struct SwipeQuickLookDiscoverBody: View {
                 .frame(maxWidth: .infinity, alignment: .topLeading)
                 .background(DS.glassSectionFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         } else {
-            CachedAsyncImage(url: model.mediaURL, stableKey: model.mediaStableKey) { phase in
-                switch phase {
-                case .success(let image):
-                    image.resizable().scaledToFit()
-                case .empty, .failure:
-                    Rectangle()
-                        .fill(DS.glassSectionFill)
-                        .overlay {
-                            Image(systemName: post.platform.iconName)
-                                .font(DS.title2)
-                                .foregroundStyle(DS.textMuted)
-                        }
-                }
-            }
-            .frame(maxWidth: .infinity)
-            .frame(height: 300)
-            .background(Color.black.opacity(0.85))
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            SwipeQuickLookMedia(
+                url: model.mediaURL,
+                stableKey: model.mediaStableKey,
+                aspect: model.aspect,
+                fallbackGlyph: post.platform.iconName
+            )
             .overlay(alignment: .topLeading) {
                 if let outlier = model.outlierLabel {
                     Text(outlier)
-                        .font(DS.caption.weight(.bold))
-                        .foregroundStyle(DS.textOnAccent)
-                        .padding(.horizontal, 9)
-                        .frame(height: 22)
-                        .background(DS.accent, in: Capsule())
+                        .font(DS.caption2.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 7)
+                        .frame(height: 18)
+                        .background(.black.opacity(0.55), in: Capsule())
                         .padding(10)
                 }
             }

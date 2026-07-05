@@ -9,7 +9,7 @@ import SwiftUI
 // MARK: - Layer
 
 /// Renders all flows in canvas space (mounted beside the cluster layer).
-struct FlowLineLayer: View {
+struct FlowLineLayer: View, Equatable {
     let flows: [CanvasFlow]
     let clusters: [CanvasCluster]
     let firingFlowIds: Set<String>
@@ -18,6 +18,15 @@ struct FlowLineLayer: View {
     let onMoveFlowEnd: (String, CGPoint) -> Void
     let onAcceptProposal: (CanvasFlow) -> Void
     let onDiscardProposal: (CanvasFlow) -> Void
+
+    /// Used via `.equatable()`: the action closures are recreated on every
+    /// parent body evaluation, so equality compares render inputs only.
+    static func == (lhs: FlowLineLayer, rhs: FlowLineLayer) -> Bool {
+        lhs.flows == rhs.flows &&
+            lhs.clusters == rhs.clusters &&
+            lhs.firingFlowIds == rhs.firingFlowIds &&
+            lhs.runningFlowIds == rhs.runningFlowIds
+    }
 
     var body: some View {
         ZStack {

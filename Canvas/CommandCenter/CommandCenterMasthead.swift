@@ -43,13 +43,20 @@ struct CommandCenterInboxChip: View {
 struct CommandCenterMasthead: View {
 
     @ObservedObject var viewModel: CommandCenterDashboardViewModel
+    @Environment(\.isPaneContext) private var isPaneContext
 
     var body: some View {
-        if viewModel.viewMode == .upcoming {
-            upcomingMasthead
-        } else {
-            standardMasthead
+        Group {
+            if viewModel.viewMode == .upcoming {
+                upcomingMasthead
+            } else {
+                standardMasthead
+            }
         }
+        // The dashboard pads DS.space24 at the top; top up to the shared
+        // clearance so titles sit clear of the floating trail chrome.
+        // Panes have no trail chrome, so they keep the tighter spacing.
+        .padding(.top, isPaneContext ? 0 : DS.navChromeClearance - DS.space24)
     }
 
     private var standardMasthead: some View {

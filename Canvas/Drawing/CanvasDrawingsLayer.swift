@@ -6,7 +6,7 @@ import SwiftUI
 import AppKit
 
 struct CanvasDrawingsLayer: View {
-    @ObservedObject var drawingState: DrawingStateManager
+    var drawingState: DrawingStateManager
     let transform: CanvasViewportTransform
     @StateObject private var strokeCache = CanvasDrawingStrokeCache()
 
@@ -1045,7 +1045,7 @@ struct CanvasDrawingsLayer: View {
 
 struct DrawingTextEditor: View {
     let drawingId: String
-    @ObservedObject var drawingState: DrawingStateManager
+    var drawingState: DrawingStateManager
     let textWeight: DrawingTextWeight
     let resolvedStrokeColor: Color
     var scaledFontSize: CGFloat? = nil

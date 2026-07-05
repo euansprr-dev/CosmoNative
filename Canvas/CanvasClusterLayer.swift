@@ -5,7 +5,7 @@
 import SwiftUI
 
 @MainActor
-struct CanvasClusterLayer: View {
+struct CanvasClusterLayer: View, @preconcurrency Equatable {
 
     // MARK: - Parameters
 
@@ -15,7 +15,10 @@ struct CanvasClusterLayer: View {
     var dropTargetClusterId: UUID?
     var selectedClusterId: UUID?
     var resizingClusterId: UUID?
-    var clusterDragOffset: CGSize?
+    /// Live drag offsets are read per-cluster inside a tiny host view so a
+    /// cluster-drag frame moves only the dragged zone — never re-evaluating
+    /// this layer's body. Optional: pane canvases render without drags.
+    var interaction: CanvasInteractionState?
     var onRenameCluster: ((UUID, String) -> Void)?
     var onRemoveCluster: ((UUID) -> Void)?
     var onSelectCluster: ((UUID?) -> Void)?
@@ -35,6 +38,25 @@ struct CanvasClusterLayer: View {
     var onMagnifyEnd: ((CGFloat) -> Void)?
     var expandedBlockUUIDs: [UUID: String] = [:]
 
+    // MARK: - Equatable boundary
+
+    /// Used via `.equatable()` at the call site: the ~20 action closures are
+    /// recreated on every parent body evaluation and would defeat SwiftUI's
+    /// implicit diffing, so equality compares only the render inputs. When
+    /// they match, the entire cluster subtree (glass materials, grid/list/
+    /// board member content) is skipped.
+    static func == (lhs: CanvasClusterLayer, rhs: CanvasClusterLayer) -> Bool {
+        // interaction is a shared reference read via observation inside the
+        // per-cluster drag host; it never participates in parent diffing.
+        lhs.clusters == rhs.clusters &&
+            lhs.blocks == rhs.blocks &&
+            lhs.effectiveScale == rhs.effectiveScale &&
+            lhs.dropTargetClusterId == rhs.dropTargetClusterId &&
+            lhs.selectedClusterId == rhs.selectedClusterId &&
+            lhs.resizingClusterId == rhs.resizingClusterId &&
+            lhs.expandedBlockUUIDs == rhs.expandedBlockUUIDs
+    }
+
     // MARK: - State
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -50,7 +72,12 @@ struct CanvasClusterLayer: View {
     var body: some View {
         ZStack {
             ForEach(clusters) { cluster in
-                clusterZone(cluster)
+                // The drag host applies the live drag offset by reading the
+                // interaction state in its own tiny body — drag frames move
+                // the dragged zone without re-entering this layer's body.
+                ClusterDragOffsetHost(interaction: interaction, clusterId: cluster.id) {
+                    clusterZone(cluster)
+                }
             }
             // Cluster inspector panel moved to CanvasView unified top-right slot
         }
@@ -74,7 +101,6 @@ struct CanvasClusterLayer: View {
         let isClusterViewDropTarget = clusterViewPreview != nil
         let isDropTarget = dropTargetClusterId == cluster.id || isClusterViewDropTarget
         let clusterIsResizing = resizingClusterId == cluster.id || localResizingClusterId == cluster.id
-        let dragOffset = draggingCluster(cluster.id) ? (clusterDragOffset ?? .zero) : .zero
 
         ZStack {
             // Native glass base. Keep the cluster body neutral so blocks and grid
@@ -220,7 +246,6 @@ struct CanvasClusterLayer: View {
             hoveredClusterID = hovered ? cluster.id : nil
         }
         .position(x: rect.midX, y: rect.midY)
-        .offset(x: dragOffset.width, y: dragOffset.height)
         .transaction { tx in
             if clusterIsResizing || draggingCluster(cluster.id) {
                 tx.animation = nil
@@ -264,7 +289,7 @@ struct CanvasClusterLayer: View {
     }
 
     private func draggingCluster(_ clusterId: UUID) -> Bool {
-        selectedClusterId == clusterId && clusterDragOffset != nil
+        interaction?.draggingClusterId == clusterId
     }
 
     private func clusterSurfaceFill(cluster: CanvasCluster, isDropTarget: Bool, isZone: Bool) -> Color {
@@ -418,6 +443,10 @@ struct CanvasClusterLayer: View {
         } else {
             let contentWidth = max(clusterWidth - 4, 120)
             let contentHeight = max(clusterHeight - 8, 120)
+            // Member-scoped: each content view receives only its own members
+            // so an edit to any other block on the canvas no longer re-diffs
+            // every cluster's grid/list/board subtree.
+            let memberBlocks = memberBlocks(for: cluster)
 
             Group {
                 switch cluster.viewMode {
@@ -427,7 +456,7 @@ struct CanvasClusterLayer: View {
                     ClusterListContent(
                         cluster: cluster,
                         clusterColor: cluster.color,
-                        blocks: blocks,
+                        blocks: memberBlocks,
                         isDropTargeted: isDropTargeted,
                         sortOrder: cluster.sortOrder,
                         expandedBlockUUID: expandedBlockUUIDs[cluster.id],
@@ -445,7 +474,7 @@ struct CanvasClusterLayer: View {
                     ClusterBoardContent(
                         cluster: cluster,
                         clusterColor: cluster.color,
-                        blocks: blocks,
+                        blocks: memberBlocks,
                         highlightedColumnValue: highlightedBoardColumnValue,
                         onOpenFocusMode: { uuid in
                             onOpenFocusMode?(uuid)
@@ -455,7 +484,7 @@ struct CanvasClusterLayer: View {
                     ClusterGridContent(
                         cluster: cluster,
                         clusterColor: cluster.color,
-                        blocks: blocks,
+                        blocks: memberBlocks,
                         isDropTargeted: isDropTargeted,
                         onOpenFocusMode: { uuid in
                             onOpenFocusMode?(uuid)
@@ -602,6 +631,12 @@ struct CanvasClusterLayer: View {
             onRenameCluster?(cluster.id, newName)
         }
         editingClusterID = nil
+    }
+
+    /// The cluster's own member blocks, in canvas order.
+    private func memberBlocks(for cluster: CanvasCluster) -> [CanvasBlock] {
+        let uuids = Set(cluster.blockUUIDs)
+        return blocks.filter { uuids.contains($0.entityUuid) }
     }
 
     // MARK: - Coordinate Conversion
@@ -785,4 +820,22 @@ extension NSCursor {
 
 extension CosmoNotification.Canvas {
     static let createClusterFromSelection = Notification.Name("com.cosmo.canvas.createClusterFromSelection")
+}
+
+// MARK: - Cluster Drag Offset Host
+
+/// Applies the live cluster-drag offset by reading the interaction state in
+/// its own body: drag frames invalidate only the dragged cluster's host (a
+/// compositor translation), while every other cluster reads just the stable
+/// dragged-id field and stays untouched.
+private struct ClusterDragOffsetHost<Content: View>: View {
+    let interaction: CanvasInteractionState?
+    let clusterId: UUID
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        let offset = interaction?.clusterDragOffset(for: clusterId) ?? .zero
+        content
+            .offset(x: offset.width, y: offset.height)
+    }
 }

@@ -30,30 +30,18 @@ enum ConnectionStatus: String {
 
 enum SettingsTab: String, CaseIterable {
     case appearance = "Appearance"
-    case cloudSync = "Cloud Sync"
+    case accountSync = "Account & Sync"
     case connections = "Connections"
-    case profiles = "Profiles"
-    case voice = "Voice"
-    case apiKeys = "API Keys"
-    case cosmoAI = "Cosmo AI"
-    case codex = "Codex"
-    case elements = "Elements"
+    case writingAI = "Writing & AI"
     case shortcuts = "Shortcuts"
-    case about = "About"
 
     var icon: String {
         switch self {
         case .appearance: return "paintbrush.fill"
-        case .cloudSync: return "icloud.fill"
+        case .accountSync: return "icloud.fill"
         case .connections: return "link"
-        case .profiles: return "person.2.fill"
-        case .voice: return "waveform"
-        case .apiKeys: return "key.fill"
-        case .cosmoAI: return "sparkles.rectangle.stack"
-        case .codex: return "atom"
-        case .elements: return "square.stack.3d.up"
+        case .writingAI: return "sparkles.rectangle.stack"
         case .shortcuts: return "keyboard"
-        case .about: return "info.circle"
         }
     }
 }
@@ -63,7 +51,7 @@ enum SettingsTab: String, CaseIterable {
 struct SanctuarySettingsView: View {
     @Environment(\.dismiss) private var dismiss
     var onClose: (() -> Void)? = nil
-    @State private var selectedTab: SettingsTab = .connections
+    @State private var selectedTab: SettingsTab = .appearance
     @State private var hoveredTab: SettingsTab?
 
     // Connections — Health
@@ -202,31 +190,64 @@ struct SanctuarySettingsView: View {
                 switch selectedTab {
                 case .appearance:
                     ThemePickerView()
-                case .cloudSync:
-                    CloudSyncSettingsTab()
+                case .accountSync:
+                    accountSyncTab
                 case .connections:
                     connectionsTab
-                case .profiles:
-                    ProfileManagementTab()
-                case .voice:
-                    voiceTab
-                case .apiKeys:
-                    apiKeysTab
-                case .cosmoAI:
-                    CosmoAISettingsTab()
-                case .codex:
-                    CodexSettingsTab()
-                case .elements:
-                    ElementsSettingsTab()
+                case .writingAI:
+                    WritingAISettingsTab()
                 case .shortcuts:
-                    ShortcutsSettingsTab()
-                case .about:
-                    aboutTab
+                    shortcutsTab
                 }
             }
             .padding(DS.space24)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // MARK: - Account & Sync Tab (cloud + about + export)
+    // ═══════════════════════════════════════════════════════════════
+
+    private var accountSyncTab: some View {
+        VStack(alignment: .leading, spacing: 32) {
+            CloudSyncSettingsTab()
+
+            settingsSection(
+                title: "COMPANION",
+                detail: "Your mark on both devices"
+            ) {
+                CompanionSettingsSection()
+            }
+
+            settingsSection(title: "ABOUT") {
+                aboutInfoCard
+            }
+
+            settingsSection(title: "DATA EXPORT") {
+                dataExportContent
+            }
+
+            Spacer(minLength: 24)
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // MARK: - Shortcuts Tab (reference + voice activation)
+    // ═══════════════════════════════════════════════════════════════
+
+    private var shortcutsTab: some View {
+        VStack(alignment: .leading, spacing: 32) {
+            settingsSection(title: "VOICE ACTIVATION") {
+                VStack(alignment: .leading, spacing: DS.space8) {
+                    voiceKeybindSection
+                    voiceCurrentKeybindDisplay
+                }
+            }
+
+            ShortcutsSettingsTab()
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -235,20 +256,24 @@ struct SanctuarySettingsView: View {
 
     private var connectionsTab: some View {
         VStack(alignment: .leading, spacing: 32) {
-            settingsSection(title: "HEALTH", icon: "heart.fill", color: DS.red) {
+            settingsSection(title: "HEALTH") {
                 healthCard
             }
 
-            settingsSection(title: "SOCIAL PLATFORMS", icon: "globe", color: DS.accent) {
+            settingsSection(title: "SOCIAL PLATFORMS") {
                 socialPlatformsContent
             }
 
-            settingsSection(title: "KNOWLEDGE", icon: "books.vertical.fill", color: DS.entityResearch) {
+            settingsSection(title: "KNOWLEDGE") {
                 readwiseCard
             }
 
-            settingsSection(title: "SCREEN TIME", icon: "hourglass", color: DS.orange) {
+            settingsSection(title: "SCREEN TIME") {
                 comingSoonCard(icon: "hourglass", name: "Screen Time", accentColor: DS.orange)
+            }
+
+            settingsSection(title: "SERVICE KEYS") {
+                serviceKeysContent
             }
 
             Spacer(minLength: 24)
@@ -302,24 +327,6 @@ struct SanctuarySettingsView: View {
     // MARK: - Voice Tab
     // ═══════════════════════════════════════════════════════════════
 
-    private var voiceTab: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            Text("Voice Activation")
-                .font(DS.title2)
-                .foregroundStyle(DS.text)
-
-            Text("Configure how you activate voice commands")
-                .font(DS.navTitle)
-                .foregroundStyle(DS.textMuted)
-
-            voiceKeybindSection
-
-            voiceCurrentKeybindDisplay
-
-            Spacer()
-        }
-    }
-
     private var voiceKeybindSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Activation Keybind")
@@ -366,16 +373,8 @@ struct SanctuarySettingsView: View {
     // MARK: - API Keys Tab
     // ═══════════════════════════════════════════════════════════════
 
-    private var apiKeysTab: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            Text("API Keys")
-                .font(DS.title2)
-                .foregroundStyle(DS.text)
-
-            Text("Configure your API keys for AI features")
-                .font(DS.navTitle)
-                .foregroundStyle(DS.textMuted)
-
+    private var serviceKeysContent: some View {
+        VStack(alignment: .leading, spacing: 8) {
             APIKeyCard(
                 title: "Anthropic Agent LLM Key",
                 subtitle: "Required for Voice Variations and native craft skills",
@@ -439,31 +438,12 @@ struct SanctuarySettingsView: View {
                 instructions: "Use the exact same DISCOVERY_API_KEY value you added to Railway for the cloud agent."
             )
 
-            Spacer()
         }
     }
 
     // ═══════════════════════════════════════════════════════════════
-
+    // MARK: - About components (Account & Sync tab)
     // ═══════════════════════════════════════════════════════════════
-    // MARK: - About Tab
-    // ═══════════════════════════════════════════════════════════════
-
-    private var aboutTab: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            Text("About Cosmo")
-                .font(DS.title2)
-                .foregroundStyle(DS.text)
-
-            aboutInfoCard
-
-            settingsSection(title: "DATA EXPORT", icon: "square.and.arrow.up", color: DS.accent) {
-                dataExportContent
-            }
-
-            Spacer()
-        }
-    }
 
     private var aboutInfoCard: some View {
         VStack(spacing: 16) {
@@ -595,20 +575,11 @@ struct SanctuarySettingsView: View {
     @ViewBuilder
     private func settingsSection<Content: View>(
         title: String,
-        icon: String,
-        color: Color,
+        detail: String? = nil,
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 8) {
-                Image(systemName: icon)
-                    .font(DS.sectionLabel)
-                    .foregroundStyle(color)
-
-                Text(title)
-                    .dsSmallCapsLabel()
-            }
-
+            SettingsSectionHeader(label: title, detail: detail)
             content()
         }
     }

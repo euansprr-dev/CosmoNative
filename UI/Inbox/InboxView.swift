@@ -96,11 +96,11 @@ struct InboxView: View {
                 .frame(height: 0.5)
                 .padding(.top, DS.space4)
         }
-        // Same breathing room as the Command Center masthead — and clear of
-        // the floating sidebar toggle (32pt + 4pt inset) at the window's
-        // top-left when the sidebar is hidden.
+        // Same breathing room as the Command Center masthead — the shared
+        // clearance keeps the title below the floating back/forward trail
+        // chrome and the sidebar toggle at the window's top-left.
         .padding(.horizontal, DS.space32)
-        .padding(.top, DS.space36)
+        .padding(.top, DS.navChromeClearance)
         .padding(.bottom, DS.space10)
     }
 

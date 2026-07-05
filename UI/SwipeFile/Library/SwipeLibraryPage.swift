@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// The shared library surface: All Swipes, Recently Added, and board detail are
-/// the same page with different scopes. Loop: scroll → click (quick look) →
-/// Return (study) → Esc → next.
+/// The shared catalog surface: Library and board detail are the same page with
+/// different scopes — searchable, filterable, complete, inside a measure with
+/// uniform rows. Loop: scroll → click (quick look) → Return (study) → Esc → next.
 struct SwipeLibraryPage: View {
     @Bindable var viewModel: SwipeLibraryViewModel
     let section: SwipeLibrarySectionSelection
@@ -20,6 +20,7 @@ struct SwipeLibraryPage: View {
     @State private var revealDate = Date()
     @State private var pageSize: CGSize = .zero
     @State private var resultsTop: CGFloat = 0
+    @State private var contextPillVisible = false
     @FocusState private var searchFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -69,6 +70,7 @@ struct SwipeLibraryPage: View {
                     viewModel: viewModel,
                     frameStore: frameStore,
                     revealDate: revealDate,
+                    hiddenItemID: isQuickLookOpen ? viewModel.selectedItem?.id : nil,
                     onOpen: { openQuickLook(itemID: $0) },
                     onStudy: { openStudy(itemID: $0) }
                 )
@@ -80,12 +82,31 @@ struct SwipeLibraryPage: View {
             .padding(.top, 36)
             .padding(.bottom, 72)
             .coordinateSpace(name: "swipeLibraryContent")
+            .swipeContentMeasure()
         }
         .scrollPosition($scrollPosition)
         .scrollEdgeEffectStyle(.soft, for: .all)
         .onScrollGeometryChange(for: CGRect.self, of: { CGRect(origin: $0.contentOffset, size: $0.containerSize) }) { _, new in
             scrollMetrics.offsetY = new.origin.y
             scrollMetrics.viewportHeight = new.size.height
+            // Only the threshold crossing touches state — continuous scroll
+            // never invalidates the view tree.
+            let shouldShow = new.origin.y > 88
+            if shouldShow != contextPillVisible {
+                contextPillVisible = shouldShow
+            }
+        }
+        .overlay(alignment: .top) {
+            SwipeContextPill(
+                title: pageTitle,
+                detail: "\(viewModel.summary.filteredCount) swipes",
+                visible: contextPillVisible
+            ) {
+                withAnimation(ProMotionSprings.gentle) {
+                    scrollPosition.scrollTo(edge: .top)
+                }
+            }
+            .padding(.top, DS.space12)
         }
     }
 
@@ -110,6 +131,7 @@ struct SwipeLibraryPage: View {
         return SwipeQuickLook(
             expanded: $quickLookExpanded,
             sourceFrame: quickLookSource,
+            heroModel: viewModel.cardModelsByID[item.id] ?? SwipeCardModel(item: item),
             onRequestClose: closeQuickLook
         ) {
             SwipeQuickLookLibraryContent(
@@ -132,14 +154,19 @@ struct SwipeLibraryPage: View {
         guard let item = viewModel.visibleItems.first(where: { $0.id == itemID }) else { return }
         viewModel.selectedItem = item
         if isQuickLookOpen { return }
-        quickLookSource = frameStore.frames[itemID]
+        // Frames are only recorded by grid cells — in compact mode the stored
+        // frame is a stale grid position, so fall back to the centered fade.
+        quickLookSource = viewModel.displayMode == .grid ? frameStore.frames[itemID] : nil
         isQuickLookOpen = true
     }
 
     private func closeQuickLook() {
         guard isQuickLookOpen else { return }
-        if let id = viewModel.selectedItem?.id, let frame = frameStore.frames[id] {
+        if viewModel.displayMode == .grid,
+           let id = viewModel.selectedItem?.id, let frame = frameStore.frames[id] {
             quickLookSource = frame
+        } else {
+            quickLookSource = nil
         }
         guard !reduceMotion else {
             quickLookExpanded = false
@@ -206,11 +233,16 @@ struct SwipeLibraryPage: View {
         .accessibilityHidden(true)
     }
 
+    /// Grid width under the measure — must mirror the results grid exactly.
+    private var gridAvailableWidth: CGFloat {
+        max(0, min(pageSize.width, 1180) - 96)
+    }
+
     private var columnCount: Int {
         SwipeWaterfallLayout.columnMetrics(
-            availableWidth: max(0, pageSize.width - 96),
-            targetColumnWidth: 252,
-            spacing: 16
+            availableWidth: gridAvailableWidth,
+            targetColumnWidth: 208,
+            spacing: 20
         ).count
     }
 
@@ -257,21 +289,22 @@ struct SwipeLibraryPage: View {
     /// Keeps the keyboard selection on-screen. Skipped for bucketed scopes whose
     /// layout doesn't match the single-grid math.
     private func scrollToSelection(index: Int) {
-        guard isQuickLookOpen == false, viewModel.recentBuckets.isEmpty,
+        guard isQuickLookOpen == false, viewModel.dateSections.isEmpty,
               viewModel.displayMode == .grid else { return }
-        let models = viewModel.visibleCardModels
+        // Poster models — the grid renders posters, so the height math must too.
+        let models = viewModel.visibleCardModels.map { $0.poster() }
         guard index < models.count else { return }
 
         let metrics = SwipeWaterfallLayout.columnMetrics(
-            availableWidth: max(0, pageSize.width - 96),
-            targetColumnWidth: 252,
-            spacing: 16
+            availableWidth: gridAvailableWidth,
+            targetColumnWidth: 208,
+            spacing: 20
         )
         let layout = SwipeWaterfallLayout.compute(
             heights: models.map { $0.height(forWidth: metrics.width) },
             columnCount: metrics.count,
             columnWidth: metrics.width,
-            spacing: 16
+            spacing: 20
         )
         guard index < layout.frames.count else { return }
 

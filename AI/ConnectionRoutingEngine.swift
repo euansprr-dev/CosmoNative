@@ -56,7 +56,8 @@ actor ConnectionRoutingEngine {
                 mergeTargetConnectionUUID: mergeTarget,
                 conceptAliases: assignment.aliases.isEmpty ? nil : assignment.aliases,
                 conceptKey: assignment.conceptKey,
-                relatedConceptNames: assignment.relatedConceptNames.isEmpty ? nil : assignment.relatedConceptNames
+                relatedConceptNames: assignment.relatedConceptNames.isEmpty ? nil : assignment.relatedConceptNames,
+                parentConceptName: assignment.parentConceptName
             ))
         }
         return crossLinked(candidates)

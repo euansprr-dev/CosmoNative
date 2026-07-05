@@ -2,21 +2,23 @@ import SwiftUI
 
 // MARK: - Card surface
 
-/// Card surface for the rebuilt swipe surfaces: warm glass fill, low tint wash,
-/// focus-aware hairline, and ONE static resting shadow. Hover reads through the
-/// border + tint + the caller's 1.01 scale — shadow parameters never animate
-/// (re-blurring hundreds of cards was the old grid's biggest GPU cost).
+/// Card surface for the rebuilt swipe surfaces: warm glass fill, a barely-there
+/// neutral wash, focus-aware hairline, and ONE static resting shadow. Hover reads
+/// through the border + tint + the caller's 1.01 scale — shadow parameters never
+/// animate (re-blurring hundreds of cards was the old grid's biggest GPU cost).
+/// The wash is deliberately neutral for every card: identity colors belong on
+/// identity surfaces (quick look header), never sprayed across a grid.
 struct SwipeCardSurfaceModifier: ViewModifier {
     var isHovered = false
     var isSelected = false
-    var tint: Color = DS.accent
+    var tint: Color = DS.entitySwipe
     var cornerRadius: CGFloat = 14
 
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         let isDark = DS.palette.isDark
         return content
-            .background(tint.opacity(isHovered ? 0.10 : 0.06), in: shape)
+            .background(tint.opacity(isHovered ? 0.07 : 0.04), in: shape)
             .background(DS.glassCardFill, in: shape)
             .clipShape(shape)
             .overlay(
@@ -33,7 +35,7 @@ extension View {
     func swipeCardSurface(
         isHovered: Bool = false,
         isSelected: Bool = false,
-        tint: Color = DS.accent,
+        tint: Color = DS.entitySwipe,
         cornerRadius: CGFloat = 14
     ) -> some View {
         modifier(SwipeCardSurfaceModifier(
@@ -42,6 +44,524 @@ extension View {
             tint: tint,
             cornerRadius: cornerRadius
         ))
+    }
+}
+
+// MARK: - Masthead (the editorial page voice)
+
+/// Page title + a serif marginalia count line — the Today-page masthead grammar.
+/// The detail line is the one deliberate ornament per page; counts tick with
+/// `.numericText()` as filters change instead of re-layouting.
+struct SwipeMasthead: View {
+    let title: String
+    let detail: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(DS.pageTitle)
+                .foregroundStyle(DS.text)
+            Text(detail)
+                .font(DS.dateSerif)
+                .foregroundStyle(DS.giltMuted)
+                .monospacedDigit()
+                .contentTransition(.numericText())
+                .animation(ProMotionSprings.gentle, value: detail)
+        }
+    }
+}
+
+// MARK: - Context pill (orientation never dies)
+
+/// Blurs in at the top when the masthead scrolls away — the large-title→inline
+/// collapse in the swipe surfaces' grammar. Tap scrolls home.
+struct SwipeContextPill: View {
+    let title: String
+    var detail: String?
+    let visible: Bool
+    let onTap: () -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 6) {
+                Text(title)
+                    .font(DS.subheadline.weight(.semibold))
+                    .foregroundStyle(DS.text)
+                if let detail, !detail.isEmpty {
+                    Text(detail)
+                        .font(DS.caption.monospacedDigit())
+                        .foregroundStyle(DS.textMuted)
+                        .contentTransition(.numericText())
+                }
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 30)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .glassEffect(.regular, in: .capsule)
+        .opacity(visible ? 1 : 0)
+        .blur(radius: visible || reduceMotion ? 0 : 8)
+        .offset(y: visible ? 0 : -6)
+        .animation(ProMotionSprings.gentle, value: visible)
+        .allowsHitTesting(visible)
+        .help("Back to top")
+        .accessibilityLabel("\(title). Scrolls back to the top.")
+        .accessibilityHidden(!visible)
+    }
+}
+
+// MARK: - Section header (the one header voice)
+
+/// Small-caps gilt label + live muted monospaced count + hairline rule.
+struct SwipeSectionHeader: View {
+    let label: String
+    let count: Int
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(label)
+                .font(DS.smallCaps)
+                .foregroundStyle(DS.giltMuted)
+            Text("\(count)")
+                .font(DS.caption.monospacedDigit())
+                .foregroundStyle(DS.textMuted)
+                .contentTransition(.numericText())
+            Rectangle()
+                .fill(DS.glassBorder)
+                .frame(height: 0.5)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+// MARK: - Content measure
+
+extension View {
+    /// The catalog measure: swipe page content never runs edge-to-edge on wide
+    /// displays — margins grow with the window, the grid stays a readable column.
+    func swipeContentMeasure() -> some View {
+        frame(maxWidth: 1180, alignment: .leading)
+            .frame(maxWidth: .infinity)
+    }
+}
+
+// MARK: - Shelf (the App Store row)
+
+/// Live shelf scroll geometry, stored outside observation — continuous scrolling
+/// never invalidates the view tree; only the can-page threshold crossings do.
+private final class SwipeShelfScrollMetrics {
+    var rawOffsetX: CGFloat = 0
+    var normalizedOffsetX: CGFloat = 0
+    var viewportWidth: CGFloat = 0
+    var contentWidth: CGFloat = 0
+}
+
+/// The App Store row shell: section-voice header with a docked "See All ›",
+/// horizontal view-aligned scroller whose clip bounds extend past the measure
+/// (shadows and hover lift never get guillotined at the column edge), and bare
+/// paging chevrons that live in the page margins — hover-revealed, washed out
+/// when a direction is unavailable.
+struct SwipeShelfRow<Content: View>: View {
+    let label: String
+    var count: Int?
+    var onSeeAll: (() -> Void)?
+    @ViewBuilder let content: () -> Content
+
+    /// How far the clip boundary extends past the measure column — sized for
+    /// shadows only (radius 10 / y 2 + the 1.01 hover lift), so no readable
+    /// card sliver ever renders into the gutter where the arrows live.
+    private let clipOutset: CGFloat = 14
+    private let verticalOutset: CGFloat = 12
+    /// Arrows sit fully beyond the clip boundary, over clean page background.
+    private var arrowOffset: CGFloat { clipOutset + 4 + arrowWidth }
+    private let arrowWidth: CGFloat = 28
+
+    @State private var scrollPosition = ScrollPosition()
+    @State private var isHovering = false
+    @State private var canPageBack = false
+    @State private var canPageForward = false
+    @State private var metrics = SwipeShelfScrollMetrics()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.space10) {
+            header
+            shelf
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            SwipeSectionHeader(label: label, count: count ?? 0)
+            if let onSeeAll {
+                Button(action: onSeeAll) {
+                    HStack(spacing: 3) {
+                        Text("See All")
+                            .font(DS.caption.weight(.medium))
+                        Image(systemName: "chevron.right")
+                            .font(DS.caption2.weight(.semibold))
+                    }
+                    .foregroundStyle(DS.textSecondary)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("See all")
+                .accessibilityLabel("See all \(label.lowercased())")
+            }
+        }
+    }
+
+    private var shelf: some View {
+        ScrollView(.horizontal) {
+            LazyHStack(alignment: .top, spacing: 14) {
+                content()
+            }
+            .padding(.vertical, verticalOutset)
+            .scrollTargetLayout()
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { metrics.contentWidth = $0 }
+        }
+        .scrollPosition($scrollPosition)
+        .scrollTargetBehavior(.viewAligned)
+        .scrollIndicators(.never)
+        .contentMargins(.horizontal, clipOutset, for: .scrollContent)
+        .onScrollGeometryChange(for: SwipeShelfScrollState.self, of: { geo in
+            SwipeShelfScrollState(
+                rawOffset: geo.contentOffset.x,
+                normalizedOffset: geo.contentOffset.x + geo.contentInsets.leading,
+                viewport: geo.containerSize.width - geo.contentInsets.leading - geo.contentInsets.trailing
+            )
+        }) { _, new in
+            metrics.rawOffsetX = new.rawOffset
+            metrics.normalizedOffsetX = new.normalizedOffset
+            metrics.viewportWidth = new.viewport
+            let back = new.normalizedOffset > 4
+            let forward = new.normalizedOffset + new.viewport < metrics.contentWidth - 4
+            if back != canPageBack { canPageBack = back }
+            if forward != canPageForward { canPageForward = forward }
+        }
+        .padding(.horizontal, -clipOutset)
+        .padding(.vertical, -verticalOutset)
+        .overlay(alignment: .leading) {
+            pagingChevron("chevron.compact.left", canPage: canPageBack) { page(-1) }
+                .offset(x: -arrowOffset)
+        }
+        .overlay(alignment: .trailing) {
+            pagingChevron("chevron.compact.right", canPage: canPageForward) { page(1) }
+                .offset(x: arrowOffset)
+        }
+        .onHover { isHovering = $0 }
+    }
+
+    /// Tall thin chevrons in the margins — the App Store grammar. Washed out
+    /// (never hidden) when the direction is unavailable, invisible until hover.
+    private func pagingChevron(_ icon: String, canPage: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(DS.pageTitle.weight(.regular))
+                .foregroundStyle(DS.textSecondary)
+                .frame(width: arrowWidth, height: 88)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .opacity(isHovering ? (canPage ? 0.9 : 0.22) : 0)
+        .animation(ProMotionSprings.hover, value: isHovering)
+        .animation(ProMotionSprings.hover, value: canPage)
+        .allowsHitTesting(isHovering && canPage)
+        .help(icon.contains("left") ? "Previous" : "Next")
+        .accessibilityLabel(icon.contains("left") ? "Scroll back" : "Scroll forward")
+        .accessibilityHidden(!isHovering)
+    }
+
+    private func page(_ direction: CGFloat) {
+        let step = direction * metrics.viewportWidth * 0.9
+        let maxRaw = metrics.rawOffsetX + (metrics.contentWidth - metrics.normalizedOffsetX - metrics.viewportWidth)
+        let minRaw = metrics.rawOffsetX - metrics.normalizedOffsetX
+        let target = max(minRaw, min(maxRaw, metrics.rawOffsetX + step))
+        withAnimation(ProMotionSprings.focusTransition) {
+            scrollPosition.scrollTo(x: target)
+        }
+    }
+}
+
+private struct SwipeShelfScrollState: Equatable {
+    let rawOffset: CGFloat
+    let normalizedOffset: CGFloat
+    let viewport: CGFloat
+}
+
+/// Card-typed shelf: uniform poster cards whose cells record their frames so
+/// shelf cards open the shared quick look with thumbnail continuity.
+struct SwipeShelf: View {
+    let label: String
+    var count: Int?
+    var onSeeAll: (() -> Void)?
+    let models: [SwipeCardModel]
+    var cardWidth: CGFloat = 200
+    var hiddenItemID: String?
+    var frameStore: SwipeFrameStore?
+    let actions: (SwipeCardModel) -> SwipeCardActions
+
+    var body: some View {
+        SwipeShelfRow(label: label, count: count ?? models.count, onSeeAll: onSeeAll) {
+            ForEach(models) { model in
+                cell(model)
+            }
+        }
+    }
+
+    private func cell(_ model: SwipeCardModel) -> some View {
+        SwipeCard(model: model, width: cardWidth, actions: actions(model))
+            .opacity(hiddenItemID == model.id ? 0 : 1)
+            .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named("swipePage")) }) { frame in
+                frameStore?.frames[model.id] = frame
+            }
+    }
+}
+
+// MARK: - Hero card (the one editorial moment per page)
+
+/// The App Store featured-card grammar: editorial text column beside the media
+/// at its TRUE aspect ratio — a reel is a tall 9:16 panel, never a landscape
+/// crop. The whole card triggers the primary CTA; Preview is the one inner
+/// button and records the media panel's frame so the quick look zooms out of it.
+struct SwipeHeroCard: View {
+    let kicker: String
+    let model: SwipeCardModel
+    let ctaLabel: String
+    var ctaIcon: String = "play.fill"
+    var onPreview: (() -> Void)?
+    var frameStore: SwipeFrameStore?
+    let action: () -> Void
+
+    @State private var isHovered = false
+    @State private var previewHovered = false
+
+    private var isPaper: Bool { model.aspect == .paper }
+    private let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
+    private static let cardHeight: CGFloat = 300
+    private static let inset: CGFloat = 12
+
+    var body: some View {
+        Button(action: action) {
+            HStack(alignment: .center, spacing: DS.space20) {
+                textColumn
+                    .padding(.leading, 24)
+                    .padding(.vertical, 24)
+                Spacer(minLength: DS.space12)
+                mediaPanel
+                    .padding(Self.inset)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(height: Self.cardHeight)
+            .background(DS.entitySwipe.opacity(0.04), in: shape)
+            .background(DS.glassCardFill, in: shape)
+            .clipShape(shape)
+            .overlay(shape.strokeBorder(DS.glassBorder, lineWidth: 0.5))
+            .contentShape(shape)
+        }
+        .buttonStyle(.plain)
+        .shadow(color: .black.opacity(isHovered ? 0.09 : 0.05), radius: isHovered ? 16 : 10, x: 0, y: isHovered ? 5 : 2)
+        .scaleEffect(isHovered ? 1.005 : 1)
+        .animation(ProMotionSprings.hover, value: isHovered)
+        .onHover { isHovered = $0 }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(kicker). \(model.hookText). \(ctaLabel)")
+        .accessibilityAddTraits(.isButton)
+    }
+
+    // MARK: Text column
+
+    private var textColumn: some View {
+        VStack(alignment: .leading, spacing: DS.space10) {
+            Text(kicker)
+                .font(DS.smallCaps)
+                .foregroundStyle(DS.giltMuted)
+            Text(model.hookText)
+                .font(DS.title2.weight(.semibold))
+                .foregroundStyle(DS.text)
+                .lineSpacing(2)
+                .lineLimit(4)
+                .frame(maxWidth: 560, alignment: .leading)
+            metaLine
+            Spacer(minLength: 0)
+            ctaRow
+        }
+        .frame(maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var metaLine: some View {
+        HStack(spacing: 6) {
+            if let glyph = model.platformGlyph {
+                Image(systemName: glyph)
+                    .font(DS.caption2)
+                    .accessibilityHidden(true)
+            }
+            if let creator = model.creatorLine {
+                Text(creator)
+                    .font(DS.caption)
+                    .lineLimit(1)
+            }
+            if let age = model.ageLabel {
+                Text("· \(age)")
+                    .font(DS.caption)
+            }
+        }
+        .foregroundStyle(DS.textMuted)
+    }
+
+    private var ctaRow: some View {
+        HStack(spacing: DS.space8) {
+            // Rendered as a label — the whole card is this button.
+            HStack(spacing: 7) {
+                Image(systemName: ctaIcon)
+                    .font(DS.caption.weight(.bold))
+                Text(ctaLabel)
+                    .font(DS.callout.weight(.semibold))
+            }
+            .foregroundStyle(DS.textOnAccent)
+            .padding(.horizontal, 16)
+            .frame(height: 34)
+            .background(DS.accent, in: Capsule())
+
+            if let onPreview {
+                Button(action: onPreview) {
+                    Text("Preview")
+                        .font(DS.callout.weight(.medium))
+                        .foregroundStyle(previewHovered ? DS.text : DS.textSecondary)
+                        .padding(.horizontal, 14)
+                        .frame(height: 34)
+                        .background(Capsule().fill(previewHovered ? DS.glassInputFillFocused : DS.glassInputFill))
+                        .overlay(Capsule().strokeBorder(DS.glassBorder, lineWidth: 0.5))
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .onHover { value in withAnimation(ProMotionSprings.hover) { previewHovered = value } }
+                .help("Quick look (Space)")
+                .accessibilityLabel("Preview")
+            }
+        }
+    }
+
+    // MARK: Media panel (honest aspect)
+
+    private var panelSize: CGSize {
+        let maxHeight = Self.cardHeight - Self.inset * 2
+        switch model.aspect {
+        case .vertical: return CGSize(width: (maxHeight * 9 / 16).rounded(), height: maxHeight)
+        case .portrait: return CGSize(width: (maxHeight * 4 / 5).rounded(), height: maxHeight)
+        case .wide: return CGSize(width: 380, height: (380.0 * 9 / 16).rounded())
+        case .paper: return CGSize(width: 300, height: maxHeight)
+        }
+    }
+
+    @ViewBuilder
+    private var mediaPanel: some View {
+        let size = panelSize
+        Group {
+            if isPaper {
+                Text(model.paperText ?? model.hookText)
+                    .font(DS.callout)
+                    .foregroundStyle(DS.textSecondary)
+                    .lineSpacing(4)
+                    .padding(16)
+                    .frame(width: size.width, height: size.height, alignment: .topLeading)
+                    .background(DS.glassSectionFill)
+            } else {
+                CachedAsyncImage(url: model.mediaURL, stableKey: model.mediaStableKey) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image.resizable().scaledToFill()
+                    case .empty, .failure:
+                        Rectangle().fill(DS.glassSectionFill)
+                    }
+                }
+                .frame(width: size.width, height: size.height)
+                .clipped()
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named("swipePage")) }) { frame in
+            frameStore?.frames[model.id] = frame
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+// MARK: - Board cover mosaic (shared by the Boards hub and the Home shelf)
+
+struct SwipeBoardMosaic: View {
+    let coverItems: [SwipeCardModel]
+    let icon: String
+    var height: CGFloat = 148
+
+    private let gutter: CGFloat = 2
+
+    private var tileHeight: CGFloat { (height - gutter) / 2 }
+
+    var body: some View {
+        GeometryReader { proxy in
+            let cell = (proxy.size.width - gutter) / 2
+            VStack(spacing: gutter) {
+                HStack(spacing: gutter) {
+                    tile(0, size: cell)
+                    tile(1, size: cell)
+                }
+                HStack(spacing: gutter) {
+                    tile(2, size: cell)
+                    tile(3, size: cell)
+                }
+            }
+        }
+        .frame(height: height)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .accessibilityHidden(true)
+    }
+
+    @ViewBuilder
+    private func tile(_ index: Int, size: CGFloat) -> some View {
+        if index < coverItems.count, coverItems[index].mediaURL != nil || coverItems[index].aspect == .paper {
+            mosaicCell(coverItems[index], size: size)
+        } else {
+            Rectangle()
+                .fill(DS.glassSectionFill)
+                .frame(width: size, height: tileHeight)
+                .overlay {
+                    if index == 0 && coverItems.isEmpty {
+                        Image(systemName: icon)
+                            .font(DS.subheadline)
+                            .foregroundStyle(DS.textMuted)
+                    }
+                }
+        }
+    }
+
+    private func mosaicCell(_ model: SwipeCardModel, size: CGFloat) -> some View {
+        Group {
+            if model.aspect == .paper {
+                Rectangle()
+                    .fill(DS.glassSectionFill)
+                    .overlay {
+                        Text(model.hookText)
+                            .font(DS.caption2)
+                            .foregroundStyle(DS.textMuted)
+                            .lineLimit(3)
+                            .padding(6)
+                    }
+            } else {
+                CachedAsyncImage(url: model.mediaURL, stableKey: model.mediaStableKey) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image.resizable().scaledToFill()
+                    case .empty, .failure:
+                        Rectangle().fill(DS.glassSectionFill)
+                    }
+                }
+            }
+        }
+        .frame(width: size, height: tileHeight)
+        .clipped()
     }
 }
 

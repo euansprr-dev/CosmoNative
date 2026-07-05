@@ -31,7 +31,7 @@ struct CosmoApp: App {
         WindowGroup {
             MainView()
                 .id(themeRefreshID)
-                .preferredColorScheme(ThemeManager.shared.currentTheme.isDark ? .dark : .light)
+                .preferredColorScheme(ThemeManager.shared.isDark ? .dark : .light)
                 .environmentObject(appState)
                 .environmentObject(database)
                 .environmentObject(voiceEngine)
@@ -207,12 +207,12 @@ struct CosmoApp: App {
             forName: CosmoNotification.Inquiry.openDeepDive,
             object: nil,
             queue: .main
-        ) { [weak appState] notification in
+        ) { notification in
             guard let uuid = notification.userInfo?["uuid"] as? String else { return }
             Task { @MainActor in
                 guard let atom = try? await AtomRepository.shared.fetch(uuid: uuid),
                       let id = atom.id else { return }
-                appState?.focusedEntity = EntitySelection(id: id, type: .deepDive)
+                FocusNavigationCoordinator.shared.open(entity: EntitySelection(id: id, type: .deepDive))
             }
         }
 
@@ -376,29 +376,9 @@ class AppState: ObservableObject {
             }
         }
 
-        // Listen for focus mode commands
-        NotificationCenter.default.addObserver(
-            forName: .enterFocusMode,
-            object: nil,
-            queue: .main
-        ) { [weak self] notification in
-            if let type = notification.userInfo?["type"] as? EntityType,
-               let id = notification.userInfo?["id"] as? Int64 {
-                Task { @MainActor in
-                    // Safety net: never enter focus mode with an invalid entity id.
-                    if id > 0 {
-                        self?.focusedEntity = EntitySelection(id: id, type: type)
-                        return
-                    }
-
-                    if let createdId = await Self.createEntityForFocusMode(type: type) {
-                        self?.focusedEntity = EntitySelection(id: createdId, type: type)
-                    } else {
-                        print("⚠️ Could not create entity for focus mode (\(type.rawValue))")
-                    }
-                }
-            }
-        }
+        // NOTE: `.enterFocusMode` is handled exclusively by MainView, which
+        // routes it through FocusTransitionCoordinator — a second observer
+        // here used to race it with an unanimated `focusedEntity` set.
     }
 
     /// When a block tries to enter focus mode with an invalid id (<=0),
@@ -409,7 +389,7 @@ class AppState: ObservableObject {
     /// migrate_legacy_to_atoms; rows created there were stranded (invisible
     /// everywhere = user content silently lost).
     @MainActor
-    private static func createEntityForFocusMode(type: EntityType) async -> Int64? {
+    static func createEntityForFocusMode(type: EntityType) async -> Int64? {
         let atomType: AtomType?
         let title: String
         switch type {

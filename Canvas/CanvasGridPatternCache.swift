@@ -13,7 +13,9 @@ final class CanvasGridPatternCache {
 
     private var images: [Key: NSImage] = [:]
 
-    func tileMultiplier(for spacing: CGFloat) -> Int {
+    /// Pack several dots into one tile when spacing gets small so the tiled
+    /// image never degenerates into a sub-pixel stamp.
+    nonisolated static func tileMultiplier(for spacing: CGFloat) -> Int {
         switch spacing {
         case ..<14:
             return 5
@@ -26,6 +28,10 @@ final class CanvasGridPatternCache {
         default:
             return 1
         }
+    }
+
+    nonisolated func tileMultiplier(for spacing: CGFloat) -> Int {
+        Self.tileMultiplier(for: spacing)
     }
 
     func image(spacing: CGFloat, dotSize: CGFloat, tileMultiplier: Int) -> NSImage {
@@ -48,14 +54,36 @@ final class CanvasGridPatternCache {
         return image
     }
 
+    /// Draws one tile with dot centers at `(i + 0.5)·spacing` (inset from the
+    /// edges so tiles join without seams), backed at 2x so the pattern stays
+    /// crisp on Retina displays.
     private func buildImage(spacing: CGFloat, dotSize: CGFloat, tileMultiplier: Int) -> NSImage {
         let tileSize = max(spacing * CGFloat(tileMultiplier), 1)
-        let image = NSImage(size: CGSize(width: tileSize, height: tileSize))
-        image.lockFocus()
-        defer { image.unlockFocus() }
+        let pixelScale: CGFloat = 2
+        let pixelSide = max(Int((tileSize * pixelScale).rounded()), 1)
+
+        let image = NSImage(size: NSSize(width: tileSize, height: tileSize))
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: pixelSide,
+            pixelsHigh: pixelSide,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .calibratedRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ) else {
+            return image
+        }
+        rep.size = NSSize(width: tileSize, height: tileSize)
+
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
 
         NSColor.clear.setFill()
-        NSRect(origin: .zero, size: image.size).fill()
+        NSRect(origin: .zero, size: NSSize(width: tileSize, height: tileSize)).fill()
 
         let dotColor = NSColor(
             srgbRed: 216.0 / 255.0,
@@ -68,8 +96,8 @@ final class CanvasGridPatternCache {
         for xIndex in 0..<tileMultiplier {
             for yIndex in 0..<tileMultiplier {
                 let center = CGPoint(
-                    x: CGFloat(xIndex) * spacing,
-                    y: CGFloat(yIndex) * spacing
+                    x: (CGFloat(xIndex) + 0.5) * spacing,
+                    y: (CGFloat(yIndex) + 0.5) * spacing
                 )
                 let rect = CGRect(
                     x: center.x - dotSize / 2,
@@ -81,6 +109,8 @@ final class CanvasGridPatternCache {
             }
         }
 
+        NSGraphicsContext.restoreGraphicsState()
+        image.addRepresentation(rep)
         return image
     }
 }

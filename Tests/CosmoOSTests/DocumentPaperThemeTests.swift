@@ -9,8 +9,8 @@ final class DocumentPaperThemeTests: XCTestCase {
         super.tearDown()
     }
 
-    func testObsidianKeepsDocumentPaperWhiteWithLightThemeInk() {
-        DS.palette = ObsidianPalette()
+    func testGreenhouseNightKeepsDocumentPaperWhiteWithLightThemeInk() {
+        DS.palette = GreenhouseNightPalette()
 
         assertColor(DS.documentSurface, equalsHex: "FFFFFF")
         assertColor(DS.documentText, equalsHex: "1A1A1F")
@@ -18,9 +18,8 @@ final class DocumentPaperThemeTests: XCTestCase {
         assertColor(DS.documentBorderSubtle, equalsHex: "E8E8EC")
     }
 
-    func testBlackMonoKeepsDocumentPaperWhiteWithDarkInk() throws {
-        let theme = try XCTUnwrap(CosmoAppTheme(rawValue: "blackMono"))
-        DS.palette = theme.palette
+    func testBlackMonoKeepsDocumentPaperWhiteWithDarkInk() {
+        DS.palette = BlackMonoPalette()
 
         assertColor(DS.documentSurface, equalsHex: "FFFFFF")
         assertColor(DS.documentText, equalsHex: "1A1A1F")
@@ -28,18 +27,16 @@ final class DocumentPaperThemeTests: XCTestCase {
         assertColor(DS.documentBorderSubtle, equalsHex: "E8E8EC")
     }
 
-    func testBlackMonoCanvasDocumentsUseSoftWhitePaperWithDarkInk() throws {
-        let theme = try XCTUnwrap(CosmoAppTheme(rawValue: "blackMono"))
-        DS.palette = theme.palette
+    func testBlackMonoCanvasDocumentsUseSoftWhitePaperWithDarkInk() {
+        DS.palette = BlackMonoPalette()
 
         assertColor(DS.canvasDocumentSurface, equalsHex: "F7F7F5")
         assertColor(DS.canvasDocumentText, equalsHex: "1A1A1F")
         assertColor(DS.canvasDocumentBorder, equalsHex: "E8E8EC")
     }
 
-    func testBlackMonoFocusEditorUsesDarkModeInkWithoutChangingPaperTokens() throws {
-        let theme = try XCTUnwrap(CosmoAppTheme(rawValue: "blackMono"))
-        DS.palette = theme.palette
+    func testBlackMonoFocusEditorUsesDarkModeInkWithoutChangingPaperTokens() {
+        DS.palette = BlackMonoPalette()
 
         let document = RichDocument(blocks: [
             RichBlock(kind: .paragraph, inlines: [.text("Immersive text")])
@@ -56,9 +53,8 @@ final class DocumentPaperThemeTests: XCTestCase {
         assertColor(DS.documentText, equalsHex: "1A1A1F")
     }
 
-    func testBlackMonoKeepsVellumPaperWhiteWithDarkInk() throws {
-        let theme = try XCTUnwrap(CosmoAppTheme(rawValue: "blackMono"))
-        DS.palette = theme.palette
+    func testBlackMonoKeepsVellumPaperWhiteWithDarkInk() {
+        DS.palette = BlackMonoPalette()
 
         assertColor(DS.vellum, equalsHex: "FFFFFF")
         assertColor(DS.vellumDeep, equalsHex: "F8F7F4")
@@ -69,7 +65,7 @@ final class DocumentPaperThemeTests: XCTestCase {
     }
 
     func testDarkThemesKeepVellumConnectionSurfacesLight() {
-        DS.palette = MidnightStudyPalette()
+        DS.palette = GreenhouseNightPalette()
 
         assertColor(DS.vellum, equalsHex: "F3EDE4")
         assertColor(DS.vellumDeep, equalsHex: "EDE5D8")
@@ -78,7 +74,7 @@ final class DocumentPaperThemeTests: XCTestCase {
     }
 
     func testRichDocumentLightModeUsesDocumentInkInDarkTheme() {
-        DS.palette = ObsidianPalette()
+        DS.palette = GreenhouseNightPalette()
         let document = RichDocument(blocks: [
             RichBlock(kind: .paragraph, inlines: [.text("Paper text")])
         ])

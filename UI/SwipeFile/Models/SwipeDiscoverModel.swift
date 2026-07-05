@@ -116,6 +116,34 @@ final class SwipeDiscoverModel {
         posts = cached.posts
         creators = remoteCreatorRecords(creators: cached.creators, posts: cached.posts)
         hasLoaded = true
+        warmThumbnailCache()
+    }
+
+    /// Pins the thumbnails the user is about to see into the disk cache while
+    /// their CDN URLs are still alive — insurance against Instagram URL expiry
+    /// between scrapes. Disk-cached entries return instantly, so re-warming is
+    /// nearly free.
+    private func warmThumbnailCache() {
+        let targets = visiblePosts.prefix(80).compactMap { post -> (URL, String)? in
+            let model = SwipeCardModel(post: post)
+            guard let url = model.mediaURL else { return nil }
+            return (url, ThumbnailCacheService.shared.cacheKey(for: url, stableKey: model.mediaStableKey))
+        }
+        guard !targets.isEmpty else { return }
+
+        Task.detached(priority: .background) {
+            await withTaskGroup(of: Void.self) { group in
+                var iterator = targets.makeIterator()
+                for _ in 0..<4 {
+                    guard let target = iterator.next() else { break }
+                    group.addTask { _ = await ThumbnailCacheService.shared.image(for: target.0, key: target.1) }
+                }
+                while await group.next() != nil {
+                    guard let target = iterator.next() else { continue }
+                    group.addTask { _ = await ThumbnailCacheService.shared.image(for: target.0, key: target.1) }
+                }
+            }
+        }
     }
 
     private func loadRemoteDiscovery(showLoading: Bool) async {
@@ -143,6 +171,7 @@ final class SwipeDiscoverModel {
                 posts = remotePosts
                 creators = remoteCreatorRecords(creators: remoteCreators, posts: remotePosts)
                 try? localCache.save(posts: remotePosts, creators: remoteCreators)
+                warmThumbnailCache()
             } catch {
                 errorMessage = "Cloud posts are still loading: \(error.localizedDescription)"
             }
@@ -509,6 +538,19 @@ extension SwipeDiscoverModel {
 
     func togglePillar(_ pillar: SwipeDiscoverPillar) {
         activePillar = activePillar == pillar ? nil : pillar
+    }
+
+    /// Posts matching one pillar under the current filters — drives the editorial
+    /// shelves without mutating the live query.
+    func posts(for pillar: SwipeDiscoverPillar) -> [SocialPostSnapshot] {
+        var pillarQuery = query
+        pillarQuery.topicTerms = pillar.searchTerms
+        return SocialDiscoveryStore(query: pillarQuery, posts: posts).visiblePosts
+    }
+
+    /// The editorial hero — the strongest outlier in the current feed.
+    var topOutlierPost: SocialPostSnapshot? {
+        visiblePosts.max { ($0.derived.outlierMultiplier ?? 0) < ($1.derived.outlierMultiplier ?? 0) }
     }
 }
 

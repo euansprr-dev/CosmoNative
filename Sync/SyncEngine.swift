@@ -128,6 +128,12 @@ class SyncEngine: ObservableObject {
         // annotations never reach the cloud or the iPhone.
         await backfillCanvasDrawingsIfNeeded()
 
+        // Inbox domain: one-shot enqueue of every capture, lane, and lane
+        // capture created before the Inbox became a synced domain (July 2026)
+        // — without this, the Mac's existing inbox never reaches the cloud or
+        // the iPhone.
+        await backfillInboxDomainIfNeeded()
+
         syncState = .syncing
 
         // 1. Push local changes
@@ -191,6 +197,84 @@ class SyncEngine: ObservableObject {
             }
         } catch {
             PersistenceHealth.note(.syncFailure, context: "SyncEngine.backfillCanvasDrawings", detail: String(describing: error))
+        }
+    }
+
+    // MARK: - Inbox Domain Backfill
+
+    /// One-shot: enqueue every live inbox item, capture lane, and lane capture
+    /// for cloud push. Rows created before the Inbox became a synced domain
+    /// (July 2026) were never change-tracked, so without this they exist only
+    /// in local GRDB and a signed-in iPhone sees an empty inbox. Flag-gated in
+    /// app_flags (survives UserDefaults resets, matches the drawings backfill).
+    private func backfillInboxDomainIfNeeded() async {
+        let flagKey = "inbox_domain_backfill_v1"
+        do {
+            let done = try await database.asyncRead { db in
+                try Row.fetchOne(db, sql: "SELECT value FROM app_flags WHERE key = ?", arguments: [flagKey]) != nil
+            }
+            guard !done else { return }
+
+            let encoder = JSONEncoder()
+            try await database.asyncWrite { db in
+                let now = ISO8601.string(from: Date())
+                var enqueued = 0
+
+                // Skip rows that already have a pending queue entry (a tracked
+                // mutation may have raced this backfill) — queueChange's
+                // uuid+table dedupe, applied here.
+                func enqueue(uuid: String, table: String, localVersion: Int64, json: String) throws {
+                    let pending = try Row.fetchOne(
+                        db,
+                        sql: "SELECT 1 FROM sync_queue WHERE uuid = ? AND table_name = ? AND status = 'pending'",
+                        arguments: [uuid, table]
+                    )
+                    guard pending == nil else { return }
+                    try db.execute(
+                        sql: """
+                        INSERT INTO sync_queue (uuid, table_name, row_id, operation, data, local_version, status)
+                        VALUES (?, ?, NULL, 'INSERT', ?, ?, 'pending')
+                        """,
+                        arguments: [uuid, table, json, localVersion]
+                    )
+                    enqueued += 1
+                }
+
+                // Live rows only: tombstones of never-pushed rows have nothing
+                // to delete in the cloud. updated_at is bumped so other devices'
+                // incremental pull cursors pick the rows up (the reconciliation
+                // precedent), and the refetched models carry it in the payload.
+                for table in ["inbox_items", "capture_destinations", "captured_items"] {
+                    try db.execute(
+                        sql: "UPDATE \(table) SET updated_at = ? WHERE is_deleted = 0",
+                        arguments: [now]
+                    )
+                }
+
+                for item in try InboxItem.fetchAll(db, sql: "SELECT * FROM inbox_items WHERE is_deleted = 0") {
+                    guard let data = try? encoder.encode(item),
+                          let json = String(data: data, encoding: .utf8) else { continue }
+                    try enqueue(uuid: item.uuid, table: "inbox_items", localVersion: item.localVersion, json: json)
+                }
+                for lane in try CaptureDestination.fetchAll(db, sql: "SELECT * FROM capture_destinations WHERE is_deleted = 0") {
+                    guard let data = try? encoder.encode(lane),
+                          let json = String(data: data, encoding: .utf8) else { continue }
+                    try enqueue(uuid: lane.uuid, table: "capture_destinations", localVersion: lane.localVersion, json: json)
+                }
+                for capture in try CapturedItem.fetchAll(db, sql: "SELECT * FROM captured_items WHERE is_deleted = 0") {
+                    guard let data = try? encoder.encode(capture),
+                          let json = String(data: data, encoding: .utf8) else { continue }
+                    try enqueue(uuid: capture.uuid, table: "captured_items", localVersion: capture.localVersion, json: json)
+                }
+
+                try db.execute(
+                    sql: "INSERT OR REPLACE INTO app_flags (key, value, updated_at) VALUES (?, '1', ?)",
+                    arguments: [flagKey, now]
+                )
+                print("📥 Inbox domain backfill enqueued \(enqueued) row(s) for cloud push")
+            }
+        } catch {
+            PersistenceHealth.note(.syncFailure, context: "SyncEngine.backfillInboxDomain", detail: String(describing: error))
         }
     }
 

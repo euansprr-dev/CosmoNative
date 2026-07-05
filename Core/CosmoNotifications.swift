@@ -112,6 +112,9 @@ enum CosmoNotification {
         static let updateInboxBlockPosition = Notification.Name("com.cosmo.canvas.updateInboxBlockPosition")
         static let updateInboxBlockSize = Notification.Name("com.cosmo.canvas.updateInboxBlockSize")
         static let refreshThinkspacePlacements = Notification.Name("com.cosmo.canvas.refreshThinkspacePlacements")
+        /// Switch the mounted canvas between its view modes (canvas/library).
+        /// userInfo: ["mode": ThinkspaceCanvasMode.rawValue]
+        static let setThinkspaceMode = Notification.Name("com.cosmo.canvas.setThinkspaceMode")
     }
 
     // MARK: - Inbox Notifications
@@ -134,6 +137,12 @@ enum CosmoNotification {
         static let openEntity = Notification.Name("com.cosmo.nav.openEntity")
         static let openEntityOnCanvas = Notification.Name("com.cosmo.nav.openEntityOnCanvas")
         static let openBlockInFocusMode = Notification.Name("com.cosmo.nav.openBlockInFocusMode")
+        /// Step back through the navigation trail (Esc/back from study surfaces).
+        static let trailStepBack = Notification.Name("com.cosmo.nav.trailStepBack")
+        /// Step forward through the navigation trail.
+        static let trailStepForward = Notification.Name("com.cosmo.nav.trailStepForward")
+        /// Jump to a trail moment. userInfo: ["momentId": String (UUID)]
+        static let trailJump = Notification.Name("com.cosmo.nav.trailJump")
 
         // Focus mode
         static let enterFocusMode = Notification.Name("com.cosmo.nav.enterFocusMode")
@@ -169,6 +178,11 @@ enum CosmoNotification {
 
         /// Fly the current canvas to a saved Place. userInfo: ["placeUUID": String]
         static let jumpToPlace = Notification.Name("com.cosmo.nav.jumpToPlace")
+
+        /// Show a library folder inside the current thinkspace's library mode
+        /// (posted when a trail jump lands on a folder moment).
+        /// userInfo: ["folderID": UUID] — absent means show the library root.
+        static let showLibraryFolder = Notification.Name("com.cosmo.nav.showLibraryFolder")
 
         // Workbenches
         /// Apply a saved workbench. userInfo: ["uuid": String]

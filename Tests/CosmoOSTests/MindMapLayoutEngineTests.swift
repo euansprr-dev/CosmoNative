@@ -92,9 +92,13 @@ final class MindMapLayoutEngineTests: XCTestCase {
             questions: [q1, q2],
             connections: [],
             extracts: []
-        )
-        XCTAssertEqual(root.children.count, 1)
+        ).root
         XCTAssertEqual(root.kind, .root)
+        // With no concepts, the deduped question lands in ONE open-questions
+        // bucket — never as multiple top-level branches.
+        XCTAssertEqual(root.children.count, 1)
+        XCTAssertEqual(root.children.first?.kind, .questionGroup)
+        XCTAssertEqual(root.children.first?.children.count, 1)
     }
 
     func testSessionTreeBuilderMarksActiveQuestion() {

@@ -37,7 +37,7 @@ struct SwipeCard: View {
             SwipeCardFooter(model: model)
         }
         .frame(width: width, height: model.height(forWidth: width), alignment: .topLeading)
-        .swipeCardSurface(isHovered: isHovered, isSelected: isSelected, tint: model.platformColor ?? DS.entitySwipe)
+        .swipeCardSurface(isHovered: isHovered, isSelected: isSelected)
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .scaleEffect(isHovered ? 1.01 : 1)
         .animation(ProMotionSprings.hover, value: isHovered)
@@ -73,7 +73,6 @@ private struct SwipeCardMedia: View {
         .clipped()
         .overlay(alignment: .bottom) { hoverScrim }
         .overlay(alignment: .topLeading) { outlierBadge }
-        .overlay(alignment: .bottomLeading) { platformGlyph }
         .overlay(alignment: .bottomTrailing) { durationBadge }
         .overlay(alignment: .topTrailing) {
             SwipeCardQuickActions(isVisible: isHovered, actions: actions)
@@ -88,13 +87,9 @@ private struct SwipeCardMedia: View {
             case .empty:
                 Rectangle().fill(DS.glassSectionFill)
             case .failure:
-                Rectangle()
-                    .fill(DS.glassSectionFill)
-                    .overlay {
-                        Image(systemName: model.platformGlyph ?? "photo")
-                            .font(DS.title2)
-                            .foregroundStyle(DS.textMuted)
-                    }
+                // Dead media degrades to content, never a broken-image glyph —
+                // the hook carries the card until a live thumbnail exists.
+                SwipeCardPaperWell(text: model.hookText)
             }
         }
         .frame(width: width, height: mediaHeight)
@@ -112,30 +107,19 @@ private struct SwipeCardMedia: View {
         .allowsHitTesting(false)
     }
 
+    /// Outlier multiplier reads like the duration stamp — quiet metadata on the
+    /// media, never an accent shout (accent is reserved for the live state).
     @ViewBuilder
     private var outlierBadge: some View {
         if let outlier = model.outlierLabel {
             Text(outlier)
-                .font(DS.caption.weight(.bold))
-                .foregroundStyle(DS.textOnAccent)
-                .padding(.horizontal, 9)
-                .frame(height: 22)
-                .background(DS.accent, in: Capsule())
+                .font(DS.caption2.weight(.semibold).monospacedDigit())
+                .foregroundStyle(.white)
+                .padding(.horizontal, 7)
+                .frame(height: 18)
+                .background(.black.opacity(0.55), in: Capsule())
                 .padding(8)
                 .accessibilityLabel("Outlier \(outlier)")
-        }
-    }
-
-    @ViewBuilder
-    private var platformGlyph: some View {
-        if let glyph = model.platformGlyph, model.aspect != .paper {
-            Image(systemName: glyph)
-                .font(DS.caption2.weight(.bold))
-                .foregroundStyle(.white)
-                .frame(width: 20, height: 20)
-                .background(model.platformColor ?? DS.textMuted, in: Circle())
-                .padding(8)
-                .accessibilityHidden(true)
         }
     }
 
@@ -245,7 +229,7 @@ private struct SwipeCardFooter: View {
     let model: SwipeCardModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 4) {
             if model.aspect != .paper {
                 hookLine
             }
@@ -255,11 +239,12 @@ private struct SwipeCardFooter: View {
                     .font(DS.caption.monospacedDigit())
                     .foregroundStyle(DS.textMuted)
                     .lineLimit(1)
+                    .frame(height: 13)
             }
         }
-        .padding(.top, 10)
-        .padding(.horizontal, 12)
-        .padding(.bottom, 11)
+        .padding(.top, 9)
+        .padding(.horizontal, 11)
+        .padding(.bottom, 10)
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .frame(height: model.footerHeight, alignment: .top)
     }
@@ -296,6 +281,12 @@ private struct SwipeCardFooter: View {
                     .frame(width: 6, height: 6)
                     .accessibilityLabel("Unstudied")
             }
+            if let glyph = model.platformGlyph {
+                Image(systemName: glyph)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
+                    .accessibilityHidden(true)
+            }
             if let creator = model.creatorLine {
                 Text(creator)
                     .font(DS.caption)
@@ -314,6 +305,6 @@ private struct SwipeCardFooter: View {
             }
             Spacer(minLength: 0)
         }
-        .frame(height: 16)
+        .frame(height: 15)
     }
 }

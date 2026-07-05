@@ -133,6 +133,9 @@ final class SocialDiscoveryRemoteStore: Sendable {
         let mediaType: String
         let mediaURLs: [MediaRow]
         let thumbnailURL: URL?
+        /// Durable Supabase Storage mirror — absent on worker deployments
+        /// that predate the thumbnail migration.
+        let thumbnailStorageURL: URL?
         let durationSeconds: Int?
         let viewCount: Int?
         let likeCount: Int?
@@ -158,6 +161,7 @@ final class SocialDiscoveryRemoteStore: Sendable {
             case mediaType = "media_type"
             case mediaURLs = "media_urls"
             case thumbnailURL = "thumbnail_url"
+            case thumbnailStorageURL = "thumbnail_storage_url"
             case durationSeconds = "duration_seconds"
             case viewCount = "view_count"
             case likeCount = "like_count"
@@ -484,7 +488,16 @@ private extension SocialDiscoveryRemoteStore.PostRow {
     }
 
     private var mediaAssets: [SocialMediaAsset] {
-        var assets = mediaURLs.compactMap(\.asset)
+        var assets: [SocialMediaAsset] = []
+        // The worker's durable storage mirror leads — scraped CDN URLs expire.
+        if let thumbnailStorageURL {
+            assets.append(SocialMediaAsset(
+                kind: .thumbnail,
+                url: thumbnailStorageURL,
+                duration: durationSeconds.map(TimeInterval.init)
+            ))
+        }
+        assets.append(contentsOf: mediaURLs.compactMap(\.asset))
         if assets.isEmpty, let thumbnailURL {
             assets.append(SocialMediaAsset(kind: .thumbnail, url: thumbnailURL))
         }

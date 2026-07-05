@@ -11,7 +11,7 @@ struct SwipeCardSkeleton: View {
         VStack(alignment: .leading, spacing: 10) {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(DS.glassSectionFill)
-                .frame(height: max(60, height - 78))
+                .frame(height: max(60, height - 74))
             RoundedRectangle(cornerRadius: 4, style: .continuous)
                 .fill(DS.glassSectionFill)
                 .frame(maxWidth: .infinity)
@@ -31,10 +31,11 @@ struct SwipeCardSkeleton: View {
 /// A full skeleton masonry used while a grid loads — same waterfall silhouette,
 /// deterministic heights so it never jumps.
 struct SwipeSkeletonGrid: View {
-    var targetColumnWidth: CGFloat = 252
-    var spacing: CGFloat = 16
+    var targetColumnWidth: CGFloat = 208
+    var spacing: CGFloat = 20
 
-    private static let heights: [CGFloat] = [300, 220, 270, 340, 240, 290, 210, 320, 260, 230]
+    /// Uniform heights — the loading state mirrors the catalog's aligned rows.
+    private static let heights: [CGFloat] = Array(repeating: 330, count: 10)
 
     var body: some View {
         SwipeWaterfallGrid(

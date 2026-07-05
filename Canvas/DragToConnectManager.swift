@@ -4,13 +4,14 @@
 import SwiftUI
 
 @MainActor
-final class DragToConnectManager: ObservableObject {
-    @Published var isActive = false
-    @Published var sourceBlock: CanvasBlock?
-    @Published var sourceCenter: CGPoint = .zero
-    @Published var currentDragPoint: CGPoint = .zero
-    @Published var hoveredTargetBlockId: String?
-    @Published var connectionComplete = false
+@Observable
+final class DragToConnectManager {
+    var isActive = false
+    var sourceBlock: CanvasBlock?
+    var sourceCenter: CGPoint = .zero
+    var currentDragPoint: CGPoint = .zero
+    var hoveredTargetBlockId: String?
+    var connectionComplete = false
 
     /// Begin a connection drag from a source block
     func beginConnection(from block: CanvasBlock, center: CGPoint) {

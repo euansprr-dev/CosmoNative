@@ -36,6 +36,7 @@ actor ConceptResolver {
         var rationale: String
         var confidence: Double
         var relatedConceptNames: [String] = []   // Other pages this one mentions → hyperlinks
+        var parentConceptName: String? = nil     // The ONE broader page this nests under (map hierarchy)
     }
 
     /// Resolves concept assignments for a session's extracts.
@@ -111,6 +112,10 @@ actor ConceptResolver {
     - relatedConcepts: for each assignment, list the other concept pages (from this plan or from EXISTING \
     pages, by name) that this page mentions or depends on. These become hyperlinks between pages — be \
     generous but truthful.
+    - parentConcept: every assignment ALSO names the ONE broader concept page it sits inside, chosen from \
+    this plan, EXISTING pages, or the HOME CONCEPT. This builds the knowledge map's hierarchy: "Flow \
+    state" sits inside "Peak human experience"; "Box breathing" sits inside "Breathwork". Use null ONLY \
+    when the concept is itself a top-level pillar of the Deep Dive. A concept is never its own parent.
     - If an extract is too vague, personal, or session-specific to belong to any durable concept, OMIT it \
     entirely. Do not force assignments.
     - Never invent UUIDs. Only use extract UUIDs and connection UUIDs that appear in the input.
@@ -121,9 +126,9 @@ actor ConceptResolver {
     Extract {"uuid":"e-9","text":"Bhastrika is an energizing pranayama involving forced exhales"}. \
     → {"conceptName":"Pranayama","action":"merge","connectionUUID":"abc-1","extractUUIDs":["e-9"]}
 
-    Example B (create new): No existing pages. Extracts e-1 "Vagal tone improves with slow exhales", \
-    e-2 "The vagus nerve links breath rate to heart rate". \
-    → {"conceptName":"Vagus nerve","action":"create","extractUUIDs":["e-1","e-2"],"relatedConcepts":["Coherent breathing"]}
+    Example B (create new): No existing pages. Deep Dive is "Breathwork". Extracts e-1 "Vagal tone \
+    improves with slow exhales", e-2 "The vagus nerve links breath rate to heart rate". \
+    → {"conceptName":"Vagus nerve","action":"create","extractUUIDs":["e-1","e-2"],"relatedConcepts":["Coherent breathing"],"parentConcept":"Breathwork"}
 
     Example C (multi-concept extract): Extract e-4 "Slow pranayama raises vagal tone within minutes" \
     bridges both → its UUID appears under BOTH "Pranayama" (merge, if a page exists) and "Vagus nerve", \
@@ -148,6 +153,7 @@ actor ConceptResolver {
           "connectionUUID": "<existing page UUID, required when action is merge>",
           "extractUUIDs": ["<uuid>", ...],
           "relatedConcepts": ["<other concept page name>", ...],
+          "parentConcept": "<broader concept page name, or null for a top-level pillar>",
           "rationale": "<one sentence>",
           "confidence": <0.0-1.0>
         }
@@ -222,6 +228,10 @@ actor ConceptResolver {
                 }
             }
 
+            var parentName = (entry["parentConcept"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let candidate = parentName, candidate.isEmpty || Self.conceptKey(candidate) == key {
+                parentName = nil   // A concept is never its own parent.
+            }
             seenKeys.insert(key)
             assignments.append(ConceptAssignment(
                 conceptKey: key,
@@ -233,7 +243,8 @@ actor ConceptResolver {
                 confidence: (entry["confidence"] as? Double) ?? 0.6,
                 relatedConceptNames: ((entry["relatedConcepts"] as? [String]) ?? [])
                     .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                    .filter { !$0.isEmpty && Self.conceptKey($0) != key }
+                    .filter { !$0.isEmpty && Self.conceptKey($0) != key },
+                parentConceptName: parentName
             ))
         }
         return assignments
@@ -320,6 +331,9 @@ actor ConceptResolver {
     nonisolated static func consolidated(_ assignments: [ConceptAssignment]) -> [ConceptAssignment] {
         guard assignments.count > 1 else { return assignments }
         var result = assignments
+        // Folded concept names may still be referenced as parents — remember
+        // where each folded concept went so parent links follow the survivor.
+        var foldedInto: [String: String] = [:]   // folded conceptKey → survivor conceptName
 
         // 1. Near-duplicate fold.
         var didFold = true
@@ -346,6 +360,8 @@ actor ConceptResolver {
                     let knownRelated = Set(kept.relatedConceptNames.map(conceptKey) + [kept.conceptKey])
                     kept.relatedConceptNames += dropped.relatedConceptNames
                         .filter { !knownRelated.contains(conceptKey($0)) }
+                    if kept.parentConceptName == nil { kept.parentConceptName = dropped.parentConceptName }
+                    foldedInto[dropped.conceptKey] = kept.conceptName
                     result[survivorIdx] = kept
                     result.remove(at: otherIdx)
                     didFold = true
@@ -360,6 +376,7 @@ actor ConceptResolver {
         }
         var survivors: [ConceptAssignment] = []
         var mentionNames: [String] = []
+        var singletonHomes: [String: String] = [:]   // folded conceptKey → its extract's UUID
         for assignment in result {
             let isSingletonCreate: Bool
             if case .createNew = assignment.action, assignment.extractUUIDs.count == 1,
@@ -370,15 +387,37 @@ actor ConceptResolver {
             }
             if isSingletonCreate {
                 mentionNames.append(assignment.conceptName)
+                singletonHomes[assignment.conceptKey] = assignment.extractUUIDs.first
             } else {
                 survivors.append(assignment)
             }
         }
-        guard !mentionNames.isEmpty else { return survivors }
+        // A folded singleton's parent-link target is whichever survivor holds
+        // its extract.
+        for (foldedKey, extractUUID) in singletonHomes {
+            if let home = survivors.first(where: { $0.extractUUIDs.contains(extractUUID) }) {
+                foldedInto[foldedKey] = home.conceptName
+            }
+        }
+        if !mentionNames.isEmpty {
+            survivors = survivors.map { assignment in
+                var copy = assignment
+                let known = Set(copy.relatedConceptNames.map(conceptKey) + [copy.conceptKey])
+                copy.relatedConceptNames += mentionNames.filter { !known.contains(conceptKey($0)) }
+                return copy
+            }
+        }
+        // Remap parents that pointed at folded concepts (chase short chains).
+        guard !foldedInto.isEmpty else { return survivors }
         return survivors.map { assignment in
             var copy = assignment
-            let known = Set(copy.relatedConceptNames.map(conceptKey) + [copy.conceptKey])
-            copy.relatedConceptNames += mentionNames.filter { !known.contains(conceptKey($0)) }
+            var hops = 0
+            while let parent = copy.parentConceptName,
+                  let survivorName = foldedInto[conceptKey(parent)],
+                  hops < 5 {
+                copy.parentConceptName = conceptKey(survivorName) == copy.conceptKey ? nil : survivorName
+                hops += 1
+            }
             return copy
         }
     }

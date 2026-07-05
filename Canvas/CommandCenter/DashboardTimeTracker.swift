@@ -19,8 +19,8 @@ struct DashboardTimeTracker: View {
 
     /// Books' arc: just past a half circle, open at the bottom — desktop scale.
     private static let arcSpan = 0.56
-    private static let arcDiameter: CGFloat = 180
-    private static let arcStroke: CGFloat = 8
+    private static let arcDiameter: CGFloat = 208
+    private static let arcStroke: CGFloat = 9
 
     var body: some View {
         HStack(alignment: .center, spacing: DS.space24) {
@@ -54,11 +54,18 @@ struct DashboardTimeTracker: View {
 
     private var arcProgress: Double {
         guard goalMinutes > 0 else { return 0 }
-        return min(1, Double(liveTotalSeconds) / Double(goalMinutes * 60))
+        let raw = min(1, Double(liveTotalSeconds) / Double(goalMinutes * 60))
+        // Once any time is tracked, the sweep never reads as a stray dot —
+        // a 2% floor makes minute one look begun, not smudged.
+        return liveTotalSeconds > 0 ? max(raw, 0.02) : 0
     }
 
     // MARK: - Gauge (arc + numerals)
 
+    /// Geometry rule (learned the hard way): the circle draws in a TRUE
+    /// square frame — a Circle shape inscribes in the smallest dimension, so
+    /// a rectangular frame silently shrinks the arc. The empty open-bottom
+    /// quarter is then cropped off, giving the cluster an honest height.
     private var gauge: some View {
         TimelineView(.periodic(from: .now, by: sessionEngine.isTimerRunning ? 1 : 60)) { _ in
             ZStack {
@@ -70,7 +77,8 @@ struct DashboardTimeTracker: View {
 
                 centerContent
             }
-            .frame(width: Self.arcDiameter, height: Self.arcDiameter * 0.72)
+            .frame(width: Self.arcDiameter, height: Self.arcDiameter)
+            .frame(height: Self.arcDiameter * 0.70, alignment: .top)
         }
     }
 
@@ -79,14 +87,13 @@ struct DashboardTimeTracker: View {
         Circle()
             .trim(from: 0, to: trim)
             .rotation(.degrees(-90 - Self.arcSpan * 360 / 2))
-            .offsetShape(dy: Self.arcDiameter * 0.14)
     }
 
     private var centerContent: some View {
         VStack(spacing: DS.space2) {
             HStack(alignment: .firstTextBaseline, spacing: DS.space4) {
                 Text(formattedLiveTotal)
-                    .font(.system(size: 30, weight: .medium, design: .serif))
+                    .font(.system(size: 36, weight: .medium, design: .serif))
                     .monospacedDigit()
                     .foregroundStyle(DS.text)
                     .contentTransition(.numericText())
@@ -114,12 +121,14 @@ struct DashboardTimeTracker: View {
             .buttonStyle(.plain)
             .help("Open reports")
         }
-        // Hard-cap the column well inside the stroke and shrink before ever
-        // touching it — the text block always keeps air from the arc.
+        // Optical centering: the band only spans the top ~60% of the circle,
+        // so its perceived center sits ABOVE the geometric one — lift the
+        // block to the band's visual midpoint so the arc crowns the numerals
+        // instead of floating far over them.
         .minimumScaleFactor(0.7)
         .allowsTightening(true)
-        .frame(maxWidth: Self.arcDiameter - 64)
-        .offset(y: Self.arcDiameter * 0.10)
+        .frame(maxWidth: Self.arcDiameter - 68)
+        .offset(y: -Self.arcDiameter * 0.12)
     }
 
     private var goalLabel: String {
@@ -388,21 +397,3 @@ struct DashboardTimeTracker: View {
     }
 }
 
-// MARK: - Shape offset helper
-
-private extension Shape {
-    /// Translate a shape vertically inside its frame — pulls the open-bottom
-    /// arc down so its visual weight centers in the band.
-    func offsetShape(dy: CGFloat) -> some Shape {
-        OffsetShape(shape: AnyShape(self), dy: dy)
-    }
-}
-
-private struct OffsetShape: Shape {
-    let shape: AnyShape
-    let dy: CGFloat
-
-    func path(in rect: CGRect) -> Path {
-        shape.path(in: rect).offsetBy(dx: 0, dy: dy)
-    }
-}

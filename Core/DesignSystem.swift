@@ -24,10 +24,18 @@ enum DS {
         palette.name == "Black Mono"
     }
 
+    /// App chrome (command surfaces, focus modes, separators, cluster washes)
+    /// goes dark with ANY dark theme — Black Mono and Greenhouse Night both
+    /// carry full dark chrome token sets. Document paper keeps its own
+    /// register below (white paper in Black Mono, parchment elsewhere).
+    private static var usesDarkChrome: Bool {
+        palette.isDark
+    }
+
     /// Full-screen focus modes in Black Mono should feel like immersive dark
     /// rooms, while document cards and previews keep stable paper styling.
     static var usesImmersiveFocusAppearance: Bool {
-        usesBlackMonoPaper
+        usesDarkChrome
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -59,74 +67,74 @@ enum DS {
     /// Compact command/dashboard chrome fill. Kept separate from document paper so
     /// Black Mono app controls stay dark while notes and cards remain white.
     static var commandChromePanelFill: Color {
-        if usesBlackMonoPaper { return palette.surfaceElevated }
+        if usesDarkChrome { return palette.surfaceElevated }
         return documentVellum.opacity(0.35)
     }
 
     /// Stronger compact command/dashboard chrome fill for nested active states.
     static var commandChromeProminentFill: Color {
-        if usesBlackMonoPaper { return palette.surfaceCard }
+        if usesDarkChrome { return palette.surfaceCard }
         return documentVellum.opacity(0.50)
     }
 
     /// Compact command/dashboard chrome border.
     static var commandChromeBorder: Color {
-        if usesBlackMonoPaper { return palette.border }
+        if usesDarkChrome { return palette.border }
         return documentSepiaSubtle
     }
 
     /// Fine dividers that sit directly on compact command/dashboard chrome.
     static var commandChromeSeparator: Color {
-        if usesBlackMonoPaper { return palette.borderSubtle }
+        if usesDarkChrome { return palette.borderSubtle }
         return documentSepiaSubtle
     }
 
     /// Stronger dividers for compact command/dashboard panel boundaries.
     static var commandChromeSeparatorStrong: Color {
-        if usesBlackMonoPaper { return palette.border }
+        if usesDarkChrome { return palette.border }
         return documentSepiaBorder
     }
 
     /// Stronger compact command/dashboard border.
     static var commandChromeProminentBorder: Color {
-        if usesBlackMonoPaper { return palette.border }
+        if usesDarkChrome { return palette.border }
         return documentSepiaBorder.opacity(0.65)
     }
 
     /// Secondary compact control fill on command/dashboard chrome.
     static var commandChromeControlFill: Color {
-        if usesBlackMonoPaper { return palette.surfaceHover }
+        if usesDarkChrome { return palette.surfaceHover }
         return documentVellumDeep.opacity(0.65)
     }
 
     /// Secondary compact control border on command/dashboard chrome.
     static var commandChromeControlBorder: Color {
-        if usesBlackMonoPaper { return palette.border }
+        if usesDarkChrome { return palette.border }
         return documentSepiaSubtle
     }
 
     /// Primary Command Center text. Black Mono command chrome is dark, while
     /// document paper remains light, so command surfaces cannot reuse ink tokens.
     static var commandCenterTitleText: Color {
-        if usesBlackMonoPaper { return palette.text }
+        if usesDarkChrome { return palette.text }
         return documentInkWash
     }
 
     /// Secondary Command Center text on app chrome.
     static var commandCenterSecondaryText: Color {
-        if usesBlackMonoPaper { return palette.textSecondary }
+        if usesDarkChrome { return palette.textSecondary }
         return documentInkFaded
     }
 
     /// Muted Command Center metadata text on app chrome.
     static var commandCenterMutedText: Color {
-        if usesBlackMonoPaper { return palette.textMuted }
+        if usesDarkChrome { return palette.textMuted }
         return documentInkFaded
     }
 
     /// Command Center ornamental text and icon color.
     static var commandCenterOrnamentText: Color {
-        if usesBlackMonoPaper { return palette.textMuted }
+        if usesDarkChrome { return palette.textMuted }
         return documentGiltMuted
     }
 
@@ -143,7 +151,7 @@ enum DS {
 
     /// Selected row fill for Command Center navigation.
     static var commandCenterSelectedRowFill: Color {
-        if usesBlackMonoPaper { return commandChromeProminentFill }
+        if usesDarkChrome { return commandChromeProminentFill }
         return documentVellum
     }
 
@@ -151,7 +159,7 @@ enum DS {
     /// Native glass can brighten when the window resigns key status; this keeps
     /// the rail visually anchored without changing light or paper-led themes.
     static var commandCenterRailStabilizingFill: Color {
-        if usesBlackMonoPaper { return palette.surfaceElevated.opacity(0.94) }
+        if usesDarkChrome { return palette.surfaceElevated.opacity(0.94) }
         return Color.clear
     }
 
@@ -161,37 +169,37 @@ enum DS {
     // ═══════════════════════════════════════════════════════════════
 
     static var focusImmersiveBackground: Color {
-        if usesBlackMonoPaper { return palette.bg }
+        if usesDarkChrome { return palette.bg }
         return documentBackground
     }
 
     static var focusImmersiveSurface: Color {
-        if usesBlackMonoPaper { return palette.surfaceElevated }
+        if usesDarkChrome { return palette.surfaceElevated }
         return documentSurface
     }
 
     static var focusImmersiveSurfaceElevated: Color {
-        if usesBlackMonoPaper { return palette.surfaceCard }
+        if usesDarkChrome { return palette.surfaceCard }
         return documentSurface
     }
 
     static var focusImmersiveText: Color {
-        if usesBlackMonoPaper { return palette.text }
+        if usesDarkChrome { return palette.text }
         return documentText
     }
 
     static var focusImmersiveTextSecondary: Color {
-        if usesBlackMonoPaper { return palette.textSecondary }
+        if usesDarkChrome { return palette.textSecondary }
         return documentTextSecondary
     }
 
     static var focusImmersiveTextMuted: Color {
-        if usesBlackMonoPaper { return palette.textMuted }
+        if usesDarkChrome { return palette.textMuted }
         return documentTextMuted
     }
 
     static var focusImmersiveBorder: Color {
-        if usesBlackMonoPaper { return palette.border }
+        if usesDarkChrome { return palette.border }
         return documentBorder
     }
 
@@ -214,7 +222,7 @@ enum DS {
     /// Canvas document cards stay paper-like in Black Mono, but use a softened
     /// near-white to avoid glowing against the black dotted canvas.
     static var canvasDocumentSurface: Color {
-        if usesBlackMonoPaper { return Color(hex: "F7F7F5") }
+        if usesDarkChrome { return Color(hex: "F7F7F5") }
         return documentSurface
     }
 
@@ -379,14 +387,16 @@ enum DS {
     // Gilt ornaments, vellum surfaces, warm ink, sepia borders
     // ═══════════════════════════════════════════════════════════════
 
-    /// Gold accent for ornamental details — never a fill, never a bar
-    static var gilt: Color { documentGilt }
+    /// Gold accent for ornamental details — never a fill, never a bar.
+    /// On dark chrome the palette speaks (Black Mono neutralizes, Greenhouse
+    /// Night warms); documentGilt stays reserved for gilt ON PAPER.
+    static var gilt: Color { usesDarkChrome ? palette.gilt : documentGilt }
 
     /// Subtle gold wash for premium backgrounds
-    static var giltSoft: Color { documentGiltSoft }
+    static var giltSoft: Color { usesDarkChrome ? palette.giltSoft : documentGiltSoft }
 
     /// Fine lines, filigree strokes, section labels
-    static var giltMuted: Color { documentGiltMuted }
+    static var giltMuted: Color { usesDarkChrome ? palette.giltMuted : documentGiltMuted }
 
     /// Aged paper surface (warmer than surface)
     static var vellum: Color { documentVellum }
@@ -508,7 +518,7 @@ enum DS {
             usesExpandedContent: usesExpandedContent
         )
 
-        if palette.isDark && !usesBlackMonoPaper {
+        if palette.isDark && !usesDarkChrome {
             return Color.black.opacity(opacity)
         }
         return Color.white.opacity(opacity)
@@ -519,7 +529,7 @@ enum DS {
         isUserCreated: Bool,
         usesExpandedContent: Bool
     ) -> Double {
-        if usesBlackMonoPaper {
+        if usesDarkChrome {
             if isDropTarget { return 0.045 }
             if isUserCreated { return usesExpandedContent ? 0.038 : 0.032 }
             return 0.024
@@ -541,7 +551,7 @@ enum DS {
         isUserCreated: Bool,
         usesExpandedContent: Bool
     ) -> Double {
-        if usesBlackMonoPaper {
+        if usesDarkChrome {
             if isDropTarget { return 0.30 }
             if isUserCreated { return usesExpandedContent ? 0.245 : 0.215 }
             return 0.16
@@ -565,7 +575,7 @@ enum DS {
     ) -> Double {
         if isDropTarget { return 0.96 }
         if isSelected { return 0.88 }
-        if usesBlackMonoPaper {
+        if usesDarkChrome {
             return isHovered ? 0.78 : 0.68
         }
         if !palette.isDark {
@@ -737,6 +747,10 @@ enum DS {
     /// Compact title serif — 15pt semibold New York, condensed manuscript title headers
     static let compactTitleSerif = Font.system(size: 15, weight: .semibold, design: .serif)
 
+    /// Crucible masthead — connection page titles, light serif with air
+    /// (paired token in the iOS DS; keep in lockstep)
+    static let crucibleTitle = Font.system(size: 30, weight: .light, design: .serif)
+
     /// Monospace tabular — 28pt ultralight, timer digits
     static let monoTabular = Font.system(size: 28, weight: .ultraLight, design: .monospaced)
 
@@ -840,6 +854,11 @@ enum DS {
 
     /// 48pt — page-level spacing, large gaps
     static let space48: CGFloat = 48
+
+    /// 56pt — top inset for page mastheads on surfaces where the floating
+    /// back/forward trail chrome hovers at the window's top-left (8pt top
+    /// padding + ~32pt capsule). Titles start below it with room to breathe.
+    static let navChromeClearance: CGFloat = 56
 
     // Legacy aliases
     static let sectionSpacing: CGFloat = 36

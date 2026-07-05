@@ -28,7 +28,7 @@ struct SwipeCardModel: Identifiable, Equatable {
     let id: String
     let mediaURL: URL?
     let mediaStableKey: String?
-    let aspect: SwipeCardAspect
+    var aspect: SwipeCardAspect
     let paperText: String?
     let hookText: String
     let creatorLine: String?
@@ -46,8 +46,8 @@ struct SwipeCardModel: Identifiable, Equatable {
 
     // MARK: Height math (single source of truth for the masonry)
 
-    static let verticalHeightCap: CGFloat = 560
-    static let paperWellHeight: CGFloat = 170
+    static let verticalHeightCap: CGFloat = 420
+    static let paperWellHeight: CGFloat = 150
 
     func mediaHeight(forWidth width: CGFloat) -> CGFloat {
         switch aspect {
@@ -59,13 +59,25 @@ struct SwipeCardModel: Identifiable, Equatable {
     }
 
     /// Paper cards carry their text in the well, so the footer is meta-only.
+    /// Heights are the exact sum of the footer's fixed slots — see SwipeCardFooter.
     var footerHeight: CGFloat {
-        if aspect == .paper { return 40 }
-        return metricsLine == nil ? 78 : 98
+        if aspect == .paper { return 34 }
+        return metricsLine == nil ? 74 : 91
     }
 
     func height(forWidth width: CGFloat) -> CGFloat {
         mediaHeight(forWidth: width) + footerHeight
+    }
+
+    /// Uniform-grid variant: every media well becomes 4:5 (center-cropped by the
+    /// card's `scaledToFill`), so rows and footers align — the App Store rhythm.
+    /// Paper posts keep their well; the honest aspect lives in the quick look.
+    func poster() -> SwipeCardModel {
+        var copy = self
+        if copy.aspect != .paper {
+            copy.aspect = .portrait
+        }
+        return copy
     }
 }
 
@@ -114,7 +126,7 @@ extension SwipeCardModel {
             outlierLabel: nil,
             durationLabel: item.duration.map(SwipeFormatting.duration(seconds:)),
             scoreLabel: item.hookScore.map { String(format: "%.1f", $0) },
-            scoreTint: item.hookScore != nil ? item.scoreColor : nil,
+            scoreTint: nil,
             metricsLine: nil,
             ageLabel: ISO8601.date(from: item.createdAt).map { SwipeFormatting.compactAge(from: $0) },
             isUnstudied: !item.isStudied,

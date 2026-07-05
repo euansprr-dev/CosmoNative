@@ -6,7 +6,7 @@ import SwiftUI
 
 enum DashboardReportChrome {
     static var usesDarkMonoChrome: Bool {
-        DS.palette.name == "Black Mono"
+        DS.palette.isDark
     }
 
     static var insetFill: Color {

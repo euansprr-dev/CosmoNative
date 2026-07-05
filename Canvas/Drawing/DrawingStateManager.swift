@@ -12,38 +12,39 @@ enum ShapeResizeCorner: CaseIterable, Hashable {
 }
 
 @MainActor
-final class DrawingStateManager: ObservableObject {
+@Observable
+final class DrawingStateManager {
 
     // MARK: - Tool State
 
-    @Published var toolMode: CanvasToolMode = .select
-    @Published var currentShapeKind: ShapeKind = .rectangle
-    @Published var currentStrokeColor: String = "#1A1A1A"
-    @Published var currentFillColor: String? = nil
-    @Published var currentStrokeWidth: CGFloat = 2.5
-    @Published var currentTextWeight: DrawingTextWeight = .M
-    @Published var currentLassoSubMode: LassoSubMode = .lasso
-    @Published var recentColors: [String] = []
+    var toolMode: CanvasToolMode = .select
+    var currentShapeKind: ShapeKind = .rectangle
+    var currentStrokeColor: String = "#1A1A1A"
+    var currentFillColor: String? = nil
+    var currentStrokeWidth: CGFloat = 2.5
+    var currentTextWeight: DrawingTextWeight = .M
+    var currentLassoSubMode: LassoSubMode = .lasso
+    var recentColors: [String] = []
 
     /// Shift held during shape creation constrains to 1:1 aspect ratio
-    @Published var shiftConstrain: Bool = false
+    var shiftConstrain: Bool = false
 
     // MARK: - Zone Tool State
 
     /// The rectangle being dragged out in canvas coordinates (nil when not dragging)
-    @Published var activeZoneRect: CGRect?
+    var activeZoneRect: CGRect?
     private var zoneStartPoint: CGPoint?
 
     // MARK: - Drawings
 
-    @Published var drawings: [CanvasDrawing] = []
-    @Published var selectedDrawingId: String?
-    @Published var selectedDrawingIds: Set<String> = []
+    var drawings: [CanvasDrawing] = []
+    var selectedDrawingId: String?
+    var selectedDrawingIds: Set<String> = []
 
     // MARK: - Drag-to-Move State
 
-    @Published var draggingDrawingId: String?
-    @Published var drawingDragOffset: CGSize = .zero
+    var draggingDrawingId: String?
+    var drawingDragOffset: CGSize = .zero
 
     // MARK: - Group Shape Resize State
 
@@ -60,10 +61,10 @@ final class DrawingStateManager: ObservableObject {
 
     // MARK: - Active Drawing (in-progress preview)
 
-    @Published var activeDrawing: CanvasDrawing?
-    @Published var activePathPoints: [CGPoint] = []
-    @Published var activePathWidths: [CGFloat] = []
-    @Published var editingTextId: String?
+    var activeDrawing: CanvasDrawing?
+    var activePathPoints: [CGPoint] = []
+    var activePathWidths: [CGFloat] = []
+    var editingTextId: String?
 
     /// Timestamp of last freehand point for velocity calculation
     private var lastPointTimestamp: Date?

@@ -38,9 +38,9 @@ struct GreenhousePalette: ThemePalette {
     let infoSoft = Color(hex: "DBEAFE")
 
     // Akashic Codex — premium material system
-    let gilt = Color(hex: "C4A265")
+    let gilt = Color(hex: "A08540")
     let giltSoft = Color(hex: "F5EDD8")
-    let giltMuted = Color(hex: "D4C9A8")
+    let giltMuted = Color(hex: "8A8578")
     let vellum = Color(hex: "F3EDE4")
     let vellumDeep = Color(hex: "EDE5D8")
     let inkWash = Color(hex: "2C2A26")

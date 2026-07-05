@@ -5,7 +5,7 @@
 import SwiftUI
 
 struct CanvasDrawingGestureLayer: View {
-    @ObservedObject var drawingState: DrawingStateManager
+    var drawingState: DrawingStateManager
     let transform: CanvasViewportTransform
 
     // Block frame tracker for lasso hit testing

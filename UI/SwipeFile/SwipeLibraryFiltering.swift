@@ -20,7 +20,7 @@ enum SwipeLibraryFiltering {
     ) -> [SwipeGalleryItem] {
         let inScope: [SwipeGalleryItem]
         switch scope {
-        case .all, .recentlyAdded, .boards:
+        case .home, .all, .boards:
             inScope = items
         default:
             let predicate = scopePredicate(scope)
@@ -31,7 +31,7 @@ enum SwipeLibraryFiltering {
 
     static func scopePredicate(_ scope: SwipeLibrarySectionSelection) -> (SwipeGalleryItem) -> Bool {
         switch scope {
-        case .all, .recentlyAdded, .boards:
+        case .home, .all, .boards:
             return { _ in true }
         case .highHookScore:
             return { ($0.hookScore ?? 0) >= 7.5 }

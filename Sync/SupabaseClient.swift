@@ -418,6 +418,22 @@ final class SupabaseClient {
         return "\(baseURL)/storage/v1/object/\(bucket)/\(path)"
     }
 
+    // MARK: - Storage fetch authorization
+
+    /// True when `url` points into this Supabase project (storage objects etc.).
+    func isSupabaseHostedURL(_ url: URL) -> Bool {
+        url.absoluteString.hasPrefix(baseURL)
+    }
+
+    /// A GET request carrying the client's auth — storage buckets are private
+    /// and "clients attach their own Bearer when fetching" (see upload above).
+    func authorizedRequest(for url: URL) -> URLRequest {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 45
+        addHeaders(to: &request)
+        return request
+    }
+
     // MARK: - Add Headers
 
     private func addHeaders(to request: inout URLRequest) {

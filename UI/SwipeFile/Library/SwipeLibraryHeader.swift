@@ -11,27 +11,16 @@ struct SwipeLibraryHeader: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: DS.space12) {
-            titleBlock
+            SwipeMasthead(title: title, detail: subtitle)
             Spacer(minLength: DS.space16)
             controls
-        }
-    }
-
-    private var titleBlock: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title)
-                .font(DS.pageTitle)
-                .foregroundStyle(DS.text)
-            Text(subtitle)
-                .font(DS.subheadline.monospacedDigit())
-                .foregroundStyle(DS.textMuted)
         }
     }
 
     private var subtitle: String {
         var parts = ["\(viewModel.summary.totalCount) swipes"]
         if viewModel.summary.unstudiedCount > 0 {
-            parts.append("\(viewModel.summary.unstudiedCount) unstudied")
+            parts.append("\(viewModel.summary.unstudiedCount) to study")
         }
         if viewModel.summary.filteredCount != viewModel.summary.totalCount {
             parts.append("\(viewModel.summary.filteredCount) shown")

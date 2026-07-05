@@ -294,6 +294,328 @@ struct CanvasGridPatternMetrics: Equatable {
     }
 }
 
+/// Layout plan for rendering the dot grid as a tiled image instead of a
+/// per-frame Path: one tiny cached tile, a frame phase-aligned to the canvas
+/// origin, and a small correction scale. Panning becomes a pure compositor
+/// translation; the tile itself only changes when zoom crosses a ~2% bucket.
+struct CanvasGridTilePlan: Equatable {
+    /// Spacing the tile is drawn at (quantized so the tile cache stays small).
+    let tileSpacing: CGFloat
+    let tileDotSize: CGFloat
+    let tileMultiplier: Int
+    /// actual screen spacing / tileSpacing — applied via scaleEffect
+    /// (top-leading anchor) so dot positions stay exact despite quantization.
+    let correctionScale: CGFloat
+    /// Top-left placement offset (≤ 0 in both axes) phasing the tile pattern
+    /// so dots land at `screenGridOrigin + n·spacing`, matching the old
+    /// path-drawn grid exactly.
+    let origin: CGPoint
+    /// Frame size in unscaled (pre-correction) units.
+    let frameSize: CGSize
+
+    /// Multiplicative quantization bucket (~2%) — invisible after the
+    /// correction scale, but bounds the tile cache across a whole session.
+    private static let spacingQuantum: CGFloat = 1.02
+
+    init?(
+        screenSpacing: CGFloat,
+        screenDotSize: CGFloat,
+        screenGridOrigin: CGPoint,
+        viewportSize: CGSize
+    ) {
+        guard screenSpacing.isFinite, screenSpacing >= 1,
+              screenDotSize.isFinite, screenDotSize > 0,
+              screenGridOrigin.x.isFinite, screenGridOrigin.y.isFinite,
+              viewportSize.width > 0, viewportSize.height > 0 else {
+            return nil
+        }
+
+        let quantum = Self.spacingQuantum
+        let bucket = (log(screenSpacing) / log(quantum)).rounded()
+        let quantizedSpacing = pow(quantum, bucket)
+        let correction = screenSpacing / quantizedSpacing
+
+        self.tileSpacing = quantizedSpacing
+        self.tileDotSize = screenDotSize / correction
+        self.tileMultiplier = CanvasGridPatternCache.tileMultiplier(for: quantizedSpacing)
+        self.correctionScale = correction
+
+        // Dots sit at tile-local (i + 0.5)·spacing, so a dot lands on screen
+        // at origin + (k + 0.5)·screenSpacing. Aligning with the canvas grid
+        // (dots at screenGridOrigin + n·spacing) needs the frame's top-left
+        // at (screenGridOrigin − spacing/2) mod screenTile, shifted ≤ 0.
+        let screenTile = screenSpacing * CGFloat(tileMultiplier)
+        func phase(_ target: CGFloat) -> CGFloat {
+            var remainder = (target - screenSpacing / 2)
+                .truncatingRemainder(dividingBy: screenTile)
+            if remainder > 0 { remainder -= screenTile }
+            return remainder
+        }
+        let originPoint = CGPoint(x: phase(screenGridOrigin.x), y: phase(screenGridOrigin.y))
+        self.origin = originPoint
+
+        // Cover from the (negative) origin across the viewport plus one tile
+        // of slack; sized in unscaled units because .frame applies before
+        // the correction scaleEffect.
+        self.frameSize = CGSize(
+            width: (viewportSize.width - originPoint.x + screenTile) / correction,
+            height: (viewportSize.height - originPoint.y + screenTile) / correction
+        )
+    }
+
+    /// Screen-space x position of the dot at tile index `index` along x.
+    /// Exposed for tests: must equal `screenGridOrigin + n·screenSpacing`.
+    func screenDotCenterX(index: Int) -> CGFloat {
+        origin.x + (CGFloat(index) + 0.5) * tileSpacing * correctionScale
+    }
+}
+
+// MARK: - 120Hz Viewport State
+
+/// The single owner of pan/zoom values for the canvas.
+///
+/// Gesture ticks mutate this object instead of CanvasView `@State`/
+/// `@GestureState` so the ~6,000-line CanvasView body never re-evaluates on
+/// a pan frame. Only the tiny views that must move every frame read the live
+/// fields (`CanvasWorldTransformHost`, `CanvasLiveTransformReader` wrappers
+/// around the grid / connection-line / drawing layers). World content reads
+/// `quantizedTransform`, which only changes when a live pan crosses a 640pt
+/// bucket or a live zoom crosses a 0.125 bucket
+/// (`CanvasViewportSnapshotPolicy`), and matches the raw transform exactly
+/// whenever no gesture is live.
+@MainActor
+@Observable
+final class CanvasViewportEngine {
+    // Committed values — change on gesture commit or programmatic jumps.
+    private(set) var committedOffset: CGSize = .zero
+    private(set) var committedScale: CGFloat = 1.0
+    private(set) var viewportSize: CGSize = .zero
+
+    // Live gesture values — change every frame during a gesture.
+    private(set) var gesturePanOffset: CGSize = .zero
+    private(set) var spacePanOffset: CGSize = .zero
+    private(set) var gestureMagnification: CGFloat = 1.0
+    private(set) var clusterMagnification: CGFloat = 1.0
+
+    // Derived, bucket-quantized — world content reads these instead of the
+    // live fields so its invalidation rate is bucket crossings, not frames.
+    private(set) var quantizedTransform: CanvasViewportTransform
+    private(set) var isLiveGesture = false
+
+    let minScale: CGFloat
+    let maxScale: CGFloat
+
+    init(minScale: CGFloat = 0.25, maxScale: CGFloat = 3.0) {
+        self.minScale = minScale
+        self.maxScale = maxScale
+        self.quantizedTransform = CanvasViewportTransform(
+            viewportSize: .zero,
+            committedOffset: .zero,
+            committedScale: 1.0,
+            minScale: minScale,
+            maxScale: maxScale
+        )
+    }
+
+    /// Full live transform. Handlers and gesture closures may read this
+    /// freely (no observation happens outside body evaluation); view bodies
+    /// must only read it if they intend to re-evaluate on every gesture frame.
+    var transform: CanvasViewportTransform {
+        CanvasViewportTransform(
+            viewportSize: viewportSize,
+            committedOffset: committedOffset,
+            gesturePanOffset: CGSize(
+                width: gesturePanOffset.width + spacePanOffset.width,
+                height: gesturePanOffset.height + spacePanOffset.height
+            ),
+            committedScale: committedScale,
+            gestureMagnification: gestureMagnification * clusterMagnification,
+            minScale: minScale,
+            maxScale: maxScale
+        )
+    }
+
+    // MARK: Mutations — every write path refreshes the quantized mirror
+
+    func setCommittedOffset(_ offset: CGSize) {
+        guard committedOffset != offset else { return }
+        committedOffset = offset
+        refreshDerived()
+    }
+
+    func setCommittedScale(_ scale: CGFloat) {
+        guard committedScale != scale else { return }
+        committedScale = scale
+        refreshDerived()
+    }
+
+    func setViewportSize(_ size: CGSize) {
+        guard viewportSize != size else { return }
+        viewportSize = size
+        refreshDerived()
+    }
+
+    func setGesturePan(_ translation: CGSize) {
+        guard gesturePanOffset != translation else { return }
+        gesturePanOffset = translation
+        refreshDerived()
+    }
+
+    func setSpacePan(_ translation: CGSize) {
+        guard spacePanOffset != translation else { return }
+        spacePanOffset = translation
+        refreshDerived()
+    }
+
+    func setGestureMagnification(_ magnification: CGFloat) {
+        guard gestureMagnification != magnification else { return }
+        gestureMagnification = magnification
+        refreshDerived()
+    }
+
+    func setClusterMagnification(_ magnification: CGFloat) {
+        guard clusterMagnification != magnification else { return }
+        clusterMagnification = magnification
+        refreshDerived()
+    }
+
+    /// Clears every live gesture field. Replaces `@GestureState` auto-reset:
+    /// called on gesture end and from the interruption paths (canvas
+    /// deactivation, thinkspace switch, unmount) so a cancelled gesture can
+    /// never leave the world stuck mid-pan.
+    func resetLiveGesture() {
+        guard gesturePanOffset != .zero ||
+                spacePanOffset != .zero ||
+                gestureMagnification != 1.0 ||
+                clusterMagnification != 1.0 else { return }
+        gesturePanOffset = .zero
+        spacePanOffset = .zero
+        gestureMagnification = 1.0
+        clusterMagnification = 1.0
+        refreshDerived()
+    }
+
+    private func refreshDerived() {
+        let live = gesturePanOffset != .zero ||
+            spacePanOffset != .zero ||
+            abs(gestureMagnification - 1) > 0.0001 ||
+            abs(clusterMagnification - 1) > 0.0001
+        if isLiveGesture != live {
+            isLiveGesture = live
+        }
+        let quantized = CanvasViewportSnapshotPolicy.snapshotTransform(
+            for: transform,
+            isLiveGesture: live
+        )
+        if quantizedTransform != quantized {
+            quantizedTransform = quantized
+        }
+    }
+}
+
+/// 120Hz interaction state — block and cluster drags.
+///
+/// The id/membership fields change only at drag start/end while the
+/// translation fields change every frame, and they are separate stored
+/// properties so @Observable tracking stays surgical: a block host that
+/// isn't part of the active drag reads only the stable fields and is never
+/// invalidated by a drag frame; the dragged block (or the dragged cluster's
+/// members) read the translation and move.
+@MainActor
+@Observable
+final class CanvasInteractionState {
+    private(set) var activeBlockDragId: String?
+    private(set) var blockDragTranslation: CGSize = .zero
+
+    private(set) var draggingClusterId: UUID?
+    private(set) var clusterDragTranslation: CGSize = .zero
+    private(set) var draggingClusterMemberUUIDs: Set<String> = []
+
+    /// Snapshot in the legacy struct shape for consumers that keep one
+    /// (connection lines' throttled endpoint recompute).
+    var blockDrag: ActiveCanvasDragState<String> {
+        var state = ActiveCanvasDragState<String>()
+        if let id = activeBlockDragId {
+            state.begin(id: id, translation: blockDragTranslation)
+        }
+        return state
+    }
+
+    func updateBlockDrag(id: String, translation: CGSize) {
+        if activeBlockDragId != id { activeBlockDragId = id }
+        if blockDragTranslation != translation { blockDragTranslation = translation }
+    }
+
+    func clearBlockDrag() {
+        if activeBlockDragId != nil { activeBlockDragId = nil }
+        if blockDragTranslation != .zero { blockDragTranslation = .zero }
+    }
+
+    func beginClusterDrag(id: UUID, memberUUIDs: Set<String>) {
+        if draggingClusterId != id { draggingClusterId = id }
+        if draggingClusterMemberUUIDs != memberUUIDs { draggingClusterMemberUUIDs = memberUUIDs }
+    }
+
+    func updateClusterDrag(translation: CGSize) {
+        if clusterDragTranslation != translation { clusterDragTranslation = translation }
+    }
+
+    func clearClusterDrag() {
+        if draggingClusterId != nil { draggingClusterId = nil }
+        if clusterDragTranslation != .zero { clusterDragTranslation = .zero }
+        if !draggingClusterMemberUUIDs.isEmpty { draggingClusterMemberUUIDs = [] }
+    }
+
+    /// Per-frame offset for a block host. Reads the per-frame translation
+    /// fields only when this block is actually part of the active drag.
+    func dragOffset(forBlockId id: String, entityUuid: String) -> CGSize {
+        if draggingClusterId != nil, draggingClusterMemberUUIDs.contains(entityUuid) {
+            return clusterDragTranslation
+        }
+        if activeBlockDragId == id {
+            return blockDragTranslation
+        }
+        return .zero
+    }
+
+    /// Per-frame offset for a cluster zone; only the dragged cluster's host
+    /// tracks the translation.
+    func clusterDragOffset(for id: UUID) -> CGSize {
+        draggingClusterId == id ? clusterDragTranslation : .zero
+    }
+}
+
+/// The only view that applies the live world transform. Gesture frames
+/// invalidate just this body — a compositor transform update on already-built
+/// `content` — never the canvas body that constructed the content.
+struct CanvasWorldTransformHost<Content: View>: View {
+    let viewportState: CanvasViewportEngine
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        let compositor = CanvasCompositorTransform(viewportTransform: viewportState.transform)
+        content
+            .offset(
+                x: compositor.contentOffset.width,
+                y: compositor.contentOffset.height
+            )
+            .scaleEffect(compositor.effectiveScale, anchor: compositor.anchor)
+    }
+}
+
+/// Hands the live transform to screen-space layers (grid, connection lines,
+/// drawings, zoom chrome) without making the enclosing body a dependency of
+/// every gesture frame: only this reader's body re-evaluates per tick, and it
+/// re-invokes the stored content closure with a fresh transform.
+struct CanvasLiveTransformReader<Content: View>: View {
+    let viewportState: CanvasViewportEngine
+    @ViewBuilder var content: (CanvasViewportTransform) -> Content
+
+    var body: some View {
+        content(viewportState.transform)
+    }
+}
+
 enum CanvasViewportSnapshotPolicy {
     private static let livePanBucketSize: CGFloat = 640
     private static let liveScaleBucketSize: CGFloat = 0.125

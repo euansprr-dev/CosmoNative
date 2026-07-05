@@ -17,6 +17,7 @@ struct SwipeBoardsHubPage: View {
                 .padding(.horizontal, 48)
                 .padding(.top, 36)
                 .padding(.bottom, 72)
+                .swipeContentMeasure()
             }
             .scrollEdgeEffectStyle(.soft, for: .all)
         }
@@ -28,14 +29,7 @@ struct SwipeBoardsHubPage: View {
     }
 
     private var masthead: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Boards")
-                .font(DS.pageTitle)
-                .foregroundStyle(DS.text)
-            Text("\(SwipeBoardStore.shared.boards.count) collections")
-                .font(DS.subheadline.monospacedDigit())
-                .foregroundStyle(DS.textMuted)
-        }
+        SwipeMasthead(title: "Boards", detail: "\(SwipeBoardStore.shared.boards.count) collections")
     }
 
     private var boardGrid: some View {
@@ -89,7 +83,7 @@ private struct SwipeBoardCard: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .swipeCardSurface(isHovered: isHovered, tint: DS.entitySwipe)
+        .swipeCardSurface(isHovered: isHovered)
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .scaleEffect(isHovered ? 1.01 : 1)
         .animation(ProMotionSprings.hover, value: isHovered)
@@ -165,79 +159,6 @@ private struct SwipeBoardCard: View {
         let name = draftName
         guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, name != board.name else { return }
         Task { await SwipeBoardStore.shared.rename(uuid: board.uuid, to: name) }
-    }
-}
-
-// MARK: - Cover mosaic
-
-private struct SwipeBoardMosaic: View {
-    let coverItems: [SwipeCardModel]
-    let icon: String
-
-    private let gutter: CGFloat = 1
-
-    var body: some View {
-        GeometryReader { proxy in
-            let cell = (proxy.size.width - gutter) / 2
-            VStack(spacing: gutter) {
-                HStack(spacing: gutter) {
-                    tile(0, size: cell)
-                    tile(1, size: cell)
-                }
-                HStack(spacing: gutter) {
-                    tile(2, size: cell)
-                    tile(3, size: cell)
-                }
-            }
-        }
-        .frame(height: 148)
-        .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
-        .accessibilityHidden(true)
-    }
-
-    @ViewBuilder
-    private func tile(_ index: Int, size: CGFloat) -> some View {
-        if index < coverItems.count, coverItems[index].mediaURL != nil || coverItems[index].aspect == .paper {
-            mosaicCell(coverItems[index], size: size)
-        } else {
-            Rectangle()
-                .fill(DS.glassSectionFill)
-                .frame(width: size, height: 73)
-                .overlay {
-                    if index == 0 && coverItems.isEmpty {
-                        Image(systemName: icon)
-                            .font(DS.subheadline)
-                            .foregroundStyle(DS.textMuted)
-                    }
-                }
-        }
-    }
-
-    private func mosaicCell(_ model: SwipeCardModel, size: CGFloat) -> some View {
-        Group {
-            if model.aspect == .paper {
-                Rectangle()
-                    .fill(DS.glassSectionFill)
-                    .overlay {
-                        Text(model.hookText)
-                            .font(DS.caption2)
-                            .foregroundStyle(DS.textMuted)
-                            .lineLimit(3)
-                            .padding(6)
-                    }
-            } else {
-                CachedAsyncImage(url: model.mediaURL, stableKey: model.mediaStableKey) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image.resizable().scaledToFill()
-                    case .empty, .failure:
-                        Rectangle().fill(DS.glassSectionFill)
-                    }
-                }
-            }
-        }
-        .frame(width: size, height: 73)
-        .clipped()
     }
 }
 

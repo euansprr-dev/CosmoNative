@@ -45,8 +45,8 @@ struct CanvasConnectionGeometryInvalidationKey: Equatable {
 }
 
 struct CanvasConnectionPulsePolicy {
-    static func shouldRun(isActive: Bool, visibleEdgeCount: Int) -> Bool {
-        isActive && visibleEdgeCount > 0
+    static func shouldRun(isActive: Bool, visibleEdgeCount: Int, isLiveGesture: Bool = false) -> Bool {
+        isActive && visibleEdgeCount > 0 && !isLiveGesture
     }
 }
 
@@ -64,8 +64,17 @@ struct CanvasConnectionLinesLayer: View {
     let blocks: [CanvasBlock]
     let geometryInvalidationKey: CanvasConnectionGeometryInvalidationKey
     let transform: CanvasViewportTransform
-    let activeBlockDrag: ActiveCanvasDragState<String>
+    /// Read live (not passed as a value) so mid-drag endpoint updates keep
+    /// flowing even though the parent body no longer re-evaluates per frame.
+    let interaction: CanvasInteractionState
     var isActive: Bool = true
+    /// True while a pan/zoom gesture is live — the pulse animation pauses so
+    /// gesture frames stay pure compositor work.
+    var isLiveGesture: Bool = false
+
+    private var activeBlockDrag: ActiveCanvasDragState<String> {
+        interaction.blockDrag
+    }
 
     // MARK: - State
 
@@ -199,6 +208,9 @@ struct CanvasConnectionLinesLayer: View {
         .onChange(of: isActive) { _, active in
             updatePulseTimer()
         }
+        .onChange(of: isLiveGesture) { _, _ in
+            updatePulseTimer()
+        }
     }
 
     // MARK: - Selection
@@ -234,7 +246,11 @@ struct CanvasConnectionLinesLayer: View {
 
     /// 15fps timer for subtle energy flow animation — replaces 120fps TimelineView
     private func updatePulseTimer() {
-        if CanvasConnectionPulsePolicy.shouldRun(isActive: isActive, visibleEdgeCount: cachedVisibleEdges.count) {
+        if CanvasConnectionPulsePolicy.shouldRun(
+            isActive: isActive,
+            visibleEdgeCount: cachedVisibleEdges.count,
+            isLiveGesture: isLiveGesture
+        ) {
             startPulseTimer()
         } else {
             pulseTimer?.invalidate()

@@ -946,53 +946,62 @@ struct ContentFocusModeView: View {
     }
 
     private var scriptoriumToolbar: some View {
-        HStack(spacing: DS.space12) {
-            if let atomChrome {
-                AtomWindowChromeLeadingControls(context: atomChrome)
-            } else if !isPaneContext {
-                Button(action: onClose) {
-                    HStack(spacing: DS.space6) {
-                        Image(systemName: "chevron.left")
-                            .font(DS.buttonText)
-                        Text("Back")
-                            .font(DS.callout)
+        // Chrome islands, not a full-width bar: navigate | ledger | tools —
+        // the wrapper already provides the row insets.
+        CosmoChromeRow(insetsEnabled: false) {
+            scriptoriumLeadingIsland
+        } center: {
+            CosmoChromeIsland { toolbarCenterSlot }
+        } trailing: {
+            CosmoChromeIsland {
+                writingSurfaceControls
+                ZenOrnament(isOn: $zenMode)
+                if let atomChrome {
+                    AtomWindowChromeTrailingControls(context: atomChrome)
+                } else if isPaneContext, !isPeekContext {
+                    Button(action: onClose) {
+                        Image(systemName: "xmark")
+                            .font(DS.caption)
+                            .foregroundStyle(focusTextMuted)
+                            .frame(width: 28, height: 28)
+                            .contentShape(Rectangle())
                     }
-                    .foregroundStyle(focusTextSecondary)
-                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Close pane")
+                    .help("Close")
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Go back")
-                .help("Back (Esc)")
-            }
-            Spacer(minLength: DS.space8)
-            toolbarCenterSlot
-            Spacer(minLength: DS.space8)
-            writingSurfaceControls
-            ZenOrnament(isOn: $zenMode)
-            if let atomChrome {
-                AtomWindowChromeTrailingControls(context: atomChrome)
-            } else if isPaneContext, !isPeekContext {
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .font(DS.caption)
-                        .foregroundStyle(focusTextMuted)
-                        .frame(width: 28, height: 28)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .padding(.leading, DS.space8)
-                .accessibilityLabel("Close pane")
-                .help("Close")
             }
         }
-        .padding(.horizontal, DS.space12)
-        .padding(.vertical, DS.space6)
         .background(FocusModeEditorBlurTapLayer())
-        .cosmoGlassPanel(role: .floatingAssistant, cornerRadius: 22)
         .opacity(isActivelyTyping ? 0.25 : 1)
         .animation(ProMotionSprings.gentle, value: isActivelyTyping)
         .onHover { hovering in
             if hovering { wakeChrome() }
+        }
+    }
+
+    @ViewBuilder
+    private var scriptoriumLeadingIsland: some View {
+        if atomChrome != nil || !isPaneContext {
+            CosmoChromeIsland {
+                if let atomChrome {
+                    AtomWindowChromeLeadingControls(context: atomChrome)
+                } else {
+                    Button(action: onClose) {
+                        HStack(spacing: DS.space6) {
+                            Image(systemName: "chevron.left")
+                                .font(DS.buttonText)
+                            Text("Back")
+                                .font(DS.callout)
+                        }
+                        .foregroundStyle(focusTextSecondary)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Go back")
+                    .help("Back (Esc)")
+                }
+            }
         }
     }
 

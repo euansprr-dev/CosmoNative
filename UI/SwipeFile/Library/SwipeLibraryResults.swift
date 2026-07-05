@@ -1,6 +1,6 @@
 import SwiftUI
 
-// MARK: - Date buckets (Recently Added)
+// MARK: - Date sections (the Library's month rhythm)
 
 struct SwipeLibraryDateBucket: Equatable, Identifiable {
     let title: String
@@ -8,29 +8,52 @@ struct SwipeLibraryDateBucket: Equatable, Identifiable {
 
     var id: String { title }
 
-    static func buckets(items: [SwipeGalleryItem], models: [SwipeCardModel]) -> [SwipeLibraryDateBucket] {
+    /// "This Week", then month names ("June", "May", … "December 2025") —
+    /// applied only to the recency-sorted, unfiltered catalog. Assumes `items`
+    /// arrive newest-first (the caller's `.recent` sort).
+    static func monthBuckets(items: [SwipeGalleryItem], models: [SwipeCardModel]) -> [SwipeLibraryDateBucket] {
         let calendar = Calendar.current
         let now = Date()
-        var today: [SwipeCardModel] = []
-        var thisWeek: [SwipeCardModel] = []
-        var earlier: [SwipeCardModel] = []
+        let weekFloor = now.addingTimeInterval(-7 * 24 * 3600)
+        let currentYear = calendar.component(.year, from: now)
+
+        var buckets: [SwipeLibraryDateBucket] = []
+        var currentTitle: String?
+        var currentModels: [SwipeCardModel] = []
+
+        func flush() {
+            if let currentTitle, !currentModels.isEmpty {
+                buckets.append(SwipeLibraryDateBucket(title: currentTitle, models: currentModels))
+            }
+            currentModels = []
+        }
 
         for (item, model) in zip(items, models) {
             let date = ISO8601.date(from: item.createdAt) ?? .distantPast
-            if calendar.isDateInToday(date) {
-                today.append(model)
-            } else if date > now.addingTimeInterval(-7 * 24 * 3600) {
-                thisWeek.append(model)
+            let title: String
+            if date > weekFloor {
+                title = "This Week"
             } else {
-                earlier.append(model)
+                let month = date.formatted(.dateTime.month(.wide))
+                let year = calendar.component(.year, from: date)
+                title = year == currentYear ? month : "\(month) \(year)"
             }
+            if title != currentTitle {
+                flush()
+                currentTitle = title
+            }
+            currentModels.append(model)
         }
+        flush()
+        return buckets
+    }
 
-        return [
-            SwipeLibraryDateBucket(title: "Today", models: today),
-            SwipeLibraryDateBucket(title: "This Week", models: thisWeek),
-            SwipeLibraryDateBucket(title: "Earlier", models: earlier)
-        ].filter { !$0.models.isEmpty }
+    /// Items saved in the last 7 days — the Home page's "New This Week" shelf.
+    static func lastWeekModels(items: [SwipeGalleryItem], models: [SwipeCardModel]) -> [SwipeCardModel] {
+        let weekFloor = Date().addingTimeInterval(-7 * 24 * 3600)
+        return zip(items, models).compactMap { item, model in
+            (ISO8601.date(from: item.createdAt) ?? .distantPast) > weekFloor ? model : nil
+        }
     }
 }
 
@@ -41,6 +64,9 @@ struct SwipeLibraryResults: View {
     @Bindable var viewModel: SwipeLibraryViewModel
     let frameStore: SwipeFrameStore
     let revealDate: Date
+    /// The quick look's source card — hidden so the panel visibly leaves a gap
+    /// in the grid and the thumbnail returns into it on close.
+    var hiddenItemID: String?
     let onOpen: (String) -> Void
     let onStudy: (String) -> Void
 
@@ -59,7 +85,7 @@ struct SwipeLibraryResults: View {
             )
         } else if viewModel.displayMode == .compact {
             SwipeLibraryCompactList(viewModel: viewModel, onOpen: onOpen, onStudy: onStudy)
-        } else if !viewModel.recentBuckets.isEmpty {
+        } else if !viewModel.dateSections.isEmpty {
             bucketedGrids
         } else {
             grid(models: viewModel.visibleCardModels, indexOffset: 0)
@@ -68,7 +94,7 @@ struct SwipeLibraryResults: View {
 
     private var bucketedGrids: some View {
         VStack(alignment: .leading, spacing: DS.space20) {
-            ForEach(viewModel.recentBuckets) { bucket in
+            ForEach(viewModel.dateSections) { bucket in
                 VStack(alignment: .leading, spacing: DS.space12) {
                     bucketHeader(bucket)
                     grid(models: bucket.models, indexOffset: bucketOffset(for: bucket))
@@ -78,33 +104,25 @@ struct SwipeLibraryResults: View {
     }
 
     private func bucketHeader(_ bucket: SwipeLibraryDateBucket) -> some View {
-        HStack(spacing: 8) {
-            Text(bucket.title)
-                .font(DS.subheadline.weight(.semibold))
-                .foregroundStyle(DS.textSecondary)
-            Text("\(bucket.models.count)")
-                .font(DS.caption.monospacedDigit())
-                .foregroundStyle(DS.textMuted)
-            Rectangle()
-                .fill(DS.glassBorder)
-                .frame(height: 0.5)
-        }
+        SwipeSectionHeader(label: bucket.title.uppercased(), count: bucket.models.count)
     }
 
     private func bucketOffset(for bucket: SwipeLibraryDateBucket) -> Int {
         var offset = 0
-        for candidate in viewModel.recentBuckets {
+        for candidate in viewModel.dateSections {
             if candidate.id == bucket.id { break }
             offset += candidate.models.count
         }
         return offset
     }
 
+    /// The catalog is a uniform grid: every model renders as a poster (4:5 crop),
+    /// so rows and footers align — the waterfall engine degenerates to a grid.
     private func grid(models: [SwipeCardModel], indexOffset: Int) -> some View {
         SwipeWaterfallGrid(
-            items: models,
-            targetColumnWidth: 252,
-            spacing: 16,
+            items: models.map { $0.poster() },
+            targetColumnWidth: 208,
+            spacing: 20,
             itemHeight: { model, width in model.height(forWidth: width) },
             cell: { model, width, index in
                 SwipeLibraryCardCell(
@@ -112,6 +130,7 @@ struct SwipeLibraryResults: View {
                     width: width,
                     index: index + indexOffset,
                     isSelected: viewModel.selectedItem?.id == model.id,
+                    isHidden: hiddenItemID == model.id,
                     revealDate: revealDate,
                     frameStore: frameStore,
                     boardMenu: SwipeCardBoardMenu(
@@ -139,6 +158,7 @@ private struct SwipeLibraryCardCell: View {
     let width: CGFloat
     let index: Int
     let isSelected: Bool
+    var isHidden = false
     let revealDate: Date
     let frameStore: SwipeFrameStore
     let boardMenu: SwipeCardBoardMenu
@@ -161,7 +181,7 @@ private struct SwipeLibraryCardCell: View {
             )
         )
         .contextMenu { contextMenuItems }
-        .opacity(hasAppeared ? 1 : 0)
+        .opacity(isHidden ? 0 : (hasAppeared ? 1 : 0))
         .scaleEffect(hasAppeared ? 1 : 0.96)
         .onAppear(perform: animateEntrance)
         .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named("swipePage")) }) { frame in
@@ -252,7 +272,7 @@ private struct SwipeLibraryCompactRow: View {
         }
         .padding(.horizontal, 12)
         .frame(height: 60)
-        .swipeCardSurface(isHovered: isHovered, isSelected: isSelected, tint: model.platformColor ?? DS.entitySwipe, cornerRadius: 12)
+        .swipeCardSurface(isHovered: isHovered, isSelected: isSelected, cornerRadius: 12)
         .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .onHover { isHovered = $0 }
         .onTapGesture(count: 2, perform: onStudy)

@@ -9,18 +9,18 @@ final class ThemePaletteTests: XCTestCase {
         super.tearDown()
     }
 
-    func testCodexMonoThemeIsRegistered() {
-        XCTAssertTrue(CosmoAppTheme.allCases.contains(.codexMono))
-        XCTAssertEqual(CosmoAppTheme.codexMono.displayName, "Codex Mono")
-        XCTAssertFalse(CosmoAppTheme.codexMono.isDark)
-    }
+    func testThemeFamiliesResolveDayAndNightFaces() {
+        XCTAssertEqual(ThemeFamily.allCases, [.mono, .greenhouse])
 
-    func testBlackMonoThemeIsRegisteredAsSeparateDarkMonoTheme() throws {
-        let theme = try XCTUnwrap(CosmoAppTheme(rawValue: "blackMono"))
+        XCTAssertEqual(ThemeFamily.mono.lightPalette.name, "Codex Mono")
+        XCTAssertFalse(ThemeFamily.mono.lightPalette.isDark)
+        XCTAssertEqual(ThemeFamily.mono.darkPalette.name, "Black Mono")
+        XCTAssertTrue(ThemeFamily.mono.darkPalette.isDark)
 
-        XCTAssertTrue(CosmoAppTheme.allCases.contains(theme))
-        XCTAssertEqual(theme.displayName, "Black Mono")
-        XCTAssertTrue(theme.isDark)
+        XCTAssertEqual(ThemeFamily.greenhouse.lightPalette.name, "Greenhouse")
+        XCTAssertFalse(ThemeFamily.greenhouse.lightPalette.isDark)
+        XCTAssertEqual(ThemeFamily.greenhouse.darkPalette.name, "Greenhouse Night")
+        XCTAssertTrue(ThemeFamily.greenhouse.darkPalette.isDark)
     }
 
     func testCodexMonoPaletteUsesPremiumMonochromeChrome() {
@@ -92,7 +92,7 @@ final class ThemePaletteTests: XCTestCase {
     }
 
     func testBlackMonoUsesImmersiveDarkFocusTokens() throws {
-        DS.palette = try XCTUnwrap(CosmoAppTheme(rawValue: "blackMono")?.palette)
+        DS.palette = BlackMonoPalette()
 
         XCTAssertTrue(DS.usesImmersiveFocusAppearance)
         assertColor(DS.focusImmersiveBackground, equalsHex: "000000")
@@ -123,7 +123,7 @@ final class ThemePaletteTests: XCTestCase {
     }
 
     func testBlackMonoInvertsMonoChromeToBlackAndWhite() throws {
-        let palette = try XCTUnwrap(CosmoAppTheme(rawValue: "blackMono")?.palette)
+        let palette = BlackMonoPalette()
 
         assertColor(palette.bg, equalsHex: "000000")
         assertColor(palette.surface, equalsHex: "050505")
@@ -138,7 +138,7 @@ final class ThemePaletteTests: XCTestCase {
     }
 
     func testBlackMonoUsesReadableDarkSpotlightGlass() throws {
-        let palette = try XCTUnwrap(CosmoAppTheme(rawValue: "blackMono")?.palette)
+        let palette = BlackMonoPalette()
 
         assertColor(palette.glassCardFill, equalsHex: "0B0B0D", alpha: 0.940)
         assertColor(palette.glassInputFill, equalsHex: "000000", alpha: 0.960)
@@ -149,7 +149,7 @@ final class ThemePaletteTests: XCTestCase {
     }
 
     func testBlackMonoUsesNeutralOrnamentsAndLightGraySeparators() throws {
-        DS.palette = try XCTUnwrap(CosmoAppTheme(rawValue: "blackMono")?.palette)
+        DS.palette = BlackMonoPalette()
 
         assertColor(DS.gilt, equalsHex: "D9D9DF")
         assertColor(DS.giltSoft, equalsHex: "151517")
@@ -160,7 +160,7 @@ final class ThemePaletteTests: XCTestCase {
     }
 
     func testBlackMonoUsesDarkCommandCenterSeparatorsAndReadableMastheadText() throws {
-        DS.palette = try XCTUnwrap(CosmoAppTheme(rawValue: "blackMono")?.palette)
+        DS.palette = BlackMonoPalette()
 
         assertColor(DS.commandCenterTitleText, equalsHex: "F5F5F7")
         assertColor(DS.commandCenterSecondaryText, equalsHex: "B7B7C0")
@@ -175,7 +175,7 @@ final class ThemePaletteTests: XCTestCase {
     }
 
     func testBlackMonoUsesDarkCommandChromeInsteadOfDocumentVellum() throws {
-        DS.palette = try XCTUnwrap(CosmoAppTheme(rawValue: "blackMono")?.palette)
+        DS.palette = BlackMonoPalette()
 
         assertColor(DS.commandChromePanelFill, equalsHex: "0B0B0D")
         assertColor(DS.commandChromeProminentFill, equalsHex: "101012")
@@ -191,7 +191,7 @@ final class ThemePaletteTests: XCTestCase {
     }
 
     func testBlackMonoUsesDarkDashboardReportChromeInsteadOfDocumentPaper() throws {
-        DS.palette = try XCTUnwrap(CosmoAppTheme(rawValue: "blackMono")?.palette)
+        DS.palette = BlackMonoPalette()
 
         assertColor(DashboardReportChrome.insetFill, equalsHex: "101012")
         assertColor(DashboardReportChrome.controlFill, equalsHex: "171717")
@@ -224,14 +224,14 @@ final class ThemePaletteTests: XCTestCase {
     }
 
     func testSwipeLibraryBackgroundMatchesCommandCenterRootInBlackMono() throws {
-        DS.palette = try XCTUnwrap(CosmoAppTheme(rawValue: "blackMono")?.palette)
+        DS.palette = BlackMonoPalette()
 
         assertColor(DS.swipeLibraryBackground, equalsHex: "000000")
         assertColor(DS.bg, equalsHex: "000000")
     }
 
     func testBlackMonoKeepsCanvasClustersBrightLikeLightMono() throws {
-        DS.palette = try XCTUnwrap(CosmoAppTheme(rawValue: "blackMono")?.palette)
+        DS.palette = BlackMonoPalette()
 
         assertColor(
             DS.canvasClusterSurfaceFill(isDropTarget: false, isUserCreated: true, usesExpandedContent: true),
@@ -261,8 +261,7 @@ final class ThemePaletteTests: XCTestCase {
     }
 
     func testBlackMonoUsesMonoGlobalPanelMaterialAndReadableSidebarGlass() throws {
-        let theme = try XCTUnwrap(CosmoAppTheme(rawValue: "blackMono"))
-        DS.palette = theme.palette
+        DS.palette = BlackMonoPalette()
 
         XCTAssertEqual(CosmoGlassPanelRole.globalSidebar.shadowRadius, 18, accuracy: 0.001)
         XCTAssertEqual(CosmoGlassPanelRole.globalSidebar.shadowYOffset, 6, accuracy: 0.001)
@@ -273,7 +272,7 @@ final class ThemePaletteTests: XCTestCase {
     }
 
     func testBlackMonoKeepsSemanticSignalColorsDifferentiated() throws {
-        let palette = try XCTUnwrap(CosmoAppTheme(rawValue: "blackMono")?.palette)
+        let palette = BlackMonoPalette()
 
         assertColor(palette.green, equalsHex: "3DDC84")
         assertColor(palette.orange, equalsHex: "F59E0B")

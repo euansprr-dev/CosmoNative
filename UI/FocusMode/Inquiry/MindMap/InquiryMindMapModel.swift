@@ -1,7 +1,8 @@
 // CosmoOS/UI/FocusMode/Inquiry/MindMap/InquiryMindMapModel.swift
 // Data model + builders for the shared 2D mind map. Two sources:
-// a full Deep Dive (Map tab: topic → questions → sub-questions → concepts)
-// and a live session research tree (Cmd+M overlay, scoped to the session).
+// a full Deep Dive (Map tab — CONCEPT-FIRST: topic → core concepts →
+// child concepts, with questions as subordinate satellites) and a live
+// session research tree (Cmd+M overlay, question-based, scoped to the session).
 
 import Foundation
 import CoreGraphics
@@ -9,9 +10,11 @@ import CoreGraphics
 struct MindMapNode: Identifiable, Hashable {
     enum Kind: Hashable {
         case root
-        case question
+        case coreConcept       // Top-level pillar of the deep dive
+        case childConcept      // Nested concept page
+        case question          // Satellite under its concept (or session-tree branch)
         case subQuestion
-        case concept
+        case questionGroup     // "Open questions" bucket / "+N more" overflow
     }
     var id: String
     var kind: Kind
@@ -25,77 +28,180 @@ struct MindMapNode: Identifiable, Hashable {
     var totalCount: Int {
         1 + children.reduce(0) { $0 + $1.totalCount }
     }
+
+    var isConcept: Bool {
+        kind == .coreConcept || kind == .childConcept
+    }
+}
+
+/// A non-tree edge between two concept nodes (cross-connection hyperlink).
+struct MindMapConceptLink: Identifiable, Hashable {
+    var fromNodeId: String
+    var toNodeId: String
+    var id: String { "\(fromNodeId)~\(toNodeId)" }
+}
+
+/// The full-topic map: a tidy tree plus the concept cross-links layered on it.
+struct MindMapGraph {
+    var root: MindMapNode
+    var conceptLinks: [MindMapConceptLink] = []
 }
 
 enum MindMapBuilder {
     static let nodeCap = 80
+    static let questionsPerConcept = 5
+    static let conceptLinkCap = 12
 
-    /// Full-topic map: deep dive root → deduped root questions → sub-questions,
-    /// with concept pages attached as leaves where their extracts route.
+    /// Full-topic map, concept-first: deep dive root → core concepts (pages
+    /// with no parent) → child concepts (via ConnectionHierarchyMetadata, with
+    /// a title token-subset fallback for legacy pages) → anchored questions as
+    /// subordinate satellites. Questions no concept claims collapse into one
+    /// "Open questions" bucket instead of flooding the top level.
     static func buildDeepDive(
         deepDive: Atom,
         questions: [Atom],
         connections: [Atom],
         extracts: [Atom],
-        activeQuestionUUID: String? = nil
-    ) -> MindMapNode {
+        activeQuestionUUID: String? = nil,
+        includeQuestions: Bool = true
+    ) -> MindMapGraph {
+        let connectionsByUUID = Dictionary(uniqueKeysWithValues: connections.map { ($0.uuid, $0) })
+        let parentByUUID = conceptParents(connections: connections, connectionsByUUID: connectionsByUUID)
+        let childConceptsByParent = Dictionary(grouping: connections.filter { parentByUUID[$0.uuid] != nil }) {
+            parentByUUID[$0.uuid] ?? ""
+        }
+
+        var promotedCounts: [String: Int] = [:]
+        for extract in extracts {
+            if let target = extract.extractMetadata?.promotedToUUID {
+                promotedCounts[target, default: 0] += 1
+            }
+        }
+
+        // Question anchoring: which concept does each root question feed?
         let deduped = DeepDiveOverviewViewModel.dedupeQuestions(questions, extractCount: { question in
             extracts.filter { $0.extractMetadata?.parentQuestionUUID == question.uuid }.count
         })
         let rootQuestions = deduped.filter { $0.questionMetadata?.parentQuestionUUID == nil }
-        let childrenByParent = Dictionary(grouping: deduped.filter { $0.questionMetadata?.parentQuestionUUID != nil }) {
+        let subQuestionsByParent = Dictionary(grouping: deduped.filter { $0.questionMetadata?.parentQuestionUUID != nil }) {
             $0.questionMetadata?.parentQuestionUUID ?? ""
         }
-        let connectionsByKey = Dictionary(
-            connections.compactMap { connection -> (String, Atom)? in
-                guard let title = connection.title else { return nil }
-                return (ConceptResolver.conceptKey(title), connection)
-            },
-            uniquingKeysWith: { first, _ in first }
-        )
+        var anchoredQuestions: [String: [Atom]] = [:]   // concept UUID → root questions
+        var unanchored: [Atom] = []
+        if includeQuestions {
+            for question in rootQuestions {
+                if let anchor = anchorConcept(
+                    for: question,
+                    extracts: extracts,
+                    connections: connections,
+                    connectionsByUUID: connectionsByUUID
+                ) {
+                    anchoredQuestions[anchor, default: []].append(question)
+                } else {
+                    unanchored.append(question)
+                }
+            }
+        }
+
+        // Subtree weight (notes in a concept + all descendants) drives ordering.
+        func subtreeWeight(_ uuid: String) -> Int {
+            let own = promotedCounts[uuid] ?? 0
+            let anchored = (anchoredQuestions[uuid] ?? []).count
+            let children = (childConceptsByParent[uuid] ?? []).reduce(0) { $0 + subtreeWeight($1.uuid) }
+            return own + anchored + children + 1
+        }
 
         var budget = nodeCap
+
         func questionNode(_ question: Atom, depth: Int) -> MindMapNode? {
             guard budget > 0 else { return nil }
             budget -= 1
-            let questionExtracts = extracts.filter { $0.extractMetadata?.parentQuestionUUID == question.uuid }
-            var children: [MindMapNode] = []
-            for child in childrenByParent[question.uuid] ?? [] {
-                if let node = questionNode(child, depth: depth + 1) { children.append(node) }
-            }
-            children.append(contentsOf: conceptLeaves(
-                for: questionExtracts,
-                connectionsByKey: connectionsByKey,
-                budget: &budget
-            ))
+            let noteCount = extracts.filter { $0.extractMetadata?.parentQuestionUUID == question.uuid }.count
+            let children = (subQuestionsByParent[question.uuid] ?? [])
+                .compactMap { questionNode($0, depth: depth + 1) }
             return MindMapNode(
                 id: "question-\(question.uuid)",
                 kind: depth == 0 ? .question : .subQuestion,
                 title: question.title ?? "Untitled question",
-                subtitle: questionExtracts.isEmpty ? nil : "\(questionExtracts.count) notes",
+                subtitle: noteCount > 0 ? "\(noteCount) notes" : nil,
                 isActive: question.uuid == activeQuestionUUID,
                 atomUUID: question.uuid,
                 children: children
             )
         }
 
-        var branches = rootQuestions.compactMap { questionNode($0, depth: 0) }
-
-        // Concept pages not reachable through any question still belong on the map.
-        let attachedConnectionUUIDs = Set(allConceptUUIDs(in: branches))
-        for connection in connections where !attachedConnectionUUIDs.contains(connection.uuid) {
-            guard budget > 0 else { break }
+        func conceptNode(_ connection: Atom, depth: Int) -> MindMapNode? {
+            guard budget > 0 else { return nil }
             budget -= 1
-            branches.append(conceptNode(connection))
+            var children: [MindMapNode] = []
+            // Child concepts first — they ARE the structure.
+            for child in (childConceptsByParent[connection.uuid] ?? [])
+                .sorted(by: { subtreeWeight($0.uuid) > subtreeWeight($1.uuid) }) {
+                if let node = conceptNode(child, depth: depth + 1) { children.append(node) }
+            }
+            // Then the questions this concept is being interrogated through.
+            let anchored = (anchoredQuestions[connection.uuid] ?? [])
+                .sorted { lhs, rhs in
+                    let lhsCount = extracts.filter { $0.extractMetadata?.parentQuestionUUID == lhs.uuid }.count
+                    let rhsCount = extracts.filter { $0.extractMetadata?.parentQuestionUUID == rhs.uuid }.count
+                    return lhsCount > rhsCount
+                }
+            for question in anchored.prefix(questionsPerConcept) {
+                if let node = questionNode(question, depth: 0) { children.append(node) }
+            }
+            if anchored.count > questionsPerConcept, budget > 0 {
+                budget -= 1
+                children.append(MindMapNode(
+                    id: "more-questions-\(connection.uuid)",
+                    kind: .questionGroup,
+                    title: "+\(anchored.count - questionsPerConcept) more questions"
+                ))
+            }
+            let noteCount = promotedCounts[connection.uuid] ?? 0
+            let branchCount = (childConceptsByParent[connection.uuid] ?? []).count
+            var subtitleParts: [String] = []
+            if noteCount > 0 { subtitleParts.append("\(noteCount) notes") }
+            if branchCount > 0 { subtitleParts.append("\(branchCount) branch\(branchCount == 1 ? "" : "es")") }
+            return MindMapNode(
+                id: "concept-\(connection.uuid)",
+                kind: depth == 0 ? .coreConcept : .childConcept,
+                title: connection.title ?? "Concept",
+                subtitle: subtitleParts.isEmpty ? nil : subtitleParts.joined(separator: " · "),
+                atomUUID: connection.uuid,
+                children: children
+            )
         }
 
-        return MindMapNode(
+        // Core concepts (no parent) are the map's primary branches.
+        var branches = connections
+            .filter { parentByUUID[$0.uuid] == nil }
+            .sorted { subtreeWeight($0.uuid) > subtreeWeight($1.uuid) }
+            .compactMap { conceptNode($0, depth: 0) }
+
+        // Leftover questions live in ONE muted bucket — never as top-level peers.
+        if !unanchored.isEmpty, budget > 0 {
+            budget -= 1
+            let bucketChildren = unanchored.compactMap { questionNode($0, depth: 0) }
+            branches.append(MindMapNode(
+                id: "open-questions",
+                kind: .questionGroup,
+                title: "Open questions",
+                subtitle: "\(unanchored.count)",
+                children: bucketChildren
+            ))
+        }
+
+        let root = MindMapNode(
             id: "deepdive-\(deepDive.uuid)",
             kind: .root,
             title: deepDive.title ?? "Deep Dive",
             subtitle: branches.isEmpty ? "Start an inquiry to grow the map" : nil,
             atomUUID: deepDive.uuid,
             children: branches
+        )
+        return MindMapGraph(
+            root: root,
+            conceptLinks: conceptLinks(root: root, connections: connections, parentByUUID: parentByUUID)
         )
     }
 
@@ -139,48 +245,143 @@ enum MindMapBuilder {
         )
     }
 
-    // MARK: - Helpers
+    // MARK: - Concept hierarchy
 
-    private static func conceptLeaves(
-        for extracts: [Atom],
-        connectionsByKey: [String: Atom],
-        budget: inout Int
-    ) -> [MindMapNode] {
-        var tally: [String: Int] = [:]
-        for extract in extracts {
-            for concept in extract.extractMetadata?.conceptNames ?? [] {
-                tally[concept, default: 0] += 1
+    /// Parent map for the concept tree. Precedence per connection:
+    /// 1. Persisted `ConnectionHierarchyMetadata.parentConnectionUUID`
+    ///    (validated: parent exists on this dive, no self-reference).
+    /// 2. Legacy fallback: another page whose title tokens are a proper subset
+    ///    of this one's ("Breathing" ⊂ "Box breathing" ⇒ nest under it).
+    /// Cycles from persisted data break deterministically (offending edge cut).
+    static func conceptParents(
+        connections: [Atom],
+        connectionsByUUID: [String: Atom]
+    ) -> [String: String] {
+        var parentByUUID: [String: String] = [:]
+        for connection in connections {
+            if let parent = connection.metadataValue(as: ConnectionHierarchyMetadata.self)?.parentConnectionUUID,
+               parent != connection.uuid,
+               connectionsByUUID[parent] != nil {
+                parentByUUID[connection.uuid] = parent
             }
         }
-        return tally.sorted { $0.value > $1.value }.prefix(4).compactMap { concept, count in
-            guard budget > 0 else { return nil }
-            budget -= 1
-            let connection = connectionsByKey[ConceptResolver.conceptKey(concept)]
-            return MindMapNode(
-                id: "concept-\(ConceptResolver.conceptKey(concept))",
-                kind: .concept,
-                title: connection?.title ?? concept,
-                subtitle: count > 1 ? "\(count)" : nil,
-                atomUUID: connection?.uuid
-            )
+
+        let tokensByUUID: [String: Set<String>] = connections.reduce(into: [:]) { partial, connection in
+            let key = ConceptResolver.conceptKey(connection.title ?? "")
+            partial[connection.uuid] = Set(key.split(separator: " ").map(String.init))
         }
+        for connection in connections where parentByUUID[connection.uuid] == nil {
+            guard let ownTokens = tokensByUUID[connection.uuid], ownTokens.count >= 2 else { continue }
+            let candidates = connections.filter { other in
+                guard other.uuid != connection.uuid,
+                      let otherTokens = tokensByUUID[other.uuid],
+                      !otherTokens.isEmpty, otherTokens != ownTokens else { return false }
+                return otherTokens.isSubset(of: ownTokens)
+            }
+            if let best = candidates.max(by: {
+                (tokensByUUID[$0.uuid]?.count ?? 0) < (tokensByUUID[$1.uuid]?.count ?? 0)
+            }) {
+                parentByUUID[connection.uuid] = best.uuid
+            }
+        }
+
+        // Break cycles: walk each ancestry; on revisit, cut the edge where the
+        // walk started so both nodes surface as core rather than vanishing.
+        for uuid in parentByUUID.keys.sorted() {
+            var visited: Set<String> = [uuid]
+            var cursor = parentByUUID[uuid]
+            while let current = cursor {
+                if visited.contains(current) {
+                    parentByUUID[uuid] = nil
+                    break
+                }
+                visited.insert(current)
+                cursor = parentByUUID[current]
+            }
+        }
+        return parentByUUID
     }
 
-    private static func conceptNode(_ connection: Atom) -> MindMapNode {
-        MindMapNode(
-            id: "concept-\(connection.uuid)",
-            kind: .concept,
-            title: connection.title ?? "Concept",
-            atomUUID: connection.uuid
+    /// Which concept a root question feeds, by strongest available signal:
+    /// promoted extracts → capture-time concept tags → question-title match.
+    static func anchorConcept(
+        for question: Atom,
+        extracts: [Atom],
+        connections: [Atom],
+        connectionsByUUID: [String: Atom]
+    ) -> String? {
+        let questionExtracts = extracts.filter { $0.extractMetadata?.parentQuestionUUID == question.uuid }
+
+        var promotedTally: [String: Int] = [:]
+        for extract in questionExtracts {
+            if let target = extract.extractMetadata?.promotedToUUID, connectionsByUUID[target] != nil {
+                promotedTally[target, default: 0] += 1
+            }
+        }
+        if let dominant = promotedTally.max(by: { $0.value < $1.value })?.key { return dominant }
+
+        let connectionByKey = Dictionary(
+            connections.compactMap { connection -> (String, String)? in
+                guard let title = connection.title, !title.isEmpty else { return nil }
+                return (ConceptResolver.conceptKey(title), connection.uuid)
+            },
+            uniquingKeysWith: { first, _ in first }
         )
+        var tagTally: [String: Int] = [:]
+        for extract in questionExtracts {
+            for concept in extract.extractMetadata?.conceptNames ?? [] {
+                if let uuid = connectionByKey[ConceptResolver.conceptKey(concept)] {
+                    tagTally[uuid, default: 0] += 1
+                }
+            }
+        }
+        if let dominant = tagTally.max(by: { $0.value < $1.value })?.key { return dominant }
+
+        let questionKey = ConceptResolver.conceptKey(
+            ConceptResolver.conceptName(fromQuestion: question.title ?? "")
+        )
+        guard questionKey.count >= 4 else { return nil }
+        return connectionByKey.first { key, _ in
+            key.count >= 4 && (questionKey.contains(key) || key.contains(questionKey))
+        }?.value
     }
 
-    private static func allConceptUUIDs(in nodes: [MindMapNode]) -> [String] {
-        nodes.flatMap { node -> [String] in
-            var uuids: [String] = []
-            if node.kind == .concept, let uuid = node.atomUUID { uuids.append(uuid) }
-            uuids.append(contentsOf: allConceptUUIDs(in: node.children))
-            return uuids
+    // MARK: - Cross-link edges
+
+    /// Hyperlink pairs between concept nodes both present on the map, minus
+    /// pairs already joined by a tree edge. Capped to stay legible.
+    private static func conceptLinks(
+        root: MindMapNode,
+        connections: [Atom],
+        parentByUUID: [String: String]
+    ) -> [MindMapConceptLink] {
+        var presentUUIDs = Set<String>()
+        func collect(_ node: MindMapNode) {
+            if node.isConcept, let uuid = node.atomUUID { presentUUIDs.insert(uuid) }
+            node.children.forEach(collect)
         }
+        collect(root)
+
+        var seen = Set<String>()
+        var links: [MindMapConceptLink] = []
+        for connection in connections {
+            guard presentUUIDs.contains(connection.uuid) else { continue }
+            for link in connection.linksList
+            where link.type == AtomLinkType.connection.rawValue
+                && link.entityType == AtomType.connection.rawValue
+                && presentUUIDs.contains(link.uuid) {
+                let pairKey = [connection.uuid, link.uuid].sorted().joined(separator: "~")
+                guard !seen.contains(pairKey),
+                      parentByUUID[connection.uuid] != link.uuid,
+                      parentByUUID[link.uuid] != connection.uuid else { continue }
+                seen.insert(pairKey)
+                links.append(MindMapConceptLink(
+                    fromNodeId: "concept-\(connection.uuid)",
+                    toNodeId: "concept-\(link.uuid)"
+                ))
+                if links.count >= conceptLinkCap { return links }
+            }
+        }
+        return links
     }
 }

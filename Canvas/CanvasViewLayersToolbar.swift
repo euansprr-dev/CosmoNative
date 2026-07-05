@@ -41,7 +41,7 @@ private enum ViewLayerItem: String, CaseIterable {
 struct CanvasViewLayersToolbar: View {
     @Binding var showCrystallizationHeatmap: Bool
     @ObservedObject var provocationEngine: ProvocationEngine
-    @ObservedObject var clusterEngine: CanvasClusterEngine
+    var clusterEngine: CanvasClusterEngine
     let blockUUIDs: [String]
 
     @State private var layersVisible = true

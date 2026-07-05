@@ -208,8 +208,12 @@ private struct CanvasRenderViewportSignature: Equatable {
     let resizingClusterId: UUID?
 }
 
+/// Deliberately NOT observable: `snapshot(...)` is called during body
+/// evaluation and mutates its internal caches — tracked properties there
+/// would register the calling body on its own cache writes. It's a pure
+/// memo held via `@State` for lifetime only.
 @MainActor
-final class CanvasRenderPipeline: ObservableObject {
+final class CanvasRenderPipeline {
     private var dataSignature: CanvasRenderDataSignature?
     private var dataRevisionSignature: CanvasRenderDataRevisionSignature?
     private var dataSnapshot: CanvasRenderDataSnapshot = .empty

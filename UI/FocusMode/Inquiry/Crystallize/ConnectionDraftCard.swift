@@ -52,6 +52,9 @@ struct ConnectionDraftCard: View {
                     .foregroundStyle(CosmoColors.textPrimary)
                 HStack(spacing: 8) {
                     destinationMenu
+                    if let parent = candidate.parentConceptName, !parent.isEmpty {
+                        chip("inside: \(parent)")
+                    }
                     chip("\(candidate.materialCount) captures")
                     chip("\(filledSections.count) sections")
                 }

@@ -44,6 +44,7 @@ struct SidebarThinkspaceSection: View {
     // Hover
     @State private var hoveredThinkspaceId: String?
     @State private var hoveredChildDocId: String?
+    @State private var hoverPrewarmTask: Task<Void, Never>?
 
     // Rename
     @State private var renamingThinkspaceId: String?
@@ -65,6 +66,24 @@ struct SidebarThinkspaceSection: View {
 
     private var hoverAnimation: Animation? {
         reduceMotion ? .easeOut(duration: 0.15) : ProMotionSprings.hover
+    }
+
+    /// Hover intent → prewarm: a brief dwell on a sidebar row predicts a
+    /// visit, so the thinkspace's blocks load into the snapshot cache before
+    /// the click (same pattern as Constellation cards). Debounced so sweeping
+    /// the pointer down the sidebar stays free.
+    private func scheduleHoverPrewarm(_ thinkspaceId: String, hovering: Bool) {
+        hoverPrewarmTask?.cancel()
+        guard hovering else { return }
+        hoverPrewarmTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(120))
+            guard !Task.isCancelled else { return }
+            NotificationCenter.default.post(
+                name: CosmoNotification.Canvas.prewarmThinkspace,
+                object: nil,
+                userInfo: ["thinkspaceId": thinkspaceId]
+            )
+        }
     }
 
     private var actionAnimation: Animation? {
@@ -286,7 +305,10 @@ struct SidebarThinkspaceSection: View {
             accentColor: rowColor,
             fillColor: thinkspaceRowFill(color: rowColor, isActive: isActive, isHovered: isHovered, isDropTarget: isDropTarget)
         ))
-        .onHover { hoveredThinkspaceId = $0 ? thinkspace.id : nil }
+        .onHover { hovering in
+            hoveredThinkspaceId = hovering ? thinkspace.id : nil
+            scheduleHoverPrewarm(thinkspace.id, hovering: hovering)
+        }
         .contextMenu {
             thinkspaceContextMenu(thinkspace)
         }

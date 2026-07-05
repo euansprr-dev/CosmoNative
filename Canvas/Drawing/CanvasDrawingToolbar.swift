@@ -4,7 +4,7 @@
 import SwiftUI
 
 struct CanvasDrawingToolbar: View {
-    @ObservedObject var drawingState: DrawingStateManager
+    var drawingState: DrawingStateManager
     @State private var showStylePanel = false
     @State private var toolsVisible = true
     @State private var customColor: Color = .black

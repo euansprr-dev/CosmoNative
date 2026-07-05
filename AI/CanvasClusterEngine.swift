@@ -11,15 +11,16 @@ struct CanvasClusterDropResolution: Equatable {
 }
 
 @MainActor
-class CanvasClusterEngine: ObservableObject {
+@Observable
+class CanvasClusterEngine {
 
     // MARK: - Published State
 
     /// Auto-detected clusters (algorithmic)
-    @Published var clusters: [CanvasCluster] = []
+    var clusters: [CanvasCluster] = []
 
     /// User-created clusters (persistent, loaded from ThinkspaceMetadata)
-    @Published var userClusters: [CanvasCluster] = [] {
+    var userClusters: [CanvasCluster] = [] {
         didSet { userClustersDataRevision &+= 1 }
     }
     private(set) var userClustersDataRevision = 0
@@ -30,9 +31,13 @@ class CanvasClusterEngine: ObservableObject {
     }
 
     /// Currently selected cluster (for drag/selection)
-    @Published var selectedClusterId: UUID?
+    var selectedClusterId: UUID?
 
-    @AppStorage("canvasAutoClusters") var isEnabled: Bool = false
+    /// Auto-clustering toggle, persisted manually (@AppStorage doesn't
+    /// publish inside @Observable classes).
+    var isEnabled: Bool = UserDefaults.standard.bool(forKey: "canvasAutoClusters") {
+        didSet { UserDefaults.standard.set(isEnabled, forKey: "canvasAutoClusters") }
+    }
 
     // MARK: - Private
 
@@ -478,7 +483,7 @@ class CanvasClusterEngine: ObservableObject {
     // MARK: - View Mode Management
 
     /// Transient state: which block is expanded in list mode (per cluster)
-    @Published var expandedBlockUUIDs: [UUID: String] = [:]
+    var expandedBlockUUIDs: [UUID: String] = [:]
 
     /// Switch cluster view mode. Auto-sizes for list/board if needed.
     func setViewMode(for clusterId: UUID, mode: ClusterViewMode, blocks: [CanvasBlock]) {
@@ -702,7 +707,7 @@ class CanvasClusterEngine: ObservableObject {
     // MARK: - Cluster Resize
 
     /// The cluster currently being resized (for live preview)
-    @Published var resizingClusterId: UUID?
+    var resizingClusterId: UUID?
 
     /// Rect captured at the start of a resize gesture (before any delta applied)
     private var resizeStartRect: CGRect?
@@ -774,7 +779,7 @@ class CanvasClusterEngine: ObservableObject {
     }
 
     /// ID of the cluster a block is currently being dragged over (for visual feedback)
-    @Published var dropTargetClusterId: UUID?
+    var dropTargetClusterId: UUID?
 
     /// Find which user cluster a canvas position falls within (exact bounds)
     func userCluster(containing point: CGPoint) -> CanvasCluster? {

@@ -168,7 +168,7 @@ final class AtomWindowPanelController: NSWindowController {
     // MARK: - Hosting View
 
     private func buildHostingView() {
-        let isDark = ThemeManager.shared.currentTheme.isDark
+        let isDark = ThemeManager.shared.isDark
         let contentView = NSHostingView(
             rootView: AtomWindowRootView(viewModel: viewModel)
                 .environment(\.cosmoWindowIsFloating, true)

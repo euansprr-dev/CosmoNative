@@ -125,7 +125,9 @@ final class InquirySessionLauncher {
 
     private func openSession(_ session: Atom, appState: AppState?) async {
         guard let id = session.id else { return }
-        appState?.focusedEntity = EntitySelection(id: id, type: .inquirySession)
+        await MainActor.run {
+            FocusNavigationCoordinator.shared.open(entity: EntitySelection(id: id, type: .inquirySession))
+        }
     }
 
     /// For Connection/Question anchors — find any related Deep Dive, or create one.

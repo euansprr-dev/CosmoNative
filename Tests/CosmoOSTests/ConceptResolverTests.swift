@@ -202,5 +202,21 @@ final class ConceptResolverTests: XCTestCase {
         ])
         XCTAssertEqual(result.count, 2)   // No shared extracts, no subset keys — untouched.
     }
+
+    func testConsolidationRemapsParentsOfFoldedConcepts() {
+        var breathing = assignment("Breathing", extracts: ["e-1"])
+        var boxBreathing = assignment("Box breathing", extracts: ["e-2", "e-3"])
+        var vagus = assignment("Vagus nerve", extracts: ["e-4", "e-5"])
+        breathing.parentConceptName = nil
+        boxBreathing.parentConceptName = nil
+        vagus.parentConceptName = "Breathing"   // Points at the concept that gets folded.
+
+        let result = ConceptResolver.consolidated([breathing, boxBreathing, vagus])
+
+        XCTAssertEqual(result.count, 2)
+        let survivor = result.first { $0.conceptKey == "vagus nerve" }
+        // Parent followed the fold: "Breathing" folded into "Box breathing".
+        XCTAssertEqual(survivor?.parentConceptName, "Box breathing")
+    }
 }
 #endif

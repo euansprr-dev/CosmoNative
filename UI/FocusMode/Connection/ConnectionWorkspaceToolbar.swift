@@ -16,17 +16,18 @@ struct ConnectionWorkspaceToolbar: View {
     @FocusState private var searchFocused: Bool
 
     var body: some View {
-        HStack(spacing: DS.space10) {
-            leadingControls
-            Spacer(minLength: DS.space8)
-            viewModeSwitcher
-            Spacer(minLength: DS.space8)
-            searchField
-            trailingControls
+        // Chrome islands, not a full-width bar: navigate | modes | tools,
+        // grouped by function on the shared chrome baseline.
+        CosmoChromeRow {
+            CosmoChromeIsland { leadingControls }
+        } center: {
+            CosmoChromeIsland { viewModeSwitcher }
+        } trailing: {
+            CosmoChromeIsland {
+                searchField
+                trailingControls
+            }
         }
-        .padding(.horizontal, DS.space12)
-        .padding(.vertical, DS.space6)
-        .cosmoGlassPanel(role: .floatingAssistant, cornerRadius: 22)
         .onChange(of: workspace.searchFocusTick) {
             searchFocused = true
         }

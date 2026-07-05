@@ -7,6 +7,12 @@ import SwiftUI
 @MainActor
 struct InquiryMindMapView: View {
     let root: MindMapNode
+    /// Cross-connection hyperlinks rendered as dashed curves (Map tab only).
+    var conceptLinks: [MindMapConceptLink] = []
+    /// Concepts the user can move a node under via the context menu.
+    var reparentTargets: [(uuid: String, title: String)] = []
+    /// Persists a user-chosen parent (child UUID, new parent UUID or nil = top level).
+    var onReparent: ((String, String?) -> Void)?
     let onSelect: (MindMapNode) -> Void
 
     @State private var offset: CGSize = .zero
@@ -39,10 +45,39 @@ struct InquiryMindMapView: View {
 
     private var mapContent: some View {
         ZStack(alignment: .topLeading) {
+            linkEdgesCanvas
             edgesCanvas
             ForEach(flattenedNodes) { node in
                 nodeCard(node)
             }
+        }
+    }
+
+    /// Cross-connection hyperlinks: quiet dashed curves beneath the tree —
+    /// the "everything is interlinked" layer without breaking the hierarchy.
+    @ViewBuilder
+    private var linkEdgesCanvas: some View {
+        if !conceptLinks.isEmpty {
+            Canvas { context, _ in
+                for link in conceptLinks {
+                    guard let from = layout.positions[link.fromNodeId],
+                          let to = layout.positions[link.toNodeId] else { continue }
+                    var path = Path()
+                    path.move(to: from)
+                    let control = CGPoint(
+                        x: (from.x + to.x) / 2,
+                        y: min(from.y, to.y) - 36
+                    )
+                    path.addQuadCurve(to: to, control: control)
+                    context.stroke(
+                        path,
+                        with: .color(CosmoMentionColors.connection.opacity(0.28)),
+                        style: StrokeStyle(lineWidth: 1, lineCap: .round, dash: [4, 4])
+                    )
+                }
+            }
+            .frame(width: layout.size.width, height: layout.size.height)
+            .accessibilityHidden(true)
         }
     }
 
@@ -79,9 +114,28 @@ struct InquiryMindMapView: View {
             branchColor: Self.branchColor(branchIndex(of: node)),
             onSelect: onSelect
         )
+        .contextMenu { conceptContextMenu(node) }
         .position(layout.positions[node.id] ?? .zero)
         .opacity(hasAppeared ? 1 : 0)
         .animation(ProMotionSprings.gentle.delay(Double(depth) * 0.06), value: hasAppeared)
+    }
+
+    /// "Move under…" reparenting for concept nodes — the user's final say
+    /// over the map hierarchy (pinned; crystallization never overrides it).
+    @ViewBuilder
+    private func conceptContextMenu(_ node: MindMapNode) -> some View {
+        if node.isConcept, let uuid = node.atomUUID {
+            Button("Open as pane") { ConnectionLinkOpener.open(uuid: uuid) }
+            if let onReparent {
+                Menu("Move under") {
+                    Button("Top level") { onReparent(uuid, nil) }
+                    Divider()
+                    ForEach(reparentTargets.filter { $0.uuid != uuid }, id: \.uuid) { target in
+                        Button(target.title) { onReparent(uuid, target.uuid) }
+                    }
+                }
+            }
+        }
     }
 
     // MARK: - Gestures & viewport

@@ -318,7 +318,6 @@ struct CommandCenterDashboard: View {
                         handleDeletedSelectedTask(uuid: deletedTaskUUID)
                     }
                 )
-                .id(task.uuid)
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
             }
         case .reports:

@@ -304,6 +304,94 @@ final class CanvasVisibilityIndexTests: XCTestCase {
         XCTAssertTrue(visibility.isBlockVisible(nearEdgeBlock))
         XCTAssertFalse(visibility.isBlockVisible(farBlock))
     }
+
+    // MARK: - Grid tile plan
+
+    /// The tiled-image grid must place dots exactly where the old path-drawn
+    /// grid did: at screenGridOrigin + n·screenSpacing, despite the tile
+    /// being drawn at a quantized spacing with a correction scale.
+    func testGridTilePlanDotAlignment() throws {
+        let cases: [(spacing: CGFloat, origin: CGPoint)] = [
+            (40, CGPoint(x: 137.4, y: -260.2)),
+            (17.3, CGPoint(x: -3.7, y: 8.1)),
+            (10, .zero),
+            (120, CGPoint(x: 999.5, y: -999.5)),
+        ]
+        for testCase in cases {
+            let plan = try XCTUnwrap(CanvasGridTilePlan(
+                screenSpacing: testCase.spacing,
+                screenDotSize: 2.5,
+                screenGridOrigin: testCase.origin,
+                viewportSize: CGSize(width: 1440, height: 900)
+            ))
+
+            // Effective spacing after correction is exact.
+            XCTAssertEqual(
+                plan.tileSpacing * plan.correctionScale,
+                testCase.spacing,
+                accuracy: 0.0001
+            )
+
+            // Some dot in the pattern lands on the canvas grid line phase:
+            // (dotX - origin.x) must be a whole multiple of spacing.
+            let dotX = plan.screenDotCenterX(index: 3)
+            let offsetInSpacings = (dotX - testCase.origin.x) / testCase.spacing
+            XCTAssertEqual(
+                offsetInSpacings,
+                offsetInSpacings.rounded(),
+                accuracy: 0.001,
+                "spacing \(testCase.spacing): dot misaligned with canvas grid"
+            )
+
+            // Placement starts at or before the viewport's top-left and the
+            // frame covers the whole viewport after scaling.
+            XCTAssertLessThanOrEqual(plan.origin.x, 0)
+            XCTAssertLessThanOrEqual(plan.origin.y, 0)
+            XCTAssertGreaterThanOrEqual(
+                plan.origin.x + plan.frameSize.width * plan.correctionScale,
+                1440
+            )
+            XCTAssertGreaterThanOrEqual(
+                plan.origin.y + plan.frameSize.height * plan.correctionScale,
+                900
+            )
+        }
+    }
+
+    func testGridTilePlanRejectsDegenerateInput() {
+        XCTAssertNil(CanvasGridTilePlan(
+            screenSpacing: 0.5,
+            screenDotSize: 1,
+            screenGridOrigin: .zero,
+            viewportSize: CGSize(width: 1000, height: 800)
+        ))
+        XCTAssertNil(CanvasGridTilePlan(
+            screenSpacing: 40,
+            screenDotSize: 2.5,
+            screenGridOrigin: .zero,
+            viewportSize: .zero
+        ))
+    }
+
+    /// Quantization must keep the tile cache bounded: a continuous zoom
+    /// sweep may only produce a limited set of distinct tile spacings.
+    func testGridTilePlanQuantizationBoundsTileVariety() throws {
+        var distinctSpacings = Set<Int>()
+        var scale: CGFloat = 0.25
+        while scale <= 3.0 {
+            if let plan = CanvasGridTilePlan(
+                screenSpacing: 40 * scale,
+                screenDotSize: max(2.5 * scale, 1),
+                screenGridOrigin: .zero,
+                viewportSize: CGSize(width: 1440, height: 900)
+            ) {
+                distinctSpacings.insert(Int((plan.tileSpacing * 100).rounded()))
+            }
+            scale += 0.001
+        }
+        XCTAssertLessThan(distinctSpacings.count, 150)
+        XCTAssertGreaterThan(distinctSpacings.count, 50)
+    }
 }
 
 @MainActor

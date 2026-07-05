@@ -157,6 +157,14 @@ actor ThumbnailCacheService {
                 let request: URLRequest
                 if InstagramCarouselImageCache.shouldUseInstagramHeaders(for: url) {
                     request = InstagramCarouselImageCache.request(for: url)
+                } else if let authorized = await MainActor.run(body: {
+                    SupabaseClient.shared.flatMap { client in
+                        client.isSupabaseHostedURL(url) ? client.authorizedRequest(for: url) : nil
+                    }
+                }) {
+                    // Mirrored thumbnails live in a private storage bucket —
+                    // fetch them with the client's own Bearer.
+                    request = authorized
                 } else {
                     var genericRequest = URLRequest(url: url)
                     genericRequest.timeoutInterval = 45

@@ -2348,6 +2348,7 @@ struct CrystallizationOutput: Codable, Sendable {
         var conceptAliases: [String]?
         var conceptKey: String?                  // Normalized concept name; cross-session dedup
         var relatedConceptNames: [String]?       // Other concept pages this one mentions → hyperlinks
+        var parentConceptName: String?           // Broader page this one nests under (map hierarchy)
 
         init(
             id: String = UUID().uuidString,
@@ -2366,7 +2367,8 @@ struct CrystallizationOutput: Codable, Sendable {
             mergeTargetConnectionUUID: String? = nil,
             conceptAliases: [String]? = nil,
             conceptKey: String? = nil,
-            relatedConceptNames: [String]? = nil
+            relatedConceptNames: [String]? = nil,
+            parentConceptName: String? = nil
         ) {
             self.id = id
             self.name = name
@@ -2385,13 +2387,14 @@ struct CrystallizationOutput: Codable, Sendable {
             self.conceptAliases = conceptAliases
             self.conceptKey = conceptKey
             self.relatedConceptNames = relatedConceptNames
+            self.parentConceptName = parentConceptName
         }
 
         private enum CodingKeys: String, CodingKey {
             case id, name, rationale, clusterExtractUUIDs, seededLexiconCandidateIds
             case proposedTitle, proposedConcept, proposedSections, proposedReferences
             case branchNodeId, materialCount, proposedNotes, accepted
-            case mergeTargetConnectionUUID, conceptAliases, conceptKey, relatedConceptNames
+            case mergeTargetConnectionUUID, conceptAliases, conceptKey, relatedConceptNames, parentConceptName
         }
 
         init(from decoder: Decoder) throws {
@@ -2417,6 +2420,7 @@ struct CrystallizationOutput: Codable, Sendable {
             conceptAliases = try c.decodeIfPresent([String].self, forKey: .conceptAliases)
             conceptKey = try c.decodeIfPresent(String.self, forKey: .conceptKey)
             relatedConceptNames = try c.decodeIfPresent([String].self, forKey: .relatedConceptNames)
+            parentConceptName = try c.decodeIfPresent(String.self, forKey: .parentConceptName)
         }
 
         func encode(to encoder: Encoder) throws {
@@ -2441,6 +2445,7 @@ struct CrystallizationOutput: Codable, Sendable {
             try c.encodeIfPresent(conceptAliases, forKey: .conceptAliases)
             try c.encodeIfPresent(conceptKey, forKey: .conceptKey)
             try c.encodeIfPresent(relatedConceptNames, forKey: .relatedConceptNames)
+            try c.encodeIfPresent(parentConceptName, forKey: .parentConceptName)
         }
     }
     struct ModelUpdateProposal: Codable, Sendable, Identifiable {
@@ -2899,6 +2904,16 @@ struct ExtractMetadata: Codable, Sendable {
         self.conceptNames = conceptNames
         self.kindPending = kindPending
     }
+}
+
+// MARK: - Connection Hierarchy
+
+/// Concept-hierarchy position of a Connection page: which broader concept
+/// page it nests under on the Deep Dive map. Key-merged into the connection's
+/// metadata JSON alongside its promotion metadata (`mergingMetadataKeys`).
+struct ConnectionHierarchyMetadata: Codable, Sendable {
+    var parentConnectionUUID: String?
+    var parentPinnedByUser: Bool?    // User chose it — crystallization must never overwrite.
 }
 
 /// Structured field for `.extract` atoms.

@@ -5,6 +5,8 @@ struct SwipeCreatorsPage: View {
     @Bindable var model: SwipeDiscoverModel
 
     @State private var selectedCreatorID: String?
+    @State private var contextPillVisible = false
+    @State private var scrollPosition = ScrollPosition()
     @FocusState private var searchFocused: Bool
 
     var body: some View {
@@ -37,7 +39,7 @@ struct SwipeCreatorsPage: View {
                 masthead
                 importNotices
                 if model.isLoading && model.creators.isEmpty {
-                    SwipeSkeletonGrid(targetColumnWidth: 300)
+                    SwipeSkeletonGrid(targetColumnWidth: 248)
                 } else if model.filteredCreators.isEmpty {
                     emptyState
                 } else {
@@ -47,20 +49,33 @@ struct SwipeCreatorsPage: View {
             .padding(.horizontal, 48)
             .padding(.top, 36)
             .padding(.bottom, 72)
+            .swipeContentMeasure()
         }
+        .scrollPosition($scrollPosition)
         .scrollEdgeEffectStyle(.soft, for: .all)
+        .onScrollGeometryChange(for: CGFloat.self, of: { $0.contentOffset.y }) { _, new in
+            let shouldShow = new > 88
+            if shouldShow != contextPillVisible {
+                contextPillVisible = shouldShow
+            }
+        }
+        .overlay(alignment: .top) {
+            SwipeContextPill(
+                title: "Creators",
+                detail: "\(model.filteredCreators.count) profiles",
+                visible: contextPillVisible
+            ) {
+                withAnimation(ProMotionSprings.gentle) {
+                    scrollPosition.scrollTo(edge: .top)
+                }
+            }
+            .padding(.top, DS.space12)
+        }
     }
 
     private var masthead: some View {
         HStack(alignment: .top, spacing: DS.space12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Creators")
-                    .font(DS.pageTitle)
-                    .foregroundStyle(DS.text)
-                Text("\(model.filteredCreators.count) profiles to study")
-                    .font(DS.subheadline.monospacedDigit())
-                    .foregroundStyle(DS.textMuted)
-            }
+            SwipeMasthead(title: "Creators", detail: "\(model.filteredCreators.count) profiles to study")
             Spacer(minLength: DS.space16)
             HStack(spacing: 8) {
                 sortMenu
@@ -182,7 +197,7 @@ private struct SwipeCreatorCard: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .swipeCardSurface(isHovered: isHovered, tint: creator.platform.swipeBrandColor)
+        .swipeCardSurface(isHovered: isHovered)
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .scaleEffect(isHovered ? 1.01 : 1)
         .animation(ProMotionSprings.hover, value: isHovered)
@@ -208,10 +223,8 @@ private struct SwipeCreatorCard: View {
             }
             Spacer(minLength: 0)
             Image(systemName: creator.platform.iconName)
-                .font(DS.caption2.weight(.bold))
-                .foregroundStyle(.white)
-                .frame(width: 20, height: 20)
-                .background(creator.platform.swipeBrandColor, in: Circle())
+                .font(DS.caption.weight(.medium))
+                .foregroundStyle(DS.textMuted)
                 .accessibilityHidden(true)
         }
     }
@@ -281,11 +294,11 @@ private struct SwipeCreatorTopThumb: View {
         .overlay(alignment: .topLeading) {
             if let multiplier = post.derived.outlierMultiplier, multiplier >= 2 {
                 Text("\(Int(multiplier.rounded()))×")
-                    .font(DS.caption2.weight(.bold))
-                    .foregroundStyle(DS.textOnAccent)
+                    .font(DS.caption2.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(.white)
                     .padding(.horizontal, 5)
                     .frame(height: 14)
-                    .background(DS.accent, in: Capsule())
+                    .background(.black.opacity(0.55), in: Capsule())
                     .padding(4)
             }
         }
@@ -338,6 +351,7 @@ struct SwipeCreatorProfilePane: View {
             .padding(.horizontal, 48)
             .padding(.top, 28)
             .padding(.bottom, 72)
+            .swipeContentMeasure()
         }
         .scrollEdgeEffectStyle(.soft, for: .all)
         .onExitCommand(perform: onBack)

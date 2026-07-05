@@ -289,6 +289,12 @@ class ThinkspaceManager: ObservableObject {
         thinkspaces.filter { $0.id != Self.commandCenterUUID }
     }
 
+    /// The thinkspace id persisted by the last `switchTo` — the space the user
+    /// is most likely to open first this session. Used by the launch prewarm.
+    var persistedLastThinkspaceId: String? {
+        UserDefaults.standard.string(forKey: lastThinkspaceKey)
+    }
+
     /// Ensure the Command Center thinkspace exists in the database.
     /// Auto-creates it with the unified dashboard zone on first launch.
     /// Migrates existing users from the old 4-zone layout to the single dashboard.

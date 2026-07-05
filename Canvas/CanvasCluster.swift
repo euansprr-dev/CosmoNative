@@ -51,7 +51,7 @@ enum ClusterBoardGrouping: String, Codable, CaseIterable, Hashable, Sendable {
     case pipeline
 }
 
-struct CanvasCluster: Identifiable {
+struct CanvasCluster: Identifiable, Equatable {
     let id: UUID
     var name: String
     var blockUUIDs: [String]

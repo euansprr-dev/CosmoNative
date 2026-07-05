@@ -115,6 +115,10 @@ final class ConnectionPromotionService {
             result.linked += try await ensureLinks(for: updated, candidate: candidate, siblingUUIDs: refs.map(\.uuid))
             let selfRef = ConnectionLinkRef(uuid: updated.uuid, title: titleByUUID[updated.uuid] ?? updated.title ?? "Connection")
             edges.append(contentsOf: refs.map { (from: selfRef, to: $0) })
+            if let parentName = candidate.parentConceptName,
+               let parentUUID = uuidByConceptKey[ConceptResolver.conceptKey(parentName)] {
+                await persistConceptParent(on: updated.uuid, parentUUID: parentUUID)
+            }
         }
 
         // Backlinks: every A → B edge gets a B → A reference row, so the graph
@@ -405,6 +409,48 @@ final class ConnectionPromotionService {
             target = target.withLinks(mergeLinks(target.linksList, [link]))
         }
         _ = try? await atoms.update(target)
+    }
+
+    /// Persists the AI-chosen concept parent for the Deep Dive map hierarchy.
+    /// Two guards: a user-pinned parent is never overwritten, and a link that
+    /// would create an ancestry cycle is dropped.
+    private func persistConceptParent(on connectionUUID: String, parentUUID: String) async {
+        guard parentUUID != connectionUUID,
+              var atom = try? await atoms.fetch(uuid: connectionUUID) else { return }
+        let existing = atom.metadataValue(as: ConnectionHierarchyMetadata.self)
+        guard existing?.parentPinnedByUser != true,
+              existing?.parentConnectionUUID != parentUUID else { return }
+
+        var parentByUUID: [String: String] = [:]
+        var cursor: String? = parentUUID
+        var depth = 0
+        while let current = cursor, depth < 10 {
+            guard let next = (try? await atoms.fetch(uuid: current))?
+                .metadataValue(as: ConnectionHierarchyMetadata.self)?.parentConnectionUUID else { break }
+            parentByUUID[current] = next
+            cursor = next
+            depth += 1
+        }
+        guard !Self.createsCycle(child: connectionUUID, parent: parentUUID, parentByUUID: parentByUUID) else { return }
+
+        atom = atom.mergingMetadataKeys(ConnectionHierarchyMetadata(
+            parentConnectionUUID: parentUUID,
+            parentPinnedByUser: existing?.parentPinnedByUser
+        ))
+        _ = try? await atoms.update(atom)
+    }
+
+    /// Pure cycle check: does making `parent` the parent of `child` create a
+    /// loop, given the current parent map?
+    nonisolated static func createsCycle(child: String, parent: String, parentByUUID: [String: String]) -> Bool {
+        var cursor: String? = parent
+        var depth = 0
+        while let current = cursor, depth < 12 {
+            if current == child { return true }
+            cursor = parentByUUID[current]
+            depth += 1
+        }
+        return false
     }
 
     /// True when any non-reference item on the page mentions one of `names`

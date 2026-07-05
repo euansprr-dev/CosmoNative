@@ -5,7 +5,7 @@ import SwiftUI
 struct SwipeDiscoverPostGrid: View {
     let posts: [SocialPostSnapshot]
     @Bindable var model: SwipeDiscoverModel
-    var targetColumnWidth: CGFloat = 300
+    var targetColumnWidth: CGFloat = 248
 
     @State private var frameStore = SwipeFrameStore()
     @State private var quickLookID: String?
@@ -21,7 +21,7 @@ struct SwipeDiscoverPostGrid: View {
             SwipeWaterfallGrid(
                 items: cardModels,
                 targetColumnWidth: targetColumnWidth,
-                spacing: 16,
+                spacing: 14,
                 maxColumns: 4,
                 itemHeight: { model, width in model.height(forWidth: width) },
                 cell: { cardModel, width, index in
@@ -29,6 +29,7 @@ struct SwipeDiscoverPostGrid: View {
                         model: cardModel,
                         width: width,
                         index: index,
+                        isHidden: quickLookID == cardModel.id,
                         revealDate: revealDate,
                         frameStore: frameStore,
                         boards: SwipeBoardStore.shared.boards,
@@ -57,6 +58,7 @@ struct SwipeDiscoverPostGrid: View {
         return SwipeQuickLook(
             expanded: $quickLookExpanded,
             sourceFrame: quickLookSource,
+            heroModel: SwipeCardModel(post: post),
             onRequestClose: closeQuickLook
         ) {
             SwipeQuickLookDiscoverContent(
@@ -122,6 +124,7 @@ private struct SwipeDiscoverCardCell: View {
     let model: SwipeCardModel
     let width: CGFloat
     let index: Int
+    var isHidden = false
     let revealDate: Date
     let frameStore: SwipeFrameStore
     let boards: [SwipeBoard]
@@ -143,7 +146,7 @@ private struct SwipeDiscoverCardCell: View {
             )
         )
         .contextMenu { contextMenuItems }
-        .opacity(hasAppeared ? 1 : 0)
+        .opacity(isHidden ? 0 : (hasAppeared ? 1 : 0))
         .scaleEffect(hasAppeared ? 1 : 0.96)
         .onAppear(perform: animateEntrance)
         .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named("swipePage")) }) { frame in

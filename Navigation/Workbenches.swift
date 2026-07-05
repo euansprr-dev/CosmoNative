@@ -116,7 +116,7 @@ struct WorkspaceSnapshot: Codable, Equatable {
         case .inbox: return .inbox
         case .codex: return .codex
         case .discover: return .discover(section: .discover)
-        case .swipeFile: return .swipeFile(section: .all)
+        case .swipeFile: return .swipeFile(section: .home)
         case .thinkspace(let id): return .thinkspace(id: id)
         }
     }

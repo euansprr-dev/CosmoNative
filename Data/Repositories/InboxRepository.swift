@@ -351,10 +351,12 @@ class InboxRepository: ObservableObject {
 
     /// Archive old actioned/dismissed items (housekeeping).
     ///
-    /// Data-safety pass, June 2026: this used to hard-DELETE rows — inbox items
-    /// aren't synced, so pruning was permanent and unrecoverable. It now exports
-    /// the rows to a JSON archive on disk BEFORE deleting, so housekeeping can
-    /// never destroy the only copy of a capture. (Currently has no callers.)
+    /// Data-safety pass, June 2026: this used to hard-DELETE rows — pruning was
+    /// permanent and unrecoverable. It now exports the rows to a JSON archive on
+    /// disk BEFORE deleting, so housekeeping can never destroy the only copy of
+    /// a capture. Since the inbox became a synced domain (July 2026), each pruned
+    /// row is also tracked as a DELETE so the cloud copy is tombstoned and other
+    /// devices drop it too. (Currently has no callers.)
     func pruneOldItems(olderThanDays days: Int = 30) async throws {
         let cutoff = Calendar.current.date(byAdding: .day, value: -days, to: Date()) ?? Date()
         let cutoffStr = ISO8601.string(from: cutoff)
@@ -385,6 +387,13 @@ class InboxRepository: ObservableObject {
             try InboxItem
                 .filter(archivedUuids.contains(Column("uuid")))
                 .deleteAll(db)
+        }
+        for item in prunable {
+            await ChangeTracker.shared.trackDelete(
+                table: InboxItem.databaseTableName,
+                uuid: item.uuid,
+                rowId: item.id
+            )
         }
         print("🗄️ Inbox pruning archived \(prunable.count) item(s) to \(archiveURL.lastPathComponent)")
     }

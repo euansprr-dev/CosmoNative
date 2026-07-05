@@ -98,6 +98,26 @@ export async function mirrorThumbnail(atomUUID: string, imageUrl: string): Promi
   return uploadObject('atom-images', `${userId.toLowerCase()}/swipe-thumbs/${atomUUID}.jpg`, data, 'image/jpeg');
 }
 
+/**
+ * Discovery-post thumbnail mirror. Scraped CDN URLs (Instagram especially)
+ * expire within weeks; scrape time is the one moment they are guaranteed
+ * alive, so we pin a durable copy then.
+ */
+export async function mirrorDiscoveryThumbnail(
+  platform: string,
+  platformPostId: string,
+  imageUrl: string
+): Promise<string> {
+  const safeId = platformPostId.replace(/[^A-Za-z0-9_-]/g, '-');
+  const data = await downloadBinary(imageUrl, 'image', 15_000);
+  return uploadObject(
+    'atom-images',
+    `${userId.toLowerCase()}/discover-thumbs/${platform}-${safeId}.jpg`,
+    data,
+    'image/jpeg'
+  );
+}
+
 /** Mirrors every slide; returns the ordered URL array only if ALL succeed. */
 export async function mirrorCarousel(
   atomUUID: string,

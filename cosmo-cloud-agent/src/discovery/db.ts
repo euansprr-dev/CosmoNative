@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { supabase, userId } from '../db/client';
 import { createAtom, updateAtom } from '../db/queries';
+import { mirrorDiscoveryThumbnail, resolveInstantThumbnailURL } from '../swipes/media';
 import { applyScore, scorePost } from './scoring';
 import type {
   DiscoveryCreatorInput,
@@ -199,7 +200,106 @@ export async function upsertDiscoveredPost(input: NormalizedDiscoveredPost): Pro
     repost_count: saved.repost_count,
     share_count: saved.share_count,
   });
-  return saved;
+  // Scrape time is the one moment the CDN thumbnail is guaranteed alive —
+  // pin the durable copy now, never on the read path.
+  return await ensureThumbnailMirror(saved);
+}
+
+// MARK: Discovery thumbnail mirroring
+
+/// Flips true once when the deployment predates the thumbnail_storage_url
+/// migration, so we warn once and stop retrying instead of spamming errors.
+let thumbnailColumnMissing = false;
+
+function warnThumbnailColumnMissing(): void {
+  if (thumbnailColumnMissing) return;
+  thumbnailColumnMissing = true;
+  console.warn('⚠️ social_discovered_posts.thumbnail_storage_url column missing — run migrations/add_thumbnail_storage_url.sql to enable durable discovery thumbnails');
+}
+
+async function ensureThumbnailMirror(post: SocialDiscoveredPostRow): Promise<SocialDiscoveredPostRow> {
+  if (thumbnailColumnMissing) return post;
+  if (post.thumbnail_storage_url) return post;
+
+  // Try the stored CDN URL first; when it has expired (Instagram URLs die
+  // within weeks), mint a FRESH one from the post's shortcode via the
+  // instant-thumbnail redirect — the same stage the swipe pipeline uses.
+  let storageUrl: string | null = null;
+  let lastFailure: string | null = null;
+
+  if (post.thumbnail_url) {
+    try {
+      storageUrl = await mirrorDiscoveryThumbnail(post.platform, post.platform_post_id, post.thumbnail_url);
+    } catch (error) {
+      lastFailure = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  if (!storageUrl && post.platform === 'instagram') {
+    try {
+      const fresh = await resolveInstantThumbnailURL(post.canonical_url);
+      if (fresh) {
+        storageUrl = await mirrorDiscoveryThumbnail(post.platform, post.platform_post_id, fresh);
+      }
+    } catch (error) {
+      lastFailure = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  if (!storageUrl) {
+    // Non-fatal: the post heals on its next scheduled re-scrape.
+    console.warn(`⚠️ thumbnail mirror failed for ${post.platform}/${post.platform_post_id}: ${lastFailure ?? 'no thumbnail source'}`);
+    return post;
+  }
+
+  const { error } = await supabase
+    .from('social_discovered_posts')
+    .update({ thumbnail_storage_url: storageUrl, updated_at: nowISO() })
+    .eq('uuid', post.uuid)
+    .eq('user_id', userId);
+
+  if (error) {
+    if (missingSchemaColumn(error)) warnThumbnailColumnMissing();
+    else console.warn(`⚠️ thumbnail mirror record failed for ${post.platform}/${post.platform_post_id}: ${error.message}`);
+    return post;
+  }
+  return { ...post, thumbnail_storage_url: storageUrl };
+}
+
+/**
+ * Boot-time sweep over rows whose CDN URLs may still be alive. Sequential and
+ * bounded — dead URLs are skipped (they recover on re-scrape), successes are
+ * permanent, so the backlog only shrinks.
+ */
+export async function backfillDiscoveryThumbnails(limit = 200): Promise<void> {
+  if (thumbnailColumnMissing) return;
+
+  // No thumbnail_url filter: Instagram posts can heal from their shortcode
+  // alone via the instant-thumbnail redirect.
+  const { data, error } = await supabase
+    .from('social_discovered_posts')
+    .select('*')
+    .eq('user_id', userId)
+    .is('thumbnail_storage_url', null)
+    .order('posted_at', { ascending: false, nullsFirst: false })
+    .limit(limit);
+
+  if (error) {
+    if (missingSchemaColumn(error)) warnThumbnailColumnMissing();
+    else console.warn('⚠️ discovery thumbnail backfill query failed:', error.message);
+    return;
+  }
+
+  const rows = (data ?? []) as SocialDiscoveredPostRow[];
+  if (!rows.length) return;
+
+  let mirrored = 0;
+  for (const row of rows) {
+    const result = await ensureThumbnailMirror(row);
+    if (result.thumbnail_storage_url) mirrored += 1;
+    if (thumbnailColumnMissing) return;
+  }
+  console.log(`🖼️ discovery thumbnail backfill: ${mirrored}/${rows.length} mirrored (${rows.length - mirrored} URLs already dead — will heal on re-scrape)`);
 }
 
 export async function createSource(params: {

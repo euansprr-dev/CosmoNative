@@ -9,6 +9,7 @@ import { startScheduler } from './scheduler/standing';
 import { writingRouter } from './api/writing';
 import { discoveryRouter } from './api/discovery';
 import { startDiscoveryScheduler } from './discovery/scheduler';
+import { backfillDiscoveryThumbnails } from './discovery/db';
 import { swipesRouter } from './swipes/api';
 import { startSwipeWorker } from './swipes/processor';
 
@@ -68,6 +69,17 @@ async function start(): Promise<void> {
   startScheduler();
   startDiscoveryScheduler();
   startSwipeWorker();
+
+  // Pin durable copies of discovery thumbnails — dead CDN URLs are re-minted
+  // from the post shortcode where possible. Boot pass + a slow repeat so the
+  // backlog keeps draining between deploys.
+  const runThumbnailBackfill = () => {
+    void backfillDiscoveryThumbnails().catch(error => {
+      console.warn('⚠️ discovery thumbnail backfill crashed:', error instanceof Error ? error.message : error);
+    });
+  };
+  runThumbnailBackfill();
+  setInterval(runThumbnailBackfill, 6 * 60 * 60 * 1000);
 
   // Start Express server — extended timeouts for long-running writing sessions
   const server = app.listen(config.port, () => {

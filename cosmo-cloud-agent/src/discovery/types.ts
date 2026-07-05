@@ -171,6 +171,9 @@ export interface SocialDiscoveredPostRow {
   media_type: SocialMediaType;
   media_urls: DiscoveryMediaInput[];
   thumbnail_url: string | null;
+  /** Durable Supabase Storage mirror — CDN thumbnail URLs expire. Optional so
+   * deployments without the migration keep decoding. */
+  thumbnail_storage_url?: string | null;
   duration_seconds: number | null;
   view_count: number | null;
   like_count: number | null;

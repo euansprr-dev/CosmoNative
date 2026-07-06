@@ -148,6 +148,18 @@ enum EditorBoundaryCommand: Equatable {
     /// Structured block paste (com.cosmo.blocks pasteboard flavor) — kinds
     /// survive copy/paste within the app.
     case pasteBlockRun(blocks: [RichBlock], caretUTF16OffsetFromEnd: Int, livePlainText: String)
+    /// A block-manipulation key equivalent (⌘D, ⌥⌘↑/↓, ⌥⌘1–3, ⇧⌘L) landed in
+    /// a block row — the host applies it structurally.
+    case blockShortcut(BlockKeyboardShortcut, livePlainText: String)
+}
+
+/// Keyboard block manipulation — the handle menu's actions without the mouse.
+enum BlockKeyboardShortcut: Equatable {
+    case duplicate
+    case moveUp
+    case moveDown
+    case heading(Int)
+    case checklistToggle
 }
 
 /// Live markdown-alias detection for block rows: a recognized prefix typed

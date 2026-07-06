@@ -33,6 +33,9 @@ enum EditorImmediateResizePolicy {
 @MainActor
 fileprivate protocol CosmoTextViewShortcutDelegate: AnyObject {
     func textViewDidRequestFormattingShortcut(_ shortcut: FormattingType)
+    /// Block-manipulation key equivalents (⌘D, ⌥⌘↑/↓, ⌥⌘1–3, ⇧⌘L). Returns
+    /// true when the host consumed the shortcut (block rows only).
+    func textViewDidRequestBlockShortcut(_ shortcut: BlockKeyboardShortcut) -> Bool
     func textView(_ textView: NSTextView, shouldHandleImagePaste pasteboard: NSPasteboard) -> Bool
 }
 
@@ -814,6 +817,31 @@ final class CosmoTextView: NSTextView {
         }
 
         let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
+
+        // Block manipulation: ⌥⌘↑/↓ move the row, ⌥⌘1–3 toggle headings.
+        if flags == [.command, .option] {
+            switch event.keyCode {
+            case 126: // ↑
+                if shortcutDelegate?.textViewDidRequestBlockShortcut(.moveUp) == true { return true }
+            case 125: // ↓
+                if shortcutDelegate?.textViewDidRequestBlockShortcut(.moveDown) == true { return true }
+            default:
+                if let chars = event.charactersIgnoringModifiers,
+                   let level = Int(chars), (1...3).contains(level),
+                   shortcutDelegate?.textViewDidRequestBlockShortcut(.heading(level)) == true {
+                    return true
+                }
+            }
+            return super.performKeyEquivalent(with: event)
+        }
+
+        // ⇧⌘L — checklist toggle (the handle menu's To-do, from the keyboard).
+        if flags == [.command, .shift],
+           event.charactersIgnoringModifiers?.lowercased() == "l",
+           shortcutDelegate?.textViewDidRequestBlockShortcut(.checklistToggle) == true {
+            return true
+        }
+
         guard flags == .command,
               let chars = event.charactersIgnoringModifiers?.lowercased() else {
             return super.performKeyEquivalent(with: event)
@@ -829,6 +857,11 @@ final class CosmoTextView: NSTextView {
         case "u":
             shortcutDelegate?.textViewDidRequestFormattingShortcut(.underline)
             return true
+        case "d":
+            if shortcutDelegate?.textViewDidRequestBlockShortcut(.duplicate) == true {
+                return true
+            }
+            return super.performKeyEquivalent(with: event)
         default:
             return super.performKeyEquivalent(with: event)
         }
@@ -2251,6 +2284,17 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         func textViewDidRequestFormattingShortcut(_ shortcut: FormattingType) {
             guard let textView = textViewReference else { return }
             applyFormatting(shortcut, to: textView)
+        }
+
+        func textViewDidRequestBlockShortcut(_ shortcut: BlockKeyboardShortcut) -> Bool {
+            // Block rows only — the continuous editors keep native behavior.
+            guard parent.splitsOnReturn, let textView = textViewReference else { return false }
+            beginAwaitingExternalContent()
+            if parent.onBoundaryCommand?(.blockShortcut(shortcut, livePlainText: textView.string)) == true {
+                return true
+            }
+            cancelAwaitingExternalContent()
+            return false
         }
 
         func textView(_ textView: NSTextView, shouldHandleImagePaste pasteboard: NSPasteboard) -> Bool {

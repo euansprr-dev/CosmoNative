@@ -5,17 +5,20 @@ struct BlockTransformOption: Identifiable, Equatable {
     let kind: RichBlockKind
     let label: String
     let icon: String
+    /// Key equivalent taught in place (trailing hint) — wired in
+    /// `CosmoTextView.performKeyEquivalent` → `.blockShortcut`.
+    var shortcutHint: String? = nil
 
     var id: String { kind.rawValue }
 
     static let all: [BlockTransformOption] = [
         BlockTransformOption(kind: .paragraph, label: "Text", icon: "text.alignleft"),
-        BlockTransformOption(kind: .heading1, label: "Heading 1", icon: "textformat.size.larger"),
-        BlockTransformOption(kind: .heading2, label: "Heading 2", icon: "textformat.size"),
-        BlockTransformOption(kind: .heading3, label: "Heading 3", icon: "textformat.size.smaller"),
+        BlockTransformOption(kind: .heading1, label: "Heading 1", icon: "textformat.size.larger", shortcutHint: "⌥⌘1"),
+        BlockTransformOption(kind: .heading2, label: "Heading 2", icon: "textformat.size", shortcutHint: "⌥⌘2"),
+        BlockTransformOption(kind: .heading3, label: "Heading 3", icon: "textformat.size.smaller", shortcutHint: "⌥⌘3"),
         BlockTransformOption(kind: .bulletList, label: "Bulleted list", icon: "list.bullet"),
         BlockTransformOption(kind: .numberedList, label: "Numbered list", icon: "list.number"),
-        BlockTransformOption(kind: .checklist, label: "To-do list", icon: "checklist"),
+        BlockTransformOption(kind: .checklist, label: "To-do list", icon: "checklist", shortcutHint: "⇧⌘L"),
         BlockTransformOption(kind: .quote, label: "Quote", icon: "text.quote"),
         BlockTransformOption(kind: .callout, label: "Callout", icon: "exclamationmark.bubble"),
         BlockTransformOption(kind: .toggle, label: "Toggle", icon: "chevron.forward.square"),
@@ -86,11 +89,19 @@ struct BlockHandleMenuView: View {
     }
 
     private func transformRow(_ option: BlockTransformOption, index: Int) -> some View {
-        menuRow(
+        let trailing: RowTrailing
+        if currentKind == option.kind {
+            trailing = .checkmark
+        } else if let hint = option.shortcutHint {
+            trailing = .shortcut(hint)
+        } else {
+            trailing = .none
+        }
+        return menuRow(
             id: option.id,
             icon: option.icon,
             label: option.label,
-            trailing: currentKind == option.kind ? .checkmark : .none,
+            trailing: trailing,
             isDestructive: false,
             index: index
         ) { onTransform(option.kind) }

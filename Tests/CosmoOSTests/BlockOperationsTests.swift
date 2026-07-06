@@ -652,6 +652,34 @@ final class BlockOperationsTests: XCTestCase {
         XCTAssertEqual(blocks?.first?["kind"] as? String, "hologram")
     }
 
+    // MARK: - Keyboard block manipulation
+
+    func testDuplicateBlockInsertsFreshCopyBelowAndFocusesIt() throws {
+        let original = RichBlock(kind: .checklist, inlines: [.text("Task")], checked: true)
+        let document = RichDocument(blocks: [original, RichBlock.paragraph("after")])
+
+        let result = try BlockOperations.duplicateBlock(in: document, at: .root(index: 0))
+
+        XCTAssertEqual(result.document.blocks.count, 3)
+        XCTAssertEqual(result.document.blocks[1].kind, .checklist)
+        XCTAssertEqual(result.document.blocks[1].plainInlineText, "Task")
+        XCTAssertNotEqual(result.document.blocks[1].id, original.id)
+        XCTAssertEqual(result.focusPath, .root(index: 1))
+    }
+
+    func testMoveBlockVerticallySwapsSiblingsAndClampsAtEnds() throws {
+        let first = RichBlock.paragraph("A")
+        let second = RichBlock.paragraph("B")
+        let document = RichDocument(blocks: [first, second])
+
+        let movedUp = try BlockOperations.moveBlockVertically(in: document, at: .root(index: 1), up: true)
+        XCTAssertEqual(movedUp.document.blocks.map(\.plainInlineText), ["B", "A"])
+        XCTAssertEqual(movedUp.focusPath, .root(index: 0))
+
+        XCTAssertThrowsError(try BlockOperations.moveBlockVertically(in: document, at: .root(index: 0), up: true))
+        XCTAssertThrowsError(try BlockOperations.moveBlockVertically(in: document, at: .root(index: 1), up: false))
+    }
+
     func testCalloutAndToggleSurviveCodableRoundTrip() throws {
         let callout = RichBlock(kind: .callout, inlines: [.text("hi")], callout: RichCalloutStyle(icon: "flame", toneID: "clay"))
         let toggle = RichBlock(kind: .toggle, inlines: [.text("head")], children: [.paragraph("body")], toggleCollapsed: true)

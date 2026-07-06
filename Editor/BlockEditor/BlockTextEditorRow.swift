@@ -240,7 +240,65 @@ struct BlockTextEditorRow: View {
                 caretOffsetFromEnd: caretUTF16OffsetFromEnd,
                 livePlainText: livePlainText
             )
+        case .blockShortcut(let shortcut, let livePlainText):
+            return applyBlockShortcut(shortcut, livePlainText: livePlainText)
         }
+    }
+
+    /// Keyboard block manipulation (⌘D, ⌥⌘↑/↓, ⌥⌘1–3, ⇧⌘L) — the handle
+    /// menu's actions without leaving the keyboard. Reconciles live text
+    /// first so an in-flight keystroke never duplicates or moves stale.
+    private func applyBlockShortcut(_ shortcut: BlockKeyboardShortcut, livePlainText: String) -> Bool {
+        guard let block = currentBlock, let currentPath else { return false }
+
+        var workingDocument = document
+        let liveContent = block.kind.strippedRenderPrefix(from: livePlainText)
+        if liveContent != block.plainInlineText, block.kind.isTextEditableBlock {
+            var workingBlock = block
+            workingBlock.inlines = [.text(liveContent)]
+            guard let reconciled = try? BlockOperations.replaceBlock(
+                in: workingDocument,
+                at: currentPath,
+                with: workingBlock
+            ) else { return false }
+            workingDocument = reconciled.document
+        }
+
+        switch shortcut {
+        case .duplicate:
+            guard let result = try? BlockOperations.duplicateBlock(in: workingDocument, at: currentPath) else { return false }
+            apply(result, undoActionName: "Duplicate Block")
+            return true
+        case .moveUp, .moveDown:
+            guard let result = try? BlockOperations.moveBlockVertically(
+                in: workingDocument,
+                at: currentPath,
+                up: shortcut == .moveUp
+            ) else { return false }
+            apply(result, undoActionName: "Move Block")
+            return true
+        case .heading(let level):
+            let target: RichBlockKind = level == 1 ? .heading1 : level == 2 ? .heading2 : .heading3
+            return toggleTransform(to: target, in: workingDocument, at: currentPath, current: block.kind)
+        case .checklistToggle:
+            return toggleTransform(to: .checklist, in: workingDocument, at: currentPath, current: block.kind)
+        }
+    }
+
+    /// Transform to the target kind, or back to a paragraph when the block
+    /// already is that kind (shortcut toggles, like Apple Notes).
+    private func toggleTransform(
+        to target: RichBlockKind,
+        in workingDocument: RichDocument,
+        at path: BlockPath,
+        current: RichBlockKind
+    ) -> Bool {
+        let destination = current == target ? RichBlockKind.paragraph : target
+        guard let result = try? BlockOperations.transformBlock(in: workingDocument, at: path, to: destination) else {
+            return false
+        }
+        apply(result, undoActionName: "Turn Into")
+        return true
     }
 
     /// Live markdown alias ("# ", "- ", "> ", "[] ", "1. ", "---") completed
@@ -472,10 +530,12 @@ struct BlockTextEditorRow: View {
         return true
     }
 
-    /// Backspace at block start — delete the empty block or merge into the
-    /// previous one. Reconciles the block with the text view's live string
-    /// first (the document binding lags by ~50ms) so characters deleted right
-    /// before the merge don't resurrect in the previous block.
+    /// Backspace at block start. A styled block sheds its style first and
+    /// becomes plain text (the Notion/Craft model — backspace never jumps a
+    /// heading straight into the previous paragraph); a plain block deletes
+    /// (when empty) or merges into the previous one. Reconciles the block
+    /// with the text view's live string first (the document binding lags by
+    /// ~50ms) so characters deleted right before the merge don't resurrect.
     private func deleteOrMergeBackward(livePlainText: String) -> Bool {
         guard let block = currentBlock,
               let currentPath else { return false }
@@ -493,6 +553,27 @@ struct BlockTextEditorRow: View {
                 return false
             }
             workingDocument = reconciled.document
+        }
+
+        // Styled → paragraph first, caret staying at the start. Toggles hoist
+        // their children through the same transform. Content/Research blocks
+        // keep their identity — they are documents, not text styles.
+        if block.kind.isTextEditableBlock,
+           ![.paragraph, .content, .research].contains(block.kind) {
+            guard let transformed = try? BlockOperations.transformBlock(
+                in: workingDocument,
+                at: currentPath,
+                to: .paragraph
+            ) else { return false }
+            apply(
+                BlockOperationResult(
+                    document: transformed.document,
+                    focusPath: currentPath,
+                    caretUTF16Offset: 0
+                ),
+                undoActionName: "Turn Into Text"
+            )
+            return true
         }
 
         let isEmpty = liveContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

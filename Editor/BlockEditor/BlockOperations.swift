@@ -493,6 +493,42 @@ enum BlockOperations {
         return BlockOperationResult(document: document, focusPath: path, caretUTF16Offset: 0)
     }
 
+    /// Duplicates one block in place (⌘D) — the copy lands directly below
+    /// with fresh identity and takes focus.
+    static func duplicateBlock(
+        in document: RichDocument,
+        at path: BlockPath
+    ) throws -> BlockOperationResult {
+        var document = document
+        let original = try block(in: document, at: path)
+        let copy = original.withRegeneratedIDs()
+        let insertionIndex = path.indexInParent + 1
+        try insert(copy, in: &document, at: BlockDropTarget(parent: path.parent, index: insertionIndex))
+        let focusPath = path.parent?.appendingChild(index: insertionIndex) ?? .root(index: insertionIndex)
+        return BlockOperationResult(document: document, focusPath: focusPath)
+    }
+
+    /// Swaps a block with its sibling above/below (⌥⌘↑/↓). No-op at the ends.
+    static func moveBlockVertically(
+        in document: RichDocument,
+        at path: BlockPath,
+        up: Bool
+    ) throws -> BlockOperationResult {
+        var document = document
+        let targetIndex = up ? path.indexInParent - 1 : path.indexInParent + 1
+        guard targetIndex >= 0 else {
+            throw BlockOperationError.blockNotFound(path)
+        }
+        try mutateChildren(in: &document.blocks, indices: path.indices) { siblings, index in
+            guard siblings.indices.contains(targetIndex) else {
+                throw BlockOperationError.blockNotFound(path)
+            }
+            siblings.swapAt(index, targetIndex)
+        }
+        let focusPath = path.parent?.appendingChild(index: targetIndex) ?? .root(index: targetIndex)
+        return BlockOperationResult(document: document, focusPath: focusPath)
+    }
+
     static func moveBlock(
         in document: RichDocument,
         from source: BlockPath,

@@ -83,6 +83,7 @@ final class InboxActionExecutor {
         }
 
         if let updated {
+            await adoptAttachments(from: item, into: updated.uuid)
             await reindex(atom: updated)
             try await inboxRepo.markActioned(uuid: item.uuid)
 
@@ -156,8 +157,10 @@ final class InboxActionExecutor {
             title: item.title ?? fallbackTitle(for: item),
             body: item.rawText
         )
+        atom = applyingChecklist(to: atom, atomType: atomType, rawText: item.rawText)
         atom = atom.mergingMetadataKeys(captureProvenance(for: item))
         atom = try await atomRepo.create(atom)
+        await adoptAttachments(from: item, into: atom.uuid)
         await reindex(atom: atom)
         try await inboxRepo.markActioned(uuid: item.uuid)
 
@@ -202,6 +205,7 @@ final class InboxActionExecutor {
 
         atom = atom.mergingMetadataKeys(captureProvenance(for: item))
         atom = try await atomRepo.create(atom)
+        await adoptAttachments(from: item, into: atom.uuid)
         await reindex(atom: atom)
         try await inboxRepo.markActioned(uuid: item.uuid)
 
@@ -250,8 +254,10 @@ final class InboxActionExecutor {
             title: item.title ?? fallbackTitle(for: item),
             body: item.rawText
         )
+        atom = applyingChecklist(to: atom, atomType: atomType, rawText: item.rawText)
         atom = atom.mergingMetadataKeys(captureProvenance(for: item))
         atom = try await atomRepo.create(atom)
+        await adoptAttachments(from: item, into: atom.uuid)
         await reindex(atom: atom)
 
         var createdBlockRecord: CanvasBlockRecord?
@@ -456,11 +462,46 @@ final class InboxActionExecutor {
         item.title ?? String(item.rawText.prefix(80)).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// A checkbox-bearing capture routed as a TASK becomes a real one: prose
+    /// names it, the checkboxes become its Things-style subtasks (checked
+    /// state preserved from the page), the body keeps just the prose.
+    private func applyingChecklist(to atom: Atom, atomType: AtomType, rawText: String) -> Atom {
+        guard atomType == .task,
+              let payload = CapturedChecklist.taskPayload(from: rawText) else { return atom }
+        var copy = atom
+        copy.title = payload.title
+        copy.body = payload.notes.isEmpty ? nil : payload.notes
+        if let checklistJSON = CapturedChecklist.checklistJSON(payload.checklist) {
+            copy = copy.mergingMetadataKeys(["checklist": checklistJSON])
+        }
+        return copy
+    }
+
     /// Provenance metadata stamped on every atom created from an inbox capture.
     /// The launch reconciler uses `sourceCaptureUuid` to safely auto-dismiss
     /// captures whose atoms already exist instead of guessing by text match.
     private func captureProvenance(for item: InboxItem) -> [String: String] {
         ["sourceCaptureUuid": item.uuid]
+    }
+
+    /// The originals follow the thought: page/photo attachments captured with
+    /// the inbox item are re-homed on the atom it became, and listed in the
+    /// atom's metadata so any surface can render them. Never fails the route —
+    /// a failed adoption leaves attachments reachable via the inbox item.
+    private func adoptAttachments(from item: InboxItem, into atomUUID: String) async {
+        let uuids = item.attachmentUUIDs
+        guard !uuids.isEmpty else { return }
+
+        for uuid in uuids {
+            _ = try? await MediaAttachmentRepository.shared.trackedMutation(uuid: uuid) { attachment in
+                attachment.ownerType = MediaAttachmentOwner.atom.rawValue
+                attachment.ownerUUID = atomUUID
+                return true
+            }
+        }
+        _ = try? await atomRepo.update(uuid: atomUUID) { atom in
+            atom = atom.mergingMetadataKeys(["attachmentUUIDs": uuids])
+        }
     }
 
     private func reindex(atom: Atom) async {

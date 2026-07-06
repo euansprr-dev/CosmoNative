@@ -116,6 +116,24 @@ struct CommandKActionExecutor {
         case "capture_swipe":
             guard let url = arguments["url"] else { return }
             _ = try await CommandKInstantSwipeCapture().capture(url: url, hook: arguments["hook"])
+        case "scan_with_iphone":
+            // The relay: a synced request row + an APNs push at the phone.
+            // The pages come back as a normal inbox capture from its side.
+            let request = try await CaptureRequestRepository.shared.create(
+                .new(kind: .inboxScan, scanSessionId: UUID().uuidString)
+            )
+            try await PushSenderService.shared.sendScanRequest(request)
+        case "upload_scan_images":
+            // Command-K closes; the open panel takes over, then the shared
+            // scan pipeline digitizes into ONE inbox capture.
+            let panel = NSOpenPanel()
+            panel.allowedContentTypes = [.image]
+            panel.allowsMultipleSelection = true
+            panel.message = "Choose page images to digitize into your Inbox"
+            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+            guard panel.runModal() == .OK else { return }
+            let images = panel.urls.compactMap { try? Data(contentsOf: $0) }
+            _ = await InboxScanIngestService.shared.ingest(images: images)
         default:
             _ = try await AgentToolExecutor.shared.execute(toolName: name, arguments: arguments)
         }

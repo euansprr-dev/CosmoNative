@@ -10,6 +10,7 @@ struct InquiryReaderView: View {
     let tab: SourceTab
 
     @State private var lastSelectedText: String = ""
+    @State private var selectionTimestamp: Int?
     @State private var loadState: WebSourceLoadState = .loading
 
     var body: some View {
@@ -19,8 +20,14 @@ struct InquiryReaderView: View {
         ZStack(alignment: .bottom) {
             content
             if !lastSelectedText.isEmpty {
-                SelectionMiniMenu(viewModel: viewModel, tab: tab, selection: lastSelectedText) {
+                SelectionMiniMenu(
+                    viewModel: viewModel,
+                    tab: tab,
+                    selection: lastSelectedText,
+                    timestampSeconds: selectionTimestamp
+                ) {
                     lastSelectedText = ""
+                    selectionTimestamp = nil
                 }
                 .padding(DS.space12)
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
@@ -43,14 +50,23 @@ struct InquiryReaderView: View {
                 missingURLState
             }
         case .youTube:
-            if let urlString = tab.url, let url = URL(string: urlString) {
-                webContent(url: url, readerMode: false)
-            } else {
-                missingURLState
-            }
+            // The study reader: just the video and its transcript — never the
+            // watch page with its feed, comments, and recommendations.
+            StudyYouTubeReaderView(
+                viewModel: viewModel,
+                tab: tab,
+                lastSelectedText: $lastSelectedText,
+                selectionTimestamp: $selectionTimestamp
+            )
         case .internalAtom, .swipe:
             if let sourceUUID = tab.sourceUUID {
                 InternalSourceView(sourceUUID: sourceUUID, lastSelectedText: $lastSelectedText)
+            } else {
+                missingURLState
+            }
+        case .pageScan:
+            if let sourceUUID = tab.sourceUUID {
+                PageScanSourceView(viewModel: viewModel, sourceUUID: sourceUUID)
             } else {
                 missingURLState
             }
@@ -141,6 +157,9 @@ struct SelectionMiniMenu: View {
     @Bindable var viewModel: InquiryWorkspaceViewModel
     let tab: SourceTab
     let selection: String
+    /// The moment in the video this selection begins (transcript readers) —
+    /// captures cite the exact timestamp.
+    var timestampSeconds: Int? = nil
     let onDismiss: () -> Void
 
     var body: some View {
@@ -193,7 +212,12 @@ struct SelectionMiniMenu: View {
     private func actionButton(label: String, kind: ExtractKind) -> some View {
         Button {
             Task {
-                _ = await viewModel.saveSelectionAsExtract(selection, kind: kind, sourceTab: tab)
+                _ = await viewModel.saveSelectionAsExtract(
+                    selection,
+                    kind: kind,
+                    sourceTab: tab,
+                    timestampSeconds: timestampSeconds
+                )
                 onDismiss()
             }
         } label: {

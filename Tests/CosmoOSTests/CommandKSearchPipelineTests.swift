@@ -844,7 +844,9 @@ final class CommandKSearchPipelineTests: XCTestCase {
 
         XCTAssertEqual(viewModel.cortexMode, .searchResults)
         XCTAssertEqual(viewModel.query, "idea")
-        XCTAssertNil(viewModel.primaryAction)
+        // Bare "idea" now leads with the composer action — and the ideas
+        // quicklink still rides alongside it.
+        XCTAssertEqual(viewModel.primaryAction?.kind, .createIdea)
         XCTAssertTrue(viewModel.userCommandRows.contains { $0.title == "Ideas" })
     }
 
@@ -1485,6 +1487,88 @@ final class CommandKSearchPipelineTests: XCTestCase {
         XCTAssertEqual(output.flatResults.first?.atomUUID, "atom-title")
     }
 
+    func testSwipesSectionRanksBelowDatabaseOnEqualTier() {
+        // Database atom and swipe both carry title-level keyword evidence,
+        // but the swipe scores higher on blended relevance…
+        let databaseAtom = RankedResult(
+            atomUUID: "atom-db",
+            atomType: .content,
+            title: "Notes on the greenhouse ritual",
+            semanticWeight: 0.1,
+            structuralWeight: 0.64,
+            recencyWeight: 0.3,
+            usageWeight: 0.5,
+            lexicalTier: .titleMatch,
+            updatedAt: "2026-01-01T00:00:00Z"
+        )
+        let strongSwipe = SwipeGalleryItem(
+            atomUUID: "swipe-strong",
+            title: "The greenhouse ritual reel",
+            hookText: nil,
+            hookScore: 90,
+            platform: "instagram",
+            thumbnailUrl: nil,
+            author: nil
+        )
+
+        let output = CommandKUnifiedSearchComposer.buildOutput(
+            query: "greenhouse ritual",
+            hybridResults: [databaseAtom],
+            swipeGalleryItems: [strongSwipe],
+            ideaGalleryItems: [],
+            readwiseBooks: [],
+            browserPins: []
+        )
+
+        // …yet on equal tier the database section leads: someone matching
+        // their own atoms is looking for those, not the swipe file.
+        XCTAssertEqual(output.groupedResults.map(\.source), [.atoms, .swipes])
+        XCTAssertEqual(output.flatResults.first?.atomUUID, "atom-db")
+        let swipeResult = output.flatResults.first { $0.atomUUID == "swipe-strong" }
+        XCTAssertEqual(swipeResult?.lexicalTier, .titleMatch)
+        XCTAssertGreaterThan(
+            swipeResult?.relevance ?? 0,
+            databaseAtom.relevance,
+            "regression guard: relevance-only section ordering would have put swipes first"
+        )
+    }
+
+    func testSwipesSectionLeadsWhenStrictlyBetterTier() {
+        // The swipe's title IS the query; the database only has a body match.
+        let exactSwipe = SwipeGalleryItem(
+            atomUUID: "swipe-exact",
+            title: "Greenhouse ritual",
+            hookText: nil,
+            hookScore: 10,
+            platform: "instagram",
+            thumbnailUrl: nil,
+            author: nil
+        )
+        let bodyMatchAtom = RankedResult(
+            atomUUID: "atom-body",
+            atomType: .content,
+            title: "Weekly planning notes",
+            semanticWeight: 0.4,
+            structuralWeight: 0.42,
+            recencyWeight: 1.0,
+            usageWeight: 0.5,
+            lexicalTier: .keywordInBody,
+            updatedAt: ISO8601.string(from: Date())
+        )
+
+        let output = CommandKUnifiedSearchComposer.buildOutput(
+            query: "greenhouse ritual",
+            hybridResults: [bodyMatchAtom],
+            swipeGalleryItems: [exactSwipe],
+            ideaGalleryItems: [],
+            readwiseBooks: [],
+            browserPins: []
+        )
+
+        XCTAssertEqual(output.groupedResults.map(\.source), [.swipes, .atoms])
+        XCTAssertEqual(output.flatResults.first?.atomUUID, "swipe-exact")
+    }
+
     func testHybridFTS5QueryRequiresAllTermsAndQuotesTokens() {
         XCTAssertEqual(
             HybridSearchEngine.prepareFTS5Query("seller financing"),
@@ -1897,6 +1981,138 @@ final class CommandKSearchPipelineTests: XCTestCase {
         let action = CommandKActionParser.parse("idea for Ben; turn onboarding calls into a story bank")
 
         XCTAssertNil(action)
+    }
+
+    // MARK: - Composer creation grammar
+
+    func testBareCreationKeywordsMapToComposerShapes() {
+        XCTAssertEqual(CommandKActionParser.parse("idea")?.kind, .createIdea)
+        XCTAssertEqual(CommandKActionParser.parse("task")?.kind, .createTask)
+        XCTAssertEqual(CommandKActionParser.parse("note")?.kind, .createNote)
+        XCTAssertEqual(CommandKActionParser.parse("content")?.kind, .createContent)
+        XCTAssertEqual(CommandKActionParser.parse("capture")?.kind, .captureInbox)
+        XCTAssertEqual(CommandKActionParser.parse("inbox")?.kind, .captureInbox)
+        XCTAssertEqual(CommandKActionParser.parse("swipe")?.kind, .captureSwipe)
+
+        // Empty creates are not executable — Enter drops into the composer.
+        XCTAssertEqual(CommandKActionParser.parse("idea")?.isExecutable, false)
+        XCTAssertEqual(CommandKActionParser.parse("task")?.isExecutable, false)
+    }
+
+    func testBareCreationRespectsWordBoundaries() {
+        XCTAssertNotEqual(CommandKActionParser.parse("ideation")?.kind, .createIdea)
+        XCTAssertNotEqual(CommandKActionParser.parse("noteworthy findings")?.kind, .createNote)
+    }
+
+    func testTaskTrailingTextPrefillsComposerTitle() {
+        let action = CommandKActionParser.parse("task buy water filters")
+        XCTAssertEqual(action?.kind, .createTask)
+        XCTAssertEqual(action?.payload.title, "buy water filters")
+        XCTAssertEqual(action?.isExecutable, true)
+    }
+
+    func testCaptureTrailingTextPrefillsBody() {
+        let action = CommandKActionParser.parse("capture the thing about pacing")
+        XCTAssertEqual(action?.kind, .captureInbox)
+        XCTAssertEqual(action?.payload.body, "the thing about pacing")
+    }
+
+    func testBareIdeaWithTrailingTextStaysScopedClientCapture() {
+        // "idea <text>" is the scoped client-draft grammar, not a title prefill.
+        let action = CommandKActionParser.parse("idea Euan")
+        XCTAssertEqual(action?.kind, .createIdea)
+        XCTAssertEqual(action?.payload.clientName, "Euan")
+    }
+
+    func testNewVerbFormsResolveShapesWithPrefill() {
+        let note = CommandKActionParser.parse("new note morning pages")
+        XCTAssertEqual(note?.kind, .createNote)
+        XCTAssertEqual(note?.payload.title, "morning pages")
+
+        // The explicit verb is unambiguous, so idea prefill is allowed here.
+        let idea = CommandKActionParser.parse("new idea morning hooks")
+        XCTAssertEqual(idea?.kind, .createIdea)
+        XCTAssertEqual(idea?.payload.title, "morning hooks")
+
+        XCTAssertEqual(CommandKActionParser.parse("create task ship it")?.kind, .createTask)
+    }
+
+    func testUrlQueriesBypassBareCreationGrammar() {
+        let action = CommandKActionParser.parse("swipe https://www.instagram.com/reel/abc123/")
+        XCTAssertEqual(action?.kind, .captureSwipe)
+        XCTAssertNotNil(action?.payload.url)
+    }
+
+    func testNewKeywordListsAllCreationShapesInOrbFanOrder() {
+        let rows = CommandKSystemCommandComposer().rows(for: "new")
+        let creationTitles = rows.filter { $0.subtitle.contains("Create") }.map(\.title)
+        XCTAssertEqual(
+            creationTitles,
+            ["New Task", "New Note", "New Idea", "New Capture", "New Content", "New Swipe", "New Thinkspace"]
+        )
+    }
+
+    func testNewPrefixNarrowsCreationShapes() {
+        let rows = CommandKSystemCommandComposer().rows(for: "new id")
+        XCTAssertEqual(rows.map(\.title), ["New Idea"])
+    }
+
+    func testComposerDraftMapsCreationActionsOnly() {
+        let create = CommandKActionParser.parse("task")!
+        XCTAssertEqual(CommandKComposerDraft.draft(for: create)?.kind, .createTask)
+
+        let browse = CommandKActionParser.parse("browser")!
+        XCTAssertNil(CommandKComposerDraft.draft(for: browse))
+    }
+
+    func testComposerDraftCarriesPrefillsAndSyncsQueryText() {
+        let action = CommandKActionParser.parse("task buy water filters")!
+        var draft = CommandKComposerDraft.draft(for: action)!
+        XCTAssertEqual(draft.form.value(for: .title), "buy water filters")
+
+        // Query keeps syncing into the lead field…
+        let retyped = CommandKActionParser.parse("task buy better water filters")!
+        draft.syncPrefills(from: retyped)
+        XCTAssertEqual(draft.form.value(for: .title), "buy better water filters")
+
+        // …until the user edits it by hand.
+        draft.titleEditedManually = true
+        draft.form.setValue("Replace the filters", for: .title)
+        let retypedAgain = CommandKActionParser.parse("task something else")!
+        draft.syncPrefills(from: retypedAgain)
+        XCTAssertEqual(draft.form.value(for: .title), "Replace the filters")
+    }
+
+    func testScopedIdeaActionPrefillsComposerBrand() {
+        let action = CommandKActionParser.parse("idea Euan: story bank")!
+        let draft = CommandKComposerDraft.draft(for: action)
+        XCTAssertEqual(draft?.kind, .createIdea)
+        XCTAssertEqual(draft?.form.value(for: .client), "Euan")
+        XCTAssertEqual(draft?.form.value(for: .title), "story bank")
+    }
+
+    func testCommandKViewRoutesEscapeToComposerBeforeActionPanel() throws {
+        let source = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("UI/CommandK/CommandKView.swift"),
+            encoding: .utf8
+        )
+        let composerPeel = source.range(of: "if viewModel.isComposerFocused {\n            viewModel.isComposerFocused = false\n            return .handled\n        }")
+        let panelPeel = source.range(of: "if viewModel.isActionPanelPresented {\n            viewModel.isActionPanelPresented = false\n            return .handled\n        }")
+        let peel = try XCTUnwrap(composerPeel)
+        let panel = try XCTUnwrap(panelPeel)
+        XCTAssertTrue(peel.lowerBound < panel.lowerBound, "composer focus must peel before the actions panel")
+    }
+
+    func testMainViewEscapeMonitorPeelsComposerBeforeActionPanel() throws {
+        let source = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Navigation/MainView.swift"),
+            encoding: .utf8
+        )
+        let composerPeel = source.range(of: "if commandKViewModel.isComposerFocused {\n                        commandKViewModel.isComposerFocused = false\n                        return nil\n                    }")
+        let panelPeel = source.range(of: "if commandKViewModel.isActionPanelPresented {\n                        commandKViewModel.isActionPanelPresented = false\n                        return nil\n                    }")
+        let peel = try XCTUnwrap(composerPeel)
+        let panel = try XCTUnwrap(panelPeel)
+        XCTAssertTrue(peel.lowerBound < panel.lowerBound, "composer focus must peel before the actions panel in the NSEvent monitor")
     }
 
     @MainActor

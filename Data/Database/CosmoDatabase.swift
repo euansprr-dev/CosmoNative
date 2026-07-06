@@ -2083,6 +2083,103 @@ class CosmoDatabase: ObservableObject {
             print("✅ deep_scout_taste table created")
         }
 
+        migrator.registerMigration("create_inquiry_gardener_decisions") { db in
+            // The Gardener's memory: accepted/dismissed structure proposals
+            // (promote / merge / graduate) so nothing is re-proposed.
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS inquiry_gardener_decisions (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    proposal_key TEXT NOT NULL,
+                    decision TEXT NOT NULL,
+                    deep_dive_uuid TEXT,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_inquiry_gardener_decisions_topic
+                    ON inquiry_gardener_decisions(deep_dive_uuid, created_at DESC);
+            """)
+            print("✅ inquiry_gardener_decisions table created")
+        }
+
+        migrator.registerMigration("media_attachments_sync_columns") { db in
+            // Physical capture (July 2026): media_attachments becomes a synced
+            // domain — photos of physical pages captured on either device flow
+            // Mac ↔ iPhone through the standard pipeline. Owner generalization:
+            // attachments link to any record kind (inbox_item, captured_item,
+            // extract, source_atom), not just Telegram lane captures.
+            for column in [
+                "ownerType TEXT NOT NULL DEFAULT 'captured_item'",
+                "ownerUUID TEXT NOT NULL DEFAULT ''",
+                "is_deleted INTEGER NOT NULL DEFAULT 0",
+                "created_at TEXT",
+                "updated_at TEXT",
+                "synced_at TEXT",
+                "_local_version INTEGER NOT NULL DEFAULT 1",
+                "_server_version INTEGER NOT NULL DEFAULT 0",
+                "_sync_version INTEGER NOT NULL DEFAULT 0",
+                "_local_pending INTEGER NOT NULL DEFAULT 0",
+            ] {
+                do {
+                    try db.execute(sql: "ALTER TABLE media_attachments ADD COLUMN \(column)")
+                } catch {
+                    // Column already exists
+                }
+            }
+            try db.execute(sql: """
+                UPDATE media_attachments SET ownerUUID = capturedItemId WHERE ownerUUID = '';
+                CREATE INDEX IF NOT EXISTS idx_media_attachments_owner
+                    ON media_attachments(ownerType, ownerUUID);
+            """)
+            print("✅ media_attachments sync columns ensured")
+        }
+
+        migrator.registerMigration("create_capture_requests") { db in
+            // The Mac → iPhone camera relay: this Mac writes pending scan
+            // requests; the phone claims them and streams pages back.
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS capture_requests (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    uuid TEXT UNIQUE NOT NULL,
+                    kind TEXT NOT NULL DEFAULT 'inbox_scan',
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    scanSessionId TEXT NOT NULL DEFAULT '',
+                    deepDiveUUID TEXT,
+                    sessionUUID TEXT,
+                    questionUUID TEXT,
+                    questionTitle TEXT,
+                    deepDiveTitle TEXT,
+                    pageCount INTEGER NOT NULL DEFAULT 0,
+                    requestedAt TEXT NOT NULL,
+                    fulfilledAt TEXT,
+                    is_deleted INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT,
+                    updated_at TEXT,
+                    synced_at TEXT,
+                    _local_version INTEGER NOT NULL DEFAULT 1,
+                    _server_version INTEGER NOT NULL DEFAULT 0,
+                    _sync_version INTEGER NOT NULL DEFAULT 0,
+                    _local_pending INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE INDEX IF NOT EXISTS idx_capture_requests_status
+                    ON capture_requests(status, is_deleted);
+            """)
+            print("✅ capture_requests table created")
+        }
+
+        migrator.registerMigration("repair_canvas_blocks_orphaned_by_remote_tombstones") { db in
+            // Remote atom tombstones (iOS/cloud deletes) historically soft-deleted
+            // only the atom row — canvas placements survived and kept rendering
+            // from their cached entity_title. The sync path now cascades; this
+            // repairs rows orphaned before the fix.
+            try db.execute(sql: """
+                UPDATE canvas_blocks
+                SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP
+                WHERE is_deleted = 0
+                  AND entity_uuid IS NOT NULL AND entity_uuid != ''
+                  AND entity_uuid IN (SELECT uuid FROM atoms WHERE is_deleted = 1)
+            """)
+            print("✅ Repaired canvas blocks orphaned by remote atom tombstones")
+        }
+
         return migrator
     }
 

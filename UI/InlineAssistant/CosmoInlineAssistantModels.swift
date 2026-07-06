@@ -1543,25 +1543,27 @@ enum CosmoInlineAssistantSkillRuntime {
         case .canvasOrganize:
             return CosmoInlineAssistantSkill(
                 id: .canvasOrganize,
-                name: "Canvas Organizer",
-                description: "Plans and stages canvas organization work using the active canvas state.",
+                name: "Organize Workspace",
+                description: "Reads the whole thinkspace and stages a reviewed plan that gathers blocks into named, intentful clusters.",
                 route: .action,
                 requiredContext: [.canvasState, .currentFocus, .workspaceMemory],
                 toolBundles: [.workspaceEditing, .canvasSpatial, .contentSearch, .strategy],
                 outputContract: "canvas_reviewed_plan",
                 instructions: [
-                    "Inspect the current canvas state before proposing spatial changes.",
-                    "Cluster by conceptual relationship, not just visual neatness.",
-                    "Stage reviewable canvas operations or a canvas plan instead of silently moving objects.",
-                    "Keep a pane history summary, but do not force the pane open for edit-only canvas work."
+                    "The thinkspace surface digest in your context lists every block (with uuid and current cluster) and every cluster (with intent) — read it FIRST; do not call tools to rediscover what it already says.",
+                    "Group by theme and working intent, never merely by type: mental-model connections that share a subject belong together, and source videos cluster with the connections they feed.",
+                    "Prefer a few meaningful clusters over many thin ones; leave genuinely unrelated blocks unclustered rather than forcing them.",
+                    "Stage ONE propose_canvas_plan using create_cluster (name + one-sentence intent + blockUUIDs copied exactly from the digest) and move_to_cluster for existing clusters.",
+                    "Every cluster name says what it collects ('Solipsism mental models', not 'Group 1'); the intent sentence is what future organizing reads.",
+                    "Explain the shape of the plan in the pane in one or two Cosmo-voice lines — the piles and why — then let the plan card do the rest."
                 ],
-                tokenBudget: 1800,
+                tokenBudget: 2400,
                 requiresReviewedDiff: true,
-                icon: "square.grid.3x3",
-                summary: "Stages reviewable organization changes for the active canvas or thinkspace.",
-                triggerPhrases: ["organize canvas", "reorganize", "arrange canvas"],
-                preferredModelTier: .strategist,
-                panePolicy: .neverForAction
+                icon: "square.grid.2x2",
+                summary: "Stages a reviewed cluster plan for the open thinkspace — themes, names, and intents.",
+                triggerPhrases: ["organize canvas", "reorganize", "arrange canvas", "organize my workspace", "organize this thinkspace", "clean up this canvas"],
+                preferredModelTier: .sonnet5,
+                panePolicy: .alwaysOpenWithResult
             )
         case .ideaStrategy:
             return CosmoInlineAssistantSkill(

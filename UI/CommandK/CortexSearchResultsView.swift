@@ -323,8 +323,10 @@ private struct CommandKActionPreviewRow: View {
             return DS.entityIdea
         case .createTask:
             return DS.entityTask
-        case .captureResearch, .captureLane, .createCaptureLane:
+        case .captureResearch, .captureLane, .createCaptureLane, .captureInbox:
             return DS.entityResearch
+        case .createNote:
+            return DS.entityNote
         case .createContent:
             return DS.entityContent
         case .createThinkspace, .navigateLastThinkspace, .openThinkspace:

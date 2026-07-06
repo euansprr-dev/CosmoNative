@@ -172,6 +172,18 @@ struct CosmoApp: App {
         }
         print("📄 Atom Window panel initialized (⌥E hotkey registered)")
 
+        // Initialize the Capture Anywhere panel (configurable hotkey, default ⌥C)
+        _ = CaptureOverlayPanelController.shared
+        HotkeyManager.shared.registerCaptureHotkey {
+            Task { @MainActor in
+                CaptureOverlayPanelController.shared.toggle()
+            }
+        }
+        print("📥 Capture Anywhere panel initialized (\(HotkeyManager.shared.captureHotkey.displayName) hotkey registered)")
+
+        // Menu-bar leaf: click opens the capture panel, drops capture instantly.
+        CaptureStatusItemController.shared.install()
+
         // Observe voice engine state for recording indicator updates
         NotificationCenter.default.addObserver(
             forName: .voiceRecordingStateChanged,
@@ -599,6 +611,13 @@ struct CosmoCommands: Commands {
                 CosmoAssistantHotkeyRouter.openFromOptionA()
             }
             .keyboardShortcut("a", modifiers: [.option])
+
+            // Menu-path twin of the global capture hotkey — keeps Capture
+            // Anywhere reachable when Accessibility permission is missing.
+            Button("Capture Anywhere") {
+                CaptureOverlayPanelController.shared.toggle()
+            }
+            .keyboardShortcut("c", modifiers: [.option])
         }
 
         // Native macOS View menu entries for the active Inquiry Workspace.

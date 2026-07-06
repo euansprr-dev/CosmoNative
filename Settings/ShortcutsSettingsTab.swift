@@ -35,6 +35,7 @@ struct ShortcutsSettingsTab: View {
 
             VStack(spacing: 0) {
                 shortcutRow(keys: "\u{2318}K", description: "Open Command Palette")
+                shortcutRow(keys: HotkeyManager.shared.captureHotkey.displayName, description: "Capture Anywhere (from any app)")
                 shortcutRow(keys: "\u{2318},", description: "Settings")
                 shortcutRow(keys: "\u{2318}N", description: "New Idea")
                 shortcutRow(keys: "\u{2318}T", description: "New Task")

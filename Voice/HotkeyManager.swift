@@ -27,6 +27,22 @@ struct HotkeyConfig: Codable, Equatable {
         displayName: "⌘⇧S"
     )
 
+    // Capture Anywhere hotkey default: Option+C (configurable via Settings)
+    static let defaultCaptureHotkey = HotkeyConfig(
+        keyCode: 8,           // 'C' key
+        modifiers: CGEventFlags.maskAlternate.rawValue,
+        displayName: "⌥C"
+    )
+
+    // Alternatives offered for the capture hotkey picker
+    static let captureAlternativeHotkeys: [HotkeyConfig] = [
+        HotkeyConfig(keyCode: 8, modifiers: CGEventFlags.maskAlternate.rawValue, displayName: "⌥C"),
+        HotkeyConfig(keyCode: 49, modifiers: CGEventFlags.maskAlternate.rawValue, displayName: "⌥Space"),
+        HotkeyConfig(keyCode: 49, modifiers: CGEventFlags([.maskShift, .maskAlternate]).rawValue, displayName: "⇧⌥Space"),
+        HotkeyConfig(keyCode: 8, modifiers: CGEventFlags([.maskControl, .maskShift]).rawValue, displayName: "⌃⇧C"),
+        HotkeyConfig(keyCode: 47, modifiers: CGEventFlags([.maskShift, .maskAlternate]).rawValue, displayName: "⇧⌥."),
+    ]
+
     // Alternative options for user selection
     // Option+Space is recommended as most reliable push-to-talk style
     static let alternativeHotkeys: [HotkeyConfig] = [
@@ -95,10 +111,28 @@ final class HotkeyManager {
     }
 
     private init() {
-        // Load saved hotkey or use default
+        // Load saved hotkeys or use defaults
         self.currentHotkey = HotkeyManager.loadHotkeyConfig()
+        self.captureHotkey = HotkeyManager.loadCaptureHotkeyConfig()
         print("🔑 HotkeyManager initialized with hotkey: \(currentHotkey.displayName)")
         print("🔑 Swipe File hotkey: \(swipeFileHotkey.displayName)")
+        print("🔑 Capture Anywhere hotkey: \(captureHotkey.displayName)")
+
+        // Recovery without relaunch: if the tap couldn't be created at
+        // startup (Accessibility not yet granted), pick it up the next time
+        // the user returns to Cosmo after granting trust in System Settings.
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.eventTap == nil, AXIsProcessTrusted() else { return }
+                if self.createEventTapIfNeeded() {
+                    print("🔑 Event tap created after permission grant — global hotkeys are live")
+                }
+            }
+        }
     }
 
     // MARK: - Swipe File Hotkey Registration
@@ -123,6 +157,25 @@ final class HotkeyManager {
     func registerCosmoWindowHotkey(onTrigger: @escaping () -> Void) {
         self.cosmoWindowCallback = onTrigger
         print("⌨️ Inline assistant hotkey (⌥A) callback registered")
+    }
+
+    // MARK: - Capture Anywhere Hotkey (configurable, default ⌥C)
+    private var captureCallback: (() -> Void)?
+
+    /// The capture panel's hotkey — user-configurable like the voice hotkey.
+    @Published var captureHotkey: HotkeyConfig {
+        didSet { saveCaptureHotkeyConfig() }
+    }
+
+    /// Register callback for the Capture Anywhere panel toggle. Creates the
+    /// event tap itself when trust already exists — capture must not depend
+    /// on the voice engine having initialized first.
+    func registerCaptureHotkey(onTrigger: @escaping () -> Void) {
+        self.captureCallback = onTrigger
+        if AXIsProcessTrusted() {
+            createEventTapIfNeeded()
+        }
+        print("📥 Capture Anywhere hotkey (\(captureHotkey.displayName)) callback registered")
     }
 
     // MARK: - Atom Window Hotkey (Option+W)
@@ -153,6 +206,21 @@ final class HotkeyManager {
             UserDefaults.standard.set(data, forKey: "voiceHotkeyConfig")
         }
         print("💾 Saved hotkey: \(currentHotkey.displayName)")
+    }
+
+    private static func loadCaptureHotkeyConfig() -> HotkeyConfig {
+        if let data = UserDefaults.standard.data(forKey: "captureHotkeyConfig"),
+           let config = try? JSONDecoder().decode(HotkeyConfig.self, from: data) {
+            return config
+        }
+        return HotkeyConfig.defaultCaptureHotkey
+    }
+
+    private func saveCaptureHotkeyConfig() {
+        if let data = try? JSONEncoder().encode(captureHotkey) {
+            UserDefaults.standard.set(data, forKey: "captureHotkeyConfig")
+        }
+        print("💾 Saved capture hotkey: \(captureHotkey.displayName)")
     }
 
     // MARK: - Register Global Hotkey
@@ -192,7 +260,18 @@ final class HotkeyManager {
 
         print("✅ Accessibility permission granted")
 
-        // Create event tap
+        if createEventTapIfNeeded() {
+            print("✅ Global \(currentHotkey.displayName) hotkey registered successfully!")
+        }
+    }
+
+    /// Create and start the CGEvent tap. Idempotent — safe to call from any
+    /// hotkey registration path (voice, capture, permission-grant recovery);
+    /// requires Accessibility trust to succeed.
+    @discardableResult
+    private func createEventTapIfNeeded() -> Bool {
+        if eventTap != nil { return true }
+
         let mask = CGEventMask(
             (1 << CGEventType.keyDown.rawValue) |
             (1 << CGEventType.keyUp.rawValue) |
@@ -219,7 +298,7 @@ final class HotkeyManager {
             print("   ℹ️  App will continue without global hotkey (development mode)")
             self.registrationError = errorMsg
             self.isRegistered = false
-            return  // Non-blocking
+            return false
         }
 
         // Add to run loop
@@ -229,9 +308,8 @@ final class HotkeyManager {
 
         self.isRegistered = true
         self.registrationError = nil
-
-        print("✅ Global \(currentHotkey.displayName) hotkey registered successfully!")
-        print("   Event tap created and added to run loop")
+        print("✅ Event tap created and added to run loop")
+        return true
     }
 
     // Legacy method for compatibility
@@ -250,6 +328,16 @@ final class HotkeyManager {
         type: CGEventType,
         event: CGEvent
     ) -> Unmanaged<CGEvent>? {
+        // The system disables taps that stall (or on secure input) — without
+        // this re-enable, every global hotkey dies silently until relaunch.
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            if let tap = eventTap {
+                CGEvent.tapEnable(tap: tap, enable: true)
+                print("🔑 Event tap re-enabled after system disable (\(type == .tapDisabledByTimeout ? "timeout" : "user input"))")
+            }
+            return Unmanaged.passRetained(event)
+        }
+
         let flags = event.flags
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         let requiredMods = currentHotkey.modifierFlags
@@ -336,6 +424,17 @@ final class HotkeyManager {
             if hasOnlyAtomMods {
                 print("📄 Atom Window hotkey triggered (⌥E)")
                 atomWindowCallback?()
+                return nil // Consume event
+            }
+        }
+
+        // MARK: Check for Capture Anywhere hotkey (configurable, default ⌥C)
+        // No isInTextField() guard — capture must fire from anywhere,
+        // including while the user is typing in another app.
+        if type == .keyDown && keyCode == Int64(captureHotkey.keyCode) {
+            if flagsExactlyMatch(captureHotkey.modifierFlags, in: flags) {
+                print("📥 Capture Anywhere hotkey triggered (\(captureHotkey.displayName))")
+                captureCallback?()
                 return nil // Consume event
             }
         }
@@ -446,6 +545,16 @@ final class HotkeyManager {
         }
 
         return Unmanaged.passRetained(event)
+    }
+
+    /// True when exactly the config's ⌘/⇧/⌥/⌃ set is held — required
+    /// modifiers present, every other checked modifier absent.
+    private func flagsExactlyMatch(_ required: CGEventFlags, in flags: CGEventFlags) -> Bool {
+        let checked: [CGEventFlags] = [.maskCommand, .maskShift, .maskAlternate, .maskControl]
+        for modifier in checked {
+            if required.contains(modifier) != flags.contains(modifier) { return false }
+        }
+        return true
     }
 
     // MARK: - Text Field Detection

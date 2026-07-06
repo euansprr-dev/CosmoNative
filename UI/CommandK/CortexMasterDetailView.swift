@@ -33,7 +33,7 @@ struct CortexMasterDetailView: View {
                     .fill(DS.commandChromeSeparatorStrong)
                     .frame(width: 0.5)
 
-                CortexDetailPane(subject: subject)
+                CortexDetailPane(subject: subject, viewModel: viewModel)
                     .frame(maxWidth: .infinity)
                     .transaction { transaction in
                         transaction.animation = nil

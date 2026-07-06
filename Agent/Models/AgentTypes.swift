@@ -379,6 +379,7 @@ enum AgentModelTier: String, Codable, Sendable {
     case sensor      // Haiku 4.5 — cheap bulk analysis, classification, scoring
     case strategist  // Sonnet 4.6 — daily driver conversations, outlines, re-ranking, strategy
     case writer      // Opus 4.6 — explicit premium route only
+    case sonnet5     // Sonnet 5 — agentic/spatial work (thinkspace organizing)
     case gpt55Thinking
     case opus47
     case gptChatLatest
@@ -391,6 +392,7 @@ enum AgentModelTier: String, Codable, Sendable {
         .gptChatLatest,
         .gpt55Thinking,
         .opus47,
+        .sonnet5,
         .strategist,
         .sensor,
         .writer
@@ -401,6 +403,7 @@ enum AgentModelTier: String, Codable, Sendable {
         case .sensor: return "anthropic/claude-haiku-4.5"
         case .strategist: return "anthropic/claude-sonnet-4.6"
         case .writer: return "anthropic/claude-opus-4.6"
+        case .sonnet5: return "anthropic/claude-sonnet-5"
         case .gpt55Thinking: return "openai/gpt-5.5"
         case .opus47: return "anthropic/claude-opus-4.7"
         case .gptChatLatest: return "openai/gpt-chat-latest"
@@ -414,6 +417,7 @@ enum AgentModelTier: String, Codable, Sendable {
         case .sensor: return "Haiku"
         case .strategist: return "Sonnet 4.6"
         case .writer: return "Opus"
+        case .sonnet5: return "Sonnet 5"
         case .gpt55Thinking: return "GPT 5.5 Thinking"
         case .opus47: return "Opus 4.7"
         case .gptChatLatest: return "GPT Chat Latest"
@@ -427,6 +431,7 @@ enum AgentModelTier: String, Codable, Sendable {
         case .sensor: return 4096
         case .strategist: return 8192
         case .writer: return 16384
+        case .sonnet5: return 8192
         case .gpt55Thinking: return 16384
         case .opus47: return 16384
         case .gptChatLatest: return 8192
@@ -440,6 +445,7 @@ enum AgentModelTier: String, Codable, Sendable {
         case .sensor: return 200_000
         case .strategist: return 200_000
         case .writer: return 1_000_000
+        case .sonnet5: return 200_000
         case .gpt55Thinking: return 1_050_000
         case .opus47: return 1_000_000
         case .gptChatLatest: return 400_000
@@ -885,12 +891,18 @@ struct ModelFailoverChain: Sendable {
         FailoverModel(modelId: "openai/gpt-chat-latest", maxRetries: 1, label: "GPT Chat Latest"),
     ])
 
+    static let sonnet5Chain = ModelFailoverChain(models: [
+        FailoverModel(modelId: "anthropic/claude-sonnet-5", maxRetries: 1, label: "Sonnet 5"),
+        FailoverModel(modelId: "anthropic/claude-sonnet-4.6", maxRetries: 1, label: "Sonnet 4.6"),
+    ])
+
     /// Get the appropriate failover chain for a model tier
     static func chain(for tier: AgentModelTier) -> ModelFailoverChain {
         switch tier {
         case .writer: return .writerChain
         case .strategist: return .defaultChain
         case .sensor: return .sensorChain
+        case .sonnet5: return .sonnet5Chain
         case .gpt55Thinking: return .gpt55ThinkingChain
         case .opus47: return .opus47Chain
         case .gptChatLatest: return .gptChatLatestChain

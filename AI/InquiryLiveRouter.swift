@@ -38,11 +38,14 @@ actor InquiryLiveRouter {
 
     /// One capture awaiting classification. `lockedKind` is set when the user
     /// chose the kind explicitly (dock prefix like "benefit:") — the model may
-    /// split and route it but never re-type it.
+    /// split and route it but never re-type it. `inkMarks` ride along on
+    /// captures digitized from a physical page (star/question/box/arrow/
+    /// underline) — bias hints for the kind test, never overrides.
     struct CaptureInput: Sendable, Equatable {
         var id: String                  // Extract UUID
         var text: String
         var lockedKind: ExtractKind?
+        var inkMarks: [String]? = nil
     }
 
     struct RoutedUnit: Sendable, Equatable {
@@ -50,6 +53,11 @@ actor InquiryLiveRouter {
         var kind: ExtractKind
         var targetQuestionUUID: String?     // Existing question (validated)
         var newBranchTitle: String?         // Create a branch instead
+        /// Where the new branch belongs by the NESTING CONTRACT: an existing
+        /// question it decomposes (validated uuid), or nil = top level of the
+        /// topic (a parallel lens or parked tangent). Only meaningful when
+        /// newBranchTitle is set.
+        var newBranchParentUUID: String?
         var conceptNames: [String]
         var confidence: Double
     }
@@ -67,6 +75,7 @@ actor InquiryLiveRouter {
             var newKind: ExtractKind?
             var targetQuestionUUID: String?
             var newBranchTitle: String?
+            var newBranchParentUUID: String?
             var conceptNames: [String]
         }
         var original: OriginalUpdate
@@ -218,6 +227,16 @@ actor InquiryLiveRouter {
        A capture that IS a standalone research question ("How to make better choices?") must get kind
        "question" AND a newBranchTitle (a cleaned-up phrasing of it) — the user is parking a question
        to revisit, and without the branch it strands as a note-shaped orphan.
+    5b. THE NESTING CONTRACT — every newBranchTitle must also carry newBranchParentUUID, decided by
+       one test: "would answering this new question MATERIALLY ADVANCE the answer to an existing
+       question?" If yes, newBranchParentUUID = that question's uuid (a DECOMPOSITION — usually the
+       active question). If it is a parallel lens on the topic or a tangent the user is parking for
+       later, newBranchParentUUID = null (top level of the topic). Where the thought OCCURRED is not
+       where it BELONGS: "How does sleep architecture work?" sparked while reading about becoming
+       your best self does NOT advance "How do I become my best self?" directly → null. "What role
+       does sleep play in becoming my best self?" does → child of it. Depth bias: if the candidate
+       parent already sits 2+ levels deep (see its "parent" chain in QUESTIONS), prefer null unless
+       the decomposition is unmistakable — deep trees stop helping humans think.
     6. conceptNames: pick from LEXICON/CONCEPTS when one clearly applies; you may add at most one new
        noun-phrase concept when the unit is clearly about a durable concept not yet listed. Otherwise [].
     7. PAST USER CORRECTIONS in the input are learned rules — when a capture resembles one, follow the
@@ -230,9 +249,17 @@ actor InquiryLiveRouter {
     Example A — long ramble splits into three units:
     Capture: "Slow exhales seem to raise vagal tone. I should find out whether monks measured this somehow. Box breathing: in 4, hold 4, out 4, hold 4."
     → units:
-      {"text":"Slow exhales seem to raise vagal tone.","kind":"speculativeClaim","targetQuestionUUID":"<uuid of the breath-physiology question from the list>","newBranchTitle":null,"conceptNames":["Vagal tone"],"confidence":0.85},
-      {"text":"I should find out whether monks measured this somehow.","kind":"question","targetQuestionUUID":null,"newBranchTitle":"Did contemplative traditions measure breath effects?","conceptNames":[],"confidence":0.7},
-      {"text":"Box breathing: in 4, hold 4, out 4, hold 4.","kind":"practice","targetQuestionUUID":null,"newBranchTitle":null,"conceptNames":["Box breathing"],"confidence":0.9}
+      {"text":"Slow exhales seem to raise vagal tone.","kind":"speculativeClaim","targetQuestionUUID":"<uuid of the breath-physiology question from the list>","newBranchTitle":null,"newBranchParentUUID":null,"conceptNames":["Vagal tone"],"confidence":0.85},
+      {"text":"I should find out whether monks measured this somehow.","kind":"question","targetQuestionUUID":null,"newBranchTitle":"Did contemplative traditions measure breath effects?","newBranchParentUUID":null,"conceptNames":[],"confidence":0.7},
+      {"text":"Box breathing: in 4, hold 4, out 4, hold 4.","kind":"practice","targetQuestionUUID":null,"newBranchTitle":null,"newBranchParentUUID":null,"conceptNames":["Box breathing"],"confidence":0.9}
+    (The new branch is a parked tangent — measuring history doesn't directly advance the active
+    physiology question — so newBranchParentUUID is null: it lands at the topic's top level.)
+
+    Example F — a decomposition nests under the question it advances:
+    Active question: "How do I become my best self?" (uuid Q1)
+    Capture: "what role does environment design play in this?"
+    → units: {"text":"what role does environment design play in this?","kind":"question","targetQuestionUUID":null,"newBranchTitle":"What role does environment design play in becoming your best self?","newBranchParentUUID":"Q1","conceptNames":["Environment design"],"confidence":0.85}
+    (Answering it materially advances Q1's answer — a true sub-question, so it nests.)
 
     Example B — attributed finding is evidence (attribution beats valence):
     Capture: "A 2019 trial found 6 breaths/min lowered blood pressure in hypertensive adults"
@@ -257,7 +284,7 @@ actor InquiryLiveRouter {
     (Declarative shape, but it names positive payoffs — the valence test fires before the claim fallback.)
 
     OUTPUT SCHEMA:
-    {"captures":[{"id":"<capture id from input>","units":[{"text":"<verbatim>","kind":"<raw kind>","targetQuestionUUID":"<uuid or null>","newBranchTitle":"<title or null>","conceptNames":["<name>"],"confidence":<0-1>}]}]}
+    {"captures":[{"id":"<capture id from input>","units":[{"text":"<verbatim>","kind":"<raw kind>","targetQuestionUUID":"<uuid or null>","newBranchTitle":"<title or null>","newBranchParentUUID":"<uuid or null>","conceptNames":["<name>"],"confidence":<0-1>}]}]}
     """
 
     static func buildPrompt(
@@ -269,10 +296,11 @@ actor InquiryLiveRouter {
             lines.append("Deep Dive: \(title)")
         }
         lines.append("ACTIVE QUESTION (default destination): \(context.activeQuestionTitle)")
-        lines.append("\nQUESTIONS (the only valid targetQuestionUUID values):")
+        lines.append("\nQUESTIONS (the only valid targetQuestionUUID/newBranchParentUUID values; \"parent\" shows nesting):")
         for question in context.questions.prefix(20) {
             let marker = question.uuid == context.activeQuestionUUID ? " (active)" : ""
-            lines.append(#"- {"uuid":"\#(question.uuid)","title":"\#(question.title)"}\#(marker)"#)
+            let parent = question.parentUUID.map { "\"\($0)\"" } ?? "null"
+            lines.append(#"- {"uuid":"\#(question.uuid)","title":"\#(question.title)","parent":\#(parent)}\#(marker)"#)
         }
         if !context.lexiconTerms.isEmpty {
             lines.append("\nLEXICON: \(context.lexiconTerms.prefix(25).joined(separator: ", "))")
@@ -292,12 +320,29 @@ actor InquiryLiveRouter {
                 lines.append("- \(capture.prefix(140))")
             }
         }
+        if captures.contains(where: { $0.inkMarks?.isEmpty == false }) {
+            lines.append("""
+
+            INK MARKS: some captures were digitized from a photographed physical page and carry the \
+            author's ink marks as hints. star → the author flags it as a key thought (raise its \
+            confidence, keep it a standalone unit). question → lean "question". box → lean "practice" \
+            or an action to take. arrow → lean "mechanism" (a pathway is drawn). underline → lean \
+            "term". Marks bias the kind test; the text itself still decides.
+            """)
+        }
         lines.append("\nCAPTURES TO ROUTE:")
         for capture in captures {
+            var annotations: [String] = []
             if let locked = capture.lockedKind {
-                lines.append(#"- {"id":"\#(capture.id)"} (KIND LOCKED BY USER: "\#(locked.rawValue)")"#)
-            } else {
+                annotations.append(#"KIND LOCKED BY USER: "\#(locked.rawValue)""#)
+            }
+            if let marks = capture.inkMarks, !marks.isEmpty {
+                annotations.append("ink marks: \(marks.joined(separator: ", "))")
+            }
+            if annotations.isEmpty {
                 lines.append(#"- {"id":"\#(capture.id)"}"#)
+            } else {
+                lines.append(#"- {"id":"\#(capture.id)"} (\#(annotations.joined(separator: "; ")))"#)
             }
             lines.append(capture.text)
         }
@@ -364,11 +409,20 @@ actor InquiryLiveRouter {
             if branchTitle != nil {
                 if proposedBranch { branchTitle = nil } else { proposedBranch = true }
             }
+            // The branch's semantic parent (nesting contract). Invented UUIDs
+            // fall back to root-level — the safer landing (visible at the
+            // topic's top level, never buried under a wrong parent).
+            var branchParent = entry["newBranchParentUUID"] as? String
+            if let candidate = branchParent, !validQuestionUUIDs.contains(candidate) {
+                branchParent = nil
+            }
+            if branchTitle == nil { branchParent = nil }
             units.append(RoutedUnit(
                 text: text,
                 kind: kind,
                 targetQuestionUUID: target,
                 newBranchTitle: branchTitle,
+                newBranchParentUUID: branchParent,
                 conceptNames: (entry["conceptNames"] as? [String]) ?? [],
                 confidence: (entry["confidence"] as? Double) ?? 0.6
             ))
@@ -388,7 +442,7 @@ actor InquiryLiveRouter {
     ) -> ApplyPlan {
         guard let first = refinement.units.first else {
             return ApplyPlan(
-                original: .init(newText: nil, newKind: nil, targetQuestionUUID: nil, newBranchTitle: nil, conceptNames: []),
+                original: .init(newText: nil, newKind: nil, targetQuestionUUID: nil, newBranchTitle: nil, newBranchParentUUID: nil, conceptNames: []),
                 additions: [],
                 summary: "Confirmed as \(originalKind.displayName)",
                 isNoOp: true
@@ -405,6 +459,7 @@ actor InquiryLiveRouter {
             newKind: kindChanged ? first.kind : nil,
             targetQuestionUUID: moved ? first.targetQuestionUUID : nil,
             newBranchTitle: first.newBranchTitle,
+            newBranchParentUUID: first.newBranchParentUUID,
             conceptNames: first.conceptNames
         )
 

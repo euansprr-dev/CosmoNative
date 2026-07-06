@@ -48,11 +48,23 @@ struct SwipeLibraryDateBucket: Equatable, Identifiable {
         return buckets
     }
 
-    /// Items saved in the last 7 days — the Home page's "New This Week" shelf.
+    /// Items saved in the last 7 days — the "New This Week" shelf.
     static func lastWeekModels(items: [SwipeGalleryItem], models: [SwipeCardModel]) -> [SwipeCardModel] {
         let weekFloor = Date().addingTimeInterval(-7 * 24 * 3600)
         return zip(items, models).compactMap { item, model in
             (ISO8601.date(from: item.createdAt) ?? .distantPast) > weekFloor ? model : nil
+        }
+    }
+
+    /// Items saved 7–30 days ago — the "New This Month" shelf. The week shelf
+    /// owns the last 7 days, so the two never show the same swipe.
+    static func lastMonthModels(items: [SwipeGalleryItem], models: [SwipeCardModel]) -> [SwipeCardModel] {
+        let now = Date()
+        let weekFloor = now.addingTimeInterval(-7 * 24 * 3600)
+        let monthFloor = now.addingTimeInterval(-30 * 24 * 3600)
+        return zip(items, models).compactMap { item, model in
+            let date = ISO8601.date(from: item.createdAt) ?? .distantPast
+            return date > monthFloor && date <= weekFloor ? model : nil
         }
     }
 }

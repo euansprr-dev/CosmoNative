@@ -33,13 +33,15 @@ enum StudyMetrics {
     static let panelWidth: CGFloat = 300
     static let panelCorner: CGFloat = 18
     static let edgeInset: CGFloat = 16
-    /// Vertical clearance under the chrome islands / above the thinking bar.
-    static let panelTopInset: CGFloat = 64
+    /// Scroll clearance above the floating thinking bar at the sheet's foot.
     static let panelBottomInset: CGFloat = 92
     static let pageMeasure: CGFloat = 680
-    static let barMaxWidthRest: CGFloat = 640
-    /// Engaged, the instrument fills out the bottom area between the panels.
-    static let barMaxWidthFocused: CGFloat = 860
+    /// The reader's one shared column: player, transcript, and the thinking
+    /// bar all sit on this measure so their edges align as one manuscript.
+    static let readerMeasure: CGFloat = 760
+    /// One stable instrument width — the bar never stretches or collapses.
+    /// Matches `readerMeasure` so the bar belongs to the column it serves.
+    static let barMaxWidth: CGFloat = readerMeasure
 }
 
 // MARK: - The Study panel surface (the inspector idiom)

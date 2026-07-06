@@ -32,6 +32,11 @@ struct APIKeys {
         case supabaseUserId = "supabase_user_id"
         case discoveryApiBaseURL = "discovery_api_base_url"
         case discoveryApiKey = "discovery_api_key"
+        // APNs (Mac → iPhone camera relay): the Mac signs its own push JWTs.
+        case apnsTeamId = "apns_team_id"
+        case apnsKeyId = "apns_key_id"
+        case apnsPrivateKey = "apns_private_key_p8"
+        case apnsBundleId = "apns_bundle_id"
     }
 
     // MARK: - In-Memory Cache (thread-safe via lock)
@@ -174,6 +179,16 @@ struct APIKeys {
         cachedValue(.discoveryApiBaseURL, envKey: "DISCOVERY_API_BASE_URL")
     }
 
+    // MARK: - APNs (Mac → iPhone camera relay)
+
+    static var apnsTeamId: String? { cachedValue(.apnsTeamId) }
+    static var apnsKeyId: String? { cachedValue(.apnsKeyId) }
+    static var apnsPrivateKey: String? { cachedValue(.apnsPrivateKey) }
+    static var apnsBundleId: String? { cachedValue(.apnsBundleId) }
+    static var hasAPNs: Bool {
+        apnsTeamId?.isEmpty == false && apnsKeyId?.isEmpty == false && apnsPrivateKey?.isEmpty == false
+    }
+
     static var discoveryApiKey: String? {
         cachedValue(.discoveryApiKey, envKey: "DISCOVERY_API_KEY")
     }
@@ -300,6 +315,10 @@ struct APIKeys {
         case "supabase_user_id": return .supabaseUserId
         case "discovery_api_base_url": return .discoveryApiBaseURL
         case "discovery_api_key": return .discoveryApiKey
+        case "apns_team_id": return .apnsTeamId
+        case "apns_key_id": return .apnsKeyId
+        case "apns_private_key_p8": return .apnsPrivateKey
+        case "apns_bundle_id": return .apnsBundleId
         default: return nil
         }
     }

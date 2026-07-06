@@ -21,6 +21,7 @@ struct InboxInspector: View {
             VStack(alignment: .leading, spacing: DS.space16) {
                 header
                 essenceSection
+                originalsSection
                 suggestionSection
                 minimapSection
                 alternatesSection
@@ -86,6 +87,17 @@ struct InboxInspector: View {
             .padding(DS.space12)
             .background(DS.glassSectionFill, in: .rect(cornerRadius: 14))
             .textSelection(.enabled)
+    }
+
+    // MARK: - Originals (captured pages)
+
+    /// The physical pages behind a scanned capture — click to see the ink
+    /// the transcript came from.
+    @ViewBuilder
+    private var originalsSection: some View {
+        if !item.attachmentUUIDs.isEmpty {
+            AttachmentRail(attachmentUUIDs: item.attachmentUUIDs, thumbSize: CGSize(width: 64, height: 84))
+        }
     }
 
     // MARK: - Suggestion

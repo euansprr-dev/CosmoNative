@@ -496,6 +496,11 @@ struct NoteFocusModeView: View {
                 saveAtomImmediately()
                 floatingBlocksManager.saveImmediately()
                 AtomRepository.shared.releaseEditingLock(uuid: atom.uuid)
+                // Mirror any local-only note images to the shared bucket so
+                // they render on iPhone. Runs after the close save, off the
+                // editing path — idempotent once every image has a remoteURL.
+                let uuid = atom.uuid
+                Task { await ImageStore.hydrateNoteImages(uuid: uuid) }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .cosmoAppWillTerminate)) { _ in

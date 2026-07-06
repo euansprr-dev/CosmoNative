@@ -357,6 +357,28 @@ enum CommandCenterTaskScheduling {
         metadata.schedulingState = nil
     }
 
+    /// Detects the cross-device reschedule lag TaskDayPinRepair heals: a client
+    /// moved dueDate+focusDate to a new day but left whenDate stranded behind
+    /// (the pre-fix iOS reschedule wrote only due/focus). Every legitimate Mac
+    /// writer moves the three pins together, and the deliberate split shape
+    /// (deadline ≠ planned day) has focusDate on the whenDate side — so
+    /// "focus == due, whenDate strictly earlier" only arises from the lag.
+    /// Returns the corrected whenDate string, or nil when the shape is healthy.
+    static func laggingWhenDateCorrection(
+        in metadata: TaskMetadata,
+        calendar: Calendar = .current
+    ) -> String? {
+        guard metadata.recurrence == nil, metadata.recurrenceParentUUID == nil,
+              let due = metadata.dueDate.flatMap({ PlannerumFormatters.iso8601.date(from: $0) }),
+              let focus = metadata.focusDate.flatMap({ PlannerumFormatters.iso8601.date(from: $0) }),
+              let when = metadata.whenDate.flatMap({ PlannerumFormatters.iso8601.date(from: $0) })
+        else { return nil }
+        let dueDay = calendar.startOfDay(for: due)
+        guard calendar.isDate(focus, inSameDayAs: due),
+              calendar.startOfDay(for: when) < dueDay else { return nil }
+        return PlannerumFormatters.iso8601.string(from: dueDay)
+    }
+
     private static func applyPlannedDate(_ day: Date, to metadata: inout TaskMetadata) {
         let dateString = PlannerumFormatters.iso8601.string(from: day)
         metadata.dueDate = dateString
@@ -611,6 +633,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
         setupBindings()
         Task {
             await RecurringSeriesEngine.shared.runCleanSlateMigrationIfNeeded()
+            await TaskDayPinRepair.runIfNeeded()
             await refreshAll()
         }
     }
@@ -2199,6 +2222,10 @@ class CommandCenterDashboardViewModel: ObservableObject {
                     let dateString = PlannerumFormatters.iso8601.string(from: dueDate)
                     metadata.dueDate = dateString
                     metadata.focusDate = dateString
+                    // Day pins move together (deadline-only edits go through
+                    // setDeadline) — a stranded whenDate keeps the task on its
+                    // old day everywhere that plans by whenDate first.
+                    metadata.whenDate = dateString
                     if metadata.recurrence != nil, metadata.recurrenceParentUUID == nil {
                         metadata.seriesAnchorDay = RecurringSeriesEngine.dayKey(for: dueDate)
                     }

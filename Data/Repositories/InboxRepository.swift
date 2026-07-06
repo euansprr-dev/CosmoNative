@@ -179,6 +179,24 @@ class InboxRepository: ObservableObject {
         await track(updated)
     }
 
+    /// Physical capture: replace a pending capture's draft text with the
+    /// finished handwriting transcript (the iPhone saved before its LLM pass
+    /// ran, or had no key). Pre-classification only — a classified or triaged
+    /// item's text is never rewritten under the user.
+    func upgradeRawText(uuid: String, to newText: String) async throws {
+        let trimmed = newText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let updated = try await database.asyncWrite { db -> InboxItem? in
+            guard var item = try InboxItem.filter(Column("uuid") == uuid).fetchOne(db) else { return nil }
+            guard item.status == .pending else { return nil }
+            item.rawText = trimmed
+            Self.prepareTrackedUpdate(&item)
+            try item.update(db)
+            return item
+        }
+        await track(updated)
+    }
+
     // MARK: - Actions
 
     func markActioned(uuid: String) async throws {

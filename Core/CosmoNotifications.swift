@@ -80,6 +80,10 @@ enum CosmoNotification {
         static let createCosmoAIBlock = Notification.Name("com.cosmo.canvas.createCosmoAIBlock")
         static let createEntityAtPosition = Notification.Name("com.cosmo.canvas.createEntityAtPosition")
 
+        // Approved canvas-plan cluster operations (thinkspace copilot)
+        static let createClusterFromPlan = Notification.Name("com.cosmo.canvas.createClusterFromPlan")
+        static let moveBlocksToCluster = Notification.Name("com.cosmo.canvas.moveBlocksToCluster")
+
         // Smart actions (content-based)
         static let moveBlockByContentToTime = Notification.Name("com.cosmo.canvas.moveBlockByContentToTime")
         static let deleteBlockByContent = Notification.Name("com.cosmo.canvas.deleteBlockByContent")

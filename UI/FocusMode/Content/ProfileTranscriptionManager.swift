@@ -3,13 +3,15 @@
 // March 2026
 
 import Foundation
+import Observation
 
 // MARK: - Profile Transcription Manager
 
-/// Manages per-entry transcription state for the ContentProfileEditor.
+/// Manages per-entry transcription state for the Profile Studio.
 /// Reuses the same InstagramMediaCache + InstagramAutoTranscriber pipeline as SwipeProcessingService.
 @MainActor
-final class ProfileTranscriptionManager: ObservableObject {
+@Observable
+final class ProfileTranscriptionManager {
 
     // MARK: - Transcription State
 
@@ -21,7 +23,7 @@ final class ProfileTranscriptionManager: ObservableObject {
     }
 
     /// Tracks state by ProfileDocument.id
-    @Published var states: [UUID: TranscriptionState] = [:]
+    var states: [UUID: TranscriptionState] = [:]
 
     /// Returns true if any transcription is in-flight
     var hasActiveTranscriptions: Bool {

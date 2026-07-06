@@ -29,9 +29,9 @@ enum CosmoInlineAssistantPaneEmptyStatePolicy {
             ]
         case .canvas:
             return [
-                .init(label: "Organize this canvas", prompt: "Organize this canvas into clusters that make sense."),
-                .init(label: "Find the through-line", prompt: "What connects the blocks on this canvas? Name the through-line."),
-                .init(label: "Search my brain", prompt: "What have I saved about ")
+                .init(label: "Organize my workspace", prompt: "Organize my workspace — group everything on this thinkspace into clusters that make sense, with names and intents."),
+                .init(label: "How would you organize this?", prompt: "Look at everything on this thinkspace — how would you organize it, and why?"),
+                .init(label: "Find the through-line", prompt: "What connects the blocks on this canvas? Name the through-line.")
             ]
         case nil:
             return [
@@ -44,6 +44,25 @@ enum CosmoInlineAssistantPaneEmptyStatePolicy {
 
     /// The empty state shows a curated shelf, not the whole registry.
     static let maxSkillCards = 5
+
+    /// Surface-aware shelf: a thinkspace leads with canvas skills and hides
+    /// text-editing ones; text surfaces hide canvas skills. Affinity is read
+    /// from `requiredContext` — `.canvasState` marks a canvas skill.
+    static func shelfSkills(
+        for kind: CosmoEditableSurfaceKind?,
+        from skills: [CosmoInlineSkillDefinition]
+    ) -> [CosmoInlineSkillDefinition] {
+        switch kind {
+        case .canvas:
+            let canvasSkills = skills.filter { $0.requiredContext.contains(.canvasState) }
+            let universal = skills.filter {
+                !$0.requiredContext.contains(.canvasState) && !$0.requiredContext.contains(.activeSurface)
+            }
+            return canvasSkills + universal
+        default:
+            return skills.filter { !$0.requiredContext.contains(.canvasState) }
+        }
+    }
 }
 
 // MARK: - Empty state view
@@ -62,18 +81,25 @@ struct CosmoInlineAssistantPaneEmptyState: View {
             starterRow
         }
         .frame(maxWidth: 460, alignment: .leading)
-        .onAppear {
-            guard shelfSkills.isEmpty else { return }
-            shelfSkills = Array(
-                CosmoInlineSkillRegistry().enabledSkills
-                    .prefix(CosmoInlineAssistantPaneEmptyStatePolicy.maxSkillCards)
-            )
-        }
+        .onAppear { reloadShelf() }
+        .onChange(of: store.activeSurfaceKind) { _, _ in reloadShelf() }
         .accessibilityElement(children: .contain)
     }
 
+    /// The shelf follows the scope: a thinkspace shows canvas skills, a
+    /// document shows writing skills.
+    private func reloadShelf() {
+        shelfSkills = Array(
+            CosmoInlineAssistantPaneEmptyStatePolicy.shelfSkills(
+                for: store.activeSurfaceKind,
+                from: CosmoInlineSkillRegistry().enabledSkills
+            )
+            .prefix(CosmoInlineAssistantPaneEmptyStatePolicy.maxSkillCards)
+        )
+    }
+
     private var heading: some View {
-        VStack(alignment: .leading, spacing: DS.space6) {
+        VStack(alignment: .leading, spacing: DS.space8) {
             Image(systemName: "sparkle")
                 .font(DS.title2.weight(.semibold))
                 .foregroundStyle(DS.accent)
@@ -81,14 +107,22 @@ struct CosmoInlineAssistantPaneEmptyState: View {
                 .background(DS.accentSoft, in: Circle())
                 .accessibilityHidden(true)
 
-            Text(headingTitle)
-                .font(DS.headline)
-                .foregroundStyle(DS.text)
+            // The pane names its scope in ONE voice — the same pill the header wears.
+            CosmoScopePill(
+                title: store.activeSurfaceTitle,
+                entity: store.activeSurfaceEntity
+            )
 
             VStack(alignment: .leading, spacing: DS.space4) {
-                Text("Select a sentence and tell me what to do with it — \"shorten this\" just works.")
-                Text("Edits stage as reviewable diffs in place; formatting too (\"bold the headers\").")
-                Text("Answers cite your documents as pills you can open.")
+                if isCanvasScope {
+                    Text("This is a thinkspace — I can see every block and cluster on it.")
+                    Text("Ask how to organize it, or just say \"organize my workspace\".")
+                    Text("Canvas changes stage as a reviewable plan — nothing moves until you approve.")
+                } else {
+                    Text("Select a sentence and tell me what to do with it — \"shorten this\" just works.")
+                    Text("Edits stage as reviewable diffs in place; formatting too (\"bold the headers\").")
+                    Text("Answers cite your documents as pills you can open.")
+                }
             }
             .font(DS.subheadline)
             .italic()
@@ -97,11 +131,8 @@ struct CosmoInlineAssistantPaneEmptyState: View {
         }
     }
 
-    private var headingTitle: String {
-        if let title = store.activeSurfaceTitle {
-            return "Ask about “\(title)”"
-        }
-        return "Ask about the active workspace"
+    private var isCanvasScope: Bool {
+        store.activeSurfaceKind == .canvas
     }
 
     private var skillShelf: some View {

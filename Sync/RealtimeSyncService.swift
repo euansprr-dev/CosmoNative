@@ -129,6 +129,22 @@ final class RealtimeSyncService {
             table: "captured_items",
             filter: SupabaseSyncTrafficPolicy.remoteOnlyRealtimeFilter
         )
+        // Physical capture (July 2026): iPhone page scans / photos arrive
+        // live so an in-flight scan session digitizes on the Mac in realtime.
+        let attachmentChanges = atoms.postgresChange(
+            AnyAction.self,
+            schema: "public",
+            table: "media_attachments",
+            filter: SupabaseSyncTrafficPolicy.remoteOnlyRealtimeFilter
+        )
+        // Camera relay status: the digitizing panel watches the phone claim,
+        // stream, and settle this Mac's scan requests.
+        let scanRequestChanges = atoms.postgresChange(
+            AnyAction.self,
+            schema: "public",
+            table: "capture_requests",
+            filter: SupabaseSyncTrafficPolicy.remoteOnlyRealtimeFilter
+        )
 
         await atoms.subscribe()
 
@@ -167,6 +183,21 @@ final class RealtimeSyncService {
             for await action in laneCaptureChanges {
                 guard let self, !self.isPaused else { continue }
                 await self.handleInboxDomainChange(action, table: "captured_items")
+            }
+        }
+
+        Task { [weak self] in
+            for await action in attachmentChanges {
+                guard let self, !self.isPaused else { continue }
+                await self.handleInboxDomainChange(action, table: "media_attachments")
+            }
+        }
+
+        Task { [weak self] in
+            for await action in scanRequestChanges {
+                guard let self, !self.isPaused else { continue }
+                await self.handleInboxDomainChange(action, table: "capture_requests")
+                NotificationCenter.default.post(name: .cosmoScanRequestUpdated, object: nil)
             }
         }
     }
@@ -215,6 +246,18 @@ final class RealtimeSyncService {
         let localData = convertJSONFieldsFromPostgres(data)
         await conflictResolver.applyRemoteChange(table: table, uuid: uuid, data: localData)
         lastEventTime = Date()
+
+        // A page scan just arrived from the iPhone — finish its careful
+        // transcription pass now instead of waiting for the next sync tick,
+        // and let live scan sessions (inquiry digitizing panel) react.
+        if table == "media_attachments" {
+            AttachmentTranscriptionWorker.kick()
+            NotificationCenter.default.post(
+                name: .cosmoMediaAttachmentArrived,
+                object: nil,
+                userInfo: ["uuid": uuid]
+            )
+        }
     }
 
     // MARK: - Canvas Block Changes (iPhone-placed blocks)
@@ -360,12 +403,27 @@ final class RealtimeSyncService {
             }
             do {
                 try await database.asyncWrite { db in
-                    try db.execute(
-                        sql: "UPDATE atoms SET is_deleted = 1, updated_at = ? WHERE uuid = ?",
-                        arguments: [ISO8601.string(from: Date()), uuid]
-                    )
+                    try CanvasBlockSyncObserver.suppressingSync {
+                        let now = ISO8601.string(from: Date())
+                        try db.execute(
+                            sql: "UPDATE atoms SET is_deleted = 1, updated_at = ? WHERE uuid = ?",
+                            arguments: [now, uuid]
+                        )
+                        // Cascade like the local delete path: canvas placements
+                        // for a tombstoned atom must die with it.
+                        try db.execute(
+                            sql: "UPDATE canvas_blocks SET is_deleted = 1, updated_at = ? WHERE entity_uuid = ? AND is_deleted = 0",
+                            arguments: [now, uuid]
+                        )
+                    }
                 }
                 lastEventTime = Date()
+                await MainActor.run {
+                    NotificationCenter.default.post(
+                        name: Notification.Name("com.cosmo.canvasBlocksChanged"),
+                        object: nil
+                    )
+                }
                 print("📡 Realtime: cloud atom deleted — \(uuid)")
             } catch {
                 PersistenceHealth.note(.writeFailure, context: "RealtimeSync.delete(\(uuid.prefix(8)))", detail: String(describing: error))

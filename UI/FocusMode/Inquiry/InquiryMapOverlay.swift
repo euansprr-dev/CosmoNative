@@ -30,6 +30,19 @@ struct InquiryMapOverlay: View {
                     viewModel.dismissMap()
                 }
             }
+            if !viewModel.gardenerProposals.isEmpty {
+                // The Gardener speaks where the structure it would change is
+                // on screen.
+                InquiryTendingMapStrip(
+                    proposals: viewModel.gardenerProposals,
+                    onAccept: { proposal in
+                        Task { await viewModel.acceptGardenerProposal(proposal) }
+                    },
+                    onDismiss: { proposal in
+                        Task { await viewModel.dismissGardenerProposal(proposal) }
+                    }
+                )
+            }
         }
         .frame(maxWidth: 880, maxHeight: 620)
         .cosmoGlassPanel(role: .floatingAssistant, cornerRadius: 24)

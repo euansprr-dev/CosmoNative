@@ -231,3 +231,67 @@ final class RecurringSeriesEngineTests: XCTestCase {
         XCTAssertEqual(pMeta.dueDate, PlannerumFormatters.iso8601.string(from: pastStart))
     }
 }
+
+/// The stranded-whenDate lag signature TaskDayPinRepair heals (pure rule —
+/// CommandCenterTaskScheduling.laggingWhenDateCorrection). The signature:
+/// due and focus share a day, whenDate strictly earlier. Every legitimate
+/// writer moves the pins together, so only the pre-fix iOS reschedule
+/// produces it.
+final class TaskDayPinRepairRuleTests: XCTestCase {
+
+    private let cal = Calendar.current
+
+    private func iso(daysAgo: Int) -> String {
+        let day = cal.startOfDay(for: cal.date(byAdding: .day, value: -daysAgo, to: Date())!)
+        return PlannerumFormatters.iso8601.string(from: day)
+    }
+
+    private func metadata(due: String?, focus: String?, when: String?, recurrence: String? = nil) -> TaskMetadata {
+        var m = TaskMetadata()
+        m.dueDate = due
+        m.focusDate = focus
+        m.whenDate = when
+        m.recurrence = recurrence
+        return m
+    }
+
+    func testLaggedWhenDateIsCorrectedToDueDay() {
+        let meta = metadata(due: iso(daysAgo: 0), focus: iso(daysAgo: 0), when: iso(daysAgo: 2))
+        let corrected = CommandCenterTaskScheduling.laggingWhenDateCorrection(in: meta, calendar: cal)
+        XCTAssertEqual(corrected, iso(daysAgo: 0))
+    }
+
+    func testDeliberateDeadlineSplitIsLeftAlone() {
+        // Things-style: plan Wednesday (when/focus), deadline Friday (due).
+        let meta = metadata(due: iso(daysAgo: 0), focus: iso(daysAgo: 2), when: iso(daysAgo: 2))
+        XCTAssertNil(CommandCenterTaskScheduling.laggingWhenDateCorrection(in: meta, calendar: cal))
+    }
+
+    func testAlignedPinsAreHealthy() {
+        let meta = metadata(due: iso(daysAgo: 1), focus: iso(daysAgo: 1), when: iso(daysAgo: 1))
+        XCTAssertNil(CommandCenterTaskScheduling.laggingWhenDateCorrection(in: meta, calendar: cal))
+    }
+
+    func testFutureWhenDateIsLeftAlone() {
+        // whenDate ahead of due is not the lag signature.
+        let meta = metadata(due: iso(daysAgo: 3), focus: iso(daysAgo: 3), when: iso(daysAgo: 0))
+        XCTAssertNil(CommandCenterTaskScheduling.laggingWhenDateCorrection(in: meta, calendar: cal))
+    }
+
+    func testRecurringTemplatesAreNeverTouched() {
+        let meta = metadata(
+            due: iso(daysAgo: 0), focus: iso(daysAgo: 0), when: iso(daysAgo: 2),
+            recurrence: #"{"frequency":"daily","interval":1}"#
+        )
+        XCTAssertNil(CommandCenterTaskScheduling.laggingWhenDateCorrection(in: meta, calendar: cal))
+    }
+
+    func testMissingPinsAreLeftAlone() {
+        XCTAssertNil(CommandCenterTaskScheduling.laggingWhenDateCorrection(
+            in: metadata(due: iso(daysAgo: 0), focus: iso(daysAgo: 0), when: nil), calendar: cal
+        ))
+        XCTAssertNil(CommandCenterTaskScheduling.laggingWhenDateCorrection(
+            in: metadata(due: nil, focus: iso(daysAgo: 0), when: iso(daysAgo: 2)), calendar: cal
+        ))
+    }
+}

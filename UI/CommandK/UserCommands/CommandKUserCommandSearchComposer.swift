@@ -141,7 +141,90 @@ struct CommandKSystemCommandComposer {
         }
     }
 
-    private static let commands: [SystemCommand] = [
+    /// The creation shapes behind the bare "new" menu — the Mac's orb fan.
+    /// Every entry answers "new"/"create", so typing either lists them all;
+    /// priorities hold the orb-fan order (task first, nearest reach).
+    private static let creationCommands: [SystemCommand] = [
+        SystemCommand(
+            id: "system-new-task",
+            title: "New Task",
+            subtitle: "Schedule, priority, and intent in the panel",
+            category: "Create",
+            kind: .createTask,
+            icon: "checkmark.circle.fill",
+            payload: CommandKActionPayload(rawText: "new task"),
+            aliases: ["new", "create", "new task", "create task", "task"],
+            priority: 106
+        ),
+        SystemCommand(
+            id: "system-new-note",
+            title: "New Note",
+            subtitle: "Create a note and open the editor",
+            category: "Create",
+            kind: .createNote,
+            icon: "doc.text",
+            payload: CommandKActionPayload(rawText: "new note"),
+            aliases: ["new", "create", "new note", "create note", "note"],
+            priority: 105
+        ),
+        SystemCommand(
+            id: "system-new-idea",
+            title: "New Idea",
+            subtitle: "Brand, format, hooks, and outline in the panel",
+            category: "Create",
+            kind: .createIdea,
+            icon: "lightbulb.fill",
+            payload: CommandKActionPayload(rawText: "new idea"),
+            aliases: ["new", "create", "new idea", "create idea", "idea"],
+            priority: 104
+        ),
+        SystemCommand(
+            id: "system-new-capture",
+            title: "New Capture",
+            subtitle: "Lands in your Inbox for triage",
+            category: "Create",
+            kind: .captureInbox,
+            icon: "tray.and.arrow.down.fill",
+            payload: CommandKActionPayload(rawText: "new capture"),
+            aliases: ["new", "create", "new capture", "capture", "inbox capture"],
+            priority: 103
+        ),
+        SystemCommand(
+            id: "system-new-content",
+            title: "New Content",
+            subtitle: "Create a content draft and open it",
+            category: "Create",
+            kind: .createContent,
+            icon: "paperplane.fill",
+            payload: CommandKActionPayload(rawText: "new content"),
+            aliases: ["new", "create", "new content", "create content", "content"],
+            priority: 102
+        ),
+        SystemCommand(
+            id: "system-new-swipe",
+            title: "New Swipe",
+            subtitle: "Capture a reel, post, or page by URL",
+            category: "Create",
+            kind: .captureSwipe,
+            icon: "bolt.fill",
+            payload: CommandKActionPayload(rawText: "new swipe"),
+            aliases: ["new", "create", "new swipe", "capture swipe", "swipe"],
+            priority: 101
+        ),
+        SystemCommand(
+            id: "system-new-thinkspace",
+            title: "New Thinkspace",
+            subtitle: "Name a fresh canvas workspace",
+            category: "Create",
+            kind: .createThinkspace,
+            icon: "rectangle.3.group",
+            payload: CommandKActionPayload(rawText: "new thinkspace"),
+            aliases: ["new", "create", "new thinkspace", "create thinkspace"],
+            priority: 100
+        ),
+    ]
+
+    private static let commands: [SystemCommand] = creationCommands + [
         SystemCommand(
             id: "system-open-browser",
             title: "Open Browser",

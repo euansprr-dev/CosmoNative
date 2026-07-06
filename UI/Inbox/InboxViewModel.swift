@@ -61,6 +61,47 @@ final class InboxViewModel {
     /// (T/A/I/C) must not fire while the user is typing a thought.
     var isCaptureFieldFocused: Bool = false
 
+    // MARK: - Physical capture (scan intake)
+
+    /// Bumped to pop the Continuity Camera device menu at the capture bar.
+    var continuityCameraMenuTick = 0
+    var showScanImporter = false
+    /// True while a scan batch is digitizing — the bar shows a progress line.
+    var isScanIngesting = false
+
+    /// Continuity Camera shots and uploaded images — digitized into ONE
+    /// capture through the shared scan pipeline.
+    func ingestScanImages(_ images: [Data]) async {
+        guard !images.isEmpty else { return }
+        captureError = nil
+        isScanIngesting = true
+        defer { isScanIngesting = false }
+        switch await InboxScanIngestService.shared.ingest(images: images) {
+        case .captured:
+            showCaptureConfirmation = true
+            Task {
+                try? await Task.sleep(for: .seconds(1.5))
+                showCaptureConfirmation = false
+            }
+        case .failed(let detail):
+            captureError = "Couldn't digitize the scan — \(detail)"
+        }
+    }
+
+    /// "Scan with iPhone": a capture_request row + an APNs push. The pages
+    /// come back as a normal inbox capture from the phone's side.
+    func requestPhoneScan() async {
+        captureError = nil
+        do {
+            let request = try await CaptureRequestRepository.shared.create(
+                .new(kind: .inboxScan, scanSessionId: UUID().uuidString)
+            )
+            try await PushSenderService.shared.sendScanRequest(request)
+        } catch {
+            captureError = error.localizedDescription
+        }
+    }
+
     // MARK: - Override Sheet
 
     var overrideItem: InboxItem?

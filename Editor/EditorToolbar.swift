@@ -241,7 +241,17 @@ struct EditorToolbar: View {
     }
 
     private func insertChecklist() {
-        insertAtCursor("☐ ")
+        // Glyph char renders clear — CosmoTextView paints the circle
+        // checkbox over its rect (drawChecklistCheckboxes).
+        let mutableText = NSMutableAttributedString(attributedString: attributedText)
+        let insertionPoint = min(cursorPosition, mutableText.length)
+        let insertString = NSMutableAttributedString(
+            string: "☐ ",
+            attributes: [.font: NSFont.systemFont(ofSize: currentFontSize)]
+        )
+        insertString.addAttribute(.foregroundColor, value: NSColor.clear, range: NSRange(location: 0, length: 1))
+        mutableText.insert(insertString, at: insertionPoint)
+        attributedText = mutableText
     }
 
     private func insertLink() {

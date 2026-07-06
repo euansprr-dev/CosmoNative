@@ -2548,6 +2548,10 @@ class AgentToolExecutor {
                 payload[key] = string
             } else if let number = value as? NSNumber {
                 payload[key] = number.stringValue
+            } else if let strings = value as? [String] {
+                // Cluster ops carry blockUUIDs arrays — join stably so the
+                // apply side can split on comma.
+                payload[key] = strings.joined(separator: ",")
             } else {
                 payload[key] = "\(value)"
             }

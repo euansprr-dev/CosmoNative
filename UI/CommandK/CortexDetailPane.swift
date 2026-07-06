@@ -186,17 +186,34 @@ func cortexEntityAccent(_ type: AtomType) -> Color {
 
 struct CortexDetailPane: View {
     let subject: CortexDetailSubject
+    /// Present when the pane can host live composer forms for creation
+    /// actions (the main Command-K shell passes it; previews elsewhere don't).
+    var viewModel: CommandKViewModel? = nil
 
     @State private var atom: Atom?
     @State private var detailScrollMetrics = CortexScrollMetrics()
 
     var body: some View {
         Group {
-            if case .empty = subject { emptyState } else { loaded }
+            if let composer = composerContext {
+                CommandKComposerPane(viewModel: composer.viewModel, action: composer.action)
+            } else if case .empty = subject {
+                emptyState
+            } else {
+                loaded
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(DS.space24)
         .task(id: subject.atomUUID) { await loadAtom() }
+    }
+
+    /// Creation actions get the live composer instead of the static preview.
+    private var composerContext: (viewModel: CommandKViewModel, action: CommandKAction)? {
+        guard let viewModel,
+              case .action(let action) = subject,
+              CommandKComposerDraft.composerKind(for: action.kind) != nil else { return nil }
+        return (viewModel, action)
     }
 
     private func loadAtom() async {

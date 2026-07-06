@@ -29,7 +29,7 @@ struct StudyPageView: View {
             .frame(maxWidth: StudyMetrics.pageMeasure, alignment: .leading)
             .frame(maxWidth: .infinity)
             .padding(.horizontal, DS.space24)
-            .padding(.top, 88)
+            .padding(.top, 48)
             .padding(.bottom, 150)
         }
         .scrollIndicators(.never)
@@ -304,6 +304,7 @@ private struct StudyThreadRow: View {
             .padding(.horizontal, DS.space10)
             .padding(.vertical, DS.space8)
             .background(isHovered ? DS.surfaceElevated.opacity(0.5) : .clear, in: .rect(cornerRadius: 10))
+            .offset(x: isHovered ? 2 : 0)
             .contentShape(.rect(cornerRadius: 10))
         }
         .buttonStyle(.plain)
@@ -350,6 +351,7 @@ private struct StudyCandidateRow: View {
             .padding(.horizontal, DS.space10)
             .padding(.vertical, DS.space8)
             .background(isHovered ? DS.surfaceElevated.opacity(0.5) : .clear, in: .rect(cornerRadius: 10))
+            .offset(x: isHovered ? 2 : 0)
             .contentShape(.rect(cornerRadius: 10))
         }
         .buttonStyle(.plain)

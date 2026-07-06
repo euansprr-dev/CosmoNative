@@ -25,6 +25,16 @@ struct CosmoInlineAssistantPaneMessage: Identifiable, Codable, Equatable, Sendab
     /// The skill that handled the run this (user) message started.
     /// Decodes as nil from older persisted sessions.
     var skillID: String? = nil
+    /// Links the message to a staged canvas-plan review card (thinkspace
+    /// copilot). Plans are transient — a persisted message whose plan is gone
+    /// renders as plain text. Decodes as nil from older persisted sessions.
+    var canvasPlanID: UUID? = nil
+}
+
+enum CosmoCanvasPlanStatus: Equatable, Sendable {
+    case pending
+    case applied
+    case dismissed
 }
 
 enum CosmoInlineAssistantSessionScope {
@@ -526,6 +536,10 @@ final class CosmoInlineAssistantStore: ObservableObject {
     /// Contextual quick replies after a run — one tap prefills and sends.
     /// Transient: cleared on submit, clear, and session switches.
     @Published var followUpSuggestions: [String] = []
+    /// Staged canvas plans awaiting review (thinkspace copilot). Transient —
+    /// they reference the live canvas and don't survive session reloads.
+    @Published private(set) var canvasPlanProposals: [PendingCanvasPlan] = []
+    @Published private(set) var canvasPlanStatuses: [UUID: CosmoCanvasPlanStatus] = [:]
     /// The live text selection on the focused editor — the bar quotes it in a
     /// chip so the user sees what "shorten this" will target before sending.
     /// Equality-guarded so caret churn doesn't re-render the bar.
@@ -751,6 +765,53 @@ final class CosmoInlineAssistantStore: ObservableObject {
         followUpSuggestions = Self.followUps(afterProposal: stamped)
         CosmoInlineAssistantMetrics.shared.proposalStaged()
         persistActiveSession()
+    }
+
+    /// A staged canvas plan (thinkspace copilot): rendered as a review card in
+    /// the pane; nothing touches the canvas until the user approves. Plans are
+    /// transient by design — they reference the live canvas, so they don't
+    /// survive session reloads (the card degrades to its summary text).
+    func receive(canvasPlan: PendingCanvasPlan) {
+        canvasPlanProposals.append(canvasPlan)
+        paneMessages.append(.init(
+            role: .assistant,
+            content: "\(canvasPlan.title) — \(canvasPlan.rationale)",
+            activitySteps: takeFinalizedRunSteps(),
+            canvasPlanID: canvasPlan.id
+        ))
+        statusText = nil
+        phase = .reviewing
+        isPaneRequested = true
+        followUpSuggestions = ["Tighten the clusters", "Name them better", "Try a different grouping"]
+        persistActiveSession()
+    }
+
+    func canvasPlan(id: UUID) -> PendingCanvasPlan? {
+        canvasPlanProposals.first { $0.id == id }
+    }
+
+    func canvasPlanStatus(id: UUID) -> CosmoCanvasPlanStatus {
+        canvasPlanStatuses[id] ?? .pending
+    }
+
+    /// Approve: apply through the same pipeline the old window used, then
+    /// drop a receipt line.
+    func approveCanvasPlan(id: UUID) {
+        guard let plan = canvasPlan(id: id), canvasPlanStatus(id: id) == .pending else { return }
+        let applied = CosmoWindowViewModel.shared.applyCanvasPlan(plan)
+        canvasPlanStatuses[id] = .applied
+        paneMessages.append(.init(
+            role: .system,
+            content: applied == plan.operations.count
+                ? "Applied — \(applied) canvas \(applied == 1 ? "change" : "changes")."
+                : "Applied \(applied) of \(plan.operations.count) canvas changes."
+        ))
+        persistActiveSession()
+    }
+
+    func dismissCanvasPlan(id: UUID) {
+        guard canvasPlanStatus(id: id) == .pending else { return }
+        canvasPlanStatuses[id] = .dismissed
     }
 
     /// A staged inquiry-question card: the user confirms (→ deep-dive session)

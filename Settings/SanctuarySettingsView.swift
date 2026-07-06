@@ -46,13 +46,53 @@ enum SettingsTab: String, CaseIterable {
     }
 }
 
+// MARK: - Shell Mode
+
+/// The settings panel is a shell with two faces: the settings hub and the
+/// Profile Studio it morphs into. One glass panel, one identity.
+enum SettingsShellMode: Equatable {
+    case settings
+    case profileStudio
+}
+
+/// How the studio should open when the shell is presented directly into it
+/// (e.g. from Idea Focus's "create profile" affordance).
+enum ProfileStudioLaunch: Equatable {
+    case create
+    case edit(atomUUID: String)
+
+    var atomUUID: String? {
+        if case .edit(let uuid) = self { return uuid }
+        return nil
+    }
+}
+
+extension Notification.Name {
+    /// Posted by the Profiles tab (and other entry points) to morph the
+    /// settings shell into the Profile Studio. userInfo["atomUUID"] edits.
+    static let openProfileStudio = Notification.Name("com.cosmo.settings.openProfileStudio")
+    /// Posted after any profile save/delete so lists refresh.
+    static let clientProfilesChanged = Notification.Name("com.cosmo.settings.clientProfilesChanged")
+}
+
 // MARK: - SanctuarySettingsView
 
 struct SanctuarySettingsView: View {
     @Environment(\.dismiss) private var dismiss
     var onClose: (() -> Void)? = nil
+    /// When set, the shell opens directly in the Profile Studio.
+    var launchStudio: ProfileStudioLaunch? = nil
+    /// Fired once when a brand-new profile materializes (used by entry points
+    /// that want to bind the fresh profile, e.g. Idea Focus assignment).
+    var onProfileCreated: ((Atom) -> Void)? = nil
     @State private var selectedTab: SettingsTab = .appearance
     @State private var hoveredTab: SettingsTab?
+
+    // Shell morph
+    @State private var shellMode: SettingsShellMode = .settings
+    @State private var studioStore: ProfileStudioStore?
+    @Namespace private var shellNamespace
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     // Connections — Health
     @AppStorage("healthKitEnabled") private var healthKitEnabled = false
@@ -70,6 +110,8 @@ struct SanctuarySettingsView: View {
 
     // Voice
     @State private var selectedHotkeyIndex: Int = 0
+    @State private var selectedCaptureHotkeyIndex: Int = 0
+    @State private var captureHotkeyConflict: String?
 
     // API Keys
     @State private var openRouterKey: String = ""
@@ -84,7 +126,58 @@ struct SanctuarySettingsView: View {
         if let onClose { onClose() } else { dismiss() }
     }
 
+    private var isStudio: Bool { shellMode == .profileStudio }
+
+    /// The shell owns its size so the glass panel can morph between faces.
+    private var panelSize: CGSize {
+        isStudio ? CGSize(width: 980, height: 700) : CGSize(width: 780, height: 600)
+    }
+
     var body: some View {
+        ZStack {
+            settingsFace
+                .opacity(isStudio ? 0 : 1)
+                .scaleEffect(isStudio ? 0.98 : 1)
+                .allowsHitTesting(!isStudio)
+
+            if isStudio, let studioStore {
+                studioFace(store: studioStore)
+                    .transition(reduceMotion
+                        ? .opacity
+                        : .opacity.combined(with: .scale(scale: 1.02)))
+            }
+        }
+        .frame(width: panelSize.width, height: panelSize.height)
+        .animation(reduceMotion ? .easeOut(duration: 0.2) : ProMotionSprings.gentle, value: shellMode)
+        .onAppear {
+            let currentHotkey = HotkeyManager.shared.currentHotkey
+            if let index = HotkeyConfig.alternativeHotkeys.firstIndex(where: { $0 == currentHotkey }) {
+                selectedHotkeyIndex = index
+            }
+            let captureHotkey = HotkeyManager.shared.captureHotkey
+            if let index = HotkeyConfig.captureAlternativeHotkeys.firstIndex(where: { $0 == captureHotkey }) {
+                selectedCaptureHotkeyIndex = index
+            }
+            if let launchStudio, studioStore == nil {
+                openStudio(atomUUID: launchStudio.atomUUID, animated: false)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .openProfileStudio)) { note in
+            openStudio(atomUUID: note.userInfo?["atomUUID"] as? String, animated: true)
+        }
+        .onKeyPress(.escape) {
+            if isStudio {
+                exitStudio()
+                return .handled
+            }
+            performClose()
+            return .handled
+        }
+    }
+
+    // MARK: - Settings face
+
+    private var settingsFace: some View {
         VStack(spacing: 0) {
             header
             Rectangle()
@@ -98,11 +191,109 @@ struct SanctuarySettingsView: View {
                 content
             }
         }
-        .onAppear {
-            let currentHotkey = HotkeyManager.shared.currentHotkey
-            if let index = HotkeyConfig.alternativeHotkeys.firstIndex(where: { $0 == currentHotkey }) {
-                selectedHotkeyIndex = index
+    }
+
+    // MARK: - Studio face
+
+    private func studioFace(store: ProfileStudioStore) -> some View {
+        VStack(spacing: 0) {
+            studioHeader(store: store)
+            Rectangle()
+                .fill(DS.sidebarMaterialBorder.opacity(0.45))
+                .frame(height: 1)
+            ProfileStudioView(store: store)
+        }
+    }
+
+    private func studioHeader(store: ProfileStudioStore) -> some View {
+        HStack(spacing: DS.space8) {
+            Button(action: { exitStudio() }) {
+                HStack(spacing: DS.space4) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text("Settings")
+                        .font(DS.callout)
+                }
+                .foregroundStyle(DS.textSecondary)
+                .padding(.vertical, DS.space4)
+                .padding(.trailing, DS.space6)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .help("Back to Settings (Esc)")
+
+            ProfileAvatarMark(name: store.name, size: 24)
+                .matchedGeometryEffect(id: "shell-mark", in: shellNamespace, isSource: isStudio)
+
+            Text(store.trimmedName.isEmpty ? "New Profile" : store.trimmedName)
+                .font(DS.headline)
+                .foregroundStyle(DS.text)
+                .lineLimit(1)
+
+            Spacer()
+
+            studioSaveIndicator(store: store)
+
+            FloatingOverlayCloseButton(action: {
+                Task {
+                    await store.finalizeOnExit()
+                    performClose()
+                }
+            })
+        }
+        .padding(.horizontal, DS.space24)
+        .padding(.vertical, DS.space16)
+    }
+
+    @ViewBuilder
+    private func studioSaveIndicator(store: ProfileStudioStore) -> some View {
+        switch store.saveState {
+        case .idle:
+            EmptyView()
+        case .saving:
+            Text("Saving…")
+                .font(DS.footnote)
+                .foregroundStyle(DS.textMuted)
+                .transition(.opacity)
+        case .saved:
+            Label("Saved", systemImage: "checkmark")
+                .font(DS.footnote)
+                .foregroundStyle(DS.textMuted)
+                .transition(.opacity)
+        }
+    }
+
+    // MARK: - Shell transitions
+
+    private func openStudio(atomUUID: String?, animated: Bool) {
+        let store = ProfileStudioStore(onProfileListChanged: {
+            NotificationCenter.default.post(name: .clientProfilesChanged, object: nil)
+        })
+        store.onProfileCreated = onProfileCreated
+        studioStore = store
+        Task { await store.load(atomUUID: atomUUID) }
+        if animated {
+            withAnimation(reduceMotion ? .easeOut(duration: 0.2) : ProMotionSprings.gentle) {
+                shellMode = .profileStudio
+            }
+        } else {
+            shellMode = .profileStudio
+        }
+    }
+
+    private func exitStudio() {
+        guard let store = studioStore else {
+            shellMode = .settings
+            return
+        }
+        Task { @MainActor in
+            await store.finalizeOnExit()
+            withAnimation(reduceMotion ? .easeOut(duration: 0.2) : ProMotionSprings.gentle) {
+                shellMode = .settings
+            }
+            // Keep the store mounted through the exit transition.
+            try? await Task.sleep(for: .milliseconds(450))
+            if shellMode == .settings { studioStore = nil }
         }
     }
 
@@ -114,6 +305,7 @@ struct SanctuarySettingsView: View {
                 .font(DS.navTitle)
                 .fontWeight(.semibold)
                 .foregroundStyle(DS.accent)
+                .matchedGeometryEffect(id: "shell-mark", in: shellNamespace, isSource: !isStudio)
 
             Text("Settings")
                 .font(DS.headline)
@@ -246,6 +438,12 @@ struct SanctuarySettingsView: View {
                 }
             }
 
+            settingsSection(title: "CAPTURE ANYWHERE") {
+                VStack(alignment: .leading, spacing: DS.space8) {
+                    captureKeybindSection
+                }
+            }
+
             ShortcutsSettingsTab()
         }
     }
@@ -341,6 +539,64 @@ struct SanctuarySettingsView: View {
                     }
                 }
             }
+        }
+        .padding(DS.space16)
+        .background(glassCard)
+    }
+
+    /// The Capture Anywhere panel's summon key — same picker grammar as the
+    /// voice keybind, plus conflict rejection against the voice hotkey.
+    private var captureKeybindSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Open the capture panel from any app")
+                .font(DS.title3)
+                .foregroundStyle(DS.text)
+
+            VStack(spacing: 8) {
+                ForEach(Array(HotkeyConfig.captureAlternativeHotkeys.enumerated()), id: \.offset) { index, hotkey in
+                    hotkeyRow(hotkey: hotkey, isSelected: selectedCaptureHotkeyIndex == index) {
+                        guard hotkey != HotkeyManager.shared.currentHotkey else {
+                            captureHotkeyConflict = "\(hotkey.displayName) is already the voice keybind — pick another"
+                            return
+                        }
+                        captureHotkeyConflict = nil
+                        selectedCaptureHotkeyIndex = index
+                        HotkeyManager.shared.captureHotkey = hotkey
+                    }
+                }
+            }
+
+            if let conflict = captureHotkeyConflict {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(DS.caption)
+                        .foregroundStyle(DS.red)
+                    Text(conflict)
+                        .font(DS.caption)
+                        .foregroundStyle(DS.red)
+                }
+            }
+
+            HStack(spacing: 8) {
+                Image(systemName: "keyboard")
+                    .font(DS.navTitle)
+                    .foregroundStyle(DS.accent)
+
+                Text("Current keybind:")
+                    .font(DS.callout)
+                    .foregroundStyle(DS.textSecondary)
+
+                Text(HotkeyManager.shared.captureHotkey.displayName)
+                    .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(DS.accent)
+                    .padding(.horizontal, DS.space10)
+                    .padding(.vertical, DS.space4)
+                    .background(
+                        RoundedRectangle(cornerRadius: DS.radiusSmall)
+                            .fill(DS.accentSoft)
+                    )
+            }
+            .padding(.top, DS.space8)
         }
         .padding(DS.space16)
         .background(glassCard)
@@ -926,6 +1182,9 @@ struct SanctuarySettingsView: View {
         case "\u{21E7}\u{2325}Space": return "Shift + Option + Space"
         case "\u{2325}.": return "Option + Period"
         case "\u{2303}\u{21E7}S": return "Control + Shift + S"
+        case "\u{2325}C": return "Option + C"
+        case "\u{2303}\u{21E7}C": return "Control + Shift + C"
+        case "\u{21E7}\u{2325}.": return "Shift + Option + Period"
         case "Fn (experimental)": return "Fn key (may be intercepted)"
         default: return ""
         }

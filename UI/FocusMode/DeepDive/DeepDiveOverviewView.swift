@@ -222,9 +222,21 @@ struct DeepDiveOverviewView: View {
                 .studyCascade(hasAppeared, index: 2)
             questionsSection
                 .studyCascade(hasAppeared, index: 3)
+            if !viewModel.gardenerProposals.isEmpty {
+                StudyTendingSection(
+                    proposals: viewModel.gardenerProposals,
+                    onAccept: { proposal in
+                        Task { await viewModel.acceptGardenerProposal(proposal) }
+                    },
+                    onDismiss: { proposal in
+                        Task { await viewModel.dismissGardenerProposal(proposal) }
+                    }
+                )
+                .studyCascade(hasAppeared, index: 4)
+            }
             if shouldShowTopicInbox {
                 inboxSection
-                    .studyCascade(hasAppeared, index: 4)
+                    .studyCascade(hasAppeared, index: 5)
             }
         }
     }

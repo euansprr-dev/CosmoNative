@@ -846,6 +846,7 @@ private struct CaptureLaneQueueRow: View {
     private func icon(for kind: MediaAttachmentKind) -> String {
         switch kind {
         case .image, .screenshot: return "photo"
+        case .pageScan: return "doc.viewfinder"
         case .pdf: return "doc.richtext"
         case .audio: return "waveform"
         case .video: return "film"

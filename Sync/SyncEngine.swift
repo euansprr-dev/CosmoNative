@@ -58,6 +58,12 @@ class SyncEngine: ObservableObject {
         // Inbox domain (July 2026): iPhone captures, lanes, and lane captures
         // flow in; classification/triage updates flow back out via the queue.
         "inbox_items", "capture_destinations", "captured_items",
+        // Physical capture (July 2026): page-scan/photo attachment records
+        // captured on the iPhone flow in; transcription updates flow back.
+        "media_attachments",
+        // Camera relay: status/pageCount updates flow back as the phone
+        // fulfills this Mac's scan requests.
+        "capture_requests",
     ]
 
     private init() {
@@ -122,6 +128,12 @@ class SyncEngine: ObservableObject {
         // the backlog continuously (non-blocking); this kick is a no-op when
         // there's nothing left.
         SwipeMediaMirrorCoordinator.kick()
+
+        // Physical capture: mirror page-scan/photo attachment blobs to
+        // Storage so the other device can render originals, and finish any
+        // transcriptions the iPhone left for this Mac. No-ops when idle.
+        AttachmentCloudStore.kick()
+        AttachmentTranscriptionWorker.kick()
 
         // Drawings sync: one-shot enqueue of every drawing created before the
         // CanvasDrawingSyncObserver existed — without this, historical
@@ -773,9 +785,27 @@ class SyncEngine: ObservableObject {
                         """,
                         arguments: [updatedAt, remoteVersion, uuid]
                     )
+
+                    // Cascade like the local delete path (AtomRepository.delete):
+                    // canvas placements for a tombstoned atom must die with it, or
+                    // the block keeps rendering from its cached entity_title.
+                    if table == Atom.databaseTableName {
+                        try db.execute(
+                            sql: "UPDATE canvas_blocks SET is_deleted = 1, updated_at = ? WHERE entity_uuid = ? AND is_deleted = 0",
+                            arguments: [updatedAt, uuid]
+                        )
+                    }
                 }
             }
             print("🗑️ Applied remote tombstone: \(table):\(uuid)")
+            if table == Atom.databaseTableName {
+                await MainActor.run {
+                    NotificationCenter.default.post(
+                        name: Notification.Name("com.cosmo.canvasBlocksChanged"),
+                        object: nil
+                    )
+                }
+            }
         } catch {
             PersistenceHealth.note(.writeFailure, context: "SyncEngine.applyRemoteTombstone(\(uuid.prefix(8)))", detail: String(describing: error))
         }

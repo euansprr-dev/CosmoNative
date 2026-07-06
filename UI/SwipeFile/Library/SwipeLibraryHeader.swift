@@ -30,8 +30,23 @@ struct SwipeLibraryHeader: View {
 
     private var controls: some View {
         HStack(spacing: 8) {
-            sortMenu
             SwipeLibrarySearchField(text: $viewModel.query, isFocused: searchFocused)
+            SwipeLibraryControlBar(viewModel: viewModel, showFilters: $showFilters)
+        }
+    }
+}
+
+// MARK: - Control bar (sort · view mode · filters)
+
+/// The catalog's tool cluster, shared between the library header and the merged
+/// Swipe File page's "All" section header.
+struct SwipeLibraryControlBar: View {
+    @Bindable var viewModel: SwipeLibraryViewModel
+    @Binding var showFilters: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            sortMenu
             displayModeToggle
             SwipeLibraryFiltersButton(
                 activeCount: viewModel.filterState.activeTokens.count,

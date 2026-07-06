@@ -162,6 +162,10 @@ struct CanvasView: View {
     /// The inline assistant's editable surface for the currently selected
     /// text-bearing canvas block (note / sticky note).
     @State private var selectedBlockEditableSurface: CanvasBlockEditableSurface?
+    /// The thinkspace ITSELF as the assistant's surface — the canvas digest the
+    /// pane scopes to whenever no text block is selected. View-owned (the
+    /// registry holds it weakly, per the context-truth invariant).
+    @State private var thinkspaceEditableSurface: ThinkspaceEditableSurface?
     @State private var dragOffset: CGSize = .zero
 
     // Canvas pan/zoom values live on viewportState (single source of truth).
@@ -421,6 +425,9 @@ struct CanvasView: View {
             }
             // Accept blocks dragged out of cluster grid/list/board views and images from Finder/desktop/apps.
             .onDrop(of: CanvasDropDelegate.supportedTypes, delegate: CanvasDropDelegate(
+                // Never place things on the canvas from an overlay mode — a
+                // drop released over the library must not fall through here.
+                isEnabled: { [self] in thinkspaceMode == .canvas },
                 screenToCanvas: { [self] screenPos in screenToCanvasPosition(screenPos) },
                 onClusterDrop: { [self] blockUUID, canvasPosition in
                     handleClusterToCanvasDrop(blockUUID: blockUUID, canvasPosition: canvasPosition)
@@ -1554,9 +1561,18 @@ struct CanvasView: View {
 
     // MARK: - Body
 
+    /// The canvas without an explicit thinkspace is the home space — one
+    /// stable id so the assistant surface never goes nil.
+    private var resolvedThinkspaceSurfaceId: String {
+        thinkspaceId ?? "home"
+    }
+
     var body: some View {
         GeometryReader { geometry in
             canvasContent
+                .cosmoSurfaceKeyWindowActivation(
+                    surfaceID: ThinkspaceEditableSurface.surfaceID(forThinkspaceId: resolvedThinkspaceSurfaceId)
+                )
                 .onAppear {
                     updateCanvasSize(geometry.size)
                     canvasIsActive = isActive
@@ -1568,6 +1584,7 @@ struct CanvasView: View {
                 if isActive {
                     let provider = CanvasContextProvider(spatialEngine: spatialEngine, thinkspaceId: thinkspaceId)
                     CosmoWindowViewModel.shared.updateContext(provider: provider)
+                    registerThinkspaceSurface()
                 }
 
                 // Load persisted blocks from database for this ThinkSpace
@@ -2087,6 +2104,40 @@ struct CanvasView: View {
                     }
                 }
 
+                // Approved canvas-plan cluster ops (thinkspace copilot) — same
+                // engine paths as the manual cluster flows, no popover.
+                addCanvasObserver(
+                    forName: CosmoNotification.Canvas.createClusterFromPlan,
+                    object: nil,
+                    queue: .main,
+                    activeOnly: true
+                ) { [self] notification in
+                    nonisolated(unsafe) let notification = notification
+                    Task { @MainActor in
+                        guard let name = notification.userInfo?["name"] as? String,
+                              let blockUUIDs = notification.userInfo?["blockUUIDs"] as? [String] else { return }
+                        applyPlannedClusterCreation(
+                            name: name,
+                            blockUUIDs: blockUUIDs,
+                            intent: notification.userInfo?["intent"] as? String
+                        )
+                    }
+                }
+
+                addCanvasObserver(
+                    forName: CosmoNotification.Canvas.moveBlocksToCluster,
+                    object: nil,
+                    queue: .main,
+                    activeOnly: true
+                ) { [self] notification in
+                    nonisolated(unsafe) let notification = notification
+                    Task { @MainActor in
+                        guard let clusterName = notification.userInfo?["clusterName"] as? String,
+                              let blockUUIDs = notification.userInfo?["blockUUIDs"] as? [String] else { return }
+                        applyPlannedClusterMove(clusterName: clusterName, blockUUIDs: blockUUIDs)
+                    }
+                }
+
                 // Listen for cross-thinkspace block drop (block moved from another thinkspace)
                 addCanvasObserver(
                     forName: CosmoNotification.Canvas.crossThinkspaceDropBlock,
@@ -2295,6 +2346,7 @@ struct CanvasView: View {
                     // deliberately skipped this in onAppear).
                     let provider = CanvasContextProvider(spatialEngine: spatialEngine, thinkspaceId: thinkspaceId)
                     CosmoWindowViewModel.shared.updateContext(provider: provider)
+                    registerThinkspaceSurface()
                 }
                 if newValue, observersRegistered {
                     CanvasPendingPlacementQueue.shared.markCanvasReady()
@@ -2307,6 +2359,10 @@ struct CanvasView: View {
                 // A switch mid-gesture must not carry the live pan into the
                 // next space (replaces @GestureState auto-reset).
                 viewportState.resetLiveGesture()
+                if isActive {
+                    // Re-scope the assistant to the space being switched to.
+                    registerThinkspaceSurface()
+                }
                 let currentThinkspaceId = spatialEngine.currentThinkspaceId
                 rememberCurrentSessionViewport(for: currentThinkspaceId)
                 guard newId != spatialEngine.currentThinkspaceId else {
@@ -4202,6 +4258,69 @@ struct CanvasView: View {
             spatialEngine.blocks[index].isSelected = false
         }
         selectedBlockId = nil
+        // With no block selected, the thinkspace itself is what the user is
+        // looking at — the assistant re-scopes to the canvas digest.
+        if let thinkspaceEditableSurface {
+            CosmoEditableSurfaceRegistry.shared.activateIfNeeded(surfaceID: thinkspaceEditableSurface.surfaceID)
+        }
+    }
+
+    /// Registers (or re-registers after a thinkspace switch) the thinkspace
+    /// surface and makes it the assistant's active scope. Called when the
+    /// canvas becomes the visible destination and when the thinkspace changes.
+    private func registerThinkspaceSurface() {
+        let surfaceId = resolvedThinkspaceSurfaceId
+        if let existing = thinkspaceEditableSurface,
+           existing.surfaceID == ThinkspaceEditableSurface.surfaceID(forThinkspaceId: surfaceId) {
+            CosmoEditableSurfaceRegistry.shared.activateIfNeeded(surfaceID: existing.surfaceID)
+            return
+        }
+        if let previous = thinkspaceEditableSurface {
+            CosmoEditableSurfaceRegistry.shared.unregister(surfaceID: previous.surfaceID)
+        }
+        let surface = ThinkspaceEditableSurface(
+            thinkspaceId: surfaceId,
+            spatialEngine: spatialEngine,
+            clusterEngine: clusterEngine
+        )
+        thinkspaceEditableSurface = surface
+        CosmoEditableSurfaceRegistry.shared.register(surface)
+        CosmoInlineAssistantStore.shared.activateSessionIfIdle(surfaceID: surface.surfaceID)
+    }
+
+    // MARK: - Approved canvas-plan cluster ops
+
+    /// Create a cluster from an approved organize plan — same engine path as
+    /// the manual cluster popover, plus the plan's intent sentence.
+    private func applyPlannedClusterCreation(name: String, blockUUIDs: [String], intent: String?) {
+        let knownUUIDs = Set(spatialEngine.blocks.map(\.entityUuid))
+        let members = blockUUIDs.filter { knownUUIDs.contains($0) }
+        guard !members.isEmpty else { return }
+        clusterEngine.createUserCluster(
+            name: name,
+            colorIndex: clusterEngine.userClusters.count % CanvasCluster.paletteHexes.count,
+            blockUUIDs: members,
+            blocks: spatialEngine.blocks,
+            thinkspaceId: thinkspaceId,
+            intent: intent
+        )
+    }
+
+    /// Move blocks into an existing cluster, matched by name (the plan speaks
+    /// in the digest's vocabulary, which lists clusters by name).
+    private func applyPlannedClusterMove(clusterName: String, blockUUIDs: [String]) {
+        let normalized = clusterName.lowercased().trimmingCharacters(in: .whitespaces)
+        guard let cluster = clusterEngine.userClusters.first(where: {
+            $0.name.lowercased().trimmingCharacters(in: .whitespaces) == normalized
+        }) else { return }
+        let knownUUIDs = Set(spatialEngine.blocks.map(\.entityUuid))
+        for uuid in blockUUIDs where knownUUIDs.contains(uuid) {
+            clusterEngine.addBlockToCluster(
+                blockUUID: uuid,
+                clusterId: cluster.id,
+                blocks: spatialEngine.blocks
+            )
+        }
     }
 
     private func handleTap(blockId: String) {
@@ -5978,11 +6097,13 @@ private struct ActiveClusterResizeSession {
 private struct CanvasDropDelegate: DropDelegate {
     static let supportedTypes: [UTType] = [.text] + CanvasImageDropController.supportedTypes
 
+    let isEnabled: () -> Bool
     let screenToCanvas: (CGPoint) -> CGPoint
     let onClusterDrop: (String, CGPoint) -> Void
     let onImageDrop: ([NSItemProvider], CGPoint) -> Void
 
     func validateDrop(info: DropInfo) -> Bool {
+        guard isEnabled() else { return false }
         if ClusterViewDragSession.sourceClusterId != nil && info.hasItemsConforming(to: [.text]) {
             return true
         }
@@ -5991,6 +6112,7 @@ private struct CanvasDropDelegate: DropDelegate {
     }
 
     func performDrop(info: DropInfo) -> Bool {
+        guard isEnabled() else { return false }
         let canvasPosition = screenToCanvas(info.location)
 
         if ClusterViewDragSession.sourceClusterId != nil {

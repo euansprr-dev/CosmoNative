@@ -298,12 +298,20 @@ struct FocusCanvasView: View {
     // MARK: - Actions
     private func closeFocusMode() {
         // Block persistence is automatic via DocumentBlocksLayer/SpatialEngine.
-        // Study surfaces navigate, they don't dismiss:
-        // - closing an inquiry session lands back in its deep dive,
-        // - closing a deep dive retraces the navigation trail.
+        // Study surfaces navigate, they don't dismiss — and their back
+        // affordances RETRACE the trail, never forward-open the parent:
+        // a back that pushes puts the current place back on top of history,
+        // which turns Back into a session ↔ deep dive loop.
         switch entity.type {
         case .inquirySession:
-            closeInquiryIntoDeepDive()
+            if NavigationTrail.shared.canGoBack {
+                NotificationCenter.default.post(
+                    name: CosmoNotification.Navigation.trailStepBack,
+                    object: nil
+                )
+            } else {
+                closeInquiryIntoDeepDive()
+            }
         case .deepDive:
             NotificationCenter.default.post(
                 name: CosmoNotification.Navigation.trailStepBack,
@@ -314,8 +322,9 @@ struct FocusCanvasView: View {
         }
     }
 
-    /// Leaving an inquiry falls back into the deep dive it belongs to — the
-    /// study is the session's home, not the canvas.
+    /// Cold-arrival fallback only (⌘K straight into a session, fresh launch):
+    /// with no trail to retrace, leaving an inquiry falls back into the deep
+    /// dive it belongs to — the study is the session's home, not the canvas.
     private func closeInquiryIntoDeepDive() {
         Task { @MainActor in
             if let session = try? await AtomRepository.shared.fetch(id: entity.id),

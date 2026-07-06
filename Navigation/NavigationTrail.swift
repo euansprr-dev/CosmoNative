@@ -10,6 +10,11 @@ import SwiftUI
 /// Records every arrival at a main-view destination or focus mode as a moment,
 /// giving the whole app browser-grade back/forward. Pane focus changes and peeks
 /// are deliberately not moments — only real "places" enter the trail.
+///
+/// Recency-unique law: a place lives at most once in the trail. Re-arriving
+/// somewhere hoists it to the top instead of stacking a duplicate, so Back
+/// walks distinct places in recency order — hopping deep dive ↔ inquiry
+/// session (or folder in/out) all afternoon never turns Back into a circle.
 @MainActor
 @Observable
 final class NavigationTrail {
@@ -45,7 +50,7 @@ final class NavigationTrail {
     /// resulting onChange arrivals don't re-record themselves.
     private(set) var isApplyingJump = false
 
-    private let capacity = 100
+    private let capacity = 300
 
     var canGoBack: Bool { !backStack.isEmpty }
     var canGoForward: Bool { !forwardStack.isEmpty }
@@ -55,7 +60,11 @@ final class NavigationTrail {
     func recordArrival(_ destination: Moment.Destination, title: String, glyph: String) {
         guard !isApplyingJump else { return }
         guard current?.destination != destination else { return }
-        if let current { backStack.append(current) }
+        if let current {
+            backStack.removeAll { $0.destination == current.destination }
+            backStack.append(current)
+        }
+        backStack.removeAll { $0.destination == destination }
         if backStack.count > capacity {
             backStack.removeFirst(backStack.count - capacity)
         }

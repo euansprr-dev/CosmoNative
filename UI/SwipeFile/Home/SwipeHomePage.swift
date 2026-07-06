@@ -13,11 +13,12 @@ private enum SwipeHomeQuickLookTarget: Equatable {
     }
 }
 
-// MARK: - Home (the magazine)
+// MARK: - Swipe File (the one page)
 
-/// The swipe context's landing page: one hero (Up Next), then shelves — New This
-/// Week, Study Queue, Boards, Outliers. Browsing and deciding happens here; the
-/// complete searchable catalog is the Library.
+/// The swipe file, whole, on one surface: one hero (Up Next), the date shelves
+/// (New This Week / New This Month), Boards, Outliers — then the complete
+/// catalog under "All" with the library's sort/view/filter tools. Searching or
+/// filtering steps the editorial aside and shows just results, in place.
 struct SwipeHomePage: View {
     @Bindable var viewModel: SwipeLibraryViewModel
     @Bindable var discoverModel: SwipeDiscoverModel
@@ -32,6 +33,9 @@ struct SwipeHomePage: View {
     @State private var contextPillVisible = false
     @State private var scrollPosition = ScrollPosition()
     @State private var pageSize: CGSize = .zero
+    @State private var showFilters = false
+    @State private var filterAnchor: CGRect = .zero
+    @State private var revealDate = Date()
     @FocusState private var searchFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -39,6 +43,9 @@ struct SwipeHomePage: View {
         ZStack(alignment: .topLeading) {
             SwipePageBackground()
             scrollContent
+            if showFilters {
+                filterDropdown.zIndex(2)
+            }
             quickLookLayer
             if let studyHero {
                 SwipeStudyHeroOverlay(hero: studyHero, expanded: studyHeroExpanded).zIndex(4)
@@ -46,13 +53,17 @@ struct SwipeHomePage: View {
         }
         .coordinateSpace(name: "swipePage")
         .onGeometryChange(for: CGSize.self, of: { $0.size }) { pageSize = $0 }
+        .onPreferenceChange(SwipeFilterAnchorKey.self) { filterAnchor = $0 }
         .task {
             await SwipeBoardStore.shared.loadIfNeeded()
             await viewModel.loadIfNeeded(section: .home)
             viewModel.setSection(.home)
             await discoverModel.loadIfNeeded()
         }
+        .onChange(of: viewModel.visibleItemsIdentity) { revealDate = Date() }
         .onExitCommand(perform: handleEscape)
+        .background(keyboardLayer)
+        .animation(ProMotionSprings.bouncy, value: showFilters)
         .overlay(alignment: .bottom) { SwipeSaveToast(message: $viewModel.boardMessage) }
         .overlay(alignment: .bottom) { SwipeSaveToast(message: $discoverModel.saveMessage) }
     }
@@ -67,8 +78,11 @@ struct SwipeHomePage: View {
                     SwipeSkeletonGrid()
                 } else if viewModel.allItems.isEmpty {
                     SwipeLibraryEmptyState(scope: .home, hasActiveFilters: false, onClearFilters: {})
+                } else if isCatalogFocused {
+                    catalogSection
                 } else {
                     editorial
+                    catalogSection
                 }
             }
             .padding(.horizontal, 48)
@@ -101,45 +115,67 @@ struct SwipeHomePage: View {
             }
         }
         if !newThisWeek.isEmpty {
-            librarySwipeShelf(label: "NEW THIS WEEK", models: newThisWeek) {
-                onNavigate(.swipeFile(section: .all))
-            }
+            librarySwipeShelf(label: "NEW THIS WEEK", models: newThisWeek)
         }
-        if !studyQueue.isEmpty {
-            librarySwipeShelf(label: "STUDY QUEUE", count: viewModel.summary.unstudiedCount, models: studyQueue) {
-                onNavigate(.swipeFile(section: .unstudied))
-            }
+        if !newThisMonth.isEmpty {
+            librarySwipeShelf(label: "NEW THIS MONTH", models: newThisMonth)
         }
         boardsShelf
         outliersShelf
     }
 
+    /// The complete catalog, inline — header voice + the library's tool cluster,
+    /// then the uniform grid. While searching/filtering this is the whole page.
+    private var catalogSection: some View {
+        VStack(alignment: .leading, spacing: DS.space12) {
+            HStack(spacing: 10) {
+                SwipeSectionHeader(
+                    label: isCatalogFocused ? "RESULTS" : "ALL",
+                    count: viewModel.summary.filteredCount
+                )
+                Spacer(minLength: DS.space16)
+                SwipeLibraryControlBar(viewModel: viewModel, showFilters: $showFilters)
+            }
+            SwipeLibraryResults(
+                viewModel: viewModel,
+                frameStore: frameStore,
+                revealDate: revealDate,
+                hiddenItemID: quickLook?.itemID,
+                onOpen: { openQuickLook(.library($0)) },
+                onStudy: { openStudyByID($0) }
+            )
+        }
+    }
+
+    /// Search or filters active — the catalog takes the page.
+    private var isCatalogFocused: Bool {
+        !viewModel.query.isEmpty || viewModel.filterState.hasActiveFilters
+    }
+
     private var masthead: some View {
         HStack(alignment: .top, spacing: DS.space12) {
-            SwipeMasthead(title: "Swipes", detail: mastheadDetail)
+            SwipeMasthead(title: "Swipe File", detail: mastheadDetail)
             Spacer(minLength: DS.space16)
             SwipeLibrarySearchField(text: $viewModel.query, isFocused: $searchFocused)
-                .onChange(of: viewModel.query) { _, new in
-                    // Search is the catalog's job — the first keystroke lands there.
-                    if !new.isEmpty {
-                        onNavigate(.swipeFile(section: .all))
-                    }
-                }
         }
     }
 
     private var mastheadDetail: String {
         var parts = ["\(viewModel.summary.totalCount) saved"]
-        if viewModel.summary.unstudiedCount > 0 {
-            parts.append("\(viewModel.summary.unstudiedCount) to study")
+        let weekCount = SwipeLibraryDateBucket.lastWeekModels(
+            items: viewModel.visibleItems,
+            models: viewModel.visibleCardModels
+        ).count
+        if weekCount > 0 {
+            parts.append("\(weekCount) new this week")
         }
         return parts.joined(separator: " · ")
     }
 
     private var contextPill: some View {
         SwipeContextPill(
-            title: "Swipes",
-            detail: "\(viewModel.summary.unstudiedCount) to study",
+            title: "Swipe File",
+            detail: "\(viewModel.summary.totalCount) saved",
             visible: contextPillVisible
         ) {
             withAnimation(ProMotionSprings.gentle) {
@@ -172,13 +208,10 @@ struct SwipeHomePage: View {
         .map { $0.poster() }
     }
 
-    /// Oldest-first — the backlog clears from the back.
-    private var studyQueue: [SwipeCardModel] {
+    private var newThisMonth: [SwipeCardModel] {
         Array(
-            zip(viewModel.visibleItems, viewModel.visibleCardModels)
-                .filter { !$0.0.isStudied && $0.1.id != heroPick?.1.id }
-                .map(\.1)
-                .reversed()
+            SwipeLibraryDateBucket.lastMonthModels(items: viewModel.visibleItems, models: viewModel.visibleCardModels)
+                .filter { $0.id != heroPick?.1.id }
                 .prefix(12)
         )
         .map { $0.poster() }
@@ -195,16 +228,16 @@ struct SwipeHomePage: View {
 
     // MARK: - Shelves
 
+    /// Date shelves carry no "See All" — everything below them IS the all.
     private func librarySwipeShelf(
         label: String,
         count: Int? = nil,
-        models: [SwipeCardModel],
-        onSeeAll: @escaping () -> Void
+        models: [SwipeCardModel]
     ) -> some View {
         SwipeShelf(
             label: label,
             count: count,
-            onSeeAll: onSeeAll,
+            onSeeAll: nil,
             models: models,
             hiddenItemID: quickLook?.itemID,
             frameStore: frameStore
@@ -383,11 +416,36 @@ struct SwipeHomePage: View {
     }
 
     private func handleEscape() {
-        if quickLook != nil {
+        if showFilters {
+            withAnimation(ProMotionSprings.bouncy) { showFilters = false }
+        } else if quickLook != nil {
             closeQuickLook()
         } else if searchFocused {
             searchFocused = false
+        } else if !viewModel.query.isEmpty {
+            viewModel.query = ""
         }
+    }
+
+    // MARK: - Filters & keyboard
+
+    private var filterDropdown: some View {
+        SwipeAnchoredFilterDropdown(
+            anchor: filterAnchor,
+            onDismiss: { withAnimation(ProMotionSprings.bouncy) { showFilters = false } }
+        ) { maxHeight in
+            SwipeLibraryFilterPanel(viewModel: viewModel, maxHeight: maxHeight)
+        }
+    }
+
+    private var keyboardLayer: some View {
+        Group {
+            Button("") { searchFocused = true }.keyboardShortcut("f", modifiers: .command)
+            Button("") { Task { await viewModel.reload() } }.keyboardShortcut("r", modifiers: .command)
+        }
+        .opacity(0)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 
     // MARK: - Actions

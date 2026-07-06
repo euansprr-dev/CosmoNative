@@ -1221,11 +1221,11 @@ class AgentToolRegistry {
                         "rationale": ["type": "string", "description": "Brief explanation of why this spatial change helps"] as [String: Any],
                         "operations": [
                             "type": "array",
-                            "description": "Ordered operations to preview. Supported kinds: arrange, place_search, create_entity, place_existing_atom, move_selection, resize_selection, create_ai_block.",
+                            "description": "Ordered operations to preview. Supported kinds: arrange, place_search, create_entity, place_existing_atom, move_selection, resize_selection, create_ai_block, create_cluster, move_to_cluster. For organizing a thinkspace, prefer create_cluster/move_to_cluster with block uuids read from the thinkspace surface digest.",
                             "items": [
                                 "type": "object",
                                 "properties": [
-                                    "kind": ["type": "string", "description": "Operation kind: arrange, place_search, create_entity, place_existing_atom, move_selection, resize_selection, create_ai_block"] as [String: Any],
+                                    "kind": ["type": "string", "description": "Operation kind: arrange, place_search, create_entity, place_existing_atom, move_selection, resize_selection, create_ai_block, create_cluster (gather existing blocks into a new named cluster), move_to_cluster (move blocks into an existing cluster by name)"] as [String: Any],
                                     "summary": ["type": "string", "description": "User-facing operation summary"] as [String: Any],
                                     "entityType": ["type": "string", "description": "idea, content, research, task, note, connection, swipe_file, or cosmoAI"] as [String: Any],
                                     "title": ["type": "string", "description": "Title for created content/card"] as [String: Any],
@@ -1241,7 +1241,11 @@ class AgentToolRegistry {
                                     "y": ["type": "number", "description": "Optional screen y position"] as [String: Any],
                                     "width": ["type": "number", "description": "Width for resize_selection"] as [String: Any],
                                     "height": ["type": "number", "description": "Height for resize_selection"] as [String: Any],
-                                    "scale": ["type": "number", "description": "Scale factor for resize_selection"] as [String: Any]
+                                    "scale": ["type": "number", "description": "Scale factor for resize_selection"] as [String: Any],
+                                    "name": ["type": "string", "description": "For create_cluster: the new cluster's name — say what it collects (e.g. 'Solipsism mental models')"] as [String: Any],
+                                    "intent": ["type": "string", "description": "For create_cluster: one sentence describing what belongs in this cluster — future organizing reads it"] as [String: Any],
+                                    "blockUUIDs": ["type": "array", "items": ["type": "string"] as [String: Any], "description": "For create_cluster/move_to_cluster: atom uuids of the blocks to gather, exactly as they appear in the thinkspace surface digest"] as [String: Any],
+                                    "clusterName": ["type": "string", "description": "For move_to_cluster: the existing cluster's name, exactly as it appears in the digest"] as [String: Any]
                                 ] as [String: Any],
                                 "required": ["kind", "summary"]
                             ] as [String: Any]

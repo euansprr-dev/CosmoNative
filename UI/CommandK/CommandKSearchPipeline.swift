@@ -8,9 +8,11 @@ enum CommandKActionKind: String, Equatable {
     case createCaptureLane
     case createIdea
     case createTask
+    case createNote
     case captureResearch
     case createContent
     case createThinkspace
+    case captureInbox
     case navigateCommandCenter
     case navigateLastThinkspace
     case openBrowser
@@ -84,7 +86,7 @@ struct CommandKAction: Identifiable, Equatable {
             components = [kind.rawValue, payload.destinationName]
         case .createIdea:
             components = [kind.rawValue, payload.clientName]
-        case .createTask, .createContent, .createThinkspace, .askCosmo:
+        case .createTask, .createNote, .createContent, .createThinkspace, .captureInbox, .askCosmo:
             components = [kind.rawValue]
         case .navigateCommandCenter, .navigateLastThinkspace, .openSwipeGallery, .openCosmoPane, .openCosmoWindow:
             components = [kind.rawValue]
@@ -118,8 +120,10 @@ struct CommandKAction: Identifiable, Equatable {
             return payload.destinationName != nil && payload.body?.isEmpty == false
         case .createCaptureLane:
             return payload.destinationName != nil
-        case .createIdea, .createTask, .captureResearch, .createContent, .createThinkspace:
+        case .createIdea, .createTask, .createNote, .captureResearch, .createContent, .createThinkspace:
             return payload.title?.isEmpty == false || payload.body?.isEmpty == false || payload.url != nil
+        case .captureInbox:
+            return payload.body?.isEmpty == false
         case .navigateCommandCenter, .navigateLastThinkspace, .openBrowser, .openSwipeGallery, .openDomain:
             return true
         case .openAtom:
@@ -186,8 +190,18 @@ struct CommandKVisualIdentity: Equatable {
             return atom(type: .idea)
         case .createTask:
             return atom(type: .task)
+        case .createNote:
+            return atom(type: .note)
         case .createContent:
             return atom(type: .content)
+        case .captureInbox:
+            return CommandKVisualIdentity(
+                style: .research,
+                symbolName: "tray.and.arrow.down.fill",
+                title: "Inbox",
+                subtitle: "Capture for triage",
+                badge: "INBOX"
+            )
         case .createThinkspace, .navigateLastThinkspace, .openThinkspace:
             return CommandKVisualIdentity(
                 style: .thinkspace,
@@ -367,6 +381,9 @@ enum CommandKActionParser {
 
     private static let reservedLanePrefixes: Set<String> = [
         "inbox",
+        "note",
+        "new",
+        "create",
         "idea",
         "save idea",
         "new idea",
@@ -427,6 +444,10 @@ enum CommandKActionParser {
 
         if let creation = parseCreation(trimmed) {
             return creation
+        }
+
+        if let bareCreation = parseBareCreation(trimmed) {
+            return bareCreation
         }
 
         if let swipeWithIdea = parseSwipeWithIdea(trimmed) {
@@ -601,6 +622,93 @@ enum CommandKActionParser {
                 clientName: trimmedClientName,
                 rawText: rawText
             )
+        )
+    }
+
+    /// One bare-keyword composer entry point ("task", "note", "new idea …").
+    struct BareCreationShape {
+        let kind: CommandKActionKind
+        let keywords: [String]
+        let title: String
+        let icon: String
+        /// Trailing text after the keyword prefills this payload slot.
+        let prefillsBody: Bool
+
+        static let all: [BareCreationShape] = [
+            BareCreationShape(kind: .createTask, keywords: ["task", "todo"], title: "Create task", icon: "checkmark.circle.fill", prefillsBody: false),
+            BareCreationShape(kind: .createNote, keywords: ["note"], title: "Create note", icon: "doc.text", prefillsBody: false),
+            // Bare "idea" only — "idea <text>" is the scoped client-capture
+            // grammar (parseScopedIdeaCapture claims it first).
+            BareCreationShape(kind: .createIdea, keywords: ["idea"], title: "Create idea", icon: "lightbulb.fill", prefillsBody: false),
+            BareCreationShape(kind: .captureInbox, keywords: ["capture", "inbox"], title: "Capture to Inbox", icon: "tray.and.arrow.down.fill", prefillsBody: true),
+            BareCreationShape(kind: .createContent, keywords: ["content"], title: "Create content", icon: "paperplane.fill", prefillsBody: false),
+            BareCreationShape(kind: .captureSwipe, keywords: ["swipe"], title: "Capture swipe", icon: "bolt.fill", prefillsBody: false),
+        ]
+    }
+
+    /// Bare creation keywords open the composer panel: "task" (and "task buy
+    /// filters"), "note", "idea", "capture", "content", "swipe", plus the
+    /// verb forms "new <shape> …" / "create <shape> …". URLs fall through to
+    /// the capture parsers, and single-word "new"/"create" fall through to
+    /// the system-command menu that lists every shape.
+    private static func parseBareCreation(_ text: String) -> CommandKAction? {
+        guard firstURL(in: text) == nil else { return nil }
+
+        var working = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lower = working.lowercased()
+        var verbStripped = false
+        for verb in ["new ", "create "] where lower.hasPrefix(verb) {
+            working = String(working.dropFirst(verb.count)).trimmingCharacters(in: .whitespaces)
+            verbStripped = true
+            break
+        }
+        guard !working.isEmpty else { return nil }
+
+        let workingLower = working.lowercased()
+        for shape in BareCreationShape.all {
+            for keyword in shape.keywords {
+                let trailing: String
+                if workingLower == keyword {
+                    trailing = ""
+                } else if workingLower.hasPrefix(keyword + " ") {
+                    trailing = String(working.dropFirst(keyword.count)).trimmingCharacters(in: .whitespaces)
+                } else {
+                    continue
+                }
+
+                // The scoped-idea and swipe grammars own bare trailing text
+                // for these shapes ("idea Euan: …", "swipe <url>"); an
+                // explicit verb ("new idea morning hooks") is unambiguous.
+                if !trailing.isEmpty, !verbStripped,
+                   shape.kind == .createIdea || shape.kind == .captureSwipe {
+                    return nil
+                }
+
+                return bareCreationAction(shape: shape, trailing: trailing, rawText: text)
+            }
+        }
+        return nil
+    }
+
+    private static func bareCreationAction(
+        shape: BareCreationShape,
+        trailing: String,
+        rawText: String
+    ) -> CommandKAction {
+        var payload = CommandKActionPayload(rawText: rawText)
+        if !trailing.isEmpty {
+            if shape.prefillsBody {
+                payload.body = trailing
+            } else {
+                payload.title = trailing
+            }
+        }
+        return CommandKAction(
+            kind: shape.kind,
+            title: shape.title,
+            subtitle: trailing.isEmpty ? "Fill in the panel — Tab to start" : trailing,
+            icon: shape.icon,
+            payload: payload
         )
     }
 

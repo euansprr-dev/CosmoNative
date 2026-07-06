@@ -1660,7 +1660,8 @@ struct MainView: View {
                     .transition(.opacity)
             } else if case .swipeFile(let section) = currentDestination {
                 Group {
-                    if section == .home {
+                    // The swipe file is one page now — old Library (.all) links land there too.
+                    if section == .home || section == .all {
                         SwipeHomePage(
                             viewModel: swipeLibraryViewModel,
                             discoverModel: swipeDiscoverModel
@@ -2194,8 +2195,13 @@ struct MainView: View {
                     return nil
                 }
 
-                // 5. Command-K — peel the actions panel first, then the palette
+                // 5. Command-K — peel the composer form, then the actions
+                // panel, then the palette
                 if showCommandK {
+                    if commandKViewModel.isComposerFocused {
+                        commandKViewModel.isComposerFocused = false
+                        return nil
+                    }
                     if commandKViewModel.isActionPanelPresented {
                         commandKViewModel.isActionPanelPresented = false
                         return nil
@@ -2750,7 +2756,6 @@ struct MainView: View {
                     showSettings = false
                 }
             })
-            .frame(width: 780, height: 600)
             .settingsGlassPanel()
         }
     }

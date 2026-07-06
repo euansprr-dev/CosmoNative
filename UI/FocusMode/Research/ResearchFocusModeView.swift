@@ -214,7 +214,6 @@ struct ResearchFocusModeView: View {
         // Settings sheet
         .sheet(isPresented: $showSettings) {
             SanctuarySettingsView()
-                .frame(width: 720, height: 540)
         }
         // Research Agent sheet
         .sheet(isPresented: $showResearchAgentSheet) {

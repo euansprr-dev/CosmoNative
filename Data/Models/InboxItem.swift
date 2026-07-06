@@ -15,7 +15,9 @@ struct InboxItem: Identifiable, Codable, Equatable, FetchableRecord, Persistable
 
     // Raw capture
     let source: InboxSource
-    let rawText: String
+    /// Mutable for exactly one writer: AttachmentTranscriptionWorker upgrades
+    /// a still-pending page scan's draft to the finished transcript.
+    var rawText: String
     var title: String?
 
     // Classification (populated by InboxClassificationEngine)
@@ -110,6 +112,12 @@ struct InboxItem: Identifiable, Codable, Equatable, FetchableRecord, Persistable
     func isSuppressed(forTopic topicUUID: String) -> Bool {
         guard let joined = metadataDictionary[Self.suppressedTopicsMetadataKey] as? String else { return false }
         return joined.split(separator: ",").map(String.init).contains(topicUUID)
+    }
+
+    /// Captured page/photo attachments (media_attachments uuids) — the
+    /// originals behind a scanned capture (iPhone camera captures, uploads).
+    var attachmentUUIDs: [String] {
+        metadataDictionary["attachmentUUIDs"] as? [String] ?? []
     }
 
     // MARK: - Factory

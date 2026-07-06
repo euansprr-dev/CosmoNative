@@ -24,6 +24,8 @@ final class DeepDiveOverviewViewModel {
     /// shown quarantined with accept/dismiss, never mixed into the inbox.
     var suggestedInboxItems: [InboxItem] = []
     var extracts: [Atom] = []
+    /// The Gardener's structure proposals for this topic (promote/merge/graduate).
+    var gardenerProposals: [InquiryGardenerProposal] = []
 
     // Computed
     var currentQuestionTitle: String? {
@@ -132,6 +134,20 @@ final class DeepDiveOverviewViewModel {
         topicInboxItems = loadedInbox.routed
         suggestedInboxItems = loadedInbox.suggested
         extracts = loadedExt
+        gardenerProposals = await InquiryGardener.shared.review(deepDiveUUID: atom.uuid)
+    }
+
+    // MARK: - Tending (the Gardener's proposals)
+
+    func acceptGardenerProposal(_ proposal: InquiryGardenerProposal) async {
+        await InquiryGardener.shared.accept(proposal, deepDiveUUID: atom.uuid)
+        gardenerProposals.removeAll { $0.key == proposal.key }
+        await load()
+    }
+
+    func dismissGardenerProposal(_ proposal: InquiryGardenerProposal) async {
+        await InquiryGardener.shared.dismiss(proposal, deepDiveUUID: atom.uuid)
+        gardenerProposals.removeAll { $0.key == proposal.key }
     }
 
     /// Topic Inbox splits into two honest groups:

@@ -35,7 +35,7 @@ struct ResizableImageBlockView: View {
         content
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(widthReader)
-            .task(id: image.path) { nsImage = ImageStore.load(path: image.path) }
+            .task(id: image.path + (image.remoteURL ?? "")) { nsImage = await ImageStore.resolve(image) }
     }
 
     @ViewBuilder

@@ -1213,16 +1213,13 @@ private struct SidebarSwipeFileContext: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            // One page now — no group label needed for a single row.
+            swipeFileRow
+
             VStack(alignment: .leading, spacing: 4) {
                 SidebarContextLabel(title: "Discover")
                 discoveryRow(.discover, icon: "safari", tint: DS.accent)
                 discoveryRow(.creators, icon: "person.2")
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
-                SidebarContextLabel(title: "Swipe File")
-                sectionRow(.home, icon: "sparkles", subtitle: "Up next & new saves")
-                sectionRow(.all, icon: "rectangle.stack", subtitle: "Everything saved")
             }
 
             VStack(alignment: .leading, spacing: 4) {
@@ -1275,6 +1272,21 @@ private struct SidebarSwipeFileContext: View {
             tint: tint
         ) {
             open(section)
+        }
+    }
+
+    /// The single swipe file entry — active for `.home` and legacy `.all` links,
+    /// which both land on the merged page.
+    private var swipeFileRow: some View {
+        SidebarContextRow(
+            title: "Swipe File",
+            icon: "rectangle.stack",
+            subtitle: "Up next, new saves & all",
+            isActive: currentDestination == .swipeFile(section: .home)
+                || currentDestination == .swipeFile(section: .all),
+            tint: DS.textSecondary
+        ) {
+            open(.home)
         }
     }
 

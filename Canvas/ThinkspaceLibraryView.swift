@@ -1172,7 +1172,7 @@ private struct ThinkspaceLibraryItemCard: View {
     @ViewBuilder
     private var draggableCard: some View {
         if item.block != nil {
-            card.draggable(item.entityUuid) { ThinkspaceLibraryDragPreview(item: item) }
+            card.draggable(item.entityUuid) { ThinkspaceLibraryDragPreview(model: model) }
         } else {
             card
         }
@@ -1199,54 +1199,10 @@ private struct ThinkspaceLibraryItemCard: View {
     /// its actual content, never framed in a card. Text pages wear their kind
     /// tint on the edge — the border carries identity; media stays neutral.
     private var mediaWell: some View {
-        Color.clear
-            .aspectRatio(model.previewAspect, contentMode: .fit)
-            .overlay { previewContent }
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(objectEdge)
+        LibraryCardObject(model: model)
             .overlay(selectionRing)
             .overlay(alignment: .topTrailing) { quickOpenButton }
-            .overlay(alignment: .bottomLeading) { playBadge }
             .cardShadow(isHovered: isHovered)
-    }
-
-    private var objectEdge: some View {
-        RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .strokeBorder(edgeColor, lineWidth: isPage ? 1 : 0.5)
-    }
-
-    private var isPage: Bool {
-        if case .page = model.previewKind { return true }
-        return false
-    }
-
-    private var edgeColor: Color {
-        isPage ? item.entityType.color.opacity(0.45) : DS.glassBorder
-    }
-
-    @ViewBuilder
-    private var playBadge: some View {
-        if model.isVideoMedia, case .media = model.previewKind {
-            Image(systemName: "play.fill")
-                .font(DS.caption.weight(.bold))
-                .foregroundStyle(.white)
-                .frame(width: 24, height: 24)
-                .background(Color.black.opacity(0.55), in: Circle())
-                .padding(8)
-                .accessibilityHidden(true)
-        }
-    }
-
-    @ViewBuilder
-    private var previewContent: some View {
-        switch model.previewKind {
-        case .media(let source):
-            LibraryMediaThumbnail(source: source, accent: item.entityType.color)
-        case .page(let text):
-            LibraryPagePreview(title: item.title, text: text)
-        case .connection(let preview):
-            LibraryConnectionPreview(preview: preview)
-        }
     }
 
     private var selectionRing: some View {
@@ -1346,27 +1302,96 @@ private struct ThinkspaceLibraryItemCard: View {
     }
 }
 
-// MARK: - Drag Preview
+// MARK: - Card Object
 
-private struct ThinkspaceLibraryDragPreview: View {
-    let item: ThinkspaceLibraryItem
+/// The document rendered as an object — its page or thumbnail with the kind
+/// edge and play badge. Shared by the grid card and the drag preview, so
+/// dragging feels like carrying the real thing (Finder's grammar), never a
+/// stand-in chip.
+private struct LibraryCardObject: View {
+    let model: ThinkspaceLibraryCardModel
+
+    private var item: ThinkspaceLibraryItem { model.item }
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: item.entityType.icon)
-                .font(DS.caption.weight(.semibold))
-                .foregroundStyle(item.entityType.color)
+        Color.clear
+            .aspectRatio(model.previewAspect, contentMode: .fit)
+            .overlay { previewContent }
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(objectEdge)
+            .overlay(alignment: .bottomLeading) { playBadge }
+    }
+
+    private var objectEdge: some View {
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .strokeBorder(edgeColor, lineWidth: isPage ? 1 : 0.5)
+    }
+
+    private var isPage: Bool {
+        if case .page = model.previewKind { return true }
+        return false
+    }
+
+    private var edgeColor: Color {
+        isPage ? item.entityType.color.opacity(0.45) : DS.glassBorder
+    }
+
+    @ViewBuilder
+    private var playBadge: some View {
+        if model.isVideoMedia, case .media = model.previewKind {
+            Image(systemName: "play.fill")
+                .font(DS.caption.weight(.bold))
+                .foregroundStyle(.white)
+                .frame(width: 24, height: 24)
+                .background(Color.black.opacity(0.55), in: Circle())
+                .padding(8)
                 .accessibilityHidden(true)
-            Text(item.title)
-                .font(DS.caption)
+        }
+    }
+
+    @ViewBuilder
+    private var previewContent: some View {
+        switch model.previewKind {
+        case .media(let source):
+            LibraryMediaThumbnail(source: source, accent: item.entityType.color)
+        case .page(let text):
+            LibraryPagePreview(
+                title: item.title,
+                text: text,
+                // Notes carry their page personality onto the card — paper
+                // tone, cover, icon — via the read-through style cache.
+                pageStyle: item.entityType == .note
+                    ? NotePageStyleCache.shared.style(for: item.entityUuid)
+                    : nil
+            )
+        case .connection(let preview):
+            LibraryConnectionPreview(preview: preview)
+        }
+    }
+}
+
+// MARK: - Drag Preview
+
+/// The card itself at grid scale — you drag the actual thumbnail with its
+/// name beneath, exactly what Finder does when you pick up a file.
+private struct ThinkspaceLibraryDragPreview: View {
+    let model: ThinkspaceLibraryCardModel
+
+    var body: some View {
+        VStack(spacing: 8) {
+            LibraryCardObject(model: model)
+                .cardShadow(isHovered: true)
+            Text(model.item.title)
+                .font(DS.callout.weight(.medium))
                 .foregroundStyle(DS.text)
                 .lineLimit(1)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(DS.canvas.opacity(0.88), in: Capsule())
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
-        .frame(maxWidth: 220)
-        .glassCard(isHovered: true, tint: item.entityType.color, cornerRadius: 12)
-        .cardShadow(isHovered: true)
+        .frame(width: 212)
+        // Slack so the object's shadow survives the drag snapshot's bounds.
+        .padding(14)
     }
 }
 
@@ -1445,9 +1470,20 @@ private enum LibraryLocalImageCache {
 private struct LibraryPagePreview: View {
     let title: String
     let text: String?
+    /// A personalized note's page style — paper tone, icon, cover — so the
+    /// card is a faithful miniature. nil for every other page kind.
+    var pageStyle: NoteDocumentStyle? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
+            if let icon = pageStyle?.pageIcon {
+                NotePageIconView(
+                    icon: icon,
+                    style: pageStyle ?? .default,
+                    darkMode: DS.palette.isDark,
+                    size: 16
+                )
+            }
             Text(title)
                 .font(DS.compactTitleSerif)
                 .foregroundStyle(CommandKPreviewPaper.text)
@@ -1461,9 +1497,30 @@ private struct LibraryPagePreview: View {
                 .clipped()
         }
         .padding(16)
+        .padding(.top, coverHeight > 0 ? coverHeight - 8 : 0)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(CommandKPreviewPaper.fill)
+        .background(paperFill)
+        .background(alignment: .top) { coverBand }
         .accessibilityHidden(true)
+    }
+
+    private var paperFill: Color {
+        pageStyle?.paperTone.pageColor(darkMode: DS.palette.isDark) ?? CommandKPreviewPaper.fill
+    }
+
+    private var coverHeight: CGFloat {
+        (pageStyle?.cover ?? NoteDocumentStyle.Cover.none) == NoteDocumentStyle.Cover.none ? 0 : 22
+    }
+
+    @ViewBuilder
+    private var coverBand: some View {
+        if let pageStyle, pageStyle.cover != .none {
+            NotePageCoverBand(
+                style: pageStyle,
+                darkMode: DS.palette.isDark,
+                height: coverHeight
+            )
+        }
     }
 }
 

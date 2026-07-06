@@ -49,8 +49,106 @@ enum CodexOutlineEditing {
     }
 }
 
+/// Pure splice computation for "Insert into post": places an outline item's
+/// text into the SLIDE N section of a slide-format draft. Returns a range +
+/// replacement so callers can apply it to the rich document without
+/// flattening formatting elsewhere.
+enum ContentSlideDraftInsertion {
+    struct Splice: Equatable {
+        let range: NSRange
+        let replacement: String
+    }
+
+    static func splice(slideNumber: Int, text: String, in draft: String) -> Splice {
+        let ns = draft as NSString
+        var lines: [(range: NSRange, content: String)] = []
+        var cursor = 0
+        while cursor < ns.length {
+            let lineRange = ns.lineRange(for: NSRange(location: cursor, length: 0))
+            let content = ns.substring(with: lineRange)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            lines.append((lineRange, content))
+            cursor = NSMaxRange(lineRange)
+        }
+
+        guard let headingIndex = lines.firstIndex(where: { isHeading($0.content, forSlide: slideNumber) }) else {
+            return appendSplice(slideNumber: slideNumber, text: text, draft: draft, length: ns.length)
+        }
+
+        // Section body = lines after the heading, up to the -- separator or the
+        // next SLIDE heading.
+        var bodyIndices: [Int] = []
+        var scan = lines.index(after: headingIndex)
+        while scan < lines.count,
+              !isSeparator(lines[scan].content),
+              !isAnyHeading(lines[scan].content) {
+            bodyIndices.append(scan)
+            scan += 1
+        }
+
+        let hasContent = bodyIndices.contains { !lines[$0].content.isEmpty }
+
+        if !hasContent {
+            // Empty writing space — replace the whole (whitespace) body with the text.
+            guard let first = bodyIndices.first, let last = bodyIndices.last else {
+                // Heading is immediately followed by a separator or another
+                // heading (or end of draft) — insert a fresh line after the heading.
+                let insertAt = NSMaxRange(lines[headingIndex].range)
+                let headingHasNewline = ns.substring(with: lines[headingIndex].range).hasSuffix("\n")
+                return Splice(
+                    range: NSRange(location: insertAt, length: 0),
+                    replacement: headingHasNewline ? "\(text)\n" : "\n\(text)"
+                )
+            }
+            let start = lines[first].range.location
+            let end = NSMaxRange(lines[last].range)
+            let endsWithNewline = ns.substring(with: lines[last].range).hasSuffix("\n")
+            return Splice(
+                range: NSRange(location: start, length: end - start),
+                replacement: endsWithNewline ? "\(text)\n" : text
+            )
+        }
+
+        // Existing writing in the slide — append below it as a new paragraph.
+        guard let lastFilled = bodyIndices.last(where: { !lines[$0].content.isEmpty }) else {
+            return appendSplice(slideNumber: slideNumber, text: text, draft: draft, length: ns.length)
+        }
+        let lineEnd = NSMaxRange(lines[lastFilled].range)
+        let endsWithNewline = ns.substring(with: lines[lastFilled].range).hasSuffix("\n")
+        return Splice(
+            range: NSRange(location: lineEnd, length: 0),
+            replacement: endsWithNewline ? "\n\(text)\n" : "\n\n\(text)"
+        )
+    }
+
+    private static func appendSplice(slideNumber: Int, text: String, draft: String, length: Int) -> Splice {
+        let section = "SLIDE \(slideNumber)\n\(text)\n--"
+        if draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return Splice(range: NSRange(location: 0, length: length), replacement: section)
+        }
+        let prefix = draft.hasSuffix("\n") ? "" : "\n"
+        return Splice(range: NSRange(location: length, length: 0), replacement: "\(prefix)\(section)")
+    }
+
+    private static func isHeading(_ content: String, forSlide number: Int) -> Bool {
+        let upper = content.uppercased()
+        return upper == "SLIDE \(number)" || upper == "SLIDE \(number):"
+    }
+
+    private static func isAnyHeading(_ content: String) -> Bool {
+        let upper = content.uppercased()
+        guard upper.hasPrefix("SLIDE ") else { return false }
+        let remainder = upper.dropFirst("SLIDE ".count)
+        return !remainder.isEmpty && remainder.allSatisfy { $0.isNumber || $0 == ":" }
+    }
+
+    private static func isSeparator(_ content: String) -> Bool {
+        !content.isEmpty && content.allSatisfy { $0 == "-" || $0 == "—" || $0 == "–" }
+    }
+}
+
 enum CodexOutlineDraftTemplate {
-    private static let linesPerSlide = 3
+    private static let linesPerSlide = 1
 
     static func make(from outline: CodexOutlineModel) -> String? {
         guard outline.slides.count > 1 else { return nil }

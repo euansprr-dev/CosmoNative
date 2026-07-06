@@ -4,6 +4,7 @@
 // March 2026 — Command Center navigation
 
 import SwiftUI
+import AppKit
 
 // MARK: - Sidebar Thinkspace Section
 
@@ -855,7 +856,15 @@ struct SidebarThinkspaceSection: View {
                 Button {
                     Task { await manager.updateColor(thinkspace, to: option.hex) }
                 } label: {
-                    Label(option.name, systemImage: thinkspace.accentColorHex == option.hex ? "checkmark.circle.fill" : "circle.fill")
+                    Label {
+                        Text(option.name)
+                    } icon: {
+                        // Native NSMenu items force `systemImage:` symbols to a
+                        // monochrome template, so a plain `circle.fill` renders
+                        // black. A non-template NSImage swatch keeps its color.
+                        Image(nsImage: option.swatchImage(selected: thinkspace.accentColorHex == option.hex))
+                            .renderingMode(.original)
+                    }
                 }
             }
         } label: {
@@ -1160,6 +1169,38 @@ private struct ThinkspaceColorOption: Identifiable {
         ThinkspaceColorOption(name: "Rose", hex: "#B06B6B"),
         ThinkspaceColorOption(name: "Cobalt", hex: "#5B84B0"),
     ]
+
+    var color: Color { Color(hex: hex) }
+
+    /// A full-color, non-template swatch for use as a native-menu icon.
+    /// `Label(_, systemImage:)` symbols are force-templated to monochrome inside
+    /// an `NSMenu`, so the color dots read as black; a non-template `NSImage`
+    /// preserves its fill. The selected option gets a white checkmark inside.
+    func swatchImage(selected: Bool) -> NSImage {
+        let size = NSSize(width: 14, height: 14)
+        let image = NSImage(size: size, flipped: false) { rect in
+            NSColor(color).setFill()
+            NSBezierPath(ovalIn: rect.insetBy(dx: 1, dy: 1)).fill()
+
+            if selected {
+                let config = NSImage.SymbolConfiguration(pointSize: 9, weight: .heavy)
+                    .applying(NSImage.SymbolConfiguration(paletteColors: [.white]))
+                if let check = NSImage(systemSymbolName: "checkmark", accessibilityDescription: nil)?
+                    .withSymbolConfiguration(config) {
+                    let checkSize = check.size
+                    check.draw(in: NSRect(
+                        x: (rect.width - checkSize.width) / 2,
+                        y: (rect.height - checkSize.height) / 2,
+                        width: checkSize.width,
+                        height: checkSize.height
+                    ))
+                }
+            }
+            return true
+        }
+        image.isTemplate = false
+        return image
+    }
 }
 
 private enum ThinkspaceNavigatorItem {

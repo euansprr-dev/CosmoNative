@@ -504,6 +504,8 @@ struct ProfileDocument: Codable, Identifiable, Sendable {
     var sourceURL: String?
     /// Non-fatal warning shown when import quality was degraded.
     var warning: String?
+    /// UUID of the library atom this document references (Add from Library)
+    var sourceAtomUUID: String?
 
     init(
         id: UUID = UUID(),
@@ -518,7 +520,8 @@ struct ProfileDocument: Codable, Identifiable, Sendable {
         comments: Int? = nil,
         leads: Int? = nil,
         sourceURL: String? = nil,
-        warning: String? = nil
+        warning: String? = nil,
+        sourceAtomUUID: String? = nil
     ) {
         self.id = id
         self.category = category
@@ -533,6 +536,7 @@ struct ProfileDocument: Codable, Identifiable, Sendable {
         self.leads = leads
         self.sourceURL = sourceURL
         self.warning = warning
+        self.sourceAtomUUID = sourceAtomUUID
     }
 }
 

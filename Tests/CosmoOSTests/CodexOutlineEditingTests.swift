@@ -154,21 +154,62 @@ final class CodexOutlineEditingTests: XCTestCase {
             """
             SLIDE 1
 
-
-
             --
             SLIDE 2
-
-
 
             --
             SLIDE 3
 
-
-
             --
             """
         )
+    }
+
+    func testInsertIntoEmptySlideFillsWritingSpace() {
+        let draft = "SLIDE 1\n\n--\nSLIDE 2\n\n--"
+        let splice = ContentSlideDraftInsertion.splice(slideNumber: 2, text: "Already-written slide copy.", in: draft)
+        let updated = (draft as NSString).replacingCharacters(in: splice.range, with: splice.replacement)
+
+        XCTAssertEqual(updated, "SLIDE 1\n\n--\nSLIDE 2\nAlready-written slide copy.\n--")
+    }
+
+    func testInsertIntoSlideWithContentAppendsBelowExistingParagraph() {
+        let draft = "SLIDE 1\nExisting hook line.\n--\nSLIDE 2\n\n--"
+        let splice = ContentSlideDraftInsertion.splice(slideNumber: 1, text: "New supporting line.", in: draft)
+        let updated = (draft as NSString).replacingCharacters(in: splice.range, with: splice.replacement)
+
+        XCTAssertEqual(updated, "SLIDE 1\nExisting hook line.\n\nNew supporting line.\n--\nSLIDE 2\n\n--")
+    }
+
+    func testInsertAppendsMissingSlideSectionAtEnd() {
+        let draft = "SLIDE 1\nHook.\n--"
+        let splice = ContentSlideDraftInsertion.splice(slideNumber: 3, text: "CTA copy.", in: draft)
+        let updated = (draft as NSString).replacingCharacters(in: splice.range, with: splice.replacement)
+
+        XCTAssertEqual(updated, "SLIDE 1\nHook.\n--\nSLIDE 3\nCTA copy.\n--")
+    }
+
+    func testInsertIntoEmptyDraftCreatesSection() {
+        let splice = ContentSlideDraftInsertion.splice(slideNumber: 1, text: "Hook.", in: "")
+        let updated = ("" as NSString).replacingCharacters(in: splice.range, with: splice.replacement)
+
+        XCTAssertEqual(updated, "SLIDE 1\nHook.\n--")
+    }
+
+    func testInsertRespectsEmDashSeparatorsAndDoesNotMatchLaterSlides() {
+        let draft = "SLIDE 1\nDon't buy that Rolex.\n—\nSLIDE 10\n\n--"
+        let splice = ContentSlideDraftInsertion.splice(slideNumber: 1, text: "Instead, cash flow.", in: draft)
+        let updated = (draft as NSString).replacingCharacters(in: splice.range, with: splice.replacement)
+
+        XCTAssertEqual(updated, "SLIDE 1\nDon't buy that Rolex.\n\nInstead, cash flow.\n—\nSLIDE 10\n\n--")
+    }
+
+    func testInsertIntoHeadingDirectlyFollowedBySeparator() {
+        let draft = "SLIDE 1\n--\nSLIDE 2\n--"
+        let splice = ContentSlideDraftInsertion.splice(slideNumber: 2, text: "Body.", in: draft)
+        let updated = (draft as NSString).replacingCharacters(in: splice.range, with: splice.replacement)
+
+        XCTAssertEqual(updated, "SLIDE 1\n--\nSLIDE 2\nBody.\n--")
     }
 
     func testDraftTemplateRequiresMultipleSlides() {

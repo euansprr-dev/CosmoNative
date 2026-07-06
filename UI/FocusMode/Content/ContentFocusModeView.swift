@@ -11,6 +11,13 @@ import AppKit
 
 enum ContentFocusLayoutPolicy {
     static let manuscriptScrollbarGutter: CGFloat = 32
+    /// The one marginalia rail (right side). A clear ghost column of the same
+    /// width balances the left page edge so the manuscript stays optically
+    /// centered on the window.
+    static let marginaliaRailWidth: CGFloat = 240
+    /// Outer cap on the ghost + manuscript + rail band so the rail never
+    /// drifts away from the text on very wide windows.
+    static let scriptoriumBandMaxWidth: CGFloat = 1244
     private static let minimumManuscriptTextWidth: CGFloat = 280
 
     static func showsMarginaliaRails(
@@ -38,8 +45,14 @@ enum ContentFocusLayoutPolicy {
             return max(320, availableWidth - DS.space40)
         }
 
-        let sideAllowance: CGFloat = zenMode ? DS.space48 : 580
-        let available = max(360, availableWidth - sideAllowance)
+        // Width the band actually gets (outer spacers included), so the
+        // manuscript can never be wider than the scroll column between the
+        // ghost margin and the rail.
+        let effectiveWidth = min(availableWidth, scriptoriumBandMaxWidth + DS.space48)
+        let sideAllowance: CGFloat = zenMode
+            ? DS.space48
+            : 2 * (marginaliaRailWidth + DS.space24) + DS.space48
+        let available = max(360, effectiveWidth - sideAllowance)
         return min(preferredWritingWidth, available)
     }
 
@@ -181,10 +194,9 @@ struct ContentFocusModeView: View {
     @FocusState private var focusedOutlineItemID: UUID?
     @State private var expandedOutlineItemIDs: Set<UUID> = []
     @State private var hoveredOutlineItemID: UUID?
-    @State private var brandExpanded = false
-    /// Rail-level hover — row controls (✕, edit links) stay hidden until the
-    /// pointer is over the rail, so the margins rest as pure typography.
-    @State private var leftRailHovered = false
+    /// Rail-level hover — row controls (✕, edit links, insert) stay hidden
+    /// until the pointer is over the rail, so the margin rests as pure
+    /// typography; the rail also inks up from its rest opacity on hover.
     @State private var rightRailHovered = false
     /// The heading the caret currently sits under — lights its SECTIONS row.
     @State private var activeDraftHeadingID: UUID?
@@ -296,7 +308,8 @@ struct ContentFocusModeView: View {
 
     private var sideRailOpacity: Double {
         if zenMode { return 0 }
-        return isActivelyTyping ? MarginaliaRailPolicy.whisperOpacity : 1
+        if isActivelyTyping { return MarginaliaRailPolicy.whisperOpacity }
+        return rightRailHovered ? 1 : MarginaliaRailPolicy.restOpacity
     }
 
     private var editorHorizontalPadding: CGFloat {
@@ -612,7 +625,6 @@ struct ContentFocusModeView: View {
         }
         .sheet(isPresented: $showSettings) {
             SanctuarySettingsView()
-                .frame(width: 720, height: 540)
         }
         .sheet(isPresented: $showSwipeAttachmentEditor) {
             ContentSwipeAttachmentEditor(
@@ -706,17 +718,10 @@ struct ContentFocusModeView: View {
 
                         HStack(alignment: .top, spacing: showMarginaliaRails ? DS.space24 : 0) {
                             if showMarginaliaRails {
-                                scriptoriumMarginScroll(width: 260,
-                                    height: max(0, geo.size.height - DS.space4)
-                                ) {
-                                    scriptoriumLeftMargin
-                                }
-                                    .opacity(sideRailOpacity)
-                                    .onHover { hovering in
-                                        withAnimation(ProMotionSprings.hover) { leftRailHovered = hovering }
-                                        if hovering { wakeChrome() }
-                                    }
-                                    .atelierStaggerIn(delay: continuationStagger(0.28), appeared: hasAppeared)
+                                // Ghost of the rail — pure paper that balances the
+                                // right rail so the manuscript centers on the window.
+                                Color.clear
+                                    .frame(width: ContentFocusLayoutPolicy.marginaliaRailWidth)
                             }
 
                             ScrollView {
@@ -743,20 +748,20 @@ struct ContentFocusModeView: View {
                             .frame(height: max(0, geo.size.height - DS.space4), alignment: .top)
 
                             if showMarginaliaRails {
-                                scriptoriumMarginScroll(width: 220,
+                                scriptoriumMarginScroll(width: ContentFocusLayoutPolicy.marginaliaRailWidth,
                                     height: max(0, geo.size.height - DS.space4)
                                 ) {
-                                    scriptoriumRightMargin
+                                    scriptoriumMarginRail
                                 }
                                     .opacity(sideRailOpacity)
                                     .onHover { hovering in
                                         withAnimation(ProMotionSprings.hover) { rightRailHovered = hovering }
                                         if hovering { wakeChrome() }
                                     }
-                                    .atelierStaggerIn(delay: continuationStagger(0.44), appeared: hasAppeared)
+                                    .atelierStaggerIn(delay: continuationStagger(0.3), appeared: hasAppeared)
                             }
                         }
-                        .frame(maxWidth: 1244)
+                        .frame(maxWidth: ContentFocusLayoutPolicy.scriptoriumBandMaxWidth)
 
                         Spacer(minLength: DS.space24)
                     }
@@ -825,10 +830,14 @@ struct ContentFocusModeView: View {
             if !zenMode {
                 manuscriptTitleEditor
                     .transition(.opacity.combined(with: .offset(y: -16)))
+
+                // The dek — the core idea as an editable standfirst under the
+                // headline, magazine-style. It's the piece's north star, so it
+                // lives on the manuscript, not in the rail furniture.
+                manuscriptDekEditor
+                    .transition(.opacity.combined(with: .offset(y: -12)))
             }
 
-            // Date ornament — the core idea lives in the left margin, so the meta
-            // row no longer echoes the title text.
             Text(formattedCreatedDate)
                 .font(DS.dateSerif)
                 .italic()
@@ -1041,6 +1050,9 @@ struct ContentFocusModeView: View {
 
     private var writingSurfaceControls: some View {
         HStack(spacing: DS.space6) {
+            if hasVoiceChip {
+                voiceChipButton
+            }
             writingAIButton
             documentStyleButton
             focusBandMenu
@@ -1132,6 +1144,17 @@ struct ContentFocusModeView: View {
             }
     }
 
+    private var manuscriptDekEditor: some View {
+        TextField("core idea…", text: coreIdeaBinding, axis: .vertical)
+            .textFieldStyle(.plain)
+            .font(DS.dateSerif)
+            .italic()
+            .foregroundStyle(focusTextSecondary)
+            .lineSpacing(3)
+            .lineLimit(1...4)
+            .accessibilityLabel("Core idea")
+    }
+
     private var scriptoriumFixedTitleHeader: some View {
         TextField("untitled content", text: $editableTitle, axis: .vertical)
             .textFieldStyle(.plain)
@@ -1206,30 +1229,26 @@ struct ContentFocusModeView: View {
         .accessibilityAddTraits(isCurrent ? .isSelected : [])
     }
 
-    // MARK: - Left marginalia (hooks + outline + core idea  /  score swaps in polish)
+    // MARK: - The marginalia rail (sections + outline + hooks + references / score in polish)
 
-    private var scriptoriumLeftMargin: some View {
-        VStack(alignment: .leading, spacing: DS.space24) {
-            if isPolishModeActive, viewModel.state.contentScorecard != nil {
-                scoreMarginaliaSection
-            }
-            hooksAndOutlineMarginaliaGroup
-            if !viewModel.state.contentDescription.isEmpty {
-                coreIdeaMarginaliaSection
-            }
-        }
-    }
-
-    private var hooksAndOutlineMarginaliaGroup: some View {
+    /// The one right-hand rail: navigation and working material, ordered by
+    /// glance frequency — live sections and the outline at eye level,
+    /// references below. The core idea lives on the manuscript as a dek and
+    /// the voice moved into the toolbar, so the rail stays two ideas deep.
+    private var scriptoriumMarginRail: some View {
         scriptoriumMarginaliaContainer {
             VStack(alignment: .leading, spacing: DS.space18) {
-                if !viewModel.state.hooks.isEmpty {
-                    hooksMarginaliaSection
+                if isPolishModeActive, viewModel.state.contentScorecard != nil {
+                    scoreMarginaliaSection
                 }
                 if !draftHeadingOutline.isEmpty {
                     draftSectionsMarginaliaSection
                 }
                 outlineMarginaliaSection
+                if !viewModel.state.hooks.isEmpty {
+                    hooksMarginaliaSection
+                }
+                referencesMarginaliaSection
             }
         }
     }
@@ -1330,6 +1349,11 @@ struct ContentFocusModeView: View {
                         }
                         .help(isExpanded ? "Collapse slide \(idx + 1)" : "Expand slide \(idx + 1)")
                         .accessibilityLabel(isExpanded ? "Collapse slide \(idx + 1)" : "Expand slide \(idx + 1)")
+                        .contextMenu {
+                            Button("Insert into post") {
+                                insertOutlineItemIntoDraft(item, slideNumber: idx + 1)
+                            }
+                        }
                         TextField("Outline item", text: marginaliaOutlineTitleBinding(for: item.id), axis: .vertical)
                             .textFieldStyle(.plain)
                             .font(DS.callout)
@@ -1340,9 +1364,50 @@ struct ContentFocusModeView: View {
                             .animation(ProMotionSprings.gentle, value: focusedOutlineItemID)
                             .animation(ProMotionSprings.gentle, value: expandedOutlineItemIDs)
                             .fixedSize(horizontal: false, vertical: true)
+
+                        Button {
+                            insertOutlineItemIntoDraft(item, slideNumber: idx + 1)
+                        } label: {
+                            Image(systemName: "text.insert")
+                                .font(DS.caption2.weight(.semibold))
+                                .foregroundStyle(isHovered ? DS.gilt : DS.giltMuted)
+                                .frame(width: 18, height: 18)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .marginaliaHoverReveal(rightRailHovered)
+                        .help("Insert into slide \(idx + 1)")
+                        .accessibilityLabel("Insert outline item into slide \(idx + 1)")
                     }
                 }
             }
+    }
+
+    /// "Insert into post" — splices an outline item's text into the matching
+    /// SLIDE N section of the draft (or appends the section when missing),
+    /// preserving rich formatting everywhere else.
+    private func insertOutlineItemIntoDraft(_ item: OutlineItem, slideNumber: Int) {
+        let text = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+
+        let splice = ContentSlideDraftInsertion.splice(
+            slideNumber: slideNumber,
+            text: text,
+            in: localDraftContent
+        )
+        guard let range = Range(splice.range, in: localDraftContent) else { return }
+
+        draftDocument = draftDocumentByReplacing(
+            range: range,
+            in: localDraftContent,
+            with: splice.replacement
+        )
+        localDraftContent = draftDocument.plainText
+        viewModel.state.draftContent = localDraftContent
+        viewModel.state.richDraftDocument = draftDocument
+        updateDraftHeadingOutline(from: draftDocument)
+        draftEditedLocally = true
+        triggerAutoSave()
     }
 
     private func toggleOutlineItemExpansion(_ id: UUID) {
@@ -1351,23 +1416,7 @@ struct ContentFocusModeView: View {
         }
     }
 
-    private var coreIdeaMarginaliaSection: some View {
-        MarginaliaDisclosureSection(
-            "CORE IDEA",
-            storageKey: "content.coreIdea",
-            spacing: DS.space6
-        ) {
-            TextField("Core idea", text: marginaliaCoreIdeaBinding, axis: .vertical)
-                .textFieldStyle(.plain)
-                .font(DS.dateSerif)
-                .italic()
-                .foregroundStyle(focusText)
-                .lineSpacing(3)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private var marginaliaCoreIdeaBinding: Binding<String> {
+    private var coreIdeaBinding: Binding<String> {
         Binding(
             get: {
                 if !viewModel.state.contentDescription.isEmpty { return viewModel.state.contentDescription }
@@ -1410,28 +1459,7 @@ struct ContentFocusModeView: View {
         }
     }
 
-    // MARK: - Right marginalia (SOURCE · SWIPES · FRAMEWORK · BRAND · HOOKS)
-
-    private var scriptoriumRightMargin: some View {
-        scriptoriumMarginaliaContainer {
-            VStack(alignment: .leading, spacing: DS.space18) {
-                rightMarginaliaSections
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var rightMarginaliaSections: some View {
-        Group {
-            referencesMarginaliaSection
-            if hasVoiceMarginalia {
-                voiceMarginaliaSection
-            }
-            cosmoWritingMarginaliaSection
-        }
-    }
-
-    private var hasVoiceMarginalia: Bool {
+    private var hasVoiceChip: Bool {
         if let framework = inheritedFramework, !framework.isEmpty { return true }
         return clientProfileAtom != nil || !availableClientProfiles.isEmpty
     }
@@ -1448,42 +1476,6 @@ struct ContentFocusModeView: View {
         content()
             .padding(.horizontal, DS.space4)
             .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    /// Not a section — a single quiet affordance at the rail's end.
-    private var cosmoWritingMarginaliaSection: some View {
-        VStack(alignment: .leading, spacing: DS.space6) {
-            Button {
-                openWritingAI()
-            } label: {
-                HStack(spacing: DS.space6) {
-                    Image(systemName: "sparkles")
-                        .font(DS.caption.weight(.semibold))
-                    Text("ask cosmo →")
-                        .font(DS.dateSerif)
-                        .italic()
-                }
-                .foregroundStyle(DS.gilt.opacity(0.7))
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .marginaliaLinkHover()
-            .help("Open the Cosmo Writing assistant")
-            .accessibilityLabel("Open Cosmo Writing assistant")
-
-            if !selectedText.isEmpty {
-                Button {
-                    improveSelectedTextViaCosmo()
-                } label: {
-                    Text("improve selected text")
-                        .font(DS.caption2)
-                        .foregroundStyle(focusTextMuted)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.top, DS.space8)
     }
 
     /// SOURCE + BLUEPRINT + RELATED SWIPES, consolidated: one section holds all
@@ -1671,58 +1663,10 @@ struct ContentFocusModeView: View {
         )
     }
 
-    /// FRAMEWORK + BRAND, consolidated: the piece's voice. Collapsed by
-    /// default — the header alone says a voice is set.
-    private var voiceMarginaliaSection: some View {
-        MarginaliaDisclosureSection(
-            "VOICE",
-            storageKey: "content.voice",
-            spacing: DS.space8
-        ) {
-            VStack(alignment: .leading, spacing: DS.space8) {
-                if clientProfileAtom != nil || !availableClientProfiles.isEmpty {
-                    HStack(spacing: DS.space6) {
-                        brandPickerMenu
-                        // The profile details are a disclosure, not a dump — Cosmo reads
-                        // the full profile on demand, so the margin only needs the name.
-                        if clientProfileAtom?.metadataValue(as: ClientProfileMetadata.self) != nil {
-                            Button {
-                                withAnimation(ProMotionSprings.snappy) {
-                                    brandExpanded.toggle()
-                                }
-                            } label: {
-                                Image(systemName: "chevron.down")
-                                    .font(DS.microIcon)
-                                    .foregroundStyle(focusTextMuted)
-                                    .rotationEffect(.degrees(brandExpanded ? 180 : 0))
-                                    .frame(width: 18, height: 18)
-                                    .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .help(brandExpanded ? "Hide brand notes" : "Show brand notes")
-                            .accessibilityLabel(brandExpanded ? "Hide brand notes" : "Show brand notes")
-                        }
-                    }
-                    if brandExpanded,
-                       let profile = clientProfileAtom,
-                       let meta = profile.metadataValue(as: ClientProfileMetadata.self) {
-                        brandVoiceBullets(meta)
-                            .transition(.opacity.combined(with: .offset(y: -4)))
-                    }
-                }
-
-                if let framework = inheritedFramework, !framework.isEmpty {
-                    Text(framework)
-                        .font(DS.dateSerif)
-                        .italic()
-                        .foregroundStyle(focusTextSecondary)
-                        .lineLimit(3)
-                }
-            }
-        }
-    }
-
-    private var brandPickerMenu: some View {
+    /// The piece's voice (brand + framework), relocated from the margin to the
+    /// toolbar: a setting of the piece, not marginalia. Gilt when a brand is
+    /// set; the menu switches profiles.
+    private var voiceChipButton: some View {
         Menu {
             ForEach(availableClientProfiles, id: \.uuid) { profile in
                 Button {
@@ -1739,6 +1683,10 @@ struct ContentFocusModeView: View {
             if availableClientProfiles.isEmpty {
                 Text("no client profiles available")
             }
+            if let framework = inheritedFramework, !framework.isEmpty {
+                Divider()
+                Text(framework)
+            }
             if clientProfileAtom != nil {
                 Divider()
                 Button(role: .destructive) {
@@ -1749,20 +1697,37 @@ struct ContentFocusModeView: View {
             }
         } label: {
             HStack(spacing: DS.space6) {
-                Text(brandMenuTitle)
-                    .font(DS.dateSerif)
-                    .foregroundStyle(focusText)
-                    .fixedSize(horizontal: false, vertical: true)
-                Image(systemName: "chevron.down")
-                    .font(DS.microIcon)
-                    .foregroundStyle(DS.gilt.opacity(0.7))
+                Image(systemName: "theatermasks")
+                    .font(DS.caption.weight(.semibold))
+                if clientProfileAtom != nil {
+                    Text(brandMenuTitle)
+                        .font(DS.caption)
+                        .lineLimit(1)
+                }
             }
+            .foregroundStyle(clientProfileAtom != nil ? DS.gilt : focusTextMuted)
+            .padding(.horizontal, DS.space8)
+            .frame(height: 28)
+            .frame(minWidth: 28)
+            .background(DS.glassCardFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(clientProfileAtom != nil ? DS.gilt.opacity(0.35) : DS.glassBorder, lineWidth: 0.5)
+            )
             .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .accessibilityLabel("Select client profile")
+        .help(voiceChipHelp)
+        .accessibilityLabel("Voice — brand and framework")
+    }
+
+    private var voiceChipHelp: String {
+        var parts: [String] = []
+        if let profile = clientProfileAtom { parts.append("Brand: \(profile.title ?? "unnamed")") }
+        if let framework = inheritedFramework, !framework.isEmpty { parts.append(framework) }
+        return parts.isEmpty ? "Set the piece's voice" : parts.joined(separator: " · ")
     }
 
     private var brandMenuTitle: String {
@@ -1770,28 +1735,6 @@ struct ContentFocusModeView: View {
             return (profile.title ?? "unnamed").lowercased()
         }
         return "pick brand"
-    }
-
-    @ViewBuilder
-    private func brandVoiceBullets(_ meta: ClientProfileMetadata) -> some View {
-        let bullets = collectBrandBullets(meta)
-        if !bullets.isEmpty {
-            VStack(alignment: .leading, spacing: 2) {
-                ForEach(Array(bullets.enumerated()), id: \.offset) { _, bullet in
-                    HStack(alignment: .top, spacing: DS.space6) {
-                        Text("·")
-                            .font(DS.footnote)
-                            .foregroundStyle(DS.gilt.opacity(0.6))
-                            .padding(.top, 2)
-                        Text(bullet)
-                            .font(DS.dateSerif)
-                            .italic()
-                            .foregroundStyle(focusText)
-                            .lineLimit(2)
-                    }
-                }
-            }
-        }
     }
 
     private func assignClientProfile(_ profile: Atom) {
@@ -1804,21 +1747,6 @@ struct ContentFocusModeView: View {
         clientProfileAtom = nil
         viewModel.state.clientProfileUUID = nil
         viewModel.state.save()
-    }
-
-    private func collectBrandBullets(_ meta: ClientProfileMetadata) -> [String] {
-        var bullets: [String] = []
-        if let niche = meta.niche, !niche.isEmpty { bullets.append(niche) }
-        if let voice = meta.voiceNotes, !voice.isEmpty {
-            bullets.append(voice)
-        }
-        if let audience = meta.targetAudience, !audience.isEmpty {
-            bullets.append(audience)
-        }
-        if let story = meta.brandStory, !story.isEmpty {
-            bullets.append(story)
-        }
-        return bullets
     }
 
     private var hooksMarginaliaSection: some View {
@@ -2302,15 +2230,6 @@ struct ContentFocusModeView: View {
     /// snapshot automatically.
     private func openWritingAI() {
         CosmoInlineAssistantStore.shared.openPane(forSurfaceID: inlineAssistantContentSurfaceID)
-    }
-
-    /// The margins' "improve selected text" — a one-tap inline-assistant submit
-    /// against the current selection.
-    private func improveSelectedTextViaCosmo() {
-        CosmoInlineAssistantStore.shared.submitPrompt(
-            "Tighten the selected text — keep my voice and meaning.",
-            forSurfaceID: inlineAssistantContentSurfaceID
-        )
     }
 
     private func markTypingActive() {

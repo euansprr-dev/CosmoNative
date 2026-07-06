@@ -398,6 +398,11 @@ enum PendingCanvasOperationKind: String, Codable, Sendable, CaseIterable {
     case moveSelection = "move_selection"
     case resizeSelection = "resize_selection"
     case createAIBlock = "create_ai_block"
+    /// Gather existing blocks into a new named cluster (writes the cluster's
+    /// intent — the canvas's machine-readable purpose).
+    case createCluster = "create_cluster"
+    /// Move existing blocks into an existing cluster, matched by name.
+    case moveToCluster = "move_to_cluster"
     case unsupported
 
     var displayName: String {
@@ -409,6 +414,8 @@ enum PendingCanvasOperationKind: String, Codable, Sendable, CaseIterable {
         case .moveSelection: return "Move Selection"
         case .resizeSelection: return "Resize Selection"
         case .createAIBlock: return "Create AI Block"
+        case .createCluster: return "Create Cluster"
+        case .moveToCluster: return "Move to Cluster"
         case .unsupported: return "Preview Only"
         }
     }

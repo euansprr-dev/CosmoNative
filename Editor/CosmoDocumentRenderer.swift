@@ -301,7 +301,11 @@ struct CosmoDocumentRenderer: View {
             }
             prefix = Text("\(listPosition). ")
         case .checklist:
-            prefix = Text((block.checked ?? false) ? "☑ " : "☐ ")
+            // Same checkbox grammar as iOS notes: circle / checkmark.circle.fill.
+            let checked = block.checked ?? false
+            prefix = Text(Image(systemName: checked ? "checkmark.circle.fill" : "circle"))
+                .foregroundColor(checked ? CosmoColors.cosmoAI.opacity(0.9) : secondaryTextColor)
+                + Text(" ")
         default:
             prefix = Text("")
         }

@@ -1758,6 +1758,7 @@ struct SourceTab: Codable, Sendable, Identifiable {
         case youTube = "youtube"
         case internalAtom = "internal"
         case swipe
+        case pageScan = "page_scan"
     }
 
     var id: String                          // tabId
@@ -2872,6 +2873,7 @@ struct ExtractMetadata: Codable, Sendable {
     var routingDecisionId: String?       // Live-router decision that settled this extract (idempotency)
     var conceptNames: [String]?          // Concept-page assignments ("Pranayama", "Vagus nerve")
     var kindPending: Bool?               // True while awaiting LLM classification ("Classifying…" UI)
+    var attachmentUUIDs: [String]?       // Page-scan originals this extract was digitized from
 
     init(
         kind: ExtractKind,
@@ -2891,7 +2893,8 @@ struct ExtractMetadata: Codable, Sendable {
         citation: String? = nil,
         routingDecisionId: String? = nil,
         conceptNames: [String]? = nil,
-        kindPending: Bool? = nil
+        kindPending: Bool? = nil,
+        attachmentUUIDs: [String]? = nil
     ) {
         self.kind = kind
         self.sourceUUID = sourceUUID
@@ -2911,6 +2914,7 @@ struct ExtractMetadata: Codable, Sendable {
         self.routingDecisionId = routingDecisionId
         self.conceptNames = conceptNames
         self.kindPending = kindPending
+        self.attachmentUUIDs = attachmentUUIDs
     }
 }
 

@@ -756,6 +756,13 @@ final class CosmoWindowViewModel: ObservableObject {
         messages.append(.system("Applied \(applied) of \(plan.operations.count) canvas operations."))
     }
 
+    /// Applies an approved canvas plan from the assistant pane's plan card.
+    /// Returns how many operations actually applied (for the receipt line).
+    @discardableResult
+    func applyCanvasPlan(_ plan: PendingCanvasPlan) -> Int {
+        applyCanvasOperations(plan.operations)
+    }
+
     func applyPendingProposedEdit() {
         guard let edit = pendingProposedEdit else { return }
 
@@ -1852,6 +1859,42 @@ final class CosmoWindowViewModel: ObservableObject {
                 name: CosmoNotification.Canvas.createCosmoAIBlock,
                 object: nil,
                 userInfo: userInfo
+            )
+            return true
+
+        case .createCluster:
+            guard let name = payload["name"], !name.isEmpty else { return false }
+            let blockUUIDs = (payload["blockUUIDs"] ?? "")
+                .split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+            guard !blockUUIDs.isEmpty else { return false }
+            var userInfo: [AnyHashable: Any] = [
+                "name": name,
+                "blockUUIDs": blockUUIDs
+            ]
+            if let intent = payload["intent"], !intent.isEmpty { userInfo["intent"] = intent }
+            NotificationCenter.default.post(
+                name: CosmoNotification.Canvas.createClusterFromPlan,
+                object: nil,
+                userInfo: userInfo
+            )
+            return true
+
+        case .moveToCluster:
+            guard let clusterName = payload["clusterName"], !clusterName.isEmpty else { return false }
+            let blockUUIDs = (payload["blockUUIDs"] ?? "")
+                .split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+            guard !blockUUIDs.isEmpty else { return false }
+            NotificationCenter.default.post(
+                name: CosmoNotification.Canvas.moveBlocksToCluster,
+                object: nil,
+                userInfo: [
+                    "clusterName": clusterName,
+                    "blockUUIDs": blockUUIDs
+                ]
             )
             return true
 

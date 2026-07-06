@@ -62,6 +62,13 @@ struct CosmoInlineAssistantAgentBridge {
         executor.onInquiryQuestionProposal = { proposal in
             store.receive(inquiryProposal: proposal)
         }
+        // Canvas plans (thinkspace copilot) review in the pane now, not the
+        // old floating window.
+        executor.onCanvasPlan = { plan in
+            Task { @MainActor in
+                store.receive(canvasPlan: plan)
+            }
+        }
         // The surface bound at submit is the truth for edit targeting — the
         // executor stamps it over model-authored IDs so proposals always bind
         // to the editor the user was actually in.
@@ -75,6 +82,7 @@ struct CosmoInlineAssistantAgentBridge {
             executor.onWorkspaceEditProposal = nil
             executor.onAssistantPaneAnswer = nil
             executor.onInquiryQuestionProposal = nil
+            executor.onCanvasPlan = nil
             executor.workspaceEditBoundSurface = nil
             executor.contextAtomUUIDs = []
             executor.contextSourceIDs = []

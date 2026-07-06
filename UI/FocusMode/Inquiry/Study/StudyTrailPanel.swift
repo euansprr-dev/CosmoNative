@@ -38,8 +38,7 @@ struct StudyTrailPanel: View {
                 .foregroundStyle(DS.textMuted)
         }
         .padding(.horizontal, DS.space16)
-        // Clearance for the chrome islands floating above the panel.
-        .padding(.top, StudyMetrics.panelTopInset)
+        .padding(.top, DS.space12)
         .padding(.bottom, DS.space10)
     }
 
@@ -181,6 +180,7 @@ private struct StudyTrailRow: View {
         .padding(.horizontal, DS.space16)
         .padding(.vertical, DS.space8)
         .background(isHovered ? DS.surfaceElevated.opacity(0.6) : .clear)
+        .offset(x: isHovered ? 2 : 0)
         .opacity(item.isProvisional ? 0.62 : 1)
         .contentShape(Rectangle())
         .onHover { hovering in

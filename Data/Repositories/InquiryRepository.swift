@@ -293,6 +293,54 @@ final class InquiryRepository {
         )
     }
 
+    /// Create the durable source atom for a physical page scan. One scan
+    /// session (however many pages) = one source object; the ordered page
+    /// attachment uuids live in the atom's metadata, the running transcript
+    /// in its body (searchable). Extracts cite it via `sourceUUID` exactly
+    /// like a webpage source.
+    @discardableResult
+    func createScanSource(
+        title: String,
+        scanSessionId: String,
+        pageAttachmentUUIDs: [String],
+        transcript: String?
+    ) async throws -> Atom {
+        var metadata = ResearchMetadata()
+        metadata.researchType = "page_scan"
+        metadata.processingStatus = InquirySourceStatus.viewed.rawValue
+        metadata.tags = ["inquiry-source", "page-scan"]
+
+        var atom = try await atoms.create(
+            type: .research,
+            title: title,
+            body: transcript,
+            structured: nil,
+            metadata: try jsonString(metadata),
+            links: nil
+        )
+        atom = atom.mergingMetadataKeys(["attachmentUUIDs": pageAttachmentUUIDs])
+        atom = atom.mergingMetadataKeys(["scanSessionId": scanSessionId])
+        return try await atoms.update(atom)
+    }
+
+    /// Append later pages / transcript growth to an existing scan source.
+    @discardableResult
+    func appendToScanSource(
+        uuid: String,
+        pageAttachmentUUIDs: [String],
+        transcript: String?
+    ) async throws -> Atom? {
+        guard var atom = try await atoms.fetch(uuid: uuid) else { return nil }
+        let existing = (atom.metadataDict?["attachmentUUIDs"] as? [String]) ?? []
+        let merged = existing + pageAttachmentUUIDs.filter { !existing.contains($0) }
+        atom = atom.mergingMetadataKeys(["attachmentUUIDs": merged])
+        if let transcript, !transcript.isEmpty {
+            let body = atom.body?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            atom.body = body.isEmpty ? transcript : body + "\n\n" + transcript
+        }
+        return try await atoms.update(atom)
+    }
+
     func fetchSource(canonicalURL: String) async throws -> Atom? {
         let all = try await atoms.fetchAll(type: .research)
         return all.first { atom in
@@ -498,7 +546,9 @@ final class InquiryRepository {
         parentDeepDiveUUID: String?,
         originSessionUUID: String?,
         parentQuestionUUID: String?,
-        originExtractUUID: String?
+        originExtractUUID: String?,
+        sourceQuestionUUID: String? = nil,
+        placementOrigin: String? = nil
     ) async throws -> (atom: Atom, created: Bool) {
         if let deepDiveUUID = parentDeepDiveUUID {
             let key = ResearchTreeDocument.normalizedQuestionKey(title)
@@ -516,7 +566,9 @@ final class InquiryRepository {
             parentDeepDiveUUID: parentDeepDiveUUID,
             originSessionUUID: originSessionUUID,
             parentQuestionUUID: parentQuestionUUID,
-            originExtractUUID: originExtractUUID
+            originExtractUUID: originExtractUUID,
+            placementOrigin: placementOrigin,
+            sourceQuestionUUID: sourceQuestionUUID
         )
         return (created, true)
     }
@@ -549,6 +601,90 @@ final class InquiryRepository {
         return reparented
     }
 
+    // MARK: - Gardener mutations (structure lifecycle)
+
+    /// Promote a nested question to the topic's top level. Provenance
+    /// (sourceQuestionUUID / originSessionUUID) is untouched — placement
+    /// changes, history doesn't.
+    func promoteQuestionToRoot(uuid: String) async {
+        guard let question = try? await atoms.fetch(uuid: uuid),
+              var meta = question.questionMetadata else { return }
+        meta.parentQuestionUUID = nil
+        meta.questionRole = .rootQuestion
+        meta.relationshipToParent = .rootUnderTopic
+        _ = try? await atoms.update(question.withMetadata(meta))
+    }
+
+    /// Fold one question into another: its extracts and children move to the
+    /// survivor; the folded question is archived (never deleted — reversible).
+    func mergeQuestion(_ foldedUUID: String, into survivorUUID: String, deepDiveUUID: String) async {
+        guard foldedUUID != survivorUUID else { return }
+        let extracts = (try? await fetchExtracts(forDeepDive: deepDiveUUID)) ?? []
+        for extract in extracts where extract.extractMetadata?.parentQuestionUUID == foldedUUID {
+            guard var meta = extract.extractMetadata else { continue }
+            meta.parentQuestionUUID = survivorUUID
+            _ = try? await atoms.update(extract.withMetadata(meta))
+        }
+        let questions = (try? await fetchQuestions(forDeepDive: deepDiveUUID)) ?? []
+        for child in questions where child.questionMetadata?.parentQuestionUUID == foldedUUID {
+            guard var meta = child.questionMetadata else { continue }
+            meta.parentQuestionUUID = survivorUUID
+            _ = try? await atoms.update(child.withMetadata(meta))
+        }
+        if let folded = questions.first(where: { $0.uuid == foldedUUID }),
+           var meta = folded.questionMetadata {
+            meta.status = .archived
+            _ = try? await atoms.update(folded.withMetadata(meta))
+        }
+    }
+
+    /// Graduate a topic-scale question into its own Deep Dive: the question
+    /// becomes the new topic's root, its whole subtree (questions + extracts)
+    /// moves with it. Returns the new Deep Dive.
+    @discardableResult
+    func graduateQuestionToDeepDive(uuid: String, fromDeepDiveUUID: String) async -> Atom? {
+        let questions = (try? await fetchQuestions(forDeepDive: fromDeepDiveUUID)) ?? []
+        guard let root = questions.first(where: { $0.uuid == uuid }) else { return nil }
+        let title = root.title ?? "Untitled inquiry"
+        guard let newDive = try? await createDeepDive(
+            title: title,
+            about: "Graduated from a question that reached topic scale."
+        ) else { return nil }
+
+        // Collect the subtree (root + all descendants).
+        var subtree: Set<String> = [uuid]
+        var frontier = [uuid]
+        while !frontier.isEmpty {
+            let next = questions.filter { question in
+                guard let parent = question.questionMetadata?.parentQuestionUUID else { return false }
+                return frontier.contains(parent) && !subtree.contains(question.uuid)
+            }
+            frontier = next.map(\.uuid)
+            subtree.formUnion(frontier)
+        }
+
+        for question in questions where subtree.contains(question.uuid) {
+            guard var meta = question.questionMetadata else { continue }
+            meta.parentDeepDiveUUID = newDive.uuid
+            if question.uuid == uuid {
+                meta.parentQuestionUUID = nil
+                meta.questionRole = .rootQuestion
+                meta.relationshipToParent = .rootUnderTopic
+            }
+            _ = try? await atoms.update(question.withMetadata(meta))
+        }
+
+        let extracts = (try? await fetchExtracts(forDeepDive: fromDeepDiveUUID)) ?? []
+        for extract in extracts {
+            guard var meta = extract.extractMetadata,
+                  let parent = meta.parentQuestionUUID,
+                  subtree.contains(parent) else { continue }
+            meta.parentDeepDiveUUID = newDive.uuid
+            _ = try? await atoms.update(extract.withMetadata(meta))
+        }
+        return newDive
+    }
+
     // MARK: - Extract
 
     @discardableResult
@@ -566,7 +702,8 @@ final class InquiryRepository {
         originType: String?,
         citation: String?,
         status: ExtractStatus = .committed,
-        kindPending: Bool? = nil
+        kindPending: Bool? = nil,
+        attachmentUUIDs: [String]? = nil
     ) async throws -> Atom {
         let metadata = ExtractMetadata(
             kind: kind,
@@ -581,7 +718,8 @@ final class InquiryRepository {
             status: status,
             originType: originType,
             citation: citation,
-            kindPending: kindPending
+            kindPending: kindPending,
+            attachmentUUIDs: attachmentUUIDs
         )
         let structured = ExtractStructured()
         var links: [AtomLink] = []

@@ -38,6 +38,13 @@ final class InquiryWorkspaceViewModel {
     var sourceActivityLine: String?
     var toast: InquiryToast?
 
+    // Reading rail YouTube search: the rail's search mode turns the candidate
+    // list into live video results the user can import like any Scout row.
+    var railSearchQuery: String = ""
+    var isRailSearchActive: Bool = false
+    private(set) var railSearchResults: [InquirySourceCandidate] = []
+    private(set) var isRailSearching: Bool = false
+
     // New shell ("Stele" redesign) UI state
     var activeReaderSourceId: String?           // when non-nil, center morphs into reader
     var isMapOverlayPresented: Bool = false     // Cmd+M session-map overlay
@@ -55,6 +62,8 @@ final class InquiryWorkspaceViewModel {
     var dockFocusTick: Int = 0
     /// Reader-mode preference for the open source (chrome-row toggle).
     var readerPrefersReaderMode: Bool = true
+    /// The Gardener's structure proposals, surfaced in the Session map.
+    var gardenerProposals: [InquiryGardenerProposal] = []
 
     func toggleTrail() { isTrailShowing.toggle() }
     func toggleReading() { isReadingShowing.toggle() }
@@ -112,6 +121,32 @@ final class InquiryWorkspaceViewModel {
         }
         requeueStrandedClassifications()
         await refreshSourceRecommendationsIfNeeded()
+        await refreshGardener()
+    }
+
+    // MARK: - Tending (the Gardener in the Session map)
+
+    func refreshGardener(force: Bool = false) async {
+        guard let deepDiveUUID = deepDive?.uuid else { return }
+        gardenerProposals = await InquiryGardener.shared.review(deepDiveUUID: deepDiveUUID, force: force)
+    }
+
+    func acceptGardenerProposal(_ proposal: InquiryGardenerProposal) async {
+        guard let deepDiveUUID = deepDive?.uuid else { return }
+        await InquiryGardener.shared.accept(proposal, deepDiveUUID: deepDiveUUID)
+        gardenerProposals.removeAll { $0.key == proposal.key }
+        await reloadDeepDiveScopedAtoms()
+        // Mirror the accepted structure into this session's tree.
+        if proposal.kind == .promote, let nodeId = questionNodeId(for: proposal.questionUUID) {
+            _ = structured.researchTree.reparentNode(nodeId, to: nil, relationshipType: .rootUnderTopic)
+            scheduleSave()
+        }
+    }
+
+    func dismissGardenerProposal(_ proposal: InquiryGardenerProposal) async {
+        guard let deepDiveUUID = deepDive?.uuid else { return }
+        await InquiryGardener.shared.dismiss(proposal, deepDiveUUID: deepDiveUUID)
+        gardenerProposals.removeAll { $0.key == proposal.key }
     }
 
     /// Captures left pending by a quit/crash mid-classification get another
@@ -958,13 +993,27 @@ final class InquiryWorkspaceViewModel {
         return newExtracts.count >= 3
     }
 
+    /// True when a scout request arrived while another was in flight — the
+    /// current question gets re-checked as soon as the running scout lands.
+    private var scoutRequestQueuedBehindInFlight = false
+
     func refreshSourceRecommendations(
         query: String? = nil,
         mode: InquirySourceSearchMode = .quick
     ) async {
-        guard !isRefreshingSources else { return }
+        guard !isRefreshingSources else {
+            // Never swallow a scout request: arriving on a fresh branch while
+            // the previous question's scout is still running used to drop the
+            // new branch's scout on the floor — it only ran on a full session
+            // re-entry. Queue one drain instead.
+            scoutRequestQueuedBehindInFlight = true
+            return
+        }
         isRefreshingSources = true
-        defer { isRefreshingSources = false }
+        defer {
+            isRefreshingSources = false
+            drainQueuedScoutRequest()
+        }
 
         let focusedQuery = query?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         let profile = branchResearchProfile(sourceQuery: focusedQuery)
@@ -1007,6 +1056,52 @@ final class InquiryWorkspaceViewModel {
                 : "Source Radar found \(batch.candidates.count) source candidates"
         )
         scheduleSave()
+    }
+
+    /// Drains a scout request that arrived mid-flight: re-checks whichever
+    /// question is active NOW (the user may have switched again meanwhile)
+    /// and scouts it only if it actually lacks a fresh batch.
+    private func drainQueuedScoutRequest() {
+        guard scoutRequestQueuedBehindInFlight else { return }
+        scoutRequestQueuedBehindInFlight = false
+        Task { [weak self] in
+            await self?.refreshSourceRecommendationsIfNeeded()
+        }
+    }
+
+    // MARK: - Reading rail YouTube search
+
+    /// Runs the rail's YouTube search for the current `railSearchQuery`.
+    /// Reuses the Deep Scout provider (Data API when a key exists, results-page
+    /// parse otherwise) so search rows are ordinary candidates: the same row,
+    /// the same import path, the same taste learning.
+    func runRailSearch() async {
+        let query = railSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            railSearchResults = []
+            isRailSearching = false
+            return
+        }
+        isRailSearching = true
+        let (_, candidates) = await DeepScoutProviders.fetchYouTube(
+            query: query,
+            lane: .teacherLecture,
+            intent: .sourceSurvey,
+            profile: branchResearchProfile(sourceQuery: query)
+        )
+        // A newer keystroke's task supersedes this one — drop stale results.
+        guard !Task.isCancelled,
+              query == railSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
+        // The user typed the query; the provider's relevance order stands.
+        railSearchResults = candidates
+        isRailSearching = false
+    }
+
+    func exitRailSearch() {
+        isRailSearchActive = false
+        railSearchQuery = ""
+        railSearchResults = []
+        isRailSearching = false
     }
 
     func importSourceCandidate(_ candidate: InquirySourceCandidate) async {
@@ -1175,6 +1270,119 @@ final class InquiryWorkspaceViewModel {
     /// Notify the live understanding engine when a source is imported/opened.
     private func noteSourceChanged() {
         scheduleLiveUnderstandingRefresh(reason: .sourceImported)
+    }
+
+    // MARK: - Page scans (physical capture)
+
+    /// Register a scan source in the session's rail and open its tab. The
+    /// scan's transcript renders via InternalSourceView, a full sibling of
+    /// web sources — extracts cite it, counts tick on it.
+    func registerScanSource(_ source: Atom) {
+        let title = source.title ?? "Page scan"
+        let tab = openSourceAtom(source, url: nil, title: title, kind: .pageScan)
+        upsertScanSourceRef(for: source, tab: tab, title: title)
+        activeSourceTabId = tab.id
+        appendActivity(
+            .init(
+                kind: .sourceOpened,
+                title: "Pages scanned",
+                detail: title,
+                questionUUID: activeQuestionUUID,
+                sourceUUID: source.uuid
+            )
+        )
+        noteSourceChanged()
+        scheduleSave()
+    }
+
+    private func upsertScanSourceRef(for source: Atom, tab: SourceTab, title: String) {
+        let now = ISO8601.string(from: Date())
+        if let idx = structured.sourceRefs.firstIndex(where: { $0.sourceUUID == source.uuid }) {
+            structured.sourceRefs[idx].tabId = tab.id
+            structured.sourceRefs[idx].title = source.title ?? title
+            structured.sourceRefs[idx].status = .viewed
+            structured.sourceRefs[idx].lastOpenedAt = now
+        } else {
+            structured.sourceRefs.append(
+                InquirySourceRef(
+                    sourceUUID: source.uuid,
+                    tabId: tab.id,
+                    url: nil,
+                    title: source.title ?? title,
+                    domain: nil,
+                    sourceType: "page_scan",
+                    primaryQuestionUUID: activeQuestionUUID,
+                    primaryNodeId: activeBranchNodeId,
+                    openedAt: now,
+                    lastOpenedAt: now,
+                    addedByUser: true
+                )
+            )
+        }
+    }
+
+    /// One digitized unit from a scanned page enters the SAME pipeline as a
+    /// typed dock capture: pending extract → routing receipt → batched live
+    /// classification. Ink marks ride along as router bias hints; the page
+    /// originals stay reachable through attachmentUUIDs + the scan source.
+    @discardableResult
+    func ingestScannedUnit(
+        text: String,
+        inkMarks: [String]?,
+        scanSource: Atom,
+        attachmentUUIDs: [String]
+    ) async -> Atom? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let scanTabId = structured.sourceTabs.first { $0.sourceUUID == scanSource.uuid }?.id
+        do {
+            let extract = try await InquiryRepository.shared.createExtract(
+                body: trimmed,
+                kind: .note,
+                sourceUUID: scanSource.uuid,
+                selectionRange: nil,
+                sessionUUID: session.uuid,
+                questionUUID: activeQuestionUUID,
+                deepDiveUUID: deepDive?.uuid,
+                branchNodeId: activeBranchNodeId,
+                sourceTabId: scanTabId,
+                userNote: nil,
+                originType: "page_scan",
+                citation: scanSource.title ?? "Page scan",
+                status: .temporary,
+                kindPending: true,
+                attachmentUUIDs: attachmentUUIDs
+            )
+            registerSavedExtract(extract, sourceTabId: scanTabId)
+            routeThought(trimmed, originExtractUUID: extract.uuid, sourceTabId: scanTabId)
+            enqueueClassification(
+                extractUUID: extract.uuid,
+                text: trimmed,
+                lockedKind: nil,
+                originalKind: .note,
+                inkMarks: inkMarks
+            )
+            pushRoutingReceipt(InquiryRoutingReceiptItem(
+                id: extract.uuid,
+                headline: "Digitized",
+                destinations: [.init(
+                    extractUUID: extract.uuid,
+                    kind: .note,
+                    questionUUID: activeQuestionUUID,
+                    questionTitle: activeQuestionTitle,
+                    conceptNames: [],
+                    isNewBranch: false,
+                    isPending: true
+                )],
+                isProvisional: true
+            ))
+            scheduleSave()
+            return extract
+        } catch {
+            print("[InquiryWorkspaceVM] ingestScannedUnit failed: \(error)")
+            showToast("Save failed", detail: error.localizedDescription)
+            return nil
+        }
     }
 
     func reopenSource(_ ref: InquirySourceRef) {
@@ -1374,6 +1582,12 @@ final class InquiryWorkspaceViewModel {
     }
 
     private func markCandidate(_ candidateId: String, status: InquirySourceImportStatus, sourceUUID: String? = nil) {
+        // Rail search results are candidates outside the batch — keep their
+        // status honest too so imported/dismissed rows leave the results list.
+        if let idx = railSearchResults.firstIndex(where: { $0.id == candidateId }) {
+            railSearchResults[idx].importStatus = status
+            railSearchResults[idx].importedSourceUUID = sourceUUID ?? railSearchResults[idx].importedSourceUUID
+        }
         updateActiveRecommendationBatch { batch in
             if let idx = batch.candidates.firstIndex(where: { $0.id == candidateId }) {
                 batch.candidates[idx].importStatus = status
@@ -1655,7 +1869,7 @@ final class InquiryWorkspaceViewModel {
         guard let extract = try? await AtomRepository.shared.fetch(uuid: extractUUID),
               let body = extract.body?.trimmingCharacters(in: .whitespacesAndNewlines), !body.isEmpty else { return }
         let title = String(body.prefix(120))
-        guard let questionUUID = await resolveBranchQuestion(title) else { return }
+        guard let questionUUID = await resolveBranchQuestion(title, underParent: activeQuestionUUID) else { return }
         await rerouteExtract(extractUUID, toQuestionUUID: questionUUID)
     }
 
@@ -1678,6 +1892,7 @@ final class InquiryWorkspaceViewModel {
         let text: String
         let lockedKind: ExtractKind?
         let originalKind: ExtractKind
+        var inkMarks: [String]? = nil
     }
 
     private var classificationQueue: [PendingClassification] = []
@@ -1692,18 +1907,20 @@ final class InquiryWorkspaceViewModel {
         classificationQueue.removeAll()
     }
 
-    private func enqueueClassification(
+    func enqueueClassification(
         extractUUID: String,
         text: String,
         lockedKind: ExtractKind?,
-        originalKind: ExtractKind
+        originalKind: ExtractKind,
+        inkMarks: [String]? = nil
     ) {
         guard !classificationQueue.contains(where: { $0.extractUUID == extractUUID }) else { return }
         classificationQueue.append(PendingClassification(
             extractUUID: extractUUID,
             text: text,
             lockedKind: lockedKind,
-            originalKind: originalKind
+            originalKind: originalKind,
+            inkMarks: inkMarks
         ))
         scheduleClassificationFlush()
     }
@@ -1732,7 +1949,7 @@ final class InquiryWorkspaceViewModel {
             var enriched = context
             enriched.corrections = await InquiryRoutingCorrectionStore.shared.recentExamples(deepDiveUUID: deepDiveUUID)
             let refinements = await InquiryLiveRouter.shared.classify(
-                captures: batch.map { .init(id: $0.extractUUID, text: $0.text, lockedKind: $0.lockedKind) },
+                captures: batch.map { .init(id: $0.extractUUID, text: $0.text, lockedKind: $0.lockedKind, inkMarks: $0.inkMarks) },
                 context: enriched
             )
             guard !Task.isCancelled else { return }
@@ -1748,6 +1965,21 @@ final class InquiryWorkspaceViewModel {
             self?.classificationRunTask = nil
             self?.runClassificationBatch()   // Drain captures queued while in flight.
         }
+    }
+
+    /// Session vocabulary for the vision transcription pass — domain terms
+    /// spell correctly when the model knows the study's language, and the
+    /// user's personal ink notation (Settings → Cloud Sync → Ink grammar)
+    /// rides along.
+    func pageTranscriptionContext() -> PageTranscriptionContext {
+        let legend = UserDefaults.standard.string(forKey: "cosmoInkLegend")
+        return PageTranscriptionContext(
+            deepDiveTitle: deepDive?.title,
+            activeQuestionTitle: activeQuestionTitle,
+            lexiconTerms: lexicon.compactMap(\.title),
+            conceptNames: deepDiveConnections.compactMap(\.title),
+            inkLegend: (legend?.isEmpty == false) ? legend : nil
+        )
     }
 
     private func liveRouterContext() -> InquiryLiveRouter.ContextSnapshot {
@@ -1818,7 +2050,7 @@ final class InquiryWorkspaceViewModel {
         if let newKind = plan.original.newKind { metadata.kind = newKind }
         var targetQuestionUUID = plan.original.targetQuestionUUID
         if let branchTitle = plan.original.newBranchTitle {
-            targetQuestionUUID = await resolveBranchQuestion(branchTitle)
+            targetQuestionUUID = await resolveBranchQuestion(branchTitle, underParent: plan.original.newBranchParentUUID)
         }
         if let target = targetQuestionUUID {
             metadata.parentQuestionUUID = target
@@ -1841,7 +2073,7 @@ final class InquiryWorkspaceViewModel {
         for unit in plan.additions {
             var unitQuestionUUID = unit.targetQuestionUUID ?? metadata.parentQuestionUUID
             if let branchTitle = unit.newBranchTitle {
-                unitQuestionUUID = await resolveBranchQuestion(branchTitle) ?? unitQuestionUUID
+                unitQuestionUUID = await resolveBranchQuestion(branchTitle, underParent: unit.newBranchParentUUID) ?? unitQuestionUUID
             }
             guard let created = try? await InquiryRepository.shared.createExtract(
                 body: unit.text,
@@ -1927,7 +2159,11 @@ final class InquiryWorkspaceViewModel {
     }
 
     /// Quiet find-or-create for live-router branch proposals: never steals focus.
-    private func resolveBranchQuestion(_ title: String) async -> String? {
+    /// `underParent` is the branch's SEMANTIC parent by the nesting contract —
+    /// an existing question it decomposes, or nil for the topic's top level.
+    /// Where the thought occurred (the active question) is recorded as
+    /// provenance either way, never conflated with placement.
+    private func resolveBranchQuestion(_ title: String, underParent parentUUID: String? = nil) async -> String? {
         if let existing = questions.first(where: {
             InquiryPlacementEngine.normalized($0.title ?? "") == InquiryPlacementEngine.normalized(title)
         }) {
@@ -1937,22 +2173,33 @@ final class InquiryWorkspaceViewModel {
             title: title,
             parentDeepDiveUUID: deepDive?.uuid,
             originSessionUUID: session.uuid,
-            parentQuestionUUID: activeQuestionUUID,
-            originExtractUUID: nil
+            parentQuestionUUID: parentUUID,
+            originExtractUUID: nil,
+            sourceQuestionUUID: activeQuestionUUID,
+            placementOrigin: "live-router"
         ) else { return nil }
         if result.created {
             questions.append(result.atom)
-            structured.researchTree.appendChild(
-                parentId: activeBranchNodeId,
-                kind: .question,
-                atomUUID: result.atom.uuid,
-                label: title,
-                aiSuggested: true,
-                accepted: true,
-                nodeType: .branchQuestion,
-                relationshipType: .childOf,
-                visibility: .solidNode
-            )
+            if let parentUUID, let parentNodeId = questionNodeId(for: parentUUID) {
+                structured.researchTree.appendChild(
+                    parentId: parentNodeId,
+                    kind: .question,
+                    atomUUID: result.atom.uuid,
+                    label: title,
+                    aiSuggested: true,
+                    accepted: true,
+                    nodeType: .branchQuestion,
+                    relationshipType: .childOf,
+                    visibility: .solidNode
+                )
+            } else {
+                _ = structured.researchTree.appendRootQuestion(
+                    atomUUID: result.atom.uuid,
+                    label: title,
+                    aiSuggested: true,
+                    accepted: true
+                )
+            }
         }
         return result.atom.uuid
     }
@@ -2379,7 +2626,10 @@ final class InquiryWorkspaceViewModel {
 
         Question from Euan: \(trimmed)
 
-        Answer thoughtfully, drawing on the provided context. If you don't know, say so.
+        Answer thoughtfully. THIS QUESTION'S OWN MATERIAL is the only ground truth \
+        for its current state — if it's empty, say the inquiry is just beginning and \
+        suggest where to start; never dress the topic background up as this \
+        question's findings. If you don't know, say so.
         """
 
         let response = await InquiryAICopilot.shared.ask(prompt: fullPrompt)
@@ -2387,43 +2637,58 @@ final class InquiryWorkspaceViewModel {
         routeThought(trimmed, originExtractUUID: nil, sourceTabId: activeSourceTabId)
     }
 
+    /// The context contract: THIS QUESTION'S material and the TOPIC's wider
+    /// background are hard-segregated. The topic-level understanding is
+    /// written by OTHER questions' sessions — presenting it unlabeled made a
+    /// fresh question "summarize" its neighbors' findings as its own.
     private func buildAIContext() -> String {
         var lines: [String] = []
+        if let activeQ = activeQuestion {
+            lines.append("ACTIVE QUESTION (the frame for everything below): \(activeQ.title ?? activeQ.uuid)")
+            lines.append("Status: \((activeQ.questionMetadata?.status ?? .open).displayName)")
+        }
+        if let source = activeSourceTab {
+            lines.append("Source open right now: \(source.title)")
+        }
+
+        lines.append("\nTHIS QUESTION'S OWN MATERIAL (the only findings that belong to it):")
+        let activeClaims = claims(for: activeQuestionUUID).prefix(5).compactMap { $0.body ?? $0.title }
+        let activeEvidence = evidence(for: activeQuestionUUID).prefix(5).compactMap { $0.body ?? $0.title }
+        let activeNotes = recentNotes(for: activeQuestionUUID, limit: 4).compactMap { $0.body ?? $0.title }
+        let sessionThoughts = structured.sessionCaptures.suffix(5).map { String($0.body.prefix(120)) }
+        if activeClaims.isEmpty && activeEvidence.isEmpty && activeNotes.isEmpty && sessionThoughts.isEmpty {
+            lines.append("(none yet — this question has no captures, claims, or evidence)")
+        } else {
+            if !activeClaims.isEmpty {
+                lines.append("Claims:\n\(activeClaims.map { "- \($0)" }.joined(separator: "\n"))")
+            }
+            if !activeEvidence.isEmpty {
+                lines.append("Evidence/counterevidence:\n\(activeEvidence.map { "- \($0)" }.joined(separator: "\n"))")
+            }
+            if !activeNotes.isEmpty {
+                lines.append("Notes:\n\(activeNotes.map { "- \($0)" }.joined(separator: "\n"))")
+            }
+            if !sessionThoughts.isEmpty {
+                lines.append("Thoughts this session:\n\(sessionThoughts.map { "- \($0)" }.joined(separator: "\n"))")
+            }
+        }
+
         if let dd = deepDive, let title = dd.title {
-            lines.append("You are inside the Deep Dive: \(title)")
+            lines.append("\nTOPIC BACKGROUND — the wider Deep Dive \"\(title)\". Built by OTHER questions' research; orientation only, NEVER this question's findings or current state:")
             if let about = dd.body, !about.isEmpty {
-                lines.append("About this Deep Dive: \(about)")
+                lines.append("About the topic: \(about)")
             }
             if let model = dd.deepDiveStructured?.currentUnderstanding.oneSentenceModel,
                !model.isEmpty {
-                lines.append("Current understanding: \(model)")
+                lines.append("Topic-level working model: \(model)")
             }
-        }
-        if let rq = rootQuestion, let qt = rq.title {
-            lines.append("Root question: \(qt)")
-        }
-        if let activeQ = activeQuestion {
-            lines.append("Active question: \(activeQ.title ?? activeQ.uuid)")
-            lines.append("Active question status: \((activeQ.questionMetadata?.status ?? .open).displayName)")
-        }
-        if let source = activeSourceTab {
-            lines.append("Current source: \(source.title)")
-        }
-        let activeClaims = claims(for: activeQuestionUUID).prefix(5).compactMap { $0.body ?? $0.title }
-        if !activeClaims.isEmpty {
-            lines.append("Current claims for active question:\n\(activeClaims.map { "- \($0)" }.joined(separator: "\n"))")
-        }
-        let activeEvidence = evidence(for: activeQuestionUUID).prefix(5).compactMap { $0.body ?? $0.title }
-        if !activeEvidence.isEmpty {
-            lines.append("Evidence/counterevidence for active question:\n\(activeEvidence.map { "- \($0)" }.joined(separator: "\n"))")
-        }
-        let pinned = pinnedQuestions().compactMap(\.title)
-        if !pinned.isEmpty {
-            lines.append("Pinned questions: \(pinned.joined(separator: "; "))")
-        }
-        let recent = structured.sessionCaptures.suffix(5).map { "- \($0.body.prefix(120))" }.joined(separator: "\n")
-        if !recent.isEmpty {
-            lines.append("Recent captures:\n\(recent)")
+            if let rq = rootQuestion, let qt = rq.title, rq.uuid != activeQuestionUUID {
+                lines.append("Session root question: \(qt)")
+            }
+            let pinned = pinnedQuestions().compactMap(\.title)
+            if !pinned.isEmpty {
+                lines.append("Pinned questions: \(pinned.joined(separator: "; "))")
+            }
         }
         return lines.joined(separator: "\n")
     }
@@ -2484,9 +2749,20 @@ final class InquiryWorkspaceViewModel {
     // MARK: - Selection → Extract (called by reader's SelectionMiniMenu)
 
     @discardableResult
-    func saveSelectionAsExtract(_ selection: String, kind: ExtractKind, sourceTab: SourceTab) async -> Atom? {
+    func saveSelectionAsExtract(
+        _ selection: String,
+        kind: ExtractKind,
+        sourceTab: SourceTab,
+        timestampSeconds: Int? = nil
+    ) async -> Atom? {
         let trimmed = selection.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
+        // Video captures cite the exact moment: the citation deep-links back
+        // to where the passage begins.
+        var citation = sourceTab.url ?? sourceTab.title
+        if let seconds = timestampSeconds, let url = sourceTab.url {
+            citation = url + (url.contains("?") ? "&t=\(seconds)s" : "?t=\(seconds)s")
+        }
         do {
             let extract = try await InquiryRepository.shared.createExtract(
                 body: trimmed,
@@ -2500,7 +2776,7 @@ final class InquiryWorkspaceViewModel {
                 sourceTabId: sourceTab.id,
                 userNote: nil,
                 originType: "selection",
-                citation: sourceTab.url ?? sourceTab.title
+                citation: citation
             )
             registerSavedExtract(extract, sourceTabId: sourceTab.id)
             appendRouteReceipt(
@@ -2588,8 +2864,30 @@ final class InquiryWorkspaceViewModel {
                 .filter { $0.status != .archived && $0.status != .deleted }
                 .sorted { $0.lastOpenedAt > $1.lastOpenedAt }
                 .prefix(5)
-                .map { $0.title }
+                .map { $0.title },
+            childFindings: childFindingsForRollup()
         )
+    }
+
+    /// The roll-up: each direct sub-question contributes its strongest line
+    /// so the parent's understanding composes from its children's answers.
+    private func childFindingsForRollup() -> [String] {
+        guard let activeQuestionUUID else { return [] }
+        return questions
+            .filter {
+                $0.questionMetadata?.parentQuestionUUID == activeQuestionUUID
+                    && ($0.questionMetadata?.status ?? .open) != .archived
+            }
+            .compactMap { child in
+                let childCounts = counts(for: child.uuid)
+                guard childCounts.total > 0 else { return nil }
+                let title = child.title ?? "Untitled sub-question"
+                let status = (child.questionMetadata?.status ?? .open).displayName.lowercased()
+                if let topClaim = claims(for: child.uuid).first?.body?.prefix(140) {
+                    return "\(title) (\(status), \(childCounts.total) notes): \(topClaim)"
+                }
+                return "\(title) (\(status), \(childCounts.total) notes)"
+            }
     }
 }
 

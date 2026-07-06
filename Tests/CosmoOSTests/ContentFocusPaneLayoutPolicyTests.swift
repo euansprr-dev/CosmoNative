@@ -34,7 +34,23 @@ final class ContentFocusPaneLayoutPolicyTests: XCTestCase {
             layoutMode: .full
         )
 
-        XCTAssertEqual(width, 620)
+        // Ghost margin + rail + gaps on either side of the manuscript:
+        // 2 × (240 + 24) + 48 = 576 → 1200 − 576 = 624.
+        XCTAssertEqual(width, 624)
+    }
+
+    func testManuscriptNeverExceedsBandScrollColumnOnVeryWideWindows() {
+        let width = ContentFocusLayoutPolicy.manuscriptWidth(
+            availableWidth: 2_000,
+            preferredWritingWidth: 860,
+            isPaneContext: false,
+            zenMode: false,
+            layoutMode: .full
+        )
+
+        // The band caps at 1244 (+48 outer spacers) — the manuscript must fit
+        // the scroll column between the ghost margin and the rail.
+        XCTAssertEqual(width, ContentFocusLayoutPolicy.scriptoriumBandMaxWidth - 2 * (ContentFocusLayoutPolicy.marginaliaRailWidth + 24))
     }
 
     func testZenModeDoesNotApplyDocumentWideBackgroundWash() throws {

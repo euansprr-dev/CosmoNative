@@ -18,6 +18,10 @@ actor InquiryUnderstandingEngine {
         var counterevidence: [String]
         var recentCaptures: [String]
         var recentSourceTitles: [String]
+        /// The roll-up: what this question's sub-questions have already
+        /// established — nesting means answers COMPOSE upward, so the parent's
+        /// brief absorbs its children's findings instead of re-opening them.
+        var childFindings: [String] = []
     }
 
     struct Output: Sendable {
@@ -29,8 +33,11 @@ actor InquiryUnderstandingEngine {
     You are Cosmo's research synthesizer. Write a single calm 4–5 sentence brief
     describing what is currently known about the active question, drawing on the
     supplied claims, evidence, and source notes. Hedge where the evidence is thin.
-    No bullets, no headings, no preamble. 120–180 words. End with the single most
-    consequential open thread to investigate next.
+    When sub-questions have settled ground (listed under "Settled by sub-questions"),
+    fold their conclusions into the brief as established — do not re-open them; the
+    parent's answer COMPOSES from its children's answers. No bullets, no headings,
+    no preamble. 120–180 words. End with the single most consequential open thread
+    to investigate next.
     """
 
     func brief(_ input: Input) async -> Output {
@@ -60,6 +67,8 @@ actor InquiryUnderstandingEngine {
         hasher.combine(input.recentSourceTitles.count)
         hasher.combine(input.recentSourceTitles.first ?? "")
         hasher.combine(input.claims.first ?? "")
+        hasher.combine(input.childFindings.count)
+        hasher.combine(input.childFindings.first ?? "")
         return String(hasher.finalize())
     }
 
@@ -97,6 +106,10 @@ actor InquiryUnderstandingEngine {
         if !input.recentSourceTitles.isEmpty {
             lines.append("Source titles (recent):")
             lines.append(contentsOf: input.recentSourceTitles.prefix(5).map { "- \($0)" })
+        }
+        if !input.childFindings.isEmpty {
+            lines.append("Settled by sub-questions (fold in as established, do not re-open):")
+            lines.append(contentsOf: input.childFindings.prefix(6).map { "- \($0)" })
         }
         lines.append("")
         lines.append("Write the brief now.")

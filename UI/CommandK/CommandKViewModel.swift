@@ -1029,10 +1029,21 @@ enum CommandKUnifiedSearchComposer {
 
         // Order sections by their best result, tier first — one fuzzy
         // semantic hit must not lift a whole section above keyword matches.
+        // On equal tiers the database outranks the swipe file: someone whose
+        // query matches their own atoms is almost always looking for those,
+        // and swipe-only browsing has its own section. Swipes lead only when
+        // their match carries strictly better keyword evidence than anything
+        // in the database.
         return grouped.sorted { lhs, rhs in
             guard let lhsBest = lhs.value.first else { return false }
             guard let rhsBest = rhs.value.first else { return true }
-            return UnifiedSearchResult.ranksHigher(lhsBest, rhsBest)
+            if lhsBest.lexicalTier != rhsBest.lexicalTier {
+                return lhsBest.lexicalTier < rhsBest.lexicalTier
+            }
+            if (lhs.key == .swipes) != (rhs.key == .swipes) {
+                return rhs.key == .swipes
+            }
+            return lhsBest.relevance > rhsBest.relevance
         }.map { (source: $0.key, results: $0.value) }
     }
 
@@ -1484,6 +1495,16 @@ public final class CommandKViewModel {
     /// panel before closing the whole palette.
     public var isActionPanelPresented = false
 
+    /// The live composer form shown in the detail pane when a creation action
+    /// is selected (the Mac's plus-orb sheets). Lives on the view model for
+    /// the same reason as `isActionPanelPresented`: MainView's escape monitor
+    /// and the keyboard layer need to see it.
+    var composerDraft: CommandKComposerDraft?
+
+    /// True while keyboard focus is inside the composer form. Escape peels
+    /// this layer first (returns focus to the search field, palette stays).
+    public var isComposerFocused = false
+
     /// Current search phase. Kept out of observation tracking so background
     /// phase changes do not invalidate the Command-K surface.
     @ObservationIgnored public private(set) var currentPhase: SearchPhase = .idle
@@ -1700,10 +1721,52 @@ public final class CommandKViewModel {
 
     private func setPrimaryAction(_ action: CommandKAction?) {
         executablePrimaryAction = action
+        if let action { syncComposerDraftPrefills(from: action) }
         guard shouldPublishPrimaryActionUpdate(from: primaryAction, to: action) else {
             return
         }
         primaryAction = action
+    }
+
+    /// Whether the current selection is a creation action whose detail pane
+    /// is a live composer — the keyboard layer routes Tab into it.
+    var isComposerSubjectSelected: Bool {
+        guard let id = selectedNodeId else { return false }
+        let action: CommandKAction?
+        if let primary = primaryAction, primary.id == id {
+            action = primary
+        } else if let row = userCommandRows.first(where: { $0.id == id }) {
+            action = row.action
+        } else {
+            action = nil
+        }
+        guard let action else { return false }
+        return CommandKComposerDraft.composerKind(for: action.kind) != nil
+    }
+
+    /// Mint or refresh the composer draft when the selection lands on a
+    /// creation action. The same action id keeps accumulated field edits;
+    /// a different creation action mints a fresh draft.
+    func ensureComposerDraft(for action: CommandKAction) {
+        if composerDraft?.actionID == action.id {
+            syncComposerDraftPrefills(from: action)
+        } else if let draft = CommandKComposerDraft.draft(for: action) {
+            composerDraft = draft
+            isComposerFocused = false
+        }
+    }
+
+    /// Live query→lead-field sync: typing after the keyword updates the
+    /// draft's title/body until the user edits that field by hand.
+    private func syncComposerDraftPrefills(from action: CommandKAction) {
+        guard var draft = composerDraft, draft.actionID == action.id else { return }
+        draft.syncPrefills(from: action)
+        if draft != composerDraft { composerDraft = draft }
+    }
+
+    private func resetComposerState() {
+        composerDraft = nil
+        isComposerFocused = false
     }
 
     private func shouldPublishPrimaryActionUpdate(
@@ -1980,6 +2043,7 @@ public final class CommandKViewModel {
             unifiedSearchEnrichmentTask?.cancel()
             swipeFilterTask?.cancel()
             swipeFilterDebounceTask?.cancel()
+            resetComposerState()
             setCurrentPhase(.idle)
         }
     }
@@ -2069,6 +2133,7 @@ public final class CommandKViewModel {
         isAIRanked = false
         selectedNodeId = nil
         selectedResultIndex = -1
+        resetComposerState()
         setCurrentPhase(.idle)
     }
 
@@ -3113,7 +3178,14 @@ public final class CommandKViewModel {
     private func performAction(_ action: CommandKAction) {
         guard !isExecutingAction else { return }
         if !action.isExecutable {
-            actionStatusMessage = "Add the missing detail first."
+            // A creation action with nothing typed yet isn't an error — Enter
+            // drops you into its composer form instead.
+            if CommandKComposerDraft.composerKind(for: action.kind) != nil {
+                ensureComposerDraft(for: action)
+                isComposerFocused = true
+            } else {
+                actionStatusMessage = "Add the missing detail first."
+            }
             return
         }
 
@@ -3185,6 +3257,21 @@ public final class CommandKViewModel {
             if let url = action.payload.url { arguments["url"] = url }
             if let body = action.payload.body { arguments["body"] = body }
             _ = try await AgentToolExecutor.shared.execute(toolName: "capture_research", arguments: arguments)
+            finishAction()
+
+        case .createNote:
+            let title = action.payload.title ?? action.payload.body ?? ""
+            _ = try await AgentToolExecutor.shared.execute(toolName: "create_note", arguments: ["title": title])
+            finishAction()
+
+        case .captureInbox:
+            guard let body = action.payload.body ?? action.payload.rawText else { return }
+            _ = await TelegramCaptureRouter.shared.routeTelegramCapture(
+                text: body,
+                chatId: "command-k",
+                messageId: nil,
+                sender: "Command-K"
+            )
             finishAction()
 
         case .createContent:
@@ -3333,6 +3420,123 @@ public final class CommandKViewModel {
         setQueryProgrammatically("")
         setPrimaryAction(nil)
         NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+    }
+
+    // MARK: - Composer Commit
+
+    /// Commit the composer draft — the deep-capture path behind the
+    /// detail-pane forms. One choke point per shape, reusing the same write
+    /// paths as the quick colon-grammar actions.
+    func commitComposerDraft() async {
+        guard let draft = composerDraft, draft.validation.isValid else { return }
+        do {
+            try await commitComposer(draft)
+            resetComposerState()
+        } catch {
+            actionStatusMessage = error.localizedDescription
+        }
+    }
+
+    private func commitComposer(_ draft: CommandKComposerDraft) async throws {
+        let form = draft.form
+        switch draft.kind {
+        case .createIdea:
+            try await commitComposerIdea(draft)
+            finishAction()
+
+        case .createTask:
+            var arguments: [String: Any] = ["title": form.value(for: .title)]
+            let optional: [(String, CommandKFormFieldID)] = [
+                ("body", .notes), ("priority", .priority), ("intent", .intent), ("dueDate", .date)
+            ]
+            for (key, field) in optional where !form.value(for: field).isEmpty {
+                arguments[key] = form.value(for: field)
+            }
+            _ = try await AgentToolExecutor.shared.execute(toolName: "create_task", arguments: arguments)
+            finishAction()
+
+        case .captureInbox:
+            // Same ingest choke point as the capture lanes — alias prefixes
+            // in the text still route to their lane.
+            _ = await TelegramCaptureRouter.shared.routeTelegramCapture(
+                text: form.value(for: .body),
+                chatId: "command-k",
+                messageId: nil,
+                sender: "Command-K"
+            )
+            finishAction()
+
+        case .captureSwipe:
+            let hook = form.value(for: .hook)
+            _ = try await CommandKInstantSwipeCapture().capture(
+                url: form.value(for: .url),
+                hook: hook.isEmpty ? nil : hook
+            )
+            finishAction()
+
+        case .createNote, .createContent:
+            // Creating IS editing (the iOS EditorCreationFlow model): make
+            // the atom, then open it — hideCommandK, never blanket-close.
+            let created = try await AtomRepository.shared.create(Atom.new(
+                type: draft.kind == .createNote ? .note : .content,
+                title: form.value(for: .title),
+                body: nil,
+                metadata: nil
+            ))
+            NotificationCenter.default.post(
+                name: CosmoNotification.Entity.created,
+                object: nil,
+                userInfo: ["atom": created, "uuid": created.uuid, "type": created.type.rawValue]
+            )
+            actionStatusMessage = nil
+            setQueryProgrammatically("")
+            setPrimaryAction(nil)
+            NotificationCenter.default.post(
+                name: CosmoNotification.NodeGraph.openAtomFromCommandK,
+                object: nil,
+                userInfo: ["atomUUID": created.uuid]
+            )
+            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.hideCommandK, object: nil)
+
+        case .createThinkspace:
+            _ = try await AgentToolExecutor.shared.execute(
+                toolName: "create_thinkspace",
+                arguments: ["title": form.value(for: .title)]
+            )
+            finishAction()
+
+        default:
+            break
+        }
+    }
+
+    private func commitComposerIdea(_ draft: CommandKComposerDraft) async throws {
+        let form = draft.form
+        // Resolve a typed-but-unpicked brand name the scoped grammar's way.
+        var clientUUID = draft.clientUUID
+        var clientName = form.value(for: .client)
+        if clientUUID == nil, !clientName.isEmpty {
+            guard let client = try await AtomRepository.shared.fuzzyFindClient(query: clientName) else {
+                throw CommandKActionExecutionError.clientNotFound(clientName)
+            }
+            clientUUID = client.uuid
+            clientName = client.title ?? clientName
+        }
+
+        let title = form.value(for: .title)
+        let body = form.value(for: .body)
+        try await createIdeaForClientAtom(
+            title: title.isEmpty ? body : title,
+            body: body.isEmpty ? nil : body,
+            clientUUID: clientUUID,
+            clientName: clientName.isEmpty ? nil : clientName,
+            captureSource: "command_k_composer",
+            contentFormat: form.value(for: .format),
+            platform: form.value(for: .platform),
+            hooks: draft.hooks,
+            context: body,
+            outline: draft.outline
+        )
     }
 
     private func finishScopedIdeaCapture() {
@@ -4273,12 +4477,20 @@ public final class CommandKViewModel {
         body rawBody: String?,
         clientUUID: String?,
         clientName: String?,
-        captureSource: String? = nil
+        captureSource: String? = nil,
+        contentFormat: String? = nil,
+        platform: String? = nil,
+        hooks: [String] = [],
+        context: String? = nil,
+        outline: [String] = []
     ) async throws -> Atom {
         let trimmedTitle = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTitle.isEmpty else { throw CommandKActionExecutionError.missingIdeaText }
 
         let trimmedBody = rawBody?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedHooks = hooks.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        let trimmedOutline = outline.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        let trimmedContext = context?.trimmingCharacters(in: .whitespacesAndNewlines)
         var atom = Atom.new(
             type: .idea,
             title: trimmedTitle,
@@ -4286,13 +4498,53 @@ public final class CommandKViewModel {
             metadata: nil
         )
 
-        if clientUUID != nil || captureSource != nil {
+        let hasRichMetadata = contentFormat?.isEmpty == false || platform?.isEmpty == false
+            || !trimmedHooks.isEmpty || trimmedContext?.isEmpty == false || !trimmedOutline.isEmpty
+        if clientUUID != nil || captureSource != nil || hasRichMetadata {
             atom = atom.withUpdatedIdeaMetadata { meta in
                 if let clientUUID {
                     meta.clientUUID = clientUUID
                 }
+                if let clientName, !clientName.isEmpty {
+                    meta.clientName = clientName
+                }
                 if let captureSource {
                     meta.captureSource = captureSource
+                }
+                // Same field contract the iOS composer writes (AtomCreation.createIdea).
+                if let contentFormat, let format = ContentFormat(rawValue: contentFormat) {
+                    meta.contentFormat = format
+                }
+                if let platform, let ideaPlatform = IdeaPlatform(rawValue: platform) {
+                    meta.platform = ideaPlatform
+                }
+                if !trimmedHooks.isEmpty {
+                    meta.hooks = trimmedHooks
+                }
+                if let trimmedContext, !trimmedContext.isEmpty {
+                    meta.context = trimmedContext
+                }
+                if !trimmedOutline.isEmpty {
+                    let model = CodexOutlineModel(
+                        arcShape: nil,
+                        slides: trimmedOutline.enumerated().map { index, note in
+                            CodexOutlineSlide(
+                                id: UUID(),
+                                position: index + 1,
+                                speechAct: nil,
+                                readerDeltas: [],
+                                frame: nil,
+                                distance: nil,
+                                techniques: [],
+                                transition: nil,
+                                note: note
+                            )
+                        }
+                    )
+                    if let data = try? JSONEncoder().encode(model),
+                       let json = String(data: data, encoding: .utf8) {
+                        meta.codexOutline = json
+                    }
                 }
             }
         }
@@ -4732,6 +4984,7 @@ public final class CommandKViewModel {
         filterCounts = [:]
         selectedNodeId = nil
         isActionPanelPresented = false
+        resetComposerState()
         setCurrentPhase(.idle)
         errorMessage = nil
         selectedTypeFilters.removeAll()

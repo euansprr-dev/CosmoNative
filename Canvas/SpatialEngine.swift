@@ -146,7 +146,29 @@ class SpatialEngine {
                     query = query.filter(Column("thinkspace_id") == nil)
                 }
 
-                let records = try query.order(Column("z_index")).fetchAll(db)
+                var records = try query.order(Column("z_index")).fetchAll(db)
+
+                // Shield: never render a placement whose atom is tombstoned. Sync
+                // gaps can orphan canvas_blocks rows (atom deleted on another
+                // device); the block would otherwise render from its cached
+                // entity_title forever. Blocks without an atom row (sticky notes,
+                // legacy metadata-backed notes) are untouched.
+                let atomUuids = records.compactMap(\.entityUuid).filter { !$0.isEmpty }
+                if !atomUuids.isEmpty {
+                    let tombstonedUuids = try String.fetchSet(
+                        db,
+                        Atom
+                            .filter(atomUuids.contains(Column("uuid")))
+                            .filter(Column("is_deleted") == true)
+                            .select(Column("uuid"), as: String.self)
+                    )
+                    if !tombstonedUuids.isEmpty {
+                        records.removeAll { record in
+                            guard let uuid = record.entityUuid, !uuid.isEmpty else { return false }
+                            return tombstonedUuids.contains(uuid)
+                        }
+                    }
+                }
 
                 // The metadata column (sticky color, rich body document, …) is not
                 // part of CanvasBlockRecord — fetch it separately and key by block id.

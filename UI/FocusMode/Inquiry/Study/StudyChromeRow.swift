@@ -13,6 +13,8 @@ struct StudyChromeRow: View {
     let isReceded: Bool
     let onClose: () -> Void
 
+    @State private var isQuestionHovered = false
+
     var body: some View {
         CosmoChromeRow {
             CosmoChromeIsland(recede: isReceded) { navigateControls }
@@ -41,23 +43,9 @@ struct StudyChromeRow: View {
 
     @ViewBuilder
     private func readerControls(_ tab: SourceTab) -> some View {
-        Button {
+        StudyChromeTextButton(icon: "chevron.left", label: "Study", help: "Back to the study (Esc)") {
             withAnimation(ProMotionSprings.focusTransition) { viewModel.dismissReader() }
-        } label: {
-            HStack(spacing: DS.space4) {
-                Image(systemName: "chevron.left")
-                    .font(DS.caption.weight(.semibold))
-                    .accessibilityHidden(true)
-                Text("Study")
-                    .font(DS.buttonText)
-            }
-            .foregroundStyle(DS.textSecondary)
-            .padding(.horizontal, DS.space6)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .help("Back to the study (Esc)")
-        .accessibilityLabel("Back to the study")
 
         Text(tab.title)
             .font(DS.buttonText.weight(.semibold))
@@ -115,13 +103,18 @@ struct StudyChromeRow: View {
                     .foregroundStyle(DS.textMuted)
                     .accessibilityHidden(true)
             }
-            .padding(.horizontal, DS.space6)
+            .padding(.horizontal, DS.space8)
+            .padding(.vertical, DS.space4)
             .frame(maxWidth: breakpoint == .narrow ? 220 : 400)
+            .background(isQuestionHovered ? DS.surfaceElevated.opacity(0.6) : .clear, in: Capsule())
             .contentShape(Capsule())
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) { isQuestionHovered = hovering }
+        }
         .help("Switch question (⌘] cycles)")
         .accessibilityLabel("Active question: \(viewModel.activeQuestionTitle). Click to switch.")
     }
@@ -179,15 +172,112 @@ struct StudyChromeRow: View {
     }
 
     /// The one tinted glass element on the screen — the primary action.
+    /// Hover lifts it a whisper; the interactive glass answers the press.
     private var crystallizeIsland: some View {
-        Button {
+        StudyCrystallizeIsland(showsLabel: breakpoint != .narrow) {
             viewModel.setPhase(.crystallize)
-        } label: {
+        }
+    }
+
+    // MARK: - Button factory (the Connection toolbar anatomy + hover life)
+
+    private func toolbarButton(
+        icon: String,
+        help: String,
+        isActive: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        StudyToolbarButton(icon: icon, help: help, isActive: isActive, action: action)
+    }
+}
+
+// MARK: - Hover-aware chrome controls
+
+/// One island control: ink brightens and a soft wash rises under the cursor —
+/// the quiet acknowledgment every macOS control owes the pointer.
+@MainActor
+struct StudyToolbarButton: View {
+    let icon: String
+    let help: String
+    var isActive: Bool = false
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(isActive || isHovered ? DS.text : DS.textSecondary)
+                .frame(width: 28, height: 28)
+                .background(washStyle, in: Circle())
+                .contentShape(Circle())
+                .scaleEffect(isHovered ? 1.04 : 1)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+        }
+        .help(help)
+        .accessibilityLabel(help)
+        .accessibilityAddTraits(isActive ? .isSelected : [])
+    }
+
+    private var washStyle: AnyShapeStyle {
+        if isActive { return AnyShapeStyle(DS.surfaceElevated) }
+        if isHovered { return AnyShapeStyle(DS.surfaceElevated.opacity(0.6)) }
+        return AnyShapeStyle(.clear)
+    }
+}
+
+/// Small icon+label chrome button with the same hover manners as the circles.
+@MainActor
+struct StudyChromeTextButton: View {
+    let icon: String
+    let label: String
+    let help: String
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: DS.space4) {
+                Image(systemName: icon)
+                    .font(DS.caption.weight(.semibold))
+                    .accessibilityHidden(true)
+                Text(label)
+                    .font(DS.buttonText)
+            }
+            .foregroundStyle(isHovered ? DS.text : DS.textSecondary)
+            .padding(.horizontal, DS.space8)
+            .padding(.vertical, DS.space4)
+            .background(isHovered ? DS.surfaceElevated.opacity(0.6) : .clear, in: Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+        }
+        .help(help)
+        .accessibilityLabel(help)
+    }
+}
+
+@MainActor
+private struct StudyCrystallizeIsland: View {
+    let showsLabel: Bool
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
             HStack(spacing: DS.space4) {
                 Image(systemName: "sparkles")
                     .font(DS.caption.weight(.semibold))
                     .accessibilityHidden(true)
-                if breakpoint != .narrow {
+                if showsLabel {
                     Text("Crystallize")
                         .font(DS.buttonText.weight(.semibold))
                 }
@@ -199,30 +289,12 @@ struct StudyChromeRow: View {
         }
         .buttonStyle(.plain)
         .glassEffect(.regular.tint(DS.accentSoft).interactive(), in: .capsule)
+        .scaleEffect(isHovered ? 1.02 : 1)
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+        }
         .keyboardShortcut(.return, modifiers: [.command])
         .help("Turn this session's branches into Concepts (⌘⏎)")
         .accessibilityLabel("Crystallize inquiry session")
-    }
-
-    // MARK: - Button factory (the Connection toolbar anatomy)
-
-    private func toolbarButton(
-        icon: String,
-        help: String,
-        isActive: Bool = false,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(isActive ? DS.text : DS.textSecondary)
-                .frame(width: 28, height: 28)
-                .background(isActive ? AnyShapeStyle(DS.surfaceElevated) : AnyShapeStyle(.clear), in: Circle())
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .help(help)
-        .accessibilityLabel(help)
-        .accessibilityAddTraits(isActive ? .isSelected : [])
     }
 }

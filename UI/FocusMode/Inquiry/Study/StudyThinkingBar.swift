@@ -1,11 +1,11 @@
 // CosmoOS/UI/FocusMode/Inquiry/Study/StudyThinkingBar.swift
-// The Study's instrument — the inline assistant bar's language, tuned for
-// inquiry: one near-opaque card that stretches from a quiet capsule into the
-// composer on focus (the Dynamic Island move), with a footer of small
-// hover-lit action chips that teach their shortcuts in place (Raycast's law).
-// Content is CLIPPED to the same shape as the surface so nothing ever paints
-// outside the card mid-stretch. Successor of InquiryAssistantDock; the
-// routing brain (submitDockText, prefix parser, suggestions) is untouched.
+// The Study's instrument — the inline assistant bar's material with ONE
+// stable shape: the composer and its action footer are always present, so
+// nothing collapses, stretches, or pops in and out of sync. Focus is a
+// whisper (border warms, shadow deepens a touch), never a layout event.
+// The clip keeps a growing multi-line draft painting inside the surface.
+// Successor of InquiryAssistantDock; the routing brain (submitDockText,
+// prefix parser, suggestions) is untouched.
 
 import SwiftUI
 
@@ -14,56 +14,44 @@ struct StudyThinkingBar: View {
     @Bindable var viewModel: InquiryWorkspaceViewModel
     @Binding var draft: String
     @FocusState.Binding var isFocused: Bool
+    /// Physical capture: wired by the shell — upload images from this Mac,
+    /// or wake the iPhone as a wireless scanner.
+    var onScanUpload: (() -> Void)?
+    var onScanPhone: (() -> Void)?
 
     @State private var showSuggestions = false
     @State private var suggestionsHeight: CGFloat = 0
 
-    private var isEngaged: Bool { isFocused || !draft.isEmpty }
+    private let barShape = RoundedRectangle(cornerRadius: 24, style: .continuous)
 
     var body: some View {
         barBody
-            // The clip is what makes the stretch read as one object: content
-            // never paints past the surface, even mid-spring on a growing
-            // multi-line draft (the assistant bar's move).
-            .clipShape(barShape)
-            .background {
-                barShape
-                    .fill(DS.surfaceCard.opacity(isEngaged ? 0.97 : 1.0))
-                    .shadow(
-                        color: .black.opacity(isEngaged ? 0.14 : 0.08),
-                        radius: isEngaged ? 22 : 10,
-                        y: isEngaged ? 10 : 4
-                    )
-            }
+            // Real glass — the bar is chrome floating over the transcript, and
+            // the material's lensing is what separates it from parchment pages
+            // (a near-opaque parchment fill camouflaged it against DS.bg).
+            .cosmoGlassPanel(role: .floatingAssistant, cornerRadius: 24)
             .overlay { barShape.stroke(borderColor, lineWidth: 1) }
-            .frame(maxWidth: isEngaged ? StudyMetrics.barMaxWidthFocused : StudyMetrics.barMaxWidthRest)
+            .frame(maxWidth: StudyMetrics.barMaxWidth)
             .overlay(alignment: .topLeading) { suggestionsOverlay }
-            // ONE spring drives the whole stretch — width, height, radius,
-            // fill, shadow, and border together.
-            .animation(ProMotionSprings.focusTransition, value: isEngaged)
+            // Focus only warms the ring — the shape never moves.
+            .animation(ProMotionSprings.hover, value: isFocused)
             .animation(ProMotionSprings.gentle, value: showSuggestions)
             .onChange(of: viewModel.dockFocusTick) {
                 isFocused = true
             }
     }
 
-    private var barShape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: isEngaged ? 22 : 26, style: .continuous)
-    }
-
     private var borderColor: Color {
-        isFocused ? DS.accent.opacity(0.36) : DS.borderSubtle
+        // The glass rim carries the resting edge; the stroke exists for focus.
+        isFocused ? DS.accent.opacity(0.36) : .clear
     }
 
-    // MARK: - Bar anatomy
+    // MARK: - Bar anatomy (one stable shape — nothing appears or collapses)
 
     private var barBody: some View {
         VStack(spacing: 0) {
             composerRow
-            if isEngaged {
-                actionsFooter
-                    .transition(.opacity)
-            }
+            actionsFooter
         }
         .padding(.horizontal, DS.space12)
         .padding(.vertical, DS.space10)
@@ -82,9 +70,6 @@ struct StudyThinkingBar: View {
                 field
             }
 
-            if !isEngaged {
-                scopeChip
-            }
             sendButton
         }
         .frame(minHeight: 32)
@@ -186,10 +171,52 @@ struct StudyThinkingBar: View {
             StudyFooterActionChip(label: "Scout", shortcut: "⌘⇧4") {
                 Task { await viewModel.refreshSourceRecommendations(query: nil, mode: .deepScout) }
             }
+            if onScanUpload != nil || onScanPhone != nil {
+                scanMenu
+            }
             Spacer(minLength: DS.space8)
             scopeChip
         }
         .padding(.top, DS.space8)
+    }
+
+    /// Physical pages into the session: a quiet menu chip in the same voice
+    /// as its neighbors — upload from this Mac, or wake the iPhone camera.
+    private var scanMenu: some View {
+        Menu {
+            if let onScanPhone {
+                Button {
+                    onScanPhone()
+                } label: {
+                    Label("Scan with iPhone", systemImage: "iphone.and.arrow.right.inward")
+                }
+            }
+            if let onScanUpload {
+                Button {
+                    onScanUpload()
+                } label: {
+                    Label("Upload images…", systemImage: "photo.badge.plus")
+                }
+            }
+        } label: {
+            HStack(spacing: DS.space4) {
+                Text("Scan")
+                    .font(DS.caption.weight(.medium))
+                    .foregroundStyle(DS.textSecondary)
+                Text("⌘⇧5")
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
+                    .opacity(0.5)
+            }
+            .padding(.horizontal, DS.space8)
+            .padding(.vertical, 4)
+            .contentShape(Capsule())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .help("Digitize a physical page (⌘⇧5)")
+        .accessibilityLabel("Scan a physical page")
     }
 
     // MARK: - Slash suggestions (floats above the bar)

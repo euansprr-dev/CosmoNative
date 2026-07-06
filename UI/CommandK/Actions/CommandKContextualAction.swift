@@ -21,6 +21,8 @@ enum CommandKContextualActionID: String, Codable, Hashable, CaseIterable {
     case crystallizeInquiry
     case captureSwipe
     case captureResearch
+    case scanWithIPhone
+    case uploadScanImages
     case createTask
     case createIdea
     case addInquiryExtract

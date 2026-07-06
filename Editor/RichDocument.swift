@@ -185,6 +185,11 @@ struct RichImageReference: Codable, Equatable, Hashable, Sendable {
     /// User-chosen on-screen width in points. `nil` ⇒ default size (back-compat: older
     /// documents have no stored size and fall back to `ImageResizeMath.defaultDisplayWidth`).
     var displayWidth: CGFloat?
+    /// Supabase Storage URL in the shared `capture-media` bucket. Populated when
+    /// a note image mirrors to the cloud so it renders on every device; `path`
+    /// stays the device-local file. Decodes nil from older documents; ignored by
+    /// older builds that don't know the key — safe both directions.
+    var remoteURL: String? = nil
 }
 
 /// Pure geometry for proportional (aspect-locked) image resizing. Shared by the SwiftUI
@@ -724,14 +729,24 @@ enum RichDocumentSerializer {
             }
             let prefix = blockPrefix(for: block, listPosition: listPosition)
             if !prefix.isEmpty {
-                result.append(NSAttributedString(string: prefix, attributes: blockPrefixAttributes(
+                let prefixString = NSMutableAttributedString(string: prefix, attributes: blockPrefixAttributes(
                     for: block,
                     fontSize: fontSize,
                     darkMode: darkMode,
                     singleLine: singleLine,
                     baseFontWeight: baseFontWeight,
                     titleMode: titleMode
-                )))
+                ))
+                // The stored ☐/☑ stays for round-trip + hit-testing but never
+                // inks — CosmoTextView paints the circle checkbox over it.
+                if block.kind == .checklist, prefixString.length >= 1 {
+                    prefixString.addAttribute(
+                        .foregroundColor,
+                        value: NSColor.clear,
+                        range: NSRange(location: 0, length: 1)
+                    )
+                }
+                result.append(prefixString)
             }
 
             if block.kind == .divider {

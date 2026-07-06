@@ -96,6 +96,15 @@ public struct CommandKView: View {
                 // keyboard back to the main search field once it dismisses.
                 if !presented { requestSearchFocus() }
             }
+            .onChange(of: viewModel.isComposerFocused) { _, focused in
+                // Same hand-back contract as the actions panel: leaving the
+                // composer returns the keyboard to the search field.
+                if focused {
+                    isSearchFocused = false
+                } else {
+                    requestSearchFocus()
+                }
+            }
             .onChange(of: searchText) { _, newValue in
                 viewModel.updateQuery(newValue)
             }
@@ -635,6 +644,13 @@ public struct CommandKView: View {
     // MARK: - Keyboard Handlers
 
     private func handleEscape() -> KeyPress.Result {
+        // Composer focus peels first: Esc steps out of the form back to the
+        // search field; the palette stays. Mirrored in MainView's monitor.
+        if viewModel.isComposerFocused {
+            viewModel.isComposerFocused = false
+            return .handled
+        }
+
         if viewModel.isActionPanelPresented {
             viewModel.isActionPanelPresented = false
             return .handled
@@ -684,6 +700,16 @@ public struct CommandKView: View {
 
     private func handleTab(_ press: KeyPress) -> KeyPress.Result {
         guard !viewModel.isActionPanelPresented else { return .ignored }
+
+        // A visible composer owns Tab: step from the search field into the
+        // form's first field (Shift-Tab keeps the scope cycle).
+        if viewModel.isComposerSubjectSelected,
+           !viewModel.isComposerFocused,
+           !press.modifiers.contains(.shift) {
+            viewModel.isComposerFocused = true
+            return .handled
+        }
+        guard !viewModel.isComposerFocused else { return .ignored }
 
         let scopes = CortexScope.allCases
         let offset = press.modifiers.contains(.shift) ? -1 : 1

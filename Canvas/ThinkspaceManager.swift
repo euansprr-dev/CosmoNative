@@ -936,6 +936,7 @@ class ThinkspaceManager: ObservableObject {
                     FROM canvas_blocks cb
                     LEFT JOIN atoms a ON a.uuid = cb.entity_uuid
                     WHERE cb.thinkspace_id = ? AND cb.is_deleted = 0
+                      AND (a.uuid IS NULL OR a.is_deleted = 0)
                     GROUP BY CASE WHEN cb.entity_uuid IS NOT NULL AND cb.entity_uuid != ''
                                  THEN cb.entity_uuid ELSE cb.id END
                     ORDER BY live_title

@@ -71,53 +71,20 @@ private struct CosmoInlineAssistantPaneHeader: View {
             .accessibilityHidden(true)
     }
 
-    /// "Cosmo" plus the scope chip — the pane always SHOWS what "this
-    /// document" means, in the surface's entity tint. Visible context truth.
+    /// "Cosmo" plus the scope pill — the pane always SHOWS what "this
+    /// document" means. Visible context truth.
     private var titleBlock: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        HStack(spacing: DS.space10) {
             Text("Cosmo")
                 .font(DS.headline)
                 .foregroundStyle(DS.text)
 
-            scopeChip
+            CosmoScopePill(
+                title: store.activeSurfaceTitle,
+                entity: store.activeSurfaceEntity
+            )
         }
         .animation(ProMotionSprings.gentle, value: store.activeSurfaceTitle)
-    }
-
-    @ViewBuilder
-    private var scopeChip: some View {
-        if let surfaceTitle = store.activeSurfaceTitle {
-            HStack(spacing: DS.space4) {
-                Circle()
-                    .fill(scopeTint)
-                    .frame(width: 5, height: 5)
-                Text(surfaceTitle)
-                    .font(DS.caption)
-                    .foregroundStyle(DS.textSecondary)
-                    .lineLimit(1)
-            }
-            .padding(.horizontal, DS.space6)
-            .padding(.vertical, 2)
-            .background(scopeTint.opacity(0.08), in: Capsule(style: .continuous))
-            .transition(.opacity)
-            .help("Cosmo is scoped to this document")
-        } else {
-            Text("no document in focus")
-                .font(DS.caption)
-                .italic()
-                .foregroundStyle(DS.textMuted)
-                .transition(.opacity)
-        }
-    }
-
-    private var scopeTint: Color {
-        switch store.activeSurfaceEntity {
-        case "content": return DS.entityContent
-        case "note": return DS.entityNote
-        case "idea": return DS.entityIdea
-        case "connection": return DS.entityConnection
-        default: return DS.accent
-        }
     }
 
     private var closeButton: some View {
@@ -137,6 +104,73 @@ private struct CosmoInlineAssistantPaneHeader: View {
         .keyboardShortcut(.escape, modifiers: [])
         .help("Close assistant pane (Esc)")
         .accessibilityLabel("Close assistant pane")
+    }
+}
+
+// MARK: - Scope pill
+
+/// The pane's name tag for what Cosmo is looking at — the iOS CosmoContextPill
+/// grammar (a real glass capsule, semibold title, muted kind subtitle), no
+/// ornament. One component for the header and the empty state.
+struct CosmoScopePill: View {
+    let title: String?
+    let entity: String?
+
+    var body: some View {
+        HStack(spacing: DS.space6) {
+            Image(systemName: entityIcon)
+                .font(DS.caption2.weight(.semibold))
+                .foregroundStyle(title == nil ? DS.textMuted : DS.textSecondary)
+                .accessibilityHidden(true)
+
+            if let title {
+                Text(title)
+                    .font(DS.caption.weight(.semibold))
+                    .foregroundStyle(DS.text)
+                    .lineLimit(1)
+                Text(entityLabel)
+                    .font(DS.caption)
+                    .foregroundStyle(DS.textMuted)
+                    .lineLimit(1)
+            } else {
+                Text("nothing in focus")
+                    .font(DS.caption)
+                    .italic()
+                    .foregroundStyle(DS.textMuted)
+            }
+        }
+        .padding(.horizontal, DS.space10)
+        .padding(.vertical, DS.space4)
+        .glassEffect(.regular, in: .capsule)
+        .frame(maxWidth: 280, alignment: .leading)
+        .fixedSize()
+        .help(title == nil
+            ? "Open a document or thinkspace to scope Cosmo"
+            : "Cosmo is scoped to this")
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(title.map { "Cosmo is scoped to \($0)" } ?? "Nothing in focus")
+    }
+
+    private var entityIcon: String {
+        switch entity {
+        case "content": return "doc.text"
+        case "note": return "note.text"
+        case "idea": return "lightbulb"
+        case "connection": return "point.3.connected.trianglepath.dotted"
+        case "thinkspace": return "square.grid.2x2"
+        default: return "scope"
+        }
+    }
+
+    private var entityLabel: String {
+        switch entity {
+        case "content": return "Draft"
+        case "note": return "Note"
+        case "idea": return "Idea"
+        case "connection": return "Concept"
+        case "thinkspace": return "Thinkspace"
+        default: return "Document"
+        }
     }
 }
 
@@ -296,6 +330,9 @@ private struct CosmoInlineAssistantPaneMessages: View {
         } else if let inquiryProposalID = message.inquiryProposalID,
                   let inquiryProposal = store.inquiryProposal(id: inquiryProposalID) {
             CosmoInlineAssistantPaneInquiryCard(store: store, proposal: inquiryProposal)
+        } else if let canvasPlanID = message.canvasPlanID,
+                  let plan = store.canvasPlan(id: canvasPlanID) {
+            CosmoInlineAssistantPaneCanvasPlanCard(store: store, plan: plan)
         } else {
             switch message.role {
             case .user:
@@ -987,6 +1024,158 @@ private struct CosmoInlineAssistantPaneProposalCard: View {
         }
         .padding(DS.space12)
         .background(DS.surface.opacity(0.55))
+    }
+}
+
+// MARK: - Canvas plan card
+
+/// The thinkspace copilot's review card: an organize (or any canvas) plan
+/// staged by the agent, listing every operation. Nothing touches the canvas
+/// until Approve — the same trust contract text edits have.
+private struct CosmoInlineAssistantPaneCanvasPlanCard: View {
+    @ObservedObject var store: CosmoInlineAssistantStore
+    let plan: PendingCanvasPlan
+
+    private var status: CosmoCanvasPlanStatus {
+        store.canvasPlanStatus(id: plan.id)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            Divider().overlay(DS.borderSubtle)
+            operationRows
+            Divider().overlay(DS.borderSubtle)
+            footer
+        }
+        .background(DS.surfaceCard, in: .rect(cornerRadius: 14))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14)
+                .strokeBorder(DS.borderSubtle, lineWidth: 1)
+        }
+        .animation(ProMotionSprings.gentle, value: status)
+        .accessibilityElement(children: .contain)
+    }
+
+    private var header: some View {
+        HStack(alignment: .top, spacing: DS.space12) {
+            Image(systemName: "square.grid.2x2")
+                .font(DS.callout.weight(.semibold))
+                .foregroundStyle(DS.accent)
+                .frame(width: 32, height: 32)
+                .background(DS.accentSoft, in: .rect(cornerRadius: 9))
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: DS.space4) {
+                Text("Canvas plan")
+                    .font(DS.caption2.weight(.semibold))
+                    .foregroundStyle(DS.textMuted)
+                    .textCase(.uppercase)
+                    .kerning(0.4)
+
+                Text(plan.title)
+                    .font(DS.headline)
+                    .foregroundStyle(DS.text)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if !plan.rationale.isEmpty {
+                    Text(plan.rationale)
+                        .font(DS.caption)
+                        .foregroundStyle(DS.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(DS.space12)
+    }
+
+    private var operationRows: some View {
+        VStack(alignment: .leading, spacing: DS.space6) {
+            ForEach(plan.operations) { operation in
+                HStack(alignment: .firstTextBaseline, spacing: DS.space8) {
+                    Image(systemName: icon(for: operation.kind))
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textMuted)
+                        .frame(width: 14)
+                        .accessibilityHidden(true)
+                    Text(operation.summary)
+                        .font(DS.caption)
+                        .foregroundStyle(DS.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .padding(DS.space12)
+    }
+
+    @ViewBuilder
+    private var footer: some View {
+        HStack(spacing: DS.space8) {
+            switch status {
+            case .pending:
+                Text("\(plan.operations.count) \(plan.operations.count == 1 ? "change" : "changes")")
+                    .font(DS.caption)
+                    .foregroundStyle(DS.textMuted)
+                    .monospacedDigit()
+                Spacer(minLength: 0)
+                Button("Dismiss") {
+                    withAnimation(ProMotionSprings.gentle) {
+                        store.dismissCanvasPlan(id: plan.id)
+                    }
+                }
+                .buttonStyle(.plain)
+                .font(DS.caption.weight(.medium))
+                .foregroundStyle(DS.textSecondary)
+                .cosmoClickCursor()
+                .accessibilityLabel("Dismiss canvas plan")
+
+                Button {
+                    withAnimation(ProMotionSprings.gentle) {
+                        store.approveCanvasPlan(id: plan.id)
+                    }
+                } label: {
+                    Text("Approve")
+                        .font(DS.caption.weight(.semibold))
+                        .foregroundStyle(DS.textOnAccent)
+                        .padding(.horizontal, DS.space12)
+                        .frame(height: 26)
+                        .background(DS.accent, in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .cosmoClickCursor()
+                .accessibilityLabel("Approve canvas plan")
+
+            case .applied:
+                Label("Applied to the canvas", systemImage: "checkmark.circle.fill")
+                    .font(DS.caption.weight(.medium))
+                    .foregroundStyle(DS.green)
+                Spacer(minLength: 0)
+
+            case .dismissed:
+                Label("Dismissed", systemImage: "xmark.circle")
+                    .font(DS.caption)
+                    .foregroundStyle(DS.textMuted)
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(.horizontal, DS.space12)
+        .padding(.vertical, DS.space10)
+    }
+
+    private func icon(for kind: PendingCanvasOperationKind) -> String {
+        switch kind {
+        case .createCluster: return "square.grid.2x2"
+        case .moveToCluster: return "arrow.right.square"
+        case .arrange: return "rectangle.3.group"
+        case .createEntity, .createAIBlock: return "plus.square"
+        case .placeSearch: return "magnifyingglass"
+        case .placeExistingAtom: return "square.on.square"
+        case .moveSelection: return "arrow.up.and.down.and.arrow.left.and.right"
+        case .resizeSelection: return "arrow.up.left.and.arrow.down.right"
+        case .unsupported: return "eye"
+        }
     }
 }
 

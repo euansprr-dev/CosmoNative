@@ -36,6 +36,7 @@ struct InboxQueueRow: View {
             statusDot
             titleColumn
             Spacer(minLength: DS.space12)
+            pageThumb
             trailingArea
         }
         .padding(.horizontal, DS.space16)
@@ -52,6 +53,18 @@ struct InboxQueueRow: View {
     }
 
     // MARK: - Pieces
+
+    /// A captured page announces itself as an object: one mini original,
+    /// extra pages whispered as a count in the corner.
+    @ViewBuilder
+    private var pageThumb: some View {
+        if let firstAttachment = item.attachmentUUIDs.first {
+            InboxRowPageThumb(
+                firstAttachmentUUID: firstAttachment,
+                pageCount: item.attachmentUUIDs.count
+            )
+        }
+    }
 
     private var statusDot: some View {
         Circle()

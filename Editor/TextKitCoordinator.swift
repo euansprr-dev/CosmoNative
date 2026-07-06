@@ -422,6 +422,92 @@ final class CosmoTextView: NSTextView {
         }
         super.draw(dirtyRect)
         drawHeadingDecorations(in: dirtyRect)
+        drawChecklistCheckboxes(in: dirtyRect)
+    }
+
+    /// Paints iOS-style circle checkboxes (circle / checkmark.circle.fill)
+    /// over the stored ☐/☑ characters. The characters stay in storage —
+    /// serialization, block mapping, and click hit-testing all key off them —
+    /// but render clear; this draws the visible checkbox in their rect.
+    private func drawChecklistCheckboxes(in dirtyRect: NSRect) {
+        guard let layoutManager, let textContainer else { return }
+        let nsText = string as NSString
+        guard nsText.length > 0 else { return }
+
+        let containerRect = dirtyRect.offsetBy(
+            dx: -textContainerInset.width,
+            dy: -textContainerInset.height
+        )
+        let visibleGlyphs = layoutManager.glyphRange(forBoundingRect: containerRect, in: textContainer)
+        let charRange = layoutManager.characterRange(forGlyphRange: visibleGlyphs, actualGlyphRange: nil)
+
+        var location = charRange.location
+        let end = NSMaxRange(charRange)
+        while location < end {
+            let lineRange = nsText.lineRange(for: NSRange(location: location, length: 0))
+            let next = max(NSMaxRange(lineRange), location + 1)
+            defer { location = next }
+            guard lineRange.length >= 1 else { continue }
+
+            let glyph = nsText.substring(with: NSRange(location: lineRange.location, length: 1))
+            let checked: Bool
+            switch glyph {
+            case "☐": checked = false
+            case "☑": checked = true
+            default: continue
+            }
+
+            let glyphGlyphRange = layoutManager.glyphRange(
+                forCharacterRange: NSRange(location: lineRange.location, length: 1),
+                actualCharacterRange: nil
+            )
+            var rect = layoutManager.boundingRect(forGlyphRange: glyphGlyphRange, in: textContainer)
+            rect.origin.x += textContainerInset.width
+            rect.origin.y += textContainerInset.height
+
+            let font = textStorage?.attribute(.font, at: lineRange.location, effectiveRange: nil) as? NSFont
+                ?? NSFont.systemFont(ofSize: 16)
+            let configuration = NSImage.SymbolConfiguration(pointSize: font.pointSize + 1, weight: .regular)
+                .applying(.init(paletteColors: [checklistSymbolColor(checked: checked, lineRange: lineRange)]))
+            guard let symbol = NSImage(
+                systemSymbolName: checked ? "checkmark.circle.fill" : "circle",
+                accessibilityDescription: checked ? "Checked" : "Unchecked"
+            )?.withSymbolConfiguration(configuration) else { continue }
+
+            let size = symbol.size
+            let drawRect = NSRect(
+                x: rect.midX - size.width / 2,
+                y: rect.midY - size.height / 2,
+                width: size.width,
+                height: size.height
+            )
+            symbol.draw(
+                in: drawRect.integral,
+                from: .zero,
+                operation: .sourceOver,
+                fraction: 1,
+                respectFlipped: true,
+                hints: [.interpolation: NSImageInterpolation.high.rawValue]
+            )
+        }
+    }
+
+    /// Checked boxes take the app accent (matching iOS DS.accent); unchecked
+    /// boxes ride the line's own ink at low alpha so they sit right on any
+    /// paper tone in light or dark mode.
+    private func checklistSymbolColor(checked: Bool, lineRange: NSRange) -> NSColor {
+        if checked {
+            return NSColor(CosmoColors.cosmoAI).withAlphaComponent(0.9)
+        }
+        let contentIndex = lineRange.location + 2
+        var base = textColor ?? .labelColor
+        if let storage = textStorage,
+           contentIndex < NSMaxRange(lineRange),
+           contentIndex < storage.length,
+           let color = storage.attribute(.foregroundColor, at: contentIndex, effectiveRange: nil) as? NSColor {
+            base = color
+        }
+        return base.withAlphaComponent(0.4)
     }
 
     override func paste(_ sender: Any?) {
@@ -2865,6 +2951,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 }
                 if activeBlockMode != .none, let prefix = continuationPrefix(for: textView) {
                     textView.insertText("\n" + prefix, replacementRange: textView.selectedRange())
+                    clearInsertedChecklistGlyph(prefix: prefix, in: textView)
                     syncBindings(from: textView)
                     scheduleAncestorTypewriterScroll(for: textView)
                     return true
@@ -2976,6 +3063,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                     } else if let prefix = continuationPrefix(for: textView) {
                         // Bullets/numbered/checklists: continue with prefix, reset inline formatting
                         textView.insertText("\n" + prefix, replacementRange: textView.selectedRange())
+                        clearInsertedChecklistGlyph(prefix: prefix, in: textView)
                         resetInlineFormattingOnly(textView)
                         syncBindings(from: textView)
                         scheduleAncestorTypewriterScroll(for: textView)
@@ -3020,6 +3108,20 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             let lineRange = currentLineRange(in: textView)
             let lineText = (textView.string as NSString).substring(with: lineRange)
             return lineText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+
+        /// After a checklist continuation prefix ("☐ ") is inserted with live
+        /// typing attributes, the box character must go clear — the visible
+        /// circle checkbox is painted over its rect by drawChecklistCheckboxes.
+        private func clearInsertedChecklistGlyph(prefix: String, in textView: NSTextView) {
+            guard prefix.hasPrefix("☐") else { return }
+            let glyphIndex = textView.selectedRange().location - prefix.utf16.count
+            guard glyphIndex >= 0 else { return }
+            textView.textStorage?.addAttribute(
+                .foregroundColor,
+                value: NSColor.clear,
+                range: NSRange(location: glyphIndex, length: 1)
+            )
         }
 
         private func continuationPrefix(for textView: NSTextView) -> String? {
@@ -3478,6 +3580,13 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 .foregroundColor,
                 value: prefixColor,
                 range: NSRange(location: 0, length: min(2, updatedLine.length))
+            )
+            // The character never inks — the circle checkbox is painted over
+            // its rect by drawChecklistCheckboxes.
+            updatedLine.addAttribute(
+                .foregroundColor,
+                value: NSColor.clear,
+                range: NSRange(location: 0, length: 1)
             )
 
             if updatedLine.length > 2 {
@@ -4065,6 +4174,13 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 newMode = .none
             } else {
                 textView.textStorage?.replaceCharacters(in: NSRange(location: lineRange.location, length: 0), with: "☐ ")
+                // Keep the stored glyph invisible — the circle checkbox is
+                // painted over its rect by drawChecklistCheckboxes.
+                textView.textStorage?.addAttribute(
+                    .foregroundColor,
+                    value: NSColor.clear,
+                    range: NSRange(location: lineRange.location, length: 1)
+                )
                 newMode = .checklist
             }
             resetToNormalTypingAttributes(textView)

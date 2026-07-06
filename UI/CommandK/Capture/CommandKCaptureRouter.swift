@@ -42,6 +42,28 @@ struct CommandKCaptureRouter {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return [] }
 
+        // "scan…" / "page…" / "photo…" — the user is reaching for a physical
+        // page, not typing a thought. Offer the two intakes first.
+        if Self.looksLikeScanIntent(trimmed) {
+            return [
+                scanPreview(
+                    title: "Scan with iPhone",
+                    subtitle: "Wake your iPhone as a page scanner",
+                    actionID: .scanWithIPhone,
+                    toolName: "scan_with_iphone",
+                    icon: "iphone.and.arrow.right.inward"
+                ),
+                scanPreview(
+                    title: "Upload Page Images",
+                    subtitle: "Digitize image files into your Inbox",
+                    actionID: .uploadScanImages,
+                    toolName: "upload_scan_images",
+                    icon: "photo.badge.plus"
+                ),
+                textPreview(kind: .task, title: "Create Task", actionID: .createTask, toolName: "create_task", input: trimmed),
+            ]
+        }
+
         return [
             textPreview(kind: .task, title: "Create Task", actionID: .createTask, toolName: "create_task", input: trimmed),
             textPreview(kind: .idea, title: "Create Idea", actionID: .createIdea, toolName: "create_idea", input: trimmed),
@@ -53,6 +75,42 @@ struct CommandKCaptureRouter {
                 input: trimmed
             )
         ]
+    }
+
+    /// A short query whose FIRST word reaches for the scanner. Longer text is
+    /// a thought that happens to mention scanning — never hijack those.
+    static func looksLikeScanIntent(_ input: String) -> Bool {
+        let words = input.lowercased().split(separator: " ")
+        guard let first = words.first, words.count <= 4 else { return false }
+        return ["scan", "page", "photo", "physical", "digitize", "digitise"]
+            .contains { $0.hasPrefix(first) || first.hasPrefix($0) }
+    }
+
+    private func scanPreview(
+        title: String,
+        subtitle: String,
+        actionID: CommandKContextualActionID,
+        toolName: String,
+        icon: String
+    ) -> CommandKCapturePreview {
+        CommandKCapturePreview(
+            id: "scan-\(toolName)",
+            kind: .research,
+            source: .text,
+            title: title,
+            subtitle: subtitle,
+            primaryAction: CommandKContextualAction(
+                id: actionID,
+                category: .capture,
+                title: title,
+                subtitle: subtitle,
+                systemImage: icon,
+                shortcut: .returnKey,
+                role: .normal,
+                availability: .enabled,
+                intent: .executeTool(name: toolName, arguments: [:])
+            )
+        )
     }
 
     private func textPreview(

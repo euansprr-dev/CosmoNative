@@ -39,7 +39,7 @@ final class CaptureMediaStorage: @unchecked Sendable {
         try data.write(to: originalURL, options: [.atomic])
 
         let thumbnailPath: String?
-        if kind == .image || kind == .screenshot {
+        if kind == .image || kind == .screenshot || kind == .pageScan {
             thumbnailPath = try? writeThumbnail(data: data, directory: directory, attachmentId: attachmentId)
         } else {
             thumbnailPath = nil

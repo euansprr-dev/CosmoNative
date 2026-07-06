@@ -220,6 +220,60 @@ final class ResearchService {
         )
     }
 
+    // MARK: - Multimodal Analysis (images)
+
+    /// Analyze one or more images alongside a text prompt (page-scan
+    /// transcription, handwriting digitization). Images ride the OpenRouter
+    /// multimodal content-parts format as base64 data URLs.
+    func analyze(
+        prompt: String,
+        images: [Data],
+        systemPrompt: String? = nil,
+        tier: AgentModelTier = .geminiFlashLatest,
+        maxTokens: Int? = nil,
+        temperature: Double = 0.2
+    ) async throws -> String {
+        guard let apiKey = apiKey, !apiKey.isEmpty else {
+            throw ResearchError.noAPIKey
+        }
+        guard !images.isEmpty else {
+            return try await analyze(prompt: prompt, systemPrompt: systemPrompt, tier: tier, maxTokens: maxTokens)
+        }
+
+        let url = URL(string: "\(openRouterBaseURL)/chat/completions")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("CosmoOS/1.0", forHTTPHeaderField: "HTTP-Referer")
+        request.setValue("CosmoOS", forHTTPHeaderField: "X-Title")
+
+        var content: [[String: Any]] = [["type": "text", "text": prompt]]
+        for imageData in images {
+            content.append([
+                "type": "image_url",
+                "image_url": ["url": "data:image/jpeg;base64,\(imageData.base64EncodedString())"],
+            ])
+        }
+
+        var messages: [[String: Any]] = []
+        if let systemPrompt {
+            messages.append(["role": "system", "content": systemPrompt])
+        }
+        messages.append(["role": "user", "content": content])
+
+        let body: [String: Any] = [
+            "model": tier.modelId,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": maxTokens ?? tier.maxTokens,
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        ConsoleLog.verbose("analyze(images:) → \(tier.modelId) images=\(images.count)", subsystem: .llm)
+        return try await executeOpenRouter(request: request)
+    }
+
     // MARK: - Generate With Prompt Caching
 
     /// Send a request with structured system content blocks, each with optional cache_control.

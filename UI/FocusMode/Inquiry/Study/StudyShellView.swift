@@ -1,8 +1,9 @@
 // CosmoOS/UI/FocusMode/Inquiry/Study/StudyShellView.swift
-// The Study: one continuous manuscript (content layer) with exactly four
-// pieces of Liquid Glass floating above it (chrome layer) — the chrome
-// islands, two quiet side panels, and the thinking bar. No welded columns,
-// no full-height dividers; depth comes from the glass, not from strokes.
+// The Study, Slack-anatomy edition: a dedicated navigation band up top (the
+// chrome islands in their own space), and beneath it the whole working area —
+// trail | manuscript | reading — clipped together into ONE rounded sheet.
+// The columns are welded inside the sheet by hairlines; the sheet itself is
+// the only rectangle, so everything reads as one window-within-the-window.
 
 import SwiftUI
 
@@ -14,13 +15,28 @@ struct StudyShellView: View {
     @State private var dockDraft: String = ""
     @FocusState private var dockFocused: Bool
     @State private var hasArrived = false
+    @State private var scanController = InquiryScanController()
+    @State private var showScanImporter = false
+
+    private static let sheetCorner: CGFloat = 14
 
     var body: some View {
         GeometryReader { proxy in
             let breakpoint = StudyBreakpoint(width: proxy.size.width)
             ZStack {
-                contentLayer(breakpoint)
-                chromeLayer(breakpoint)
+                DS.bg.ignoresSafeArea()
+                VStack(spacing: DS.space8) {
+                    StudyChromeRow(
+                        viewModel: viewModel,
+                        breakpoint: breakpoint,
+                        isReceded: dockFocused,
+                        onClose: closeWorkspace
+                    )
+                    workspaceSheet(breakpoint)
+                        .padding(.horizontal, DS.space10)
+                        .padding(.bottom, DS.space10)
+                }
+                bottomInstruments
                 if let toast = viewModel.toast {
                     toastOverlay(toast)
                 }
@@ -33,8 +49,21 @@ struct StudyShellView: View {
             .animation(ProMotionSprings.focusTransition, value: viewModel.activeReaderSourceId)
         }
         .background(StudyShortcuts(viewModel: viewModel, onEscape: handleEscape))
+        .fileImporter(
+            isPresented: $showScanImporter,
+            allowedContentTypes: [.image],
+            allowsMultipleSelection: true
+        ) { result in
+            guard case .success(let urls) = result else { return }
+            let scoped = urls.filter { $0.startAccessingSecurityScopedResource() }
+            scanController.ingestImageFiles(scoped)
+            scoped.forEach { $0.stopAccessingSecurityScopedResource() }
+        }
         .task { await arrive() }
-        .onDisappear { Task { await viewModel.pauseAndPersist() } }
+        .onDisappear {
+            scanController.teardown()
+            Task { await viewModel.pauseAndPersist() }
+        }
         .sheet(isPresented: crystallizeBinding) {
             InquiryCrystallizeSheet(viewModel: viewModel) {
                 viewModel.setPhase(.explore)
@@ -52,6 +81,7 @@ struct StudyShellView: View {
     }
 
     private func arrive() async {
+        scanController.configure(viewModel: viewModel)
         await viewModel.loadDeepDiveAndRoot()
         // One-frame rule: flip after data lands so the page assembles on
         // arrival instead of mounting pre-visible.
@@ -59,87 +89,38 @@ struct StudyShellView: View {
         hasArrived = true
     }
 
-    // MARK: - Content layer (the manuscript — never glass)
+    // MARK: - The workspace sheet (one rounded surface, three columns)
 
-    @ViewBuilder
-    private func contentLayer(_ breakpoint: StudyBreakpoint) -> some View {
+    private func workspaceSheet(_ breakpoint: StudyBreakpoint) -> some View {
         ZStack {
-            DS.bg.ignoresSafeArea()
-            centerColumn
-                .padding(.leading, leadingInset(breakpoint))
-                .padding(.trailing, trailingInset(breakpoint))
-                .animation(ProMotionSprings.focusTransition, value: leadingInset(breakpoint))
-                .animation(ProMotionSprings.focusTransition, value: trailingInset(breakpoint))
+            columns(breakpoint)
+            if breakpoint == .narrow, viewModel.isTrailShowing || viewModel.isReadingShowing {
+                panelScrim
+            }
+            if !breakpoint.panelsDisplace {
+                overlayPanels(breakpoint)
+            }
         }
-        .filmGrain(opacity: 0.02)
+        .background(DS.bg)
+        .clipShape(RoundedRectangle(cornerRadius: Self.sheetCorner, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: Self.sheetCorner, style: .continuous)
+                .stroke(DS.borderSubtle, lineWidth: 1)
+        )
     }
 
-    @ViewBuilder
-    private var centerColumn: some View {
-        if let tabId = viewModel.activeReaderSourceId,
-           let tab = viewModel.structured.sourceTabs.first(where: { $0.id == tabId }) {
-            // The source is a document OBJECT on the desk: a rounded sheet
-            // whose corners and insets are concentric with the side panels —
-            // never a raw web rectangle butting against the chrome.
-            InquiryReaderView(viewModel: viewModel, tab: tab)
-                .clipShape(RoundedRectangle(cornerRadius: StudyMetrics.panelCorner, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: StudyMetrics.panelCorner, style: .continuous)
-                        .stroke(DS.borderSubtle, lineWidth: 1)
-                )
-                .shadow(color: .black.opacity(0.08), radius: 14, y: 6)
-                .padding(.horizontal, StudyMetrics.edgeInset)
-                .padding(.top, StudyMetrics.panelTopInset)
-                .padding(.bottom, StudyMetrics.panelBottomInset)
-                .transition(.opacity)
-        } else {
-            StudyPageView(viewModel: viewModel, hasArrived: hasArrived)
-                .transition(.opacity)
-        }
-    }
-
-    /// At regular width a docked panel reserves exactly its own width so the
-    /// reading column centers on the TRUE page axis between the panels.
-    private func leadingInset(_ breakpoint: StudyBreakpoint) -> CGFloat {
-        guard breakpoint.panelsDisplace, viewModel.isTrailShowing else { return 0 }
-        return StudyMetrics.panelWidth
-    }
-
-    private func trailingInset(_ breakpoint: StudyBreakpoint) -> CGFloat {
-        guard breakpoint.panelsDisplace, viewModel.isReadingShowing else { return 0 }
-        return StudyMetrics.panelWidth
-    }
-
-    // MARK: - Chrome layer (glass only)
-
-    @ViewBuilder
-    private func chromeLayer(_ breakpoint: StudyBreakpoint) -> some View {
-        panelScrim(breakpoint)
-        panels(breakpoint)
-        VStack(spacing: 0) {
-            StudyChromeRow(
-                viewModel: viewModel,
-                breakpoint: breakpoint,
-                isReceded: dockFocused || viewModel.activeReaderSourceId != nil,
-                onClose: closeWorkspace
-            )
-            Spacer()
-        }
-        bottomInstruments
-    }
-
-    /// Inspectors dock edge-to-edge, full height, flush to the window — the
-    /// Apple inspector idiom (navigation floats; inspectors sit alongside
-    /// content). The chrome islands float above them like Tahoe toolbars.
-    private func panels(_ breakpoint: StudyBreakpoint) -> some View {
+    /// At regular width the panels are true columns of the sheet — welded by
+    /// their hairlines, clipped by the sheet's one rounded edge.
+    private func columns(_ breakpoint: StudyBreakpoint) -> some View {
         HStack(spacing: 0) {
-            if viewModel.isTrailShowing {
-                StudyTrailPanel(viewModel: viewModel, isOverlay: !breakpoint.panelsDisplace)
+            if breakpoint.panelsDisplace, viewModel.isTrailShowing {
+                StudyTrailPanel(viewModel: viewModel)
                     .transition(.move(edge: .leading).combined(with: .opacity))
             }
-            Spacer(minLength: 0)
-            if viewModel.isReadingShowing {
-                StudyReadingPanel(viewModel: viewModel, isOverlay: !breakpoint.panelsDisplace)
+            centerColumn
+                .frame(maxWidth: .infinity)
+            if breakpoint.panelsDisplace, viewModel.isReadingShowing {
+                StudyReadingPanel(viewModel: viewModel)
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
@@ -147,34 +128,72 @@ struct StudyShellView: View {
         .animation(ProMotionSprings.focusTransition, value: viewModel.isReadingShowing)
     }
 
-    /// Narrow overlays get a whisper of scrim; tap dismisses. Light enough
-    /// that the glass behind stays alive.
-    @ViewBuilder
-    private func panelScrim(_ breakpoint: StudyBreakpoint) -> some View {
-        if breakpoint == .narrow, viewModel.isTrailShowing || viewModel.isReadingShowing {
-            Color.black.opacity(0.10)
-                .ignoresSafeArea()
-                .transition(.opacity)
-                .onTapGesture {
-                    withAnimation(ProMotionSprings.focusTransition) {
-                        viewModel.isTrailShowing = false
-                        viewModel.isReadingShowing = false
-                    }
-                }
-                .accessibilityLabel("Dismiss panels")
+    /// Below regular width the panels slide OVER the center inside the sheet.
+    private func overlayPanels(_ breakpoint: StudyBreakpoint) -> some View {
+        HStack(spacing: 0) {
+            if viewModel.isTrailShowing {
+                StudyTrailPanel(viewModel: viewModel, isOverlay: true)
+                    .transition(.move(edge: .leading).combined(with: .opacity))
+            }
+            Spacer(minLength: 0)
+            if viewModel.isReadingShowing {
+                StudyReadingPanel(viewModel: viewModel, isOverlay: true)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
         }
+        .animation(ProMotionSprings.focusTransition, value: viewModel.isTrailShowing)
+        .animation(ProMotionSprings.focusTransition, value: viewModel.isReadingShowing)
+    }
+
+    @ViewBuilder
+    private var centerColumn: some View {
+        if let tabId = viewModel.activeReaderSourceId,
+           let tab = viewModel.structured.sourceTabs.first(where: { $0.id == tabId }) {
+            // Flush inside the sheet — the panels' hairlines are the only
+            // separation; the sheet's corners do the framing.
+            InquiryReaderView(viewModel: viewModel, tab: tab)
+                .transition(.opacity)
+        } else {
+            StudyPageView(viewModel: viewModel, hasArrived: hasArrived)
+                .filmGrain(opacity: 0.02)
+                .transition(.opacity)
+        }
+    }
+
+    /// Narrow overlays get a whisper of scrim; tap dismisses.
+    private var panelScrim: some View {
+        Color.black.opacity(0.10)
+            .transition(.opacity)
+            .onTapGesture {
+                withAnimation(ProMotionSprings.focusTransition) {
+                    viewModel.isTrailShowing = false
+                    viewModel.isReadingShowing = false
+                }
+            }
+            .accessibilityLabel("Dismiss panels")
     }
 
     private var bottomInstruments: some View {
         VStack(spacing: DS.space8) {
             Spacer()
+            if scanController.isPanelVisible {
+                InquiryScanPanel(controller: scanController)
+                    .padding(.horizontal, DS.space24)
+            }
             StudyReceiptStack(viewModel: viewModel)
                 .padding(.horizontal, DS.space24)
-            StudyThinkingBar(viewModel: viewModel, draft: $dockDraft, isFocused: $dockFocused)
-                .padding(.horizontal, DS.space24)
+            StudyThinkingBar(
+                viewModel: viewModel,
+                draft: $dockDraft,
+                isFocused: $dockFocused,
+                onScanUpload: { showScanImporter = true },
+                onScanPhone: { Task { await scanController.requestPhoneScan() } }
+            )
+            .padding(.horizontal, DS.space24)
         }
-        .padding(.bottom, StudyMetrics.edgeInset)
+        .padding(.bottom, DS.space24)
         .frame(maxWidth: .infinity)
+        .animation(ProMotionSprings.gentle, value: scanController.isPanelVisible)
     }
 
     // MARK: - Overlays

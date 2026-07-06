@@ -273,7 +273,14 @@ class CanvasClusterEngine {
     // MARK: - User Cluster Management
 
     /// Create a user cluster from selected blocks
-    func createUserCluster(name: String, colorIndex: Int, blockUUIDs: [String], blocks: [CanvasBlock], thinkspaceId: String?) {
+    func createUserCluster(
+        name: String,
+        colorIndex: Int,
+        blockUUIDs: [String],
+        blocks: [CanvasBlock],
+        thinkspaceId: String?,
+        intent: String? = nil
+    ) {
         var cluster = CanvasCluster(
             id: UUID(),
             name: name,
@@ -284,6 +291,9 @@ class CanvasClusterEngine {
             isUserCreated: true,
             thinkspaceId: thinkspaceId
         )
+        // Machine-readable purpose — written by organize plans, read by future
+        // organizing (and eventually drop-routing).
+        cluster.intent = intent
         cluster.updateBoundingRect(blocks: blocks)
         userClusters.append(cluster)
 

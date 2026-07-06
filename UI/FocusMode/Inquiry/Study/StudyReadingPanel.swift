@@ -13,10 +13,14 @@ struct StudyReadingPanel: View {
     @Bindable var viewModel: InquiryWorkspaceViewModel
     var isOverlay: Bool = false
 
+    @FocusState private var searchFocused: Bool
+
     var body: some View {
         VStack(spacing: 0) {
             header
-            if visibleSources.isEmpty && candidates.isEmpty {
+            if isPresentingSearch {
+                searchResultsList
+            } else if visibleSources.isEmpty && candidates.isEmpty {
                 teachingState
             } else {
                 list
@@ -27,11 +31,41 @@ struct StudyReadingPanel: View {
         }
         .frame(width: StudyMetrics.panelWidth)
         .studyPanelSurface(edge: .trailing, isOverlay: isOverlay)
+        .animation(ProMotionSprings.gentle, value: viewModel.isRailSearchActive)
+        .task(id: viewModel.railSearchQuery) { await debouncedSearch() }
+    }
+
+    /// Results replace the list only once there's a query to answer.
+    private var isPresentingSearch: Bool {
+        viewModel.isRailSearchActive
+            && !viewModel.railSearchQuery.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    private func debouncedSearch() async {
+        guard viewModel.isRailSearchActive else { return }
+        try? await Task.sleep(for: .milliseconds(350))
+        guard !Task.isCancelled else { return }
+        await viewModel.runRailSearch()
     }
 
     // MARK: - Header
 
+    @ViewBuilder
     private var header: some View {
+        Group {
+            if viewModel.isRailSearchActive {
+                searchHeader
+            } else {
+                readingHeader
+            }
+        }
+        .padding(.leading, DS.space16)
+        .padding(.trailing, DS.space10)
+        .padding(.top, DS.space12)
+        .padding(.bottom, DS.space10)
+    }
+
+    private var readingHeader: some View {
         HStack(spacing: DS.space6) {
             Text("READING")
                 .dsSmallCapsLabel()
@@ -49,14 +83,62 @@ struct StudyReadingPanel: View {
                     .contentTransition(.numericText())
                     .foregroundStyle(DS.textMuted)
             }
+            searchButton
             rescoutButton
         }
-        .padding(.leading, DS.space16)
-        .padding(.trailing, DS.space10)
-        // Clearance for the chrome islands floating above the panel.
-        .padding(.top, StudyMetrics.panelTopInset)
-        .padding(.bottom, DS.space10)
         .animation(ProMotionSprings.gentle, value: viewModel.sourceActivityLine)
+    }
+
+    /// Search mode: the header row becomes the field (Mail's idiom) — the
+    /// list beneath turns into live YouTube results.
+    private var searchHeader: some View {
+        HStack(spacing: DS.space6) {
+            Image(systemName: "magnifyingglass")
+                .font(DS.caption)
+                .foregroundStyle(searchFocused ? DS.accent : DS.textMuted)
+                .accessibilityHidden(true)
+            TextField("Search YouTube", text: $viewModel.railSearchQuery)
+                .textFieldStyle(.plain)
+                .font(DS.footnote)
+                .focused($searchFocused)
+                .onSubmit { Task { await viewModel.runRailSearch() } }
+                .onExitCommand { viewModel.exitRailSearch() }
+            Button {
+                viewModel.exitRailSearch()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(DS.caption)
+                    .foregroundStyle(DS.textMuted)
+            }
+            .buttonStyle(.plain)
+            .help("Close search")
+            .accessibilityLabel("Close YouTube search")
+        }
+        .padding(.horizontal, DS.space8)
+        .padding(.vertical, 5)
+        .background(DS.glassInputFill.opacity(searchFocused ? 1 : 0.6), in: Capsule())
+        .overlay(Capsule().stroke(searchFocused ? DS.focusRing : DS.borderSubtle, lineWidth: 1))
+        .animation(ProMotionSprings.hover, value: searchFocused)
+    }
+
+    private var searchButton: some View {
+        Button {
+            viewModel.isRailSearchActive = true
+            // The field mounts on the next frame — focus once it exists.
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(60))
+                searchFocused = true
+            }
+        } label: {
+            Image(systemName: "magnifyingglass")
+                .font(DS.caption2.weight(.semibold))
+                .foregroundStyle(DS.textSecondary)
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Search YouTube for sources")
+        .accessibilityLabel("Search YouTube for sources")
     }
 
     private var rescoutButton: some View {
@@ -102,6 +184,60 @@ struct StudyReadingPanel: View {
         }
         .scrollIndicators(.never)
         .scrollEdgeEffectStyle(.soft, for: .all)
+    }
+
+    // MARK: - YouTube search results
+
+    private var searchResults: [InquirySourceCandidate] {
+        viewModel.railSearchResults.filter { $0.importStatus == .candidate }
+    }
+
+    private var searchResultsList: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                sectionHeader("YOUTUBE", count: searchResults.count)
+                if viewModel.isRailSearching && searchResults.isEmpty {
+                    searchSkeleton
+                } else if searchResults.isEmpty {
+                    Text("No videos found — try different words.")
+                        .font(DS.callout)
+                        .foregroundStyle(DS.textMuted)
+                        .padding(.horizontal, DS.space16)
+                        .padding(.vertical, DS.space12)
+                } else {
+                    ForEach(Array(searchResults.enumerated()), id: \.element.id) { index, candidate in
+                        if index > 0 { rowSeparator }
+                        StudyCandidatePanelRow(viewModel: viewModel, candidate: candidate)
+                    }
+                }
+            }
+            .padding(.bottom, StudyMetrics.panelBottomInset)
+        }
+        .scrollIndicators(.never)
+        .scrollEdgeEffectStyle(.soft, for: .all)
+    }
+
+    /// Result-shaped placeholder rows while the first results are in flight.
+    private var searchSkeleton: some View {
+        ForEach(0..<5, id: \.self) { index in
+            HStack(alignment: .top, spacing: DS.space8) {
+                Circle()
+                    .fill(DS.glassSectionFill)
+                    .frame(width: 18, height: 18)
+                VStack(alignment: .leading, spacing: 5) {
+                    Capsule()
+                        .fill(DS.glassSectionFill)
+                        .frame(width: index.isMultiple(of: 2) ? 190 : 150, height: 10)
+                    Capsule()
+                        .fill(DS.glassSectionFill)
+                        .frame(width: 110, height: 8)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, DS.space16)
+            .padding(.vertical, DS.space8)
+        }
+        .accessibilityHidden(true)
     }
 
     private func rows(of sources: [InquirySourceRef]) -> some View {
@@ -276,6 +412,7 @@ private struct StudySourceRow: View {
             .padding(.horizontal, DS.space16)
             .padding(.vertical, DS.space8)
             .background(isHovered ? DS.surfaceElevated.opacity(0.6) : .clear)
+            .offset(x: isHovered ? 2 : 0)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -349,11 +486,18 @@ private struct StudyCandidatePanelRow: View {
             .padding(.horizontal, DS.space16)
             .padding(.vertical, DS.space8)
             .background(isHovered ? DS.surfaceElevated.opacity(0.6) : .clear)
+            .offset(x: isHovered ? 2 : 0)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { hovering in
             withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+        }
+        .onDrag {
+            guard let url = candidate.url, let nsURL = NSURL(string: url) else {
+                return NSItemProvider()
+            }
+            return NSItemProvider(object: nsURL)
         }
         .contextMenu {
             Button("Import") {
@@ -375,12 +519,25 @@ private struct StudyCandidatePanelRow: View {
         var parts: [String] = []
         if let creator = DeepScoutTasteStore.creatorName(for: candidate) {
             parts.append(creator)
+        } else if let subtitle = candidate.subtitle, !subtitle.isEmpty {
+            parts.append(subtitle)
         }
         if !candidate.reason.isEmpty && !candidate.reason.hasPrefix("Deep Scout") {
             parts.append(candidate.reason)
-        } else {
+        } else if statSignals.isEmpty {
             parts.append(candidate.provider.displayName)
+        } else {
+            parts.append(contentsOf: statSignals)
         }
         return parts.joined(separator: " · ")
+    }
+
+    /// Duration and view-count signals ("12 min", "1.2M views", "12:34") —
+    /// the honest meta for rows whose reason is just the generic Scout line.
+    private var statSignals: [String] {
+        candidate.qualitySignals.filter { signal in
+            signal.hasSuffix(" min") || signal.hasSuffix("views")
+                || (!signal.isEmpty && signal.allSatisfy { $0.isNumber || $0 == ":" || $0 == "," })
+        }
     }
 }

@@ -20,10 +20,129 @@ struct CloudSyncSettingsTab: View {
             authSection
             syncStatusSection
             mediaMirrorSection
+            iPhonePushSection
+            inkGrammarSection
             migrationSection
             cloudAgentSection
 
             Spacer()
+        }
+    }
+
+    // MARK: - Physical capture (ink grammar)
+
+    @AppStorage("cosmoInkLegend") private var inkLegend = ""
+
+    private var inkGrammarSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            sectionHeader(title: "INK GRAMMAR", icon: "pencil.and.scribble", color: DS.accent)
+
+            VStack(alignment: .leading, spacing: DS.space12) {
+                Text("Your personal page notation — taught to the handwriting digitizer alongside the standard marks (★ key claim, ? open question, ☐ practice, → mechanism, underline term).")
+                    .font(DS.footnote)
+                    .foregroundStyle(DS.textMuted)
+
+                TextField("e.g. double underline = definition, circled = revisit tomorrow", text: $inkLegend, axis: .vertical)
+                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(2...4)
+            }
+            .padding(DS.space16)
+            .background(glassCard)
+        }
+    }
+
+    // MARK: - iPhone Push (APNs — the camera relay)
+
+    @State private var apnsTeamId = APIKeys.apnsTeamId ?? ""
+    @State private var apnsKeyId = APIKeys.apnsKeyId ?? ""
+    @State private var apnsBundleId = APIKeys.apnsBundleId ?? "com.euanspencer.cosmo.ios"
+    @State private var apnsKeyLoaded = APIKeys.apnsPrivateKey?.isEmpty == false
+    @State private var showP8Importer = false
+    @State private var apnsNote: String?
+
+    @ViewBuilder
+    private var iPhonePushSection: some View {
+        if authService.isSignedIn {
+            VStack(alignment: .leading, spacing: 16) {
+                sectionHeader(title: "IPHONE PUSH", icon: "iphone.radiowaves.left.and.right", color: DS.accent)
+
+                VStack(alignment: .leading, spacing: DS.space12) {
+                    Text("Lets this Mac wake your iPhone as a page scanner — \"Scan with iPhone\" sends a real notification, even when Cosmo isn't open on the phone.")
+                        .font(DS.footnote)
+                        .foregroundStyle(DS.textMuted)
+
+                    apnsField(label: "Team ID", text: $apnsTeamId, identifier: "apns_team_id", prompt: "ABCDE12345")
+                    apnsField(label: "Key ID", text: $apnsKeyId, identifier: "apns_key_id", prompt: "XYZ9876543")
+                    apnsField(label: "Bundle ID", text: $apnsBundleId, identifier: "apns_bundle_id", prompt: "com.euanspencer.cosmo.ios")
+
+                    HStack(spacing: DS.space12) {
+                        Button {
+                            showP8Importer = true
+                        } label: {
+                            Label(apnsKeyLoaded ? "Replace .p8 key…" : "Import .p8 key…", systemImage: "key.fill")
+                        }
+                        .help("The APNs auth key from developer.apple.com → Keys")
+
+                        if apnsKeyLoaded {
+                            Label("Key stored in Keychain", systemImage: "checkmark.circle.fill")
+                                .font(DS.footnote)
+                                .foregroundStyle(DS.green)
+                        }
+
+                        Spacer()
+
+                        if PushSenderService.shared.isConfigured {
+                            Button("Send test push") {
+                                Task {
+                                    do {
+                                        let probe = CaptureRequest.new(kind: .inboxScan, scanSessionId: "settings-test")
+                                        try await PushSenderService.shared.sendScanRequest(probe)
+                                        apnsNote = "Test push sent — check your iPhone."
+                                    } catch {
+                                        apnsNote = error.localizedDescription
+                                    }
+                                }
+                            }
+                            .help("Sends a scan-request notification to your registered iPhone")
+                        }
+                    }
+
+                    if let apnsNote {
+                        Text(apnsNote)
+                            .font(DS.footnote)
+                            .foregroundStyle(DS.textMuted)
+                    }
+                }
+                .padding(DS.space16)
+                .background(glassCard)
+            }
+            .fileImporter(isPresented: $showP8Importer, allowedContentTypes: [.data, .text]) { result in
+                guard case .success(let url) = result else { return }
+                let scoped = url.startAccessingSecurityScopedResource()
+                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                guard let pem = try? String(contentsOf: url, encoding: .utf8),
+                      pem.contains("BEGIN PRIVATE KEY") else {
+                    apnsNote = "That file doesn't look like an APNs .p8 key."
+                    return
+                }
+                APIKeys.save(pem, identifier: "apns_private_key_p8")
+                apnsKeyLoaded = true
+                apnsNote = "Key imported."
+            }
+        }
+    }
+
+    private func apnsField(label: String, text: Binding<String>, identifier: String, prompt: String) -> some View {
+        HStack(spacing: DS.space12) {
+            Text(label)
+                .font(DS.callout)
+                .foregroundStyle(DS.text)
+                .frame(width: 80, alignment: .leading)
+            TextField(prompt, text: text)
+                .textFieldStyle(.roundedBorder)
+                .onChange(of: text.wrappedValue) { _, newValue in
+                    APIKeys.save(newValue.trimmingCharacters(in: .whitespaces), identifier: identifier)
+                }
         }
     }
 

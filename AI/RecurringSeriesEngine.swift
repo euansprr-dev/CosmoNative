@@ -834,3 +834,91 @@ final class RecurringSeriesEngine {
         meta.seriesAnchorDay = dayKey(for: todayStart, calendar: calendar)
     }
 }
+
+// MARK: - Day-pin repair (stranded whenDate)
+
+/// One-shot repair for tasks rescheduled from a client that moved
+/// dueDate/focusDate but left whenDate on the old day (the pre-July-2026 iOS
+/// reschedule). The Mac plans a task's day by whenDate first, so those rows
+/// stayed branded Overdue here no matter how often the phone moved them.
+/// Aligns whenDate to the due day for every row matching the lag signature
+/// (see CommandCenterTaskScheduling.laggingWhenDateCorrection — legitimate
+/// writes never produce it), then never runs again. Repaired rows sync back
+/// to the phone like any other edit.
+enum TaskDayPinRepair {
+    static let flagKey = "taskDayPinWhenDateRepair.v1"
+
+    /// Serializes callers the same way the clean-slate migration does.
+    @MainActor private static var repairTask: Task<Void, Never>?
+
+    @MainActor
+    static func runIfNeeded() async {
+        if let inFlight = repairTask {
+            await inFlight.value
+            return
+        }
+        let task = Task { await run() }
+        repairTask = task
+        await task.value
+    }
+
+    @MainActor
+    private static func run() async {
+        let database = CosmoDatabase.shared
+        let flagIsSet = (try? await database.asyncRead { db in
+            try Row.fetchOne(db, sql: "SELECT value FROM app_flags WHERE key = ?", arguments: [flagKey]) != nil
+        }) ?? false
+        guard !flagIsSet else { return }
+
+        let tasks: [Atom]
+        do {
+            tasks = try await AtomRepository.shared.fetchAll(type: .task)
+        } catch {
+            PersistenceHealth.note(.writeFailure, context: "TaskDayPinRepair", detail: "task fetch failed: \(error.localizedDescription) — retrying next launch")
+            return
+        }
+
+        var repaired = 0
+        var failures = 0
+        for atom in tasks {
+            guard case .value(let meta) = atom.decodedMetadata(as: TaskMetadata.self),
+                  CommandCenterTaskScheduling.laggingWhenDateCorrection(in: meta) != nil else { continue }
+            do {
+                _ = try await AtomRepository.shared.update(uuid: atom.uuid) { mutable in
+                    guard var m = mutable.metadataValue(as: TaskMetadata.self),
+                          let corrected = CommandCenterTaskScheduling.laggingWhenDateCorrection(in: m) else { return }
+                    m.whenDate = corrected
+                    if let merged = mutable.mergingTaskMetadata(m, context: "TaskDayPinRepair(\(mutable.uuid.prefix(8)))") {
+                        mutable = merged
+                    }
+                }
+                repaired += 1
+            } catch {
+                failures += 1
+                PersistenceHealth.note(.writeFailure, context: "TaskDayPinRepair(\(atom.uuid.prefix(8)))", detail: error.localizedDescription)
+            }
+        }
+
+        if failures == 0 {
+            do {
+                try await database.asyncWrite { db in
+                    try db.execute(
+                        sql: "INSERT OR REPLACE INTO app_flags (key, value, updated_at) VALUES (?, '1', ?)",
+                        arguments: [flagKey, ISO8601.string(from: Date())]
+                    )
+                }
+            } catch {
+                PersistenceHealth.note(.writeFailure, context: "TaskDayPinRepair.flag", detail: "failed to persist app_flags row: \(error.localizedDescription)")
+            }
+            if repaired > 0 {
+                print("🩹 TaskDayPinRepair: aligned whenDate on \(repaired) task(s)")
+            }
+        } else {
+            PersistenceHealth.note(
+                .writeFailure,
+                context: "TaskDayPinRepair",
+                detail: "\(failures) atom(s) failed; flag not set — remaining work retries next launch"
+            )
+        }
+    }
+}

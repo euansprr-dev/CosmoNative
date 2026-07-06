@@ -420,12 +420,15 @@ struct IdeaFocusModeView: View {
         if showProfileEditor {
             ZStack {
                 FloatingOverlayBackdrop { showProfileEditor = false }
-                ContentProfileEditor(existingAtom: nil, onClose: { showProfileEditor = false }) { newProfile in
-                    Task { await viewModel.assignClient(newProfile) }
-                    Task { await viewModel.loadClientProfiles() }
-                }
-                .frame(maxWidth: 600, maxHeight: 720)
-                .floatingOverlayPanel()
+                SanctuarySettingsView(
+                    onClose: { showProfileEditor = false },
+                    launchStudio: .create,
+                    onProfileCreated: { newProfile in
+                        Task { await viewModel.assignClient(newProfile) }
+                        Task { await viewModel.loadClientProfiles() }
+                    }
+                )
+                .settingsGlassPanel()
             }
             .transition(.opacity.combined(with: .scale(scale: 0.96)))
         }

@@ -12,9 +12,11 @@ struct InboxCaptureBar: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space6) {
             inputRow
+            scanProgressLine
             captureErrorLine
         }
         .animation(ProMotionSprings.snappy, value: viewModel.captureError)
+        .animation(ProMotionSprings.gentle, value: viewModel.isScanIngesting)
         .onChange(of: viewModel.captureFieldFocusRequest) {
             isFocused = true
         }
@@ -23,6 +25,40 @@ struct InboxCaptureBar: View {
         }
         .onChange(of: viewModel.captureText) {
             if viewModel.captureError != nil { viewModel.captureError = nil }
+        }
+        // Continuity Camera lives on an invisible anchor: the camera button
+        // pops ONE native menu — device items (Take Photo / Scan Documents)
+        // plus our own intake routes.
+        .background(
+            ContinuityCameraAnchor(
+                presentTick: viewModel.continuityCameraMenuTick,
+                onImages: { images in
+                    Task { await viewModel.ingestScanImages(images) }
+                },
+                fallbackItems: [
+                    ("Scan with iPhone (notification)", { Task { await viewModel.requestPhoneScan() } }),
+                    ("Upload images…", { viewModel.showScanImporter = true }),
+                ]
+            )
+            .frame(width: 1, height: 1)
+            .allowsHitTesting(false),
+            alignment: .bottomLeading
+        )
+        .fileImporter(
+            isPresented: Binding(
+                get: { viewModel.showScanImporter },
+                set: { viewModel.showScanImporter = $0 }
+            ),
+            allowedContentTypes: [.image],
+            allowsMultipleSelection: true
+        ) { result in
+            guard case .success(let urls) = result else { return }
+            let images = urls.compactMap { url -> Data? in
+                let scoped = url.startAccessingSecurityScopedResource()
+                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                return try? Data(contentsOf: url)
+            }
+            Task { await viewModel.ingestScanImages(images) }
         }
     }
 
@@ -39,6 +75,21 @@ struct InboxCaptureBar: View {
         .dsGlassInput(isFocused: isFocused, cornerRadius: 14)
         .animation(ProMotionSprings.snappy, value: isFocused)
         .animation(ProMotionSprings.snappy, value: viewModel.isCaptureExpanded)
+    }
+
+    /// Pages digitizing — a quiet line, never a blocking spinner.
+    @ViewBuilder
+    private var scanProgressLine: some View {
+        if viewModel.isScanIngesting {
+            HStack(spacing: DS.space6) {
+                ProgressView().controlSize(.mini)
+                Text("Reading your pages…")
+                    .font(DS.caption)
+                    .foregroundStyle(DS.textSecondary)
+            }
+            .padding(.horizontal, DS.space4)
+            .transition(.opacity)
+        }
     }
 
     /// Honest failure line — the save failed, the text is still in the field.
@@ -100,6 +151,20 @@ struct InboxCaptureBar: View {
 
     private var trailingActions: some View {
         HStack(spacing: DS.space4) {
+            Button {
+                viewModel.continuityCameraMenuTick += 1
+            } label: {
+                Image(systemName: "camera")
+                    .font(DS.caption)
+                    .foregroundStyle(DS.textMuted)
+                    .frame(width: 26, height: 26)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(viewModel.isScanIngesting)
+            .help("Capture a physical page — iPhone camera, scan, or upload")
+            .accessibilityLabel("Capture a physical page")
+
             Button {
                 withAnimation(ProMotionSprings.snappy) {
                     viewModel.isCaptureExpanded.toggle()

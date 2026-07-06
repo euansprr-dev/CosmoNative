@@ -75,6 +75,9 @@ struct MarginaliaLabel: View {
 enum MarginaliaRailPolicy {
     /// Rails fall to a whisper while the user is actively typing.
     static let whisperOpacity: Double = 0.25
+    /// At rest the rail sits just below full ink — faint marginalia until the
+    /// pointer drifts over it, which brings it to 1.
+    static let restOpacity: Double = 0.8
 }
 
 // MARK: - Marginalia disclosure section

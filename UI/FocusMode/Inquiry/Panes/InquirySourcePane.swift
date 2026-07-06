@@ -226,6 +226,7 @@ struct InquirySourcePane: View {
         case .youTube: return "play.rectangle"
         case .internalAtom: return "note.text"
         case .swipe: return "bookmark"
+        case .pageScan: return "doc.viewfinder"
         }
     }
 
@@ -328,7 +329,7 @@ struct InquirySourcePane: View {
             } else {
                 tabUnavailable
             }
-        case .internalAtom, .swipe:
+        case .internalAtom, .swipe, .pageScan:
             if let uuid = tab.sourceUUID {
                 InternalSourceView(sourceUUID: uuid, lastSelectedText: $lastSelectedText)
             } else {

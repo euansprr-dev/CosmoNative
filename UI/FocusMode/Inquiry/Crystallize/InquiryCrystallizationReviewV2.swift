@@ -419,6 +419,8 @@ struct InquiryCrystallizationReviewV2: View {
             )
             output = appliedOutput
             status = .applied
+            // A crystallization is the natural seam for tending the tree.
+            await viewModel.refreshGardener(force: true)
         } catch {
             statusMessage = error.localizedDescription
             status = .failed

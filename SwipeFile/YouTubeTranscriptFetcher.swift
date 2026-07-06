@@ -1,11 +1,12 @@
 // CosmoOS/SwipeFile/YouTubeTranscriptFetcher.swift
-// Fetches YouTube video transcripts via page-scraping
-// Extracts ytInitialPlayerResponse from watch page HTML — no API key required
+// Fetches YouTube video transcripts via the InnerTube player API (ANDROID
+// client), falling back to watch-page scraping — no API key required
 
 import Foundation
 
 /// Fetches YouTube video transcripts and metadata
-/// Uses page-scraping to extract captions (same approach as youtube-transcript-api)
+/// Uses InnerTube first (its caption URLs skip the web pot-token check that
+/// makes scraped watch-page URLs return empty bodies), page scrape as backup
 actor YouTubeTranscriptFetcher {
     static let shared = YouTubeTranscriptFetcher()
 
@@ -28,8 +29,8 @@ actor YouTubeTranscriptFetcher {
     // MARK: - Fetch Transcript
 
     func fetchTranscript(videoId: String) async throws -> TranscriptResult {
-        // 1. Fetch the watch page HTML
-        let playerResponse = try await fetchPlayerResponseFromPage(videoId: videoId)
+        // 1. Fetch the player response (InnerTube first, watch page as fallback)
+        let playerResponse = try await fetchPlayerResponse(videoId: videoId)
 
         // 2. Extract video details
         let title = playerResponse.videoDetails?.title
@@ -53,6 +54,38 @@ actor YouTubeTranscriptFetcher {
             author: author,
             title: title
         )
+    }
+
+    // MARK: - Player Response
+
+    /// InnerTube ANDROID first: caption URLs scraped from the watch page now
+    /// require a browser pot token and come back as empty 200s, while the
+    /// ANDROID client's URLs still work. The page scrape stays as a fallback.
+    private func fetchPlayerResponse(videoId: String) async throws -> InnertubePlayerResponse {
+        if let viaInnertube = try? await fetchPlayerResponseFromInnertube(videoId: videoId),
+           viaInnertube.captions?.playerCaptionsTracklistRenderer?.captionTracks?.isEmpty == false {
+            return viaInnertube
+        }
+        return try await fetchPlayerResponseFromPage(videoId: videoId)
+    }
+
+    private func fetchPlayerResponseFromInnertube(videoId: String) async throws -> InnertubePlayerResponse {
+        let endpoint = URL(string: "https://www.youtube.com/youtubei/v1/player?prettyPrint=false")!
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("com.google.android.youtube/20.10.38 (Linux; U; Android 11) gzip", forHTTPHeaderField: "User-Agent")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "context": ["client": [
+                "clientName": "ANDROID",
+                "clientVersion": "20.10.38",
+                "androidSdkVersion": 30,
+                "hl": "en",
+            ] as [String: Any]],
+            "videoId": videoId,
+        ])
+        let (data, _) = try await URLSession.shared.data(for: request)
+        return try JSONDecoder().decode(InnertubePlayerResponse.self, from: data)
     }
 
     // MARK: - Page Scraping
@@ -211,11 +244,21 @@ actor YouTubeTranscriptFetcher {
         let (data, _) = try await URLSession.shared.data(from: url)
 
         // Try JSON3 format first
-        if let json3 = try? JSONDecoder().decode(TranscriptJson3.self, from: data) {
+        if let json3 = try? JSONDecoder().decode(TranscriptJson3.self, from: data),
+           json3.events?.isEmpty == false {
             return parseJson3Transcript(json3)
         }
 
-        // Fall back to XML parsing
+        // srv3 timedtext XML — what InnerTube ANDROID caption URLs serve
+        let srv3 = YouTubeTranscriptService.parseSRV3(data)
+        if !srv3.isEmpty {
+            let segments = srv3.map {
+                TranscriptResult.TranscriptSegment(text: $0.text, start: $0.start, duration: $0.duration ?? 0)
+            }
+            return (srv3.map(\.text).joined(separator: " "), segments)
+        }
+
+        // Fall back to legacy <text start dur> XML parsing
         let xmlString = String(data: data, encoding: .utf8) ?? ""
         return parseXmlTranscript(xmlString)
     }

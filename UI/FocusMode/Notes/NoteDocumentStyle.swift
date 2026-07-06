@@ -86,6 +86,92 @@ struct NoteDocumentStyle: Codable, Equatable {
         }
     }
 
+    /// The page's paper — a quiet tint under everything. Parchment is the
+    /// theme's own surface; the rest are curated washes with light and
+    /// immersive variants so every theme family stays coherent.
+    enum PaperTone: String, Codable, CaseIterable, Identifiable {
+        case parchment
+        case cream
+        case linen
+        case mist
+        case sage
+        case dusk
+
+        var id: String { rawValue }
+
+        var label: String {
+            switch self {
+            case .parchment: return "Parchment"
+            case .cream: return "Cream"
+            case .linen: return "Linen"
+            case .mist: return "Mist"
+            case .sage: return "Sage"
+            case .dusk: return "Dusk"
+            }
+        }
+
+        /// nil ⇒ use the theme's own document surface (Parchment).
+        func pageColor(darkMode: Bool) -> Color? {
+            switch self {
+            case .parchment: return nil
+            case .cream: return Color(hex: darkMode ? "272216" : "FAF4E6")
+            case .linen: return Color(hex: darkMode ? "241F1B" : "F7F1EA")
+            case .mist: return Color(hex: darkMode ? "1B2126" : "F1F4F7")
+            case .sage: return Color(hex: darkMode ? "1C231D" : "F0F5EE")
+            case .dusk: return Color(hex: darkMode ? "211E27" : "F3F0F7")
+            }
+        }
+
+        /// The swatch face shown in the picker (always resolvable).
+        func swatchColor(darkMode: Bool) -> Color {
+            pageColor(darkMode: darkMode)
+                ?? (darkMode ? Color(hex: "1E1D1A") : Color(hex: "F8F7F4"))
+        }
+    }
+
+    /// A cover band above the title — Craft-style page identity.
+    enum Cover: String, Codable, CaseIterable, Identifiable {
+        case none
+        case wash
+        case dawn
+        case meadow
+        case dusk
+        case ink
+
+        var id: String { rawValue }
+
+        var label: String {
+            switch self {
+            case .none: return "None"
+            case .wash: return "Wash"
+            case .dawn: return "Dawn"
+            case .meadow: return "Meadow"
+            case .dusk: return "Dusk"
+            case .ink: return "Ink"
+            }
+        }
+
+        /// Gradient stops per cover. `wash` derives from the page's tone so
+        /// the band always belongs to its paper.
+        func gradientColors(tone: PaperTone, darkMode: Bool) -> [Color]? {
+            switch self {
+            case .none:
+                return nil
+            case .wash:
+                let base = tone.swatchColor(darkMode: darkMode)
+                return [base.opacity(darkMode ? 0.9 : 1), base.opacity(0.0)]
+            case .dawn:
+                return [Color(hex: darkMode ? "4A3A33" : "F2D8C2"), Color(hex: darkMode ? "2A2320" : "FAF0E4").opacity(0)]
+            case .meadow:
+                return [Color(hex: darkMode ? "2F4234" : "CFE3CE"), Color(hex: darkMode ? "20281F" : "EFF6EC").opacity(0)]
+            case .dusk:
+                return [Color(hex: darkMode ? "3A3347" : "D8D0E8"), Color(hex: darkMode ? "252031" : "F1EDF8").opacity(0)]
+            case .ink:
+                return [Color(hex: darkMode ? "31373D" : "C9D2DA"), Color(hex: darkMode ? "22262A" : "EDF1F4").opacity(0)]
+            }
+        }
+    }
+
     enum LineSpacing: String, Codable, CaseIterable, Identifiable {
         case compact
         case standard
@@ -127,6 +213,10 @@ struct NoteDocumentStyle: Codable, Equatable {
     var textSize: TextSize = .standard
     var pageWidth: PageWidth = .standard
     var lineSpacing: LineSpacing = .standard
+    var paperTone: PaperTone = .parchment
+    /// SF Symbol name or a literal emoji rendered beside the title.
+    var pageIcon: String? = nil
+    var cover: Cover = .none
 
     static let `default` = NoteDocumentStyle()
 
@@ -135,7 +225,7 @@ struct NoteDocumentStyle: Codable, Equatable {
     // Decoding stays lenient: styles persisted before a field existed (or
     // after one is renamed) must never reset a note's voice to defaults.
     private enum CodingKeys: String, CodingKey {
-        case fontFamily, textSize, pageWidth, lineSpacing
+        case fontFamily, textSize, pageWidth, lineSpacing, paperTone, pageIcon, cover
     }
 
     init(from decoder: Decoder) throws {
@@ -144,6 +234,9 @@ struct NoteDocumentStyle: Codable, Equatable {
         textSize = (try? container.decodeIfPresent(TextSize.self, forKey: .textSize)) ?? .standard
         pageWidth = (try? container.decodeIfPresent(PageWidth.self, forKey: .pageWidth)) ?? .standard
         lineSpacing = (try? container.decodeIfPresent(LineSpacing.self, forKey: .lineSpacing)) ?? .standard
+        paperTone = (try? container.decodeIfPresent(PaperTone.self, forKey: .paperTone)) ?? .parchment
+        pageIcon = (try? container.decodeIfPresent(String.self, forKey: .pageIcon)) ?? nil
+        cover = (try? container.decodeIfPresent(Cover.self, forKey: .cover)) ?? .none
     }
 
     // MARK: - Metadata Persistence
@@ -185,27 +278,6 @@ struct NoteDocumentStyle: Codable, Equatable {
     }
 }
 
-/// The "Aa" style popover for the Notes focus mode — the document's voice
-/// lives here: font family, text size, page width, typewriter mode.
-struct NoteStyleMenuView: View {
-    @Binding var style: NoteDocumentStyle
-    @Binding var typewriterMode: Bool
-    @Binding var paragraphFocus: Bool
-
-    var body: some View {
-        DocumentStyleMenuView(
-            fontFamily: $style.fontFamily,
-            textSize: $style.textSize,
-            widthOptions: NoteDocumentStyle.PageWidth.allCases,
-            widthSelection: $style.pageWidth,
-            widthLabel: { $0.label },
-            typewriterMode: $typewriterMode,
-            lineSpacing: $style.lineSpacing,
-            paragraphFocus: $paragraphFocus
-        )
-    }
-}
-
 /// The shared "Aa" style popover body — one source of truth for the
 /// document-voice menu, so Notes and Content focus modes read identically.
 /// Page-width options are generic because each surface has its own widths.
@@ -223,6 +295,9 @@ struct DocumentStyleMenuView<WidthOption: Identifiable & Equatable>: View {
     var lineSpacing: Binding<NoteDocumentStyle.LineSpacing>? = nil
     /// Paragraph focus (dim everything but the caret's block) — Notes only.
     var paragraphFocus: Binding<Bool>? = nil
+    /// True when hosted inside another popover body (the Notes page-style
+    /// popover) that owns padding and width.
+    var embedded: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space12) {
@@ -244,8 +319,8 @@ struct DocumentStyleMenuView<WidthOption: Identifiable & Equatable>: View {
                 focusRow(paragraphFocus)
             }
         }
-        .padding(DS.space16)
-        .frame(width: 296)
+        .padding(embedded ? 0 : DS.space16)
+        .frame(width: embedded ? nil : 296)
     }
 
     private func section(_ title: String, @ViewBuilder content: () -> some View) -> some View {

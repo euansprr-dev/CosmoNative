@@ -302,7 +302,6 @@ struct NoteFocusModeView: View {
     /// it weakly, and the old single global slot deallocated it whenever any
     /// other view registered, silently unbinding this note from the assistant.
     @State private var ownedContextProvider: NoteContextProvider?
-    @State private var graphOverlayVisible: Bool = false
     @State private var backlinkPreviews: [NoteBacklinkPreview] = []
     @State private var mentionedInCounts: [AtomType: Int] = [:]
     @State private var textAnalysis: NoteFocusTextAnalysis = .empty
@@ -408,29 +407,13 @@ struct NoteFocusModeView: View {
                 FocusFloatingBlocksLayer(manager: floatingBlocksManager)
                     .frame(width: geo.size.width, height: geo.size.height)
             }
-
-            // Graph overlay (⌘G)
-            if graphOverlayVisible {
-                NoteGraphOverlayView(
-                    centerAtom: atom,
-                    onClose: { withAnimation(ProMotionSprings.modal) { graphOverlayVisible = false } }
-                )
-                .transition(.opacity)
-                .zIndex(100)
-            }
         }
         .background(
-            // Hidden keyboard shortcut buttons (rule 10: macOS shortcuts for primary actions)
-            Group {
-                Button("Toggle graph") { toggleGraphOverlay() }
-                    .keyboardShortcut("g", modifiers: .command)
-                    .opacity(0)
-                    .accessibilityHidden(true)
-                Button("Toggle panels") { togglePanels() }
-                    .keyboardShortcut("\\", modifiers: .command)
-                    .opacity(0)
-                    .accessibilityHidden(true)
-            }
+            // Hidden keyboard shortcut button (rule 10: macOS shortcuts for primary actions)
+            Button("Toggle panels") { togglePanels() }
+                .keyboardShortcut("\\", modifiers: .command)
+                .opacity(0)
+                .accessibilityHidden(true)
         )
         .focusBlockContextMenu(
             manager: floatingBlocksManager,
@@ -618,7 +601,13 @@ struct NoteFocusModeView: View {
 
     private var backgroundSurface: some View {
         ZStack {
-            focusBackground
+            // Per-note paper: the tone replaces the theme surface wholesale
+            // so the whole page — margins included — reads as one sheet.
+            if let paper = noteStyle.paperTone.pageColor(darkMode: DS.usesImmersiveFocusAppearance) {
+                paper
+            } else {
+                focusBackground
+            }
             // Subtle vignette that darkens edges to emphasize the center column
             RadialGradient(
                 colors: [Color.clear, DS.inkWash.opacity(0.04)],
@@ -628,6 +617,7 @@ struct NoteFocusModeView: View {
             )
             .blendMode(.multiply)
         }
+        .animation(reduceMotion ? nil : ProMotionSprings.gentle, value: noteStyle.paperTone)
     }
 
     // MARK: - Top Bar (V2)
@@ -661,6 +651,9 @@ struct NoteFocusModeView: View {
                 AtomWindowChromeTrailingControls(context: atomChrome)
             }
         }
+        // Finite chrome height — the Atom window bar must never stretch with
+        // its islands' content (see AtomWindowMetrics).
+        .frame(height: AtomWindowMetrics.focusToolbarHeight)
         .padding(.horizontal, DS.space16)
         .padding(.top, DS.space12)
         .padding(.bottom, DS.space8)
@@ -743,22 +736,6 @@ struct NoteFocusModeView: View {
     private var topBarChromeButtons: some View {
         HStack(spacing: DS.space8) {
             styleMenuButton
-            chromeIconButton(
-                systemName: "rectangle.split.3x1",
-                isActive: leftRailVisible || rightRailVisible,
-                tint: DS.accent,
-                help: "Toggle panels (⌘\\)",
-                accessibilityLabel: "Toggle side panels",
-                action: { togglePanels() }
-            )
-            chromeIconButton(
-                systemName: "point.3.filled.connected.trianglepath.dotted",
-                isActive: graphOverlayVisible,
-                tint: DS.gilt,
-                help: "Graph view (⌘G)",
-                accessibilityLabel: "Toggle graph view",
-                action: { toggleGraphOverlay() }
-            )
             if isPaneContext, !isPeekContext, atomChrome == nil {
                 chromeIconButton(
                     systemName: "xmark",
@@ -772,51 +749,34 @@ struct NoteFocusModeView: View {
         }
     }
 
-    /// The center pill of the Atom window bar: the document's view controls
-    /// (style · panels · graph). Same flat capsule language as the leading/trailing
-    /// clusters (`atomWindowChromeCluster`) so all three read as one material family,
-    /// and `space4` spacing matches the nav/action pills exactly. In the Atom window
-    /// the extra pane-close glyph never applies (chrome owns close), so this cluster
-    /// is intentionally just the three view toggles.
+    /// The center pill of the Atom window bar: the page-style control. Same
+    /// flat capsule language as the leading/trailing clusters
+    /// (`atomWindowChromeCluster`) so all three read as one material family.
     private var atomViewControlsCluster: some View {
         HStack(spacing: DS.space4) {
             styleMenuButton
-            chromeIconButton(
-                systemName: "rectangle.split.3x1",
-                isActive: leftRailVisible || rightRailVisible,
-                tint: DS.accent,
-                help: "Toggle panels (⌘\\)",
-                accessibilityLabel: "Toggle side panels",
-                action: { togglePanels() }
-            )
-            chromeIconButton(
-                systemName: "point.3.filled.connected.trianglepath.dotted",
-                isActive: graphOverlayVisible,
-                tint: DS.gilt,
-                help: "Graph view (⌘G)",
-                accessibilityLabel: "Toggle graph view",
-                action: { toggleGraphOverlay() }
-            )
         }
         .atomWindowChromeCluster()
     }
 
-    /// "Aa" — the document's voice. Font family, text size, page width, and
-    /// typewriter mode live here, per-note.
+    /// "Aa" — the page's whole personality: text voice (font, size, width,
+    /// spacing) and page character (paper, icon, cover, panels), per-note.
     private var styleMenuButton: some View {
         chromeIconButton(
             systemName: "textformat",
             isActive: styleMenuPresented || noteStyle != .default,
             tint: DS.accent,
-            help: "Document style",
-            accessibilityLabel: "Document style",
+            help: "Page style",
+            accessibilityLabel: "Page style",
             action: { styleMenuPresented.toggle() }
         )
         .popover(isPresented: $styleMenuPresented, arrowEdge: .bottom) {
-            NoteStyleMenuView(
+            NotePageStylePopover(
                 style: $noteStyle,
                 typewriterMode: $typewriterMode,
-                paragraphFocus: $paragraphFocus
+                paragraphFocus: $paragraphFocus,
+                leftRailVisible: $leftRailVisible,
+                rightRailVisible: $rightRailVisible
             )
         }
     }
@@ -882,9 +842,36 @@ struct NoteFocusModeView: View {
             .contentMargins(.top, noteToolbarClearance, for: .scrollContent)
     }
 
+    /// Cover band + page icon — the page's personality, above the title,
+    /// scrolling with the manuscript. Inset and rounded so it reads as part
+    /// of the sheet, concentric with the page's card radii.
+    @ViewBuilder
+    private var pageIdentityHeader: some View {
+        if noteStyle.cover != .none {
+            NotePageCoverBand(style: noteStyle, darkMode: DS.usesImmersiveFocusAppearance)
+                .clipShape(.rect(cornerRadius: 12, style: .continuous))
+                .frame(maxWidth: bodyColumnWidth)
+                .padding(.top, DS.space8)
+        }
+        if let pageIcon = noteStyle.pageIcon {
+            NotePageIconView(
+                icon: pageIcon,
+                style: noteStyle,
+                darkMode: DS.usesImmersiveFocusAppearance,
+                size: 30
+            )
+            .padding(.leading, BlockInteractionPolicy.gutterWidth)
+            .frame(maxWidth: bodyColumnWidth, alignment: .leading)
+            .padding(.top, noteStyle.cover != .none ? DS.space12 : DS.space24)
+            .help("Page icon")
+        }
+    }
+
     private var centerScroll: some View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(spacing: 0) {
+                pageIdentityHeader
+                    .animation(reduceMotion ? nil : ProMotionSprings.gentle, value: noteStyle.cover)
                 if isEmptyNote {
                     NoteFocusEmptyStateView {
                         titleSection
@@ -1308,12 +1295,6 @@ struct NoteFocusModeView: View {
                 leftRailVisible = true
                 rightRailVisible = true
             }
-        }
-    }
-
-    private func toggleGraphOverlay() {
-        withAnimation(ProMotionSprings.modal) {
-            graphOverlayVisible.toggle()
         }
     }
 
@@ -2637,226 +2618,6 @@ fileprivate struct NoteFocusEmptyStateView<Title: View>: View {
     }
 }
 
-// MARK: - Graph Overlay
-
-fileprivate struct NoteGraphOverlayView: View {
-    let centerAtom: Atom
-    let onClose: () -> Void
-
-    @State private var nodes: [GraphOverlayNode] = []
-    @State private var isLoading = true
-    @State private var hops: Int = 1
-
-    var body: some View {
-        ZStack {
-            Rectangle()
-                .fill(DS.focusImmersiveBackground.opacity(0.96))
-                .ignoresSafeArea()
-                .onTapGesture { onClose() }
-
-            VStack(spacing: 0) {
-                graphTopBar
-                graphCanvas
-                graphLegend
-            }
-        }
-        .task { await loadNeighborhood() }
-        .onChange(of: hops) { _, _ in
-            Task { await loadNeighborhood() }
-        }
-    }
-
-    private var graphTopBar: some View {
-        HStack(spacing: DS.space12) {
-            Button(action: onClose) {
-                HStack(spacing: DS.space4) {
-                    Image(systemName: "chevron.left")
-                        .font(DS.buttonText)
-                    Text("Close")
-                        .font(DS.callout)
-                }
-                .foregroundStyle(DS.focusImmersiveTextSecondary)
-                .padding(.horizontal, DS.space12)
-                .padding(.vertical, DS.space8)
-                .frame(minHeight: 32)
-                .background(DS.focusImmersiveBorder.opacity(0.5), in: Capsule())
-                .accessibilityLabel("Close graph view")
-            }
-            .buttonStyle(.plain)
-            .keyboardShortcut(.escape, modifiers: [])
-
-            Text("GRAPH VIEW  ·  \(centerAtom.title ?? "Untitled")")
-                .font(DS.smallCaps)
-                .foregroundStyle(DS.gilt)
-                .tracking(1)
-
-            Spacer()
-
-            Picker("Hops", selection: $hops) {
-                Text("1-hop").tag(1)
-                Text("2-hop").tag(2)
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 140)
-        }
-        .padding(.horizontal, DS.space12)
-        .padding(.vertical, DS.space6)
-        .cosmoGlassPanel(role: .floatingAssistant, cornerRadius: 22)
-        .padding(.horizontal, DS.space16)
-        .padding(.top, DS.space12)
-        .padding(.bottom, DS.space8)
-    }
-
-    private var graphCanvas: some View {
-        GeometryReader { geo in
-            let center = CGPoint(x: geo.size.width / 2, y: geo.size.height / 2)
-            ZStack {
-                // Edges
-                ForEach(nodes.indices.filter { nodes[$0].atomUUID != centerAtom.uuid }, id: \.self) { idx in
-                    Path { path in
-                        path.move(to: center)
-                        path.addLine(to: nodes[idx].position(in: geo.size, center: center))
-                    }
-                    .stroke(DS.gilt.opacity(0.35), style: StrokeStyle(lineWidth: 0.6, lineCap: .round))
-                }
-
-                // Nodes
-                ForEach(nodes, id: \.atomUUID) { node in
-                    graphNodeDot(node: node, in: geo.size, center: center)
-                }
-
-                if isLoading {
-                    ProgressView()
-                        .controlSize(.small)
-                        .position(center)
-                }
-            }
-        }
-    }
-
-    private func graphNodeDot(node: GraphOverlayNode, in size: CGSize, center: CGPoint) -> some View {
-        let isCenter = node.atomUUID == centerAtom.uuid
-        let pos = node.position(in: size, center: center)
-        return VStack(spacing: DS.space4) {
-            Image(systemName: node.type.iconName)
-                .font(isCenter ? DS.title3 : DS.caption)
-                .foregroundStyle(isCenter ? DS.entityNote : tint(for: node.type))
-                .frame(width: isCenter ? 44 : 32, height: isCenter ? 44 : 32)
-                .background(
-                    Circle()
-                        .fill(DS.focusImmersiveSurface)
-                        .overlay(Circle().stroke(isCenter ? DS.entityNote : DS.sepiaBorder.opacity(0.6), lineWidth: isCenter ? 1.5 : 0.5))
-                )
-                .shadow(color: DS.inkWash.opacity(0.1), radius: isCenter ? 10 : 4, y: 2)
-                .accessibilityLabel(node.title)
-            Text(node.title)
-                .font(DS.caption2)
-                .foregroundStyle(isCenter ? DS.focusImmersiveText : DS.focusImmersiveTextSecondary)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(maxWidth: 120)
-        }
-        .position(pos)
-    }
-
-    private var graphLegend: some View {
-        HStack(spacing: DS.space16) {
-            legendDot(color: DS.entityNote, label: "note")
-            legendDot(color: DS.entityIdea, label: "idea")
-            legendDot(color: DS.entityContent, label: "content")
-            legendDot(color: DS.entitySwipe, label: "swipe")
-            Spacer()
-        }
-        .padding(.horizontal, DS.space24)
-        .padding(.vertical, DS.space16)
-    }
-
-    private func legendDot(color: Color, label: String) -> some View {
-        HStack(spacing: DS.space4) {
-            Circle()
-                .fill(color)
-                .frame(width: 8, height: 8)
-            Text(label)
-                .font(DS.caption)
-                .foregroundStyle(DS.focusImmersiveTextMuted)
-        }
-    }
-
-    private func tint(for type: AtomType) -> Color {
-        switch type {
-        case .idea: return DS.entityIdea
-        case .content: return DS.entityContent
-        case .research: return DS.entityResearch
-        case .note: return DS.entityNote
-        case .task: return DS.entityTask
-        default: return DS.focusImmersiveTextSecondary
-        }
-    }
-
-    @MainActor
-    private func loadNeighborhood() async {
-        isLoading = true
-        defer { isLoading = false }
-
-        guard let result = try? await GraphQueryEngine().getNeighborhood(
-            of: centerAtom.uuid,
-            depth: hops,
-            maxNodesPerLevel: hops == 1 ? 8 : 12
-        ) else { return }
-
-        // Hydrate titles via AtomRepository
-        let allUUIDs = result.allUUIDs
-        let atoms = (try? await AtomRepository.shared.fetchBatch(uuids: allUUIDs)) ?? []
-        let byUUID = Dictionary(uniqueKeysWithValues: atoms.map { ($0.uuid, $0) })
-
-        var built: [GraphOverlayNode] = []
-        // Center
-        built.append(GraphOverlayNode(
-            atomUUID: centerAtom.uuid,
-            title: centerAtom.title ?? "Untitled",
-            type: centerAtom.type,
-            angleIndex: 0,
-            totalInRing: 1,
-            ring: 0
-        ))
-        for (levelIndex, level) in result.levels.enumerated() {
-            let total = max(1, level.count)
-            for (i, neighbor) in level.enumerated() {
-                guard let a = byUUID[neighbor.node.atomUUID] else { continue }
-                built.append(GraphOverlayNode(
-                    atomUUID: a.uuid,
-                    title: a.title ?? "Untitled",
-                    type: a.type,
-                    angleIndex: i,
-                    totalInRing: total,
-                    ring: levelIndex + 1
-                ))
-            }
-        }
-        withAnimation(ProMotionSprings.cardEntrance) {
-            nodes = built
-        }
-    }
-}
-
-fileprivate struct GraphOverlayNode: Equatable {
-    let atomUUID: String
-    let title: String
-    let type: AtomType
-    let angleIndex: Int
-    let totalInRing: Int
-    let ring: Int
-
-    func position(in size: CGSize, center: CGPoint) -> CGPoint {
-        if ring == 0 { return center }
-        let radius = CGFloat(ring) * min(size.width, size.height) * 0.28
-        let theta = (Double(angleIndex) / Double(max(totalInRing, 1))) * 2 * .pi - .pi / 2
-        return CGPoint(
-            x: center.x + radius * CGFloat(cos(theta)),
-            y: center.y + radius * CGFloat(sin(theta))
-        )
-    }
-}
 
 // MARK: - Cosmo Context Provider
 

@@ -263,4 +263,34 @@ final class BlockSelectionTests: XCTestCase {
         XCTAssertEqual(loaded.lineSpacing.blockGap, 9)
     }
 
+    func testNoteDocumentStylePagePersonalityRoundTripsThroughMetadata() {
+        var style = NoteDocumentStyle()
+        style.paperTone = .sage
+        style.pageIcon = "🌿"
+        style.cover = .meadow
+
+        let metadata = style.write(intoMetadata: nil)
+        let loaded = NoteDocumentStyle.load(fromMetadata: metadata)
+
+        XCTAssertEqual(loaded, style)
+        XCTAssertNotNil(loaded.paperTone.pageColor(darkMode: false))
+        XCTAssertNotNil(loaded.cover.gradientColors(tone: loaded.paperTone, darkMode: true))
+    }
+
+    func testNoteDocumentStyleDecodesLegacyMetadataWithoutPagePersonality() {
+        // Pre-personality styles keep defaults for the new fields, and an
+        // unknown future tone degrades to parchment instead of failing.
+        let legacyMetadata = """
+        {"note_document_style":{"fontFamily":"serif","paperTone":"hologram"}}
+        """
+
+        let loaded = NoteDocumentStyle.load(fromMetadata: legacyMetadata)
+
+        XCTAssertEqual(loaded.fontFamily, .serif)
+        XCTAssertEqual(loaded.paperTone, .parchment)
+        XCTAssertNil(loaded.pageIcon)
+        XCTAssertEqual(loaded.cover, .none)
+        XCTAssertNil(loaded.paperTone.pageColor(darkMode: false), "Parchment defers to the theme surface")
+    }
+
 }

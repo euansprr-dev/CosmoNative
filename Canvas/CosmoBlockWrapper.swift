@@ -49,6 +49,10 @@ struct CosmoBlockWrapper<Content: View>: View {
     // Surface style — .vellum (default) or .crisp (pure white, for Media)
     var surfaceStyle: BlockSurfaceStyle = .vellum
 
+    // Per-document paper: when set, replaces the surface fill wholesale so a
+    // personalized note reads as itself on the canvas (Notes page tones).
+    var surfaceTint: Color? = nil
+
     // Fixed internal layout size. When set, resizing scales this layout instead of reflowing content.
     var fixedLayoutSize: CGSize?
 
@@ -92,6 +96,7 @@ struct CosmoBlockWrapper<Content: View>: View {
         title: String,
         autoHeight: Bool = false,
         surfaceStyle: BlockSurfaceStyle = .vellum,
+        surfaceTint: Color? = nil,
         fixedLayoutSize: CGSize? = nil,
         preservesAspectRatio: Bool = false,
         suppressGiltCorner: Bool = false,
@@ -108,6 +113,7 @@ struct CosmoBlockWrapper<Content: View>: View {
         self.title = title
         self.autoHeight = autoHeight
         self.surfaceStyle = surfaceStyle
+        self.surfaceTint = surfaceTint
         self.fixedLayoutSize = fixedLayoutSize
         self.preservesAspectRatio = preservesAspectRatio
         self.suppressGiltCorner = suppressGiltCorner
@@ -288,8 +294,12 @@ struct CosmoBlockWrapper<Content: View>: View {
     // MARK: - Background
 
     /// Base surface fill — vellum (warm parchment) for most blocks,
-    /// crisp white for media/photographic content.
+    /// crisp white for media/photographic content, or the document's own
+    /// paper tone when the block carries one.
     private var baseSurface: Color {
+        if let surfaceTint {
+            return surfaceTint
+        }
         switch surfaceStyle {
         case .vellum: return DS.vellum
         case .crisp:  return DS.canvasDocumentSurface

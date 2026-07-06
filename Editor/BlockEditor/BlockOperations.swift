@@ -8,6 +8,7 @@ enum BlockOperations {
     ) throws -> BlockOperationResult {
         var document = document
         var block = try block(in: document, at: path)
+        let previousKind = block.kind
         block.kind = kind
         block.checked = kind == .checklist ? (block.checked ?? false) : nil
         if kind.headingLevelInt != nil, block.heading == nil {
@@ -16,7 +17,24 @@ enum BlockOperations {
         if kind.headingLevelInt == nil {
             block.heading = nil
         }
+        block.callout = kind == .callout ? (block.callout ?? .default) : nil
+        block.toggleCollapsed = kind == .toggle ? (block.toggleCollapsed ?? false) : nil
+        // Transforming a toggle into anything else must not strand its
+        // children on a block that no longer renders them — hoist them out
+        // as siblings directly below.
+        let hoistedChildren: [RichBlock]
+        if previousKind == .toggle, kind != .toggle, !block.children.isEmpty {
+            hoistedChildren = block.children
+            block.children = []
+        } else {
+            hoistedChildren = []
+        }
         try replaceBlock(block, in: &document, at: path)
+        if !hoistedChildren.isEmpty {
+            try mutateChildren(in: &document.blocks, indices: path.indices) { siblings, index in
+                siblings.insert(contentsOf: hoistedChildren, at: min(index + 1, siblings.count))
+            }
+        }
         return BlockOperationResult(document: document, focusPath: path)
     }
 
@@ -82,10 +100,28 @@ enum BlockOperations {
         var before = original
         before.inlines = [.text(String(text[..<splitIndex]))]
 
+        // Return on a toggle header dives INTO the toggle: the remainder
+        // becomes its first child and the caret follows (you name the toggle,
+        // press Return, and fill it — the Craft model).
+        if original.kind == .toggle {
+            before.toggleCollapsed = false
+            before.children.insert(
+                RichBlock(kind: .paragraph, inlines: [.text(String(text[splitIndex...]))]),
+                at: 0
+            )
+            try replaceBlock(before, in: &document, at: path)
+            return BlockOperationResult(
+                document: document,
+                focusPath: path.appendingChild(index: 0),
+                caretUTF16Offset: 0
+            )
+        }
+
         let after = RichBlock(
             kind: original.kind.splitContinuationKind,
             inlines: [.text(String(text[splitIndex...]))],
-            checked: original.kind == .checklist ? false : nil
+            checked: original.kind == .checklist ? false : nil,
+            callout: original.kind == .callout ? nil : original.callout
         )
 
         try replaceBlock(before, in: &document, at: path)
@@ -232,6 +268,8 @@ enum BlockOperations {
         result.kind = source.kind
         result.checked = source.checked
         result.heading = source.heading
+        result.callout = source.callout
+        result.toggleCollapsed = source.toggleCollapsed
         return result
     }
 
@@ -241,7 +279,30 @@ enum BlockOperations {
     /// them); one trailing empty line from a terminal newline is trimmed.
     static func parsedPasteBlocks(from pastedText: String) -> [RichBlock] {
         let lines = pastedText.normalizingHardNewlines().components(separatedBy: "\n")
-        var blocks = lines.map(pasteBlock(fromLine:))
+        var blocks: [RichBlock] = []
+        // Fenced code (``` … ```) collapses into ONE code block with soft
+        // breaks — pasted code must never shred into per-line paragraphs.
+        var openCodeLines: [String]? = nil
+        for line in lines {
+            if line.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
+                if let collected = openCodeLines {
+                    blocks.append(RichBlock(kind: .code, inlines: [.text(collected.joined(separator: "\u{2028}"))]))
+                    openCodeLines = nil
+                } else {
+                    openCodeLines = []
+                }
+                continue
+            }
+            if openCodeLines != nil {
+                openCodeLines?.append(line)
+                continue
+            }
+            blocks.append(pasteBlock(fromLine: line))
+        }
+        if let collected = openCodeLines {
+            // Unclosed fence — keep what was collected as code anyway.
+            blocks.append(RichBlock(kind: .code, inlines: [.text(collected.joined(separator: "\u{2028}"))]))
+        }
         if blocks.count > 1,
            let lastBlock = blocks.last,
            lastBlock.kind == .paragraph,
@@ -264,6 +325,9 @@ enum BlockOperations {
         if line.hasPrefix("> ") {
             return RichBlock(kind: .quote, inlines: [.text(String(line.dropFirst(2)))])
         }
+        if line.hasPrefix("!! ") {
+            return RichBlock(kind: .callout, inlines: [.text(String(line.dropFirst(3)))])
+        }
         if line.trimmingCharacters(in: .whitespaces) == "***" {
             return RichBlock(kind: .divider)
         }
@@ -280,7 +344,10 @@ enum BlockOperations {
 
         var document = document
         let current = try block(in: document, at: path)
-        let previousPath = path.parent?.appendingChild(index: path.indexInParent - 1) ?? .root(index: path.indexInParent - 1)
+        let previousSiblingPath = path.parent?.appendingChild(index: path.indexInParent - 1) ?? .root(index: path.indexInParent - 1)
+        // Merging after an EXPANDED toggle lands in its last child — the
+        // visually adjacent line — never in the header above the children.
+        let previousPath = deepestTrailingTextPath(in: document, from: previousSiblingPath)
         var previous = try block(in: document, at: previousPath)
 
         guard previous.kind.isTextEditableBlock, current.kind.isTextEditableBlock else {
@@ -293,7 +360,11 @@ enum BlockOperations {
         let mergedText = previous.plainInlineText + current.plainInlineText
         previous.inlines = [.text(mergedText)]
         try replaceBlock(previous, in: &document, at: previousPath)
-        try removeBlock(in: &document, at: path)
+        // A merged-away toggle must not orphan its children — they splice in
+        // where the toggle stood.
+        try mutateChildren(in: &document.blocks, indices: path.indices) { siblings, index in
+            siblings.replaceSubrange(index...index, with: current.children)
+        }
 
         return BlockOperationResult(
             document: document,
@@ -302,21 +373,85 @@ enum BlockOperations {
         )
     }
 
+    /// Follows expanded toggles downward to the last text-editable line the
+    /// user actually sees above a given position.
+    private static func deepestTrailingTextPath(
+        in document: RichDocument,
+        from path: BlockPath
+    ) -> BlockPath {
+        guard let candidate = try? block(in: document, at: path),
+              candidate.kind == .toggle,
+              candidate.toggleCollapsed != true,
+              !candidate.children.isEmpty else {
+            return path
+        }
+        return deepestTrailingTextPath(
+            in: document,
+            from: path.appendingChild(index: candidate.children.count - 1)
+        )
+    }
+
     static func exitEmptyListBlock(
         in document: RichDocument,
         at path: BlockPath
     ) throws -> BlockOperationResult {
         var block = try block(in: document, at: path)
-        guard [.bulletList, .numberedList, .checklist].contains(block.kind),
+        guard [.bulletList, .numberedList, .checklist, .callout, .toggle].contains(block.kind),
               block.plainInlineText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw BlockOperationError.unsupportedBlockKind(block.kind)
         }
 
+        // An abandoned empty toggle hands its children back to the page.
+        let hoistedChildren = block.kind == .toggle ? block.children : []
+        if block.kind == .toggle { block.children = [] }
         block.kind = .paragraph
         block.checked = nil
+        block.callout = nil
+        block.toggleCollapsed = nil
         var document = document
         try replaceBlock(block, in: &document, at: path)
+        if !hoistedChildren.isEmpty {
+            try mutateChildren(in: &document.blocks, indices: path.indices) { siblings, index in
+                siblings.insert(contentsOf: hoistedChildren, at: min(index + 1, siblings.count))
+            }
+        }
         return BlockOperationResult(document: document, focusPath: path, caretUTF16Offset: 0)
+    }
+
+    /// Return on the empty trailing line of a code block — the block gives
+    /// that line up and the caret exits into a fresh paragraph below. An
+    /// entirely empty code block converts back to a paragraph instead.
+    static func exitCodeBlock(
+        in document: RichDocument,
+        at path: BlockPath
+    ) throws -> BlockOperationResult {
+        var block = try block(in: document, at: path)
+        guard block.kind == .code else {
+            throw BlockOperationError.unsupportedBlockKind(block.kind)
+        }
+
+        var document = document
+        var text = block.plainInlineText
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            block.kind = .paragraph
+            block.inlines = [.text("")]
+            try replaceBlock(block, in: &document, at: path)
+            return BlockOperationResult(document: document, focusPath: path, caretUTF16Offset: 0)
+        }
+
+        if text.hasSuffix("\u{2028}") {
+            text.removeLast()
+        }
+        block.inlines = [.text(text)]
+        try replaceBlock(block, in: &document, at: path)
+        let insertionIndex = path.indexInParent + 1
+        try insert(
+            .paragraph(""),
+            in: &document,
+            at: BlockDropTarget(parent: path.parent, index: insertionIndex)
+        )
+        let focusPath = path.parent?.appendingChild(index: insertionIndex) ?? .root(index: insertionIndex)
+        return BlockOperationResult(document: document, focusPath: focusPath, caretUTF16Offset: 0)
     }
 
     static func deleteEmptyBlockBackward(
@@ -331,7 +466,10 @@ enum BlockOperations {
         }
 
         var document = document
-        try removeBlock(in: &document, at: path)
+        // A deleted toggle's children survive it, splicing in where it stood.
+        try mutateChildren(in: &document.blocks, indices: path.indices) { siblings, index in
+            siblings.replaceSubrange(index...index, with: block.children)
+        }
         let focusPath = path.parent?.appendingChild(index: path.indexInParent - 1) ?? .root(index: path.indexInParent - 1)
         return BlockOperationResult(document: document, focusPath: focusPath)
     }
@@ -727,6 +865,8 @@ extension BlockOperations {
         case .numberedList: return "\(numberedIndex). " + text
         case .checklist: return (block.checked == true ? "- [x] " : "- [ ] ") + text
         case .quote: return "> " + text
+        case .callout: return "!! " + text
+        case .code: return "```\n" + text.replacingOccurrences(of: "\u{2028}", with: "\n") + "\n```"
         case .divider: return "---"
         default: return text
         }

@@ -21,10 +21,14 @@ enum BlockRhythmPolicy {
         case .heading2: return baseGap + (previousIsHeading ? 6 : 15)
         case .heading3: return baseGap + (previousIsHeading ? 4 : 10)
         case .divider: return baseGap + 6
+        case .callout, .code: return baseGap + 4
         case .bulletList, .numberedList, .checklist:
             return previousKind == kind ? max(4, baseGap - 2) : baseGap
         default:
-            return previousKind == .divider ? baseGap + 6 : baseGap
+            if previousKind == .divider { return baseGap + 6 }
+            // Air below a tinted card before plain text resumes.
+            if previousKind == .callout || previousKind == .code { return baseGap + 4 }
+            return baseGap
         }
     }
 }
@@ -236,9 +240,119 @@ struct BlockListView: View {
                 blockKindBadge(for: block.kind)
                 textBlockRow(for: block, at: path)
             }
+        case .callout:
+            CalloutBlockRowView(
+                style: block.callout ?? .default,
+                darkMode: darkMode,
+                onStyleChange: { newStyle in
+                    var updated = block
+                    updated.callout = newStyle
+                    replaceBlock(at: path, with: updated)
+                }
+            ) {
+                textBlockRow(for: block, at: path)
+            }
+        case .code:
+            CodeBlockRowView(
+                codeText: { (try? BlockOperations.currentBlock(in: document, at: path))?.plainInlineText ?? block.plainInlineText },
+                darkMode: darkMode
+            ) {
+                textBlockRow(for: block, at: path)
+            }
+        case .toggle:
+            toggleRow(for: block, at: path)
         default:
             textBlockRow(for: block, at: path)
         }
+    }
+
+    private func toggleRow(for block: RichBlock, at path: BlockPath) -> some View {
+        ToggleBlockRowView(
+            isCollapsed: block.toggleCollapsed ?? false,
+            hasChildren: !block.children.isEmpty,
+            darkMode: darkMode,
+            onToggleCollapse: {
+                var updated = block
+                updated.toggleCollapsed = !(block.toggleCollapsed ?? false)
+                replaceBlock(at: path, with: updated)
+            },
+            onAddFirstChild: { addFirstToggleChild(at: path, block: block) },
+            header: {
+                textBlockRow(for: block, at: path)
+            },
+            children: {
+                BlockListView(
+                    document: toggleChildrenBinding(at: path, fallback: block),
+                    fontSize: fontSize,
+                    fontDesign: fontDesign,
+                    lineSpacingAdjustment: lineSpacingAdjustment,
+                    blockGap: blockGap,
+                    placeholder: "",
+                    darkMode: darkMode,
+                    overrideTextColor: overrideTextColor,
+                    allowSlashCommands: allowSlashCommands,
+                    allowMentions: allowMentions,
+                    allowSelectionMenu: allowSelectionMenu,
+                    allowImages: allowImages,
+                    typewriterMode: typewriterMode,
+                    scrollsInternally: false,
+                    editorTargetID: editorTargetID,
+                    navigationTargetID: navigationTargetID,
+                    focusCoordinator: resolvedFocusCoordinator,
+                    providesNavigationOrder: false,
+                    onSelectionChanged: onSelectionChanged,
+                    onExitFinalEmptyTextRegion: { exitToggleBody(at: path) },
+                    onDocumentChange: { _, _ in emitDocumentChange() }
+                )
+            }
+        )
+    }
+
+    /// Binding into a toggle's children — the nested list edits them in
+    /// place, exactly like an element body.
+    private func toggleChildrenBinding(at path: BlockPath, fallback: RichBlock) -> Binding<RichDocument> {
+        Binding(
+            get: {
+                let block = (try? BlockOperations.currentBlock(in: document, at: path)) ?? fallback
+                return RichDocument(blocks: block.children)
+            },
+            set: { nextDocument in
+                guard var block = try? BlockOperations.currentBlock(in: document, at: path) else { return }
+                block.children = nextDocument.blocks
+                guard let result = try? BlockOperations.replaceBlock(in: document, at: path, with: block),
+                      result.document != document else { return }
+                document = result.document
+                emitDocumentChange()
+            }
+        )
+    }
+
+    private func addFirstToggleChild(at path: BlockPath, block: RichBlock) {
+        var updated = (try? BlockOperations.currentBlock(in: document, at: path)) ?? block
+        guard updated.children.isEmpty else { return }
+        let paragraph = RichBlock.paragraph("")
+        updated.children = [paragraph]
+        updated.toggleCollapsed = false
+        replaceBlock(at: path, with: updated)
+        resolvedFocusCoordinator.focus(paragraph.id)
+    }
+
+    /// Return on the empty final child of a toggle exits the toggle — the
+    /// empty child is given up and the caret lands in a fresh paragraph below.
+    private func exitToggleBody(at path: BlockPath) -> Bool {
+        guard var block = try? BlockOperations.currentBlock(in: document, at: path),
+              block.kind == .toggle else { return false }
+        if let last = block.children.last,
+           last.kind == .paragraph,
+           last.plainInlineText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            block.children.removeLast()
+        }
+        guard let replaced = try? BlockOperations.replaceBlock(in: document, at: path, with: block),
+              let result = try? BlockOperations.insertBlock(.paragraph(""), in: replaced.document, after: path) else {
+            return false
+        }
+        commit(result, undoActionName: "Exit Toggle")
+        return true
     }
 
     private func textBlockRow(for block: RichBlock, at path: BlockPath) -> some View {

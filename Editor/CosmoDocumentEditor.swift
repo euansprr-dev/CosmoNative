@@ -169,12 +169,16 @@ struct MarkdownBlockAlias {
         ("[] ", .checklist, false),
         ("- ", .bulletList, nil),
         ("* ", .bulletList, nil),
-        ("> ", .quote, nil)
+        ("> ", .quote, nil),
+        ("!! ", .callout, nil)
     ]
 
     static func match(text: String, cursorLocation: Int) -> MarkdownBlockAlias? {
         if text == "---", cursorLocation == 3 {
             return MarkdownBlockAlias(kind: .divider, checked: nil, utf16Length: 3)
+        }
+        if text == "```", cursorLocation == 3 {
+            return MarkdownBlockAlias(kind: .code, checked: nil, utf16Length: 3)
         }
         for (prefix, kind, checked) in prefixes {
             let length = (prefix as NSString).length

@@ -335,11 +335,17 @@ struct RichTextEditor: View {
     }
 
     private var slashCommands: [SlashCommand] {
-        SlashCommandCatalog.commands(elementDefinitions: elementStore.activeDefinitions)
+        surfaceCommands(SlashCommandCatalog.commands(elementDefinitions: elementStore.activeDefinitions))
     }
 
     private var slashSearchCommands: [SlashCommand] {
-        SlashCommandCatalog.searchableCommands(elementDefinitions: elementStore.activeDefinitions)
+        surfaceCommands(SlashCommandCatalog.searchableCommands(elementDefinitions: elementStore.activeDefinitions))
+    }
+
+    /// Block rows offer the full palette; the continuous editors drop the
+    /// kinds they can't render.
+    private func surfaceCommands(_ commands: [SlashCommand]) -> [SlashCommand] {
+        splitsOnReturn ? commands : commands.filter { !$0.type.requiresBlockEditor }
     }
 
     private var elementSubmenuCommands: [SlashCommand] {
@@ -1143,10 +1149,23 @@ enum SlashCommandType: Equatable {
     case heading1, heading2, heading3
     case bulletList, numberedList, checkbox
     case quote, divider
+    case callout, toggle, codeBlock
 
     var requiresTextKitMutationBeforeSemanticHandling: Bool {
         switch self {
         case .content, .research:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Kinds only the block editor can render — the legacy continuous
+    /// editor (Content/Idea/canvas) has no TextKit chrome for them, so its
+    /// slash menu must not offer them.
+    var requiresBlockEditor: Bool {
+        switch self {
+        case .callout, .toggle, .codeBlock:
             return true
         default:
             return false
@@ -1170,6 +1189,9 @@ enum SlashCommandType: Equatable {
         case .checkbox: return "checkbox"
         case .quote: return "quote"
         case .divider: return "divider"
+        case .callout: return "callout"
+        case .toggle: return "toggle"
+        case .codeBlock: return "code-block"
         }
     }
 }
@@ -1182,6 +1204,9 @@ enum SlashCommandCatalog {
         SlashCommand(type: .heading2, title: "Heading 2", subtitle: "Medium section heading", icon: "textformat.size", shortcut: nil),
         SlashCommand(type: .heading3, title: "Heading 3", subtitle: "Small section heading", icon: "textformat.size.smaller", shortcut: nil),
         SlashCommand(type: .quote, title: "Quote", subtitle: "Add a block quote", icon: "text.quote", shortcut: nil),
+        SlashCommand(type: .callout, title: "Callout", subtitle: "Highlight with an icon and tint", icon: "exclamationmark.bubble", shortcut: "!!", searchAliases: ["callout", "info", "note", "highlight", "aside"]),
+        SlashCommand(type: .toggle, title: "Toggle", subtitle: "Collapsible section of blocks", icon: "chevron.forward.square", shortcut: nil, searchAliases: ["toggle", "collapse", "disclosure", "fold"]),
+        SlashCommand(type: .codeBlock, title: "Code", subtitle: "Monospaced code block", icon: "curlybraces", shortcut: "```", searchAliases: ["code", "snippet", "mono", "codeblock"]),
         SlashCommand(type: .divider, title: "Divider", subtitle: "Visual separation between sections", icon: "minus", shortcut: nil),
         SlashCommand(type: .content, title: "Content Block", subtitle: "Draft with the content workflow", icon: "doc.text", shortcut: nil, searchAliases: ["content", "draft", "post"]),
         SlashCommand(type: .research, title: "Research Block", subtitle: "Collect sources and notes", icon: "magnifyingglass.circle", shortcut: nil, searchAliases: ["research", "source", "citation"]),

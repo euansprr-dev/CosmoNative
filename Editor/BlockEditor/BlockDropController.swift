@@ -84,9 +84,11 @@ enum BlockInteractionPolicy {
             return HandleMetrics(verticalAnchor: .center, topPadding: 0, hitSize: CGSize(width: 28, height: 28))
         case .element, .image:
             return HandleMetrics(verticalAnchor: .cardHeader, topPadding: 8, hitSize: CGSize(width: 28, height: 32))
+        case .callout, .code:
+            return HandleMetrics(verticalAnchor: .cardHeader, topPadding: 8, hitSize: CGSize(width: 28, height: 32))
         case .content, .research:
             return HandleMetrics(verticalAnchor: .cardHeader, topPadding: 20, hitSize: CGSize(width: 28, height: 32))
-        case .paragraph, .quote, .bulletList, .numberedList, .checklist:
+        case .paragraph, .quote, .bulletList, .numberedList, .checklist, .toggle:
             return HandleMetrics(verticalAnchor: .textBaseline, topPadding: 11, hitSize: CGSize(width: 28, height: 30))
         }
     }

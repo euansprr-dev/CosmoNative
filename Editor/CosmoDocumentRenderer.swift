@@ -93,6 +93,12 @@ struct CosmoDocumentRenderer: View {
                 .frame(height: 1))
         case .element:
             AnyView(elementBlockView(block, depth: depth))
+        case .callout:
+            AnyView(calloutBlockView(block, at: index, in: siblings))
+        case .toggle:
+            AnyView(toggleBlockView(block, depth: depth))
+        case .code:
+            AnyView(codeBlockView(block))
         case .image:
             if let image = block.inlines.compactMap(\.image).first,
                let nsImage = ImageStore.load(path: image.path) {
@@ -161,6 +167,70 @@ struct CosmoDocumentRenderer: View {
                 .stroke(elementBorderColor, lineWidth: 0.7)
         )
         .shadow(color: elementShadowColor, radius: 1.5, x: 0, y: 1)
+    }
+
+    private func calloutBlockView(_ block: RichBlock, at index: Int, in siblings: [RichBlock]) -> some View {
+        let tone = NoteInkPalette.tone(block.callout?.toneID)
+        return HStack(alignment: .top, spacing: 8) {
+            Image(systemName: DocumentElementSymbol.validName(block.callout?.icon ?? RichCalloutStyle.default.icon))
+                .font(.system(size: max(11, fontSize - 4), weight: .medium))
+                .foregroundStyle(tone.ink(darkMode: darkMode))
+                .frame(width: 18, height: 18)
+            inlineText(for: block, at: index, in: siblings)
+                .font(font(for: block))
+                .foregroundColor(textColor)
+                .lineLimit(lineLimit)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(tone.wash(darkMode: darkMode))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(tone.hairline(darkMode: darkMode), lineWidth: 1)
+        )
+    }
+
+    private func toggleBlockView(_ block: RichBlock, depth: Int) -> some View {
+        let collapsed = block.toggleCollapsed ?? false
+        return VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: collapsed ? "chevron.right" : "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(elementChevronColor)
+                    .frame(width: 14, height: 14)
+                    .padding(.top, 2)
+                Text(block.plainInlineText)
+                    .font(.system(size: fontSize, weight: .medium))
+                    .foregroundColor(textColor)
+                    .lineLimit(lineLimit)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !collapsed, !block.children.isEmpty {
+                blockStack(block.children, depth: depth + 1)
+                    .padding(.leading, 20)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func codeBlockView(_ block: RichBlock) -> some View {
+        Text(block.plainInlineText.replacingOccurrences(of: "\u{2028}", with: "\n"))
+            .font(.system(size: max(11, fontSize - 3), design: .monospaced))
+            .foregroundColor(textColor)
+            .lineLimit(lineLimit)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(darkMode ? Color.white.opacity(0.06) : DS.inkWash.opacity(0.05))
+            )
     }
 
     private var elementChevronColor: Color {

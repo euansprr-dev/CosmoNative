@@ -2839,6 +2839,19 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                     return true
                 }
 
+                // Code blocks: Return stays INSIDE the block as a soft break —
+                // code is multiline by nature. The empty-final-line branch
+                // above is the exit (double-Return leaves the block).
+                if parent.splitsOnReturn, parent.rowBlockKind == .code {
+                    if parent.menusVisible?() == true {
+                        dismissMenus()
+                    }
+                    textView.insertText("\u{2028}", replacementRange: textView.selectedRange())
+                    syncBindings(from: textView)
+                    scheduleAncestorTypewriterScroll(for: textView)
+                    return true
+                }
+
                 // Block rows: Return ALWAYS splits the block at the caret —
                 // the Notion model. Shift+Return (insertLineBreak above) is
                 // the only way to stay in the block. The caret offset is
@@ -3654,6 +3667,10 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 toggleNumberedList(in: textView)
             case .checkbox:
                 toggleChecklist(in: textView)
+            case .callout, .toggle, .codeBlock:
+                // Block-editor-only kinds; the legacy continuous editor has no
+                // TextKit rendering for them, so the trigger is just consumed.
+                break
             }
 
             syncBindings(from: textView)

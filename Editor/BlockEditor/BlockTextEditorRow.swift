@@ -164,6 +164,7 @@ struct BlockTextEditorRow: View {
         }
         if first.kind == existingBlock.kind {
             result[0].id = existingBlock.id
+            restoreRowOnlyFields(&result[0], from: existingBlock)
             return result
         }
         // The row owns its block's KIND — a content sync may upgrade a plain
@@ -179,8 +180,22 @@ struct BlockTextEditorRow: View {
             result[0].checked = existingBlock.kind == .checklist
                 ? (result[0].checked ?? existingBlock.checked ?? false)
                 : nil
+            restoreRowOnlyFields(&result[0], from: existingBlock)
         }
         return result
+    }
+
+    /// Fields the row's text serializer can't see — callout chrome, toggle
+    /// state, and toggle children live only on the document block, so every
+    /// re-emission from the text view must carry them forward or a keystroke
+    /// silently deletes them.
+    private func restoreRowOnlyFields(_ block: inout RichBlock, from existingBlock: RichBlock) {
+        block.callout = existingBlock.callout
+        block.toggleCollapsed = existingBlock.toggleCollapsed
+        block.rawKind = existingBlock.rawKind
+        if !existingBlock.children.isEmpty, block.children.isEmpty {
+            block.children = existingBlock.children
+        }
     }
 
     private func handleBoundaryCommand(_ command: EditorBoundaryCommand) -> Bool {
@@ -380,6 +395,7 @@ struct BlockTextEditorRow: View {
             parsed[0].kind = block.kind
             parsed[0].checked = block.checked
             parsed[0].heading = block.heading
+            restoreRowOnlyFields(&parsed[0], from: block)
         }
         guard let replaced = try? BlockOperations.replaceBlocks(
             in: document,
@@ -494,9 +510,14 @@ struct BlockTextEditorRow: View {
     private func exitEmptyListOrFinalRegion() -> Bool {
         guard let block = currentBlock,
               let currentPath else { return false }
-        if [.bulletList, .numberedList, .checklist].contains(block.kind),
+        if block.kind == .code,
+           let result = try? BlockOperations.exitCodeBlock(in: document, at: currentPath) {
+            apply(result, undoActionName: "Exit Code Block")
+            return true
+        }
+        if [.bulletList, .numberedList, .checklist, .callout, .toggle].contains(block.kind),
            let result = try? BlockOperations.exitEmptyListBlock(in: document, at: currentPath) {
-            apply(result, undoActionName: "Exit List")
+            apply(result, undoActionName: "Exit Block")
             return true
         }
         return onExitFinalEmptyTextRegion?() ?? false
@@ -519,7 +540,6 @@ struct BlockTextEditorRow: View {
     /// Slash command from the coordinator — the "/" trigger and query have
     /// already been removed from the text view AND livePlainText.
     private func executeSlashCommand(_ command: SlashCommand, livePlainText: String) -> Bool {
-        let path = currentPath
         let action = BlockCommandCatalog.action(for: command)
         guard let block = currentBlock,
               let currentPath,

@@ -528,4 +528,141 @@ final class BlockOperationsTests: XCTestCase {
         XCTAssertEqual(firstLine.blockOffset, 0)
         XCTAssertEqual(firstLine.caretOffsetFromEnd, 2)
     }
+
+    // MARK: - Callout / Toggle / Code blocks
+
+    func testTransformToCalloutSeedsDefaultStyleAndBackStripsIt() throws {
+        let document = RichDocument(blocks: [RichBlock.paragraph("Watch this")])
+
+        let toCallout = try BlockOperations.transformBlock(in: document, at: .root(index: 0), to: .callout)
+        XCTAssertEqual(toCallout.document.blocks[0].kind, .callout)
+        XCTAssertEqual(toCallout.document.blocks[0].callout, .default)
+
+        let backToText = try BlockOperations.transformBlock(in: toCallout.document, at: .root(index: 0), to: .paragraph)
+        XCTAssertNil(backToText.document.blocks[0].callout)
+    }
+
+    func testTransformToggleAwayHoistsChildrenAsSiblings() throws {
+        let child = RichBlock.paragraph("inside")
+        let toggle = RichBlock(kind: .toggle, inlines: [.text("Header")], children: [child])
+        let document = RichDocument(blocks: [toggle, RichBlock.paragraph("after")])
+
+        let result = try BlockOperations.transformBlock(in: document, at: .root(index: 0), to: .heading2)
+
+        XCTAssertEqual(result.document.blocks.count, 3)
+        XCTAssertEqual(result.document.blocks[0].kind, .heading2)
+        XCTAssertTrue(result.document.blocks[0].children.isEmpty)
+        XCTAssertEqual(result.document.blocks[1].id, child.id)
+        XCTAssertEqual(result.document.blocks[2].plainInlineText, "after")
+    }
+
+    func testSplitToggleHeaderDivesIntoFirstChild() throws {
+        let toggle = RichBlock(kind: .toggle, inlines: [.text("Plan")], toggleCollapsed: true)
+        let document = RichDocument(blocks: [toggle])
+
+        let result = try BlockOperations.splitTextBlock(in: document, at: .root(index: 0), utf16Offset: 4)
+
+        let updated = result.document.blocks[0]
+        XCTAssertEqual(updated.kind, .toggle)
+        XCTAssertEqual(updated.toggleCollapsed, false)
+        XCTAssertEqual(updated.children.count, 1)
+        XCTAssertEqual(updated.children[0].kind, .paragraph)
+        XCTAssertEqual(result.focusPath?.indices, [0, 0])
+    }
+
+    func testMergeBackwardAfterExpandedToggleLandsInLastChildAndKeepsChildren() throws {
+        let child = RichBlock.paragraph("inside")
+        let toggle = RichBlock(kind: .toggle, inlines: [.text("Header")], children: [child])
+        let tail = RichBlock.paragraph("tail")
+        let document = RichDocument(blocks: [toggle, tail])
+
+        let result = try BlockOperations.mergeBackward(in: document, at: .root(index: 1))
+
+        XCTAssertEqual(result.document.blocks.count, 1)
+        XCTAssertEqual(result.document.blocks[0].children[0].plainInlineText, "insidetail")
+        XCTAssertEqual(result.focusPath?.indices, [0, 0])
+        XCTAssertEqual(result.caretUTF16Offset, "inside".utf16.count)
+    }
+
+    func testDeleteEmptyToggleHoistsChildren() throws {
+        let child = RichBlock.paragraph("survivor")
+        let toggle = RichBlock(kind: .toggle, inlines: [.text("")], children: [child])
+        let document = RichDocument(blocks: [RichBlock.paragraph("first"), toggle])
+
+        let result = try BlockOperations.deleteEmptyBlockBackward(in: document, at: .root(index: 1))
+
+        XCTAssertEqual(result.document.blocks.count, 2)
+        XCTAssertEqual(result.document.blocks[1].id, child.id)
+    }
+
+    func testExitCodeBlockTrimsTrailingEmptyLineAndInsertsParagraph() throws {
+        let code = RichBlock(kind: .code, inlines: [.text("let a = 1\u{2028}")])
+        let document = RichDocument(blocks: [code])
+
+        let result = try BlockOperations.exitCodeBlock(in: document, at: .root(index: 0))
+
+        XCTAssertEqual(result.document.blocks.count, 2)
+        XCTAssertEqual(result.document.blocks[0].plainInlineText, "let a = 1")
+        XCTAssertEqual(result.document.blocks[1].kind, .paragraph)
+        XCTAssertEqual(result.focusPath, .root(index: 1))
+    }
+
+    func testExitEmptyCodeBlockConvertsToParagraph() throws {
+        let code = RichBlock(kind: .code, inlines: [.text("")])
+        let document = RichDocument(blocks: [code])
+
+        let result = try BlockOperations.exitCodeBlock(in: document, at: .root(index: 0))
+
+        XCTAssertEqual(result.document.blocks.count, 1)
+        XCTAssertEqual(result.document.blocks[0].kind, .paragraph)
+    }
+
+    func testPasteCollapsesFencedCodeIntoOneBlockWithSoftBreaks() {
+        let parsed = BlockOperations.parsedPasteBlocks(from: "before\n```\nlet a = 1\nprint(a)\n```\nafter")
+
+        XCTAssertEqual(parsed.count, 3)
+        XCTAssertEqual(parsed[0].plainInlineText, "before")
+        XCTAssertEqual(parsed[1].kind, .code)
+        XCTAssertEqual(parsed[1].plainInlineText, "let a = 1\u{2028}print(a)")
+        XCTAssertEqual(parsed[2].plainInlineText, "after")
+    }
+
+    func testMarkdownAliasesForCalloutAndCode() {
+        XCTAssertEqual(MarkdownBlockAlias.match(text: "!! ", cursorLocation: 3)?.kind, .callout)
+        XCTAssertEqual(MarkdownBlockAlias.match(text: "```", cursorLocation: 3)?.kind, .code)
+        XCTAssertNil(MarkdownBlockAlias.match(text: "x!! ", cursorLocation: 4))
+    }
+
+    // MARK: - Lenient kind decoding
+
+    func testUnknownBlockKindDecodesAsParagraphAndRoundTripsRawKind() throws {
+        let json = """
+        {"blocks":[{"id":"\(UUID().uuidString)","kind":"hologram","inlines":[{"id":"\(UUID().uuidString)","kind":"text","text":"future block","marks":[]}]}]}
+        """
+        let decoded = try JSONDecoder().decode(RichDocument.self, from: Data(json.utf8))
+
+        XCTAssertEqual(decoded.blocks.count, 1)
+        XCTAssertEqual(decoded.blocks[0].kind, .paragraph)
+        XCTAssertEqual(decoded.blocks[0].rawKind, "hologram")
+        XCTAssertEqual(decoded.blocks[0].plainInlineText, "future block")
+
+        let reencoded = try JSONEncoder().encode(decoded)
+        let roundTripped = try JSONSerialization.jsonObject(with: reencoded) as? [String: Any]
+        let blocks = roundTripped?["blocks"] as? [[String: Any]]
+        XCTAssertEqual(blocks?.first?["kind"] as? String, "hologram")
+    }
+
+    func testCalloutAndToggleSurviveCodableRoundTrip() throws {
+        let callout = RichBlock(kind: .callout, inlines: [.text("hi")], callout: RichCalloutStyle(icon: "flame", toneID: "clay"))
+        let toggle = RichBlock(kind: .toggle, inlines: [.text("head")], children: [.paragraph("body")], toggleCollapsed: true)
+        let document = RichDocument(blocks: [callout, toggle])
+
+        let data = try JSONEncoder().encode(document)
+        let decoded = try JSONDecoder().decode(RichDocument.self, from: data)
+
+        XCTAssertEqual(decoded.blocks[0].callout?.icon, "flame")
+        XCTAssertEqual(decoded.blocks[0].callout?.toneID, "clay")
+        XCTAssertEqual(decoded.blocks[1].toggleCollapsed, true)
+        XCTAssertEqual(decoded.blocks[1].children.count, 1)
+    }
 }

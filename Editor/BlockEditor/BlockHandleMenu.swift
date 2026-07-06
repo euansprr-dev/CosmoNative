@@ -16,7 +16,10 @@ struct BlockTransformOption: Identifiable, Equatable {
         BlockTransformOption(kind: .bulletList, label: "Bulleted list", icon: "list.bullet"),
         BlockTransformOption(kind: .numberedList, label: "Numbered list", icon: "list.number"),
         BlockTransformOption(kind: .checklist, label: "To-do list", icon: "checklist"),
-        BlockTransformOption(kind: .quote, label: "Quote", icon: "text.quote")
+        BlockTransformOption(kind: .quote, label: "Quote", icon: "text.quote"),
+        BlockTransformOption(kind: .callout, label: "Callout", icon: "exclamationmark.bubble"),
+        BlockTransformOption(kind: .toggle, label: "Toggle", icon: "chevron.forward.square"),
+        BlockTransformOption(kind: .code, label: "Code", icon: "curlybraces")
     ]
 }
 

@@ -110,6 +110,30 @@ enum BlockCommandCatalog {
             action: .transform(.quote)
         ),
         BlockCommand(
+            id: "callout",
+            title: "Callout",
+            subtitle: "Highlight with an icon and tint",
+            systemImage: "exclamationmark.bubble",
+            aliases: ["info", "note", "highlight", "aside", "warning"],
+            action: .transform(.callout)
+        ),
+        BlockCommand(
+            id: "toggle",
+            title: "Toggle",
+            subtitle: "Collapsible section of blocks",
+            systemImage: "chevron.forward.square",
+            aliases: ["collapse", "disclosure", "fold", "expand"],
+            action: .transform(.toggle)
+        ),
+        BlockCommand(
+            id: "code-block",
+            title: "Code",
+            subtitle: "Monospaced code block",
+            systemImage: "curlybraces",
+            aliases: ["snippet", "mono", "codeblock", "pre"],
+            action: .transform(.code)
+        ),
+        BlockCommand(
             id: "divider",
             title: "Divider",
             subtitle: "Separate sections",
@@ -186,6 +210,12 @@ enum BlockCommandCatalog {
             return .transform(.checklist)
         case .divider:
             return .replaceOrInsert(.divider)
+        case .callout:
+            return .transform(.callout)
+        case .toggle:
+            return .transform(.toggle)
+        case .codeBlock:
+            return .transform(.code)
         case .content:
             return .replaceOrInsert(.content)
         case .research:
@@ -227,6 +257,9 @@ private extension RichBlockKind {
         case .element: return "Element"
         case .content: return "Content Block"
         case .research: return "Research Block"
+        case .callout: return "Callout"
+        case .toggle: return "Toggle"
+        case .code: return "Code Block"
         }
     }
 }

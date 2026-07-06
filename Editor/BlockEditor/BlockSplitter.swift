@@ -61,7 +61,7 @@ enum BlockSplitter {
 
     static func isTextRegionBlock(_ block: RichBlock) -> Bool {
         switch block.kind {
-        case .paragraph, .heading1, .heading2, .heading3, .quote, .bulletList, .numberedList, .checklist, .content, .research:
+        case .paragraph, .heading1, .heading2, .heading3, .quote, .bulletList, .numberedList, .checklist, .content, .research, .callout, .toggle, .code:
             return true
         case .divider, .image, .element:
             return false

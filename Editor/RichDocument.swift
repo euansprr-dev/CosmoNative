@@ -23,6 +23,9 @@ enum RichBlockKind: String, Codable, CaseIterable, Hashable, Sendable {
     case element
     case content
     case research
+    case callout
+    case toggle
+    case code
 
     var headingLevelInt: Int? {
         switch self {
@@ -35,7 +38,8 @@ enum RichBlockKind: String, Codable, CaseIterable, Hashable, Sendable {
 
     var isTextEditableBlock: Bool {
         switch self {
-        case .paragraph, .heading1, .heading2, .heading3, .quote, .bulletList, .numberedList, .checklist, .content, .research:
+        case .paragraph, .heading1, .heading2, .heading3, .quote, .bulletList, .numberedList, .checklist, .content, .research,
+             .callout, .toggle, .code:
             return true
         case .divider, .image, .element:
             return false
@@ -44,7 +48,7 @@ enum RichBlockKind: String, Codable, CaseIterable, Hashable, Sendable {
 
     var splitContinuationKind: RichBlockKind {
         switch self {
-        case .heading1, .heading2, .heading3, .quote, .content, .research:
+        case .heading1, .heading2, .heading3, .quote, .content, .research, .callout:
             return .paragraph
         case .bulletList:
             return .bulletList
@@ -54,9 +58,38 @@ enum RichBlockKind: String, Codable, CaseIterable, Hashable, Sendable {
             return .checklist
         case .paragraph:
             return .paragraph
-        case .divider, .image, .element:
+        case .code:
+            // Return inside a code block inserts a soft break; a structural
+            // split (hard-newline backstop) keeps the continuation as code.
+            return .code
+        case .divider, .image, .element, .toggle:
             return .paragraph
         }
+    }
+}
+
+/// The tinted-block style carried by a callout: an SF Symbol and a
+/// `NoteInkPalette` tone ID. Lenient-decoded so future fields never break
+/// older documents.
+struct RichCalloutStyle: Codable, Equatable, Hashable, Sendable {
+    var icon: String
+    var toneID: String
+
+    static let `default` = RichCalloutStyle(icon: "sparkles", toneID: NoteInkPalette.defaultToneID)
+
+    init(icon: String, toneID: String) {
+        self.icon = icon
+        self.toneID = toneID
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case icon, toneID
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        icon = (try? container.decodeIfPresent(String.self, forKey: .icon)) ?? Self.default.icon
+        toneID = (try? container.decodeIfPresent(String.self, forKey: .toneID)) ?? Self.default.toneID
     }
 }
 
@@ -176,6 +209,14 @@ struct RichBlock: Identifiable, Codable, Equatable, Hashable, Sendable {
     var element: RichElementInstance? = nil
     var heading: RichHeadingMetadata? = nil
     var children: [RichBlock] = []
+    /// Callout chrome (icon + tone). Only meaningful when `kind == .callout`.
+    var callout: RichCalloutStyle? = nil
+    /// Toggle disclosure state. Only meaningful when `kind == .toggle`.
+    var toggleCollapsed: Bool? = nil
+    /// Forward-compat: a kind raw value this build doesn't know. The block
+    /// renders/edits as a paragraph, but the original kind is preserved on
+    /// re-encode so newer builds get their block back intact.
+    var rawKind: String? = nil
 
     init(
         id: UUID = UUID(),
@@ -184,7 +225,9 @@ struct RichBlock: Identifiable, Codable, Equatable, Hashable, Sendable {
         checked: Bool? = nil,
         element: RichElementInstance? = nil,
         heading: RichHeadingMetadata? = nil,
-        children: [RichBlock] = []
+        children: [RichBlock] = [],
+        callout: RichCalloutStyle? = nil,
+        toggleCollapsed: Bool? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -193,6 +236,8 @@ struct RichBlock: Identifiable, Codable, Equatable, Hashable, Sendable {
         self.element = element
         self.heading = kind.headingLevelInt == nil ? nil : (heading ?? RichHeadingMetadata())
         self.children = children
+        self.callout = kind == .callout ? (callout ?? .default) : callout
+        self.toggleCollapsed = kind == .toggle ? (toggleCollapsed ?? false) : toggleCollapsed
     }
 
     static func paragraph(_ text: String) -> RichBlock {
@@ -229,12 +274,25 @@ struct RichBlock: Identifiable, Codable, Equatable, Hashable, Sendable {
         case element
         case heading
         case children
+        case callout
+        case toggleCollapsed
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
-        kind = try container.decode(RichBlockKind.self, forKey: .kind)
+        // Lenient kind decoding: an unknown raw value (written by a newer
+        // build) degrades to a paragraph instead of throwing — a throw here
+        // used to discard the entire document body. The original raw value is
+        // kept so re-encoding round-trips the newer block untouched.
+        let rawKindValue = try container.decode(String.self, forKey: .kind)
+        if let knownKind = RichBlockKind(rawValue: rawKindValue) {
+            kind = knownKind
+            rawKind = nil
+        } else {
+            kind = .paragraph
+            rawKind = rawKindValue
+        }
         inlines = try container.decodeIfPresent([RichInlineNode].self, forKey: .inlines) ?? []
         checked = try container.decodeIfPresent(Bool.self, forKey: .checked)
         element = try container.decodeIfPresent(RichElementInstance.self, forKey: .element)
@@ -243,12 +301,20 @@ struct RichBlock: Identifiable, Codable, Equatable, Hashable, Sendable {
             heading = RichHeadingMetadata()
         }
         children = try container.decodeIfPresent([RichBlock].self, forKey: .children) ?? []
+        callout = try? container.decodeIfPresent(RichCalloutStyle.self, forKey: .callout)
+        if kind == .callout, callout == nil {
+            callout = .default
+        }
+        toggleCollapsed = try? container.decodeIfPresent(Bool.self, forKey: .toggleCollapsed)
+        if kind == .toggle, toggleCollapsed == nil {
+            toggleCollapsed = false
+        }
     }
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(id, forKey: .id)
-        try container.encode(kind, forKey: .kind)
+        try container.encode(rawKind ?? kind.rawValue, forKey: .kind)
         try container.encode(inlines, forKey: .inlines)
         try container.encodeIfPresent(checked, forKey: .checked)
         try container.encodeIfPresent(element, forKey: .element)
@@ -258,6 +324,8 @@ struct RichBlock: Identifiable, Codable, Equatable, Hashable, Sendable {
         if !children.isEmpty {
             try container.encode(children, forKey: .children)
         }
+        try container.encodeIfPresent(callout, forKey: .callout)
+        try container.encodeIfPresent(toggleCollapsed, forKey: .toggleCollapsed)
     }
 }
 
@@ -276,6 +344,8 @@ struct RichDocument: Codable, Equatable, Hashable, Sendable {
         blocks.allSatisfy { block in
             switch block.kind {
             case .divider, .image, .element:
+                return false
+            case .toggle where !block.children.isEmpty:
                 return false
             default:
                 return block.inlines.allSatisfy { node in
@@ -334,8 +404,17 @@ struct RichDocument: Codable, Equatable, Hashable, Sendable {
                 prefix = ""
             case .research:
                 prefix = ""
+            case .callout:
+                prefix = ""
+            case .code:
+                prefix = ""
             case .image:
                 return indentation + "[Image]"
+            case .toggle:
+                let header = block.inlines.map(\.plainText).joined()
+                let childText = plainText(for: block.children, depth: depth + 1)
+                let headerLine = indentation + "▸ " + header
+                return childText.isEmpty ? headerLine : headerLine + "\n" + childText
             case .element:
                 let title = block.element?.instanceTitleSnapshot ?? block.element?.titleSnapshot ?? "Untitled Element"
                 let childText = plainText(for: block.children, depth: depth + 1)
@@ -363,6 +442,9 @@ struct RichDocument: Codable, Equatable, Hashable, Sendable {
                 return true
             }
             if block.element?.isCollapsed == true, !block.children.isEmpty {
+                return true
+            }
+            if block.kind == .toggle, block.toggleCollapsed == true, !block.children.isEmpty {
                 return true
             }
             if containsCollapsedHiddenContent(in: block.children) {
@@ -1157,7 +1239,7 @@ enum RichDocumentSerializer {
 
     private static func blockPrefix(for block: RichBlock, listPosition: Int) -> String {
         switch block.kind {
-        case .paragraph, .image, .element, .content, .research:
+        case .paragraph, .image, .element, .content, .research, .callout, .toggle, .code:
             return ""
         case .heading1, .heading2, .heading3:
             return ""  // Headings use attribute-based detection, no visible prefix
@@ -1277,6 +1359,15 @@ enum RichDocumentSerializer {
             attributes[.foregroundColor] = (attributes[.foregroundColor] as? NSColor)?.withAlphaComponent(0.9)
         }
 
+        // Code reads as a compact mono column — tight leading, no paragraph
+        // air (soft-break lines inside the block should sit close).
+        if block.kind == .code {
+            let codeParagraph = NSMutableParagraphStyle()
+            codeParagraph.lineSpacing = 3
+            codeParagraph.paragraphSpacing = 0
+            attributes[.paragraphStyle] = codeParagraph
+        }
+
         // Completed to-dos read as done: muted ink plus a strikethrough drawn
         // at render time. The parser strips this strikethrough on checked
         // lines so toggling never bakes a persistent mark into the content.
@@ -1329,6 +1420,10 @@ enum RichDocumentSerializer {
             return NSFont.systemFont(ofSize: max(24, fontSize + 8), weight: .semibold)
         case .heading3:
             return NSFont.systemFont(ofSize: max(20, fontSize + 4), weight: .medium)
+        case .code:
+            return NSFont.monospacedSystemFont(ofSize: max(11, fontSize - 3), weight: .regular)
+        case .toggle:
+            return NSFont.systemFont(ofSize: fontSize, weight: .medium)
         default:
             return NSFont.systemFont(ofSize: fontSize, weight: baseFontWeight)
         }

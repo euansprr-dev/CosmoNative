@@ -423,6 +423,16 @@ enum DocumentElementContextFormatter {
             return ["\(indentation)<divider />"]
         case .image:
             return ["\(indentation)[Image]"]
+        case .toggle:
+            let header = block.inlines.map(\.plainText).joined()
+            var output = ["\(indentation)<toggle collapsed=\"\((block.toggleCollapsed ?? false) ? "true" : "false")\">\(escapedText(header))"]
+            output.append(contentsOf: lines(for: block.children, depth: depth + 1))
+            output.append("\(indentation)</toggle>")
+            return output
+        case .code:
+            let body = block.inlines.map(\.plainText).joined()
+                .replacingOccurrences(of: "\u{2028}", with: "\n\(indentation)")
+            return ["\(indentation)```", "\(indentation)\(body)", "\(indentation)```"]
         case .element:
             let title = block.element?.titleSnapshot ?? "Untitled Element"
             let instanceTitle = block.element?.instanceTitleSnapshot ?? title
@@ -463,7 +473,9 @@ enum DocumentElementContextFormatter {
             return "\(numberedListPosition(in: siblings, before: index)). "
         case .checklist:
             return (block.checked ?? false) ? "[x] " : "[ ] "
-        case .divider, .image, .element, .content, .research:
+        case .callout:
+            return "!! "
+        case .divider, .image, .element, .content, .research, .toggle, .code:
             return ""
         }
     }

@@ -278,6 +278,59 @@ struct NoteDocumentStyle: Codable, Equatable {
     }
 }
 
+/// Per-note page styles for chrome that only knows an atom UUID (library
+/// cards). Read-through: `style(for:)` returns the cached value and quietly
+/// fetches when missing — the observing view re-renders when it lands. A
+/// note save (`.noteFocusStateDidChange`) drops that note's entry, so the
+/// next read refetches and personalization stays live.
+@MainActor
+@Observable
+final class NotePageStyleCache {
+    static let shared = NotePageStyleCache()
+
+    private(set) var styles: [String: NoteDocumentStyle] = [:]
+    @ObservationIgnored private var inflight: Set<String> = []
+    @ObservationIgnored private var saveObserver: NSObjectProtocol?
+
+    private init() {
+        saveObserver = NotificationCenter.default.addObserver(
+            forName: .noteFocusStateDidChange,
+            object: nil,
+            queue: .main
+        ) { notification in
+            let uuid = notification.userInfo?["atomUUID"] as? String
+            Task { @MainActor in
+                if let uuid {
+                    NotePageStyleCache.shared.invalidate(uuid)
+                }
+            }
+        }
+    }
+
+    func style(for atomUUID: String) -> NoteDocumentStyle? {
+        guard !atomUUID.isEmpty else { return nil }
+        if let cached = styles[atomUUID] {
+            return cached
+        }
+        fetchIfNeeded(atomUUID)
+        return nil
+    }
+
+    func invalidate(_ atomUUID: String) {
+        styles[atomUUID] = nil
+    }
+
+    private func fetchIfNeeded(_ atomUUID: String) {
+        guard !inflight.contains(atomUUID) else { return }
+        inflight.insert(atomUUID)
+        Task { @MainActor in
+            let atom = try? await AtomRepository.shared.fetch(uuid: atomUUID)
+            styles[atomUUID] = NoteDocumentStyle.load(fromMetadata: atom?.metadata)
+            inflight.remove(atomUUID)
+        }
+    }
+}
+
 /// The shared "Aa" style popover body — one source of truth for the
 /// document-voice menu, so Notes and Content focus modes read identically.
 /// Page-width options are generic because each surface has its own widths.

@@ -315,6 +315,35 @@ struct NotePageIconView: View {
     }
 }
 
+/// The note's one earned-delight moment: picking a paper tone sends a quiet
+/// wash of light blooming across the page from the Aa button's corner. One
+/// spring, self-fading, purely decorative — callers gate it on Reduce Motion.
+struct PaperToneBloomPulse: View {
+    var darkMode: Bool = false
+
+    @State private var progress: CGFloat = 0
+
+    var body: some View {
+        GeometryReader { geo in
+            let reach = max(geo.size.width, geo.size.height) * 1.3
+            RadialGradient(
+                colors: [Color.white.opacity(darkMode ? 0.10 : 0.28), .clear],
+                center: UnitPoint(x: 0.9, y: 0.04),
+                startRadius: 0,
+                endRadius: max(1, reach * progress)
+            )
+            .opacity(Double(1 - progress))
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+        .onAppear {
+            withAnimation(ProMotionSprings.gentle) {
+                progress = 1
+            }
+        }
+    }
+}
+
 /// The cover band above the title — pure gradient, scrolls with the page,
 /// concentric with whatever container clips it.
 struct NotePageCoverBand: View {

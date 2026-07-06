@@ -314,6 +314,8 @@ struct NoteFocusModeView: View {
     // V2 block editor + per-document style
     @State private var noteStyle: NoteDocumentStyle = .default
     @State private var styleMenuPresented = false
+    /// Increments on every paper-tone pick; restarts the bloom pulse via .id.
+    @State private var paperBloomTrigger = 0
     @State private var bodyFocusCoordinator = BlockFocusCoordinator()
 
     private let database = CosmoDatabase.shared
@@ -616,8 +618,18 @@ struct NoteFocusModeView: View {
                 endRadius: 900
             )
             .blendMode(.multiply)
+            // Picking a paper tone blooms a wash of light from the Aa corner —
+            // the page's one earned delight. Reduce Motion keeps the crossfade.
+            if paperBloomTrigger > 0 {
+                PaperToneBloomPulse(darkMode: DS.usesImmersiveFocusAppearance)
+                    .id(paperBloomTrigger)
+            }
         }
         .animation(reduceMotion ? nil : ProMotionSprings.gentle, value: noteStyle.paperTone)
+        .onChange(of: noteStyle.paperTone) { _, _ in
+            guard !isInitialLoad, !reduceMotion else { return }
+            paperBloomTrigger += 1
+        }
     }
 
     // MARK: - Top Bar (V2)

@@ -463,6 +463,8 @@ enum DocumentElementContextFormatter {
             return ["\(indentation)<divider />"]
         case .image:
             return ["\(indentation)[Image]"]
+        case .sketch:
+            return ["\(indentation)[Sketch]"]
         case .toggle:
             let header = block.inlines.map(\.plainText).joined()
             var output = ["\(indentation)<toggle collapsed=\"\((block.toggleCollapsed ?? false) ? "true" : "false")\">\(escapedText(header))"]
@@ -515,7 +517,7 @@ enum DocumentElementContextFormatter {
             return (block.checked ?? false) ? "[x] " : "[ ] "
         case .callout:
             return "!! "
-        case .divider, .image, .element, .content, .research, .toggle, .code:
+        case .divider, .image, .element, .content, .research, .toggle, .code, .sketch:
             return ""
         }
     }

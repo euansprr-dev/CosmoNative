@@ -63,7 +63,7 @@ enum BlockSplitter {
         switch block.kind {
         case .paragraph, .heading1, .heading2, .heading3, .quote, .bulletList, .numberedList, .checklist, .content, .research, .callout, .toggle, .code:
             return true
-        case .divider, .image, .element:
+        case .divider, .image, .element, .sketch:
             return false
         }
     }

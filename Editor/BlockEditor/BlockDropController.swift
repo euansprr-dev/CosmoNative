@@ -82,7 +82,7 @@ enum BlockInteractionPolicy {
             return HandleMetrics(verticalAnchor: .headingBaseline, topPadding: 12, hitSize: CGSize(width: 28, height: 32))
         case .divider:
             return HandleMetrics(verticalAnchor: .center, topPadding: 0, hitSize: CGSize(width: 28, height: 28))
-        case .element, .image:
+        case .element, .image, .sketch:
             return HandleMetrics(verticalAnchor: .cardHeader, topPadding: 8, hitSize: CGSize(width: 28, height: 32))
         case .callout, .code:
             return HandleMetrics(verticalAnchor: .cardHeader, topPadding: 8, hitSize: CGSize(width: 28, height: 32))

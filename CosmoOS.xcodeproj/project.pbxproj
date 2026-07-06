@@ -803,6 +803,7 @@
 		DD73F7F3B769BB14CBCA5F2D /* ThemeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE2A63D6C848F67BC121A100 /* ThemeManager.swift */; };
 		DD8E8EEA5CE42E8E8C3AC2DC /* CloudSyncSettingsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E44D197477D41A9BAA7F58C /* CloudSyncSettingsTab.swift */; };
 		DDB77C1C08F1D53AA652F553 /* ElementBlockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91DCBAACFA841DE9D1FF6354 /* ElementBlockView.swift */; };
+		C0FFEE0000000000000003C1 /* SketchBlockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0FFEE0000000000000003C2 /* SketchBlockView.swift */; };
 		C0FFEE0000000000000003A5 /* ToggleBlockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0FFEE0000000000000003A6 /* ToggleBlockView.swift */; };
 		C0FFEE0000000000000003A3 /* CodeBlockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0FFEE0000000000000003A4 /* CodeBlockView.swift */; };
 		C0FFEE0000000000000003A1 /* CalloutBlockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0FFEE0000000000000003A2 /* CalloutBlockView.swift */; };
@@ -840,6 +841,7 @@
 		E7641C5DE49071C0869864B8 /* StreakDetailsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA49915CE2C4D102E676F3CD /* StreakDetailsView.swift */; };
 		E7B1767F517215AB11C9F1FA /* ConstellationLayoutEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2D5BA75760933D6A587CBB3 /* ConstellationLayoutEngine.swift */; };
 		E7BF92A4D4DB4EEDE6FFAE9D /* NoteDocumentStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16383AACBDCD56D9EF33943F /* NoteDocumentStyle.swift */; };
+		C0FFEE0000000000000003B1 /* NotePageStylePopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0FFEE0000000000000003B2 /* NotePageStylePopover.swift */; };
 		E7D24E93A28D49A377A65F5E /* CodexCategorySection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F2C209A7F520238E9EC1A30 /* CodexCategorySection.swift */; };
 		E8F8E5951A4802216BB58A63 /* CosmoInlineAssistantModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCEC35FEED3D5D871486D183 /* CosmoInlineAssistantModels.swift */; };
 		E8FD1ECD6B58C4656C822ACF /* CosmoKeyboardFooter.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFEAC446A385A68CC665887D /* CosmoKeyboardFooter.swift */; };
@@ -1012,6 +1014,7 @@
 		14EEE85E94D5D770B73C61D2 /* CosmoAIFocusModeViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmoAIFocusModeViewModel.swift; sourceTree = "<group>"; };
 		1582ED4D92B66729C9F3D55A /* CosmoAgentService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmoAgentService.swift; sourceTree = "<group>"; };
 		16383AACBDCD56D9EF33943F /* NoteDocumentStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteDocumentStyle.swift; sourceTree = "<group>"; };
+		C0FFEE0000000000000003B2 /* NotePageStylePopover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotePageStylePopover.swift; sourceTree = "<group>"; };
 		1684EE294C69EEEB248254C8 /* SynthesisResult.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SynthesisResult.swift; sourceTree = "<group>"; };
 		1692FB24347BF33E65B4141C /* CosmoInlineAssistantReviewOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmoInlineAssistantReviewOverlay.swift; sourceTree = "<group>"; };
 		16984B4BC80A21F41705482B /* SmartOrganizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmartOrganizer.swift; sourceTree = "<group>"; };
@@ -1450,6 +1453,7 @@
 		9157C7E304CFADE15F65B5AF /* ContentPerformanceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentPerformanceView.swift; sourceTree = "<group>"; };
 		915B66D73377441B2010E2A9 /* PaneEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaneEnvironment.swift; sourceTree = "<group>"; };
 		91DCBAACFA841DE9D1FF6354 /* ElementBlockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ElementBlockView.swift; sourceTree = "<group>"; };
+		C0FFEE0000000000000003C2 /* SketchBlockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SketchBlockView.swift; sourceTree = "<group>"; };
 		C0FFEE0000000000000003A6 /* ToggleBlockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToggleBlockView.swift; sourceTree = "<group>"; };
 		C0FFEE0000000000000003A4 /* CodeBlockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeBlockView.swift; sourceTree = "<group>"; };
 		C0FFEE0000000000000003A2 /* CalloutBlockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalloutBlockView.swift; sourceTree = "<group>"; };
@@ -2523,6 +2527,7 @@
 			isa = PBXGroup;
 			children = (
 				16383AACBDCD56D9EF33943F /* NoteDocumentStyle.swift */,
+				C0FFEE0000000000000003B2 /* NotePageStylePopover.swift */,
 				BEE5E024773299E98155B565 /* NoteFocusModeView.swift */,
 			);
 			path = Notes;
@@ -3584,6 +3589,7 @@
 				E7191A4BEF4AA8F25DCECA48 /* BlockTextEditorRow.swift */,
 				F7382FD7C170832A4442C023 /* ElementBlockHeader.swift */,
 				91DCBAACFA841DE9D1FF6354 /* ElementBlockView.swift */,
+				C0FFEE0000000000000003C2 /* SketchBlockView.swift */,
 				C0FFEE0000000000000003A6 /* ToggleBlockView.swift */,
 				C0FFEE0000000000000003A4 /* CodeBlockView.swift */,
 				C0FFEE0000000000000003A2 /* CalloutBlockView.swift */,
@@ -4298,6 +4304,7 @@
 				8DFAF75F03C93AECB04B1873 /* EditorToolbar.swift in Sources */,
 				7147AA779012530F981B4FD0 /* ElementBlockHeader.swift in Sources */,
 				DDB77C1C08F1D53AA652F553 /* ElementBlockView.swift in Sources */,
+				C0FFEE0000000000000003C1 /* SketchBlockView.swift in Sources */,
 				C0FFEE0000000000000003A5 /* ToggleBlockView.swift in Sources */,
 				C0FFEE0000000000000003A3 /* CodeBlockView.swift in Sources */,
 				C0FFEE0000000000000003A1 /* CalloutBlockView.swift in Sources */,
@@ -4510,6 +4517,7 @@
 				829C58AAE407C268D5C06035 /* NodeGraphEngine.swift in Sources */,
 				9CA607325E141EE69F287355 /* NoteBlockView.swift in Sources */,
 				E7BF92A4D4DB4EEDE6FFAE9D /* NoteDocumentStyle.swift in Sources */,
+				C0FFEE0000000000000003B1 /* NotePageStylePopover.swift in Sources */,
 				9863F2C63CA3E562FAE25FFA /* NoteFocusModeView.swift in Sources */,
 				00D5A7E95A2B4E54678F7850 /* NoteStructureApplyService.swift in Sources */,
 				88D08FC512C14DD42B36F680 /* NoteStructurePlanModels.swift in Sources */,

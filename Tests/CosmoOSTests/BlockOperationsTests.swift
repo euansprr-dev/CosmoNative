@@ -693,4 +693,45 @@ final class BlockOperationsTests: XCTestCase {
         XCTAssertEqual(decoded.blocks[1].toggleCollapsed, true)
         XCTAssertEqual(decoded.blocks[1].children.count, 1)
     }
+
+    // MARK: - Sketch
+
+    func testSketchDrawingSurvivesCodableRoundTripWithPortableJSON() throws {
+        let stroke = RichSketchStroke(
+            points: [RichSketchPoint(x: 1, y: 2), RichSketchPoint(x: 3, y: 4)],
+            width: 4.5,
+            inkID: "moss",
+            isHighlighter: true
+        )
+        let block = RichBlock(kind: .sketch, sketch: RichSketchDrawing(strokes: [stroke], height: 300))
+
+        let data = try JSONEncoder().encode(RichDocument(blocks: [block]))
+        let decoded = try JSONDecoder().decode(RichDocument.self, from: data)
+
+        XCTAssertEqual(decoded.blocks[0].kind, .sketch)
+        XCTAssertEqual(decoded.blocks[0].sketch?.strokes, [stroke])
+        XCTAssertEqual(decoded.blocks[0].sketch?.height, 300)
+        // Portable payload: explicit x/y keys, not platform archives.
+        let json = String(data: data, encoding: .utf8) ?? ""
+        XCTAssertTrue(json.contains("\"x\""))
+        XCTAssertTrue(json.contains("\"inkID\""))
+    }
+
+    func testSketchBlockIsNonTextAndInsertsWithTrailingParagraph() throws {
+        XCTAssertFalse(RichBlockKind.sketch.isTextEditableBlock)
+
+        let document = RichDocument(blocks: [RichBlock.paragraph("")])
+        let result = try BlockOperations.apply(
+            .replaceOrInsert(.sketch),
+            in: document,
+            at: .root(index: 0),
+            livePlainText: "",
+            triggerAlreadyRemoved: true
+        )
+
+        XCTAssertEqual(result.document.blocks[0].kind, .sketch)
+        XCTAssertNotNil(result.document.blocks[0].sketch)
+        XCTAssertEqual(result.document.blocks[1].kind, .paragraph)
+        XCTAssertEqual(result.focusPath, .root(index: 1))
+    }
 }

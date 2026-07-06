@@ -99,6 +99,8 @@ struct CosmoDocumentRenderer: View {
             AnyView(toggleBlockView(block, depth: depth))
         case .code:
             AnyView(codeBlockView(block))
+        case .sketch:
+            AnyView(sketchBlockView(block))
         case .image:
             if let image = block.inlines.compactMap(\.image).first,
                let nsImage = ImageStore.load(path: image.path) {
@@ -219,6 +221,36 @@ struct CosmoDocumentRenderer: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Read-only sketch miniature — same smoothing as the editor, capped
+    /// height for previews.
+    private func sketchBlockView(_ block: RichBlock) -> some View {
+        let drawing = block.sketch ?? RichSketchDrawing()
+        return Canvas { context, _ in
+            for stroke in drawing.strokes {
+                let path = SketchGeometry.smoothedPath(for: stroke.points)
+                let base = stroke.inkID == "ink"
+                    ? textColor
+                    : NoteInkPalette.tone(stroke.inkID).ink(darkMode: darkMode)
+                context.stroke(
+                    path,
+                    with: .color(stroke.isHighlighter ? base.opacity(0.35) : base),
+                    style: StrokeStyle(lineWidth: stroke.width, lineCap: .round, lineJoin: .round)
+                )
+            }
+        }
+        .frame(height: min(drawing.height, 180))
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(darkMode ? Color.white.opacity(0.045) : Color.white.opacity(0.55))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(darkMode ? Color.white.opacity(0.10) : DS.documentBorderSubtle, lineWidth: 1)
+        )
+        .accessibilityHidden(true)
     }
 
     private func codeBlockView(_ block: RichBlock) -> some View {

@@ -26,6 +26,7 @@ enum RichBlockKind: String, Codable, CaseIterable, Hashable, Sendable {
     case callout
     case toggle
     case code
+    case sketch
 
     var headingLevelInt: Int? {
         switch self {
@@ -41,7 +42,7 @@ enum RichBlockKind: String, Codable, CaseIterable, Hashable, Sendable {
         case .paragraph, .heading1, .heading2, .heading3, .quote, .bulletList, .numberedList, .checklist, .content, .research,
              .callout, .toggle, .code:
             return true
-        case .divider, .image, .element:
+        case .divider, .image, .element, .sketch:
             return false
         }
     }
@@ -62,9 +63,71 @@ enum RichBlockKind: String, Codable, CaseIterable, Hashable, Sendable {
             // Return inside a code block inserts a soft break; a structural
             // split (hard-newline backstop) keeps the continuation as code.
             return .code
-        case .divider, .image, .element, .toggle:
+        case .divider, .image, .element, .toggle, .sketch:
             return .paragraph
         }
+    }
+}
+
+// MARK: - Sketch
+
+/// One drawn point — deliberately explicit (not CGPoint) so the payload is
+/// hashable and byte-portable to iOS later.
+struct RichSketchPoint: Codable, Equatable, Hashable, Sendable {
+    var x: Double
+    var y: Double
+}
+
+struct RichSketchStroke: Codable, Equatable, Hashable, Sendable {
+    var points: [RichSketchPoint]
+    var width: Double
+    /// NoteInkPalette tone id, or "ink" for the document text color.
+    var inkID: String
+    var isHighlighter: Bool
+
+    init(points: [RichSketchPoint] = [], width: Double = 2.5, inkID: String = "ink", isHighlighter: Bool = false) {
+        self.points = points
+        self.width = width
+        self.inkID = inkID
+        self.isHighlighter = isHighlighter
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case points, width, inkID, isHighlighter
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        points = (try? container.decodeIfPresent([RichSketchPoint].self, forKey: .points)) ?? []
+        width = (try? container.decodeIfPresent(Double.self, forKey: .width)) ?? 2.5
+        inkID = (try? container.decodeIfPresent(String.self, forKey: .inkID)) ?? "ink"
+        isHighlighter = (try? container.decodeIfPresent(Bool.self, forKey: .isHighlighter)) ?? false
+    }
+}
+
+/// A freehand drawing board inside a note. Strokes are plain JSON — no
+/// PencilKit archives — so any platform can render and edit them.
+struct RichSketchDrawing: Codable, Equatable, Hashable, Sendable {
+    var strokes: [RichSketchStroke]
+    var height: Double
+
+    static let defaultHeight: Double = 240
+    static let minHeight: Double = 120
+    static let maxHeight: Double = 600
+
+    init(strokes: [RichSketchStroke] = [], height: Double = RichSketchDrawing.defaultHeight) {
+        self.strokes = strokes
+        self.height = height
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case strokes, height
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        strokes = (try? container.decodeIfPresent([RichSketchStroke].self, forKey: .strokes)) ?? []
+        height = (try? container.decodeIfPresent(Double.self, forKey: .height)) ?? Self.defaultHeight
     }
 }
 
@@ -213,6 +276,8 @@ struct RichBlock: Identifiable, Codable, Equatable, Hashable, Sendable {
     var callout: RichCalloutStyle? = nil
     /// Toggle disclosure state. Only meaningful when `kind == .toggle`.
     var toggleCollapsed: Bool? = nil
+    /// Freehand drawing payload. Only meaningful when `kind == .sketch`.
+    var sketch: RichSketchDrawing? = nil
     /// Forward-compat: a kind raw value this build doesn't know. The block
     /// renders/edits as a paragraph, but the original kind is preserved on
     /// re-encode so newer builds get their block back intact.
@@ -227,7 +292,8 @@ struct RichBlock: Identifiable, Codable, Equatable, Hashable, Sendable {
         heading: RichHeadingMetadata? = nil,
         children: [RichBlock] = [],
         callout: RichCalloutStyle? = nil,
-        toggleCollapsed: Bool? = nil
+        toggleCollapsed: Bool? = nil,
+        sketch: RichSketchDrawing? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -238,6 +304,7 @@ struct RichBlock: Identifiable, Codable, Equatable, Hashable, Sendable {
         self.children = children
         self.callout = kind == .callout ? (callout ?? .default) : callout
         self.toggleCollapsed = kind == .toggle ? (toggleCollapsed ?? false) : toggleCollapsed
+        self.sketch = kind == .sketch ? (sketch ?? RichSketchDrawing()) : sketch
     }
 
     static func paragraph(_ text: String) -> RichBlock {
@@ -282,6 +349,7 @@ struct RichBlock: Identifiable, Codable, Equatable, Hashable, Sendable {
         case children
         case callout
         case toggleCollapsed
+        case sketch
     }
 
     init(from decoder: Decoder) throws {
@@ -315,6 +383,10 @@ struct RichBlock: Identifiable, Codable, Equatable, Hashable, Sendable {
         if kind == .toggle, toggleCollapsed == nil {
             toggleCollapsed = false
         }
+        sketch = try? container.decodeIfPresent(RichSketchDrawing.self, forKey: .sketch)
+        if kind == .sketch, sketch == nil {
+            sketch = RichSketchDrawing()
+        }
     }
 
     func encode(to encoder: Encoder) throws {
@@ -332,6 +404,7 @@ struct RichBlock: Identifiable, Codable, Equatable, Hashable, Sendable {
         }
         try container.encodeIfPresent(callout, forKey: .callout)
         try container.encodeIfPresent(toggleCollapsed, forKey: .toggleCollapsed)
+        try container.encodeIfPresent(sketch, forKey: .sketch)
     }
 }
 
@@ -349,7 +422,7 @@ struct RichDocument: Codable, Equatable, Hashable, Sendable {
     var isEmpty: Bool {
         blocks.allSatisfy { block in
             switch block.kind {
-            case .divider, .image, .element:
+            case .divider, .image, .element, .sketch:
                 return false
             case .toggle where !block.children.isEmpty:
                 return false
@@ -416,6 +489,8 @@ struct RichDocument: Codable, Equatable, Hashable, Sendable {
                 prefix = ""
             case .image:
                 return indentation + "[Image]"
+            case .sketch:
+                return indentation + "[Sketch]"
             case .toggle:
                 let header = block.inlines.map(\.plainText).joined()
                 let childText = plainText(for: block.children, depth: depth + 1)
@@ -1245,7 +1320,7 @@ enum RichDocumentSerializer {
 
     private static func blockPrefix(for block: RichBlock, listPosition: Int) -> String {
         switch block.kind {
-        case .paragraph, .image, .element, .content, .research, .callout, .toggle, .code:
+        case .paragraph, .image, .element, .content, .research, .callout, .toggle, .code, .sketch:
             return ""
         case .heading1, .heading2, .heading3:
             return ""  // Headings use attribute-based detection, no visible prefix

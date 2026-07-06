@@ -1165,7 +1165,7 @@ enum SlashCommandType: Equatable {
     case heading1, heading2, heading3
     case bulletList, numberedList, checkbox
     case quote, divider
-    case callout, toggle, codeBlock
+    case callout, toggle, codeBlock, sketch
 
     var requiresTextKitMutationBeforeSemanticHandling: Bool {
         switch self {
@@ -1181,7 +1181,7 @@ enum SlashCommandType: Equatable {
     /// slash menu must not offer them.
     var requiresBlockEditor: Bool {
         switch self {
-        case .callout, .toggle, .codeBlock:
+        case .callout, .toggle, .codeBlock, .sketch:
             return true
         default:
             return false
@@ -1208,6 +1208,7 @@ enum SlashCommandType: Equatable {
         case .callout: return "callout"
         case .toggle: return "toggle"
         case .codeBlock: return "code-block"
+        case .sketch: return "sketch"
         }
     }
 }
@@ -1229,6 +1230,7 @@ enum SlashCommandCatalog {
         SlashCommand(type: .content, title: "Content Block", subtitle: "Draft with the content workflow", icon: "doc.text", shortcut: nil, searchAliases: ["content", "draft", "post"], section: .structure),
         SlashCommand(type: .research, title: "Research Block", subtitle: "Collect sources and notes", icon: "magnifyingglass.circle", shortcut: nil, searchAliases: ["research", "source", "citation"], section: .structure),
         SlashCommand(type: .image, title: "Image", subtitle: "Insert an inline image", icon: "photo", shortcut: nil, section: .media),
+        SlashCommand(type: .sketch, title: "Sketch", subtitle: "Draw freehand on the page", icon: "scribble.variable", shortcut: nil, searchAliases: ["draw", "drawing", "doodle", "board"], section: .media),
     ]
 
     static let newElementCommand = SlashCommand(

@@ -261,6 +261,12 @@ struct BlockListView: View {
             }
         case .toggle:
             toggleRow(for: block, at: path)
+        case .sketch:
+            SketchBlockView(
+                block: blockBinding(at: path, fallback: block),
+                darkMode: darkMode,
+                onSketchChange: emitDocumentChange
+            )
         default:
             textBlockRow(for: block, at: path)
         }

@@ -3711,7 +3711,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 toggleNumberedList(in: textView)
             case .checkbox:
                 toggleChecklist(in: textView)
-            case .callout, .toggle, .codeBlock:
+            case .callout, .toggle, .codeBlock, .sketch:
                 // Block-editor-only kinds; the legacy continuous editor has no
                 // TextKit rendering for them, so the trigger is just consumed.
                 break

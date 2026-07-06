@@ -150,6 +150,14 @@ enum BlockCommandCatalog {
             action: .replaceOrInsert(.image)
         ),
         BlockCommand(
+            id: "sketch",
+            title: "Sketch",
+            subtitle: "Draw freehand on the page",
+            systemImage: "scribble.variable",
+            aliases: ["draw", "drawing", "doodle", "board"],
+            action: .replaceOrInsert(.sketch)
+        ),
+        BlockCommand(
             id: "content",
             title: "Content Block",
             subtitle: "Create a structured writing block",
@@ -216,6 +224,8 @@ enum BlockCommandCatalog {
             return .transform(.toggle)
         case .codeBlock:
             return .transform(.code)
+        case .sketch:
+            return .replaceOrInsert(.sketch)
         case .content:
             return .replaceOrInsert(.content)
         case .research:
@@ -260,6 +270,7 @@ private extension RichBlockKind {
         case .callout: return "Callout"
         case .toggle: return "Toggle"
         case .code: return "Code Block"
+        case .sketch: return "Sketch"
         }
     }
 }

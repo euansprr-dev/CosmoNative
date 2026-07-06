@@ -1,7 +1,7 @@
 // CosmoOS/Editor/SlashCommandMenu.swift
-// Beautiful slash command popover with search and keyboard navigation
-// Premium "Cosmic Glass" styling from Cosmo design system
-// December 2025 - Staggered animations, symbol effects, haptic feedback
+// The block insert menu: one dense, sectioned list — Apple-menu density,
+// monochrome ink icons, trailing markdown-alias hints, elements inline.
+// July 2026 redesign (Notes overhaul Phase 2).
 
 import SwiftUI
 
@@ -15,82 +15,55 @@ struct SlashCommandMenu: View {
     let query: String
     /// Already filtered against the query, in display order.
     let commands: [SlashCommand]
-    let elementSubmenuCommands: [SlashCommand]
     let selectedIndex: Int
     let onHighlight: (Int) -> Void
     let onSelect: (SlashCommand) -> Void
     let onDismiss: () -> Void
     var darkMode: Bool = false  // Dark glass mode for Thinkspace blocks
 
-    @State private var appearedRows: Set<String> = []
+    @State private var appeared = false
+
+    private let menuWidth: CGFloat = 300
+    private let menuHeight: CGFloat = 380
 
     private var isSearching: Bool {
         !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    private var shouldShowElementsSubmenu: Bool {
-        !isSearching && commands[safe: selectedIndex]?.type == .elements
-    }
-
-    private var elementsSubmenuYOffset: CGFloat {
-        guard let index = commands.firstIndex(where: { $0.type == .elements }) else {
-            return 12
-        }
-        return 12 + CGFloat(index) * 54
-    }
-
-    private let menuWidth: CGFloat = 280
-    private let menuHeight: CGFloat = 340
-    private let elementSubmenuWidth: CGFloat = 240
-    private var totalWidth: CGFloat {
-        shouldShowElementsSubmenu ? menuWidth + 8 + elementSubmenuWidth : menuWidth
-    }
-
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            menuContent
-                .frame(width: menuWidth, height: menuHeight, alignment: .top)
-                .cosmoMenuChrome(cornerRadius: 18, darkMode: darkMode)
-
-            if shouldShowElementsSubmenu {
-                ElementCommandSubmenu(
-                    commands: elementSubmenuCommands,
-                    onSelect: onSelect,
-                    darkMode: darkMode
-                )
-                .frame(width: elementSubmenuWidth)
-                .offset(x: menuWidth + 8, y: elementsSubmenuYOffset)
-                .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .topLeading)))
-            }
-        }
-        .frame(width: totalWidth, height: menuHeight, alignment: .topLeading)
-        .position(x: position.x + (totalWidth / 2), y: position.y + (menuHeight / 2))
-        .onAppear(perform: handleAppear)
-    }
-
-    // MARK: - Subviews
-
-    @ViewBuilder
-    private var menuContent: some View {
         VStack(spacing: 0) {
             commandListView
-            keyboardHintView
+            CosmoKeyboardFooter(darkMode: darkMode)
+        }
+        .frame(width: menuWidth, height: menuHeight, alignment: .top)
+        .cosmoMenuChrome(cornerRadius: 14, darkMode: darkMode)
+        .position(x: position.x + (menuWidth / 2), y: position.y + (menuHeight / 2))
+        .onAppear {
+            CosmicHaptics.shared.play(.menuAppear)
+            withAnimation(ProMotionSprings.menuAppear) { appeared = true }
         }
     }
+
+    // MARK: - List
 
     private var commandListView: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 0) {
                     ForEach(Array(commands.enumerated()), id: \.element.id) { index, command in
+                        // While browsing, a section header introduces each
+                        // group; while searching, results are a flat ranked
+                        // list — headers would fight the ranking.
+                        if !isSearching, showsSectionHeader(at: index) {
+                            sectionHeader(command.section)
+                        }
                         commandRow(command: command, index: index)
                     }
                 }
-                .padding(.vertical, 4)
+                .padding(.vertical, DS.space6)
             }
-            .frame(maxHeight: 300)
+            .frame(maxHeight: menuHeight - 34)
             .scrollBounceBehavior(.basedOnSize)
-            .background(Color.clear)
             .onChange(of: selectedIndex) { _, newIndex in
                 CosmicHaptics.shared.play(.threshold)
                 withAnimation(.easeOut(duration: 0.12)) {
@@ -100,289 +73,139 @@ struct SlashCommandMenu: View {
         }
     }
 
+    private func showsSectionHeader(at index: Int) -> Bool {
+        guard let command = commands[safe: index] else { return false }
+        guard index > 0 else { return true }
+        return commands[index - 1].section != command.section
+    }
+
+    private func sectionHeader(_ section: SlashCommandSection) -> some View {
+        Text(section.rawValue)
+            .font(DS.caption2.weight(.semibold))
+            .tracking(0.8)
+            .foregroundStyle(darkMode ? Color.white.opacity(0.42) : DS.textMuted)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, DS.space12)
+            .padding(.top, DS.space8)
+            .padding(.bottom, DS.space2)
+            .accessibilityAddTraits(.isHeader)
+    }
+
     private func commandRow(command: SlashCommand, index: Int) -> some View {
         SlashCommandRow(
             command: command,
             isSelected: index == selectedIndex,
-            index: index,
-            hasAppeared: appearedRows.contains(command.id),
             darkMode: darkMode
         )
         .id(index)
         .onTapGesture {
             CosmicHaptics.shared.play(.selection)
-            guard command.type != .elements else { return }
             onSelect(command)
         }
         .onHover { isHovered in
             if isHovered, selectedIndex != index {
-                CosmicHaptics.shared.play(.threshold)
                 onHighlight(index)
             }
         }
-        .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + Double(index) * 0.03) {
-                withAnimation(ProMotionSprings.cardEntrance) {
-                    _ = appearedRows.insert(command.id)
-                }
-            }
-        }
-    }
-
-    private var keyboardHintView: some View {
-        CosmoKeyboardFooter(darkMode: darkMode)
-    }
-
-    // MARK: - Event Handlers
-
-    private func handleAppear() {
-        CosmicHaptics.shared.play(.menuAppear)
     }
 }
 
 // MARK: - Slash Command Row
-/// Premium row with staggered entrance and symbol effects
+
+/// One 32pt row: monochrome ink icon, medium title, trailing mono alias hint.
+/// Selection is a soft accent wash + hairline — never a solid fill.
 struct SlashCommandRow: View {
     let command: SlashCommand
     let isSelected: Bool
-    let index: Int
-    let hasAppeared: Bool
-    var darkMode: Bool = false
-
-    @State private var iconBounce = false
-
-    // Dark mode colors
-    private var textPrimary: Color { darkMode ? .white : DS.documentText }
-    private var textSecondary: Color { darkMode ? Color.white.opacity(0.6) : DS.documentTextSecondary }
-    private var textTertiary: Color { darkMode ? Color.white.opacity(0.4) : DS.documentTextMuted }
-    private var accentColor: Color { darkMode ? Color.white.opacity(0.76) : DS.accent }
-
-    var body: some View {
-        HStack(spacing: 12) {
-            // Icon - Cosmo lavender/purple accent with symbol effect
-            Image(systemName: DocumentElementSymbol.validName(command.icon))
-                .font(.system(size: 16))
-                .foregroundStyle(isSelected ? accentColor : accentColor.opacity(0.86))
-                .symbolEffect(.bounce, value: iconBounce)
-                .frame(width: 28, height: 28)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(iconFill)
-                        .shadow(
-                            color: DS.sidebarMaterialShadow.opacity(isSelected ? 0.28 : 0),
-                            radius: isSelected ? 6 : 0,
-                            y: isSelected ? 2 : 0
-                        )
-                )
-
-            // Title and subtitle
-            VStack(alignment: .leading, spacing: 2) {
-                Text(command.title)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(textPrimary)
-
-                Text(command.subtitle)
-                    .font(.system(size: 12))
-                    .foregroundStyle(textSecondary)
-                    .lineLimit(1)
-            }
-
-            Spacer()
-
-            // Shortcut badge
-            if let shortcut = command.shortcut {
-                Text(shortcut)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(textTertiary)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(darkMode ? Color.white.opacity(0.10) : DS.glassInputFill.opacity(0.52))
-                    .clipShape(.rect(cornerRadius: DS.radiusXSmall))
-            }
-
-            // Selection indicator
-            if isSelected {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(accentColor)
-                    .transition(.scale.combined(with: .opacity))
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(isSelected ? selectedFill : Color.clear)
-        )
-        .contentShape(Rectangle())
-        // Staggered entrance animation
-        .opacity(hasAppeared ? 1 : 0)
-        .offset(x: hasAppeared ? 0 : -12)
-        .blur(radius: hasAppeared ? 0 : 2)
-        .scaleEffect(x: hasAppeared ? 1 : 0.98, y: 1, anchor: .leading)
-        .animation(ProMotionSprings.snappy, value: isSelected)
-        .onChange(of: isSelected) { _, selected in
-            if selected {
-                iconBounce.toggle()
-            }
-        }
-    }
-
-    private var iconFill: Color {
-        if darkMode {
-            return isSelected ? Color.white.opacity(0.16) : Color.white.opacity(0.08)
-        }
-        return isSelected ? DS.glassInputFillFocused.opacity(0.90) : DS.glassInputFill.opacity(0.54)
-    }
-
-    private var selectedFill: Color {
-        darkMode ? Color.white.opacity(0.10) : DS.glassInputFillFocused.opacity(0.82)
-    }
-}
-
-private struct ElementCommandSubmenu: View {
-    let commands: [SlashCommand]
-    let onSelect: (SlashCommand) -> Void
     var darkMode: Bool = false
 
     private var textPrimary: Color { darkMode ? .white : DS.documentText }
-    private var textSecondary: Color { darkMode ? Color.white.opacity(0.6) : DS.documentTextSecondary }
-    private var accentColor: Color { darkMode ? Color.white.opacity(0.76) : DS.accent }
+    private var inkColor: Color { darkMode ? Color.white.opacity(0.62) : DS.documentTextSecondary }
+    private var hintColor: Color { darkMode ? Color.white.opacity(0.34) : DS.documentTextMuted.opacity(0.8) }
+    private var accentColor: Color { darkMode ? Color.white.opacity(0.85) : DS.accent }
 
     var body: some View {
-        ScrollView {
-            LazyVStack(spacing: 0) {
-                ForEach(commands) { command in
-                    Button {
-                        CosmicHaptics.shared.play(.selection)
-                        onSelect(command)
-                    } label: {
-                        row(for: command)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.vertical, 6)
-        }
-        .frame(maxHeight: 300)
-        .scrollBounceBehavior(.basedOnSize)
-        .cosmoMenuChrome(cornerRadius: 16, darkMode: darkMode)
-    }
-
-    private func row(for command: SlashCommand) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: DS.space10) {
             Image(systemName: DocumentElementSymbol.validName(command.icon))
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(accentColor)
-                .frame(width: 26, height: 26)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(darkMode ? Color.white.opacity(0.08) : DS.glassInputFill.opacity(0.54))
-                )
+                .font(DS.subheadline.weight(.medium))
+                .foregroundStyle(isSelected ? accentColor : inkColor)
+                .frame(width: 20, alignment: .center)
+                .accessibilityHidden(true)
 
-            VStack(alignment: .leading, spacing: 1) {
-                Text(command.title)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(textPrimary)
-                    .lineLimit(1)
-
-                Text(command.subtitle)
-                    .font(.system(size: 11))
-                    .foregroundStyle(textSecondary)
-                    .lineLimit(1)
-            }
+            Text(command.title)
+                .font(DS.callout.weight(.medium))
+                .foregroundStyle(textPrimary)
+                .lineLimit(1)
 
             Spacer(minLength: 0)
+
+            if let shortcut = command.shortcut {
+                Text(shortcut)
+                    .font(DS.caption.monospaced())
+                    .foregroundStyle(hintColor)
+            }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
+        .padding(.horizontal, DS.space10)
+        .frame(height: 32)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(isSelected ? selectionFill : Color.clear)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(isSelected ? selectionHairline : Color.clear, lineWidth: 1)
+                )
+                .padding(.horizontal, DS.space6)
+        )
         .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+    }
+
+    private var selectionFill: Color {
+        darkMode ? Color.white.opacity(0.10) : DS.accentSoft
+    }
+
+    private var selectionHairline: Color {
+        darkMode ? Color.white.opacity(0.16) : DS.accent.opacity(0.22)
     }
 }
 
 // MARK: - Element Creation Menu
+
+/// The "New Element" form: name, tone, icon — with a live preview of the
+/// element header rendering exactly as it will appear in the document.
 struct ElementCreationMenu: View {
     let position: CGPoint
-    let onCreate: (String, String) -> Void
+    let onCreate: (String, String, String) -> Void
     let onDismiss: () -> Void
     var darkMode: Bool = false
 
     @State private var title = ""
-    @State private var icon = ElementIconPickerCategory.structure.options.first?.systemIcon ?? "square.dashed"
-    @State private var selectedCategory: ElementIconPickerCategory = .structure
+    @State private var icon = NoteElementIconCatalog.curated.first?.symbol ?? "square.dashed"
+    @State private var toneID = NoteInkPalette.defaultToneID
+    @State private var iconQuery = ""
     @FocusState private var titleFocused: Bool
 
-    private let menuWidth: CGFloat = 330
-    private let menuHeight: CGFloat = 364
+    private let menuWidth: CGFloat = 320
+    private let menuHeight: CGFloat = 352
 
     private var textPrimary: Color { darkMode ? .white : DS.documentText }
     private var textSecondary: Color { darkMode ? Color.white.opacity(0.62) : DS.documentTextSecondary }
     private var fieldFill: Color { darkMode ? Color.white.opacity(0.08) : DS.glassInputFill.opacity(0.46) }
     private var canCreate: Bool { !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    private var tone: NoteInkTone { NoteInkPalette.tone(toneID) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
-                Image(systemName: sanitizedIcon)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(darkMode ? Color.white.opacity(0.82) : DS.accent)
-                    .frame(width: 28, height: 28)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(fieldFill)
-                    )
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("New Element")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(textPrimary)
-                    Text("Reusable block")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(textSecondary)
-                }
-
-                Spacer(minLength: 0)
-
-                Button(action: onDismiss) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .semibold))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(textSecondary)
-            }
-
-            TextField("Element name", text: $title)
-                .textFieldStyle(.plain)
-                .foregroundStyle(textPrimary)
-                .focused($titleFocused)
-                .onSubmit { createIfPossible() }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .background(RoundedRectangle(cornerRadius: 7).fill(fieldFill))
-
-            ElementIconPickerGrid(
-                selectedIcon: $icon,
-                selectedCategory: $selectedCategory,
-                darkMode: darkMode,
-                onPick: { option in
-                    if title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        title = option.defaultTitle
-                    }
-                }
-            )
-
-            HStack {
-                Spacer(minLength: 0)
-                Button("Create") {
-                    createIfPossible()
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(!canCreate)
-            }
+        VStack(alignment: .leading, spacing: DS.space10) {
+            livePreview
+            nameField
+            toneRow
+            iconPicker
+            footerRow
         }
-        .padding(12)
+        .padding(DS.space12)
         .frame(width: menuWidth, height: menuHeight, alignment: .top)
-        .cosmoMenuChrome(cornerRadius: 18, darkMode: darkMode)
+        .cosmoMenuChrome(cornerRadius: 14, darkMode: darkMode)
         .position(x: position.x + (menuWidth / 2), y: position.y + (menuHeight / 2))
         .onAppear {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
@@ -395,210 +218,311 @@ struct ElementCreationMenu: View {
         }
     }
 
-    private var sanitizedIcon: String {
-        DocumentElementSymbol.validName(icon)
+    /// The element header, rendered with the exact chrome it will have in the
+    /// document — what you see is what you insert.
+    private var livePreview: some View {
+        HStack(spacing: DS.space8) {
+            Image(systemName: "chevron.right")
+                .font(DS.caption2.weight(.semibold))
+                .foregroundStyle(textSecondary.opacity(0.7))
+                .rotationEffect(.degrees(90))
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(tone.wash(darkMode: darkMode))
+                .frame(width: 20, height: 20)
+                .overlay(
+                    Image(systemName: DocumentElementSymbol.validName(icon))
+                        .font(DS.caption.weight(.medium))
+                        .foregroundStyle(tone.ink(darkMode: darkMode))
+                )
+            Text(title.isEmpty ? "New Element" : title)
+                .font(DS.callout.weight(.semibold))
+                .foregroundStyle(title.isEmpty ? textSecondary : textPrimary)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, DS.space10)
+        .frame(height: 30)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(tone.wash(darkMode: darkMode).opacity(0.6))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(tone.hairline(darkMode: darkMode), lineWidth: 1)
+        )
+        .animation(ProMotionSprings.snappy, value: toneID)
+        .accessibilityHidden(true)
+    }
+
+    private var nameField: some View {
+        TextField("Element name", text: $title)
+            .textFieldStyle(.plain)
+            .font(DS.callout)
+            .foregroundStyle(textPrimary)
+            .focused($titleFocused)
+            .onSubmit { createIfPossible() }
+            .padding(.horizontal, DS.space10)
+            .padding(.vertical, DS.space8)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(fieldFill))
+            .accessibilityLabel("Element name")
+    }
+
+    private var toneRow: some View {
+        HStack(spacing: DS.space8) {
+            ForEach(NoteInkPalette.tones) { option in
+                toneSwatch(option)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func toneSwatch(_ option: NoteInkTone) -> some View {
+        let isSelected = option.id == toneID
+        return Button {
+            withAnimation(ProMotionSprings.snappy) { toneID = option.id }
+        } label: {
+            Circle()
+                .fill(option.ink(darkMode: darkMode).opacity(isSelected ? 1 : 0.75))
+                .frame(width: 18, height: 18)
+                .overlay(
+                    Circle()
+                        .strokeBorder(
+                            isSelected ? option.ink(darkMode: darkMode).opacity(0.5) : Color.clear,
+                            lineWidth: 2
+                        )
+                        .padding(-3)
+                )
+                .frame(width: 26, height: 26)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help(option.label)
+        .accessibilityLabel("\(option.label) color")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private var iconPicker: some View {
+        VStack(alignment: .leading, spacing: DS.space6) {
+            TextField("Search icons", text: $iconQuery)
+                .textFieldStyle(.plain)
+                .font(DS.caption)
+                .foregroundStyle(textPrimary)
+                .padding(.horizontal, DS.space8)
+                .padding(.vertical, DS.space4)
+                .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(fieldFill))
+                .accessibilityLabel("Search icons")
+
+            ScrollView {
+                LazyVGrid(columns: Array(repeating: GridItem(.fixed(30), spacing: DS.space6), count: 8), spacing: DS.space6) {
+                    ForEach(NoteElementIconCatalog.matching(iconQuery), id: \.symbol) { option in
+                        iconCell(option)
+                    }
+                }
+            }
+            .frame(height: 108)
+            .scrollBounceBehavior(.basedOnSize)
+        }
+    }
+
+    private func iconCell(_ option: NoteElementIconCatalog.Option) -> some View {
+        let isSelected = option.symbol == icon
+        return Button {
+            icon = option.symbol
+            if title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                title = option.suggestedName
+            }
+        } label: {
+            Image(systemName: DocumentElementSymbol.validName(option.symbol))
+                .font(DS.subheadline.weight(.medium))
+                .foregroundStyle(isSelected ? tone.ink(darkMode: darkMode) : textSecondary)
+                .frame(width: 30, height: 30)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(isSelected ? tone.wash(darkMode: darkMode) : fieldFill.opacity(0.7))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .strokeBorder(isSelected ? tone.hairline(darkMode: darkMode) : Color.clear, lineWidth: 1)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(option.suggestedName)
+        .accessibilityLabel(option.suggestedName)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private var footerRow: some View {
+        HStack {
+            Button("Cancel", action: onDismiss)
+                .buttonStyle(.plain)
+                .font(DS.caption)
+                .foregroundStyle(textSecondary)
+            Spacer(minLength: 0)
+            Button("Create") { createIfPossible() }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(!canCreate)
+                .keyboardShortcut(.defaultAction)
+        }
     }
 
     private func createIfPossible() {
         guard canCreate else { return }
-        onCreate(title, sanitizedIcon)
+        onCreate(title, DocumentElementSymbol.validName(icon), toneID)
     }
 }
 
-private struct ElementIconOption: Identifiable, Hashable {
-    let defaultTitle: String
-    let systemIcon: String
+// MARK: - Icon Catalog
 
-    var id: String { systemIcon }
-}
+/// The element icon vocabulary: a curated first screen plus a keyword-searchable
+/// catalog. Modern, filled-free SF Symbols that read at 13pt.
+enum NoteElementIconCatalog {
+    struct Option {
+        let symbol: String
+        let suggestedName: String
+        let keywords: [String]
 
-private enum ElementIconPickerCategory: String, CaseIterable, Identifiable {
-    case structure = "Structure"
-    case people = "People"
-    case writing = "Writing"
-    case media = "Media"
-    case status = "Status"
-    case symbols = "Symbols"
-
-    var id: String { rawValue }
-
-    var icon: String {
-        switch self {
-        case .structure: return "square.dashed"
-        case .people: return "person.2"
-        case .writing: return "pencil.line"
-        case .media: return "photo"
-        case .status: return "checkmark.circle"
-        case .symbols: return "sparkle"
+        init(_ symbol: String, _ suggestedName: String, _ keywords: [String] = []) {
+            self.symbol = symbol
+            self.suggestedName = suggestedName
+            self.keywords = keywords
         }
     }
 
-    var options: [ElementIconOption] {
-        switch self {
-        case .structure:
-            return [
-                .init(defaultTitle: "Section", systemIcon: "square.dashed"),
-                .init(defaultTitle: "Folder", systemIcon: "folder"),
-                .init(defaultTitle: "List", systemIcon: "list.bullet.rectangle"),
-                .init(defaultTitle: "Grid", systemIcon: "rectangle.grid.2x2"),
-                .init(defaultTitle: "Stack", systemIcon: "square.stack.3d.up"),
-                .init(defaultTitle: "Map", systemIcon: "map"),
-                .init(defaultTitle: "Target", systemIcon: "target"),
-                .init(defaultTitle: "Layers", systemIcon: "square.3.stack.3d"),
-                .init(defaultTitle: "Tree", systemIcon: "point.3.connected.trianglepath.dotted"),
-                .init(defaultTitle: "Pillar", systemIcon: "rectangle.split.3x1"),
-                .init(defaultTitle: "Hierarchy", systemIcon: "rectangle.connected.to.line.below"),
-                .init(defaultTitle: "Group", systemIcon: "rectangle.3.group")
-            ]
-        case .people:
-            return [
-                .init(defaultTitle: "Audience", systemIcon: "person.2"),
-                .init(defaultTitle: "Customer", systemIcon: "person.crop.circle"),
-                .init(defaultTitle: "Community", systemIcon: "person.3"),
-                .init(defaultTitle: "Voice", systemIcon: "bubble.left"),
-                .init(defaultTitle: "Interview", systemIcon: "person.wave.2"),
-                .init(defaultTitle: "Persona", systemIcon: "face.smiling"),
-                .init(defaultTitle: "Team", systemIcon: "person.2.crop.square.stack"),
-                .init(defaultTitle: "Profile", systemIcon: "person.text.rectangle"),
-                .init(defaultTitle: "Contact", systemIcon: "at"),
-                .init(defaultTitle: "Network", systemIcon: "network"),
-                .init(defaultTitle: "Conversation", systemIcon: "bubble.left.and.bubble.right"),
-                .init(defaultTitle: "Quote", systemIcon: "quote.opening")
-            ]
-        case .writing:
-            return [
-                .init(defaultTitle: "Idea", systemIcon: "lightbulb"),
-                .init(defaultTitle: "Draft", systemIcon: "doc.text"),
-                .init(defaultTitle: "Outline", systemIcon: "list.bullet.indent"),
-                .init(defaultTitle: "Hook", systemIcon: "text.quote"),
-                .init(defaultTitle: "Script", systemIcon: "text.alignleft"),
-                .init(defaultTitle: "Research", systemIcon: "books.vertical"),
-                .init(defaultTitle: "Note", systemIcon: "note.text"),
-                .init(defaultTitle: "Page", systemIcon: "doc"),
-                .init(defaultTitle: "Pen", systemIcon: "pencil.line"),
-                .init(defaultTitle: "Highlight", systemIcon: "highlighter"),
-                .init(defaultTitle: "Bookmark", systemIcon: "bookmark"),
-                .init(defaultTitle: "Tag", systemIcon: "tag")
-            ]
-        case .media:
-            return [
-                .init(defaultTitle: "Image", systemIcon: "photo"),
-                .init(defaultTitle: "Video", systemIcon: "play.rectangle"),
-                .init(defaultTitle: "Audio", systemIcon: "waveform"),
-                .init(defaultTitle: "Clip", systemIcon: "film"),
-                .init(defaultTitle: "Swipe", systemIcon: "rectangle.on.rectangle"),
-                .init(defaultTitle: "Asset", systemIcon: "shippingbox"),
-                .init(defaultTitle: "Camera", systemIcon: "camera"),
-                .init(defaultTitle: "Music", systemIcon: "music.note"),
-                .init(defaultTitle: "Mic", systemIcon: "mic"),
-                .init(defaultTitle: "Link", systemIcon: "link"),
-                .init(defaultTitle: "Gallery", systemIcon: "photo.on.rectangle.angled"),
-                .init(defaultTitle: "Cast", systemIcon: "antenna.radiowaves.left.and.right")
-            ]
-        case .status:
-            return [
-                .init(defaultTitle: "Todo", systemIcon: "circle"),
-                .init(defaultTitle: "Done", systemIcon: "checkmark.circle"),
-                .init(defaultTitle: "Question", systemIcon: "questionmark.circle"),
-                .init(defaultTitle: "Warning", systemIcon: "exclamationmark.triangle"),
-                .init(defaultTitle: "Insight", systemIcon: "sparkles"),
-                .init(defaultTitle: "Priority", systemIcon: "flag"),
-                .init(defaultTitle: "Pinned", systemIcon: "pin"),
-                .init(defaultTitle: "Locked", systemIcon: "lock"),
-                .init(defaultTitle: "Progress", systemIcon: "hourglass"),
-                .init(defaultTitle: "Schedule", systemIcon: "calendar"),
-                .init(defaultTitle: "Goal", systemIcon: "scope"),
-                .init(defaultTitle: "Notice", systemIcon: "bell")
-            ]
-        case .symbols:
-            return [
-                .init(defaultTitle: "Spark", systemIcon: "sparkle"),
-                .init(defaultTitle: "Star", systemIcon: "star"),
-                .init(defaultTitle: "Heart", systemIcon: "heart"),
-                .init(defaultTitle: "Compass", systemIcon: "safari"),
-                .init(defaultTitle: "Globe", systemIcon: "globe"),
-                .init(defaultTitle: "Cube", systemIcon: "cube"),
-                .init(defaultTitle: "Brain", systemIcon: "brain"),
-                .init(defaultTitle: "Atom", systemIcon: "atom"),
-                .init(defaultTitle: "Wand", systemIcon: "wand.and.stars"),
-                .init(defaultTitle: "Diamond", systemIcon: "diamond"),
-                .init(defaultTitle: "Hexagon", systemIcon: "hexagon"),
-                .init(defaultTitle: "Crown", systemIcon: "crown")
-            ]
+    /// First screen — no query. Two rows above the fold, ~3 screens total.
+    static let curated: [Option] = [
+        Option("square.dashed", "Section", ["structure", "box"]),
+        Option("lightbulb", "Idea", ["spark", "inspiration"]),
+        Option("person.2", "Meeting", ["people", "audience"]),
+        Option("book", "Reading", ["book", "study"]),
+        Option("scale.3d", "Decision", ["weigh", "choice"]),
+        Option("sun.max", "Journal", ["day", "morning"]),
+        Option("tray.full", "Inbox", ["collect", "bank"]),
+        Option("target", "Goal", ["aim", "objective"]),
+        Option("calendar", "Schedule", ["date", "plan"]),
+        Option("checkmark.circle", "Done", ["complete", "task"]),
+        Option("flag", "Priority", ["important", "urgent"]),
+        Option("pin", "Pinned", ["stick", "keep"]),
+        Option("quote.opening", "Quote", ["citation", "words"]),
+        Option("text.quote", "Excerpt", ["passage"]),
+        Option("list.bullet.indent", "Outline", ["plan", "structure"]),
+        Option("brain", "Thinking", ["mind", "brainstorm"]),
+        Option("sparkles", "Insight", ["magic", "aha"]),
+        Option("questionmark.circle", "Question", ["ask", "open"]),
+        Option("exclamationmark.triangle", "Warning", ["caution", "risk"]),
+        Option("bolt", "Action", ["energy", "fast"]),
+        Option("flame", "Hot", ["fire", "trending"]),
+        Option("heart", "Favorite", ["love", "like"]),
+        Option("star", "Starred", ["best", "highlight"]),
+        Option("map", "Map", ["territory", "plan"]),
+    ]
+
+    /// The long tail, reachable by search only.
+    static let extended: [Option] = [
+        Option("folder", "Folder", ["directory", "group"]),
+        Option("archivebox", "Archive", ["store", "old"]),
+        Option("doc.text", "Draft", ["document", "page"]),
+        Option("note.text", "Note", ["memo"]),
+        Option("bookmark", "Bookmark", ["save", "later"]),
+        Option("tag", "Tag", ["label", "category"]),
+        Option("link", "Link", ["url", "connection"]),
+        Option("paperclip", "Attachment", ["clip", "file"]),
+        Option("magnifyingglass", "Research", ["search", "investigate"]),
+        Option("books.vertical", "Library", ["reference", "collection"]),
+        Option("graduationcap", "Learning", ["course", "school"]),
+        Option("pencil.line", "Writing", ["pen", "draft"]),
+        Option("highlighter", "Highlight", ["marker"]),
+        Option("scissors", "Clip", ["cut", "snippet"]),
+        Option("photo", "Media", ["image", "picture"]),
+        Option("play.rectangle", "Video", ["film", "reel"]),
+        Option("waveform", "Audio", ["sound", "voice"]),
+        Option("mic", "Recording", ["voice", "dictation"]),
+        Option("music.note", "Music", ["song"]),
+        Option("camera", "Photo", ["shot"]),
+        Option("chart.line.uptrend.xyaxis", "Metrics", ["growth", "analytics", "stats"]),
+        Option("chart.pie", "Breakdown", ["share", "analytics"]),
+        Option("dollarsign.circle", "Money", ["finance", "budget"]),
+        Option("cart", "Shopping", ["buy", "groceries"]),
+        Option("gift", "Gift", ["present", "surprise"]),
+        Option("airplane", "Travel", ["trip", "flight"]),
+        Option("car", "Drive", ["commute"]),
+        Option("house", "Home", ["house"]),
+        Option("building.2", "Work", ["office", "company"]),
+        Option("briefcase", "Business", ["client", "work"]),
+        Option("hammer", "Build", ["make", "project"]),
+        Option("wrench.adjustable", "Fix", ["repair", "tool"]),
+        Option("gearshape", "Setup", ["settings", "config"]),
+        Option("terminal", "Dev", ["code", "shell"]),
+        Option("keyboard", "Typing", ["input"]),
+        Option("cpu", "System", ["chip", "tech"]),
+        Option("network", "Network", ["graph", "web"]),
+        Option("globe", "World", ["global", "web"]),
+        Option("safari", "Compass", ["explore", "browse"]),
+        Option("location", "Place", ["map", "pin"]),
+        Option("leaf", "Nature", ["plant", "green"]),
+        Option("tree", "Growth", ["forest"]),
+        Option("drop", "Water", ["hydrate", "liquid"]),
+        Option("moon", "Night", ["sleep", "evening"]),
+        Option("cloud", "Weather", ["sky"]),
+        Option("snowflake", "Winter", ["cold", "frozen"]),
+        Option("figure.run", "Workout", ["exercise", "fitness", "gym"]),
+        Option("dumbbell", "Training", ["gym", "strength"]),
+        Option("fork.knife", "Recipe", ["food", "cooking", "meal"]),
+        Option("cup.and.saucer", "Coffee", ["cafe", "break"]),
+        Option("pills", "Health", ["medicine", "medical"]),
+        Option("cross.case", "Medical", ["doctor", "health"]),
+        Option("bed.double", "Sleep", ["rest", "night"]),
+        Option("face.smiling", "Mood", ["feeling", "emotion"]),
+        Option("bubble.left.and.bubble.right", "Conversation", ["chat", "dialog"]),
+        Option("envelope", "Email", ["mail", "message"]),
+        Option("phone", "Call", ["contact"]),
+        Option("person.crop.circle", "Person", ["contact", "profile"]),
+        Option("person.3", "Team", ["group", "community"]),
+        Option("hand.raised", "Blocked", ["stop", "wait"]),
+        Option("clock", "Time", ["hour", "schedule"]),
+        Option("hourglass", "Pending", ["waiting", "progress"]),
+        Option("timer", "Timer", ["countdown", "pomodoro"]),
+        Option("bell", "Reminder", ["notify", "alert"]),
+        Option("lock", "Private", ["secret", "secure"]),
+        Option("key", "Access", ["password", "unlock"]),
+        Option("shield", "Security", ["protect", "guard"]),
+        Option("trash", "Discard", ["delete", "remove"]),
+        Option("arrow.triangle.branch", "Options", ["fork", "paths"]),
+        Option("arrow.clockwise", "Routine", ["repeat", "habit"]),
+        Option("infinity", "Ongoing", ["forever", "loop"]),
+        Option("puzzlepiece", "Piece", ["part", "fit"]),
+        Option("cube", "Object", ["3d", "thing"]),
+        Option("shippingbox", "Package", ["delivery", "asset"]),
+        Option("gamecontroller", "Play", ["game", "fun"]),
+        Option("paintbrush", "Design", ["art", "creative"]),
+        Option("paintpalette", "Palette", ["color", "art"]),
+        Option("theatermasks", "Story", ["drama", "narrative"]),
+        Option("film", "Scene", ["movie", "clip"]),
+        Option("wand.and.stars", "Magic", ["transform", "ai"]),
+        Option("atom", "Science", ["physics", "research"]),
+        Option("function", "Formula", ["math", "equation"]),
+        Option("number", "Reference", ["hashtag", "id"]),
+        Option("curlybraces", "Snippet", ["code", "dev"]),
+        Option("diamond", "Gem", ["rare", "special"]),
+        Option("crown", "Best", ["top", "winner"]),
+        Option("trophy", "Win", ["achievement", "award"]),
+        Option("medal", "Milestone", ["achievement"]),
+        Option("rocket", "Launch", ["ship", "start"]),
+        Option("paperplane", "Send", ["publish", "share"]),
+        Option("megaphone", "Announce", ["marketing", "promo"]),
+        Option("eye", "Watch", ["observe", "review"]),
+        Option("binoculars", "Scout", ["explore", "research"]),
+    ]
+
+    static func matching(_ query: String) -> [Option] {
+        let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalized.isEmpty else { return curated }
+        return (curated + extended).filter { option in
+            option.symbol.contains(normalized)
+                || option.suggestedName.lowercased().contains(normalized)
+                || option.keywords.contains { $0.contains(normalized) }
         }
-    }
-}
-
-private struct ElementIconPickerGrid: View {
-    @Binding var selectedIcon: String
-    @Binding var selectedCategory: ElementIconPickerCategory
-
-    var darkMode: Bool
-    var onPick: (ElementIconOption) -> Void
-
-    private let columns = Array(repeating: GridItem(.fixed(38), spacing: 8), count: 6)
-
-    private var textSecondary: Color { darkMode ? Color.white.opacity(0.62) : DS.documentTextSecondary }
-    private var fill: Color { darkMode ? Color.white.opacity(0.08) : DS.glassInputFill.opacity(0.46) }
-    private var selectedFill: Color { darkMode ? Color.white.opacity(0.18) : DS.accentSoft }
-    private var selectedStroke: Color { darkMode ? Color.white.opacity(0.42) : DS.accent.opacity(0.55) }
-
-    var body: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 6) {
-                ForEach(ElementIconPickerCategory.allCases) { category in
-                    Button {
-                        selectedCategory = category
-                    } label: {
-                        Image(systemName: DocumentElementSymbol.validName(category.icon))
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(category == selectedCategory ? DS.accent : textSecondary)
-                            .frame(width: 32, height: 26)
-                            .background(
-                                RoundedRectangle(cornerRadius: 7)
-                                    .fill(category == selectedCategory ? selectedFill : fill)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                }
-
-                Spacer(minLength: 0)
-            }
-
-            LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
-                ForEach(selectedCategory.options) { option in
-                    Button {
-                        selectedIcon = DocumentElementSymbol.validName(option.systemIcon)
-                        onPick(option)
-                    } label: {
-                        Image(systemName: DocumentElementSymbol.validName(option.systemIcon))
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(DocumentElementSymbol.validName(option.systemIcon) == selectedIcon ? DS.accent : textSecondary)
-                            .frame(width: 38, height: 38)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(DocumentElementSymbol.validName(option.systemIcon) == selectedIcon ? selectedFill : fill)
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(DocumentElementSymbol.validName(option.systemIcon) == selectedIcon ? selectedStroke : Color.clear, lineWidth: 1)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .help(option.defaultTitle)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(darkMode ? Color.white.opacity(0.045) : Color.white.opacity(0.38))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(darkMode ? Color.white.opacity(0.08) : Color.black.opacity(0.06), lineWidth: 1)
-                )
-        )
     }
 }
 

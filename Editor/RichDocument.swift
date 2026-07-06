@@ -250,15 +250,21 @@ struct RichBlock: Identifiable, Codable, Equatable, Hashable, Sendable {
         isCollapsed: Bool = false,
         instanceTitle: String? = nil
     ) -> RichBlock {
-        RichBlock.element(
+        // A fresh instance is stamped with the definition's template
+        // structure (regenerated IDs — instances own their copies).
+        let seededChildren = children.isEmpty
+            ? definition.templateChildren.map { $0.withRegeneratedIDs() }
+            : children
+        return RichBlock.element(
             RichElementInstance(
                 definitionID: definition.id,
                 titleSnapshot: definition.title,
                 systemIconSnapshot: definition.systemIcon,
                 isCollapsed: isCollapsed,
-                instanceTitleSnapshot: instanceTitle ?? definition.title
+                instanceTitleSnapshot: instanceTitle ?? definition.title,
+                tintSnapshot: definition.tintID
             ),
-            children: children
+            children: seededChildren
         )
     }
 

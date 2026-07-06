@@ -45,7 +45,7 @@ final class DocumentElementStoreTests: XCTestCase {
             .contains { $0.lastPathComponent.hasPrefix("Elements.corrupt-") })
     }
 
-    func testSlashCommandCatalogUsesSingleElementsParentInDefaultMenu() throws {
+    func testSlashCommandCatalogRendersElementsInlineWithNewElementLast() throws {
         let disabled = DocumentElementDefinition(
             title: "Archived",
             systemIcon: "archivebox",
@@ -58,15 +58,59 @@ final class DocumentElementStoreTests: XCTestCase {
 
         let commands = SlashCommandCatalog.commands(elementDefinitions: [disabled, audience])
 
-        XCTAssertEqual(commands.filter { $0.type == .elements }.map(\.title), ["Elements"])
-        XCTAssertFalse(commands.contains { $0.type == .newElement })
-        XCTAssertFalse(commands.contains { $0.type == .element })
+        // Elements render inline as their own section — no flyout parent row.
+        XCTAssertFalse(commands.contains { $0.type == .elements })
+        let elementRows = commands.filter { $0.section == .elements }
+        XCTAssertEqual(elementRows.map(\.title), ["Target Audience", "New Element…"])
+        XCTAssertEqual(elementRows.first?.elementDefinition?.id, audience.id)
+        XCTAssertFalse(elementRows.contains { $0.isStarterElement })
+    }
 
-        let submenuCommands = SlashCommandCatalog.elementSubmenuCommands(elementDefinitions: [disabled, audience])
-        XCTAssertEqual(submenuCommands.map(\.title), ["New Element", "Target Audience"])
-        XCTAssertEqual(submenuCommands.last?.type, .element)
-        XCTAssertEqual(submenuCommands.last?.icon, "person.2.fill")
-        XCTAssertEqual(submenuCommands.last?.elementDefinition?.id, audience.id)
+    func testSlashCommandCatalogOffersStarterGalleryWhenNoElementsExist() throws {
+        let commands = SlashCommandCatalog.commands(elementDefinitions: [])
+        let elementRows = commands.filter { $0.section == .elements }
+
+        XCTAssertEqual(elementRows.dropLast().count, SlashCommandCatalog.starterDefinitions.count)
+        XCTAssertTrue(elementRows.dropLast().allSatisfy(\.isStarterElement))
+        XCTAssertEqual(elementRows.last?.type, .newElement)
+        // Starters carry template structure and deterministic ids.
+        XCTAssertTrue(SlashCommandCatalog.starterDefinitions.allSatisfy { !$0.templateChildren.isEmpty })
+        XCTAssertEqual(
+            Set(SlashCommandCatalog.starterDefinitions.map(\.id)).count,
+            SlashCommandCatalog.starterDefinitions.count
+        )
+    }
+
+    func testStarterAdoptionPreservesIdentityAndTemplate() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let fileURL = directory.appendingPathComponent("Elements.json")
+        let store = DocumentElementStore(fileURL: fileURL)
+
+        let starter = SlashCommandCatalog.starterDefinitions[0]
+        try store.adopt(starter)
+        try store.adopt(starter) // second adopt is a no-op
+
+        XCTAssertEqual(store.definitions.count, 1)
+        XCTAssertEqual(store.definitions[0].id, starter.id)
+        XCTAssertEqual(store.definitions[0].templateChildren.count, starter.templateChildren.count)
+    }
+
+    func testElementInsertionStampsTintAndTemplateChildren() throws {
+        let definition = DocumentElementDefinition(
+            title: "Decision",
+            systemIcon: "scale.3d",
+            tintID: "clay",
+            templateChildren: [RichBlock(kind: .checklist, inlines: [.text("Option")], checked: false)]
+        )
+
+        let block = RichBlock.element(definition)
+
+        XCTAssertEqual(block.element?.tintSnapshot, "clay")
+        XCTAssertEqual(block.children.count, 1)
+        XCTAssertEqual(block.children[0].kind, .checklist)
+        // Template copies get fresh identity.
+        XCTAssertNotEqual(block.children[0].id, definition.templateChildren[0].id)
     }
 
     func testSlashCommandCatalogSearchMatchesElementNames() throws {

@@ -19,14 +19,18 @@ struct ElementBlockView: View {
     var onExitBody: (() -> Void)? = nil
     var onElementChange: (() -> Void)? = nil
 
+    @State private var isHovered = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             ElementBlockHeader(
                 title: titleBinding,
                 isCollapsed: isCollapsed,
                 iconName: iconName,
+                tone: tone,
+                darkMode: darkMode,
+                collapsedChildCount: block.children.count,
                 titleColor: titleColor,
-                iconColor: iconColor,
                 chevronColor: chevronColor,
                 autoFocusTitle: focusCoordinator.focusedBlockID == block.id,
                 onToggleCollapse: toggleCollapse,
@@ -43,8 +47,8 @@ struct ElementBlockView: View {
         .background(cardBackground)
         .clipShape(.rect(cornerRadius: 10, style: .continuous))
         .overlay(cardBorder)
-        .shadow(color: shadowColor, radius: 4, x: 0, y: 2)
         .animation(ProMotionSprings.snappy, value: isCollapsed)
+        .onHover { isHovered = $0 }
         .onAppear { focusCoordinator.register(block.id) }
         .onDisappear { focusCoordinator.unregister(block.id) }
     }
@@ -69,9 +73,9 @@ struct ElementBlockView: View {
             onExitFinalEmptyTextRegion: exitBody,
             onDocumentChange: { _, _ in onElementChange?() }
         )
-        .padding(.horizontal, DS.space12)
-        .padding(.top, DS.space8)
-        .padding(.bottom, DS.space12)
+        .padding(.horizontal, DS.space10)
+        .padding(.top, DS.space4)
+        .padding(.bottom, DS.space10)
     }
 
     private var titleBinding: Binding<String> {
@@ -102,18 +106,23 @@ struct ElementBlockView: View {
         block.element?.systemIconSnapshot ?? DocumentElementSymbol.fallback
     }
 
+    private var tone: NoteInkTone {
+        DocumentElementRendering.tone(for: block)
+    }
+
+    /// At rest the card is a whisper of its tone; hover firms the hairline.
+    /// No drop shadow — the wash and hairline are all the depth it needs.
     private var cardBackground: some View {
         RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .fill(DS.surfaceCard)
+            .fill(tone.wash(darkMode: darkMode).opacity(0.55))
     }
 
     private var cardBorder: some View {
         RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .stroke(DS.documentBorderSubtle, lineWidth: 1)
-    }
-
-    private var shadowColor: Color {
-        Color.black.opacity(darkMode ? 0.30 : 0.04)
+            .strokeBorder(
+                tone.hairline(darkMode: darkMode).opacity(isHovered ? 1 : 0.65),
+                lineWidth: 1
+            )
     }
 
     private var titleColor: Color {
@@ -121,10 +130,6 @@ struct ElementBlockView: View {
             return Color(nsColor: overrideTextColor).opacity(0.92)
         }
         return darkMode ? DS.focusImmersiveText.opacity(0.92) : DS.documentText.opacity(0.92)
-    }
-
-    private var iconColor: Color {
-        darkMode ? DS.focusImmersiveTextSecondary : DS.documentTextSecondary
     }
 
     private var chevronColor: Color {

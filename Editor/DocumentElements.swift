@@ -19,6 +19,12 @@ struct DocumentElementDefinition: Identifiable, Codable, Equatable, Hashable, Se
     var createdAt: Date
     var updatedAt: Date
     var isEnabled: Bool
+    /// NoteInkPalette tone — the element's color, shown on its icon seat and
+    /// card wash. Lenient-decoded so pre-tint definitions stay valid.
+    var tintID: String
+    /// Starter structure stamped into every fresh instance (a Decision Log
+    /// ships its checklist). Instances own their copies after insertion.
+    var templateChildren: [RichBlock]
 
     init(
         id: UUID = UUID(),
@@ -26,7 +32,9 @@ struct DocumentElementDefinition: Identifiable, Codable, Equatable, Hashable, Se
         systemIcon: String,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
-        isEnabled: Bool = true
+        isEnabled: Bool = true,
+        tintID: String = NoteInkPalette.defaultToneID,
+        templateChildren: [RichBlock] = []
     ) {
         self.id = id
         self.title = title
@@ -34,6 +42,26 @@ struct DocumentElementDefinition: Identifiable, Codable, Equatable, Hashable, Se
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.isEnabled = isEnabled
+        self.tintID = tintID
+        self.templateChildren = templateChildren
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, systemIcon, createdAt, updatedAt, isEnabled, tintID, templateChildren
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        title = try container.decodeIfPresent(String.self, forKey: .title) ?? "Untitled Element"
+        systemIcon = DocumentElementSymbol.validName(
+            try container.decodeIfPresent(String.self, forKey: .systemIcon) ?? DocumentElementSymbol.fallback
+        )
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? createdAt
+        isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
+        tintID = (try? container.decodeIfPresent(String.self, forKey: .tintID)) ?? NoteInkPalette.defaultToneID
+        templateChildren = (try? container.decodeIfPresent([RichBlock].self, forKey: .templateChildren)) ?? []
     }
 }
 
@@ -44,6 +72,9 @@ struct RichElementInstance: Identifiable, Codable, Equatable, Hashable, Sendable
     var systemIconSnapshot: String
     var isCollapsed: Bool
     var instanceTitleSnapshot: String
+    /// NoteInkPalette tone snapshot — travels in the document so an element
+    /// renders in its color everywhere, even without the definition store.
+    var tintSnapshot: String
 
     init(
         id: UUID = UUID(),
@@ -51,7 +82,8 @@ struct RichElementInstance: Identifiable, Codable, Equatable, Hashable, Sendable
         titleSnapshot: String,
         systemIconSnapshot: String,
         isCollapsed: Bool = false,
-        instanceTitleSnapshot: String? = nil
+        instanceTitleSnapshot: String? = nil,
+        tintSnapshot: String = NoteInkPalette.defaultToneID
     ) {
         self.id = id
         self.definitionID = definitionID
@@ -59,6 +91,7 @@ struct RichElementInstance: Identifiable, Codable, Equatable, Hashable, Sendable
         self.systemIconSnapshot = DocumentElementSymbol.validName(systemIconSnapshot)
         self.isCollapsed = isCollapsed
         self.instanceTitleSnapshot = Self.normalized(instanceTitleSnapshot ?? titleSnapshot, fallback: self.titleSnapshot)
+        self.tintSnapshot = tintSnapshot
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -68,6 +101,7 @@ struct RichElementInstance: Identifiable, Codable, Equatable, Hashable, Sendable
         case systemIconSnapshot
         case isCollapsed
         case instanceTitleSnapshot
+        case tintSnapshot
     }
 
     init(from decoder: Decoder) throws {
@@ -86,6 +120,7 @@ struct RichElementInstance: Identifiable, Codable, Equatable, Hashable, Sendable
             try container.decodeIfPresent(String.self, forKey: .instanceTitleSnapshot),
             fallback: titleSnapshot
         )
+        tintSnapshot = (try? container.decodeIfPresent(String.self, forKey: .tintSnapshot)) ?? NoteInkPalette.defaultToneID
     }
 
     func encode(to encoder: Encoder) throws {
@@ -96,6 +131,7 @@ struct RichElementInstance: Identifiable, Codable, Equatable, Hashable, Sendable
         try container.encode(systemIconSnapshot, forKey: .systemIconSnapshot)
         try container.encode(isCollapsed, forKey: .isCollapsed)
         try container.encode(instanceTitleSnapshot, forKey: .instanceTitleSnapshot)
+        try container.encode(tintSnapshot, forKey: .tintSnapshot)
     }
 
     private static func normalized(_ value: String?, fallback: String) -> String {
@@ -107,6 +143,10 @@ struct RichElementInstance: Identifiable, Codable, Equatable, Hashable, Sendable
 enum DocumentElementRendering {
     static func title(for block: RichBlock) -> String {
         block.element?.titleSnapshot ?? "Untitled Element"
+    }
+
+    static func tone(for block: RichBlock) -> NoteInkTone {
+        NoteInkPalette.tone(block.element?.tintSnapshot)
     }
 
     static func instanceTitle(for block: RichBlock) -> String {
@@ -512,20 +552,31 @@ enum DocumentElementStoreError: Error, Equatable {
 }
 
 @MainActor
-final class DocumentElementStore: ObservableObject {
-    @Published private(set) var definitions: [DocumentElementDefinition] = []
+@Observable
+final class DocumentElementStore {
+    /// The app-wide store: local JSON cache + write-through to a synced
+    /// user_preference atom (scope `cosmo.note_elements`) so definitions can
+    /// follow the user across devices. Views share this instance.
+    static let shared = DocumentElementStore(syncsToCloud: true)
+
+    private(set) var definitions: [DocumentElementDefinition] = []
 
     let fileURL: URL
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
     private let fileManager: FileManager
+    private let syncsToCloud: Bool
+
+    static let syncScope = "cosmo.note_elements"
 
     init(
         fileURL: URL = DocumentElementStore.defaultFileURL,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        syncsToCloud: Bool = false
     ) {
         self.fileURL = fileURL
         self.fileManager = fileManager
+        self.syncsToCloud = syncsToCloud
 
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -537,6 +588,9 @@ final class DocumentElementStore: ObservableObject {
         self.decoder = decoder
 
         load()
+        if syncsToCloud {
+            Task { await reconcileWithSyncedAtom() }
+        }
     }
 
     nonisolated static var defaultFileURL: URL {
@@ -556,13 +610,20 @@ final class DocumentElementStore: ObservableObject {
     }
 
     @discardableResult
-    func createDefinition(title: String, systemIcon: String) throws -> DocumentElementDefinition {
+    func createDefinition(
+        title: String,
+        systemIcon: String,
+        tintID: String = NoteInkPalette.defaultToneID,
+        templateChildren: [RichBlock] = []
+    ) throws -> DocumentElementDefinition {
         let now = Date()
         let definition = DocumentElementDefinition(
             title: normalizedTitle(title),
             systemIcon: normalizedIcon(systemIcon),
             createdAt: now,
-            updatedAt: now
+            updatedAt: now,
+            tintID: NoteInkPalette.tone(tintID).id,
+            templateChildren: templateChildren
         )
         definitions.append(definition)
         try persist()
@@ -570,16 +631,30 @@ final class DocumentElementStore: ObservableObject {
     }
 
     @discardableResult
-    func updateDefinition(id: UUID, title: String, systemIcon: String) throws -> DocumentElementDefinition {
+    func updateDefinition(id: UUID, title: String, systemIcon: String, tintID: String? = nil) throws -> DocumentElementDefinition {
         guard let index = definitions.firstIndex(where: { $0.id == id }) else {
             throw DocumentElementStoreError.definitionNotFound(id)
         }
 
         definitions[index].title = normalizedTitle(title)
         definitions[index].systemIcon = normalizedIcon(systemIcon)
+        if let tintID {
+            definitions[index].tintID = NoteInkPalette.tone(tintID).id
+        }
         definitions[index].updatedAt = Date()
         try persist()
         return definitions[index]
+    }
+
+    /// Inserts a prebuilt definition (starter gallery) — id is preserved so
+    /// the same starter converges across devices; no-op if already present.
+    func adopt(_ definition: DocumentElementDefinition) throws {
+        guard !definitions.contains(where: { $0.id == definition.id }) else { return }
+        var adopted = definition
+        adopted.createdAt = Date()
+        adopted.updatedAt = adopted.createdAt
+        definitions.append(adopted)
+        try persist()
     }
 
     func disableDefinition(id: UUID) throws {
@@ -647,6 +722,81 @@ final class DocumentElementStore: ObservableObject {
         try ensureParentDirectoryExists()
         let data = try encoder.encode(definitions)
         try data.write(to: fileURL, options: [.atomic])
+        if syncsToCloud {
+            let snapshot = definitions
+            Task { await Self.writeSyncedAtom(definitions: snapshot) }
+        }
+    }
+
+    // MARK: - Cross-device sync (user_preference atom, scope cosmo.note_elements)
+
+    /// Merges the synced atom's definitions with the local file cache —
+    /// per-definition, newest `updatedAt` wins; definitions only one side
+    /// knows about are unioned in. Runs once at startup; every local write
+    /// then flows through to the atom, so devices converge.
+    private func reconcileWithSyncedAtom() async {
+        guard let atom = try? await Self.syncedAtom() else { return }
+        guard let structured = atom.structured,
+              let data = structured.data(using: .utf8),
+              let remote = try? decoder.decode([DocumentElementDefinition].self, from: data) else {
+            // No usable remote payload yet — seed it from local.
+            await Self.writeSyncedAtom(definitions: definitions)
+            return
+        }
+
+        var merged: [UUID: DocumentElementDefinition] = [:]
+        for definition in remote {
+            merged[definition.id] = definition
+        }
+        for definition in definitions {
+            if let existing = merged[definition.id] {
+                if definition.updatedAt > existing.updatedAt {
+                    merged[definition.id] = definition
+                }
+            } else {
+                merged[definition.id] = definition
+            }
+        }
+
+        let result = merged.values.sorted { $0.createdAt < $1.createdAt }
+        if result != definitions {
+            definitions = result
+            try? persist()
+        } else if remote.count != result.count {
+            await Self.writeSyncedAtom(definitions: result)
+        }
+    }
+
+    private static func syncedAtom() async throws -> Atom? {
+        let prefs = try await AtomRepository.shared.fetchAll(type: .userPreference)
+        return prefs.first { atom in
+            guard let dict = atom.metadataDict else { return false }
+            return (dict["scope"] as? String) == syncScope
+        }
+    }
+
+    private static func writeSyncedAtom(definitions: [DocumentElementDefinition]) async {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(definitions),
+              let structured = String(data: data, encoding: .utf8) else { return }
+        do {
+            if let existing = try await syncedAtom() {
+                _ = try await AtomRepository.shared.update(uuid: existing.uuid) { atom in
+                    atom.structured = structured
+                }
+            } else {
+                _ = try await AtomRepository.shared.create(Atom.new(
+                    type: .userPreference,
+                    title: "Note elements",
+                    structured: structured,
+                    metadata: #"{"scope":"\#(syncScope)"}"#
+                ))
+            }
+        } catch {
+            ConsoleLog.error("[ELEMENTS] synced-atom write failed: \(error)", subsystem: .database)
+        }
     }
 
     private func ensureParentDirectoryExists() throws {

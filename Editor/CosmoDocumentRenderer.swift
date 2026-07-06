@@ -125,6 +125,7 @@ struct CosmoDocumentRenderer: View {
         let visibleChildren = DocumentElementRendering.visibleChildBlocks(for: block)
         let collapsed = DocumentElementRendering.isCollapsed(block)
         let instanceTitle = DocumentElementRendering.instanceTitle(for: block)
+        let tone = DocumentElementRendering.tone(for: block)
 
         return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
@@ -133,40 +134,42 @@ struct CosmoDocumentRenderer: View {
                     .foregroundStyle(elementChevronColor)
                     .frame(width: 14, height: 14)
 
-                Image(systemName: DocumentElementRendering.systemIcon(for: block))
-                    .symbolRenderingMode(.monochrome)
-                    .font(.system(size: 13, weight: .regular))
-                    .foregroundStyle(elementIconColor)
-                    .frame(width: 16, height: 16)
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(tone.wash(darkMode: darkMode))
+                    .frame(width: 18, height: 18)
+                    .overlay(
+                        Image(systemName: DocumentElementRendering.systemIcon(for: block))
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(tone.ink(darkMode: darkMode))
+                    )
 
                 Text(instanceTitle)
-                    .font(.system(size: 13.5, weight: .medium))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(elementTitleColor)
                     .lineLimit(1)
 
                 Spacer(minLength: 0)
             }
-            .frame(minHeight: 38, alignment: .center)
-            .padding(.horizontal, 12)
+            .frame(minHeight: 30, alignment: .center)
+            .padding(.horizontal, 10)
 
             if !visibleChildren.isEmpty {
                 blockStack(visibleChildren, depth: depth + 1)
                     .padding(.top, 2)
-                    .padding(.leading, 12)
-                    .padding(.trailing, 12)
-                    .padding(.bottom, 10)
+                    .padding(.leading, 10)
+                    .padding(.trailing, 10)
+                    .padding(.bottom, 8)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(elementBackgroundColor(depth: depth))
+                .fill(tone.wash(darkMode: darkMode).opacity(0.55))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(elementBorderColor, lineWidth: 0.7)
+                .strokeBorder(tone.hairline(darkMode: darkMode).opacity(0.65), lineWidth: 1)
         )
-        .shadow(color: elementShadowColor, radius: 1.5, x: 0, y: 1)
     }
 
     private func calloutBlockView(_ block: RichBlock, at index: Int, in siblings: [RichBlock]) -> some View {

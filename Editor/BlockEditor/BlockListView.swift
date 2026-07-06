@@ -462,10 +462,9 @@ struct BlockListView: View {
         if providesNavigationOrder {
             if let session = ownedOverlayPresenter.slashSession {
                 SlashCommandMenu(
-                    position: clampedOverlayPosition(for: session.anchorInList, menuSize: CGSize(width: 528, height: 348)),
+                    position: clampedOverlayPosition(for: session.anchorInList, menuSize: CGSize(width: 300, height: 380)),
                     query: session.query,
                     commands: session.commands,
-                    elementSubmenuCommands: session.elementSubmenuCommands,
                     selectedIndex: session.selectedIndex,
                     onHighlight: session.onHighlight,
                     onSelect: session.onSelect,
@@ -477,7 +476,7 @@ struct BlockListView: View {
             }
             if let session = ownedOverlayPresenter.elementCreationSession {
                 ElementCreationMenu(
-                    position: clampedOverlayPosition(for: session.anchorInList, menuSize: CGSize(width: 330, height: 364)),
+                    position: clampedOverlayPosition(for: session.anchorInList, menuSize: CGSize(width: 320, height: 352)),
                     onCreate: session.onCreate,
                     onDismiss: session.onDismiss,
                     darkMode: session.darkMode

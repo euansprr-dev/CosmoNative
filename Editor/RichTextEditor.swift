@@ -187,7 +187,6 @@ final class EditorOverlayPresenter {
         var query: String
         /// Already filtered against the query, in display order.
         var commands: [SlashCommand]
-        var elementSubmenuCommands: [SlashCommand]
         var selectedIndex: Int
         var darkMode: Bool
         var onHighlight: (Int) -> Void
@@ -198,7 +197,7 @@ final class EditorOverlayPresenter {
     struct ElementCreationSession {
         var anchorInList: CGPoint
         var darkMode: Bool
-        var onCreate: (String, String) -> Void
+        var onCreate: (String, String, String) -> Void
         var onDismiss: () -> Void
     }
 
@@ -272,7 +271,7 @@ struct RichTextEditor: View {
     @State private var cursorPosition: Int = 0
     @State private var shouldRefocusEditor = false
     @State private var overlayEscapeOwnerID = UUID()
-    @StateObject private var elementStore = DocumentElementStore()
+    private var elementStore: DocumentElementStore { DocumentElementStore.shared }
 
     // Configuration
     var fontSize: CGFloat = 16
@@ -346,10 +345,6 @@ struct RichTextEditor: View {
     /// kinds they can't render.
     private func surfaceCommands(_ commands: [SlashCommand]) -> [SlashCommand] {
         splitsOnReturn ? commands : commands.filter { !$0.type.requiresBlockEditor }
-    }
-
-    private var elementSubmenuCommands: [SlashCommand] {
-        SlashCommandCatalog.elementSubmenuCommands(elementDefinitions: elementStore.activeDefinitions)
     }
 
     /// The slash menu's rows, filtered by the live type-through query.
@@ -607,7 +602,6 @@ struct RichTextEditor: View {
                     position: slashMenuPosition,
                     query: slashQuery,
                     commands: slashFilteredCommands,
-                    elementSubmenuCommands: elementSubmenuCommands,
                     selectedIndex: slashSelectedIndex,
                     onHighlight: { slashSelectedIndex = $0 },
                     onSelect: { handleSlashMenuSelection($0) },
@@ -622,8 +616,8 @@ struct RichTextEditor: View {
             if showElementCreationMenu, overlayPresenter == nil {
                 ElementCreationMenu(
                     position: elementCreationMenuPosition,
-                    onCreate: { title, icon in
-                        createElementAndInsert(title: title, icon: icon)
+                    onCreate: { title, icon, tintID in
+                        createElementAndInsert(title: title, icon: icon, tintID: tintID)
                     },
                     onDismiss: {
                         dismissAllOverlays()
@@ -845,7 +839,7 @@ struct RichTextEditor: View {
         slashMenuLocalAnchor = localAnchor
         slashMenuPosition = clampMenuPosition(
             localAnchor,
-            menuSize: CGSize(width: 528, height: 340),
+            menuSize: CGSize(width: 300, height: 380),
             in: containerSize
         )
         showSlashMenu = true
@@ -866,8 +860,7 @@ struct RichTextEditor: View {
             publishSlashSessionIfHoisted()
             return true
         case .commit:
-            guard let command = filtered[safe: slashSelectedIndex],
-                  command.type != .elements else { return false }
+            guard let command = filtered[safe: slashSelectedIndex] else { return false }
             handleSlashMenuSelection(command)
             return true
         case .dismiss:
@@ -885,14 +878,20 @@ struct RichTextEditor: View {
             overlayPresenter?.slashSession = nil
             elementCreationMenuPosition = clampMenuPosition(
                 slashMenuPosition,
-                menuSize: CGSize(width: 330, height: 364),
+                menuSize: CGSize(width: 320, height: 352),
                 in: containerSize
             )
             showElementCreationMenu = true
             publishElementCreationSessionIfHoisted()
             return
         }
-        guard command.type != .elements else { return }
+        // A starter element becomes a real definition on first use, then
+        // inserts like any other element.
+        if command.isStarterElement, let definition = command.elementDefinition {
+            if !elementStore.definitions.contains(where: { $0.id == definition.id }) {
+                try? elementStore.adopt(definition)
+            }
+        }
         dismissAllOverlays()
         postSlashCommand(command)
     }
@@ -907,8 +906,8 @@ struct RichTextEditor: View {
                 y: frameInOverlaySpace.minY + slashMenuLocalAnchor.y
             ),
             darkMode: darkMode,
-            onCreate: { title, icon in
-                createElementAndInsert(title: title, icon: icon)
+            onCreate: { title, icon, tintID in
+                createElementAndInsert(title: title, icon: icon, tintID: tintID)
             },
             onDismiss: {
                 dismissAllOverlays()
@@ -927,7 +926,6 @@ struct RichTextEditor: View {
             ),
             query: slashQuery,
             commands: slashFilteredCommands,
-            elementSubmenuCommands: elementSubmenuCommands,
             selectedIndex: slashSelectedIndex,
             darkMode: darkMode,
             onHighlight: { index in
@@ -952,9 +950,9 @@ struct RichTextEditor: View {
         return true
     }
 
-    private func createElementAndInsert(title: String, icon: String) {
+    private func createElementAndInsert(title: String, icon: String, tintID: String = NoteInkPalette.defaultToneID) {
         do {
-            let definition = try elementStore.createDefinition(title: title, systemIcon: icon)
+            let definition = try elementStore.createDefinition(title: title, systemIcon: icon, tintID: tintID)
             dismissAllOverlays()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                 shouldRefocusEditor = true
@@ -966,7 +964,8 @@ struct RichTextEditor: View {
                         icon: definition.systemIcon,
                         shortcut: nil,
                         searchAliases: ["element", definition.systemIcon],
-                        elementDefinition: definition
+                        elementDefinition: definition,
+                        section: .elements
                     ))
                 }
             }
@@ -1104,6 +1103,15 @@ extension Notification.Name {
 }
 
 // MARK: - Slash Commands
+/// Menu grouping — the slash menu renders one small-caps header per section.
+enum SlashCommandSection: String, Equatable {
+    case cosmo = "COSMO"
+    case basics = "BASICS"
+    case structure = "STRUCTURE"
+    case media = "MEDIA"
+    case elements = "MY ELEMENTS"
+}
+
 struct SlashCommand: Identifiable {
     let id: String
     let type: SlashCommandType
@@ -1113,6 +1121,10 @@ struct SlashCommand: Identifiable {
     let shortcut: String?
     var searchAliases: [String]
     var elementDefinition: DocumentElementDefinition?
+    var section: SlashCommandSection
+    /// A ready-made element offered before the user has any of their own —
+    /// selecting it creates the definition, then inserts it.
+    var isStarterElement: Bool
 
     init(
         type: SlashCommandType,
@@ -1121,7 +1133,9 @@ struct SlashCommand: Identifiable {
         icon: String,
         shortcut: String?,
         searchAliases: [String] = [],
-        elementDefinition: DocumentElementDefinition? = nil
+        elementDefinition: DocumentElementDefinition? = nil,
+        section: SlashCommandSection = .basics,
+        isStarterElement: Bool = false
     ) {
         self.type = type
         self.title = title
@@ -1130,6 +1144,8 @@ struct SlashCommand: Identifiable {
         self.shortcut = shortcut
         self.searchAliases = searchAliases
         self.elementDefinition = elementDefinition
+        self.section = section
+        self.isStarterElement = isStarterElement
         if let elementDefinition {
             id = "element:\(elementDefinition.id.uuidString)"
         } else {
@@ -1198,69 +1214,119 @@ enum SlashCommandType: Equatable {
 
 enum SlashCommandCatalog {
     static let baseCommands: [SlashCommand] = [
-        SlashCommand(type: .writingAI, title: "Writing AI", subtitle: "Ask, rewrite, search, or critique", icon: "sparkles", shortcut: "⌥A"),
-        SlashCommand(type: .image, title: "Image", subtitle: "Insert an inline image", icon: "photo", shortcut: nil),
-        SlashCommand(type: .heading1, title: "Heading 1", subtitle: "Large section heading", icon: "textformat.size.larger", shortcut: nil),
-        SlashCommand(type: .heading2, title: "Heading 2", subtitle: "Medium section heading", icon: "textformat.size", shortcut: nil),
-        SlashCommand(type: .heading3, title: "Heading 3", subtitle: "Small section heading", icon: "textformat.size.smaller", shortcut: nil),
-        SlashCommand(type: .quote, title: "Quote", subtitle: "Add a block quote", icon: "text.quote", shortcut: nil),
-        SlashCommand(type: .callout, title: "Callout", subtitle: "Highlight with an icon and tint", icon: "exclamationmark.bubble", shortcut: "!!", searchAliases: ["callout", "info", "note", "highlight", "aside"]),
-        SlashCommand(type: .toggle, title: "Toggle", subtitle: "Collapsible section of blocks", icon: "chevron.forward.square", shortcut: nil, searchAliases: ["toggle", "collapse", "disclosure", "fold"]),
-        SlashCommand(type: .codeBlock, title: "Code", subtitle: "Monospaced code block", icon: "curlybraces", shortcut: "```", searchAliases: ["code", "snippet", "mono", "codeblock"]),
-        SlashCommand(type: .divider, title: "Divider", subtitle: "Visual separation between sections", icon: "minus", shortcut: nil),
-        SlashCommand(type: .content, title: "Content Block", subtitle: "Draft with the content workflow", icon: "doc.text", shortcut: nil, searchAliases: ["content", "draft", "post"]),
-        SlashCommand(type: .research, title: "Research Block", subtitle: "Collect sources and notes", icon: "magnifyingglass.circle", shortcut: nil, searchAliases: ["research", "source", "citation"]),
-        SlashCommand(type: .bulletList, title: "Bullet List", subtitle: "Create a bullet list", icon: "list.bullet", shortcut: nil),
-        SlashCommand(type: .numberedList, title: "Numbered List", subtitle: "Create a numbered list", icon: "list.number", shortcut: nil),
-        SlashCommand(type: .checkbox, title: "Checklist", subtitle: "Track tasks with checkboxes", icon: "checklist", shortcut: nil),
+        SlashCommand(type: .writingAI, title: "Writing AI", subtitle: "Ask, rewrite, search, or critique", icon: "sparkles", shortcut: "⌥A", section: .cosmo),
+        SlashCommand(type: .heading1, title: "Heading 1", subtitle: "Large section heading", icon: "textformat.size.larger", shortcut: "#", section: .basics),
+        SlashCommand(type: .heading2, title: "Heading 2", subtitle: "Medium section heading", icon: "textformat.size", shortcut: "##", section: .basics),
+        SlashCommand(type: .heading3, title: "Heading 3", subtitle: "Small section heading", icon: "textformat.size.smaller", shortcut: "###", section: .basics),
+        SlashCommand(type: .bulletList, title: "Bullet List", subtitle: "Create a bullet list", icon: "list.bullet", shortcut: "-", section: .basics),
+        SlashCommand(type: .numberedList, title: "Numbered List", subtitle: "Create a numbered list", icon: "list.number", shortcut: "1.", section: .basics),
+        SlashCommand(type: .checkbox, title: "Checklist", subtitle: "Track tasks with checkboxes", icon: "checklist", shortcut: "[]", section: .basics),
+        SlashCommand(type: .quote, title: "Quote", subtitle: "Add a block quote", icon: "text.quote", shortcut: ">", section: .basics),
+        SlashCommand(type: .toggle, title: "Toggle", subtitle: "Collapsible section of blocks", icon: "chevron.forward.square", shortcut: nil, searchAliases: ["toggle", "collapse", "disclosure", "fold"], section: .structure),
+        SlashCommand(type: .callout, title: "Callout", subtitle: "Highlight with an icon and tint", icon: "exclamationmark.bubble", shortcut: "!!", searchAliases: ["callout", "info", "note", "highlight", "aside"], section: .structure),
+        SlashCommand(type: .codeBlock, title: "Code", subtitle: "Monospaced code block", icon: "curlybraces", shortcut: "```", searchAliases: ["code", "snippet", "mono", "codeblock"], section: .structure),
+        SlashCommand(type: .divider, title: "Divider", subtitle: "Visual separation between sections", icon: "minus", shortcut: "---", section: .structure),
+        SlashCommand(type: .content, title: "Content Block", subtitle: "Draft with the content workflow", icon: "doc.text", shortcut: nil, searchAliases: ["content", "draft", "post"], section: .structure),
+        SlashCommand(type: .research, title: "Research Block", subtitle: "Collect sources and notes", icon: "magnifyingglass.circle", shortcut: nil, searchAliases: ["research", "source", "citation"], section: .structure),
+        SlashCommand(type: .image, title: "Image", subtitle: "Insert an inline image", icon: "photo", shortcut: nil, section: .media),
     ]
 
     static let newElementCommand = SlashCommand(
         type: .newElement,
-        title: "New Element",
+        title: "New Element…",
         subtitle: "Create a reusable organization block",
-        icon: "plus.square",
+        icon: "plus",
         shortcut: nil,
-        searchAliases: ["new elements", "create element", "elements"]
+        searchAliases: ["new elements", "create element", "elements", "element"],
+        section: .elements
     )
 
-    static let elementsCommand = SlashCommand(
-        type: .elements,
-        title: "Elements",
-        subtitle: "Create or insert reusable blocks",
-        icon: "square.stack.3d.up",
-        shortcut: nil,
-        searchAliases: ["element", "elements", "new element"]
-    )
+    /// Ready-made elements offered while the user has none of their own.
+    /// Deterministic IDs so the same starter converges across devices.
+    static let starterDefinitions: [DocumentElementDefinition] = [
+        DocumentElementDefinition(
+            id: UUID(uuidString: "00000000-C05A-40E1-0001-000000000001")!,
+            title: "Meeting", systemIcon: "person.2", tintID: "slate",
+            templateChildren: [
+                RichBlock(kind: .paragraph, inlines: [.text("")]),
+                RichBlock(kind: .checklist, inlines: [.text("Follow up")], checked: false)
+            ]
+        ),
+        DocumentElementDefinition(
+            id: UUID(uuidString: "00000000-C05A-40E1-0001-000000000002")!,
+            title: "Journal", systemIcon: "sun.max", tintID: "gilt",
+            templateChildren: [RichBlock(kind: .paragraph, inlines: [.text("")])]
+        ),
+        DocumentElementDefinition(
+            id: UUID(uuidString: "00000000-C05A-40E1-0001-000000000003")!,
+            title: "Brainstorm", systemIcon: "lightbulb", tintID: "moss",
+            templateChildren: [RichBlock(kind: .bulletList, inlines: [.text("")])]
+        ),
+        DocumentElementDefinition(
+            id: UUID(uuidString: "00000000-C05A-40E1-0001-000000000004")!,
+            title: "Decision Log", systemIcon: "scale.3d", tintID: "clay",
+            templateChildren: [
+                RichBlock(kind: .paragraph, inlines: [.text("")]),
+                RichBlock(kind: .quote, inlines: [.text("Why: ")])
+            ]
+        ),
+        DocumentElementDefinition(
+            id: UUID(uuidString: "00000000-C05A-40E1-0001-000000000005")!,
+            title: "Reading Notes", systemIcon: "book", tintID: "plum",
+            templateChildren: [
+                RichBlock(kind: .quote, inlines: [.text("")]),
+                RichBlock(kind: .paragraph, inlines: [.text("")])
+            ]
+        ),
+        DocumentElementDefinition(
+            id: UUID(uuidString: "00000000-C05A-40E1-0001-000000000006")!,
+            title: "Idea Bank", systemIcon: "tray.full", tintID: "rose",
+            templateChildren: [RichBlock(kind: .bulletList, inlines: [.text("")])]
+        )
+    ]
 
     static func commands(elementDefinitions: [DocumentElementDefinition]) -> [SlashCommand] {
-        Array(baseCommands.prefix(2)) + [elementsCommand] + Array(baseCommands.dropFirst(2))
+        baseCommands + elementSectionCommands(from: elementDefinitions)
     }
 
     static func searchableCommands(elementDefinitions: [DocumentElementDefinition]) -> [SlashCommand] {
-        Array(baseCommands.prefix(2))
-            + [elementsCommand, newElementCommand]
-            + elementCommands(from: elementDefinitions)
-            + Array(baseCommands.dropFirst(2))
+        commands(elementDefinitions: elementDefinitions)
     }
 
-    static func elementSubmenuCommands(elementDefinitions: [DocumentElementDefinition]) -> [SlashCommand] {
-        [newElementCommand] + elementCommands(from: elementDefinitions)
-    }
-
-    private static func elementCommands(from elementDefinitions: [DocumentElementDefinition]) -> [SlashCommand] {
-        let elementCommands = activeElementDefinitions(from: elementDefinitions).map { definition in
-            SlashCommand(
-                type: .element,
-                title: definition.title,
-                subtitle: "Insert element",
-                icon: definition.systemIcon,
-                shortcut: nil,
-                searchAliases: ["element", definition.systemIcon],
-                elementDefinition: definition
-            )
+    /// The MY ELEMENTS section: the user's own elements (or the starter
+    /// gallery while they have none), then "New Element…".
+    private static func elementSectionCommands(from elementDefinitions: [DocumentElementDefinition]) -> [SlashCommand] {
+        let active = activeElementDefinitions(from: elementDefinitions)
+        let rows: [SlashCommand]
+        if active.isEmpty {
+            rows = starterDefinitions.map { definition in
+                SlashCommand(
+                    type: .element,
+                    title: definition.title,
+                    subtitle: "Starter element",
+                    icon: definition.systemIcon,
+                    shortcut: nil,
+                    searchAliases: ["element", "starter"],
+                    elementDefinition: definition,
+                    section: .elements,
+                    isStarterElement: true
+                )
+            }
+        } else {
+            rows = active.map { definition in
+                SlashCommand(
+                    type: .element,
+                    title: definition.title,
+                    subtitle: "Insert element",
+                    icon: definition.systemIcon,
+                    shortcut: nil,
+                    searchAliases: ["element", definition.systemIcon],
+                    elementDefinition: definition,
+                    section: .elements
+                )
+            }
         }
-        return elementCommands
+        return rows + [newElementCommand]
     }
 
     static func filteredCommands(

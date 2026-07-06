@@ -1642,7 +1642,7 @@ private struct SocialPlatformConnectionCard: View {
 // MARK: - Elements Settings
 
 struct ElementsSettingsTab: View {
-    @StateObject private var store = DocumentElementStore()
+    private var store: DocumentElementStore { DocumentElementStore.shared }
     @State private var newTitle = ""
     @State private var newIcon = "square.dashed"
     @State private var errorMessage: String?

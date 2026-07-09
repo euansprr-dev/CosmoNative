@@ -32,10 +32,68 @@ struct CosmoInlineAssistantPaneView: View {
         VStack(spacing: 0) {
             CosmoInlineAssistantPaneHeader(store: store, onClose: onClose)
             CosmoInlineAssistantPaneMessages(store: store)
+            CosmoInlineAssistantAutoSkillChip(store: store)
             CosmoInlineAssistantPaneFollowUps(store: store)
             CosmoInlineAssistantPaneComposer(store: store)
         }
         .background(DS.bg)
+    }
+}
+
+/// An event-triggered skill offering itself: one dismissible chip, zero tokens
+/// until tapped. Quiet — a colleague raising a hand, not an interruption.
+private struct CosmoInlineAssistantAutoSkillChip: View {
+    @ObservedObject var store: CosmoInlineAssistantStore
+
+    var body: some View {
+        if let suggestion = store.autoSkillSuggestion, !store.isProcessing {
+            HStack(spacing: DS.space8) {
+                Button {
+                    store.acceptAutoSkillSuggestion()
+                } label: {
+                    HStack(spacing: DS.space6) {
+                        Image(systemName: suggestion.icon)
+                            .font(DS.caption2.weight(.semibold))
+                            .accessibilityHidden(true)
+                        Text("Run \(suggestion.skillName)")
+                            .font(DS.caption.weight(.semibold))
+                            .lineLimit(1)
+                    }
+                    .foregroundStyle(DS.accent)
+                    .padding(.horizontal, DS.space10)
+                    .padding(.vertical, DS.space4)
+                    .background(DS.accentSoft, in: Capsule())
+                    .overlay {
+                        Capsule().strokeBorder(DS.accent.opacity(0.16), lineWidth: 1)
+                    }
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .cosmoClickCursor()
+                .help("Run this skill on the current document")
+                .accessibilityLabel("Run skill \(suggestion.skillName)")
+
+                Button {
+                    store.dismissAutoSkillSuggestion()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(DS.caption2.weight(.semibold))
+                        .foregroundStyle(DS.textMuted)
+                        .frame(width: 20, height: 20)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .cosmoClickCursor()
+                .help("Dismiss")
+                .accessibilityLabel("Dismiss skill suggestion")
+
+                Spacer()
+            }
+            .padding(.horizontal, DS.space16)
+            .padding(.vertical, DS.space6)
+            .transition(.opacity.combined(with: .move(edge: .bottom)))
+            .animation(ProMotionSprings.gentle, value: store.autoSkillSuggestion)
+        }
     }
 }
 
@@ -46,16 +104,138 @@ private struct CosmoInlineAssistantPaneHeader: View {
     let onClose: () -> Void
 
     @State private var isCloseHovered = false
+    @State private var memoryFacts: [String] = []
+    @State private var isMemoryPopoverShown = false
 
     var body: some View {
-        HStack(spacing: DS.space8) {
-            orb
-            titleBlock
+        VStack(spacing: 0) {
+            HStack(spacing: DS.space8) {
+                orb
+                titleBlock
+                Spacer()
+                closeButton
+            }
+            .padding(.horizontal, DS.space16)
+            .frame(height: 52)
+
+            if !store.sessionLedger.isEmpty || !memoryFacts.isEmpty {
+                sessionSpine
+            }
+        }
+        .task { await refreshMemoryFacts() }
+        .onChange(of: store.isProcessing) { _, processing in
+            guard !processing else { return }
+            Task { await refreshMemoryFacts() }
+        }
+    }
+
+    // MARK: Session spine
+
+    /// The session's living state in one quiet line: what this session has
+    /// produced, which model answers, and what Cosmo has remembered (tap to
+    /// inspect or forget — memory transparency).
+    private var sessionSpine: some View {
+        HStack(spacing: DS.space10) {
+            if editCount > 0 || answerCount > 0 {
+                Text(spineSummary)
+                    .font(DS.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(DS.textMuted)
+                    .contentTransition(.numericText())
+                    .animation(ProMotionSprings.gentle, value: spineSummary)
+            }
+
+            Text(CosmoInlineAssistantCacheWarmer.effectiveTier.displayLabel)
+                .font(DS.caption)
+                .foregroundStyle(DS.textMuted)
+                .help("The model answering in this session")
+
+            if !memoryFacts.isEmpty {
+                memoryChip
+            }
+
             Spacer()
-            closeButton
         }
         .padding(.horizontal, DS.space16)
-        .frame(height: 52)
+        .padding(.bottom, DS.space6)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var editCount: Int {
+        store.sessionLedger.filter { $0.proposalID != nil }.count
+    }
+
+    private var answerCount: Int {
+        store.sessionLedger.filter { $0.answerDigest != nil && $0.proposalID == nil }.count
+    }
+
+    private var spineSummary: String {
+        var parts: [String] = []
+        if editCount > 0 { parts.append("\(editCount) edit\(editCount == 1 ? "" : "s")") }
+        if answerCount > 0 { parts.append("\(answerCount) answer\(answerCount == 1 ? "" : "s")") }
+        return parts.joined(separator: " · ")
+    }
+
+    private var memoryChip: some View {
+        Button {
+            isMemoryPopoverShown = true
+        } label: {
+            HStack(spacing: DS.space4) {
+                Image(systemName: "brain")
+                    .font(DS.caption2)
+                    .accessibilityHidden(true)
+                Text("\(memoryFacts.count)")
+                    .font(DS.caption)
+                    .monospacedDigit()
+            }
+            .foregroundStyle(DS.textMuted)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .cosmoClickCursor()
+        .help("What Cosmo remembers — click to inspect or forget")
+        .accessibilityLabel("\(memoryFacts.count) remembered facts")
+        .popover(isPresented: $isMemoryPopoverShown, arrowEdge: .bottom) {
+            memoryPopover
+        }
+    }
+
+    private var memoryPopover: some View {
+        VStack(alignment: .leading, spacing: DS.space8) {
+            Text("Cosmo remembers")
+                .font(DS.caption.weight(.semibold))
+                .foregroundStyle(DS.textSecondary)
+
+            ForEach(memoryFacts, id: \.self) { fact in
+                HStack(alignment: .firstTextBaseline, spacing: DS.space8) {
+                    Text(fact)
+                        .font(DS.caption)
+                        .foregroundStyle(DS.text)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: DS.space8)
+                    Button {
+                        Task {
+                            await CosmoMemoryService.shared.deleteArchivalMemory(fact)
+                            await refreshMemoryFacts()
+                        }
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(DS.caption2)
+                            .foregroundStyle(DS.textMuted)
+                    }
+                    .buttonStyle(.plain)
+                    .cosmoClickCursor()
+                    .help("Forget this")
+                    .accessibilityLabel("Forget: \(fact)")
+                }
+            }
+        }
+        .padding(DS.space12)
+        .frame(width: 340, alignment: .leading)
+    }
+
+    private func refreshMemoryFacts() async {
+        memoryFacts = await CosmoMemoryService.shared.allArchivalMemory().suffix(8).reversed()
     }
 
     /// The orb wears the phase — same symbol vocabulary as the floating bar.
@@ -264,6 +444,11 @@ private struct CosmoInlineAssistantPaneMessages: View {
                     .frame(height: 1)
                     .id(Self.bottomAnchorID)
             }
+            // A conversation reads from its end: opening the pane mid-session
+            // must land on the latest exchange, not page one. This also keeps
+            // the lazy transcript from instantiating every row on open the way
+            // a top-anchored scroll + manual scroll-to-bottom would.
+            .defaultScrollAnchor(.bottom)
             .onChange(of: store.paneMessages.count) {
                 withAnimation(ProMotionSprings.gentle) {
                     proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
@@ -295,8 +480,8 @@ private struct CosmoInlineAssistantPaneMessages: View {
 
     private var conversation: some View {
         LazyVStack(alignment: .leading, spacing: DS.space12) {
-            ForEach(store.paneMessages) { message in
-                messageRow(message)
+            ForEach(runs) { run in
+                runView(run)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
 
@@ -311,6 +496,50 @@ private struct CosmoInlineAssistantPaneMessages: View {
         .padding(DS.space16)
         .animation(ProMotionSprings.gentle, value: store.paneMessages.count)
         .animation(ProMotionSprings.gentle, value: store.isProcessing)
+    }
+
+    /// The worklog grammar: one card per run (ask → receipts → deliverables).
+    /// Messages from older sessions (no runID) render ungrouped, exactly as
+    /// they always did.
+    private struct PaneRun: Identifiable {
+        let id: UUID
+        var messages: [CosmoInlineAssistantPaneMessage]
+        var isGrouped: Bool
+    }
+
+    private var runs: [PaneRun] {
+        var result: [PaneRun] = []
+        for message in store.paneMessages {
+            if let runID = message.runID {
+                if let index = result.lastIndex(where: { $0.id == runID }) {
+                    result[index].messages.append(message)
+                } else {
+                    result.append(PaneRun(id: runID, messages: [message], isGrouped: true))
+                }
+            } else {
+                result.append(PaneRun(id: message.id, messages: [message], isGrouped: false))
+            }
+        }
+        return result
+    }
+
+    @ViewBuilder
+    private func runView(_ run: PaneRun) -> some View {
+        if run.isGrouped {
+            CosmoInlineAssistantRunCard(
+                store: store,
+                runID: run.id,
+                messages: run.messages,
+                skill: skillResolver.skill(id: run.messages.first(where: { $0.role == .user })?.skillID),
+                content: { message in
+                    AnyView(messageRow(message))
+                }
+            )
+        } else {
+            ForEach(run.messages) { message in
+                messageRow(message)
+            }
+        }
     }
 
     private var shouldShowProgress: Bool {
@@ -350,6 +579,75 @@ private struct CosmoInlineAssistantPaneMessages: View {
                 CosmoInlineAssistantPaneSectionLabel(text: message.content)
             }
         }
+    }
+}
+
+// MARK: - Run card
+
+/// One run of the session worklog: the ask as a compact quoted header, then
+/// the run's receipts and deliverables stacked beneath it. The card is a quiet
+/// warm container (inner chrome on the glass pane — Law 3); the answer prose
+/// stays the hero inside it. Right-click promotes the run into a skill.
+private struct CosmoInlineAssistantRunCard: View {
+    @ObservedObject var store: CosmoInlineAssistantStore
+    let runID: UUID
+    let messages: [CosmoInlineAssistantPaneMessage]
+    var skill: CosmoInlineSkillDefinition?
+    let content: (CosmoInlineAssistantPaneMessage) -> AnyView
+
+    private var ask: CosmoInlineAssistantPaneMessage? {
+        messages.first { $0.role == .user }
+    }
+
+    private var deliverables: [CosmoInlineAssistantPaneMessage] {
+        messages.filter { $0.role != .user }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.space10) {
+            if let ask {
+                askHeader(ask)
+            }
+            ForEach(deliverables) { message in
+                content(message)
+            }
+        }
+        .padding(DS.space12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(DS.glassSectionFill, in: .rect(cornerRadius: 14))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14)
+                .strokeBorder(DS.glassBorder, lineWidth: 1)
+        }
+        .contextMenu {
+            Button {
+                store.promoteRun(withRunID: runID)
+            } label: {
+                Label("Save as Skill…", systemImage: "wand.and.stars")
+            }
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private func askHeader(_ ask: CosmoInlineAssistantPaneMessage) -> some View {
+        VStack(alignment: .leading, spacing: DS.space4) {
+            if let skill {
+                CosmoInlineAssistantSkillBadge(skill: skill)
+            }
+            HStack(alignment: .top, spacing: DS.space8) {
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(DS.accent.opacity(0.55))
+                    .frame(width: 2)
+                Text(ask.content)
+                    .font(DS.callout)
+                    .foregroundStyle(DS.textSecondary)
+                    .textSelection(.enabled)
+                    .lineLimit(4)
+            }
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("You asked: \(ask.content)")
     }
 }
 

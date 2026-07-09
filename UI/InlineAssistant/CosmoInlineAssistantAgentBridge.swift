@@ -19,6 +19,9 @@ struct CosmoInlineAssistantPreparedAgentRequest {
     var contextAtomUUIDs: [String]
     var contextSourceIDs: [String]
     var activeClientUUID: String?
+    /// Multi-phase skill pipeline — when non-empty the bridge runs one scoped
+    /// agent turn per step instead of a single turn.
+    var pipelineSteps: [CosmoInlineSkillStep] = []
 }
 
 struct CosmoInlineAssistantAgentBridge {
@@ -71,8 +74,11 @@ struct CosmoInlineAssistantAgentBridge {
         }
         // The surface bound at submit is the truth for edit targeting — the
         // executor stamps it over model-authored IDs so proposals always bind
-        // to the editor the user was actually in.
+        // to the editor the user was actually in. The text rides along so the
+        // executor can validate anchors and expand series instructions
+        // (renumberSequence, scoped formatMarks) against real document state.
         executor.workspaceEditBoundSurface = snapshot.map { ($0.surfaceID, $0.targetID) }
+        executor.workspaceEditBoundSurfaceText = snapshot?.text
 
         let paneAnswerCount = store.paneMessages.filter {
             $0.role == .assistant && $0.proposalID == nil
@@ -84,6 +90,7 @@ struct CosmoInlineAssistantAgentBridge {
             executor.onInquiryQuestionProposal = nil
             executor.onCanvasPlan = nil
             executor.workspaceEditBoundSurface = nil
+            executor.workspaceEditBoundSurfaceText = nil
             executor.contextAtomUUIDs = []
             executor.contextSourceIDs = []
             executor.contextConversationID = nil
@@ -119,7 +126,8 @@ struct CosmoInlineAssistantAgentBridge {
             route: route,
             snapshot: snapshot,
             inlineContextAtoms: store.selectedContextAtoms,
-            selectedSkillID: store.activeSubmissionSkillID
+            selectedSkillID: store.activeSubmissionSkillID,
+            sessionLedgerBlock: store.sessionLedgerPromptBlock
         )
         // The agent's memory thread follows the conversation the user can SEE
         // (the store's active session), not whichever surface happens to be
@@ -136,30 +144,76 @@ struct CosmoInlineAssistantAgentBridge {
         executor.contextConversationID = preparedRequest.conversationID
         executor.activeClientUUID = preparedRequest.activeClientUUID
 
-        let (response, _) = await CosmoAgentService.shared.processMessage(
-            preparedRequest.prompt,
-            conversationId: preparedRequest.conversationID,
-            source: .inApp,
-            tierOverride: preparedRequest.tierOverride,
-            intentOverride: preparedRequest.intentOverride,
-            systemPromptOverride: preparedRequest.systemPromptOverride,
-            volatileContextOverride: preparedRequest.volatileContextOverride,
-            responseMode: preparedRequest.responseMode,
-            profileToolBundles: preparedRequest.profileToolBundles,
-            forcedToolBundles: preparedRequest.forcedToolBundles,
-            // Action edits inject their own compact context — skip the heavy Command-A layers.
-            lightweightContext: route == .action,
-            onToolActivity: { event in
-                Task { @MainActor in
-                    store.receiveToolActivity(event)
+        var response: String
+        if !preparedRequest.pipelineSteps.isEmpty {
+            response = await Self.runPipeline(preparedRequest, route: route, store: store)
+        } else {
+            (response, _) = await CosmoAgentService.shared.processMessage(
+                preparedRequest.prompt,
+                conversationId: preparedRequest.conversationID,
+                source: .inApp,
+                tierOverride: preparedRequest.tierOverride,
+                intentOverride: preparedRequest.intentOverride,
+                systemPromptOverride: preparedRequest.systemPromptOverride,
+                volatileContextOverride: preparedRequest.volatileContextOverride,
+                responseMode: preparedRequest.responseMode,
+                profileToolBundles: preparedRequest.profileToolBundles,
+                forcedToolBundles: preparedRequest.forcedToolBundles,
+                // Action edits inject their own compact context — skip the heavy Command-A layers.
+                lightweightContext: route == .action,
+                onToolActivity: { event in
+                    Task { @MainActor in
+                        store.receiveToolActivity(event)
+                    }
+                },
+                onPaneAnswerDelta: { delta in
+                    Task { @MainActor in
+                        store.receivePaneAnswerDelta(delta)
+                    }
                 }
-            },
-            onPaneAnswerDelta: { delta in
-                Task { @MainActor in
-                    store.receivePaneAnswerDelta(delta)
+            )
+        }
+
+        // Escalation ladder: a fast-lane (Haiku) edit run whose proposals kept
+        // failing validation retries ONCE on the daily driver. Cheap requests
+        // stay cheap; hard ones self-heal instead of dead-ending.
+        if preparedRequest.pipelineSteps.isEmpty,
+           route == .action,
+           preparedRequest.tierOverride == .sensor,
+           store.proposals.count == proposalCount,
+           executor.workspaceEditValidationRejections >= 2 {
+            print("[AGENT-PERF] inline fast-lane escalation → sonnet5 after \(executor.workspaceEditValidationRejections) validation rejections")
+            store.receiveToolActivity(.started(
+                name: "inline_thinking",
+                displayLabel: "Taking another pass with a stronger model…",
+                args: [:]
+            ))
+            executor.resetSessionSourceRefs()
+            let retry = await CosmoAgentService.shared.processMessage(
+                preparedRequest.prompt,
+                conversationId: preparedRequest.conversationID,
+                source: .inApp,
+                tierOverride: .sonnet5,
+                intentOverride: preparedRequest.intentOverride,
+                systemPromptOverride: preparedRequest.systemPromptOverride,
+                volatileContextOverride: preparedRequest.volatileContextOverride,
+                responseMode: preparedRequest.responseMode,
+                profileToolBundles: preparedRequest.profileToolBundles,
+                forcedToolBundles: preparedRequest.forcedToolBundles,
+                lightweightContext: true,
+                onToolActivity: { event in
+                    Task { @MainActor in
+                        store.receiveToolActivity(event)
+                    }
+                },
+                onPaneAnswerDelta: { delta in
+                    Task { @MainActor in
+                        store.receivePaneAnswerDelta(delta)
+                    }
                 }
-            }
-        )
+            )
+            response = retry.0
+        }
         CosmoAgentService.shared.noteInlinePrefixWritten()
         let perfTotalMs = Int(Date().timeIntervalSince(perfStart) * 1000)
         print("[AGENT-PERF] inline TOTAL=\(perfTotalMs)ms (prepare=\(perfPrepareMs)ms, agentLoop=\(perfTotalMs - perfPrepareMs)ms)")
@@ -197,6 +251,68 @@ struct CosmoInlineAssistantAgentBridge {
     }
 
     static let mock = CosmoInlineAssistantAgentBridge { _, _, _ in }
+
+    /// Runs a multi-step skill pipeline: one scoped agent turn per step in the
+    /// SAME conversation, so each step sees the previous steps' receipts. Steps
+    /// can carry their own tool bundles and model tier (gather-on-Haiku →
+    /// write-on-Sonnet → stage-edits).
+    @MainActor
+    private static func runPipeline(
+        _ preparedRequest: CosmoInlineAssistantPreparedAgentRequest,
+        route: CosmoInlineAssistantRoute,
+        store: CosmoInlineAssistantStore
+    ) async -> String {
+        let steps = preparedRequest.pipelineSteps
+        var lastResponse = ""
+
+        for (index, step) in steps.enumerated() {
+            if Task.isCancelled { break }
+            store.receiveToolActivity(.started(
+                name: "inline_pipeline_step",
+                displayLabel: "Step \(index + 1) of \(steps.count): \(step.name)",
+                args: [:]
+            ))
+
+            let volatile = [
+                preparedRequest.volatileContextOverride,
+                step.promptBlock(index: index, total: steps.count)
+            ]
+            .compactMap { $0 }
+            .joined(separator: "\n\n")
+
+            let stepBundles = step.toolBundles.map { preparedRequest.forcedToolBundles.union($0) }
+                ?? preparedRequest.forcedToolBundles
+
+            let (text, _) = await CosmoAgentService.shared.processMessage(
+                index == 0
+                    ? preparedRequest.prompt
+                    : "Continue with pipeline step \(index + 1): \(step.name).",
+                conversationId: preparedRequest.conversationID,
+                source: .inApp,
+                tierOverride: step.preferredModelTier ?? preparedRequest.tierOverride,
+                intentOverride: preparedRequest.intentOverride,
+                systemPromptOverride: preparedRequest.systemPromptOverride,
+                volatileContextOverride: volatile,
+                responseMode: preparedRequest.responseMode,
+                profileToolBundles: preparedRequest.profileToolBundles,
+                forcedToolBundles: stepBundles,
+                lightweightContext: route == .action,
+                onToolActivity: { event in
+                    Task { @MainActor in
+                        store.receiveToolActivity(event)
+                    }
+                },
+                onPaneAnswerDelta: { delta in
+                    Task { @MainActor in
+                        store.receivePaneAnswerDelta(delta)
+                    }
+                }
+            )
+            lastResponse = text
+        }
+
+        return lastResponse
+    }
 }
 
 /// Opportunistically writes the inline assistant's cached prompt prefix (tools +
@@ -207,7 +323,27 @@ struct CosmoInlineAssistantAgentBridge {
 enum CosmoInlineAssistantCacheWarmer {
     private static var inFlight = false
 
+    /// The tier a real request would run on right now — the same resolution
+    /// chain as `prepareInlineAssistantAgentRequest`. Prompt caches are
+    /// model-scoped: warming any other model is pure waste and the first real
+    /// request still pays the cold write.
+    static var effectiveTier: AgentModelTier {
+        CosmoWindowViewModel.shared.modelOverride
+            ?? CosmoWindowViewModel.shared.selectedAgentProfile?.preferredModelTier
+            ?? CosmoInlineAssistantRequestShape.defaultModelTier
+    }
+
     static func warmIfNeeded(route: CosmoInlineAssistantRoute = .action) {
+        warm(route: route, tier: effectiveTier)
+    }
+
+    /// Fire when the user switches models mid-session so the first request on
+    /// the new model reads a warm prefix instead of paying a cold write.
+    static func warmForModelChange() {
+        warm(route: .action, tier: effectiveTier)
+    }
+
+    private static func warm(route: CosmoInlineAssistantRoute, tier: AgentModelTier) {
         guard !inFlight else { return }
         inFlight = true
         Task(priority: .utility) {
@@ -220,7 +356,7 @@ enum CosmoInlineAssistantCacheWarmer {
                 responseMode: CosmoInlineAssistantRequestShape.responseMode(for: route),
                 profileToolBundles: [],
                 forcedToolBundles: CosmoInlineAssistantRequestShape.baselineToolBundles(for: route),
-                tier: .sensor
+                tier: tier
             )
             inFlight = false
         }

@@ -84,6 +84,9 @@ enum CosmoInlineSkillPanePolicy: String, Codable, Equatable, Sendable {
 struct CosmoInlineAssistantSkillPlan: Codable, Equatable, Sendable {
     var primarySkill: CosmoInlineAssistantSkill
     var definitionID: String? = nil
+    /// Multi-phase pipeline from the skill definition — when present, the
+    /// bridge runs the skill step-by-step instead of as one turn.
+    var pipelineSteps: [CosmoInlineSkillStep]? = nil
 
     var route: CosmoInlineAssistantRoute { primarySkill.route }
     var requiredContext: Set<CosmoInlineAssistantSkillContext> { primarySkill.requiredContext }
@@ -147,6 +150,63 @@ struct CosmoInlineAssistantSkillPlan: Codable, Equatable, Sendable {
     }
 }
 
+/// Event-driven skill activation: a skill can offer itself (or run) when
+/// something happens in the workspace, instead of waiting to be asked.
+/// Guardrails live in the runner: per-skill+surface cooldown, never while a
+/// run is in flight, and `suggest` mode costs zero tokens until tapped.
+struct CosmoInlineSkillAutoTrigger: Codable, Equatable, Sendable {
+    enum Event: String, Codable, Equatable, Sendable {
+        /// The user opened/focused an editable surface.
+        case onSurfaceActivate
+        /// The user accepted a staged proposal on this surface.
+        case onProposalAccepted
+    }
+
+    enum Mode: String, Codable, Equatable, Sendable {
+        /// Present a one-tap chip — the skill only runs when the user taps it.
+        case suggest
+        /// Run the skill immediately (staging-only: its output is a reviewed
+        /// proposal or one pane card, never chat spam).
+        case run
+    }
+
+    var event: Event
+    var mode: Mode = .suggest
+    /// Restrict to surface kinds (e.g. only content drafts). Nil = any.
+    var surfaceKinds: Set<CosmoEditableSurfaceKind>? = nil
+    /// Minimum minutes between firings per surface.
+    var cooldownMinutes: Int = 60
+    /// The prompt the firing submits (or the chip label in suggest mode).
+    var prompt: String = "Begin."
+}
+
+/// One phase of a multi-step skill pipeline. Steps run sequentially as scoped
+/// agent turns in the same conversation — each sees the previous steps'
+/// receipts, and each can carry its own tool bundles and model tier
+/// (gather-on-Haiku → write-on-Sonnet → stage-edits).
+struct CosmoInlineSkillStep: Codable, Equatable, Sendable {
+    var name: String
+    var instructions: [String]
+    var toolBundles: Set<AgentToolBundle>? = nil
+    var preferredModelTier: AgentModelTier? = nil
+    var outputContract: String? = nil
+
+    func promptBlock(index: Int, total: Int) -> String {
+        var block = """
+        ## Pipeline Step \(index + 1) of \(total): \(name)
+        Complete ONLY this step now. Earlier steps' results are in the conversation history.
+        \(instructions.map { "- \($0)" }.joined(separator: "\n"))
+        """
+        if let outputContract, !outputContract.isEmpty {
+            block += "\nStep output contract: \(outputContract)"
+        }
+        if index + 1 < total {
+            block += "\nDeliver this step's result via answer_in_assistant_pane; the next step builds on it."
+        }
+        return block
+    }
+}
+
 /// A paired example teaching a skill what great output looks like. Examples are
 /// the highest-leverage field for Haiku-tier skills — small models imitate far
 /// better than they follow abstract instructions.
@@ -193,6 +253,11 @@ struct CosmoInlineSkillDefinition: Identifiable, Codable, Equatable, Sendable {
     /// Post-conditions the model must check before staging output
     /// (e.g. "every slide keeps its SLIDE N header", "no invented metrics").
     var verification: String?
+    /// Event-driven activation (decodes nil from older persisted definitions).
+    var autoTrigger: CosmoInlineSkillAutoTrigger?
+    /// Multi-phase pipeline (decodes nil from older persisted definitions).
+    /// When present, the skill runs step-by-step instead of as one turn.
+    var steps: [CosmoInlineSkillStep]?
 
     var displayedModelLabel: String {
         if isBuiltin,
@@ -632,6 +697,10 @@ enum CosmoInlineSlashSkillParser {
     }
 }
 
+/// The session's working state: which surface, client, skill, and selected
+/// @ context the conversation is bound to. Pure state — cross-message
+/// continuity itself lives in the session ledger ("## Session So Far"), not in
+/// keyword follow-up detection.
 struct CosmoInlineAssistantWorkingContextFrame: Codable, Equatable, Sendable {
     var conversationID: String
     var surfaceID: String?
@@ -641,61 +710,35 @@ struct CosmoInlineAssistantWorkingContextFrame: Codable, Equatable, Sendable {
     var surfaceSourceHash: String?
     var activeAtomUUID: String?
     var effectiveClientUUID: String?
-    var clientReference: String?
     var skillID: CosmoInlineAssistantSkillID
     var route: CosmoInlineAssistantRoute
-    var sourcePrompt: String = ""
-    var previousPrompt: String?
-    var previousSkillID: CosmoInlineAssistantSkillID?
-    var previousTargetHint: String?
-    var currentTargetHint: String?
-    var operationHint: String?
     var contextAtomUUIDs: [String] = []
     var contextAtomTitles: [String] = []
-    var isFollowUp: Bool
-    var reusedContext: Bool
-    var stableContextKey: String
     var updatedAt: Date
 
     var promptBlock: String {
-        let cacheStatus = reusedContext ? "hit" : "miss"
         let surface = surfaceID ?? activeAtomUUID ?? "none"
         let title = surfaceTitle ?? "untitled"
         let clientUUID = effectiveClientUUID ?? "none"
-        let clientName = clientReference ?? "none"
-        let previousTarget = previousTargetHint ?? "none"
-        let currentTarget = currentTargetHint ?? "none"
-        let previousSkill = previousSkillID?.rawValue ?? "none"
-        let operation = operationHint ?? "none"
         let sourceHash = surfaceSourceHash ?? "none"
         let selectedContext = contextAtomTitles.isEmpty ? "none" : contextAtomTitles.joined(separator: ", ")
         let selectedContextIDs = contextAtomUUIDs.isEmpty ? "none" : contextAtomUUIDs.joined(separator: ", ")
 
         return """
-        ## Inline Working Context Cache
-        Cache status: \(cacheStatus)
-        Stable context key: \(stableContextKey)
+        ## Inline Working Context
         Surface scope: \(surface)
         Surface title: \(title)
         Surface source hash: \(sourceHash)
         Active atom UUID: \(activeAtomUUID ?? "none")
         Active client UUID: \(clientUUID)
-        Client reference: \(clientName)
         Current skill: \(skillID.rawValue)
-        Previous skill: \(previousSkill)
-        Previous target: \(previousTarget)
-        Current target: \(currentTarget)
-        Operation hint: \(operation)
         Selected context: \(selectedContext)
         Selected context UUIDs: \(selectedContextIDs)
-        Follow-up prompt: \(isFollowUp ? "yes" : "no")
 
-        Cache policy:
-        - Reuse the prior client/profile context when the current prompt is a follow-up and no new client is named.
-        - Reuse the prior operation intent for phrases like "do the same" or "same thing" unless the user changes the task.
-        - Keep selected @ context active for the inline assistant session until the user removes it.
-        - Refresh the active surface text whenever the source hash changes; do not rely on cached text for reviewed diffs.
-        - If client/profile evidence is stale or missing, call the profile/search tools again instead of guessing.
+        Context rules:
+        - The active client and selected @ context stay bound to this session until the user changes them.
+        - Refresh the active surface text whenever the source hash changes; never rely on remembered text for reviewed diffs.
+        - If client/profile evidence is missing, call the profile/search tools instead of guessing.
         """
     }
 }
@@ -713,7 +756,6 @@ final class CosmoInlineAssistantWorkingContextCache {
 
     func updateFrame(
         conversationID: String,
-        prompt: String,
         route: CosmoInlineAssistantRoute,
         snapshot: CosmoEditableSourceSnapshot?,
         activeAtomUUID: String?,
@@ -728,20 +770,10 @@ final class CosmoInlineAssistantWorkingContextCache {
             activeAtomUUID: activeAtomUUID
         )
         let previous = freshFrame(for: key, now: now)
-        let isFollowUp = Self.isFollowUpPrompt(prompt)
-        let currentTarget = Self.targetHint(in: prompt)
-        let explicitClient = Self.clientReference(in: prompt)
-        let effectiveClientUUID = activeClientUUID ?? (isFollowUp ? previous?.effectiveClientUUID : nil)
-        let clientReference = explicitClient ?? (isFollowUp ? previous?.clientReference : nil)
-        let effectiveSkillID = isFollowUp ? (previous?.skillID ?? skillPlan.primarySkill.id) : skillPlan.primarySkill.id
-        let contextAtomUUIDs = contextAtoms.map(\.uuid)
-        let contextAtomTitles = contextAtoms.map { $0.title ?? "Untitled" }
-        let reusedContext = previous != nil && (
-            isFollowUp ||
-            previous?.effectiveClientUUID == effectiveClientUUID ||
-            previous?.clientReference == clientReference ||
-            previous?.contextAtomUUIDs == contextAtomUUIDs
-        )
+        // Client continuity is state, not keyword detection: the session's
+        // client sticks until app state names another (TTL-bounded by the
+        // frame itself).
+        let effectiveClientUUID = activeClientUUID ?? previous?.effectiveClientUUID
 
         let frame = CosmoInlineAssistantWorkingContextFrame(
             conversationID: conversationID,
@@ -752,33 +784,10 @@ final class CosmoInlineAssistantWorkingContextCache {
             surfaceSourceHash: snapshot?.sourceHash,
             activeAtomUUID: activeAtomUUID,
             effectiveClientUUID: effectiveClientUUID,
-            clientReference: clientReference,
-            skillID: effectiveSkillID,
+            skillID: skillPlan.primarySkill.id,
             route: route,
-            sourcePrompt: prompt,
-            previousPrompt: previous?.sourcePrompt,
-            previousSkillID: previous?.skillID,
-            previousTargetHint: previous?.currentTargetHint,
-            currentTargetHint: currentTarget,
-            operationHint: Self.operationHint(
-                in: prompt,
-                isFollowUp: isFollowUp,
-                previous: previous,
-                skillPlan: skillPlan
-            ),
-            contextAtomUUIDs: contextAtomUUIDs,
-            contextAtomTitles: contextAtomTitles,
-            isFollowUp: isFollowUp,
-            reusedContext: reusedContext,
-            stableContextKey: stableContextKey(
-                conversationID: conversationID,
-                snapshot: snapshot,
-                activeAtomUUID: activeAtomUUID,
-                clientUUID: effectiveClientUUID,
-                clientReference: clientReference,
-                skillID: effectiveSkillID,
-                contextAtomUUIDs: contextAtomUUIDs
-            ),
+            contextAtomUUIDs: contextAtoms.map(\.uuid),
+            contextAtomTitles: contextAtoms.map { $0.title ?? "Untitled" },
             updatedAt: now
         )
         framesByScope[key] = frame
@@ -813,10 +822,6 @@ final class CosmoInlineAssistantWorkingContextCache {
         framesByScope.removeValue(forKey: key)
     }
 
-    nonisolated static func isFollowUp(_ prompt: String) -> Bool {
-        isFollowUpPrompt(prompt)
-    }
-
     private func freshFrame(
         for key: String,
         now: Date
@@ -840,48 +845,14 @@ final class CosmoInlineAssistantWorkingContextCache {
         ].joined(separator: "|")
     }
 
-    private func stableContextKey(
-        conversationID: String,
-        snapshot: CosmoEditableSourceSnapshot?,
-        activeAtomUUID: String?,
-        clientUUID: String?,
-        clientReference: String?,
-        skillID: CosmoInlineAssistantSkillID,
-        contextAtomUUIDs: [String]
-    ) -> String {
-        [
-            conversationID,
-            snapshot?.surfaceID ?? activeAtomUUID ?? "global",
-            clientUUID ?? clientReference ?? "no-client",
-            skillID.rawValue,
-            contextAtomUUIDs.sorted().joined(separator: "-")
-        ].joined(separator: "|")
-    }
+}
 
-    private nonisolated static func isFollowUpPrompt(_ prompt: String) -> Bool {
-        let lower = prompt.lowercased()
-        return containsAny(lower, [
-            "do the same", "same thing", "same for", "same but", "like that",
-            "again", "also do", "now do", "do that", "repeat that"
-        ])
-    }
-
-    private nonisolated static func targetHint(in prompt: String) -> String? {
-        let words = prompt
-            .lowercased()
-            .split { !$0.isLetter && !$0.isNumber }
-            .map(String.init)
-
-        for index in words.indices where words[index] == "slide" {
-            let nextIndex = words.index(after: index)
-            guard nextIndex < words.endIndex else { continue }
-            return "slide \(words[nextIndex])"
-        }
-
-        return nil
-    }
-
-    nonisolated static func clientReference(in prompt: String) -> String? {
+/// Parses an explicitly named client out of the CURRENT prompt ("for Marcus",
+/// "Josh's profile"). Single-message entity extraction — cross-message client
+/// continuity is the working frame's state, and session continuity is the
+/// ledger's job.
+enum CosmoExplicitClientReference {
+    static func firstName(in prompt: String) -> String? {
         let words = prompt.split(separator: " ").map(String.init)
         let triggers: Set<String> = ["for", "about", "to", "of", "from"]
 
@@ -904,45 +875,11 @@ final class CosmoInlineAssistantWorkingContextCache {
         return nil
     }
 
-    private nonisolated static func operationHint(
-        in prompt: String,
-        isFollowUp: Bool,
-        previous: CosmoInlineAssistantWorkingContextFrame?,
-        skillPlan: CosmoInlineAssistantSkillPlan
-    ) -> String {
-        if isFollowUp, previous != nil {
-            return "reuse previous operation"
-        }
-
-        switch skillPlan.primarySkill.id {
-        case .factFill:
-            return "fill facts with source-backed context"
-        case .inlineEdit:
-            return "stage reviewed inline edit"
-        case .canvasOrganize:
-            return "stage canvas organization"
-        case .voiceVariations:
-            return "generate voice variations"
-        case .contentReview:
-            return "review active content"
-        case .ideaStrategy:
-            return "shape flow and story structure"
-        case .researchAnswer:
-            return "answer with retrieved context"
-        case .concept:
-            return "develop concept with staged section drafts"
-        case .skillBuilder:
-            return "design and create a new inline skill"
-        case .synthesize:
-            return "synthesize saved research into a drafted output"
-        }
-    }
-
-    private nonisolated static func clean(_ word: String) -> String {
+    private static func clean(_ word: String) -> String {
         word.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
     }
 
-    private nonisolated static func cleanClientCandidate(_ word: String) -> String {
+    private static func cleanClientCandidate(_ word: String) -> String {
         var cleaned = word
             .replacingOccurrences(of: "’s", with: "")
             .replacingOccurrences(of: "'s", with: "")
@@ -951,10 +888,6 @@ final class CosmoInlineAssistantWorkingContextCache {
             cleaned.removeLast()
         }
         return cleaned
-    }
-
-    private nonisolated static func containsAny(_ text: String, _ needles: [String]) -> Bool {
-        needles.contains { text.contains($0) }
     }
 }
 
@@ -1085,9 +1018,30 @@ enum CosmoInlineSkillContextResolver {
             satisfied.insert(.clientProfile)
         }
 
+        // Voice exemplars: for client-scoped writing/edit work, two excerpts of
+        // the client's actual recent posts ride along with the compact profile.
+        // Style transfer works by example, not adjectives — the model matches
+        // real register and rhythm instead of interpreting "casual but sharp".
+        if satisfied.contains(.clientProfile),
+           skillPlan.requiresReviewedDiff
+            || skillPlan.primarySkill.id == .voiceVariations
+            || skillPlan.requiredContext.contains(.bestPerformingContent),
+           let clientUUID = (resolvedClientAtom?.uuid
+                ?? activeClientUUID
+                ?? inlineContextAtoms.first(where: { $0.type == .clientProfile })?.uuid) {
+            let exemplars = await voiceExemplars(clientUUID: clientUUID)
+            if !exemplars.isEmpty {
+                blocks.append("""
+                <resolved_context kind="voiceExemplars" clientUUID="\(clientUUID)">
+                Recent work in this client's actual voice — match its register, rhythm, and vocabulary when writing for them. Never copy its content or claims.
+                \(exemplars.joined(separator: "\n"))
+                </resolved_context>
+                """)
+            }
+        }
+
         // TODO: Resolve .clientMemory compactly from client memory service when available.
-        // TODO: Resolve .voiceLessons compactly from lesson/voice stores.
-        // TODO: Resolve .swipes and .bestPerformingContent from selected @ context and swipe search.
+        // TODO: Resolve .swipes from selected @ context and swipe search.
         // TODO: Resolve .researchEvidence only when the skill/prompt explicitly needs external facts.
 
         if let snapshot,
@@ -1100,6 +1054,26 @@ enum CosmoInlineSkillContextResolver {
             blocks: blocks,
             satisfiedContexts: satisfied
         )
+    }
+
+    /// Two compact excerpts of the client's most recent posts with real bodies.
+    private static func voiceExemplars(clientUUID: String, limit: Int = 2) async -> [String] {
+        let recent = (try? await AtomRepository.shared.fetchRecentContent(
+            clientProfileUUID: clientUUID,
+            limit: 6
+        )) ?? []
+
+        return recent
+            .compactMap { atom -> String? in
+                guard let body = atom.body?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      body.count >= 80 else { return nil }
+                let flattened = body
+                    .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+                let excerpt = String(flattened.prefix(400))
+                return "- \"\(atom.title ?? "Untitled")\": \(excerpt)\(flattened.count > 400 ? "…" : "")"
+            }
+            .prefix(limit)
+            .map { $0 }
     }
 
     private static func resolveClientAtom(
@@ -1122,7 +1096,7 @@ enum CosmoInlineSkillContextResolver {
             return atom
         }
 
-        if let clientReference = CosmoInlineAssistantWorkingContextCache.clientReference(in: prompt),
+        if let clientReference = CosmoExplicitClientReference.firstName(in: prompt),
            let atom = try? await AtomRepository.shared.fuzzyFindClient(query: clientReference) {
             return atom
         }
@@ -1302,7 +1276,11 @@ enum CosmoInlineAssistantSkillRuntime {
         if let selectedSkillID,
            let definition = registry.skill(id: selectedSkillID) {
             skill = definition.assistantSkill()
-            return CosmoInlineAssistantSkillPlan(primarySkill: skill, definitionID: definition.id)
+            return CosmoInlineAssistantSkillPlan(
+                primarySkill: skill,
+                definitionID: definition.id,
+                pipelineSteps: definition.steps?.isEmpty == false ? definition.steps : nil
+            )
         } else if isFollowUpLike(lower), let previousSkillID {
             skill = builtInSkill(previousSkillID)
         } else if previousSkillID == .concept {
@@ -1477,6 +1455,7 @@ enum CosmoInlineAssistantSkillRuntime {
                     "Respect slide-delimited/source-delimited structure. If the user says one slide/section, only target that slide/section unless they explicitly ask for broader changes.",
                     "When inserting outline points into existing slide bodies, do not include a new SLIDE N heading in proposedText if the insertion anchor is already that SLIDE N heading. Insert only the body copy that belongs under the existing header.",
                     "If the user asks to add slides, fill a step-by-step, or make the draft match a referenced profile/swipe structure, treat it as actionable. Use the existing slides as the lead-in and stage the added slide content; do not ask the user to choose an angle unless the target surface or required context is genuinely missing.",
+                    "When you insert a new item into a numbered series (a new slide between existing SLIDE N headers, or a new step in a step-by-step list), keep the numbering sequential and unique: number the new item correctly and add a textReplacement operation to bump every following item up by one (old SLIDE 7 to SLIDE 8, Step 5 to Step 6). Never use a fractional number like SLIDE 6.5 and never leave a duplicate number.",
                     "Group changes into reviewable operations with precise rationales.",
                     "Do not open the pane for edit-only work unless the user also asked for an explanation or the edit cannot be staged."
                 ],
@@ -2436,9 +2415,11 @@ enum CosmoInlineAssistantInstructionPrompt {
 
             For each change to existing text, set originalText to the ENTIRE line or sentence that contains the target, copied verbatim from the active surface text, and set proposedText to that same line with ONLY the requested change applied. This guarantees the edit is located and woven in exactly where it lives, and shows a clean before/after. Never use a short fragment (like just a number) as originalText — it may not match or may be ambiguous, which dumps the change at the bottom and flags it as outdated. Use textInsertion only for brand-new content, anchored via originalText to the existing line it should follow.
 
-            Formatting requests (bold, italic, underline, strikethrough, turn into a heading) use kind formatMarks with formatMark set and originalText = the exact text to format, one operation per target. The words must stay identical — never express formatting by rewriting text or adding asterisks/markdown symbols, and never use textReplacement for a pure formatting change.
+            Formatting requests (bold, italic, underline, strikethrough, turn into a heading) use kind formatMarks with formatMark set and originalText = the exact text to format, one operation per target. The words must stay identical — never express formatting by rewriting text or adding asterisks/markdown symbols, and never use textReplacement for a pure formatting change. To format EVERY slide header at once ("bold all the headers"), send ONE formatMarks operation with scope set to allSlideHeaders — the app expands it to every header line exactly.
 
             When inserting outline points into existing slide bodies, anchor each insertion to the existing SLIDE N heading but do not include another SLIDE N heading in proposedText. Insert only the body text that should live under that already-existing slide header. Do not create new slide headers unless the requested destination slide does not already exist.
+
+            When you insert or remove an item in a sequentially numbered series — a new slide between two existing SLIDE N headers, or a step in a numbered list inside a slide — the numbering must stay sequential and unique afterwards. Give any new item its correct integer number, then add ONE renumberSequence operation (seriesKind slideHeaders or numberedSteps, fromNumber = the first number that must shift, delta = 1 to shift up or -1 to shift down, withinSlide for step lists) — the app rewrites every affected line from the live document. Never hand-copy individual header bumps, never invent a fractional number (no SLIDE 6.5, no Step 5b), and never leave two items sharing the same number. The tool result includes resultingDocumentStructure — verify it matches the user's ask before finishing, and stage a corrected proposal if it does not.
 
             If this is edit-only work, do not force the assistant pane open. The proposal summary will still be recorded in pane history. Use answer_in_assistant_pane only when the user also asked for an explanation, the edit cannot be staged, or there is a substantive non-edit result. Proposal summaries are receipts: one tight line in Cosmo's voice saying what changed and the resulting state ("Bolded all 9 slide headers"), never process narration.
             \(paneExplanation)
@@ -2568,4 +2549,12 @@ enum CosmoInlineAssistantRequestShape {
     static func responseMode(for route: CosmoInlineAssistantRoute) -> AgentResponseMode {
         route == .action ? .automatic : .inlineAssistant
     }
+
+    /// The model tier a normal inline request runs on when no skill, profile, or
+    /// user override is set. The cache prewarmer MUST warm this exact tier:
+    /// Anthropic prompt caches are model-scoped, so a prefix warmed on a different
+    /// model can never be read back by the real request (the warm is pure waste and
+    /// the first request still pays a cold write). Kept here so the request path and
+    /// the prewarmer can't drift apart on model, same as pinnedIntent / toolBundles.
+    static let defaultModelTier: AgentModelTier = .sonnet5
 }

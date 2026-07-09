@@ -22,14 +22,15 @@ struct CommandKComposerPane: View {
                 if let draft = viewModel.composerDraft, draft.actionID == action.id {
                     fields(for: draft.kind)
                 }
-                Spacer(minLength: DS.space24)
+                // Keep the last rows reachable above the floating Save pill.
+                Spacer(minLength: DS.space48)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(CortexScrollViewIntrospector { scrollMetrics = $0 })
         }
         .scrollIndicators(.hidden)
         .cortexThinScrollbar(metrics: scrollMetrics)
-        .safeAreaInset(edge: .bottom) { footer }
+        .overlay(alignment: .bottomTrailing) { floatingSave }
         .task(id: action.id) {
             viewModel.ensureComposerDraft(for: action)
             if needsClients, clients.isEmpty { await loadClients() }
@@ -48,49 +49,43 @@ struct CommandKComposerPane: View {
 
     // MARK: - Chrome
 
+    /// The eyebrow — a quiet kind label above the hero title field. The hero
+    /// of the pane is the title the user is typing, never this chrome.
     private var header: some View {
-        HStack(spacing: DS.space10) {
+        HStack(spacing: DS.space8) {
             Image(systemName: action.icon)
-                .font(DS.subheadline.weight(.semibold))
+                .font(DS.caption.weight(.semibold))
                 .foregroundStyle(accent)
-                .frame(width: 30, height: 30)
-                .background(accent.opacity(0.12), in: .rect(cornerRadius: 9))
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(viewModel.composerDraft?.form.primaryTitle ?? action.title)
-                    .font(DS.headline)
-                    .foregroundStyle(DS.text)
-                Text(headerHint)
-                    .font(DS.caption)
-                    .foregroundStyle(DS.textMuted)
-            }
+            Text((viewModel.composerDraft?.form.primaryTitle ?? action.title).uppercased())
+                .font(DS.caption2.weight(.semibold))
+                .kerning(0.8)
+                .foregroundStyle(DS.textSecondary)
             Spacer(minLength: 0)
+            Text(headerHint)
+                .font(DS.caption2)
+                .foregroundStyle(DS.textMuted)
         }
+        .accessibilityElement(children: .combine)
     }
 
-    private var footer: some View {
-        HStack(spacing: DS.space10) {
-            if let message = viewModel.composerDraft?.validation.message {
-                Text(message)
-                    .font(DS.caption)
-                    .foregroundStyle(DS.textMuted)
-            }
-            Spacer(minLength: 0)
-            Text("⌘↩")
-                .font(DS.caption.monospaced())
-                .foregroundStyle(DS.textMuted)
-            Button("Save") { commit() }
-                .buttonStyle(CommandKComposerSaveButtonStyle(accent: accent))
-                .keyboardShortcut(.return, modifiers: .command)
-                .disabled(viewModel.composerDraft?.validation.isValid != true)
-                .help("Save (⌘↩)")
+    /// One floating Save pill — no bar, no echoed validation text. The form
+    /// speaks for itself; an invalid draft just leaves the pill disabled.
+    private var floatingSave: some View {
+        Button("Save") { commit() }
+            .buttonStyle(CommandKComposerSaveButtonStyle(accent: accent))
+            .keyboardShortcut(.return, modifiers: .command)
+            .disabled(viewModel.composerDraft?.validation.isValid != true)
+            .help(saveHelp)
+            .padding(.trailing, DS.space16)
+            .padding(.bottom, DS.space12)
+    }
+
+    private var saveHelp: String {
+        if let message = viewModel.composerDraft?.validation.message {
+            return "\(message) (⌘↩ to save)"
         }
-        .padding(.horizontal, DS.space16)
-        .padding(.vertical, DS.space10)
-        .background(CommandKPreviewPaper.fill.opacity(0.92))
-        .overlay(alignment: .top) {
-            Rectangle().fill(DS.glassBorder).frame(height: 0.5)
-        }
+        return "Save (⌘↩)"
     }
 
     private var headerHint: String {
@@ -130,9 +125,13 @@ struct CommandKComposerPane: View {
         case .captureInbox:
             CommandKInboxComposerFields(pane: self)
         case .captureSwipe:
-            CommandKSwipeComposerFields(pane: self)
-        case .createNote, .createContent, .createThinkspace:
-            CommandKTitleOnlyComposerFields(pane: self)
+            CommandKSwipeComposerFields(pane: self, clients: clients)
+        case .createNote:
+            CommandKNoteComposerFields(pane: self)
+        case .createContent:
+            CommandKContentComposerFields(pane: self)
+        case .createThinkspace:
+            CommandKThinkspaceComposerFields(pane: self)
         default:
             EmptyView()
         }
@@ -186,6 +185,7 @@ struct CommandKComposerPane: View {
 
     private var needsClients: Bool {
         viewModel.composerDraft?.kind == .createIdea
+            || viewModel.composerDraft?.kind == .captureSwipe
     }
 
     private func loadClients() async {
@@ -211,22 +211,34 @@ enum CommandKComposerField: Hashable {
     case url
     case hook
     case notes
+    case checklist
     case outline(Int)
+    case sparkTitle  // swipe composer's inline "spark an idea"
+    case sparkBody
 }
 
 private struct CommandKComposerSaveButtonStyle: ButtonStyle {
     let accent: Color
     @State private var isHovered = false
+    @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(DS.callout.weight(.semibold))
             .foregroundStyle(DS.textOnAccent)
             .padding(.horizontal, DS.space12)
-            .padding(.vertical, DS.space6)
-            .background(accent.opacity(configuration.isPressed ? 0.85 : (isHovered ? 1.0 : 0.92)), in: .capsule)
+            .padding(.vertical, DS.space8)
+            .background(accent.opacity(fillOpacity(isPressed: configuration.isPressed)), in: .capsule)
+            .dsFloatingShadow()
+            .opacity(isEnabled ? 1 : 0.45)
             .scaleEffect(configuration.isPressed ? 0.97 : 1)
             .animation(ProMotionSprings.press, value: configuration.isPressed)
+            .animation(ProMotionSprings.snappy, value: isEnabled)
             .onHover { isHovered = $0 }
+    }
+
+    private func fillOpacity(isPressed: Bool) -> Double {
+        if isPressed { return 0.85 }
+        return isHovered ? 1.0 : 0.92
     }
 }

@@ -39,10 +39,14 @@ final class FocusModeAppearanceTests: XCTestCase {
             let source = try source(file)
             // June 2026 Greenhouse-clean workspaces (Connection, Idea) route
             // through DS.bg deliberately; everything else stays immersive.
+            // July 2026: Swipe Study shares the Swipe File page surface
+            // (SwipePageBackground = DS.swipeLibraryBackground) so the hero
+            // zoom from the library lands on the same paper.
             XCTAssertTrue(
                 source.contains("DS.focusImmersiveBackground")
                     || source.contains("focusBackground")
-                    || source.contains("DS.bg.ignoresSafeArea"),
+                    || source.contains("DS.bg.ignoresSafeArea")
+                    || source.contains("SwipePageBackground()"),
                 "\(file) should route its top-level surface through semantic focus tokens"
             )
         }
@@ -114,14 +118,15 @@ final class FocusModeAppearanceTests: XCTestCase {
 
     func testPremiumFocusModesUseSharedGlassChromePrimitives() throws {
         let premiumChromeSource = try source("UI/FocusMode/Shared/FocusModePremiumChrome.swift")
-        let swipeFocusSource = try source("UI/FocusMode/SwipeStudy/SwipeStudyFocusModeView.swift")
+        let railSource = try source("UI/FocusMode/SwipeStudy/SwipeStudyInsightRail.swift")
 
         XCTAssertTrue(premiumChromeSource.contains("struct FocusModeGlassRail"))
         XCTAssertTrue(premiumChromeSource.contains("struct FocusModeInspectorSection"))
         XCTAssertTrue(premiumChromeSource.contains("struct FocusModeMediaWell"))
-        // Idea v2 moved to its own Greenhouse-clean inspector (IdeaInspectorView);
-        // SwipeStudy still uses the shared premium chrome.
-        XCTAssertTrue(swipeFocusSource.contains("FocusModeInspectorSection"))
+        // Idea v2 moved to IdeaInspectorView; Swipe Study v2 (July 2026) moved
+        // to the Swipe File header voice — one grammar per screen.
+        XCTAssertTrue(railSource.contains("struct SwipeStudyRailHeader"))
+        XCTAssertFalse(railSource.contains("FocusModeInspectorSection"))
     }
 
     func testAtomWindowChromeIsInjectedByAtomWindowRootOnlyWhenHostingAtoms() throws {
@@ -170,78 +175,92 @@ final class FocusModeAppearanceTests: XCTestCase {
         XCTAssertFalse(ideaFocusSource.contains("FocusCosmoPanel(session: cosmoSession"))
     }
 
-    func testSwipeTeardownLivesBelowSourcePreviewInsteadOfThirdColumn() throws {
+    func testSwipeAnalysisRailLivesBelowStageInsteadOfThirdColumn() throws {
+        // Wide layout = two columns: [stage above rail] beside the manuscript.
+        // The analysis rail never becomes a detached third column.
         let swipeFocusSource = try source("UI/FocusMode/SwipeStudy/SwipeStudyFocusModeView.swift")
+        let wideRange = try XCTUnwrap(swipeFocusSource.range(of: "HStack(alignment: .top, spacing: DS.space40)"))
+        let wideSource = String(swipeFocusSource[wideRange.lowerBound...])
 
-        XCTAssertTrue(swipeFocusSource.contains("sourceStage(atom: atom)"))
-        XCTAssertTrue(swipeFocusSource.contains("teardownRail"))
-        XCTAssertTrue(swipeFocusSource.contains("private struct SwipeStudyTeardownShell<Source: View, Transcript: View, Teardown: View>"))
-        XCTAssertFalse(swipeFocusSource.contains("@ViewBuilder marginalia: () -> Marginalia"))
+        let stageRange = try XCTUnwrap(wideSource.range(of: "stage(atom: atom)"))
+        let railRange = try XCTUnwrap(wideSource.range(of: "rail(atom: atom"))
+        let manuscriptRange = try XCTUnwrap(wideSource.range(of: "manuscript(atom: atom)"))
+
+        XCTAssertLessThan(stageRange.lowerBound, railRange.lowerBound)
+        XCTAssertLessThan(railRange.lowerBound, manuscriptRange.lowerBound)
     }
 
-    func testSwipeCompactLayoutPlacesTranscriptBeforeTeardown() throws {
+    func testSwipeCompactLayoutLeadsWithHeaderThenTranscript() throws {
+        // Narrow pane grammar: small header card → transcript → remaining rail
+        // sections. The transcript owns the width; no full-height poster.
         let swipeFocusSource = try source("UI/FocusMode/SwipeStudy/SwipeStudyFocusModeView.swift")
-        let compactRange = try XCTUnwrap(swipeFocusSource.range(of: "private var compactStack: some View"))
-        let wideRange = try XCTUnwrap(swipeFocusSource.range(of: "private var wideTable: some View"))
-        let compactSource = String(swipeFocusSource[compactRange.lowerBound..<wideRange.lowerBound])
+        let compactRange = try XCTUnwrap(swipeFocusSource.range(of: "private func compactLayout"))
+        let compactSource = String(swipeFocusSource[compactRange.lowerBound...])
 
-        let sourceRange = try XCTUnwrap(compactSource.range(of: "source"))
-        let transcriptRange = try XCTUnwrap(compactSource.range(of: "transcript"))
-        let teardownRange = try XCTUnwrap(compactSource.range(of: "teardown"))
+        let headerRange = try XCTUnwrap(compactSource.range(of: "SwipeStudyCompactHeader(model: model, atom: atom)"))
+        let transcriptRange = try XCTUnwrap(compactSource.range(of: "SwipeStudyTranscriptBlock(model: model, atom: atom)"))
+        let railRange = try XCTUnwrap(compactSource.range(of: "SwipeStudyInsightRail("))
 
-        XCTAssertLessThan(sourceRange.lowerBound, transcriptRange.lowerBound)
-        XCTAssertLessThan(transcriptRange.lowerBound, teardownRange.lowerBound)
+        XCTAssertLessThan(headerRange.lowerBound, transcriptRange.lowerBound)
+        XCTAssertLessThan(transcriptRange.lowerBound, railRange.lowerBound)
     }
 
-    func testSwipeSourcePreviewAvoidsDoubleContainerChrome() throws {
+    func testSwipeMediumPanePairsMediaWithAnalysisHeader() throws {
+        // Normal pane grammar: media beside title + insight/structure, then
+        // the transcript, then patterns + details.
         let swipeFocusSource = try source("UI/FocusMode/SwipeStudy/SwipeStudyFocusModeView.swift")
+        let mediumRange = try XCTUnwrap(swipeFocusSource.range(of: "private func mediumLayout"))
+        let mediumSource = String(swipeFocusSource[mediumRange.lowerBound..<swipeFocusSource.range(of: "private func compactLayout")!.lowerBound])
 
-        XCTAssertTrue(swipeFocusSource.contains("sourcePreviewCard(atom: atom)"))
-        XCTAssertFalse(swipeFocusSource.contains("FocusModeMediaWell(maxWidth: isPaneContext ? 360 : 460)"))
+        XCTAssertTrue(mediumSource.contains("stage(atom: atom)"))
+        XCTAssertTrue(mediumSource.contains("SwipeStudyHeroBlock(model: model, atom: atom, compact: true)"))
+        XCTAssertTrue(mediumSource.contains("visibleSections: [.insight, .structure]"))
+        XCTAssertTrue(mediumSource.contains("visibleSections: [.patterns, .details]"))
     }
 
-    func testSwipeTeardownStartsWithInsightStructureAndPhysics() throws {
-        let swipeFocusSource = try source("UI/FocusMode/SwipeStudy/SwipeStudyFocusModeView.swift")
+    func testSwipeStudyHasNoPhysicsOrCodexLayer() throws {
+        // The July 2026 rebuild removed the physics/codex pass from Study —
+        // the surface is transcript + one insight pass only.
+        for file in ["SwipeStudyFocusModeView.swift", "SwipeStudyInsightRail.swift",
+                     "SwipeStudyManuscript.swift", "SwipeStudyModel.swift"] {
+            let text = try source("UI/FocusMode/SwipeStudy/\(file)")
+            XCTAssertFalse(text.contains("ContentPhysicsSection"), "\(file) resurrects the physics section")
+            XCTAssertFalse(text.contains("bestPhysicsProfile"), "\(file) resurrects the physics profile")
+            XCTAssertFalse(text.contains("generateCodexProfile"), "\(file) resurrects codex generation")
+        }
+    }
 
-        XCTAssertFalse(swipeFocusSource.contains("HookAnalysisCard(analysis: analysis)"))
-        XCTAssertFalse(swipeFocusSource.contains("MarginaliaLabel(\"TEARDOWN\")"))
+    func testSwipeInsightRailOrdersInsightStructurePatternsDetails() throws {
+        let railSource = try source("UI/FocusMode/SwipeStudy/SwipeStudyInsightRail.swift")
 
-        let insightRange = try XCTUnwrap(swipeFocusSource.range(of: "marginaliaInsight(insight)"))
-        let structureRange = try XCTUnwrap(swipeFocusSource.range(of: "StructureMapView("))
-        let physicsRange = try XCTUnwrap(swipeFocusSource.range(of: "ContentPhysicsSection(profile: physicsProfile)"))
+        let insightRange = try XCTUnwrap(railSource.range(of: "insightSection(analysis)"))
+        let structureRange = try XCTUnwrap(railSource.range(of: "structureSection(analysis)"))
+        let patternsRange = try XCTUnwrap(railSource.range(of: "patternsSection\n"))
+        let detailsRange = try XCTUnwrap(railSource.range(of: "detailsSection\n"))
 
         XCTAssertLessThan(insightRange.lowerBound, structureRange.lowerBound)
-        XCTAssertLessThan(structureRange.lowerBound, physicsRange.lowerBound)
+        XCTAssertLessThan(structureRange.lowerBound, patternsRange.lowerBound)
+        XCTAssertLessThan(patternsRange.lowerBound, detailsRange.lowerBound)
     }
 
-    func testSwipeAnalysisRailUsesInspectorContainersForLowerSections() throws {
-        let swipeFocusSource = try source("UI/FocusMode/SwipeStudy/SwipeStudyFocusModeView.swift")
-        let similarSwipesSource = try source("UI/FocusMode/SwipeStudy/SimilarSwipesSection.swift")
+    func testSwipeManuscriptHasOneSerifMoment() throws {
+        // The hero title is the single serif moment; the smallcaps ornament
+        // row ("· · · SWIPE FILE · … · · ·") must never come back.
+        let manuscriptSource = try source("UI/FocusMode/SwipeStudy/SwipeStudyManuscript.swift")
+        XCTAssertTrue(manuscriptSource.contains("DS.displaySerif"))
+        XCTAssertFalse(manuscriptSource.contains("· · ·"))
 
-        XCTAssertTrue(swipeFocusSource.contains("FocusModeInspectorSection(\"TAXONOMY\")"))
-        XCTAssertTrue(similarSwipesSource.contains("FocusModeInspectorSection(\"PATTERNS\")"))
-        XCTAssertTrue(similarSwipesSource.contains("FocusModeInspectorSection(\"RELATED\")"))
-        XCTAssertFalse(swipeFocusSource.contains("instagramAnalysisPlaceholder"))
-        XCTAssertFalse(swipeFocusSource.contains("Coming Soon"))
-    }
-
-    func testSwipeAnalysisRailPlacesPhysicsAtBottom() throws {
-        let swipeFocusSource = try source("UI/FocusMode/SwipeStudy/SwipeStudyFocusModeView.swift")
-
-        let taxonomyRange = try XCTUnwrap(swipeFocusSource.range(of: "FocusModeInspectorSection(\"TAXONOMY\")"))
-        let relatedRange = try XCTUnwrap(swipeFocusSource.range(of: "SimilarSwipesSection("))
-        let physicsRange = try XCTUnwrap(swipeFocusSource.range(of: "FocusModeInspectorSection(\"PHYSICS\")"))
-
-        XCTAssertLessThan(taxonomyRange.lowerBound, relatedRange.lowerBound)
-        XCTAssertLessThan(relatedRange.lowerBound, physicsRange.lowerBound)
+        let shellSource = try source("UI/FocusMode/SwipeStudy/SwipeStudyFocusModeView.swift")
+        XCTAssertFalse(shellSource.contains("· · ·"))
+        XCTAssertFalse(shellSource.contains(".italic()"))
     }
 
     func testSwipeStudyUsesThinCustomScrollChrome() throws {
         let swipeFocusSource = try source("UI/FocusMode/SwipeStudy/SwipeStudyFocusModeView.swift")
 
-        XCTAssertTrue(swipeFocusSource.contains("@State private var teardownScrollMetrics = CortexScrollMetrics()"))
+        XCTAssertTrue(swipeFocusSource.contains("@State private var scrollMetrics = CortexScrollMetrics()"))
         XCTAssertTrue(swipeFocusSource.contains("CortexScrollViewIntrospector"))
-        XCTAssertTrue(swipeFocusSource.contains("CortexThinScrollbar(metrics: teardownScrollMetrics)"))
+        XCTAssertTrue(swipeFocusSource.contains("CortexThinScrollbar(metrics: scrollMetrics)"))
     }
 
     func testIdeaFocusModeUsesContentFocusSizedCustomScrollbar() throws {

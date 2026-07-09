@@ -273,7 +273,7 @@ final class CosmoCraftSkillRunner {
     }
 
     private func resolveClientAtom(prompt: String, contentAtom: Atom?) async -> Atom? {
-        if let reference = CosmoInlineAssistantWorkingContextCache.clientReference(in: prompt),
+        if let reference = CosmoExplicitClientReference.firstName(in: prompt),
            let atom = try? await AtomRepository.shared.fuzzyFindClient(query: reference) {
             return atom
         }

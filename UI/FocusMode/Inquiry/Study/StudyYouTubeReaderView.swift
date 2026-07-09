@@ -4,9 +4,9 @@
 // pinned on top, the transcript flowing beneath as one selectable text with
 // quiet timestamp links (click to seek). Player, transcript, and the floating
 // thinking bar share ONE column (StudyMetrics.readerMeasure) so their edges
-// align as a single manuscript. Any selection feeds the same capture
-// mini-menu as every reader, and captures carry a timestamped citation back
-// to the exact moment in the video.
+// align as a single manuscript. Any selection raises the floating Capture
+// pill shared by every reader, and captures carry a timestamped citation
+// back to the exact moment in the video.
 
 import SwiftUI
 import WebKit
@@ -17,6 +17,9 @@ struct StudyYouTubeReaderView: View {
     let tab: SourceTab
     @Binding var lastSelectedText: String
     @Binding var selectionTimestamp: Int?
+    /// Selection rect in SwiftUI `.global` space — anchors the reader's
+    /// floating capture pill to the highlighted passage.
+    var selectionAnchor: Binding<CGRect?>? = nil
 
     @State private var paragraphs: [YouTubeTranscriptParagraph] = []
     @State private var loadState: TranscriptLoadState = .loading
@@ -108,6 +111,7 @@ struct StudyYouTubeReaderView: View {
                         paragraphs: visibleParagraphs,
                         lastSelectedText: $lastSelectedText,
                         selectionTimestamp: $selectionTimestamp,
+                        selectionAnchor: selectionAnchor,
                         onSeek: seek
                     )
                 }
@@ -313,6 +317,7 @@ private struct StudyTranscriptTextView: NSViewRepresentable {
     let paragraphs: [YouTubeTranscriptParagraph]
     @Binding var lastSelectedText: String
     @Binding var selectionTimestamp: Int?
+    var selectionAnchor: Binding<CGRect?>? = nil
     let onSeek: (Double) -> Void
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -412,7 +417,16 @@ private struct StudyTranscriptTextView: NSViewRepresentable {
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
             let range = textView.selectedRange()
-            guard range.length > 0 else { return }
+            let parent = self.parent
+            guard range.length > 0 else {
+                // Collapsed selection dismisses the floating capture pill.
+                Task { @MainActor in
+                    parent.lastSelectedText = ""
+                    parent.selectionTimestamp = nil
+                    parent.selectionAnchor?.wrappedValue = nil
+                }
+                return
+            }
             let nsString = textView.string as NSString
             guard range.location + range.length <= nsString.length else { return }
             let selected = nsString.substring(with: range)
@@ -421,10 +435,14 @@ private struct StudyTranscriptTextView: NSViewRepresentable {
             // Nearest paragraph start at or before the selection = the moment
             // this passage begins in the video.
             let start = timestampIndex.last(where: { $0.location <= range.location })?.start
-            let parent = self.parent
+            let anchor = SelectionAnchorSpace.globalRect(
+                fromScreen: textView.firstRect(forCharacterRange: range, actualRange: nil),
+                for: textView
+            )
             Task { @MainActor in
                 parent.lastSelectedText = selected
                 parent.selectionTimestamp = start.map { Int($0) }
+                parent.selectionAnchor?.wrappedValue = anchor
             }
         }
     }

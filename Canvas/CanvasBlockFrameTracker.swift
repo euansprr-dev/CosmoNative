@@ -49,80 +49,132 @@ final class BlockRenderedSizeCache {
     }
 }
 
+// MARK: - Right-Click Hit Result
+
+/// What the right-click monitor found under the cursor. The monitor owns the
+/// response: block menu, radial creation menu, or handing the event back to
+/// SwiftUI (expanded cluster UI renders its own interactive content).
+enum CanvasRightClickHit: Equatable {
+    case block(String)
+    /// Inside a cluster whose members render as list/board/grid UI — the
+    /// blocks' canvas positions are meaningless there, so neither a block
+    /// menu nor the radial menu is correct. The event passes through.
+    case expandedCluster
+    case empty
+}
+
 // MARK: - Block Frame Tracker
 
+/// INVARIANT: hit-testing must agree with what the canvas actually renders.
+/// Geometry is therefore stored in CANVAS space for the same block set the
+/// render snapshot draws (blocks consumed by non-canvas-mode clusters are
+/// excluded), and the click point is converted with the LIVE viewport
+/// transform at click time — pan/zoom can never leave the tracker stale.
 @MainActor
 final class CanvasBlockFrameTracker: ObservableObject {
-    @Published var blockFrames: [String: CGRect] = [:]  // blockId -> screen-space rect
-    var trackedBlocks: [CanvasBlock] = []  // Updated alongside frames
-    // PERF: Pre-built zIndex map for O(1) lookup in hitTest (was O(n) per comparison)
-    private var zIndexMap: [String: Int] = [:]
+    /// Screen-space rects for overlay consumers (provocation markers, lasso
+    /// selection). Derived from the canvas-space rects + the transform passed
+    /// to `update`/`refreshScreenFrames`; right-click hit-testing does NOT
+    /// read these.
+    @Published var blockFrames: [String: CGRect] = [:]
+    /// The renderable block set (cluster-consumed blocks excluded), matching
+    /// `CanvasRenderSnapshot`'s notion of what is visible on the canvas.
+    private(set) var trackedBlocks: [CanvasBlock] = []
 
-    /// Hit-test a screen point against tracked block frames.
-    /// Returns the block ID of the topmost block at that point, if any.
-    func hitTest(at point: CGPoint) -> String? {
-        // PERF: Sort using pre-built map — O(n log n) instead of O(n^2 log n)
-        let sortedBlockIds = blockFrames.keys.sorted { id1, id2 in
-            zIndexMap[id1, default: 0] > zIndexMap[id2, default: 0]
-        }
+    // Canvas-space geometry — transform-independent, so it only changes when
+    // block/cluster data changes, never on pan/zoom.
+    private var blockCanvasRects: [String: CGRect] = [:]
+    private var expandedClusterCanvasRects: [CGRect] = []
+    /// Block ids sorted topmost-first (zIndex desc, id desc — the exact
+    /// reverse of the render pipeline's draw order).
+    private var hitTestOrder: [String] = []
 
-        for blockId in sortedBlockIds {
-            if let frame = blockFrames[blockId], frame.contains(point) {
-                return blockId
+    /// Reads the owning canvas's live viewport transform at click time.
+    /// Set by the hosting CanvasView; nil until a canvas registers (or after
+    /// its viewport engine is gone) — hit-testing then declines the event.
+    var liveTransformProvider: (@MainActor () -> CanvasViewportTransform?)?
+
+    /// False while the thinkspace shows a non-canvas surface (library mode).
+    /// The canvas world is only a backdrop there — its blocks must not
+    /// capture right-clicks that belong to the overlay UI.
+    var isCanvasSurfaceActive = true
+
+    /// Hit-test a right-click. Returns nil when the canvas surface isn't the
+    /// active interaction layer — the caller must pass the event through.
+    func rightClickHitTest(at screenPoint: CGPoint) -> CanvasRightClickHit? {
+        guard isCanvasSurfaceActive else { return nil }
+        guard let transform = liveTransformProvider?() ?? nil else { return nil }
+
+        let canvasPoint = transform.screenToCanvas(screenPoint)
+        for blockId in hitTestOrder {
+            if let rect = blockCanvasRects[blockId], rect.contains(canvasPoint) {
+                return .block(blockId)
             }
         }
-        return nil
+        if expandedClusterCanvasRects.contains(where: { $0.contains(canvasPoint) }) {
+            return .expandedCluster
+        }
+        return .empty
     }
 
-    /// Update all block frames based on current canvas state.
-    func updateFrames(
+    /// Rebuild tracked geometry from current canvas data. Blocks belonging to
+    /// clusters in list/board/grid view modes render inside the cluster's own
+    /// UI, not at their canvas positions, so they are excluded — mirroring
+    /// `CanvasRenderDataSnapshot.clusterConsumedBlockUUIDs`.
+    func update(
         blocks: [CanvasBlock],
-        canvasOffset: CGSize,
-        scaledPanOffset: CGSize,
-        effectiveScale: CGFloat,
-        screenCenter: CGPoint
+        userClusters: [CanvasCluster],
+        transform: CanvasViewportTransform
     ) {
-        self.trackedBlocks = blocks
-        // PERF: Build zIndex lookup map for O(1) access in hitTest
-        var newZIndex: [String: Int] = [:]
-        for block in blocks {
-            newZIndex[block.id] = block.zIndex
+        var consumedUUIDs = Set<String>()
+        var expandedRects: [CGRect] = []
+        for cluster in userClusters where cluster.viewMode != .canvas {
+            consumedUUIDs.formUnion(cluster.blockUUIDs)
+            expandedRects.append(cluster.boundingRect)
         }
-        self.zIndexMap = newZIndex
 
-        var newFrames: [String: CGRect] = [:]
-        for block in blocks {
-            // Calculate screen position (same math as CanvasView.blockView position)
-            let canvasX = block.position.x + canvasOffset.width + scaledPanOffset.width
-            let canvasY = block.position.y + canvasOffset.height + scaledPanOffset.height
+        let renderable = blocks.filter { !consumedUUIDs.contains($0.entityUuid) }
+        trackedBlocks = renderable
+        expandedClusterCanvasRects = expandedRects
 
-            // Apply scale transform around screen center
-            let scaledX = screenCenter.x + (canvasX - screenCenter.x) * effectiveScale
-            let scaledY = screenCenter.y + (canvasY - screenCenter.y) * effectiveScale
-
-            // Block size (scaled) — use actual rendered size for autoHeight blocks
+        var canvasRects: [String: CGRect] = [:]
+        canvasRects.reserveCapacity(renderable.count)
+        for block in renderable {
+            // Blocks are positioned by center; autoHeight blocks can render
+            // taller than their model size, so use the reported size.
             let actualSize = BlockRenderedSizeCache.shared.renderedSize(for: block)
-            let scaledWidth = actualSize.width * effectiveScale * block.scale
-            let scaledHeight = actualSize.height * effectiveScale * block.scale
-
-            // Frame centered on position
-            newFrames[block.id] = CGRect(
-                x: scaledX - scaledWidth / 2,
-                y: scaledY - scaledHeight / 2,
-                width: scaledWidth,
-                height: scaledHeight
+            let width = actualSize.width * block.scale
+            let height = actualSize.height * block.scale
+            canvasRects[block.id] = CGRect(
+                x: block.position.x - width / 2,
+                y: block.position.y - height / 2,
+                width: width,
+                height: height
             )
         }
-        blockFrames = newFrames
+        blockCanvasRects = canvasRects
+
+        // Topmost-first: reverse of the render pipeline's (zIndex asc, id asc)
+        // draw order so ties resolve to the block drawn on top.
+        hitTestOrder = renderable
+            .sorted { lhs, rhs in
+                if lhs.zIndex == rhs.zIndex { return lhs.id > rhs.id }
+                return lhs.zIndex > rhs.zIndex
+            }
+            .map(\.id)
+
+        refreshScreenFrames(transform: transform)
     }
 
-    func updateFrames(blocks: [CanvasBlock], transform: CanvasViewportTransform) {
-        updateFrames(
-            blocks: blocks,
-            canvasOffset: transform.committedOffset,
-            scaledPanOffset: transform.scaledPanOffset,
-            effectiveScale: transform.effectiveScale,
-            screenCenter: transform.screenCenter
-        )
+    /// Recompute the screen-space `blockFrames` from stored canvas rects.
+    /// Overlay consumers that need up-to-the-frame screen geometry (lasso
+    /// completion) call this with the transform they were handed.
+    func refreshScreenFrames(transform: CanvasViewportTransform) {
+        var newFrames: [String: CGRect] = [:]
+        newFrames.reserveCapacity(blockCanvasRects.count)
+        for (blockId, canvasRect) in blockCanvasRects {
+            newFrames[blockId] = transform.canvasRectToScreen(canvasRect)
+        }
+        blockFrames = newFrames
     }
 }

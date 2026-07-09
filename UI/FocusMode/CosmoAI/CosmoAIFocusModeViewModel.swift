@@ -41,7 +41,7 @@ final class CosmoAIFocusModeViewModel: ObservableObject {
     }
 
     nonisolated static func defaultModelTier(userOverride: AgentModelTier?) -> AgentModelTier {
-        userOverride ?? .geminiFlashLatest
+        userOverride ?? .autoDefault
     }
 
     // MARK: - Send Message

@@ -29,6 +29,10 @@ struct CosmoInlineAssistantPaneMessage: Identifiable, Codable, Equatable, Sendab
     /// copilot). Plans are transient — a persisted message whose plan is gone
     /// renders as plain text. Decodes as nil from older persisted sessions.
     var canvasPlanID: UUID? = nil
+    /// Groups every message of one run (ask → receipts → deliverables) so the
+    /// pane renders runs as cards instead of a flat bubble stream. Decodes as
+    /// nil from older persisted sessions (those render ungrouped).
+    var runID: UUID? = nil
 }
 
 enum CosmoCanvasPlanStatus: Equatable, Sendable {
@@ -39,6 +43,9 @@ enum CosmoCanvasPlanStatus: Equatable, Sendable {
 
 enum CosmoInlineAssistantSessionScope {
     static let globalSurfaceID = "global"
+    /// Conversation-id prefix marking inline assistant sessions — the agent
+    /// service keys its window/receipt policies on it.
+    static let conversationIDPrefix = "cosmo-inline-assistant"
 
     static func surfaceID(for rawSurfaceID: String?) -> String {
         let trimmed = rawSurfaceID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -46,7 +53,7 @@ enum CosmoInlineAssistantSessionScope {
     }
 
     static func conversationID(for rawSurfaceID: String?) -> String {
-        "cosmo-inline-assistant:\(surfaceID(for: rawSurfaceID))"
+        "\(conversationIDPrefix):\(surfaceID(for: rawSurfaceID))"
     }
 }
 
@@ -63,6 +70,9 @@ struct CosmoInlineAssistantPersistedSession: Codable, Equatable {
     var lastSubmissionRoute: CosmoInlineAssistantRoute?
     /// Optional so blobs persisted before inquiry cards decode unchanged.
     var inquiryQuestionProposals: [CosmoAssistantInquiryQuestionProposal]? = nil
+    /// The session's turn ledger — optional so older persisted blobs decode
+    /// unchanged (schemaVersion stays 1).
+    var ledger: [CosmoInlineTurnRecord]? = nil
     var updatedAt = Date()
 
     var isEmpty: Bool {
@@ -159,17 +169,20 @@ enum CosmoInlineAssistantPromptClassifier {
     static func route(
         for prompt: String,
         previousRoute: CosmoInlineAssistantRoute? = nil,
-        hasSelection: Bool = false
+        hasSelection: Bool = false,
+        hasRecentActionContext: Bool = false
     ) -> CosmoInlineAssistantRoute {
-        if CosmoInlineAssistantWorkingContextCache.isFollowUp(prompt),
-           let previousRoute {
-            return previousRoute
-        }
         // A live selection plus a short imperative ("shorten this", "punchier")
         // is an edit on the selection — keyword planning would otherwise scatter
         // these across routes.
         if hasSelection, isShortImperative(prompt) {
             return .action
+        }
+        // A short imperative in a session whose last run staged edits continues
+        // that work — decided by session state (the ledger holds a recent
+        // action), not by follow-up keyword lists.
+        if let previousRoute, hasRecentActionContext, isShortImperative(prompt) {
+            return previousRoute
         }
         return CosmoInlineAssistantSkillRuntime.plan(for: prompt, surfaceKind: nil).route
     }
@@ -558,10 +571,24 @@ final class CosmoInlineAssistantStore: ObservableObject {
     /// The entity prefix of the bound surface ("content", "note", "idea",
     /// "connection") — drives the scope chip's tint in the pane header.
     @Published private(set) var activeSurfaceEntity: String?
+    /// One record per run this session: ask → deliverable → review outcome.
+    /// Rendered into the volatile prompt layer as "## Session So Far", so every
+    /// turn's model sees the true session state (the continuity carrier).
+    @Published private(set) var sessionLedger: [CosmoInlineTurnRecord] = []
+    /// Event-triggered skill offer (one-tap chip; dismissible; zero tokens
+    /// until tapped). Set by CosmoInlineSkillAutoRunner.
+    @Published private(set) var autoSkillSuggestion: CosmoInlineSkillAutoRunner.Suggestion?
+    /// "Promote this run to a skill" — a prefilled draft the Assistant Studio
+    /// opens with. Set from a run card's context menu; the bar presents the
+    /// Studio when this becomes non-nil.
+    @Published var pendingStudioSkillDraft: CosmoInlineSkillDefinition?
 
     private var skillSuggestionTask: Task<Void, Never>?
     /// The in-flight agent run, held so the stop button can actually cancel it.
     private var activeRunTask: Task<Void, Error>?
+    /// Stamped on every pane message the current run produces — the pane
+    /// groups a run's messages into one card.
+    private var currentRunID: UUID?
 
     private let agentBridge: CosmoInlineAssistantAgentBridge
     private let sessionPersistence: CosmoInlineAssistantSessionPersistence
@@ -648,7 +675,8 @@ final class CosmoInlineAssistantStore: ObservableObject {
         let route = selectedSkillPlan?.route ?? CosmoInlineAssistantPromptClassifier.route(
             for: prompt,
             previousRoute: lastSubmissionRoute,
-            hasSelection: activeEditableSnapshot()?.selection?.isEmpty == false
+            hasSelection: activeEditableSnapshot()?.selection?.isEmpty == false,
+            hasRecentActionContext: hasRecentActionContext
         )
         activeSubmissionSkillID = effectiveSkillID
         activeSubmissionRoute = route
@@ -675,10 +703,15 @@ final class CosmoInlineAssistantStore: ObservableObject {
             isPaneRequested = false
         }
 
-        paneMessages.append(.init(role: .user, content: prompt, skillID: effectiveSkillID))
+        let runID = UUID()
+        currentRunID = runID
+        paneMessages.append(.init(role: .user, content: prompt, skillID: effectiveSkillID, runID: runID))
         persistActiveSession()
 
         let assistantMessageCountBeforeRun = paneMessages.filter { $0.role == .assistant }.count
+        let answerMessageCountBeforeRun = paneMessages.filter {
+            $0.role == .assistant && $0.proposalID == nil
+        }.count
         let proposalCountBeforeRun = proposals.count
 
         let runTask = Task { [agentBridge] in
@@ -706,6 +739,16 @@ final class CosmoInlineAssistantStore: ObservableObject {
             }
         }
         activeRunTask = nil
+
+        appendLedgerRecord(
+            runID: runID,
+            userAsk: prompt,
+            route: route,
+            skillID: effectiveSkillID,
+            proposalCountBeforeRun: proposalCountBeforeRun,
+            answerMessageCountBeforeRun: answerMessageCountBeforeRun
+        )
+        currentRunID = nil
 
         isProcessing = false
         statusText = nil
@@ -755,7 +798,8 @@ final class CosmoInlineAssistantStore: ObservableObject {
             content: stamped.summary,
             proposalID: stamped.id,
             sourceRefs: currentSourceRefs,
-            activitySteps: takeFinalizedRunSteps()
+            activitySteps: takeFinalizedRunSteps(),
+            runID: currentRunID
         ))
         statusText = nil
         if !activeSubmissionShouldOpenPaneForAnswer {
@@ -777,7 +821,8 @@ final class CosmoInlineAssistantStore: ObservableObject {
             role: .assistant,
             content: "\(canvasPlan.title) — \(canvasPlan.rationale)",
             activitySteps: takeFinalizedRunSteps(),
-            canvasPlanID: canvasPlan.id
+            canvasPlanID: canvasPlan.id,
+            runID: currentRunID
         ))
         statusText = nil
         phase = .reviewing
@@ -821,7 +866,8 @@ final class CosmoInlineAssistantStore: ObservableObject {
         paneMessages.append(.init(
             role: .assistant,
             content: inquiryProposal.question,
-            inquiryProposalID: inquiryProposal.id
+            inquiryProposalID: inquiryProposal.id,
+            runID: currentRunID
         ))
         statusText = nil
         isPaneRequested = true
@@ -883,7 +929,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
         if effectiveRoute != .action || activeSubmissionShouldOpenPaneForAnswer {
             isPaneRequested = true
         }
-        let message = CosmoInlineAssistantPaneMessage(role: .assistant, content: delta)
+        let message = CosmoInlineAssistantPaneMessage(role: .assistant, content: delta, runID: currentRunID)
         streamingPaneMessageID = message.id
         paneMessages.append(message)
     }
@@ -927,13 +973,14 @@ final class CosmoInlineAssistantStore: ObservableObject {
         }
 
         if let title, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            paneMessages.append(.init(role: .system, content: title))
+            paneMessages.append(.init(role: .system, content: title, runID: currentRunID))
         }
         paneMessages.append(.init(
             role: .assistant,
             content: finalAnswer,
             sourceRefs: currentSourceRefs,
-            activitySteps: takeFinalizedRunSteps()
+            activitySteps: takeFinalizedRunSteps(),
+            runID: currentRunID
         ))
         followUpSuggestions = Self.followUps(afterAnswerRoute: effectiveRoute)
         persistActiveSession()
@@ -1109,13 +1156,18 @@ final class CosmoInlineAssistantStore: ObservableObject {
         await accept(operationID: operationID, provider: provider)
     }
 
+    /// Accept a single operation. When `applying` is set (transaction steps),
+    /// that compiled, byte-exact operation is what actually applies while the
+    /// review status stays keyed to the ORIGINAL operation's id.
     func accept(
         operationID: UUID,
-        provider: any CosmoEditableSurfaceProvider
+        provider: any CosmoEditableSurfaceProvider,
+        applying override: CosmoAssistantProposalOperation? = nil
     ) async {
         guard let location = operationLocation(for: operationID) else { return }
         let operation = proposals[location.proposalIndex].operations[location.operationIndex]
         guard operation.status == .pending || operation.status == .conflicted else { return }
+        let applying = override ?? operation
 
         let snapshot = provider.editableSnapshot()
         guard provider.surfaceID == proposals[location.proposalIndex].surfaceID
@@ -1125,14 +1177,14 @@ final class CosmoInlineAssistantStore: ObservableObject {
             return
         }
 
-        guard operation.canApply(against: snapshot) else {
+        guard applying.canApply(against: snapshot) else {
             markOperation(operationID, as: .conflicted)
             errorText = "The source changed since Cosmo drafted this edit. Ask Cosmo to regenerate it."
             return
         }
 
         do {
-            let result = try await provider.apply(operation: operation)
+            let result = try await provider.apply(operation: applying)
             markOperation(operationID, as: result.status)
             errorText = nil
             persistActiveSession()
@@ -1141,6 +1193,12 @@ final class CosmoInlineAssistantStore: ObservableObject {
                     proposal: proposals[location.proposalIndex],
                     operation: operation,
                     accepted: true
+                )
+                // Event hook for auto-triggered skills (cooldown-guarded, so a
+                // multi-op accept-all fires at most once per skill+surface).
+                CosmoInlineSkillAutoRunner.shared.proposalAccepted(
+                    surfaceID: proposals[location.proposalIndex].surfaceID,
+                    store: self
                 )
             }
         } catch {
@@ -1190,10 +1248,37 @@ final class CosmoInlineAssistantStore: ObservableObject {
         recordSkillOutcome(proposal: proposal, operation: operation, accepted: false)
     }
 
-    func acceptAll(proposalID: UUID) async {
+    /// Accept every pending operation as ONE transaction: all anchors resolve
+    /// against the same original snapshot and apply bottom-up, so a renumber
+    /// cascade can never alias into text an earlier accept just produced
+    /// (the old one-at-a-time re-resolution corrupted multi-op edits).
+    func acceptAll(
+        proposalID: UUID,
+        registry: CosmoEditableSurfaceRegistry = .shared
+    ) async {
         guard let proposal = proposals.first(where: { $0.id == proposalID }) else { return }
-        for operation in proposal.operations where operation.status == .pending || operation.status == .conflicted {
-            await accept(operationID: operation.id)
+        let pending = proposal.operations.filter { $0.status == .pending || $0.status == .conflicted }
+        guard !pending.isEmpty else { return }
+
+        var resolvedProvider: (any CosmoEditableSurfaceProvider)? = registry.provider(surfaceID: proposal.surfaceID)
+        if resolvedProvider == nil {
+            resolvedProvider = await CosmoAtomBackedEditableSurface.load(surfaceID: proposal.surfaceID)
+        }
+        guard let provider = resolvedProvider else {
+            for operation in pending {
+                markOperation(operation.id, as: .conflicted)
+            }
+            errorText = "The editable surface for this proposal is no longer available."
+            return
+        }
+
+        let snapshot = provider.editableSnapshot()
+        let plan = CosmoInlineEditTransaction.compile(
+            operations: pending,
+            sourceText: snapshot.text
+        )
+        for step in plan.steps {
+            await accept(operationID: step.id, provider: provider, applying: step)
         }
     }
 
@@ -1335,6 +1420,12 @@ final class CosmoInlineAssistantStore: ObservableObject {
         currentSelection = normalized
     }
 
+    /// The active session's surface key — exposed for the session distiller
+    /// (which turns idle sessions into durable memory).
+    var activeSessionSurfaceIDForDistillation: String {
+        activeSessionSurfaceID
+    }
+
     func activateSession(surfaceID rawSurfaceID: String?) {
         let surfaceID = CosmoInlineAssistantSessionScope.surfaceID(for: rawSurfaceID)
         guard surfaceID != activeSessionSurfaceID else {
@@ -1343,6 +1434,12 @@ final class CosmoInlineAssistantStore: ObservableObject {
         }
 
         persistActiveSession()
+        // Switching away is the session's natural end — distill durable facts
+        // from the outgoing ledger in the background.
+        CosmoSessionDistiller.shared.distillIfWorthwhile(
+            sessionKey: activeSessionSurfaceID,
+            ledger: sessionLedger
+        )
         activeSessionSurfaceID = surfaceID
         followUpSuggestions = []
         restoreSession(for: surfaceID)
@@ -1440,6 +1537,99 @@ final class CosmoInlineAssistantStore: ObservableObject {
         guard let location = operationLocation(for: operationID) else { return }
         proposals[location.proposalIndex].operations[location.operationIndex].status = status
         CosmoInlineAssistantMetrics.shared.operationResolved(status: status)
+        // Review outcomes feed the session ledger — the next turn's model sees
+        // "accepted 24, rejected 2" instead of guessing what the user did.
+        sessionLedger = CosmoInlineSessionLedger.updated(
+            sessionLedger,
+            withReviewStateOf: proposals[location.proposalIndex]
+        )
+    }
+
+    // MARK: - Session ledger
+
+    /// The "## Session So Far" block for the volatile prompt layer, or nil for
+    /// a fresh session.
+    var sessionLedgerPromptBlock: String? {
+        CosmoInlineSessionLedger.promptBlock(records: sessionLedger)
+    }
+
+    /// True when the session's latest run staged a proposal that is still
+    /// (partly) unreviewed — the state signal route stickiness keys on.
+    var hasRecentActionContext: Bool {
+        guard let last = sessionLedger.last else { return false }
+        return last.route == .action || last.hasPendingOperations
+    }
+
+    // MARK: - Auto-triggered skills
+
+    func presentAutoSkillSuggestion(_ suggestion: CosmoInlineSkillAutoRunner.Suggestion) {
+        autoSkillSuggestion = suggestion
+    }
+
+    func dismissAutoSkillSuggestion() {
+        autoSkillSuggestion = nil
+    }
+
+    func acceptAutoSkillSuggestion() {
+        guard let suggestion = autoSkillSuggestion else { return }
+        autoSkillSuggestion = nil
+        runAutoSkill(
+            skillID: suggestion.skillID,
+            prompt: suggestion.prompt,
+            surfaceID: suggestion.surfaceID
+        )
+    }
+
+    func runAutoSkill(skillID: String, prompt: String, surfaceID: String) {
+        guard !isProcessing else { return }
+        selectedSkillID = skillID
+        selectedSkillIsExplicit = true
+        submitPrompt(prompt, forSurfaceID: surfaceID)
+    }
+
+    /// Promote a successful run into a skill draft — the Studio opens prefilled.
+    func promoteRunToSkill(recordID: UUID) {
+        guard let record = sessionLedger.first(where: { $0.id == recordID }) else { return }
+        pendingStudioSkillDraft = .draft(fromRun: record)
+    }
+
+    /// Same, addressed by the pane run (run cards know their runID).
+    func promoteRun(withRunID runID: UUID) {
+        guard let record = sessionLedger.last(where: { $0.runID == runID }) else { return }
+        pendingStudioSkillDraft = .draft(fromRun: record)
+    }
+
+    private func appendLedgerRecord(
+        runID: UUID,
+        userAsk: String,
+        route: CosmoInlineAssistantRoute,
+        skillID: String?,
+        proposalCountBeforeRun: Int,
+        answerMessageCountBeforeRun: Int
+    ) {
+        let newProposals = proposals.count > proposalCountBeforeRun
+            ? Array(proposals[proposalCountBeforeRun...])
+            : []
+        let answerMessages = paneMessages.filter {
+            $0.role == .assistant && $0.proposalID == nil
+        }
+        let newAnswerText = answerMessages.count > answerMessageCountBeforeRun
+            ? answerMessages.last?.content
+            : nil
+
+        var record = CosmoInlineSessionLedger.record(
+            userAsk: userAsk,
+            route: route,
+            skillID: skillID,
+            newProposals: newProposals,
+            newAnswerText: newAnswerText,
+            errorText: errorText
+        )
+        record.runID = runID
+        sessionLedger.append(record)
+        if sessionLedger.count > CosmoInlineSessionLedger.maxStoredRecords {
+            sessionLedger.removeFirst(sessionLedger.count - CosmoInlineSessionLedger.maxStoredRecords)
+        }
     }
 
     private func persistActiveSession() {
@@ -1451,7 +1641,8 @@ final class CosmoInlineAssistantStore: ObservableObject {
             selectedSkillID: selectedSkillID,
             selectedSkillIsExplicit: selectedSkillID == nil ? nil : selectedSkillIsExplicit,
             lastSubmissionRoute: lastSubmissionRoute,
-            inquiryQuestionProposals: inquiryQuestionProposals
+            inquiryQuestionProposals: inquiryQuestionProposals,
+            ledger: sessionLedger.isEmpty ? nil : sessionLedger
         ))
     }
 
@@ -1465,6 +1656,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
         paneMessages = repairedPaneMessages.messages
         proposals = session.proposals
         inquiryQuestionProposals = session.inquiryQuestionProposals ?? []
+        sessionLedger = session.ledger ?? []
         selectedContextAtoms = ContextSourcePolicy.filteredAtoms(session.selectedContextAtoms, query: "")
         selectedSkillID = session.selectedSkillIsExplicit == true ? session.selectedSkillID : nil
         lastSubmissionRoute = session.lastSubmissionRoute
@@ -1486,6 +1678,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
         paneMessages = []
         proposals = []
         inquiryQuestionProposals = []
+        sessionLedger = []
         selectedContextAtoms = []
         selectedSkillID = nil
         lastSubmissionRoute = nil

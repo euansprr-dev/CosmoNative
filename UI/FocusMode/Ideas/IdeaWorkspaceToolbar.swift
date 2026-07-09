@@ -41,6 +41,7 @@ struct IdeaWorkspaceToolbar: View {
     private var leadingControls: some View {
         if let atomChrome {
             AtomWindowChromeLeadingControls(context: atomChrome)
+            AtomWindowChromeDivider()
         } else if !isPaneContext {
             toolbarButton(icon: "chevron.left", help: "Back (Esc)", action: actions.onClose)
         }
@@ -141,6 +142,7 @@ struct IdeaWorkspaceToolbar: View {
     private var trailingControls: some View {
         inspectorToggle
         if let atomChrome {
+            AtomWindowChromeDivider()
             AtomWindowChromeTrailingControls(context: atomChrome)
         } else if isPaneContext {
             closeButton

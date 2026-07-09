@@ -30,6 +30,12 @@ struct DashboardScheduleStrip: View {
                             calendarEventBlock(event)
                         }
 
+                        // Schedule blocks — pure time blocking (iOS planner
+                        // parity); recurring templates arrive pre-projected.
+                        ForEach(viewModel.todayScheduleBlocks) { block in
+                            scheduleBlockView(block)
+                        }
+
                         // Deep work sessions
                         ForEach(viewModel.todaySessions) { session in
                             sessionBlock(session)
@@ -141,6 +147,87 @@ struct DashboardScheduleStrip: View {
         .offset(x: 40, y: yOffset)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.trailing, 4)
+    }
+
+    // MARK: - Schedule Block (time blocking — the iOS planner's objects)
+
+    @ViewBuilder
+    private func scheduleBlockView(_ block: ScheduleBlockEntry) -> some View {
+        let yOffset = yPosition(for: block.start)
+        let height = max(blockHeight(from: block.start, to: block.end), 16)
+        let tint = block.colorHex.map(Color.init(hex:)) ?? DS.accent
+        let isPast = block.end < Date()
+
+        HStack(spacing: 0) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(tint)
+                .frame(width: 3)
+
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 3) {
+                    Text(block.title)
+                        .font(DS.caption2).fontWeight(.medium)
+                        .foregroundColor(block.isCompleted || isPast ? DS.textMuted : DS.text)
+                        .strikethrough(block.isCompleted, color: DS.textMuted)
+                        .lineLimit(1)
+                    if block.isRecurring {
+                        Image(systemName: "repeat")
+                            .font(.system(size: 7, weight: .semibold))
+                            .foregroundColor(tint)
+                    }
+                    if block.location != nil {
+                        Image(systemName: "link")
+                            .font(.system(size: 7, weight: .semibold))
+                            .foregroundColor(tint)
+                    }
+                }
+
+                if height > 24 {
+                    Text(timeRange(block.start, block.end))
+                        .font(.system(size: 8))
+                        .foregroundColor(DS.textMuted)
+                }
+            }
+            .padding(.leading, 4)
+            .padding(.trailing, 6)
+        }
+        .padding(.vertical, 2)
+        .frame(height: height, alignment: .top)
+        .background(
+            RoundedRectangle(cornerRadius: 4)
+                .fill(tint.opacity(0.10))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 4)
+                .stroke(tint.opacity(0.25), lineWidth: 0.5)
+        )
+        .opacity(isPast ? 0.6 : 1.0)
+        .offset(x: 40, y: yOffset)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.trailing, 4)
+        .contextMenu {
+            Button {
+                viewModel.convertScheduleBlockToTask(block)
+            } label: {
+                Label("Turn into Task", systemImage: "checkmark.circle")
+            }
+            if let location = block.location,
+               let url = URL(string: location),
+               url.scheme == "http" || url.scheme == "https" {
+                Link(destination: url) {
+                    Label("Open Link", systemImage: "arrow.up.right.square")
+                }
+            }
+            Divider()
+            Button(role: .destructive) {
+                viewModel.deleteScheduleBlock(block)
+            } label: {
+                Label(block.isRecurring ? "Delete Series" : "Delete Block", systemImage: "trash")
+            }
+        }
+        .help(block.isRecurring
+            ? "\(block.title) — \(block.recurrenceText ?? "repeats"). Edits apply to every occurrence."
+            : block.title)
     }
 
     // MARK: - Session Block

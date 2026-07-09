@@ -90,19 +90,33 @@ final class CosmoInlineAssistantRoutingTests: XCTestCase {
         XCTAssertTrue(instructions.contains("For slide-specific instructions, follow the user literally"))
     }
 
-    func testFollowUpPromptCanReusePreviousActionRoute() {
+    func testShortImperativeContinuesActionSessionState() {
+        // A short imperative in a session whose ledger holds a recent action
+        // continues that route — session STATE decides, not keyword lists.
         XCTAssertEqual(
             CosmoInlineAssistantPromptClassifier.route(
                 for: "Do the same for slide four",
-                previousRoute: .action
+                previousRoute: .action,
+                hasRecentActionContext: true
             ),
             .action
         )
 
+        // Without session state there is no route stickiness; the plan decides.
         XCTAssertEqual(
             CosmoInlineAssistantPromptClassifier.route(
                 for: "Same thing but for the ending",
                 previousRoute: .answer
+            ),
+            .answer
+        )
+
+        // A full explicit ask never gets hijacked by stickiness.
+        XCTAssertEqual(
+            CosmoInlineAssistantPromptClassifier.route(
+                for: "What is the strongest hook here?",
+                previousRoute: .action,
+                hasRecentActionContext: true
             ),
             .answer
         )
@@ -1163,9 +1177,9 @@ final class CosmoInlineAssistantRoutingTests: XCTestCase {
         XCTAssertTrue(resolved.promptBlock.lowercased().contains("use them directly"))
     }
 
-    func testWorkingContextClientReferenceHandlesPossessiveProfilePrompt() {
+    func testExplicitClientReferenceHandlesPossessiveProfilePrompt() {
         XCTAssertEqual(
-            CosmoInlineAssistantWorkingContextCache.clientReference(
+            CosmoExplicitClientReference.firstName(
                 in: "Fill slide 1 with the details of Josh's first duplex from San Diego (check out Josh's profile)"
             ),
             "Josh"
@@ -1278,7 +1292,7 @@ final class CosmoInlineAssistantRoutingTests: XCTestCase {
         XCTAssertTrue(prompt.contains("what you used and why"))
     }
 
-    func testWorkingContextCacheReusesClientForFollowUpOnSameSurface() {
+    func testWorkingContextCacheCarriesClientForwardAsSessionState() {
         let cache = CosmoInlineAssistantWorkingContextCache()
         let snapshot = CosmoEditableSourceSnapshot(
             surfaceID: "content:deck-1",
@@ -1296,7 +1310,6 @@ final class CosmoInlineAssistantRoutingTests: XCTestCase {
         )
         let first = cache.updateFrame(
             conversationID: "conversation-1",
-            prompt: "Change slide one to this for Josh. Fill out the information accurate to Josh.",
             route: .action,
             snapshot: snapshot,
             activeAtomUUID: "atom-deck-1",
@@ -1305,18 +1318,17 @@ final class CosmoInlineAssistantRoutingTests: XCTestCase {
             now: Date(timeIntervalSince1970: 100)
         )
 
-        XCTAssertFalse(first.reusedContext)
         XCTAssertEqual(first.effectiveClientUUID, "client-josh")
         XCTAssertEqual(first.skillID, .factFill)
-        XCTAssertEqual(first.currentTargetHint, "slide one")
 
+        // The follow-up names no client and uses no magic keywords — the
+        // session's client is STATE and sticks until app state changes it.
         let secondPlan = CosmoInlineAssistantSkillRuntime.plan(
-            for: "Do the same for slide four",
+            for: "Now fill slide four with the rental numbers",
             surfaceKind: .text
         )
         let second = cache.updateFrame(
             conversationID: "conversation-1",
-            prompt: "Do the same for slide four",
             route: .action,
             snapshot: snapshot,
             activeAtomUUID: "atom-deck-1",
@@ -1325,12 +1337,20 @@ final class CosmoInlineAssistantRoutingTests: XCTestCase {
             now: Date(timeIntervalSince1970: 120)
         )
 
-        XCTAssertTrue(second.reusedContext)
-        XCTAssertTrue(second.isFollowUp)
         XCTAssertEqual(second.effectiveClientUUID, "client-josh")
-        XCTAssertEqual(second.skillID, .factFill)
-        XCTAssertEqual(second.previousTargetHint, "slide one")
-        XCTAssertEqual(second.currentTargetHint, "slide four")
+
+        // A different app-state client wins over the carried one.
+        let third = cache.updateFrame(
+            conversationID: "conversation-1",
+            route: .action,
+            snapshot: snapshot,
+            activeAtomUUID: "atom-deck-1",
+            activeClientUUID: "client-marcus",
+            skillPlan: secondPlan,
+            now: Date(timeIntervalSince1970: 140)
+        )
+
+        XCTAssertEqual(third.effectiveClientUUID, "client-marcus")
     }
 
     func testWorkingContextFrameTracksSelectedContextAtoms() {
@@ -1344,7 +1364,6 @@ final class CosmoInlineAssistantRoutingTests: XCTestCase {
 
         let frame = cache.updateFrame(
             conversationID: "conversation-1",
-            prompt: "Give me five variations in this voice",
             route: .answer,
             snapshot: nil,
             activeAtomUUID: "atom-1",
@@ -1356,7 +1375,6 @@ final class CosmoInlineAssistantRoutingTests: XCTestCase {
 
         XCTAssertEqual(frame.contextAtomUUIDs, [josh.uuid, swipe.uuid])
         XCTAssertEqual(frame.contextAtomTitles, ["Josh", "Josh top reel"])
-        XCTAssertTrue(frame.stableContextKey.contains(josh.uuid))
         XCTAssertTrue(frame.promptBlock.contains("Selected context: Josh, Josh top reel"))
     }
 
@@ -1374,19 +1392,10 @@ final class CosmoInlineAssistantRoutingTests: XCTestCase {
             surfaceSourceHash: "hash-a",
             activeAtomUUID: "atom-deck-1",
             effectiveClientUUID: "client-josh",
-            clientReference: "Josh",
             skillID: plan.primarySkill.id,
             route: .action,
-            previousPrompt: "Change slide one to this for Josh.",
-            previousSkillID: .factFill,
-            previousTargetHint: "slide one",
-            currentTargetHint: "slide four",
-            operationHint: "reuse previous operation",
             contextAtomUUIDs: ["ctx-josh", "ctx-reel"],
             contextAtomTitles: ["Josh", "Top reel"],
-            isFollowUp: true,
-            reusedContext: true,
-            stableContextKey: "conversation-1|content:deck-1|client-josh|factFill|ctx-josh-ctx-reel",
             updatedAt: Date(timeIntervalSince1970: 120)
         )
 
@@ -1397,13 +1406,10 @@ final class CosmoInlineAssistantRoutingTests: XCTestCase {
             workingContextFrame: frame
         )
 
-        XCTAssertTrue(prompt.contains("## Inline Working Context Cache"))
-        XCTAssertTrue(prompt.contains("Cache status: hit"))
+        XCTAssertTrue(prompt.contains("## Inline Working Context"))
         XCTAssertTrue(prompt.contains("Active client UUID: client-josh"))
-        XCTAssertTrue(prompt.contains("Previous target: slide one"))
-        XCTAssertTrue(prompt.contains("Current target: slide four"))
         XCTAssertTrue(prompt.contains("Selected context: Josh, Top reel"))
-        XCTAssertTrue(prompt.contains("Reuse the prior client/profile context"))
+        XCTAssertTrue(prompt.contains("stay bound to this session"))
     }
 }
 

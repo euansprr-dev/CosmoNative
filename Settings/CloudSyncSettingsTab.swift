@@ -96,7 +96,7 @@ struct CloudSyncSettingsTab: View {
                                 Task {
                                     do {
                                         let probe = CaptureRequest.new(kind: .inboxScan, scanSessionId: "settings-test")
-                                        try await PushSenderService.shared.sendScanRequest(probe)
+                                        try await PushSenderService.shared.sendScanRequest(probe, isTest: true)
                                         apnsNote = "Test push sent — check your iPhone."
                                     } catch {
                                         apnsNote = error.localizedDescription

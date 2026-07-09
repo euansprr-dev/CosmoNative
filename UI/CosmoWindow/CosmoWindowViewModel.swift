@@ -54,7 +54,14 @@ final class CosmoWindowViewModel: ObservableObject {
     @Published var mentionedAtoms: [Atom] = []
     @Published var showMentionOverlay = false
     @Published var mentionSearchText = ""
-    @Published var modelOverride: AgentModelTier? = nil
+    @Published var modelOverride: AgentModelTier? = nil {
+        didSet {
+            // Prompt caches are model-scoped: warm the new model's prefix once
+            // so the first request after a switch skips the cold cache write.
+            guard oldValue != modelOverride else { return }
+            CosmoInlineAssistantCacheWarmer.warmForModelChange()
+        }
+    }
     @Published var selectedAgentProfileID: String? = nil
     @Published private(set) var agentProfiles: [CustomAgentProfile] = []
     @Published var pendingCanvasPlan: PendingCanvasPlan? = nil
@@ -760,7 +767,18 @@ final class CosmoWindowViewModel: ObservableObject {
     /// Returns how many operations actually applied (for the receipt line).
     @discardableResult
     func applyCanvasPlan(_ plan: PendingCanvasPlan) -> Int {
-        applyCanvasOperations(plan.operations)
+        let applied = applyCanvasOperations(plan.operations, targetThinkspaceId: plan.targetThinkspaceId)
+        // The plan decides which blocks belong together; geometry is never the
+        // model's job. One completion signal lets the canvas run its
+        // deterministic cluster-overlap resolution AFTER every operation landed.
+        var userInfo: [AnyHashable: Any] = [:]
+        if let target = plan.targetThinkspaceId { userInfo["thinkspaceId"] = target }
+        NotificationCenter.default.post(
+            name: CosmoNotification.Canvas.canvasPlanDidApply,
+            object: nil,
+            userInfo: userInfo
+        )
+        return applied
     }
 
     func applyPendingProposedEdit() {
@@ -1349,7 +1367,8 @@ final class CosmoWindowViewModel: ObservableObject {
         route: CosmoInlineAssistantRoute,
         snapshot: CosmoEditableSourceSnapshot?,
         inlineContextAtoms: [Atom] = [],
-        selectedSkillID: String? = nil
+        selectedSkillID: String? = nil,
+        sessionLedgerBlock: String? = nil
     ) async -> CosmoInlineAssistantPreparedAgentRequest {
         let inlineRequestContextAtoms = ContextSourcePolicy.filteredAtoms(
             Self.uniqueAtoms(mentionedAtoms + inlineContextAtoms),
@@ -1376,7 +1395,6 @@ final class CosmoWindowViewModel: ObservableObject {
         let responseMode: AgentResponseMode = route == .action ? .automatic : .inlineAssistant
         let workingContextFrame = workingContextCache.updateFrame(
             conversationID: conversationId,
-            prompt: prompt,
             route: route,
             snapshot: snapshot,
             activeAtomUUID: activeContext.data.currentAtomUUID,
@@ -1468,14 +1486,22 @@ final class CosmoWindowViewModel: ObservableObject {
             : ((try? await CosmoRetrievalService.shared.retrieve(retrievalRequest)) ?? [])
         let coreMemory = (try? await CosmoMemoryService.shared.coreMemory()) ?? []
         let workingMemory = (try? await CosmoMemoryService.shared.workingMemory(conversationID: conversationId)) ?? []
+        // Distilled session facts, embedding-matched to this ask — runs for
+        // BOTH routes (a ~100-token recall is worth it on action edits too:
+        // "wants headers bolded" is exactly what an edit request needs).
+        let recallMemory = await CosmoMemoryService.shared.recallArchivalMemory(
+            query: [prompt, snapshot?.title ?? ""].joined(separator: " "),
+            limit: 3
+        )
         let contextPack = ContextPackAssembler.assemble(
             request: retrievalRequest,
             retrievalResults: retrievalResults,
             coreMemory: coreMemory,
             workingMemory: workingMemory,
-            recallMemory: []
+            recallMemory: recallMemory
         )
-        let hasContextPackContent = !contextPack.retrievedResults.isEmpty || !coreMemory.isEmpty || !workingMemory.isEmpty
+        let hasContextPackContent = !contextPack.retrievedResults.isEmpty || !coreMemory.isEmpty
+            || !workingMemory.isEmpty || !recallMemory.isEmpty
         let runtimePrompt = runtimePromptLayer(
             collaboratorPrompt: collaboratorPreset?.runtimePrompt,
             agentProfile: activeProfile,
@@ -1498,6 +1524,11 @@ final class CosmoWindowViewModel: ObservableObject {
             // Prefetched related-work digest — assembled in the background when the
             // surface activated, so the common request needs zero tool round-trips.
             CosmoInlineAmbientContextPack.shared.digest(forSurfaceID: snapshot?.surfaceID),
+            // The session turn ledger — what was asked, staged, answered, and
+            // accepted so far. This is the state-based continuity carrier; it
+            // must precede the surface snapshot so references resolve before
+            // the model reads the live text.
+            sessionLedgerBlock,
             CosmoInlineAssistantInstructionPrompt.volatileContext(
                 snapshot: snapshot,
                 skillPlan: skillPlan,
@@ -1508,14 +1539,28 @@ final class CosmoWindowViewModel: ObservableObject {
         .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         .joined(separator: "\n\n")
 
+        // Mechanical fast lane, decided by STATE: a live selection plus the
+        // default edit skill and no research bundles is a surgical edit —
+        // Haiku handles it at ~10x less cost and latency. Any explicit skill,
+        // profile, or user model pick still wins.
+        let mechanicalFastLane = route == .action
+            && snapshot?.selection?.isEmpty == false
+            && selectedSkillID == nil
+            && skillPlan.primarySkill.id == .inlineEdit
+            && !skillPlan.toolBundles.contains(.webResearch)
+
         return CosmoInlineAssistantPreparedAgentRequest(
             prompt: enrichedText,
             // Dedicated, surface-scoped conversation so the inline assistant doesn't drag
             // in (or grow) the large shared Cosmo-window chat history on every edit.
             conversationID: CosmoInlineAssistantSessionScope.conversationID(for: snapshot?.surfaceID),
-            // Normal inline requests use the daily driver; explicit skill/model
-            // overrides still win for specialized work.
-            tierOverride: modelOverride ?? skillPlan.preferredModelTier ?? activeProfile?.preferredModelTier ?? .strategist,
+            // Normal inline requests use the daily driver (Sonnet 5, via the shared
+            // request shape so the prewarmer warms the same model); explicit
+            // skill/model overrides still win for specialized work.
+            tierOverride: modelOverride
+                ?? skillPlan.preferredModelTier
+                ?? activeProfile?.preferredModelTier
+                ?? (mechanicalFastLane ? .sensor : CosmoInlineAssistantRequestShape.defaultModelTier),
             intentOverride: CosmoInlineAssistantRequestShape.pinnedIntent(for: route),
             systemPromptOverride: staticInstructionOverride,
             volatileContextOverride: volatileContextOverride.isEmpty ? nil : volatileContextOverride,
@@ -1524,7 +1569,8 @@ final class CosmoWindowViewModel: ObservableObject {
             forcedToolBundles: forcedBundles,
             contextAtomUUIDs: Array(linkedAtomUUIDs.union(inlineRequestContextAtoms.map(\.uuid))),
             contextSourceIDs: pinnedContextSourceIDs,
-            activeClientUUID: activeContext.data.activeClientUUID
+            activeClientUUID: activeContext.data.activeClientUUID,
+            pipelineSteps: skillPlan.pipelineSteps ?? []
         )
     }
 
@@ -1766,17 +1812,23 @@ final class CosmoWindowViewModel: ObservableObject {
         return prompts.isEmpty ? defaultPromptSuggestions : Array(prompts.prefix(3))
     }
 
-    private func applyCanvasOperations(_ operations: [PendingCanvasOperation]) -> Int {
+    private func applyCanvasOperations(
+        _ operations: [PendingCanvasOperation],
+        targetThinkspaceId: String? = nil
+    ) -> Int {
         var applied = 0
         for operation in operations {
-            if applyCanvasOperation(operation) {
+            if applyCanvasOperation(operation, targetThinkspaceId: targetThinkspaceId) {
                 applied += 1
             }
         }
         return applied
     }
 
-    private func applyCanvasOperation(_ operation: PendingCanvasOperation) -> Bool {
+    private func applyCanvasOperation(
+        _ operation: PendingCanvasOperation,
+        targetThinkspaceId: String? = nil
+    ) -> Bool {
         let payload = operation.payload
 
         switch operation.kind {
@@ -1874,6 +1926,7 @@ final class CosmoWindowViewModel: ObservableObject {
                 "blockUUIDs": blockUUIDs
             ]
             if let intent = payload["intent"], !intent.isEmpty { userInfo["intent"] = intent }
+            if let targetThinkspaceId { userInfo["thinkspaceId"] = targetThinkspaceId }
             NotificationCenter.default.post(
                 name: CosmoNotification.Canvas.createClusterFromPlan,
                 object: nil,
@@ -1888,13 +1941,15 @@ final class CosmoWindowViewModel: ObservableObject {
                 .map { $0.trimmingCharacters(in: .whitespaces) }
                 .filter { !$0.isEmpty }
             guard !blockUUIDs.isEmpty else { return false }
+            var moveInfo: [AnyHashable: Any] = [
+                "clusterName": clusterName,
+                "blockUUIDs": blockUUIDs
+            ]
+            if let targetThinkspaceId { moveInfo["thinkspaceId"] = targetThinkspaceId }
             NotificationCenter.default.post(
                 name: CosmoNotification.Canvas.moveBlocksToCluster,
                 object: nil,
-                userInfo: [
-                    "clusterName": clusterName,
-                    "blockUUIDs": blockUUIDs
-                ]
+                userInfo: moveInfo
             )
             return true
 
@@ -2226,7 +2281,7 @@ struct CosmoModelOption: Identifiable {
             id: "auto",
             tier: nil,
             title: "Auto",
-            detail: "Gemini 3 Flash by default",
+            detail: "Sonnet 4.6 by default",
             icon: "wand.and.stars"
         ),
         CosmoModelOption(

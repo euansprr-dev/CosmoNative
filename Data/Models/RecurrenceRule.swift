@@ -170,6 +170,25 @@ struct RecurrenceRule: Codable, Equatable {
         self.endCondition = endCondition
     }
 
+    private enum CodingKeys: String, CodingKey {
+        case frequency, interval, daysOfWeek, dayOfMonth, monthOfYear, endCondition
+    }
+
+    /// Lenient decode (kept in lockstep with the iOS copy): `frequency` is
+    /// the only required key. Rules written by other platforms (or older
+    /// builds) omit `interval`/`endCondition` — the synthesized decoder
+    /// rejected the whole rule over a missing endCondition, silently
+    /// un-repeating foreign series.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        frequency = try container.decode(RecurrenceFrequency.self, forKey: .frequency)
+        interval = try container.decodeIfPresent(Int.self, forKey: .interval) ?? 1
+        daysOfWeek = try container.decodeIfPresent([DayOfWeek].self, forKey: .daysOfWeek)
+        dayOfMonth = try container.decodeIfPresent(Int.self, forKey: .dayOfMonth)
+        monthOfYear = try container.decodeIfPresent(Int.self, forKey: .monthOfYear)
+        endCondition = try container.decodeIfPresent(RecurrenceEndCondition.self, forKey: .endCondition) ?? .never
+    }
+
     // MARK: - Convenience Initializers
     static func daily(every interval: Int = 1, endCondition: RecurrenceEndCondition = .never) -> RecurrenceRule {
         RecurrenceRule(

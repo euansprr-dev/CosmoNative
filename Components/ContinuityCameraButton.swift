@@ -32,7 +32,13 @@ struct ContinuityCameraAnchor: NSViewRepresentable {
         if presentTick != context.coordinator.lastTick {
             context.coordinator.lastTick = presentTick
             if presentTick > 0 {
-                view.presentDeviceMenu()
+                // Never pop a menu mid-render: updateNSView runs inside
+                // SwiftUI's update transaction, and a nested menu-tracking
+                // run loop started there opens an invisible session that
+                // AppKit aborts before it ever draws.
+                DispatchQueue.main.async {
+                    view.presentDeviceMenu()
+                }
             }
         }
     }

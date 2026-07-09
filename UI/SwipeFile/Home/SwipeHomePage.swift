@@ -121,6 +121,7 @@ struct SwipeHomePage: View {
             librarySwipeShelf(label: "NEW THIS MONTH", models: newThisMonth)
         }
         boardsShelf
+        patternsShelf
         outliersShelf
     }
 
@@ -276,6 +277,62 @@ struct SwipeHomePage: View {
         }
     }
 
+    /// Recurring moves the PatternWeaver noticed across saved swipes. Hidden
+    /// until patterns exist (the Boards grammar); opening one starts a study
+    /// session that walks the pattern's members with the prev/next chevrons.
+    @ViewBuilder
+    private var patternsShelf: some View {
+        let patterns = SwipePatternStore.shared.patterns
+        if !patterns.isEmpty {
+            SwipeShelfRow(
+                label: "PATTERNS",
+                count: patterns.count,
+                onSeeAll: nil
+            ) {
+                ForEach(patterns.sorted { $0.members.count > $1.members.count }) { pattern in
+                    SwipeHomePatternTile(
+                        pattern: pattern,
+                        coverItems: patternCoverItems(pattern)
+                    ) {
+                        openPatternStudy(pattern)
+                    }
+                }
+            }
+        }
+    }
+
+    private func patternCoverItems(_ pattern: SwipePattern) -> [SwipeCardModel] {
+        Array(
+            pattern.members
+                .compactMap { member in
+                    viewModel.allItems.first(where: { $0.id == member.swipeUUID })
+                        .map { viewModel.cardModelsByID[$0.id] ?? SwipeCardModel(item: $0) }
+                }
+                .prefix(4)
+        )
+    }
+
+    /// Study the pattern: open its most recent member with the session queue
+    /// set to the pattern's members, so ⌘[/⌘] walks the move end to end.
+    private func openPatternStudy(_ pattern: SwipePattern) {
+        let memberIDs = pattern.members.map(\.swipeUUID)
+        let items = viewModel.allItems.filter { memberIDs.contains($0.id) }
+        guard let first = items.first else { return }
+        SwipeStudySession.shared.begin(
+            order: items.map(\.entityId),
+            current: first.entityId
+        )
+        NotificationCenter.default.post(
+            name: .enterFocusMode,
+            object: nil,
+            userInfo: [
+                "type": EntityType.research,
+                "id": first.entityId,
+                "commandKTab": "swipeGallery"
+            ]
+        )
+    }
+
     @ViewBuilder
     private var outliersShelf: some View {
         if topOutliers.isEmpty {
@@ -358,6 +415,7 @@ struct SwipeHomePage: View {
             expanded: $quickLookExpanded,
             sourceFrame: quickLookSource,
             heroModel: model,
+            panelAspect: model.aspect,
             onRequestClose: closeQuickLook
         ) {
             SwipeQuickLookLibraryContent(
@@ -365,8 +423,6 @@ struct SwipeHomePage: View {
                 model: model,
                 onStudy: { openStudy(item: item, model: model) },
                 onAddToCanvas: { viewModel.addToCanvas(item) },
-                onPrevious: {},
-                onNext: {},
                 onClose: closeQuickLook
             )
         }
@@ -466,7 +522,7 @@ struct SwipeHomePage: View {
         }
 
         let source: CGRect? = quickLook != nil
-            ? SwipeQuickLookGeometry.panelFrame(in: pageSize)
+            ? SwipeQuickLookGeometry.panelFrame(in: pageSize, aspect: model.aspect)
             : frameStore.frames[item.id]
 
         quickLook = nil
@@ -493,6 +549,49 @@ struct SwipeHomePage: View {
         quickLook = nil
         quickLookExpanded = false
         Task { await discoverModel.saveAndOpenForTranscription(post) }
+    }
+}
+
+// MARK: - Pattern tile (shelf size)
+
+/// A recurring move: named, defined, with a mosaic of the swipes sharing it.
+private struct SwipeHomePatternTile: View {
+    let pattern: SwipePattern
+    let coverItems: [SwipeCardModel]
+    let onOpen: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: onOpen) {
+            VStack(alignment: .leading, spacing: 8) {
+                SwipeBoardMosaic(coverItems: coverItems, icon: "circle.hexagongrid", height: 116)
+                Text(pattern.name)
+                    .font(DS.callout.weight(.semibold))
+                    .foregroundStyle(DS.text)
+                    .lineLimit(1)
+                Text(pattern.definition)
+                    .font(DS.caption)
+                    .foregroundStyle(DS.textSecondary)
+                    .lineLimit(2)
+                    .frame(height: 26, alignment: .topLeading)
+                Text("\(pattern.members.count) swipes share this move")
+                    .font(DS.caption.monospacedDigit())
+                    .foregroundStyle(DS.textMuted)
+            }
+            .padding(10)
+            .frame(width: 208, alignment: .topLeading)
+            .swipeCardSurface(isHovered: isHovered)
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .scaleEffect(isHovered ? 1.01 : 1)
+        .animation(ProMotionSprings.hover, value: isHovered)
+        .onHover { isHovered = $0 }
+        .help("Study this pattern — the chevrons walk its swipes")
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(pattern.name), \(pattern.members.count) swipes")
+        .accessibilityAddTraits(.isButton)
     }
 }
 

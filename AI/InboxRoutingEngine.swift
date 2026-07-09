@@ -87,15 +87,56 @@ actor InboxRoutingEngine {
             recommendations.append(merge)
         }
 
-        // Stage 2 — placement against centroids.
-        let placement = await placementRecommendations(
-            title: title,
-            text: text,
-            suggestedAtomType: suggestedAtomType,
-            queryTokens: queryTokens,
-            searchResultUUIDs: Set(atomUUIDs)
-        )
-        recommendations.append(contentsOf: placement)
+        // Stage 2 — Atlas routing: cross-kind shortlist (Stage A, local
+        // embeddings) → one taught sensor-tier call (Stage B) that answers
+        // with typed moves. The pre-Atlas centroid path survives below as the
+        // offline fallback — routing never regresses when no LLM is reachable.
+        var routedTitle = title
+        var effectiveAtomType = suggestedAtomType
+        var atlasDecided = false
+
+        if let queryVector = await captureEmbedding(for: text) {
+            let shortlist = await InboxDestinationAtlas.shared.shortlist(queryVector: queryVector)
+            if !shortlist.isEmpty {
+                let corrections = await InboxRoutingCorrectionLedger.shared
+                    .recentExamples(limit: config.atlasCorrectionExamples)
+                if let decision = await InboxAtlasRouter.shared.route(
+                    text: text,
+                    heuristicTitle: title,
+                    candidates: shortlist,
+                    corrections: corrections
+                ) {
+                    atlasDecided = true
+                    // The router names the capture too (title extraction folded
+                    // into the same call) — but a user-provided title always wins.
+                    let userTitled = preferredTitle?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                    if !userTitled, let cleaned = decision.title {
+                        routedTitle = String(cleaned.prefix(80))
+                    }
+                    effectiveAtomType = Self.atomType(forCaptureType: decision.captureType) ?? suggestedAtomType
+                    let moveRecommendations = await atlasRecommendations(
+                        fromDecision: decision,
+                        shortlist: shortlist,
+                        title: routedTitle,
+                        fallbackAtomType: effectiveAtomType,
+                        searchResultUUIDs: Set(atomUUIDs)
+                    )
+                    recommendations.append(contentsOf: moveRecommendations)
+                }
+            }
+        }
+
+        if !atlasDecided {
+            // Offline fallback — placement against centroids (pre-Atlas Stage 2).
+            let placement = await placementRecommendations(
+                title: title,
+                text: text,
+                suggestedAtomType: suggestedAtomType,
+                queryTokens: queryTokens,
+                searchResultUUIDs: Set(atomUUIDs)
+            )
+            recommendations.append(contentsOf: placement)
+        }
 
         let abstained = recommendations.isEmpty
 
@@ -106,8 +147,8 @@ actor InboxRoutingEngine {
                 InboxRecommendation(
                     kind: .createStandaloneAtom,
                     confidence: 0.30,
-                    suggestedAtomType: suggestedAtomType.rawValue,
-                    destinationPath: suggestedAtomType.displayName,
+                    suggestedAtomType: effectiveAtomType.rawValue,
+                    destinationPath: effectiveAtomType.displayName,
                     rationale: "No destination cleared the confidence bar, so this capture stays unsorted until you decide."
                 )
             )
@@ -127,14 +168,191 @@ actor InboxRoutingEngine {
             .prefix(3)
 
         return RoutingResult(
-            title: title,
+            title: routedTitle,
             bundle: InboxRecommendationBundle(
-                title: title,
+                title: routedTitle,
                 recommendations: recommendations,
                 relatedAtomUUIDs: relatedAtomUUIDs.isEmpty ? nil : Array(relatedAtomUUIDs)
             ),
             abstained: abstained
         )
+    }
+
+    // MARK: - Stage 2 (Atlas) — decision → recommendations
+
+    /// The router's capture-shape verdict mapped onto atom types. Replaces the
+    /// keyword intent gate whenever the Atlas call succeeds.
+    static func atomType(forCaptureType captureType: String?) -> AtomType? {
+        switch captureType {
+        case "task": return .task
+        case "question", "idea": return .idea
+        case "insight", "note": return .note
+        case "source": return .research
+        default: return nil
+        }
+    }
+
+    /// Maps validated Atlas moves onto recommendation rows the executor and
+    /// UI already understand. Spatial moves reuse the classic kinds (and get
+    /// real placement plans); knowledge-graph moves carry an `InboxAtlasMove`.
+    private func atlasRecommendations(
+        fromDecision decision: InboxAtlasRouter.Decision,
+        shortlist: [InboxDestinationAtlas.ScoredEntry],
+        title: String,
+        fallbackAtomType: AtomType,
+        searchResultUUIDs: Set<String>
+    ) async -> [InboxRecommendation] {
+        let entriesByKey = Dictionary(uniqueKeysWithValues: shortlist.map { ($0.entry.key, $0.entry) })
+        var results: [InboxRecommendation] = []
+        // Fetched lazily — only spatial moves need the thinkspace metadata.
+        var thinkspaceAtoms: [Atom]?
+
+        for move in decision.moves where move.confidence >= config.atlasMoveMinConfidence {
+            let rationale = move.growth.isEmpty
+                ? "The Atlas router matched this capture against your workspace's destinations."
+                : move.growth
+
+            switch move.kind {
+            case .advanceQuestion:
+                guard let key = move.targetKey, let entry = entriesByKey[key],
+                      let deepDiveUUID = entry.parentUUID else { continue }
+                results.append(InboxRecommendation(
+                    kind: .advanceQuestion,
+                    confidence: move.confidence,
+                    suggestedAtomType: AtomType.note.rawValue,
+                    destinationPath: "\(entry.parentName ?? "Inquiry") › \(entry.name)",
+                    rationale: rationale,
+                    atlasMove: InboxAtlasMove(
+                        deepDiveUUID: deepDiveUUID,
+                        deepDiveName: entry.parentName,
+                        questionUUID: entry.uuid,
+                        questionTitle: entry.name
+                    )
+                ))
+
+            case .spawnQuestion:
+                guard let key = move.targetKey, let entry = entriesByKey[key],
+                      let newTitle = move.newTitle else { continue }
+                let parentQuestion = move.parentQuestionKey.flatMap { entriesByKey[$0] }
+                results.append(InboxRecommendation(
+                    kind: .spawnQuestion,
+                    confidence: move.confidence,
+                    suggestedAtomType: AtomType.idea.rawValue,
+                    destinationPath: "\(entry.name) › new question",
+                    rationale: rationale,
+                    atlasMove: InboxAtlasMove(
+                        deepDiveUUID: entry.uuid,
+                        deepDiveName: entry.name,
+                        newQuestionTitle: newTitle,
+                        parentQuestionUUID: parentQuestion?.uuid
+                    )
+                ))
+
+            case .feedConnection:
+                guard let key = move.targetKey, let entry = entriesByKey[key],
+                      let sectionRaw = move.section,
+                      let section = ConnectionSectionType(rawValue: sectionRaw) else { continue }
+                results.append(InboxRecommendation(
+                    kind: .feedConnection,
+                    confidence: move.confidence,
+                    suggestedAtomType: AtomType.note.rawValue,
+                    destinationPath: "\(entry.name) › \(section.displayName)",
+                    rationale: rationale,
+                    atlasMove: InboxAtlasMove(
+                        connectionUUID: entry.uuid,
+                        connectionName: entry.name,
+                        connectionSection: sectionRaw
+                    )
+                ))
+
+            case .attachClient:
+                guard let key = move.targetKey, let entry = entriesByKey[key] else { continue }
+                results.append(InboxRecommendation(
+                    kind: .attachClient,
+                    confidence: move.confidence,
+                    suggestedAtomType: AtomType.idea.rawValue,
+                    destinationPath: "Idea for \(entry.name)",
+                    rationale: rationale,
+                    atlasMove: InboxAtlasMove(
+                        clientUUID: entry.uuid,
+                        clientName: entry.name
+                    )
+                ))
+
+            case .placeCluster:
+                guard let key = move.targetKey, let entry = entriesByKey[key],
+                      let thinkspaceId = entry.parentUUID else { continue }
+                if thinkspaceAtoms == nil { thinkspaceAtoms = await fetchThinkspaceAtoms() }
+                guard let thinkspaceAtom = thinkspaceAtoms?.first(where: { $0.uuid == thinkspaceId }),
+                      let metadata = thinkspaceAtom.metadataValue(as: ThinkspaceMetadata.self),
+                      let cluster = metadata.clusters.first(where: { $0.id == entry.uuid }) else { continue }
+                let related = cluster.blockUUIDs.filter { searchResultUUIDs.contains($0) }
+                guard let plan = await SpatialPlacementPlanner.shared.planForExistingCluster(
+                    title: title,
+                    atomType: fallbackAtomType,
+                    thinkspaceId: thinkspaceId,
+                    thinkspaceName: metadata.name,
+                    cluster: cluster,
+                    relatedAtomUUIDs: related
+                ) else { continue }
+                results.append(InboxRecommendation(
+                    kind: .placeInExistingCluster,
+                    confidence: move.confidence,
+                    suggestedAtomType: fallbackAtomType.rawValue,
+                    destinationPath: "\(metadata.name) › \(cluster.name)",
+                    rationale: rationale,
+                    thinkspaceId: thinkspaceId,
+                    thinkspaceName: metadata.name,
+                    clusterId: cluster.id,
+                    clusterName: cluster.name,
+                    placementPlan: plan
+                ))
+
+            case .placeThinkspace:
+                guard let key = move.targetKey, let entry = entriesByKey[key] else { continue }
+                guard let plan = await SpatialPlacementPlanner.shared.planForThinkspacePlacement(
+                    title: title,
+                    atomType: fallbackAtomType,
+                    thinkspaceId: entry.uuid,
+                    thinkspaceName: entry.name,
+                    relatedAtomUUIDs: Array(searchResultUUIDs)
+                ) else { continue }
+                results.append(InboxRecommendation(
+                    kind: .placeInThinkspace,
+                    confidence: move.confidence,
+                    suggestedAtomType: fallbackAtomType.rawValue,
+                    destinationPath: entry.name,
+                    rationale: rationale,
+                    thinkspaceId: entry.uuid,
+                    thinkspaceName: entry.name,
+                    placementPlan: plan
+                ))
+
+            case .germinateConnection:
+                guard let newTitle = move.newTitle else { continue }
+                results.append(InboxRecommendation(
+                    kind: .germinateConnection,
+                    confidence: move.confidence,
+                    suggestedAtomType: AtomType.connection.rawValue,
+                    destinationPath: "New concept: \(newTitle)",
+                    rationale: rationale,
+                    atlasMove: InboxAtlasMove(germinateTitle: newTitle)
+                ))
+
+            case .germinateDeepDive:
+                guard let newTitle = move.newTitle else { continue }
+                results.append(InboxRecommendation(
+                    kind: .germinateDeepDive,
+                    confidence: move.confidence,
+                    suggestedAtomType: AtomType.idea.rawValue,
+                    destinationPath: "New deep dive: \(newTitle)",
+                    rationale: rationale,
+                    atlasMove: InboxAtlasMove(germinateTitle: newTitle)
+                ))
+            }
+        }
+
+        return results
     }
 
     // MARK: - Stage 1 — Merge (near-duplicate territory only)

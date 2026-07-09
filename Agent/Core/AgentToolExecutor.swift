@@ -103,6 +103,11 @@ class AgentToolExecutor {
     /// model must never unbind a proposal from the editor the user was in
     /// (the in-editor diff only renders when the proposal matches the surface).
     var workspaceEditBoundSurface: (surfaceID: String, targetID: String)?
+    /// The bound surface's text at submit time — lets `workspaceEditProposal`
+    /// validate operations (anchors locate, numbering stays sane), repair
+    /// asterisk-formatting deterministically, and expand series instructions
+    /// (renumberSequence, scoped formatMarks) from the document's own state.
+    var workspaceEditBoundSurfaceText: String?
     var inlineSkillStore: CosmoInlineSkillStore = .defaultForRuntime()
 
     private init() {}
@@ -112,8 +117,14 @@ class AgentToolExecutor {
     /// traceable. Reset by the caller per request.
     private(set) var sessionSourceRefs: [CosmoAssistantSourceRef] = []
 
+    /// How many times THIS run's proposals failed validation — the bridge's
+    /// escalation ladder retries once on a stronger model when a fast-lane
+    /// (Haiku) run keeps producing invalid operations.
+    private(set) var workspaceEditValidationRejections = 0
+
     func resetSessionSourceRefs() {
         sessionSourceRefs = []
+        workspaceEditValidationRejections = 0
     }
 
     func recordSourceRef(uuid: String, title: String, kind: String) {
@@ -1999,7 +2010,21 @@ class AgentToolExecutor {
             )
         }
 
-        let plan = PendingCanvasPlan(title: title, rationale: rationale, operations: operations)
+        // The plan binds to the thinkspace the request was scoped to at submit
+        // time — apply notifications are broadcast, and only the canvas whose
+        // thinkspace matches may handle them.
+        var targetThinkspaceId: String?
+        if let surfaceID = workspaceEditBoundSurface?.surfaceID,
+           surfaceID.hasPrefix("thinkspace:") {
+            targetThinkspaceId = String(surfaceID.dropFirst("thinkspace:".count))
+        }
+
+        let plan = PendingCanvasPlan(
+            title: title,
+            rationale: rationale,
+            operations: operations,
+            targetThinkspaceId: targetThinkspaceId
+        )
         onCanvasPlan?(plan)
 
         return jsonEncode([
@@ -2018,21 +2043,29 @@ class AgentToolExecutor {
 
         onWorkspaceEditProposal?(proposal)
 
-        return jsonEncode([
+        var payload: [String: Any] = [
             "success": true,
             "proposalId": proposal.id.uuidString,
             "operationCount": proposal.operations.count,
             "message": "Workspace edit proposal is ready for review. Do not say it has been applied until the user accepts changes."
-        ] as [String: Any])
+        ]
+        if let afterOutline = buildResult.afterOutline {
+            // The simulated post-apply structure — verify it matches what the
+            // user asked for; if it doesn't, stage a corrected proposal.
+            payload["resultingDocumentStructure"] = afterOutline
+        }
+        return jsonEncode(payload)
     }
 
-    func workspaceEditProposal(arguments args: [String: Any]) -> (proposal: CosmoAssistantProposal?, error: String?) {
+    func workspaceEditProposal(
+        arguments args: [String: Any]
+    ) -> (proposal: CosmoAssistantProposal?, error: String?, afterOutline: String?) {
         guard let prompt = trimmedString(args["prompt"]),
               let modelSurfaceID = trimmedString(args["surfaceID"]),
               let title = trimmedString(args["title"]),
               let summary = trimmedString(args["summary"]),
               let rawOperations = args["operations"] as? [[String: Any]] else {
-            return (nil, "Missing required workspace edit proposal fields")
+            return (nil, "Missing required workspace edit proposal fields", nil)
         }
 
         // The bound surface (captured at submit) is authoritative — model-authored
@@ -2040,8 +2073,10 @@ class AgentToolExecutor {
         // surfaces expose several targets under one surfaceID prefix).
         let boundSurface = workspaceEditBoundSurface
         let surfaceID = boundSurface?.surfaceID ?? modelSurfaceID
+        let boundText = workspaceEditBoundSurfaceText
 
-        let operations = rawOperations.map { raw in
+        var operations: [CosmoAssistantProposalOperation] = []
+        for raw in rawOperations {
             let modelTargetID = raw["targetID"] as? String ?? ""
             let targetID: String
             if let boundSurface {
@@ -2051,24 +2086,94 @@ class AgentToolExecutor {
             } else {
                 targetID = modelTargetID
             }
+            let rawKind = raw["kind"] as? String ?? ""
+            let sourceHash = raw["sourceHash"] as? String ?? ""
+            let rationale = raw["rationale"] as? String ?? "Proposed by Cosmo."
+
+            // Series instructions expand deterministically from the document's
+            // own state — the model never hand-copies N mechanical rewrites.
+            if rawKind == "renumberSequence" {
+                guard let boundText, !boundText.isEmpty else {
+                    return (nil, "renumberSequence needs an active editable surface — none is bound to this request.", nil)
+                }
+                guard let expanded = CosmoInlineSeriesExpansion.renumberOperations(
+                    seriesKind: raw["seriesKind"] as? String ?? "slideHeaders",
+                    fromNumber: intValue(raw["fromNumber"]) ?? 1,
+                    delta: intValue(raw["delta"]) ?? 0,
+                    throughNumber: intValue(raw["throughNumber"]),
+                    withinSlide: intValue(raw["withinSlide"]),
+                    sourceText: boundText,
+                    targetID: targetID,
+                    sourceHash: sourceHash,
+                    rationale: rationale
+                ) else {
+                    return (nil, "renumberSequence matched nothing: check seriesKind, fromNumber, and delta against the document structure digest.", nil)
+                }
+                operations.append(contentsOf: expanded)
+                continue
+            }
+
+            if rawKind == "formatMarks",
+               let scope = trimmedString(raw["scope"]),
+               let mark = (raw["formatMark"] as? String).flatMap(CosmoAssistantFormatMark.init(rawValue:)) {
+                guard let boundText, !boundText.isEmpty else {
+                    return (nil, "Scoped formatMarks needs an active editable surface — none is bound to this request.", nil)
+                }
+                guard let expanded = CosmoInlineSeriesExpansion.scopedFormatMarkOperations(
+                    scope: scope,
+                    mark: mark,
+                    sourceText: boundText,
+                    targetID: targetID,
+                    sourceHash: sourceHash,
+                    rationale: rationale
+                ) else {
+                    return (nil, "formatMarks scope \"\(scope)\" matched nothing on this surface. Supported scope: allSlideHeaders.", nil)
+                }
+                operations.append(contentsOf: expanded)
+                continue
+            }
+
             let operation = CosmoAssistantProposalOperation(
-                kind: CosmoAssistantProposalOperationKind(rawValue: raw["kind"] as? String ?? "") ?? .textReplacement,
+                kind: CosmoAssistantProposalOperationKind(rawValue: rawKind) ?? .textReplacement,
                 targetID: targetID,
                 anchorID: raw["anchorID"] as? String,
                 originalText: raw["originalText"] as? String,
                 proposedText: raw["proposedText"] as? String,
-                sourceHash: raw["sourceHash"] as? String ?? "",
-                rationale: raw["rationale"] as? String ?? "Proposed by Cosmo.",
+                sourceHash: sourceHash,
+                rationale: rationale,
                 formatMark: (raw["formatMark"] as? String).flatMap(CosmoAssistantFormatMark.init(rawValue:))
             )
-            return CosmoInlineAssistantOutlineBodyInsertionNormalizer.normalized(
+            operations.append(CosmoInlineAssistantOutlineBodyInsertionNormalizer.normalized(
                 operation: operation,
                 prompt: prompt
-            )
+            ))
         }
 
         if operations.contains(where: { CosmoInlineAssistantEditScopeGuard.shouldReject(operation: $0, prompt: prompt) }) {
-            return (nil, CosmoInlineAssistantEditScopeGuard.rejectionMessage)
+            return (nil, CosmoInlineAssistantEditScopeGuard.rejectionMessage, nil)
+        }
+
+        // Validate against the bound surface text: repair asterisk-formatting,
+        // require anchors to locate, and simulate the transaction so numbering
+        // corruption is caught BEFORE it reaches review. Issues go back to the
+        // model as a structured error — it is still in the tool loop and fixes
+        // the proposal itself.
+        var afterOutline: String?
+        if let boundText, !boundText.isEmpty {
+            let validation = CosmoInlineProposalValidator.validate(
+                operations: operations,
+                sourceText: boundText,
+                summary: summary
+            )
+            guard validation.isValid else {
+                workspaceEditValidationRejections += 1
+                let issueList = validation.issues.enumerated()
+                    .map { "\($0.offset + 1). \($0.element)" }
+                    .joined(separator: "\n")
+                return (nil, "The proposal was NOT staged — fix these and call propose_workspace_edit again:\n\(issueList)", nil)
+            }
+            operations = validation.repairedOperations
+            afterOutline = validation.afterOutline
         }
 
         let proposal = CosmoAssistantProposal(
@@ -2078,7 +2183,7 @@ class AgentToolExecutor {
             summary: summary,
             operations: operations
         )
-        return (proposal, nil)
+        return (proposal, nil, afterOutline)
     }
 
     private func answerInAssistantPane(_ args: [String: Any]) async throws -> String {
@@ -2579,31 +2684,31 @@ class AgentToolExecutor {
 
         let dayStart = calendar.startOfDay(for: targetDate)
 
-        let blocks = try await atomRepo.fetchAll(type: .scheduleBlock)
-        let dayBlocks = blocks.filter { atom in
-            let meta = atom.metadataValue(as: ScheduleBlockMetadata.self)
-            if let startStr = meta?.startTime,
-               let startDate = ISO8601.date(from: startStr) {
-                return calendar.isDate(startDate, inSameDayAs: dayStart)
-            }
-            // Fallback to createdAt
-            if let date = ISO8601.date(from: atom.createdAt) {
-                return calendar.isDate(date, inSameDayAs: dayStart)
-            }
-            return false
-        }
+        // Engine projection (iOS parity): repeating templates surface on
+        // every rule day with the occurrence's own times — the old literal
+        // startTime filter only saw them on the day they were drawn.
+        let entries = await ScheduleBlockEngine.blocks(on: dayStart, repository: atomRepo)
+        let atomsByUUID = Dictionary(
+            uniqueKeysWithValues: ((try? await atomRepo.fetchAll(type: .scheduleBlock)) ?? [])
+                .map { ($0.uuid, $0) }
+        )
 
-        let items: [[String: Any]] = dayBlocks.map { atom in
-            let meta = atom.metadataValue(as: ScheduleBlockMetadata.self)
-            return [
-                "uuid": atom.uuid,
-                "title": atom.title ?? "Untitled",
-                "startTime": meta?.startTime ?? "",
-                "endTime": meta?.endTime ?? "",
-                "isCompleted": meta?.isCompleted ?? false,
+        let items: [[String: Any]] = entries.map { entry in
+            let meta = atomsByUUID[entry.id]?.metadataValue(as: ScheduleBlockMetadata.self)
+            var item: [String: Any] = [
+                "uuid": entry.id,
+                "title": entry.title,
+                "startTime": ISO8601.string(from: entry.start),
+                "endTime": ISO8601.string(from: entry.end),
+                "isCompleted": entry.isCompleted,
                 "blockType": meta?.blockType ?? "",
                 "intent": meta?.originType ?? ""
-            ] as [String: Any]
+            ]
+            if entry.isRecurring {
+                // Semantic, not structural: "Every week on Mon, Fri".
+                item["repeats"] = entry.recurrenceText ?? "repeats"
+            }
+            return item
         }
 
         return jsonEncode([

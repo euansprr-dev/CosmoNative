@@ -144,6 +144,12 @@ final class SwipeLibraryViewModel {
     }
 
     func openStudy(_ item: SwipeGalleryItem) {
+        // Record the browsing order so Study's prev/next chevrons (⌘[ / ⌘])
+        // walk the same sequence this surface was showing.
+        SwipeStudySession.shared.begin(
+            order: visibleItems.map(\.entityId),
+            current: item.entityId
+        )
         NotificationCenter.default.post(
             name: .enterFocusMode,
             object: nil,

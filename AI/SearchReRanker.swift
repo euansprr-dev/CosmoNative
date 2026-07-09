@@ -39,6 +39,15 @@ final class SearchReRanker {
 
     // MARK: - Re-Rank
 
+    /// Whether a fresh AI ranking exists for this query. The palette uses it
+    /// to badge cache-served results whose ordering came from the re-ranker —
+    /// the re-ranker never reorders a list that is already on screen.
+    func hasCachedRanking(for query: String) -> Bool {
+        let key = query.trimmingCharacters(in: .whitespaces).lowercased()
+        guard let cached = cache[key] else { return false }
+        return Date().timeIntervalSince(cached.timestamp) < cacheTTL
+    }
+
     /// Re-rank search results using Claude for conceptual understanding.
     /// Returns nil if re-ranking should be skipped (exact match, short query, etc.)
     func reRank(

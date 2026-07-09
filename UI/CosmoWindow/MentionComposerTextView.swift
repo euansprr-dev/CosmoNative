@@ -5,6 +5,13 @@
 import SwiftUI
 import AppKit
 
+/// An intent token to wash inline in the composer (the Mac port of the iOS
+/// task composer's token highlight): a plain-text range plus its tint.
+struct MentionComposerTokenWash: Equatable {
+    let range: NSRange
+    let color: NSColor
+}
+
 /// A multiline text editor for the Cosmo overlay that colorizes @-mention
 /// patterns inline using entity-type colors from `CosmoMentionColors`.
 struct MentionComposerTextView: NSViewRepresentable {
@@ -22,6 +29,10 @@ struct MentionComposerTextView: NSViewRepresentable {
     var onDismissMentionOverlayFromBackspace: () -> Void = {}
     /// Return true to consume Tab (e.g. accept a skill suggestion).
     var onTab: () -> Bool = { false }
+    /// Computes the intent-token washes ("@idea" scope, armed "/skill") for the
+    /// current plain text + selection. Default: none — only the assistant
+    /// composers opt in.
+    var tokenWashProvider: (String, NSRange) -> [MentionComposerTokenWash] = { _, _ in [] }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -112,6 +123,8 @@ struct MentionComposerTextView: NSViewRepresentable {
             context.coordinator.applyMentionHighlighting(textView)
         }
 
+        context.coordinator.refreshTokenWashes(textView)
+
         // Recalculate intrinsic height
         context.coordinator.updateIntrinsicHeight(textView)
 
@@ -125,6 +138,9 @@ struct MentionComposerTextView: NSViewRepresentable {
         var parent: MentionComposerTextView
         weak var textView: ComposerNSTextView?
         weak var scrollView: ComposerScrollView?
+        /// The token washes currently stamped in storage — nil after any pass
+        /// that wiped attributes wholesale, so the next refresh restamps.
+        private var lastAppliedTokenWashes: [MentionComposerTokenWash]?
 
         init(_ parent: MentionComposerTextView) {
             self.parent = parent
@@ -157,6 +173,7 @@ struct MentionComposerTextView: NSViewRepresentable {
                 parent.text = textView.string
                 applyMentionHighlighting(textView)
             }
+            refreshTokenWashes(textView)
             parent.onTextChange()
             updateIntrinsicHeight(textView)
         }
@@ -172,6 +189,7 @@ struct MentionComposerTextView: NSViewRepresentable {
             if !MentionComposerTextSelectionPolicy.rangesEqual(parent.selection, selectedRange) {
                 parent.selection = selectedRange
             }
+            refreshTokenWashes(textView)
         }
 
         func textDidBeginEditing(_ notification: Notification) {
@@ -237,11 +255,56 @@ struct MentionComposerTextView: NSViewRepresentable {
             }
 
             storage.endEditing()
+            lastAppliedTokenWashes = nil
 
             // Restore cursor position
             if selectedRange.location <= (content as NSString).length {
                 textView.setSelectedRange(selectedRange)
             }
+        }
+
+        /// Stamps the intent-token washes (scope / armed-skill tokens) over the
+        /// live storage. Attribute-only and cache-guarded so caret churn never
+        /// causes attribute churn; in pill mode ranges arrive in plain space
+        /// and are mapped through the serializer. Only pill mode gets the
+        /// reset pass — a non-pill composer wanting washes would also need
+        /// clearing wired into `applyMentionHighlighting`.
+        func refreshTokenWashes(_ textView: NSTextView) {
+            guard let storage = textView.textStorage else { return }
+            let plain = currentPlainText(textView)
+            let selection: NSRange
+            if parent.usesPillMentions {
+                selection = ComposerMentionSerializer.plainRange(
+                    forAttributedRange: textView.selectedRange(), in: storage
+                )
+            } else {
+                selection = textView.selectedRange()
+            }
+
+            let washes = parent.tokenWashProvider(plain, selection)
+            guard washes != lastAppliedTokenWashes else { return }
+
+            storage.beginEditing()
+            if parent.usesPillMentions {
+                // Nothing else stamps colors in pill mode — reset, then wash.
+                let full = NSRange(location: 0, length: storage.length)
+                storage.removeAttribute(.backgroundColor, range: full)
+                storage.addAttribute(.foregroundColor, value: NSColor(DS.text), range: full)
+                storage.addAttribute(.font, value: NSFont.systemFont(ofSize: 14, weight: .regular), range: full)
+            }
+            for wash in washes {
+                let range = parent.usesPillMentions
+                    ? ComposerMentionSerializer.attributedRange(forPlainRange: wash.range, in: storage)
+                    : wash.range
+                guard range.location != NSNotFound,
+                      range.length > 0,
+                      range.location + range.length <= storage.length else { continue }
+                storage.addAttribute(.backgroundColor, value: wash.color.withAlphaComponent(0.12), range: range)
+                storage.addAttribute(.foregroundColor, value: wash.color, range: range)
+                storage.addAttribute(.font, value: NSFont.systemFont(ofSize: 14, weight: .semibold), range: range)
+            }
+            storage.endEditing()
+            lastAppliedTokenWashes = washes
         }
 
         /// Plain-text projection of the composer (pills become their `"@<title>"` token).
@@ -292,6 +355,7 @@ struct MentionComposerTextView: NSViewRepresentable {
             }
 
             storage.endEditing()
+            lastAppliedTokenWashes = nil
 
             // Keep new typing as normal text rather than inheriting attachment attributes.
             textView.typingAttributes = [

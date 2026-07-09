@@ -376,6 +376,12 @@ enum AgentConfirmationTier: String, Codable, Sendable {
 /// Auto routes should stay cheap; premium models are selected explicitly.
 /// NOTE: Named `AgentModelTier` to avoid collision with `ModelTier` in VoiceAtom.swift
 enum AgentModelTier: String, Codable, Sendable {
+    /// The tier auto mode runs on when nothing picks a model — ONE stable
+    /// default for every intent (per-intent switching fragments the prompt
+    /// cache). Direct-Anthropic daily driver; the old Gemini-preview default
+    /// was slow/queued on OpenRouter and never matched the live provider.
+    static let autoDefault: AgentModelTier = .strategist
+
     case sensor      // Haiku 4.5 — cheap bulk analysis, classification, scoring
     case strategist  // Sonnet 4.6 — daily driver conversations, outlines, re-ranking, strategy
     case writer      // Opus 4.6 — explicit premium route only
@@ -551,6 +557,20 @@ struct AgentMessage: Codable, Identifiable, Sendable {
     static func system(_ content: String) -> AgentMessage {
         AgentMessage(role: .system, content: content)
     }
+
+    /// Characters that actually reach the model for this message — tool-call
+    /// arguments ride along with the content. Window math that ignores them
+    /// undercounts big proposals (a 10KB propose_workspace_edit call would
+    /// otherwise count as ~0 tokens).
+    var estimatedPromptCharacters: Int {
+        var count = content.count
+        if let toolCalls {
+            for call in toolCalls {
+                count += call.name.count + call.argumentsJSON.count
+            }
+        }
+        return count
+    }
 }
 
 // MARK: - Tool Call
@@ -618,17 +638,18 @@ struct AgentConversation: Codable, Identifiable, Sendable {
         messages.append(message)
     }
 
-    /// Total token count estimate (rough: 4 chars per token)
+    /// Total token count estimate (rough: 4 chars per token), including
+    /// tool-call arguments — they are sent to the model like any other bytes.
     var estimatedTokenCount: Int {
-        messages.reduce(0) { $0 + ($1.content.count / 4) }
+        messages.reduce(0) { $0 + ($1.estimatedPromptCharacters / 4) }
     }
 
     mutating func applyModelSelection(_ selected: AgentModelTier?) {
-        modelLock = selected ?? modelLock ?? .geminiFlashLatest
+        modelLock = selected ?? modelLock ?? .autoDefault
     }
 
     func effectiveModelTier(userOverride: AgentModelTier?) -> AgentModelTier {
-        userOverride ?? modelLock ?? .geminiFlashLatest
+        userOverride ?? modelLock ?? .autoDefault
     }
 }
 

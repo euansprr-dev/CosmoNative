@@ -73,7 +73,6 @@ struct AtomWindowChromeState: Equatable {
 
 struct AtomWindowChromeActions {
     var closeWindow: () -> Void
-    var unloadAtom: () -> Void
     var goBack: () -> Void
     var goForward: () -> Void
     var toggleBookmark: () -> Void
@@ -98,23 +97,21 @@ extension EnvironmentValues {
 }
 
 // MARK: - Shared Atom Window Chrome
+//
+// The universal Atom-window bar grammar (one grammar per screen — peakui Law 11):
+// these are *bare control rows* designed to live inside exactly ONE
+// `CosmoChromeIsland` per side. The island provides the only container — the
+// controls never bring their own capsule, so hosts can merge their mode tools
+// into the same glass without nesting ovals inside ovals.
 
-extension View {
-    /// A flat warm-fill capsule that clusters chrome controls on the Atom window
-    /// glass rail. This is *inner chrome* (peakui Law 3) — a flat `DS.glassCardFill`
-    /// wash + hairline, never glass-on-glass — so the leading/center/trailing clusters
-    /// read as one material family. `fixedSize` keeps each cluster at its intrinsic
-    /// width so the rail distributes slack *around* the pills as the window resizes,
-    /// rather than stretching any one of them.
-    func atomWindowChromeCluster() -> some View {
-        padding(.horizontal, DS.space6)
-            .padding(.vertical, DS.space4)
-            .background(DS.glassCardFill.opacity(0.52), in: Capsule())
-            .overlay(
-                Capsule()
-                    .stroke(DS.glassBorder.opacity(0.82), lineWidth: 0.5)
-            )
-            .fixedSize(horizontal: true, vertical: false)
+/// Hairline separator between control groups sharing one island.
+struct AtomWindowChromeDivider: View {
+    var body: some View {
+        Rectangle()
+            .fill(DS.glassBorder.opacity(0.9))
+            .frame(width: 1, height: 14)
+            .padding(.horizontal, 2)
+            .accessibilityHidden(true)
     }
 }
 
@@ -123,107 +120,111 @@ struct AtomWindowChromeLeadingControls: View {
     var showsTitle: Bool = true
 
     var body: some View {
-        HStack(spacing: DS.space4) {
-            AtomWindowChromeIconButton(
-                systemName: "xmark",
-                help: "Close Atom window",
-                action: context.actions.closeWindow
-            )
+        AtomWindowChromeIconButton(
+            systemName: "xmark",
+            help: "Close Atom window (⌥E)",
+            action: context.actions.closeWindow
+        )
 
-            chromeDivider
+        AtomWindowChromeDivider()
 
-            AtomWindowChromeIconButton(
-                systemName: "chevron.left",
-                help: "Back (⌘[)",
-                isEnabled: context.state.canGoBack,
-                action: context.actions.goBack
-            )
-            .keyboardShortcut("[", modifiers: .command)
+        AtomWindowChromeIconButton(
+            systemName: "chevron.left",
+            help: "Back (⌘[)",
+            isEnabled: context.state.canGoBack,
+            action: context.actions.goBack
+        )
+        .keyboardShortcut("[", modifiers: .command)
 
-            AtomWindowChromeIconButton(
-                systemName: "chevron.right",
-                help: "Forward (⌘])",
-                isEnabled: context.state.canGoForward,
-                action: context.actions.goForward
-            )
-            .keyboardShortcut("]", modifiers: .command)
+        AtomWindowChromeIconButton(
+            systemName: "chevron.right",
+            help: "Forward (⌘])",
+            isEnabled: context.state.canGoForward,
+            action: context.actions.goForward
+        )
+        .keyboardShortcut("]", modifiers: .command)
 
-            if showsTitle {
-                titlePill
-            }
+        if showsTitle {
+            AtomWindowChromeTitleButton(context: context)
         }
-        .atomWindowChromeCluster()
     }
+}
 
-    private var chromeDivider: some View {
-        Rectangle()
-            .fill(DS.glassBorder.opacity(0.75))
-            .frame(width: 1, height: 16)
-            .padding(.horizontal, 1)
-    }
+/// The window's identity: type icon + title, and the doorway to the switcher.
+private struct AtomWindowChromeTitleButton: View {
+    let context: AtomWindowChromePayload
 
-    private var titlePill: some View {
-        HStack(spacing: DS.space6) {
-            Image(systemName: context.state.typeIcon)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(context.state.typeColor.color)
-                .accessibilityHidden(true)
+    @State private var isHovered = false
 
-            Text(context.state.title)
-                .font(DS.buttonText.weight(.semibold))
-                .foregroundStyle(DS.text)
-                .lineLimit(1)
-                .frame(maxWidth: 190, alignment: .leading)
-        }
-        .padding(.leading, DS.space4)
-        .padding(.trailing, DS.space8)
-        .frame(height: 28)
-        .contentShape(Capsule())
-        .onTapGesture {
+    var body: some View {
+        Button {
             withAnimation(ProMotionSprings.snappy) {
                 context.actions.showSearch()
             }
+        } label: {
+            HStack(spacing: DS.space6) {
+                Image(systemName: context.state.typeIcon)
+                    .font(DS.caption2.weight(.semibold))
+                    .foregroundStyle(context.state.typeColor.color)
+                    .accessibilityHidden(true)
+
+                Text(context.state.title)
+                    .font(DS.buttonText.weight(.semibold))
+                    .foregroundStyle(DS.text)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    // Hug short titles, truncate long ones — the outer
+                    // fixedSize hands this frame a nil proposal, so it
+                    // resolves to min(ideal, cap) instead of stretching.
+                    .frame(maxWidth: 200, alignment: .leading)
+
+                Image(systemName: "chevron.down")
+                    .font(DS.caption2.weight(.semibold))
+                    .foregroundStyle(DS.textMuted)
+                    .opacity(isHovered ? 1 : 0)
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, DS.space8)
+            .frame(height: 28)
+            .background(
+                Capsule().fill(DS.glassCardFill.opacity(isHovered ? 0.9 : 0))
+            )
+            .contentShape(Capsule())
         }
-        .help("Search atoms")
+        .buttonStyle(.plain)
+        .fixedSize(horizontal: true, vertical: false)
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+        }
+        .help("Search & switch atoms")
+        .accessibilityLabel("\(context.state.title). Search and switch atoms")
     }
 }
 
 struct AtomWindowChromeTrailingControls: View {
     let context: AtomWindowChromePayload
-    var showsAtomClose: Bool = true
 
     var body: some View {
-        HStack(spacing: DS.space4) {
-            AtomWindowChromeIconButton(
-                systemName: context.state.isBookmarked ? "bookmark.fill" : "bookmark",
-                help: context.state.isBookmarked ? "Remove bookmark" : "Bookmark atom",
-                isEnabled: context.state.canBookmark,
-                isActive: context.state.isBookmarked,
-                activeTint: context.state.typeColor.color,
-                action: context.actions.toggleBookmark
-            )
+        AtomWindowChromeIconButton(
+            systemName: context.state.isBookmarked ? "bookmark.fill" : "bookmark",
+            help: context.state.isBookmarked ? "Remove bookmark" : "Bookmark atom",
+            isEnabled: context.state.canBookmark,
+            isActive: context.state.isBookmarked,
+            activeTint: context.state.typeColor.color,
+            action: context.actions.toggleBookmark
+        )
 
-            AtomWindowChromeIconButton(
-                systemName: "magnifyingglass",
-                help: "Search atoms",
-                action: {
-                    withAnimation(ProMotionSprings.snappy) {
-                        context.actions.showSearch()
-                    }
+        AtomWindowChromeIconButton(
+            systemName: "magnifyingglass",
+            help: "Search atoms",
+            action: {
+                withAnimation(ProMotionSprings.snappy) {
+                    context.actions.showSearch()
                 }
-            )
-
-            createMenu
-
-            if showsAtomClose {
-                AtomWindowChromeIconButton(
-                    systemName: "xmark.circle",
-                    help: "Close current atom",
-                    action: context.actions.unloadAtom
-                )
             }
-        }
-        .atomWindowChromeCluster()
+        )
+
+        createMenu
     }
 
     private var createMenu: some View {
@@ -244,32 +245,62 @@ struct AtomWindowChromeTrailingControls: View {
                 context.actions.createAtom(.connection)
             }
         } label: {
-            Image(systemName: "plus")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(DS.textSecondary)
-                .frame(width: 28, height: 28)
-                .contentShape(Circle())
+            AtomWindowChromeGlyph(systemName: "plus", isHovered: isCreateHovered)
         }
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) { isCreateHovered = hovering }
+        }
         .help("Create atom")
         .accessibilityLabel("Create atom")
     }
+
+    @State private var isCreateHovered = false
 }
 
+/// The one universal bar for shell states (launcher, loading, generic atoms):
+/// the same two islands every focus mode composes, on the shared baseline.
 struct AtomWindowStandaloneChrome: View {
     let context: AtomWindowChromePayload
-    var showsAtomClose: Bool = true
 
     var body: some View {
-        HStack(spacing: DS.space10) {
-            AtomWindowChromeLeadingControls(context: context)
-            Spacer(minLength: DS.space12)
-            AtomWindowChromeTrailingControls(context: context, showsAtomClose: showsAtomClose)
+        CosmoChromeRow(insetsEnabled: false) {
+            CosmoChromeIsland {
+                AtomWindowChromeLeadingControls(context: context)
+            }
+        } center: {
+            EmptyView()
+        } trailing: {
+            CosmoChromeIsland {
+                AtomWindowChromeTrailingControls(context: context)
+            }
         }
-        .padding(.horizontal, DS.space12)
-        .padding(.vertical, DS.space8)
-        .cosmoGlassPanel(role: .floatingAssistant, cornerRadius: 24)
+        .frame(height: AtomWindowMetrics.focusToolbarHeight)
+    }
+}
+
+/// The shared 28pt glyph treatment: quiet at rest, a warm wash on hover —
+/// every icon in the Atom bar answers the pointer (macOS manners).
+private struct AtomWindowChromeGlyph: View {
+    let systemName: String
+    var isHovered = false
+    var isActive = false
+    var activeTint: Color = DS.accent
+
+    var body: some View {
+        Image(systemName: systemName)
+            .font(DS.buttonText.weight(.semibold))
+            .foregroundStyle(isActive ? activeTint : DS.textSecondary)
+            .frame(width: 28, height: 28)
+            .background(
+                Circle().fill(
+                    isActive
+                        ? activeTint.opacity(0.14)
+                        : DS.glassCardFill.opacity(isHovered ? 0.9 : 0)
+                )
+            )
+            .contentShape(Circle())
     }
 }
 
@@ -281,22 +312,24 @@ private struct AtomWindowChromeIconButton: View {
     var activeTint: Color = DS.accent
     let action: () -> Void
 
+    @State private var isHovered = false
+
     var body: some View {
         Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(foreground)
-                .frame(width: 28, height: 28)
-                .contentShape(Circle())
+            AtomWindowChromeGlyph(
+                systemName: systemName,
+                isHovered: isHovered && isEnabled,
+                isActive: isActive,
+                activeTint: activeTint
+            )
         }
         .buttonStyle(.plain)
         .disabled(!isEnabled)
         .opacity(isEnabled ? 1 : 0.34)
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+        }
         .help(help)
         .accessibilityLabel(help)
-    }
-
-    private var foreground: Color {
-        isActive ? activeTint : DS.textSecondary
     }
 }

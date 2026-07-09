@@ -468,11 +468,22 @@ final class CosmoTextView: NSTextView {
             let font = textStorage?.attribute(.font, at: lineRange.location, effectiveRange: nil) as? NSFont
                 ?? NSFont.systemFont(ofSize: 16)
             let configuration = NSImage.SymbolConfiguration(pointSize: font.pointSize + 1, weight: .regular)
-                .applying(.init(paletteColors: [checklistSymbolColor(checked: checked, lineRange: lineRange)]))
-            guard let symbol = NSImage(
+            guard let base = NSImage(
                 systemSymbolName: checked ? "checkmark.circle.fill" : "circle",
                 accessibilityDescription: checked ? "Checked" : "Unchecked"
             )?.withSymbolConfiguration(configuration) else { continue }
+
+            // Monochrome tint, not paletteColors — palette rendering paints
+            // the checkmark as its own colored layer, while iOS's
+            // foregroundStyle keeps it a cutout so the paper shows through.
+            let color = checklistSymbolColor(checked: checked, lineRange: lineRange)
+            let tint = color.withAlphaComponent(1)
+            let symbol = NSImage(size: base.size, flipped: false) { drawInto in
+                base.draw(in: drawInto)
+                tint.set()
+                drawInto.fill(using: .sourceAtop)
+                return true
+            }
 
             let size = symbol.size
             let drawRect = NSRect(
@@ -485,19 +496,19 @@ final class CosmoTextView: NSTextView {
                 in: drawRect.integral,
                 from: .zero,
                 operation: .sourceOver,
-                fraction: 1,
+                fraction: color.alphaComponent,
                 respectFlipped: true,
                 hints: [.interpolation: NSImageInterpolation.high.rawValue]
             )
         }
     }
 
-    /// Checked boxes take the app accent (matching iOS DS.accent); unchecked
-    /// boxes ride the line's own ink at low alpha so they sit right on any
-    /// paper tone in light or dark mode.
+    /// Checked boxes take the app accent at full strength (matching iOS
+    /// DS.accent exactly); unchecked boxes ride the line's own ink at low
+    /// alpha so they sit right on any paper tone in light or dark mode.
     private func checklistSymbolColor(checked: Bool, lineRange: NSRange) -> NSColor {
         if checked {
-            return NSColor(CosmoColors.cosmoAI).withAlphaComponent(0.9)
+            return NSColor(CosmoColors.cosmoAI)
         }
         let contentIndex = lineRange.location + 2
         var base = textColor ?? .labelColor
@@ -1561,6 +1572,22 @@ enum SlashMenuKeyEvent {
     case dismiss
 }
 
+/// Replace the entire text storage out-of-band and drop the per-view undo
+/// stack in the same breath. A full `setAttributedString` swaps the buffer
+/// WITHOUT going through the NSTextView undo system, so every
+/// `_undoRedoTextOperation:` the user's prior typing registered now points at
+/// ranges/backing that no longer exist. Leaving them on the stack means a later
+/// ⌘Z pops a stale operation and messages a freed undo target → EXC_BAD_ACCESS
+/// (the "undo after applying an inline-assistant edit" crash). Undoing *across*
+/// an out-of-band content replacement is meaningless anyway. No-op for block
+/// rows, where `allowsUndo == false` makes `undoManager` nil. Document-editor
+/// analog of the Command-K field-editor undo-drain fix.
+@MainActor
+private func replaceStorageDroppingUndo(_ textView: NSTextView, with attributed: NSAttributedString) {
+    textView.textStorage?.setAttributedString(attributed)
+    textView.undoManager?.removeAllActions()
+}
+
 struct TextKitEditorRepresentable: NSViewRepresentable {
     @Binding var attributedText: NSAttributedString
     @Binding var plainText: String
@@ -1660,7 +1687,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         }
 
         configureTextView(textView, context: context, isInitial: true)
-        textView.textStorage?.setAttributedString(attributedText)
+        replaceStorageDroppingUndo(textView, with: attributedText)
         applyStorageOverrides(textView.textStorage)
         context.coordinator.applyPolishHighlights(to: textView)
         context.coordinator.applyFocusBand(to: textView)
@@ -1723,7 +1750,10 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             let selectedRange = textView.selectedRange()
             // The attachment objects the overlay points at are about to be replaced.
             context.coordinator.removeImageResizeOverlay()
-            textView.textStorage?.setAttributedString(attributedText)
+            // Fresh external content (structural rebuild, inline-assistant apply,
+            // GRDB reload) replaces the buffer out-of-band — drop the now-stale
+            // per-view undo stack so a later ⌘Z can't message a freed undo target.
+            replaceStorageDroppingUndo(textView, with: attributedText)
             applyStorageOverrides(textView.textStorage)
             let safeLocation = min(selectedRange.location, textView.string.count)
             let safeLength = min(selectedRange.length, textView.string.count - safeLocation)
@@ -1971,7 +2001,10 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             }
         }
 
-        guard overrideTextColor != nil || overrideFont != nil || !headingParagraphUpdates.isEmpty else { return }
+        guard overrideTextColor != nil || overrideFont != nil || !headingParagraphUpdates.isEmpty else {
+            Self.reclearChecklistGlyphs(in: storage)
+            return
+        }
 
         storage.beginEditing()
         if let color = overrideTextColor {
@@ -1987,7 +2020,33 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         for update in headingParagraphUpdates {
             storage.addAttribute(.paragraphStyle, value: update.style, range: update.range)
         }
+        Self.reclearChecklistGlyphs(in: storage)
         storage.endEditing()
+    }
+
+    /// The stored ☐/☑ checklist characters must never ink — the visible
+    /// circle checkbox is painted over their rect by drawChecklistCheckboxes.
+    /// Any pass that stamps foregroundColor across whole lines (ink
+    /// overrides, block-toggle attribute resets) re-inks the glyph and the
+    /// raw ballot-box character bleeds through under the painted circle, so
+    /// every such pass must route back through here.
+    static func reclearChecklistGlyphs(in storage: NSTextStorage, range: NSRange? = nil) {
+        let nsText = storage.string as NSString
+        guard nsText.length > 0 else { return }
+        let scanRange = range.map { nsText.lineRange(for: $0) } ?? NSRange(location: 0, length: nsText.length)
+        var location = scanRange.location
+        let end = NSMaxRange(scanRange)
+        while location < end {
+            let lineRange = nsText.lineRange(for: NSRange(location: location, length: 0))
+            defer { location = max(NSMaxRange(lineRange), location + 1) }
+            guard lineRange.length >= 1 else { continue }
+            let glyph = nsText.substring(with: NSRange(location: lineRange.location, length: 1))
+            guard glyph == "☐" || glyph == "☑" else { continue }
+            let glyphRange = NSRange(location: lineRange.location, length: 1)
+            let current = storage.attribute(.foregroundColor, at: glyphRange.location, effectiveRange: nil) as? NSColor
+            guard current != NSColor.clear else { continue }
+            storage.addAttribute(.foregroundColor, value: NSColor.clear, range: glyphRange)
+        }
     }
 
     private func resolvedBaseFont() -> NSFont {
@@ -2965,9 +3024,17 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                     return true
                 }
 
-                if selectionIsOnEmptyFinalLine(in: textView),
-                   parent.onBoundaryCommand?(.insertNewlineOnEmptyFinalLine) == true {
-                    return true
+                if selectionIsOnEmptyFinalLine(in: textView) {
+                    // Exit-list/exit-code converts this block's kind out of
+                    // band — suppress stale write-backs exactly like the
+                    // split/deleteBackward paths, or the view's old "• "
+                    // snapshot re-emits, parses as a bullet, and resurrects
+                    // the list kind over the fresh paragraph.
+                    beginAwaitingExternalContent()
+                    if parent.onBoundaryCommand?(.insertNewlineOnEmptyFinalLine) == true {
+                        return true
+                    }
+                    cancelAwaitingExternalContent()
                 }
 
                 // Code blocks: Return stays INSIDE the block as a soft break —
@@ -4116,6 +4183,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                     textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingBlockID, range: updatedLineRange)
                     textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingCollapsed, range: updatedLineRange)
                     textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingCollapsedChildrenJSON, range: updatedLineRange)
+                    if kind == .checklist, let storage = textView.textStorage {
+                        TextKitEditorRepresentable.reclearChecklistGlyphs(in: storage, range: updatedLineRange)
+                    }
                 }
             }
 
@@ -4511,7 +4581,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 titleMode: parent.titleConfiguration != nil
             )
 
-            storage.setAttributedString(serialized)
+            // Structural rebuild swaps the whole buffer out-of-band; drop the
+            // stale per-view undo stack so a later ⌘Z can't hit a freed target.
+            replaceStorageDroppingUndo(textView, with: serialized)
             let safeLocation = min(selectedRange.location, storage.length)
             let safeLength = min(selectedRange.length, storage.length - safeLocation)
             textView.setSelectedRange(NSRange(location: safeLocation, length: safeLength))

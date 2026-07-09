@@ -277,6 +277,8 @@ struct NoteFocusModeView: View {
     @State private var titleUnderlineProgress: CGFloat = 0
     @State private var titleEditorHeight: CGFloat = 76
     @State private var scrollViewportHeight: CGFloat = 0
+    @State private var scrollViewportWidth: CGFloat = 0
+    @State private var focusViewportWidth: CGFloat = 0
     @State private var pendingObservedTitleDocument: RichDocument?
     @State private var titleDocumentAtEditStart: RichDocument = .empty
     @State private var isEditingTitle = false
@@ -400,6 +402,7 @@ struct NoteFocusModeView: View {
                 }
             }
             .animation(reduceMotion ? nil : ProMotionSprings.gentle, value: isActivelyTyping)
+            .animation(reduceMotion ? nil : ProMotionSprings.gentle, value: showsRightRail)
             .overlay(alignment: .top) {
                 topBar
             }
@@ -408,6 +411,13 @@ struct NoteFocusModeView: View {
             GeometryReader { geo in
                 FocusFloatingBlocksLayer(manager: floatingBlocksManager)
                     .frame(width: geo.size.width, height: geo.size.height)
+            }
+        }
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.width
+        } action: { newValue in
+            withoutImplicitAnimation {
+                focusViewportWidth = newValue
             }
         }
         .background(
@@ -559,7 +569,14 @@ struct NoteFocusModeView: View {
     }
 
     private var showsRightRail: Bool {
-        rightRailVisible && !typewriterMode
+        rightRailVisible && !typewriterMode && hasRoomForRightRail
+    }
+
+    /// The carrel rail only joins when the viewport can host it without
+    /// starving the manuscript — narrow Atom windows and panes give the
+    /// full width to the page.
+    private var hasRoomForRightRail: Bool {
+        focusViewportWidth == 0 || focusViewportWidth >= 1100
     }
 
     /// Rails whisper while the user is writing and wake on hover.
@@ -649,10 +666,9 @@ struct NoteFocusModeView: View {
     }
 
     private func atomWindowTopBar(_ atomChrome: AtomWindowChromePayload) -> some View {
-        // Chrome islands on the shared baseline — nav (window controls) · view
-        // controls · actions — never a full-width bar. Same island grammar as the
-        // Content workspace toolbar (CosmoChromeRow / CosmoChromeIsland). The
-        // center island stays truly centered regardless of the side islands' width.
+        // ONE island per side (peakui Law 11): the universal Atom controls and
+        // the note's own tools share the same two glass capsules. No centered
+        // third island — it collides with long titles at narrow window widths.
         CosmoChromeRow(insetsEnabled: false) {
             CosmoChromeIsland {
                 AtomWindowChromeLeadingControls(context: atomChrome)
@@ -662,9 +678,11 @@ struct NoteFocusModeView: View {
                 }
             }
         } center: {
-            CosmoChromeIsland { atomViewControlsCluster }
+            EmptyView()
         } trailing: {
             CosmoChromeIsland {
+                styleMenuButton
+                AtomWindowChromeDivider()
                 AtomWindowChromeTrailingControls(context: atomChrome)
             }
         }
@@ -766,22 +784,14 @@ struct NoteFocusModeView: View {
         }
     }
 
-    /// The center pill of the Atom window bar: the page-style control. Same
-    /// flat capsule language as the leading/trailing clusters
-    /// (`atomWindowChromeCluster`) so all three read as one material family.
-    private var atomViewControlsCluster: some View {
-        HStack(spacing: DS.space4) {
-            styleMenuButton
-        }
-        .atomWindowChromeCluster()
-    }
-
     /// "Aa" — the page's whole personality: text voice (font, size, width,
     /// spacing) and page character (paper, icon, cover, panels), per-note.
     private var styleMenuButton: some View {
+        // Active (filled) only while the popover is open — a styled note must
+        // not wear a permanent chip; the bar stays quiet glyphs at rest.
         chromeIconButton(
             systemName: "textformat",
-            isActive: styleMenuPresented || noteStyle != .default,
+            isActive: styleMenuPresented,
             tint: DS.accent,
             help: "Page style",
             accessibilityLabel: "Page style",
@@ -830,6 +840,13 @@ struct NoteFocusModeView: View {
         noteStyle.pageWidth.readingWidth + BlockInteractionPolicy.gutterWidth
     }
 
+    /// Base page margin: generous on a full screen, tighter in narrow
+    /// viewports (the Atom window, panes) so the reading measure — not
+    /// chrome whitespace — gets the width.
+    private var manuscriptMargin: CGFloat {
+        scrollViewportWidth > 0 && scrollViewportWidth < 900 ? DS.space16 : DS.space40
+    }
+
     /// Click in the empty space below the last block to keep writing — focuses
     /// the tail paragraph, creating one if the document ends with something else.
     private var bodyTailClickCatcher: some View {
@@ -867,6 +884,9 @@ struct NoteFocusModeView: View {
         if noteStyle.cover != .none {
             NotePageCoverBand(style: noteStyle, darkMode: DS.usesImmersiveFocusAppearance)
                 .clipShape(.rect(cornerRadius: 12, style: .continuous))
+                // Align the band with the text measure (not the gutter-inclusive
+                // column) so it shares the title's left edge and sits centered.
+                .padding(.leading, BlockInteractionPolicy.gutterWidth)
                 .frame(maxWidth: bodyColumnWidth)
                 .padding(.top, DS.space8)
         }
@@ -895,6 +915,9 @@ struct NoteFocusModeView: View {
                     }
                         .padding(.top, DS.space48)
                         .frame(maxWidth: CosmoTypography.optimalReadingWidth)
+                        // The page margins run one gutter wider on the trailing
+                        // side (see below); re-center this centered composition.
+                        .padding(.leading, BlockInteractionPolicy.gutterWidth)
                 } else {
                     titleSection
                         .padding(.leading, BlockInteractionPolicy.gutterWidth)
@@ -972,16 +995,21 @@ struct NoteFocusModeView: View {
                 }
             }
             .frame(maxWidth: .infinity)
-            .padding(.horizontal, DS.space40)
+            // The block column carries the 52pt handle gutter inside its
+            // leading edge, so the trailing margin runs one gutter wider —
+            // that centers the *text*, not the column (optical centering).
+            .padding(.leading, manuscriptMargin)
+            .padding(.trailing, manuscriptMargin + BlockInteractionPolicy.gutterWidth)
             .background(FocusModeEditorBlurTapLayer())
             .animation(reduceMotion ? nil : ProMotionSprings.gentle, value: headerFocusOpacity)
         }
         .background(FocusModeEditorBlurTapLayer())
-        .onGeometryChange(for: CGFloat.self) { proxy in
-            proxy.size.height
+        .onGeometryChange(for: CGSize.self) { proxy in
+            proxy.size
         } action: { newValue in
             withoutImplicitAnimation {
-                scrollViewportHeight = newValue
+                scrollViewportHeight = newValue.height
+                scrollViewportWidth = newValue.width
             }
         }
     }
@@ -1009,6 +1037,8 @@ struct NoteFocusModeView: View {
                 .frame(height: 0.5)
         }
         .frame(maxWidth: CosmoTypography.optimalReadingWidth * 0.6)
+        // Center on the text measure, matching the page's optical centering.
+        .padding(.leading, BlockInteractionPolicy.gutterWidth)
     }
 
     // MARK: - Outline Rail (left)

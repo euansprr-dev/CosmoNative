@@ -2180,6 +2180,61 @@ class CosmoDatabase: ObservableObject {
             print("✅ Repaired canvas blocks orphaned by remote atom tombstones")
         }
 
+        migrator.registerMigration("create_inbox_routing_corrections") { db in
+            // Atlas routing correction ledger: every accept/dismiss/re-file of
+            // an inbox suggestion becomes a worked example fed back into the
+            // router prompt (the InquiryRoutingCorrectionStore pattern at
+            // workspace scale).
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS inbox_routing_corrections (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    text TEXT NOT NULL,
+                    chosen_kind TEXT NOT NULL,
+                    chosen_label TEXT NOT NULL,
+                    rejected_kind TEXT,
+                    rejected_label TEXT,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_inbox_routing_corrections_recency
+                    ON inbox_routing_corrections(created_at DESC);
+            """)
+            print("✅ inbox_routing_corrections table created")
+        }
+
+        migrator.registerMigration("create_agent_memory") { db in
+            // Persistent agent memory: core facts (always injected into
+            // prompts), per-conversation working memory, and embedding-
+            // recalled archival memory. Previously in-RAM only — everything
+            // the agent "remembered" vanished on restart.
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS agent_core_memory (
+                    key TEXT PRIMARY KEY NOT NULL,
+                    value TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS agent_working_memory (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    conversation_id TEXT NOT NULL,
+                    value TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_agent_working_memory_conversation
+                    ON agent_working_memory(conversation_id);
+
+                CREATE TABLE IF NOT EXISTS agent_archival_memory (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    uuid TEXT UNIQUE NOT NULL,
+                    value TEXT NOT NULL,
+                    embedding BLOB,
+                    created_at TEXT NOT NULL
+                );
+            """)
+            print("✅ agent memory tables created")
+        }
+
         return migrator
     }
 

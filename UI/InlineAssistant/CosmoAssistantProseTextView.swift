@@ -70,13 +70,27 @@ struct CosmoAssistantProseTextView: NSViewRepresentable {
             return CGSize(width: width, height: 50)
         }
 
-        textContainer.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
-        let fullRange = NSRange(location: 0, length: nsView.textStorage?.length ?? 0)
-        layoutManager.invalidateLayout(forCharacterRange: fullRange, actualCharacterRange: nil)
+        // SwiftUI probes several widths per layout pass, and LazyVStack
+        // placement multiplies the probes across every message. Measuring must
+        // therefore be idempotent and O(1) on repeat: memoize per width, only
+        // touch the container when the width really changed, and never force a
+        // full invalidation — resizing the container (or editing the storage in
+        // updateNSView) already invalidates the affected fragments. Doing more
+        // than that re-dirties the live view mid-layout and can livelock the
+        // whole window.
+        if let cached = context.coordinator.cachedSize(forWidth: width) {
+            return cached
+        }
+
+        if abs(textContainer.containerSize.width - width) > 0.25 {
+            textContainer.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
+        }
         layoutManager.ensureLayout(for: textContainer)
 
         let usedRect = layoutManager.usedRect(for: textContainer)
-        return CGSize(width: width, height: ceil(usedRect.height) + 4)
+        let size = CGSize(width: width, height: ceil(usedRect.height) + 4)
+        context.coordinator.cacheSize(size, forWidth: width)
+        return size
     }
 
     func makeCoordinator() -> Coordinator {
@@ -132,6 +146,8 @@ struct CosmoAssistantProseTextView: NSViewRepresentable {
         /// Atom snippets are tiny but the fetch hits GRDB — remember answers
         /// (including misses) for the view's lifetime.
         private var snippetCache: [String: String?] = [:]
+        /// Measured heights per proposed width, valid until the segments change.
+        private var sizeCache: [CGFloat: CGSize] = [:]
 
         init(parent: CosmoAssistantProseTextView) {
             self.parent = parent
@@ -143,6 +159,15 @@ struct CosmoAssistantProseTextView: NSViewRepresentable {
 
         func record(segments: [CosmoAssistantProseSegment]) {
             lastSegments = segments
+            sizeCache.removeAll()
+        }
+
+        func cachedSize(forWidth width: CGFloat) -> CGSize? {
+            sizeCache[width]
+        }
+
+        func cacheSize(_ size: CGSize, forWidth width: CGFloat) {
+            sizeCache[width] = size
         }
 
         func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {

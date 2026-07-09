@@ -222,11 +222,7 @@ struct InboxInspector: View {
     }
 
     private func applyAlternate(_ recommendation: InboxRecommendation) async {
-        do {
-            _ = try await InboxActionExecutor.shared.executeRecommendation(item: item, recommendation: recommendation)
-        } catch {
-            print("⚠️ [InboxInspector] Alternate failed: \(error)")
-        }
+        await viewModel.applyAlternate(item, recommendation: recommendation)
     }
 
     // MARK: - Verbs

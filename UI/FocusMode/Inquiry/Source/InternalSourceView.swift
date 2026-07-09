@@ -7,6 +7,9 @@ import SwiftUI
 struct InternalSourceView: View {
     let sourceUUID: String
     @Binding var lastSelectedText: String
+    /// Selection rect in SwiftUI `.global` space for hosts that float a
+    /// capture pill next to the highlight.
+    var selectionAnchor: Binding<CGRect?>? = nil
 
     @State private var atom: Atom?
     @State private var isLoading = true
@@ -24,7 +27,11 @@ struct InternalSourceView: View {
                         .font(CosmoTypography.caption)
                         .foregroundStyle(CosmoColors.textTertiary)
                     if let body = atom.body, !body.isEmpty {
-                        SelectableText(text: body, lastSelectedText: $lastSelectedText)
+                        SelectableText(
+                            text: body,
+                            lastSelectedText: $lastSelectedText,
+                            selectionAnchor: selectionAnchor
+                        )
                     } else {
                         Text("No body content.")
                             .font(CosmoTypography.body)
@@ -56,6 +63,7 @@ struct InternalSourceView: View {
 struct SelectableText: NSViewRepresentable {
     let text: String
     @Binding var lastSelectedText: String
+    var selectionAnchor: Binding<CGRect?>? = nil
 
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSScrollView()
@@ -98,9 +106,20 @@ struct SelectableText: NSViewRepresentable {
                 let nsString = tv.string as NSString
                 if range.location + range.length <= nsString.length {
                     let selected = nsString.substring(with: range)
+                    let anchor = SelectionAnchorSpace.globalRect(
+                        fromScreen: tv.firstRect(forCharacterRange: range, actualRange: nil),
+                        for: tv
+                    )
                     Task { @MainActor in
                         parent.lastSelectedText = selected
+                        parent.selectionAnchor?.wrappedValue = anchor
                     }
+                }
+            } else {
+                // Collapsed selection dismisses the host's capture pill.
+                Task { @MainActor in
+                    parent.lastSelectedText = ""
+                    parent.selectionAnchor?.wrappedValue = nil
                 }
             }
         }

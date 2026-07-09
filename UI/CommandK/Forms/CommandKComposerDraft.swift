@@ -20,6 +20,37 @@ struct CommandKComposerDraft: Equatable {
     /// Resolved client UUID once the brand menu picks a profile.
     var clientUUID: String?
 
+    // MARK: Task facets (typed — the iOS TaskComposerView contract)
+
+    /// Planned-for day (focusDate) when set independently of the due date.
+    var focusDate: Date?
+    /// Scheduling estimate in minutes (None/15/25/45/60/120 presets).
+    var durationMinutes: Int?
+    /// Timed-task goal — tracking this much time prompts completion.
+    var timeGoalMinutes: Int?
+    /// Subtasks captured at birth, encoded to TaskMetadata.checklist on save.
+    var checklist: [ChecklistItem] = []
+    /// Repeating-series rule; commit writes rule JSON + seriesAnchorDay.
+    var recurrenceRule: RecurrenceRule?
+    /// Parsed time of day ("at 3pm") — commit writes TaskMetadata.startTime.
+    var scheduledTime: Date?
+    /// Quick-add grammar result: the title with recognized phrases stripped.
+    /// Set by the task form's live parse; nil means save the raw title.
+    var cleanedTitle: String?
+    /// The user dismissed the parsed habit chip — commit skips auto-attribution.
+    var suppressHabit = false
+
+    // MARK: Cross-shape extras
+
+    /// "Inspired by" swipe for idea drafts (and the reverse: the idea a swipe
+    /// capture sparks) — writes the linkedSwipeIds/originSwipeUUID contract.
+    var linkedSwipeUUID: String?
+    /// Swipe composer: the inline "spark an idea" disclosure state.
+    var sparkIdea = false
+    /// The sparked idea's fields (title falls back to the hook on commit).
+    var sparkTitle = ""
+    var sparkBody = ""
+
     var validation: CommandKFormValidation { form.validation }
 
     /// The field the search query syncs into while typing.

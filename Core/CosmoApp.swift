@@ -66,6 +66,10 @@ struct CosmoApp: App {
         // Migrate Supabase credentials from hardcoded to Keychain (one-time)
         APIKeys.seedSupabaseIfNeeded()
 
+        // Session distiller: turns idle inline-assistant sessions into durable
+        // memory (fires on app-resign-active and session switches).
+        CosmoSessionDistiller.shared.activate()
+
         // Check for existing Supabase Auth session BEFORE starting Telegram bridge.
         // This ensures isSignedIn is set before the bridge decides whether to poll or skip.
         Task {

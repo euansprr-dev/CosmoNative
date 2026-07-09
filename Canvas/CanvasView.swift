@@ -511,6 +511,23 @@ struct CanvasView: View {
                 scheduleFrameUpdate()
                 debouncedSaveZoomPan()
             }
+            // Any block mutation (moves from sync/undo/organize ops, loads
+            // that keep the same count) must re-track hit-test geometry —
+            // count alone misses position-only changes.
+            .onChange(of: spatialEngine.blocksDataRevision) { _, _ in
+                scheduleFrameUpdate()
+            }
+            // Cluster view-mode/membership/bounds changes alter which blocks
+            // are hit-testable and where the expanded-cluster zones sit.
+            .onChange(of: clusterEngine.userClustersDataRevision) { _, _ in
+                scheduleFrameUpdate()
+            }
+            // Library mode covers the canvas with its own browser UI — the
+            // right-click monitor must stand down (mirrors the world layer's
+            // allowsHitTesting gate).
+            .onChange(of: thinkspaceMode) { _, newMode in
+                blockFrameTracker.isCanvasSurfaceActive = (newMode == .canvas)
+            }
         }
         // NOTE: Removed .drawingGroup() from here - it was breaking async image loading
         // in ResearchCard, InboxViewBlockView thumbnails, etc. GPU acceleration is applied
@@ -1577,6 +1594,14 @@ struct CanvasView: View {
                     updateCanvasSize(geometry.size)
                     canvasIsActive = isActive
 
+                    // Right-click hit-testing converts the click point with
+                    // the live transform at click time — never a stale
+                    // precomputed snapshot.
+                    blockFrameTracker.liveTransformProvider = { [weak viewportState] in
+                        viewportState?.transform
+                    }
+                    blockFrameTracker.isCanvasSurfaceActive = (thinkspaceMode == .canvas)
+
                 // Register context provider for global Cosmo window. A hidden
                 // launch prewarm must not claim the context — the user is
                 // looking at another destination; registration happens when
@@ -2114,7 +2139,8 @@ struct CanvasView: View {
                 ) { [self] notification in
                     nonisolated(unsafe) let notification = notification
                     Task { @MainActor in
-                        guard let name = notification.userInfo?["name"] as? String,
+                        guard planTargetMatchesThisCanvas(notification.userInfo),
+                              let name = notification.userInfo?["name"] as? String,
                               let blockUUIDs = notification.userInfo?["blockUUIDs"] as? [String] else { return }
                         applyPlannedClusterCreation(
                             name: name,
@@ -2132,9 +2158,28 @@ struct CanvasView: View {
                 ) { [self] notification in
                     nonisolated(unsafe) let notification = notification
                     Task { @MainActor in
-                        guard let clusterName = notification.userInfo?["clusterName"] as? String,
+                        guard planTargetMatchesThisCanvas(notification.userInfo),
+                              let clusterName = notification.userInfo?["clusterName"] as? String,
                               let blockUUIDs = notification.userInfo?["blockUUIDs"] as? [String] else { return }
                         applyPlannedClusterMove(clusterName: clusterName, blockUUIDs: blockUUIDs)
+                    }
+                }
+
+                // After ALL of a plan's operations landed: clusters were derived
+                // from wherever their members already sat, so freshly organized
+                // regions routinely overlap. Resolve deterministically — packed
+                // close, never overlapping. (The Task hop queues this behind the
+                // per-operation tasks above, which use the same FIFO executor.)
+                addCanvasObserver(
+                    forName: CosmoNotification.Canvas.canvasPlanDidApply,
+                    object: nil,
+                    queue: .main,
+                    activeOnly: true
+                ) { [self] notification in
+                    nonisolated(unsafe) let notification = notification
+                    Task { @MainActor in
+                        guard planTargetMatchesThisCanvas(notification.userInfo) else { return }
+                        resolvePlannedClusterOverlaps()
                     }
                 }
 
@@ -3636,7 +3681,11 @@ struct CanvasView: View {
             let signpost = CanvasPerformanceInstrumentation.signposter.beginInterval("frame-tracker-update")
             try? await Task.sleep(for: .milliseconds(100))
             guard !Task.isCancelled else { return }
-            blockFrameTracker.updateFrames(blocks: spatialEngine.blocks, transform: viewportTransform)
+            blockFrameTracker.update(
+                blocks: spatialEngine.blocks,
+                userClusters: clusterEngine.userClusters,
+                transform: viewportTransform
+            )
             CanvasPerformanceInstrumentation.signposter.endInterval("frame-tracker-update", signpost)
         }
     }
@@ -4057,7 +4106,11 @@ struct CanvasView: View {
         }
 
         // Update frame tracker after position change
-        blockFrameTracker.updateFrames(blocks: spatialEngine.blocks, transform: viewportTransform)
+        blockFrameTracker.update(
+            blocks: spatialEngine.blocks,
+            userClusters: clusterEngine.userClusters,
+            transform: viewportTransform
+        )
         ThinkspaceCanvasSnapshotCache.shared.store(
             blocks: spatialEngine.blocks,
             zoomLevel: canvasScale,
@@ -4175,7 +4228,11 @@ struct CanvasView: View {
                 )
             }
 
-            blockFrameTracker.updateFrames(blocks: spatialEngine.blocks, transform: viewportTransform)
+            blockFrameTracker.update(
+                blocks: spatialEngine.blocks,
+                userClusters: clusterEngine.userClusters,
+                transform: viewportTransform
+            )
             clusterResizeSession = nil
         }
 
@@ -4304,6 +4361,58 @@ struct CanvasView: View {
             thinkspaceId: thinkspaceId,
             intent: intent
         )
+    }
+
+    /// True when a plan notification targets THIS canvas's thinkspace.
+    /// Untargeted (legacy) payloads fall back to the old behavior: the active
+    /// canvas handles them.
+    private func planTargetMatchesThisCanvas(_ userInfo: [AnyHashable: Any]?) -> Bool {
+        guard let target = userInfo?["thinkspaceId"] as? String, !target.isEmpty else {
+            return true
+        }
+        return (thinkspaceId ?? "home") == target
+    }
+
+    /// INVARIANT (user-mandated): organizing the canvas never leaves cluster
+    /// regions overlapping — packed close, never touching. The plan decides
+    /// membership; this deterministic pass owns geometry. Zones (Command
+    /// Center) are fixed obstacles: they push clusters but never move.
+    /// SCOPE INVARIANT: operates ONLY on clusters belonging to this canvas's
+    /// thinkspace and persists explicitly to it — an unscoped pass once let one
+    /// thinkspace's clusters overwrite another's saved layout.
+    private func resolvePlannedClusterOverlaps() {
+        let currentScope = thinkspaceId ?? "home"
+        let clusters = clusterEngine.userClusters.filter {
+            ($0.thinkspaceId ?? "home") == currentScope
+                && $0.boundingRect.width > 0
+                && $0.boundingRect.height > 0
+        }
+        guard clusters.count > 1 else { return }
+
+        let boxes = clusters.map {
+            CanvasClusterLayoutResolver.Box(id: $0.id, rect: $0.boundingRect, isFixed: $0.isZone)
+        }
+        let displacements = CanvasClusterLayoutResolver.displacements(for: boxes)
+        guard !displacements.isEmpty else { return }
+
+        withAnimation(ProMotionSprings.gentle) {
+            for cluster in clusters {
+                guard let delta = displacements[cluster.id] else { continue }
+                let memberUUIDs = Set(clusterEngine.memberBlockUUIDs(for: cluster.id))
+                for index in spatialEngine.blocks.indices
+                where memberUUIDs.contains(spatialEngine.blocks[index].entityUuid) {
+                    let block = spatialEngine.blocks[index]
+                    let newPosition = CGPoint(
+                        x: block.position.x + delta.width,
+                        y: block.position.y + delta.height
+                    )
+                    spatialEngine.blocks[index].position = newPosition
+                    spatialEngine.updateBlockPosition(block.id, position: newPosition)
+                }
+                clusterEngine.offsetClusterRect(id: cluster.id, by: delta)
+            }
+        }
+        clusterEngine.persistClusters(thinkspaceId: thinkspaceId)
     }
 
     /// Move blocks into an existing cluster, matched by name (the plan speaks

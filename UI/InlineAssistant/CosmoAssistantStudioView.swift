@@ -100,6 +100,9 @@ struct CosmoAssistantStudioView: View {
         }
     }
 
+    /// A prefilled skill draft ("promote this run to a skill") — the Skills
+    /// tab opens straight into the editor with it.
+    var initialSkillDraft: CosmoInlineSkillDefinition? = nil
     let onDismiss: () -> Void
 
     @State private var selectedTab: Tab = .skills
@@ -182,7 +185,7 @@ struct CosmoAssistantStudioView: View {
     @ViewBuilder
     private var tabContent: some View {
         switch selectedTab {
-        case .skills: CosmoStudioSkillsTab()
+        case .skills: CosmoStudioSkillsTab(initialDraft: initialSkillDraft)
         case .personality: CosmoStudioPersonalityTab()
         case .metrics: CosmoStudioMetricsTab()
         }
@@ -292,9 +295,12 @@ private struct CosmoAssistantStudioTabButton: View {
 // MARK: - Skills Tab
 
 private struct CosmoStudioSkillsTab: View {
+    var initialDraft: CosmoInlineSkillDefinition? = nil
+
     @State private var skills: [CosmoInlineSkillDefinition] = []
     @State private var editingSkill: CosmoInlineSkillDefinition?
     @State private var acceptStats: [String: (accepted: Int, total: Int)] = [:]
+    @State private var didPresentInitialDraft = false
 
     private let store = CosmoInlineSkillStore.defaultForRuntime()
 
@@ -304,6 +310,8 @@ private struct CosmoStudioSkillsTab: View {
 
             ScrollView {
                 LazyVStack(spacing: DS.space8) {
+                    routerTestPanel
+
                     sectionLabel("Custom skills")
                     if customSkills.isEmpty {
                         emptyCustomState
@@ -325,7 +333,13 @@ private struct CosmoStudioSkillsTab: View {
         .padding(.horizontal, DS.space16)
         .padding(.top, DS.space8)
         .padding(.bottom, DS.space4)
-        .task { reload() }
+        .task {
+            reload()
+            if let initialDraft, !didPresentInitialDraft {
+                didPresentInitialDraft = true
+                editingSkill = initialDraft
+            }
+        }
         .sheet(item: $editingSkill) { skill in
             CosmoStudioSkillEditor(
                 skill: skill,
@@ -384,6 +398,68 @@ private struct CosmoStudioSkillsTab: View {
 
     private var builtinSkills: [CosmoInlineSkillDefinition] {
         skills.filter(\.isBuiltin)
+    }
+
+    // MARK: Router test panel
+
+    @State private var routerTestPhrase = ""
+    @State private var routerTestResult: String?
+
+    /// Type a phrase, see which skill the embedding router would pick and its
+    /// score — routing quality stops being a guess.
+    private var routerTestPanel: some View {
+        VStack(alignment: .leading, spacing: DS.space6) {
+            sectionLabel("Test routing")
+            HStack(spacing: DS.space8) {
+                TextField("Type a request the way you would ask it…", text: $routerTestPhrase)
+                    .textFieldStyle(.plain)
+                    .font(DS.callout)
+                    .padding(.horizontal, DS.space10)
+                    .padding(.vertical, 7)
+                    .background(DS.surface, in: .rect(cornerRadius: 8))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(DS.borderSubtle, lineWidth: 1)
+                    }
+                    .onSubmit { runRouterTest() }
+
+                Button("Route") { runRouterTest() }
+                    .buttonStyle(.plain)
+                    .font(DS.callout.weight(.semibold))
+                    .foregroundStyle(DS.accent)
+                    .cosmoClickCursor()
+                    .disabled(routerTestPhrase.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .accessibilityLabel("Test skill routing")
+            }
+            if let routerTestResult {
+                Text(routerTestResult)
+                    .font(DS.caption)
+                    .foregroundStyle(DS.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.bottom, DS.space8)
+    }
+
+    private func runRouterTest() {
+        let phrase = routerTestPhrase.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !phrase.isEmpty else { return }
+        routerTestResult = "Routing…"
+        Task {
+            let suggestion = await CosmoInlineSkillAutoRouter.shared.suggestion(
+                for: phrase,
+                registry: CosmoInlineSkillRegistry(store: store)
+            )
+            let plan = CosmoInlineAssistantSkillRuntime.plan(for: phrase, surfaceKind: nil)
+            var lines: [String] = []
+            if let suggestion {
+                lines.append("Embedding router: \(suggestion.skillName) (score \(String(format: "%.2f", suggestion.score)))")
+            } else {
+                lines.append("Embedding router: no skill above threshold")
+            }
+            lines.append("Keyword plan: \(plan.primarySkill.name) → \(plan.route == .action ? "edit" : "answer") route")
+            routerTestResult = lines.joined(separator: "\n")
+        }
     }
 
     private func reload() {

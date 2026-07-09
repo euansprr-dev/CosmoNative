@@ -136,6 +136,7 @@ private enum DashboardRefreshDomain: Hashable {
     case timeData
     case sessions
     case weeklyReport
+    case scheduleBlocks
 }
 
 enum RecurringTaskTitleEditScope: String, CaseIterable, Sendable {
@@ -166,10 +167,12 @@ private struct DashboardAtomSubsetSignature: Equatable {
 private struct DashboardAtomRefreshSignature: Equatable {
     let tasks: DashboardAtomSubsetSignature
     let deepWork: DashboardAtomSubsetSignature
+    let scheduleBlocks: DashboardAtomSubsetSignature
 
     init(atoms: [Atom]) {
         self.tasks = DashboardAtomSubsetSignature(atoms: atoms, matching: [.task])
         self.deepWork = DashboardAtomSubsetSignature(atoms: atoms, matching: [.deepWorkBlock])
+        self.scheduleBlocks = DashboardAtomSubsetSignature(atoms: atoms, matching: [.scheduleBlock])
     }
 }
 
@@ -554,6 +557,12 @@ class CommandCenterDashboardViewModel: ObservableObject {
 
     @Published var todayEvents: [CalendarEvent] = []
 
+    // MARK: - Schedule Blocks (pure time blocking — iOS planner parity)
+
+    /// The viewed day's schedule blocks, recurring templates already
+    /// projected (ScheduleBlockEngine mirrors the iOS contract).
+    @Published var todayScheduleBlocks: [ScheduleBlockEntry] = []
+
     // MARK: - Quick Stats
 
     @Published var xpProgress: XPProgressState = XPProgressState()
@@ -655,6 +664,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
                         await self.refreshTasks()
                     }
                     self.refreshCalendarEvents()
+                    await self.refreshScheduleBlocks()
                 }
             }
             .store(in: &cancellables)
@@ -803,6 +813,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
         await habitEngine.refreshDefinitions()
         await refreshTasks()
         refreshCalendarEvents()
+        await refreshScheduleBlocks()
         await loadHabits()
         await loadTodayTimeData()
         await loadTodaySessions()
@@ -899,6 +910,8 @@ class CommandCenterDashboardViewModel: ObservableObject {
             case .habits:
                 await loadHabitReport()
             }
+        case .scheduleBlocks:
+            await refreshScheduleBlocks()
         }
     }
 
@@ -926,6 +939,11 @@ class CommandCenterDashboardViewModel: ObservableObject {
             scheduleRefresh(.sessions, delayNanoseconds: 150_000_000)
             scheduleRefresh(.habits, delayNanoseconds: 200_000_000)
             scheduleRefresh(.weeklyReport, delayNanoseconds: 250_000_000)
+        }
+
+        // Blocks made on the iPhone planner land here through sync.
+        if previous.scheduleBlocks != signature.scheduleBlocks {
+            scheduleRefresh(.scheduleBlocks, delayNanoseconds: 200_000_000)
         }
 
         lastAtomRefreshSignature = signature
@@ -1379,6 +1397,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
         }
 
         refreshCalendarEvents()
+        await refreshScheduleBlocks()
         await loadHabits()
         await loadTodayTimeData()
         await loadTodaySessions()
@@ -1774,6 +1793,31 @@ class CommandCenterDashboardViewModel: ObservableObject {
             .filter { $0.startDate >= dayStart && $0.startDate < dayEnd }
             .sorted { $0.startDate < $1.startDate }
         assignIfChanged(\.todayEvents, to: nextEvents)
+    }
+
+    // MARK: - Schedule blocks
+
+    func refreshScheduleBlocks() async {
+        let blocks = await ScheduleBlockEngine.blocks(on: selectedDate)
+        assignIfChanged(\.todayScheduleBlocks, to: blocks)
+    }
+
+    /// The one door from a block into the task world: the new task inherits
+    /// the slot (and any repeat becomes a task series); the block retires.
+    func convertScheduleBlockToTask(_ block: ScheduleBlockEntry) {
+        Task {
+            _ = try? await ScheduleBlockEngine.convertToTask(scheduleBlockUUID: block.id)
+            await refreshScheduleBlocks()
+            await refreshTasks()
+        }
+    }
+
+    /// Deletes the block atom (a repeating block's whole series).
+    func deleteScheduleBlock(_ block: ScheduleBlockEntry) {
+        Task {
+            try? await AtomRepository.shared.delete(uuid: block.id)
+            await refreshScheduleBlocks()
+        }
     }
 
     // MARK: - Habits

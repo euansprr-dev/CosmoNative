@@ -12,6 +12,7 @@ struct ParsedTaskInput {
     var intent: TaskIntent?
     var intentUUID: String?
     var recurrenceRule: RecurrenceRule?
+    var durationMinutes: Int?
     var habitUUID: String?
     var habitTitle: String?
     var habitIcon: String?
@@ -57,6 +58,9 @@ enum TaskInputParser {
 
         // Extract recurrence phrases before weekday/date parsing consumes them
         result.recurrenceRule = extractRecurrence(&remaining)
+
+        // Extract duration ("for 2 hours", "for 45m") before time parsing
+        result.durationMinutes = extractDuration(&remaining)
 
         // Extract time (2pm, 14:00, at 3:30pm)
         result.scheduledTime = extractTime(&remaining)
@@ -267,6 +271,43 @@ enum TaskInputParser {
 
         input.removeSubrange(fullRange)
         return .weekly(on: days)
+    }
+
+    /// Extract "for 2 hours", "for 1.5h", "for 90 minutes", "for 45m",
+    /// "for 1h30m" — a scheduling-estimate duration in minutes.
+    private static func extractDuration(_ input: inout String) -> Int? {
+        let patterns: [(pattern: String, minutes: (NSTextCheckingResult, String) -> Int?)] = [
+            // "for 1h30m" / "for 1h 30m"
+            ("\\bfor\\s+(\\d{1,2})\\s*h(?:ours?)?\\s*(\\d{1,2})\\s*m(?:in(?:ute)?s?)?\\b", { match, text in
+                guard let hoursRange = Range(match.range(at: 1), in: text),
+                      let minutesRange = Range(match.range(at: 2), in: text),
+                      let hours = Int(text[hoursRange]),
+                      let minutes = Int(text[minutesRange]) else { return nil }
+                return hours * 60 + minutes
+            }),
+            // "for 1.5 hours" / "for 2 hours" / "for 2h"
+            ("\\bfor\\s+(\\d{1,2}(?:\\.\\d)?)\\s*h(?:ours?|rs?)?\\b", { match, text in
+                guard let valueRange = Range(match.range(at: 1), in: text),
+                      let hours = Double(text[valueRange]) else { return nil }
+                return Int((hours * 60).rounded())
+            }),
+            // "for 90 minutes" / "for 45 min" / "for 30m"
+            ("\\bfor\\s+(\\d{1,3})\\s*m(?:in(?:ute)?s?)?\\b", { match, text in
+                guard let valueRange = Range(match.range(at: 1), in: text) else { return nil }
+                return Int(text[valueRange])
+            }),
+        ]
+
+        for (pattern, minutes) in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { continue }
+            let nsRange = NSRange(input.startIndex..<input.endIndex, in: input)
+            guard let match = regex.firstMatch(in: input, range: nsRange),
+                  let value = minutes(match, input), value > 0,
+                  let fullRange = Range(match.range, in: input) else { continue }
+            input.removeSubrange(fullRange)
+            return value
+        }
+        return nil
     }
 
     private static func extractTime(_ input: inout String) -> Date? {

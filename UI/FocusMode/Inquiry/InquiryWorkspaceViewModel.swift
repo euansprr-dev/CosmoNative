@@ -1703,30 +1703,34 @@ final class InquiryWorkspaceViewModel {
         _ raw: String,
         kind: ExtractKind,
         originType: String,
-        kindLocked: Bool = true
+        kindLocked: Bool = true,
+        sourceTabOverride: SourceTab? = nil,
+        citationOverride: String? = nil
     ) async -> Atom? {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
+        let tab = sourceTabOverride ?? activeSourceTab
+        let tabId = sourceTabOverride?.id ?? activeSourceTabId
         do {
             // Pending until the classifier settles it: locked captures keep the
             // user's kind and only await routing; unlocked ones await their kind.
             let extract = try await InquiryRepository.shared.createExtract(
                 body: trimmed,
                 kind: kind,
-                sourceUUID: activeSourceTab?.sourceUUID,
+                sourceUUID: tab?.sourceUUID,
                 selectionRange: nil,
                 sessionUUID: session.uuid,
                 questionUUID: activeQuestionUUID,
                 deepDiveUUID: deepDive?.uuid,
                 branchNodeId: activeBranchNodeId,
-                sourceTabId: activeSourceTabId,
+                sourceTabId: tabId,
                 userNote: nil,
                 originType: originType,
-                citation: activeSourceTab?.url ?? activeSourceTab?.title,
+                citation: citationOverride ?? tab?.url ?? tab?.title,
                 status: .temporary,
                 kindPending: kindLocked ? nil : true
             )
-            registerSavedExtract(extract, sourceTabId: activeSourceTabId)
+            registerSavedExtract(extract, sourceTabId: tabId)
             appendRouteReceipt(
                 InquiryRouteReceipt(
                     kind: kind == .note ? .noteSaved : .extractSaved,
@@ -1734,11 +1738,11 @@ final class InquiryWorkspaceViewModel {
                     detail: "Routed to \(activeQuestionTitle)",
                     questionUUID: activeQuestionUUID,
                     branchNodeId: activeBranchNodeId,
-                    sourceUUID: activeSourceTab?.sourceUUID,
+                    sourceUUID: tab?.sourceUUID,
                     extractUUID: extract.uuid
                 )
             )
-            routeThought(trimmed, originExtractUUID: extract.uuid, sourceTabId: activeSourceTabId)
+            routeThought(trimmed, originExtractUUID: extract.uuid, sourceTabId: tabId)
             enqueueClassification(
                 extractUUID: extract.uuid,
                 text: trimmed,
@@ -2746,59 +2750,36 @@ final class InquiryWorkspaceViewModel {
         }
     }
 
-    // MARK: - Selection → Extract (called by reader's SelectionMiniMenu)
+    // MARK: - Selection → Capture (called by reader's SelectionCapturePill)
 
+    /// A highlight enters the EXACT pipeline a typed dock thought does — the
+    /// classifier picks its kind, the router picks its destination. The only
+    /// difference is provenance: the source citation (with the video moment,
+    /// when the selection comes from a transcript) rides along.
     @discardableResult
-    func saveSelectionAsExtract(
+    func captureSelection(
         _ selection: String,
-        kind: ExtractKind,
         sourceTab: SourceTab,
         timestampSeconds: Int? = nil
     ) async -> Atom? {
-        let trimmed = selection.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
         // Video captures cite the exact moment: the citation deep-links back
         // to where the passage begins.
         var citation = sourceTab.url ?? sourceTab.title
         if let seconds = timestampSeconds, let url = sourceTab.url {
             citation = url + (url.contains("?") ? "&t=\(seconds)s" : "?t=\(seconds)s")
         }
-        do {
-            let extract = try await InquiryRepository.shared.createExtract(
-                body: trimmed,
-                kind: kind,
-                sourceUUID: sourceTab.sourceUUID,
-                selectionRange: nil,
-                sessionUUID: session.uuid,
-                questionUUID: activeQuestionUUID,
-                deepDiveUUID: deepDive?.uuid,
-                branchNodeId: activeBranchNodeId,
-                sourceTabId: sourceTab.id,
-                userNote: nil,
-                originType: "selection",
-                citation: citation
-            )
-            registerSavedExtract(extract, sourceTabId: sourceTab.id)
-            appendRouteReceipt(
-                InquiryRouteReceipt(
-                    kind: kind == .note ? .noteSaved : .extractSaved,
-                    message: "\(kind.displayName) saved",
-                    detail: "Routed to \(activeQuestionTitle)",
-                    questionUUID: activeQuestionUUID,
-                    branchNodeId: activeBranchNodeId,
-                    sourceUUID: sourceTab.sourceUUID,
-                    extractUUID: extract.uuid
-                )
-            )
-            showToast("\(kind.displayName) saved", detail: "From \(sourceTab.title)")
+        let extract = await saveDockExtract(
+            selection,
+            kind: .note,
+            originType: "selection",
+            kindLocked: false,
+            sourceTabOverride: sourceTab,
+            citationOverride: citation
+        )
+        if extract != nil {
             scheduleLiveUnderstandingRefresh(reason: .extractSaved)
-            scheduleSave()
-            return extract
-        } catch {
-            print("[InquiryWorkspaceVM] saveSelectionAsExtract failed: \(error)")
-            showToast("Save failed", detail: error.localizedDescription)
-            return nil
         }
+        return extract
     }
 
     // MARK: - Live Understanding (debounced auto-regenerate + manual trigger)

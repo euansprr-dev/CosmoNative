@@ -532,7 +532,7 @@ private struct CortexSwipeVideoSurface: View {
     var body: some View {
         ZStack {
             if let player {
-                VideoPlayer(player: player)
+                CosmoVideoPlayerView(player: player)
             } else {
                 // Thumbnail-only preview with a tap-to-play affordance. The AVKit
                 // `VideoPlayer` view is instantiated *only* on an explicit play tap,

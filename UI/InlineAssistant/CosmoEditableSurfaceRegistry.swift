@@ -26,8 +26,10 @@ final class CosmoEditableSurfaceRegistry {
         // An editable surface coming alive is the strongest signal an inline edit
         // is coming — warm the prompt-cache prefix and prefetch ambient context
         // in the background, so the first request needs zero tool round-trips.
+        let snapshot = provider.editableSnapshot()
         CosmoInlineAssistantCacheWarmer.warmIfNeeded()
-        CosmoInlineAmbientContextPack.shared.prefetch(for: provider.editableSnapshot())
+        CosmoInlineAmbientContextPack.shared.prefetch(for: snapshot)
+        CosmoInlineSkillAutoRunner.shared.surfaceActivated(snapshot: snapshot)
     }
 
     func activate(surfaceID: String) {

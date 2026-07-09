@@ -72,7 +72,9 @@ struct InstagramReelLayout: View {
     private var videoPlayerView: some View {
         ZStack {
             if let player = player {
-                VideoPlayer(player: player)
+                // AVPlayerView, not SwiftUI VideoPlayer — the latter aborts the
+                // app on first metadata instantiation (see CosmoVideoPlayerView).
+                CosmoVideoPlayerView(player: player)
             } else if let thumbnailURL = instagramData.extractedMediaURL {
                 // Show thumbnail while loading
                 AsyncImage(url: thumbnailURL) { image in

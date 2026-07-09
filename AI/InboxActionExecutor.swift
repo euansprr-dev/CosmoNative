@@ -41,6 +41,18 @@ final class InboxActionExecutor {
             return try await executeMerge(item: item, targetAtomUuid: targetUuid)
         case .placeInExistingCluster, .createClusterAndPlace, .placeInThinkspace, .createThinkspaceAndPlace:
             return try await executePlacementRecommendation(item: item, recommendation: recommendation)
+        case .advanceQuestion:
+            return try await executeAdvanceQuestion(item: item, recommendation: recommendation)
+        case .spawnQuestion:
+            return try await executeSpawnQuestion(item: item, recommendation: recommendation)
+        case .feedConnection:
+            return try await executeFeedConnection(item: item, recommendation: recommendation)
+        case .attachClient:
+            return try await executeAttachClient(item: item, recommendation: recommendation)
+        case .germinateConnection:
+            return try await executeGerminateConnection(item: item, recommendation: recommendation)
+        case .germinateDeepDive:
+            return try await executeGerminateDeepDive(item: item, recommendation: recommendation)
         case .createStandaloneAtom:
             let atomType = AtomType(rawValue: recommendation.suggestedAtomType) ?? .connection
             return try await executeNew(item: item, atomType: atomType)
@@ -226,6 +238,274 @@ final class InboxActionExecutor {
         )
 
         return atom
+    }
+
+    // MARK: - Atlas moves (July 2026)
+
+    /// The capture is material for an open inquiry question: it lands as an
+    /// extract on that question's thread, exactly where a study-session
+    /// capture would.
+    @discardableResult
+    func executeAdvanceQuestion(item: InboxItem, recommendation: InboxRecommendation) async throws -> Atom? {
+        guard let move = recommendation.atlasMove,
+              let questionUUID = move.questionUUID,
+              let question = try await atomRepo.fetch(uuid: questionUUID),
+              !question.isDeleted else { return nil }
+
+        var extract = try await InquiryRepository.shared.createExtract(
+            body: item.rawText,
+            kind: .note,
+            sourceUUID: nil,
+            selectionRange: nil,
+            sessionUUID: nil,
+            questionUUID: questionUUID,
+            deepDiveUUID: move.deepDiveUUID ?? question.questionMetadata?.parentDeepDiveUUID,
+            branchNodeId: nil,
+            sourceTabId: nil,
+            userNote: nil,
+            originType: "inboxAtlasRoute",
+            citation: nil
+        )
+        let provenance = captureProvenance(for: item)
+        if let stamped = try? await atomRepo.update(uuid: extract.uuid, updates: { atom in
+            atom = atom.mergingMetadataKeys(provenance)
+        }) {
+            extract = stamped
+        }
+        await adoptAttachments(from: item, into: extract.uuid)
+        await reindex(atom: extract)
+        try await inboxRepo.markActioned(uuid: item.uuid)
+        registerCreationUndo(created: extract, item: item, actionDescription: "Advance Inquiry Question")
+        return extract
+    }
+
+    /// The capture IS a research question: it becomes a branch in the target
+    /// deep dive, honoring the nesting-contract parent the router chose.
+    @discardableResult
+    func executeSpawnQuestion(item: InboxItem, recommendation: InboxRecommendation) async throws -> Atom? {
+        guard let move = recommendation.atlasMove,
+              let deepDiveUUID = move.deepDiveUUID,
+              let deepDive = try await atomRepo.fetch(uuid: deepDiveUUID),
+              !deepDive.isDeleted else { return nil }
+
+        let title = move.newQuestionTitle ?? item.title ?? String(item.rawText.prefix(120))
+        let (question, created) = try await InquiryRepository.shared.findOrCreateQuestion(
+            title: title,
+            parentDeepDiveUUID: deepDiveUUID,
+            originSessionUUID: nil,
+            parentQuestionUUID: move.parentQuestionUUID,
+            originExtractUUID: nil,
+            placementOrigin: "inbox-atlas"
+        )
+
+        let linked = deepDive.addingLink(AtomLink(
+            type: AtomLinkType.deepDiveQuestion.rawValue,
+            uuid: question.uuid,
+            entityType: AtomType.question.rawValue
+        ))
+        _ = try? await atomRepo.update(linked)
+
+        // The raw capture often carries more than the cleaned question title —
+        // keep it as the branch's first note instead of throwing words away.
+        if normalizedText(item.rawText) != normalizedText(title) {
+            _ = try? await InquiryRepository.shared.createExtract(
+                body: item.rawText,
+                kind: .note,
+                sourceUUID: nil,
+                selectionRange: nil,
+                sessionUUID: nil,
+                questionUUID: question.uuid,
+                deepDiveUUID: deepDiveUUID,
+                branchNodeId: nil,
+                sourceTabId: nil,
+                userNote: nil,
+                originType: "inboxAtlasRoute",
+                citation: nil
+            )
+        }
+
+        try await inboxRepo.markActioned(uuid: item.uuid)
+        if created {
+            registerCreationUndo(created: question, item: item, actionDescription: "Spawn Inquiry Question")
+        }
+        return question
+    }
+
+    /// The capture develops a concept page: it lands as an item in the router's
+    /// chosen section. The pre-edit structured JSON is persisted on the inbox
+    /// item BEFORE mutation (the merge pattern) so undo survives restarts.
+    @discardableResult
+    func executeFeedConnection(item: InboxItem, recommendation: InboxRecommendation) async throws -> Atom? {
+        guard let move = recommendation.atlasMove,
+              let connectionUUID = move.connectionUUID,
+              let sectionRaw = move.connectionSection,
+              let sectionType = ConnectionSectionType(rawValue: sectionRaw),
+              let connection = try await atomRepo.fetch(uuid: connectionUUID),
+              !connection.isDeleted else { return nil }
+
+        let previousStructured = connection.structured ?? ""
+        var data = connection.structured.flatMap { ConnectionStructuredData.fromJSON($0) }
+            ?? ConnectionStructuredData(sections: [])
+
+        let newItem = ConnectionItem(content: item.rawText)
+        if let index = data.sections.firstIndex(where: { $0.type == sectionType }) {
+            data.sections[index].items.append(newItem)
+        } else {
+            data.sections.append(ConnectionSection(type: sectionType, items: [newItem]))
+        }
+        guard let encoded = data.toJSON() else { return nil }
+
+        do {
+            try await inboxRepo.updateMetadata(uuid: item.uuid, merging: [
+                "prefeedStructured": previousStructured,
+                "prefeedConnectionUuid": connectionUUID
+            ])
+        } catch {
+            print("⚠️ [InboxAction] Failed to persist pre-feed snapshot: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "InboxActionExecutor.executeFeedConnection", detail: "pre-feed snapshot store failed for \(item.uuid): \(error.localizedDescription)")
+        }
+
+        guard let updated = try await atomRepo.update(uuid: connectionUUID, updates: { atom in
+            atom.structured = encoded
+        }) else { return nil }
+
+        await adoptAttachments(from: item, into: updated.uuid)
+        await reindex(atom: updated)
+        try await inboxRepo.markActioned(uuid: item.uuid)
+
+        let originalItem = item
+        let restoredStructured = previousStructured
+        let fedStructured = encoded
+
+        CosmoUndoManager.shared.register(
+            InlineUndoAction(actionDescription: "Feed Concept Page") { [weak self] in
+                guard let self else { return }
+                _ = try? await self.atomRepo.update(uuid: connectionUUID) { atom in
+                    atom.structured = restoredStructured.isEmpty ? nil : restoredStructured
+                }
+                try? await self.inboxRepo.restore(originalItem)
+            } redo: { [weak self] in
+                guard let self else { return }
+                _ = try? await self.atomRepo.update(uuid: connectionUUID) { atom in
+                    atom.structured = fedStructured
+                }
+                try? await self.inboxRepo.markActioned(uuid: originalItem.uuid)
+            }
+        )
+
+        return updated
+    }
+
+    /// The capture is a content idea for a client: a typed idea atom carrying
+    /// the client link + metadata (the FlashLiteRouter post-process contract),
+    /// enriched by the idea pipeline.
+    @discardableResult
+    func executeAttachClient(item: InboxItem, recommendation: InboxRecommendation) async throws -> Atom? {
+        guard let move = recommendation.atlasMove,
+              let clientUUID = move.clientUUID,
+              let client = try await atomRepo.fetch(uuid: clientUUID),
+              !client.isDeleted else { return nil }
+
+        var atom = Atom.new(
+            type: .idea,
+            title: item.title ?? fallbackTitle(for: item),
+            body: item.rawText
+        )
+        atom = atom.addingLink(AtomLink(
+            type: AtomLinkType.ideaToClient.rawValue,
+            uuid: client.uuid,
+            entityType: AtomType.clientProfile.rawValue
+        ))
+        atom = atom.withUpdatedIdeaMetadata { ideaMeta in
+            ideaMeta.ideaStatus = ideaMeta.ideaStatus ?? .spark
+            ideaMeta.clientUUID = client.uuid
+            ideaMeta.clientName = client.title ?? move.clientName
+        }
+        atom = atom.mergingMetadataKeys(captureProvenance(for: item))
+        atom = try await atomRepo.create(atom)
+        await adoptAttachments(from: item, into: atom.uuid)
+        await reindex(atom: atom)
+        try await inboxRepo.markActioned(uuid: item.uuid)
+        registerCreationUndo(created: atom, item: item, actionDescription: "File Idea for Client")
+
+        let created = atom
+        Task { await IdeaInsightEngine.shared.quickEnrich(atom: created) }
+        return atom
+    }
+
+    /// The capture seeds a brand-new concept page under the router's name,
+    /// linked to the material it bridges.
+    @discardableResult
+    func executeGerminateConnection(item: InboxItem, recommendation: InboxRecommendation) async throws -> Atom? {
+        var atom = Atom.new(
+            type: .connection,
+            title: recommendation.atlasMove?.germinateTitle ?? item.title ?? fallbackTitle(for: item),
+            body: item.rawText
+        )
+        for uuid in item.relatedAtomUUIDsValue {
+            guard let related = try? await atomRepo.fetch(uuid: uuid), !related.isDeleted else { continue }
+            atom = atom.appendingLink(AtomLink(
+                type: AtomLinkType.related.rawValue,
+                uuid: related.uuid,
+                entityType: related.type.rawValue
+            ))
+        }
+        atom = atom.mergingMetadataKeys(captureProvenance(for: item))
+        atom = try await atomRepo.create(atom)
+        await adoptAttachments(from: item, into: atom.uuid)
+        await reindex(atom: atom)
+        try await inboxRepo.markActioned(uuid: item.uuid)
+        registerCreationUndo(created: atom, item: item, actionDescription: "Germinate Concept Page")
+        return atom
+    }
+
+    /// The capture opens a research territory of its own: a new deep dive
+    /// whose root question is the capture.
+    @discardableResult
+    func executeGerminateDeepDive(item: InboxItem, recommendation: InboxRecommendation) async throws -> Atom? {
+        let topicTitle = recommendation.atlasMove?.germinateTitle ?? item.title ?? fallbackTitle(for: item)
+        let dive = try await InquiryRepository.shared.createDeepDive(
+            title: topicTitle,
+            about: "Opened from an inbox capture."
+        )
+        let questionTitle = item.title ?? String(item.rawText.prefix(120))
+        _ = try? await InquiryRepository.shared.findOrCreateQuestion(
+            title: questionTitle,
+            parentDeepDiveUUID: dive.uuid,
+            originSessionUUID: nil,
+            parentQuestionUUID: nil,
+            originExtractUUID: nil,
+            placementOrigin: "inbox-atlas"
+        )
+        try await inboxRepo.markActioned(uuid: item.uuid)
+        registerCreationUndo(created: dive, item: item, actionDescription: "Germinate Deep Dive")
+        return dive
+    }
+
+    /// Shared undo shape for Atlas moves that created one primary atom:
+    /// undo deletes the atom and restores the capture; redo re-persists it.
+    private func registerCreationUndo(created: Atom, item: InboxItem, actionDescription: String) {
+        let createdAtom = created
+        let originalItem = item
+        CosmoUndoManager.shared.register(
+            InlineUndoAction(actionDescription: actionDescription) { [weak self] in
+                guard let self else { return }
+                try? await self.atomRepo.delete(uuid: createdAtom.uuid)
+                try? await self.inboxRepo.restore(originalItem)
+            } redo: { [weak self] in
+                guard let self else { return }
+                try? await self.restoreAtomSnapshot(createdAtom)
+                await self.reindex(atom: createdAtom)
+                try? await self.inboxRepo.markActioned(uuid: originalItem.uuid)
+            }
+        )
+    }
+
+    private func normalizedText(_ text: String) -> String {
+        text.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 
     private func executePlacementRecommendation(
@@ -443,8 +723,10 @@ final class InboxActionExecutor {
             object: nil,
             userInfo: ["thinkspaceId": thinkspaceId]
         )
-        // Placement changed cluster membership — routing centroids are stale.
+        // Placement changed cluster membership — routing centroids and the
+        // destination atlas are stale.
         await InboxRoutingEngine.shared.invalidateCentroids()
+        await InboxDestinationAtlas.shared.invalidate()
     }
 
     private func resolveThinkspaceName(for thinkspaceId: String) async -> String? {

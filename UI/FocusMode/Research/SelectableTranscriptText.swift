@@ -74,10 +74,13 @@ struct SelectableTranscriptText: NSViewRepresentable {
             return CGSize(width: width, height: 50)
         }
 
-        // Set container width so layout computes correct line wrapping.
-        textContainer.containerSize = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
-        let fullRange = NSRange(location: 0, length: nsView.textStorage?.length ?? 0)
-        layoutManager.invalidateLayout(forCharacterRange: fullRange, actualCharacterRange: nil)
+        // SwiftUI probes this several times per pass; measuring must be cheap
+        // on repeat. Only resize the container on a real width change (which
+        // invalidates wrapping by itself) and never force a full relayout —
+        // that pattern livelocked the assistant pane (July 2026).
+        if abs(textContainer.containerSize.width - width) > 0.25 {
+            textContainer.containerSize = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
+        }
         layoutManager.ensureLayout(for: textContainer)
 
         let usedRect = layoutManager.usedRect(for: textContainer)

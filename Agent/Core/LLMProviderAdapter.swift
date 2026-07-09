@@ -433,9 +433,17 @@ final class AnthropicProvider: LLMProvider, @unchecked Sendable {
     ) throws -> [String: Any] {
         let resolvedModel = Self.nativeModelID(model ?? AgentProvider.anthropic.defaultModel)
 
+        var conversation = Self.conversationMessages(from: messages)
+        if useCacheControl {
+            // Incremental message caching: a breakpoint on the FINAL message
+            // makes the next request (same prefix + more messages) a cache
+            // extend instead of a full-price re-read — each tool-loop
+            // iteration and each turn only pays for its new tokens.
+            conversation = Self.markingLastMessageForCache(conversation)
+        }
         var body: [String: Any] = [
             "model": resolvedModel,
-            "messages": Self.conversationMessages(from: messages),
+            "messages": conversation,
             "max_tokens": maxTokensOverride ?? resolvedMaxTokens(for: resolvedModel)
         ]
 
@@ -499,6 +507,31 @@ final class AnthropicProvider: LLMProvider, @unchecked Sendable {
             throw LLMProviderError.apiError("Anthropic \(httpResponse.statusCode): \(errorText)")
         }
         return data
+    }
+
+    /// Stamps `cache_control` on the last content block of the final message.
+    /// Uses the 4th breakpoint slot (tools + cached-system take two); the
+    /// breakpoint moves forward every request, so consecutive requests in a
+    /// loop or session match the longest previously-cached prefix.
+    static func markingLastMessageForCache(_ messages: [[String: Any]]) -> [[String: Any]] {
+        guard var last = messages.last else { return messages }
+
+        var blocks: [[String: Any]]
+        if let existing = last["content"] as? [[String: Any]] {
+            blocks = existing
+        } else if let text = last["content"] as? String, !text.isEmpty {
+            blocks = [["type": "text", "text": text]]
+        } else {
+            return messages
+        }
+        guard var lastBlock = blocks.last else { return messages }
+        lastBlock["cache_control"] = promptCacheControl
+        blocks[blocks.count - 1] = lastBlock
+        last["content"] = blocks
+
+        var result = messages
+        result[result.count - 1] = last
+        return result
     }
 
     static func conversationMessages(from messages: [AgentMessage]) -> [[String: Any]] {
@@ -1412,6 +1445,10 @@ extension OpenAIProvider {
             openAIMessages.append(msgDict)
         }
 
+        if resolvedModel.hasPrefix("anthropic/") {
+            Self.markLastUserMessageForAnthropicCache(&openAIMessages)
+        }
+
         let resolvedMaxTokens = maxTokens(for: resolvedModel)
 
         var body: [String: Any] = [
@@ -1448,6 +1485,28 @@ extension OpenAIProvider {
         }
 
         return try parseOpenAIResponse(data)
+    }
+}
+
+extension OpenAIProvider {
+    /// Incremental message caching for OpenRouter's Anthropic passthrough:
+    /// converts the final user message to content-parts form and stamps
+    /// `cache_control`, so the next request in the conversation extends the
+    /// cache instead of re-reading the whole history. Only user messages —
+    /// OpenRouter's parts mapping for tool-role content is undocumented.
+    static func markLastUserMessageForAnthropicCache(_ messages: inout [[String: Any]]) {
+        guard var last = messages.last,
+              last["role"] as? String == "user",
+              let text = last["content"] as? String,
+              !text.isEmpty else {
+            return
+        }
+        last["content"] = [[
+            "type": "text",
+            "text": text,
+            "cache_control": ["type": "ephemeral"]
+        ] as [String: Any]]
+        messages[messages.count - 1] = last
     }
 }
 
@@ -1700,6 +1759,10 @@ extension OpenAIProvider {
                 msgDict["content"] = msg.content
             }
             openAIMessages.append(msgDict)
+        }
+
+        if resolvedModel.hasPrefix("anthropic/") {
+            Self.markLastUserMessageForAnthropicCache(&openAIMessages)
         }
 
         var body: [String: Any] = [

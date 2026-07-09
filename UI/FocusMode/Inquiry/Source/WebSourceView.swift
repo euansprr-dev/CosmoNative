@@ -1,6 +1,7 @@
 // CosmoOS/UI/FocusMode/Inquiry/Source/WebSourceView.swift
 // WKWebView wrapper for web sources in the Inquiry Source Pane.
-// JS bridge captures user selections and forwards them to a SaveAsExtract sheet.
+// JS bridge reports user selections (text + rect) so the host can float
+// a capture pill next to the highlight.
 
 import SwiftUI
 import WebKit
@@ -17,31 +18,37 @@ struct WebSourceView: NSViewRepresentable {
     let url: URL
     let readerMode: Bool
     @Binding var lastSelectedText: String
+    /// Selection's bounding rect in SwiftUI `.global` space, so the host can
+    /// float a capture pill next to the highlight. Optional — hosts that keep
+    /// their own fixed menu simply don't pass it.
+    var selectionAnchor: Binding<CGRect?>? = nil
     var loadState: Binding<WebSourceLoadState>? = nil
 
     func makeNSView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
         let userContentController = WKUserContentController()
         userContentController.add(context.coordinator, name: "selection")
-        // JS that posts selection text to the native side every time it changes.
+        // JS that posts the selection (text + viewport rect) every time it
+        // changes — including the empty selection, so the native pill can
+        // dismiss when the highlight collapses.
         let script = WKUserScript(
             source: """
             (function() {
                 let lastSel = '';
-                document.addEventListener('mouseup', () => {
-                    const text = window.getSelection().toString();
-                    if (text && text !== lastSel) {
-                        lastSel = text;
-                        window.webkit.messageHandlers.selection.postMessage(text);
+                function report() {
+                    const sel = window.getSelection();
+                    const text = sel ? sel.toString() : '';
+                    if (text === lastSel) { return; }
+                    lastSel = text;
+                    let payload = { text: text, x: 0, y: 0, w: 0, h: 0 };
+                    if (text && sel.rangeCount > 0) {
+                        const r = sel.getRangeAt(0).getBoundingClientRect();
+                        payload = { text: text, x: r.x, y: r.y, w: r.width, h: r.height };
                     }
-                });
-                document.addEventListener('keyup', () => {
-                    const text = window.getSelection().toString();
-                    if (text && text !== lastSel) {
-                        lastSel = text;
-                        window.webkit.messageHandlers.selection.postMessage(text);
-                    }
-                });
+                    window.webkit.messageHandlers.selection.postMessage(payload);
+                }
+                document.addEventListener('mouseup', report);
+                document.addEventListener('keyup', report);
             })();
             """,
             injectionTime: .atDocumentEnd,
@@ -103,7 +110,27 @@ struct WebSourceView: NSViewRepresentable {
         init(parent: WebSourceView) { self.parent = parent }
 
         func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-            if message.name == "selection", let text = message.body as? String {
+            guard message.name == "selection" else { return }
+            // Rich payload: text + selection rect in the page's viewport
+            // coordinates (== the web view's local space at default zoom).
+            if let dict = message.body as? [String: Any], let text = dict["text"] as? String {
+                let webView = message.webView
+                Task { @MainActor in
+                    guard !text.isEmpty else {
+                        parent.lastSelectedText = ""
+                        parent.selectionAnchor?.wrappedValue = nil
+                        return
+                    }
+                    parent.lastSelectedText = text
+                    if let webView,
+                       let x = dict["x"] as? Double, let y = dict["y"] as? Double,
+                       let w = dict["w"] as? Double, let h = dict["h"] as? Double {
+                        let local = CGRect(x: x, y: y, width: w, height: h)
+                        parent.selectionAnchor?.wrappedValue =
+                            SelectionAnchorSpace.globalRect(fromLocal: local, in: webView)
+                    }
+                }
+            } else if let text = message.body as? String {
                 Task { @MainActor in
                     parent.lastSelectedText = text
                 }

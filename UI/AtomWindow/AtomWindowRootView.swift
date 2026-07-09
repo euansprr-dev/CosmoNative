@@ -130,9 +130,6 @@ struct AtomWindowRootView: View {
             closeWindow: {
                 AtomWindowPanelController.shared.hide()
             },
-            unloadAtom: {
-                viewModel.unloadCurrentSession()
-            },
             goBack: {
                 Task { await viewModel.goBack() }
             },
@@ -153,9 +150,9 @@ struct AtomWindowRootView: View {
 
     private func emptyShell<Content: View>(@ViewBuilder content: () -> Content) -> some View {
         VStack(spacing: 0) {
-            AtomWindowStandaloneChrome(context: emptyChromePayload, showsAtomClose: false)
+            AtomWindowStandaloneChrome(context: emptyChromePayload)
                 .padding(.horizontal, DS.space16)
-                .padding(.top, DS.space16)
+                .padding(.top, DS.space12)
                 .padding(.bottom, DS.space8)
 
             content()
@@ -180,14 +177,33 @@ struct AtomWindowRootView: View {
             Image(systemName: "atom")
                 .font(.system(size: 36, weight: .light))
                 .foregroundStyle(DS.textMuted)
+                .accessibilityHidden(true)
 
             Text("Open any atom")
                 .font(DS.title2)
                 .foregroundStyle(DS.text)
 
-            Text("Press  /  to search or  +  to create")
-                .font(DS.callout)
-                .foregroundStyle(DS.textSecondary)
+            Button {
+                withAnimation(ProMotionSprings.snappy) {
+                    viewModel.isSearchVisible = true
+                }
+            } label: {
+                HStack(spacing: DS.space6) {
+                    Image(systemName: "magnifyingglass")
+                        .font(DS.caption.weight(.semibold))
+                        .accessibilityHidden(true)
+                    Text("Search atoms")
+                        .font(DS.buttonText.weight(.semibold))
+                }
+                .foregroundStyle(DS.accent)
+                .padding(.horizontal, DS.space12)
+                .padding(.vertical, DS.space6)
+                .background(DS.accentSoft, in: Capsule())
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .help("Search atoms")
+            .padding(.top, DS.space4)
         }
     }
 
@@ -251,140 +267,6 @@ struct AtomWindowRootView: View {
     }
 }
 
-// MARK: - Header Bar
-
-struct AtomWindowHeaderBar: View {
-    @Bindable var viewModel: AtomWindowViewModel
-
-    var body: some View {
-        HStack(spacing: DS.space6) {
-            navigationControls
-            Spacer(minLength: 0)
-            atomTitle
-            Spacer(minLength: 0)
-            actionControls
-        }
-        .padding(.horizontal, AtomWindowMetrics.contentPadding)
-        .frame(height: AtomWindowMetrics.headerHeight)
-    }
-
-    // MARK: - Left: Navigation
-
-    private var navigationControls: some View {
-        HStack(spacing: 2) {
-            headerButton("xmark", accessibilityLabel: "Close") {
-                AtomWindowPanelController.shared.hide()
-            }
-
-            headerButton("chevron.left", accessibilityLabel: "Back") {
-                Task { await viewModel.goBack() }
-            }
-            .disabled(!viewModel.canGoBack)
-            .opacity(viewModel.canGoBack ? 1 : 0.35)
-            .keyboardShortcut("[", modifiers: .command)
-
-            headerButton("chevron.right", accessibilityLabel: "Forward") {
-                Task { await viewModel.goForward() }
-            }
-            .disabled(!viewModel.canGoForward)
-            .opacity(viewModel.canGoForward ? 1 : 0.35)
-            .keyboardShortcut("]", modifiers: .command)
-        }
-    }
-
-    // MARK: - Center: Title
-
-    @ViewBuilder
-    private var atomTitle: some View {
-        if let atom = viewModel.currentAtom {
-            HStack(spacing: DS.space6) {
-                Image(systemName: atom.type.iconName)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(AtomWindowViewModel.entityColor(for: atom.type))
-
-                Text(atom.title ?? "Untitled")
-                    .font(DS.headline)
-                    .foregroundStyle(DS.text)
-                    .lineLimit(1)
-            }
-            .onTapGesture {
-                withAnimation(ProMotionSprings.snappy) {
-                    viewModel.isSearchVisible.toggle()
-                }
-            }
-        } else {
-            Text("Atom Window")
-                .font(DS.headline)
-                .foregroundStyle(DS.textSecondary)
-        }
-    }
-
-    // MARK: - Right: Actions
-
-    private var actionControls: some View {
-        HStack(spacing: 2) {
-            headerButton(
-                viewModel.isCurrentBookmarked ? "bookmark.fill" : "bookmark",
-                accessibilityLabel: "Bookmark"
-            ) {
-                viewModel.toggleBookmark()
-            }
-            .disabled(viewModel.currentAtom == nil)
-            .opacity(viewModel.currentAtom != nil ? 1 : 0.35)
-
-            headerButton("magnifyingglass", accessibilityLabel: "Search") {
-                withAnimation(ProMotionSprings.snappy) {
-                    viewModel.isSearchVisible.toggle()
-                }
-            }
-
-            Menu {
-                Button("Idea", systemImage: AtomType.idea.iconName) {
-                    Task { await viewModel.createNewAtom(type: .idea) }
-                }
-                Button("Note", systemImage: AtomType.note.iconName) {
-                    Task { await viewModel.createNewAtom(type: .note) }
-                }
-                Button("Content", systemImage: AtomType.content.iconName) {
-                    Task { await viewModel.createNewAtom(type: .content) }
-                }
-                Button("Research", systemImage: AtomType.research.iconName) {
-                    Task { await viewModel.createNewAtom(type: .research) }
-                }
-                Button("Concept", systemImage: AtomType.connection.iconName) {
-                    Task { await viewModel.createNewAtom(type: .connection) }
-                }
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(DS.textSecondary)
-                    .frame(width: AtomWindowMetrics.controlSize, height: AtomWindowMetrics.controlSize)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .menuIndicator(.hidden)
-        }
-    }
-
-    // MARK: - Shared Button
-
-    private func headerButton(
-        _ icon: String,
-        accessibilityLabel: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(DS.textSecondary)
-                .frame(width: AtomWindowMetrics.controlSize, height: AtomWindowMetrics.controlSize)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(accessibilityLabel)
-    }
-}
-
 // MARK: - Generic View (for unsupported atom types)
 
 struct AtomWindowGenericView: View {
@@ -410,7 +292,7 @@ struct AtomWindowGenericView: View {
             if let atomChrome {
                 AtomWindowStandaloneChrome(context: atomChrome)
                     .padding(.horizontal, DS.space16)
-                    .padding(.top, DS.space16)
+                    .padding(.top, DS.space12)
             }
         }
     }

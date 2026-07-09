@@ -979,6 +979,7 @@ struct ContentFocusModeView: View {
                 writingSurfaceControls
                 ZenOrnament(isOn: $zenMode)
                 if let atomChrome {
+                    AtomWindowChromeDivider()
                     AtomWindowChromeTrailingControls(context: atomChrome)
                 } else if isPaneContext, !isPeekContext {
                     Button(action: onClose) {

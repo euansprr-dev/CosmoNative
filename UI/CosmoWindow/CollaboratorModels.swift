@@ -446,19 +446,28 @@ struct PendingCanvasPlan: Identifiable, Equatable, Codable, Sendable {
     var rationale: String
     var operations: [PendingCanvasOperation]
     var createdAt: Date
+    /// The thinkspace the plan was proposed AGAINST, captured from the bound
+    /// surface at proposal time. Apply notifications carry it so only the
+    /// matching canvas handles them — plan ops are broadcast, and an unscoped
+    /// broadcast once applied one thinkspace's clusters onto another canvas.
+    /// Optional: decodes nil from older payloads (those apply to the active
+    /// canvas, the old behavior).
+    var targetThinkspaceId: String?
 
     init(
         id: UUID = UUID(),
         title: String,
         rationale: String,
         operations: [PendingCanvasOperation],
-        createdAt: Date = Date()
+        createdAt: Date = Date(),
+        targetThinkspaceId: String? = nil
     ) {
         self.id = id
         self.title = title
         self.rationale = rationale
         self.operations = operations
         self.createdAt = createdAt
+        self.targetThinkspaceId = targetThinkspaceId
     }
 
     var affectedObjectCount: Int {

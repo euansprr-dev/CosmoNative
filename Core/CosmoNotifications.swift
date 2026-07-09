@@ -83,6 +83,9 @@ enum CosmoNotification {
         // Approved canvas-plan cluster operations (thinkspace copilot)
         static let createClusterFromPlan = Notification.Name("com.cosmo.canvas.createClusterFromPlan")
         static let moveBlocksToCluster = Notification.Name("com.cosmo.canvas.moveBlocksToCluster")
+        /// Posted once after ALL of an approved canvas plan's operations — the
+        /// canvas runs its deterministic cluster-overlap resolution on it.
+        static let canvasPlanDidApply = Notification.Name("com.cosmo.canvas.canvasPlanDidApply")
 
         // Smart actions (content-based)
         static let moveBlockByContentToTime = Notification.Name("com.cosmo.canvas.moveBlockByContentToTime")

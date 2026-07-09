@@ -1,4 +1,5 @@
 import SwiftUI
+import AVKit
 
 // MARK: - Frame store
 
@@ -10,10 +11,43 @@ final class SwipeFrameStore {
 }
 
 /// Geometry shared by the quick look and the study hero so handoffs line up.
+/// July 2026: the library quick look panel IS the post — sized to the medium's
+/// honest aspect (9:16 reel, square carousel, 16:9 video) plus one footer bar.
 enum SwipeQuickLookGeometry {
-    static func panelFrame(in size: CGSize) -> CGRect {
-        let width = min(680, max(420, size.width - 160))
-        let height = min(size.height * 0.88, 780)
+    static let footerHeight: CGFloat = 56
+
+    static func panelFrame(in size: CGSize, aspect: SwipeCardAspect? = nil) -> CGRect {
+        let maxWidth = max(320, size.width - 160)
+        let maxHeight = size.height * 0.9
+
+        var width: CGFloat
+        var height: CGFloat
+
+        switch aspect {
+        case .vertical:
+            // 9:16 reel — height-major, width re-clamped for narrow windows.
+            let mediaHeight = min(maxHeight - footerHeight, 760)
+            let mediaWidth = min(mediaHeight * 9 / 16, maxWidth)
+            width = mediaWidth
+            height = min(mediaWidth * 16 / 9, maxHeight - footerHeight) + footerHeight
+        case .portrait:
+            // Square carousel stage.
+            let side = min(540, maxWidth, maxHeight - footerHeight)
+            width = side
+            height = side + footerHeight
+        case .wide:
+            let mediaWidth = min(760, maxWidth, (maxHeight - footerHeight) * 16 / 9)
+            width = mediaWidth
+            height = mediaWidth * 9 / 16 + footerHeight
+        case .paper:
+            width = min(480, maxWidth)
+            height = min(520, maxHeight)
+        case nil:
+            // Legacy shape (Discover quick look).
+            width = min(680, max(420, size.width - 160))
+            height = min(maxHeight * 0.98, 780)
+        }
+
         return CGRect(
             x: (size.width - width) / 2,
             y: (size.height - height) / 2,
@@ -38,6 +72,9 @@ struct SwipeQuickLook<Content: View>: View {
     @Binding var expanded: Bool
     let sourceFrame: CGRect?
     var heroModel: SwipeCardModel?
+    /// When set, the panel takes the medium's honest shape (reel/square/wide)
+    /// instead of the legacy document shape.
+    var panelAspect: SwipeCardAspect?
     let onRequestClose: () -> Void
     @ViewBuilder let content: () -> Content
 
@@ -46,7 +83,7 @@ struct SwipeQuickLook<Content: View>: View {
     var body: some View {
         GeometryReader { proxy in
             let bounds = CGRect(origin: .zero, size: proxy.size)
-            let target = SwipeQuickLookGeometry.panelFrame(in: proxy.size)
+            let target = SwipeQuickLookGeometry.panelFrame(in: proxy.size, aspect: panelAspect)
             let fallback = target.insetBy(
                 dx: target.width * 0.04,
                 dy: target.height * 0.04
@@ -122,65 +159,120 @@ private struct SwipeQuickLookHeroThumbnail: View {
     }
 }
 
-// MARK: - Library content
+// MARK: - Library content (the post, bigger — nothing else)
 
+/// The minimal preview: the panel is the post at its honest aspect — a playing
+/// reel, a swipeable square carousel, or the text page — with one footer bar:
+/// who made it, and Open Study. Analysis lives in Study, not here.
 struct SwipeQuickLookLibraryContent: View {
     let item: SwipeGalleryItem
     let model: SwipeCardModel
-    var hasPrevious = false
-    var hasNext = false
     let onStudy: () -> Void
     let onAddToCanvas: () -> Void
-    let onPrevious: () -> Void
-    let onNext: () -> Void
     let onClose: () -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            ZStack {
-                SwipeQuickLookBody(item: item, model: model)
-                    .id(item.id)
-                    .transition(.opacity)
+        // Explicit sizing — the stage gets exactly panel-minus-footer, so no
+        // flexible-layout negotiation (or an overgrown AVPlayerView/image) can
+        // ever swallow the footer or spill past the panel.
+        GeometryReader { geo in
+            let stageHeight = max(0, geo.size.height - SwipeQuickLookGeometry.footerHeight)
+            VStack(spacing: 0) {
+                stage
+                    .frame(width: geo.size.width, height: stageHeight)
+                    .clipped()
+                    .overlay(alignment: .topTrailing) { closeButton }
+                    .contextMenu {
+                        Button("Add to Canvas", systemImage: "square.grid.2x2", action: onAddToCanvas)
+                    }
+                footer
+                    .frame(width: geo.size.width)
             }
-            .animation(.easeInOut(duration: 0.12), value: item.id)
-            footer
         }
+    }
+
+    @ViewBuilder
+    private var stage: some View {
+        switch model.aspect {
+        case .vertical:
+            SwipeQuickLookReelStage(item: item, model: model)
+        case .portrait, .wide:
+            // The pager degrades to the still stage when no slides exist, so
+            // multi-image posts page and single-image posts just show.
+            SwipeQuickLookCarouselStage(item: item, model: model)
+        case .paper:
+            ScrollView {
+                Text(model.paperText ?? model.hookText)
+                    .font(DS.body)
+                    .foregroundStyle(DS.text)
+                    .lineSpacing(5)
+                    .textSelection(.enabled)
+                    .padding(20)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+            .scrollIndicators(.never)
+        }
+    }
+
+    private var closeButton: some View {
+        Button(action: onClose) {
+            Image(systemName: "xmark")
+                .font(DS.caption.weight(.semibold))
+                .foregroundStyle(.white)
+                .frame(width: 26, height: 26)
+                .background(.black.opacity(0.35), in: Circle())
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .padding(10)
+        .help("Close (Esc)")
+        .accessibilityLabel("Close preview")
     }
 
     /// Creator identity leads — the quick look is the sanctioned identity
     /// surface, so the platform glyph keeps its brand color here.
-    private var header: some View {
+    private var footer: some View {
         HStack(spacing: 8) {
-            HStack(spacing: 7) {
-                if let glyph = model.platformGlyph {
-                    Image(systemName: glyph)
-                        .font(DS.caption.weight(.semibold))
-                        .foregroundStyle(model.platformColor ?? DS.textMuted)
-                        .accessibilityHidden(true)
-                }
-                Text(identityLine)
-                    .font(DS.subheadline.weight(.medium))
-                    .foregroundStyle(DS.textSecondary)
-                    .lineLimit(1)
-                if let age = model.ageLabel {
-                    Text("· \(age)")
-                        .font(DS.caption)
-                        .foregroundStyle(DS.textMuted)
-                }
+            if let glyph = model.platformGlyph {
+                Image(systemName: glyph)
+                    .font(DS.caption.weight(.semibold))
+                    .foregroundStyle(model.platformColor ?? DS.textMuted)
+                    .accessibilityHidden(true)
             }
-            Spacer()
-            SwipeQuickLookIconButton(systemImage: "chevron.left", help: "Previous (←)", action: onPrevious)
-                .disabled(!hasPrevious)
-                .opacity(hasPrevious ? 1 : 0.35)
-            SwipeQuickLookIconButton(systemImage: "chevron.right", help: "Next (→)", action: onNext)
-                .disabled(!hasNext)
-                .opacity(hasNext ? 1 : 0.35)
-            SwipeQuickLookIconButton(systemImage: "square.grid.2x2", help: "Add to Canvas", action: onAddToCanvas)
-            SwipeQuickLookIconButton(systemImage: "xmark", help: "Close (Esc)", action: onClose)
+            Text(identityLine)
+                .font(DS.subheadline.weight(.medium))
+                .foregroundStyle(DS.textSecondary)
+                .lineLimit(1)
+            if let age = model.ageLabel {
+                Text("· \(age)")
+                    .font(DS.caption)
+                    .foregroundStyle(DS.textMuted)
+            }
+
+            Spacer(minLength: DS.space12)
+
+            Button(action: onStudy) {
+                HStack(spacing: 7) {
+                    Image(systemName: "book")
+                        .font(DS.caption.weight(.bold))
+                        .accessibilityHidden(true)
+                    Text("Open Study")
+                        .font(DS.callout.weight(.semibold))
+                }
+                .foregroundStyle(DS.textOnAccent)
+                .padding(.horizontal, 16)
+                .frame(height: 34)
+                .background(DS.accent, in: Capsule())
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .help("Open in Swipe Study (⏎)")
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 14)
+        .frame(height: SwipeQuickLookGeometry.footerHeight)
+        .overlay(alignment: .top) {
+            Rectangle().fill(DS.glassBorder).frame(height: 0.5)
+        }
     }
 
     private var identityLine: String {
@@ -188,121 +280,225 @@ struct SwipeQuickLookLibraryContent: View {
             ?? SocialPlatform.fromLibraryKey(item.platform)?.displayName
             ?? "Swipe"
     }
-
-    private var footer: some View {
-        HStack {
-            Button(action: onStudy) {
-                HStack(spacing: 7) {
-                    Image(systemName: "play.fill")
-                        .font(DS.caption.weight(.bold))
-                    Text("Open Study")
-                        .font(DS.callout.weight(.semibold))
-                }
-                .foregroundStyle(DS.textOnAccent)
-                .padding(.horizontal, 16)
-                .frame(height: 36)
-                .background(DS.accent, in: Capsule())
-                .contentShape(Capsule())
-            }
-            .buttonStyle(.plain)
-            .help("Open in Swipe Study (⏎)")
-
-            Spacer()
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .overlay(alignment: .top) {
-            Rectangle().fill(DS.glassBorder).frame(height: 0.5)
-        }
-    }
 }
 
-// MARK: - Scrollable body
+// MARK: - Reel stage (plays in place)
 
-private struct SwipeQuickLookBody: View {
+/// The reel, playing. Local cache first (instant), then the stored media URL
+/// resolved through the local cache (downloads once), thumbnail while anything
+/// is in flight. Loops; pauses the moment the preview closes.
+private struct SwipeQuickLookReelStage: View {
     let item: SwipeGalleryItem
     let model: SwipeCardModel
 
+    @State private var player: AVPlayer?
+    @State private var isResolving = false
+    @State private var resolveFailed = false
+    @State private var loopObserver: NSObjectProtocol?
+
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                media
-                hookSection
-                metadataSection
+        ZStack {
+            if let player {
+                // CosmoVideoPlayerView (AVPlayerView), never SwiftUI VideoPlayer.
+                // Floating controls: always discoverable in a preview.
+                CosmoVideoPlayerView(player: player, controlsStyle: .floating)
+            } else {
+                SwipeQuickLookStillStage(model: model)
+                if isResolving {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(.white)
+                        .padding(10)
+                        .background(.black.opacity(0.35), in: Circle())
+                }
             }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 14)
         }
-        .scrollIndicators(.never)
+        .task(id: item.id) {
+            await resolveAndPlay()
+        }
+        .onDisappear(perform: teardown)
     }
 
-    @ViewBuilder
-    private var media: some View {
-        if model.aspect == .paper {
-            Text(model.paperText ?? model.hookText)
-                .font(DS.body)
-                .foregroundStyle(DS.text)
-                .lineSpacing(4)
-                .textSelection(.enabled)
-                .padding(16)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-                .background(DS.glassSectionFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        } else {
-            SwipeQuickLookMedia(
-                url: model.mediaURL,
-                stableKey: model.mediaStableKey,
-                aspect: model.aspect,
-                fallbackGlyph: model.platformGlyph
-            )
-            .accessibilityLabel("Swipe media preview")
+    private func resolveAndPlay() async {
+        teardown()
+        resolveFailed = false
+
+        // Fast path: the reel is already on disk.
+        if let shortcode = item.instagramId,
+           let localURL = InstagramVideoLocalCache.localVideoURL(forShortcode: shortcode) {
+            start(with: localURL)
+            return
         }
+
+        // Slow path: stored media URL → resolve through the local cache.
+        isResolving = true
+        defer { isResolving = false }
+        guard let atom = try? await AtomRepository.shared.fetch(uuid: item.id),
+              let mediaURL = atom.richContent?.instagramData?.extractedMediaURL else {
+            resolveFailed = true
+            return
+        }
+        let playable = await InstagramVideoLocalCache.resolvePlayableURL(
+            from: mediaURL,
+            shortcode: item.instagramId
+        )
+        start(with: playable)
     }
 
-    /// The hook IS the headline — no label needed above the one line the
-    /// swipe exists for.
-    @ViewBuilder
-    private var hookSection: some View {
-        if model.aspect != .paper {
-            Text(model.hookText)
-                .font(DS.headline)
-                .foregroundStyle(DS.text)
-                .lineSpacing(3)
-                .textSelection(.enabled)
+    private func start(with url: URL) {
+        let avItem = AVPlayerItem(url: url)
+        let avPlayer = AVPlayer(playerItem: avItem)
+        loopObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime,
+            object: avItem,
+            queue: .main
+        ) { _ in
+            avPlayer.seek(to: .zero)
+            avPlayer.play()
         }
+        player = avPlayer
+        avPlayer.play()
     }
 
-    private var metadataSection: some View {
-        VStack(spacing: 0) {
-            metadataRow("Hook type", item.hookType?.displayName)
-            metadataRow("Narrative", item.primaryNarrative?.displayName)
-            metadataRow("Format", item.swipeContentFormat?.displayName)
-            metadataRow("Hook score", item.hookScore.map { String(format: "%.1f", $0) })
-            metadataRow("Niche", item.niche)
-            metadataRow("Creator", item.creatorName ?? item.author)
+    private func teardown() {
+        player?.pause()
+        if let loopObserver {
+            NotificationCenter.default.removeObserver(loopObserver)
         }
-        .padding(.vertical, 4)
-        .dsGlassSection()
-    }
-
-    @ViewBuilder
-    private func metadataRow(_ label: String, _ value: String?) -> some View {
-        if let value, !value.isEmpty {
-            HStack {
-                Text(label)
-                    .font(DS.subheadline)
-                    .foregroundStyle(DS.textMuted)
-                Spacer()
-                Text(value)
-                    .font(DS.subheadline.weight(.medium).monospacedDigit())
-                    .foregroundStyle(DS.textSecondary)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-        }
+        loopObserver = nil
+        player = nil
     }
 }
 
-// MARK: - Media well (natural aspect)
+// MARK: - Carousel stage (square pager)
+
+/// The carousel, swipeable, on a square stage. Slides load from the persisted
+/// carousel items (local image cache first); a single-image post shows its one
+/// image the same way.
+private struct SwipeQuickLookCarouselStage: View {
+    let item: SwipeGalleryItem
+    let model: SwipeCardModel
+
+    @State private var slides: [CarouselItem] = []
+    @State private var index = 0
+    @State private var isHovered = false
+
+    var body: some View {
+        ZStack {
+            if slides.isEmpty {
+                SwipeQuickLookStillStage(model: model)
+            } else {
+                slideImage(slides[min(index, slides.count - 1)])
+                arrows
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if slides.count > 1 {
+                pageCounter
+            }
+        }
+        .task(id: item.id) {
+            let atom = try? await AtomRepository.shared.fetch(uuid: item.id)
+            slides = atom?.richContent?.instagramData?.carouselItems ?? []
+            index = 0
+        }
+        .onHover { isHovered = $0 }
+    }
+
+    private func slideImage(_ slide: CarouselItem) -> some View {
+        let displayURL = InstagramCarouselImageCache.displayURL(for: slide, shortcode: item.instagramId)
+        let cacheKey = InstagramCarouselImageCache.stableKey(for: slide, shortcode: item.instagramId)
+        // Letterboxed on the warm fill, never cropped — a preview shows the
+        // whole slide. The ZStack takes exactly the stage's explicit frame.
+        return ZStack {
+            DS.glassSectionFill
+            CachedAsyncImage(url: displayURL, stableKey: cacheKey) { phase in
+                switch phase {
+                case .success(let image):
+                    image.resizable().scaledToFit()
+                case .empty, .failure:
+                    ProgressView().controlSize(.small)
+                }
+            }
+        }
+        .id(slide.index)
+        .transition(.opacity)
+        .animation(ProMotionSprings.snappy, value: index)
+    }
+
+    private var arrows: some View {
+        HStack {
+            if index > 0 {
+                arrow("chevron.left", label: "Previous slide") {
+                    withAnimation(ProMotionSprings.snappy) { index -= 1 }
+                }
+            }
+            Spacer()
+            if index < slides.count - 1 {
+                arrow("chevron.right", label: "Next slide") {
+                    withAnimation(ProMotionSprings.snappy) { index += 1 }
+                }
+            }
+        }
+        .padding(.horizontal, DS.space8)
+        .opacity(isHovered ? 1 : 0.65)
+        .animation(ProMotionSprings.hover, value: isHovered)
+    }
+
+    private func arrow(_ systemName: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(DS.title3.weight(.semibold))
+                .foregroundStyle(.white)
+                .frame(width: 32, height: 32)
+                .background(.black.opacity(0.35), in: Circle())
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help(label)
+        .accessibilityLabel(label)
+    }
+
+    private var pageCounter: some View {
+        Text("\(index + 1) of \(slides.count)")
+            .font(DS.caption.monospacedDigit())
+            .foregroundStyle(.white)
+            .contentTransition(.numericText())
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(.black.opacity(0.35), in: Capsule())
+            .padding(.bottom, 10)
+            .animation(ProMotionSprings.gentle, value: index)
+    }
+}
+
+// MARK: - Still stage (thumbnail fill)
+
+/// The medium's thumbnail on the stage — letterboxed on the warm fill, never
+/// cropped: a preview must show the whole post.
+private struct SwipeQuickLookStillStage: View {
+    let model: SwipeCardModel
+
+    var body: some View {
+        ZStack {
+            DS.glassSectionFill
+            CachedAsyncImage(url: model.mediaURL, stableKey: model.mediaStableKey) { phase in
+                switch phase {
+                case .success(let image):
+                    image.resizable().scaledToFit()
+                case .empty, .failure:
+                    Image(systemName: model.platformGlyph ?? "photo")
+                        .font(DS.title2)
+                        .foregroundStyle(DS.textMuted)
+                        .accessibilityHidden(true)
+                }
+            }
+        }
+        .accessibilityLabel("Swipe media preview")
+    }
+}
+
+// MARK: - Media well (natural aspect — Discover quick look)
 
 /// Quick-look media at the post's own aspect ratio — width-fit, height-capped,
 /// edge-to-edge fill on a warm well. No black letterbox.

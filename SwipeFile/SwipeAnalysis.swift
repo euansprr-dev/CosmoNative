@@ -63,6 +63,16 @@ public struct SwipeAnalysis: Codable, Sendable, Equatable {
     public var structuralRecipe: String?
     public var voiceMarkers: [String]?
 
+    /// Short display headline (≤60 chars) produced by the insight pass —
+    /// verbatim hook when the hook is already short, compressed otherwise.
+    /// `atom.title` is set from this; `atom.hook` keeps the full first slide.
+    public var displayTitle: String?
+
+    /// Compact (~100 token) signature card for cross-swipe pattern weaving:
+    /// hook mechanism, beat sequence, persuasion moves, subject, quantification
+    /// style. Lets the PatternWeaver reason over many swipes without transcripts.
+    public var signatureCard: String?
+
     // Beat Pattern Intelligence
     public var normalizedBeats: [String]?
     public var beatFingerprint: String?
@@ -129,6 +139,8 @@ public struct SwipeAnalysis: Codable, Sendable, Equatable {
         case hookMechanism
         case structuralRecipe
         case voiceMarkers
+        case displayTitle
+        case signatureCard
         case normalizedBeats
         case beatFingerprint
         case transcriptComments
@@ -285,6 +297,8 @@ public struct SwipeAnalysis: Codable, Sendable, Equatable {
         hookMechanism = try container.decodeIfPresent(String.self, forKey: .hookMechanism)
         structuralRecipe = try container.decodeIfPresent(String.self, forKey: .structuralRecipe)
         voiceMarkers = try container.decodeIfPresent([String].self, forKey: .voiceMarkers)
+        displayTitle = try container.decodeIfPresent(String.self, forKey: .displayTitle)
+        signatureCard = try container.decodeIfPresent(String.self, forKey: .signatureCard)
         normalizedBeats = try container.decodeIfPresent([String].self, forKey: .normalizedBeats)
         beatFingerprint = try container.decodeIfPresent(String.self, forKey: .beatFingerprint)
         transcriptComments = try container.decodeIfPresent([TranscriptComment].self, forKey: .transcriptComments)
@@ -669,13 +683,20 @@ public struct SwipeSection: Codable, Sendable, Equatable, Identifiable {
     public var emotion: SwipeEmotion?
     public var sizePercent: Double?
 
-    public init(label: String, startIndex: Int = 0, endIndex: Int = 0, purpose: String, emotion: SwipeEmotion? = nil, sizePercent: Double? = nil) {
+    /// 1-based transcript-slide anchors from the insight pass — lets the UI
+    /// scroll the transcript / seek the video when a structure beat is tapped.
+    public var slideStart: Int?
+    public var slideEnd: Int?
+
+    public init(label: String, startIndex: Int = 0, endIndex: Int = 0, purpose: String, emotion: SwipeEmotion? = nil, sizePercent: Double? = nil, slideStart: Int? = nil, slideEnd: Int? = nil) {
         self.label = label
         self.startIndex = startIndex
         self.endIndex = endIndex
         self.purpose = purpose
         self.emotion = emotion
         self.sizePercent = sizePercent
+        self.slideStart = slideStart
+        self.slideEnd = slideEnd
     }
 
     /// Relative size of this section (0.0-1.0) within total content length

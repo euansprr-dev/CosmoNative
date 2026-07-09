@@ -1023,12 +1023,23 @@ class CanvasClusterEngine {
         }
     }
 
-    /// Persist user clusters to ThinkspaceMetadata
+    /// Public persistence entry for callers that know their scope (the canvas
+    /// overlap resolution) — same write path, explicit thinkspace.
+    func persistClusters(thinkspaceId: String?) {
+        persistUserClusters(thinkspaceId: thinkspaceId)
+    }
+
+    /// Persist user clusters to ThinkspaceMetadata.
+    /// SCOPE INVARIANT: only clusters that BELONG to the target thinkspace are
+    /// written. This write replaces the thinkspace's whole cluster list — an
+    /// unfiltered array (e.g. one contaminated across a thinkspace switch, or a
+    /// persist keyed off the wrong cluster's id) would silently overwrite
+    /// another thinkspace's saved layout with foreign clusters.
     private func persistUserClusters(thinkspaceId: String?) {
         guard let tsId = thinkspaceId else { return }
 
         let codable = userClusters
-            .filter { $0.isUserCreated }
+            .filter { $0.isUserCreated && $0.thinkspaceId == tsId }
             .map { CodableCluster(from: $0) }
 
         Task {

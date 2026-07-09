@@ -15,8 +15,9 @@ final class PushSenderService {
     private init() {}
 
     /// Cached JWT — Apple accepts a token for up to an hour; re-signing per
-    /// push is wasteful and Apple throttles overly fresh tokens.
-    private var cachedJWT: (token: String, issuedAt: Date)?
+    /// push is wasteful and Apple throttles overly fresh tokens. `signer`
+    /// (team/key ID) invalidates the cache when the user swaps keys.
+    private var cachedJWT: (token: String, issuedAt: Date, signer: String)?
 
     var isConfigured: Bool { APIKeys.hasAPNs }
 
@@ -24,39 +25,51 @@ final class PushSenderService {
         case notConfigured
         case badPrivateKey
         case noDeviceToken
-        case apns(status: Int, body: String)
+        case apns(status: Int, body: String, environment: String)
 
         var errorDescription: String? {
             switch self {
             case .notConfigured: return "Add your APNs Team ID, Key ID, and .p8 key in Settings → Sync."
             case .badPrivateKey: return "The APNs .p8 key couldn't be read."
             case .noDeviceToken: return "Your iPhone hasn't registered for push yet — open Cosmo on the phone once."
-            case .apns(let status, let body): return "APNs rejected the push (HTTP \(status)): \(body.prefix(160))"
+            case .apns(let status, let body, let environment):
+                return "APNs (\(environment)) rejected the push (HTTP \(status)): \(body.prefix(160))"
             }
         }
     }
 
     /// Wake the iPhone for a scan request. Sends to every registered iOS
     /// device token (personal account — usually exactly one phone).
-    func sendScanRequest(_ request: CaptureRequest) async throws {
+    ///
+    /// `isTest` pushes use a distinct category: the phone suppresses
+    /// foreground SCAN_REQUEST banners (realtime opens the scanner instead),
+    /// but a settings probe has no synced row — it must stay visible.
+    func sendScanRequest(_ request: CaptureRequest, isTest: Bool = false) async throws {
         guard isConfigured else { throw PushError.notConfigured }
         let devices = try await fetchDeviceTokens()
         guard !devices.isEmpty else { throw PushError.noDeviceToken }
 
-        let title = "Scan for your Mac"
-        let body = request.kind == .inquiryScan
-            ? "Photograph pages into “\(request.questionTitle ?? request.deepDiveTitle ?? "your session")”"
-            : "Photograph pages into your Inbox"
+        let title = isTest ? "Cosmo push test" : "Scan for your Mac"
+        let body: String
+        if isTest {
+            body = "The Mac → iPhone relay works."
+        } else if request.kind == .inquiryScan {
+            body = "Photograph pages into “\(request.questionTitle ?? request.deepDiveTitle ?? "your session")”"
+        } else {
+            body = "Photograph pages into your Inbox"
+        }
 
-        let payload: [String: Any] = [
+        var payload: [String: Any] = [
             "aps": [
                 "alert": ["title": title, "body": body],
                 "sound": "default",
-                "category": "SCAN_REQUEST",
+                "category": isTest ? "SCAN_TEST" : "SCAN_REQUEST",
                 "interruption-level": "time-sensitive",
             ],
-            "deepLink": "cosmo://scan-request/\(request.uuid)",
         ]
+        if !isTest {
+            payload["deepLink"] = "cosmo://scan-request/\(request.uuid)"
+        }
 
         var lastError: Error?
         for device in devices {
@@ -79,12 +92,9 @@ final class PushSenderService {
 
     private func fetchDeviceTokens() async throws -> [DeviceToken] {
         guard let client = SupabaseClient.shared, client.isAuthenticated else { return [] }
-        let rows = try await client.fetchChanges(
-            table: "device_push_tokens",
-            since: nil,
-            excludeLocalSource: false,
-            limit: 10
-        )
+        // device_push_tokens is not a synced domain (no uuid column) — the
+        // fetchChanges sync ordering 400s against it. Plain fetch only.
+        let rows = try await client.fetchRows(table: "device_push_tokens", limit: 10)
         return rows.compactMap { row in
             guard let token = row["token"] as? String, !token.isEmpty,
                   (row["platform"] as? String ?? "ios") == "ios" else { return nil }
@@ -116,7 +126,11 @@ final class PushSenderService {
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else { return }
         guard (200...299).contains(http.statusCode) else {
-            throw PushError.apns(status: http.statusCode, body: String(data: data, encoding: .utf8) ?? "")
+            throw PushError.apns(
+                status: http.statusCode,
+                body: String(data: data, encoding: .utf8) ?? "",
+                environment: device.environment
+            )
         }
         print("📮 APNs push delivered (\(device.environment))")
     }
@@ -124,12 +138,14 @@ final class PushSenderService {
     // MARK: - JWT (ES256, cached ~45 min)
 
     private func jwt() throws -> String {
-        if let cachedJWT, Date().timeIntervalSince(cachedJWT.issuedAt) < 45 * 60 {
-            return cachedJWT.token
-        }
         guard let teamId = APIKeys.apnsTeamId, let keyId = APIKeys.apnsKeyId,
               let pem = APIKeys.apnsPrivateKey else {
             throw PushError.notConfigured
+        }
+        let signer = "\(teamId)/\(keyId)"
+        if let cachedJWT, cachedJWT.signer == signer,
+           Date().timeIntervalSince(cachedJWT.issuedAt) < 45 * 60 {
+            return cachedJWT.token
         }
         guard let key = try? P256.Signing.PrivateKey(pemRepresentation: pem) else {
             throw PushError.badPrivateKey
@@ -142,7 +158,7 @@ final class PushSenderService {
         let signingInput = "\(headerPart).\(claimsPart)"
         let signature = try key.signature(for: Data(signingInput.utf8))
         let token = "\(signingInput).\(Self.base64URL(signature.rawRepresentation))"
-        cachedJWT = (token, Date())
+        cachedJWT = (token, Date(), signer)
         return token
     }
 

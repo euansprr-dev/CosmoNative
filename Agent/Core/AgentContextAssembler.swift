@@ -380,11 +380,12 @@ class AgentContextAssembler {
         let todayBlocks = await fetchTodayBlocks()
         if !todayBlocks.isEmpty {
             let blockSummaries = todayBlocks.prefix(5).map { block -> String in
-                let title = block.title ?? "Untitled"
-                let meta = block.metadataValue(as: ScheduleBlockMetadata.self)
-                let status = (meta?.isCompleted ?? false) ? "done" : "pending"
-                let time = formatTimeRange(start: meta?.startTime, end: meta?.endTime)
-                return "  - \(time) \(title) [\(status)]"
+                let status = block.isCompleted ? "done" : "pending"
+                let time = formatTimeRange(
+                    start: ISO8601.string(from: block.start),
+                    end: ISO8601.string(from: block.end)
+                )
+                return "  - \(time) \(block.title) [\(status)]"
             }
             parts.append("Today's schedule (\(todayBlocks.count) blocks):")
             parts.append(contentsOf: blockSummaries)
@@ -498,11 +499,12 @@ class AgentContextAssembler {
         let todayBlocks = await fetchTodayBlocks()
         if !todayBlocks.isEmpty {
             let blockSummaries = todayBlocks.map { block -> String in
-                let title = block.title ?? "Untitled"
-                let meta = block.metadataValue(as: ScheduleBlockMetadata.self)
-                let status = (meta?.isCompleted ?? false) ? "done" : "pending"
-                let time = formatTimeRange(start: meta?.startTime, end: meta?.endTime)
-                return "  - \(time) \(title) [\(status)]"
+                let status = block.isCompleted ? "done" : "pending"
+                let time = formatTimeRange(
+                    start: ISO8601.string(from: block.start),
+                    end: ISO8601.string(from: block.end)
+                )
+                return "  - \(time) \(block.title) [\(status)]"
             }
             parts.append("Today's schedule (\(todayBlocks.count) blocks):")
             parts.append(contentsOf: blockSummaries)
@@ -640,14 +642,11 @@ class AgentContextAssembler {
 
         // Today's completed blocks
         let todayBlocks = await fetchTodayBlocks()
-        let completed = todayBlocks.filter { atom in
-            let meta = atom.metadataValue(as: ScheduleBlockMetadata.self)
-            return meta?.isCompleted == true
-        }
+        let completed = todayBlocks.filter(\.isCompleted)
         if !completed.isEmpty {
             parts.append("Completed today:")
             for block in completed {
-                parts.append("  - \(block.title ?? "Untitled")")
+                parts.append("  - \(block.title)")
             }
         }
 
@@ -1086,30 +1085,11 @@ class AgentContextAssembler {
 
     // MARK: - Data Fetching Helpers
 
-    private func fetchTodayBlocks() async -> [Atom] {
-        let calendar = Calendar.current
-        let todayStart = calendar.startOfDay(for: Date())
-
-        do {
-            let blocks = try await atomRepo.fetchAll(type: .scheduleBlock)
-            return blocks.filter { atom in
-                let meta = atom.metadataValue(as: ScheduleBlockMetadata.self)
-                if let startStr = meta?.startTime,
-                   let startDate = ISO8601.date(from: startStr) {
-                    return calendar.isDate(startDate, inSameDayAs: todayStart)
-                }
-                if let date = ISO8601.date(from: atom.createdAt) {
-                    return calendar.isDate(date, inSameDayAs: todayStart)
-                }
-                return false
-            }.sorted { a, b in
-                let aMeta = a.metadataValue(as: ScheduleBlockMetadata.self)
-                let bMeta = b.metadataValue(as: ScheduleBlockMetadata.self)
-                return (aMeta?.startTime ?? "") < (bMeta?.startTime ?? "")
-            }
-        } catch {
-            return []
-        }
+    private func fetchTodayBlocks() async -> [ScheduleBlockEntry] {
+        // Engine projection (iOS parity): repeating templates surface on
+        // every rule day — the old literal-startTime filter only saw a
+        // recurring block on the day it was drawn.
+        await ScheduleBlockEngine.blocks(on: Date(), repository: atomRepo)
     }
 
     private func fetchActiveTasks() async -> [Atom] {

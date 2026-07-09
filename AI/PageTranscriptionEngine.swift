@@ -9,6 +9,8 @@
 // CosmoOS-iOS/CosmoCoreKit/Sources/AI/PageTranscriptionEngine.swift.
 
 import Foundation
+import ImageIO
+import UniformTypeIdentifiers
 
 /// One transcribed page.
 struct PageTranscription: Codable, Sendable, Equatable {
@@ -89,20 +91,30 @@ actor PageTranscriptionEngine {
     ) async throws -> PageTranscription {
         let prompt = Self.buildPrompt(context: context)
 
-        if let raw = try? await ResearchService.shared.analyze(
-            prompt: prompt,
-            images: [imageData],
-            systemPrompt: Self.systemPrompt,
-            tier: .sonnet5,
-            maxTokens: 4000
-        ), let parsed = Self.parse(raw), !parsed.isEmpty {
-            return parsed
+        // The API gets a bounded image, never the raw camera frame — a
+        // full-resolution scan exceeds provider limits (Anthropic: 5MB) and
+        // the call fails, silently stranding the rough on-device draft.
+        let pageImage = Self.downscaledJPEG(imageData, maxPixel: 2048, quality: 0.8) ?? imageData
+
+        do {
+            let raw = try await ResearchService.shared.analyze(
+                prompt: prompt,
+                images: [pageImage],
+                systemPrompt: Self.systemPrompt,
+                tier: .sonnet5,
+                maxTokens: 4000
+            )
+            if let parsed = Self.parse(raw), !parsed.isEmpty {
+                return parsed
+            }
+        } catch {
+            print("PageTranscriptionEngine: first pass failed — \(error)")
         }
 
         // One retry (transient failures, malformed JSON) — same model.
         let raw = try await ResearchService.shared.analyze(
             prompt: prompt,
-            images: [imageData],
+            images: [pageImage],
             systemPrompt: Self.systemPrompt,
             tier: .sonnet5,
             maxTokens: 4000
@@ -227,6 +239,26 @@ actor PageTranscriptionEngine {
             diagrams: diagrams,
             confidence: min(max(confidence, 0), 1)
         )
+    }
+
+    /// Re-encode as JPEG capped at `maxPixel` on the long edge (ImageIO —
+    /// parity with AttachmentStore.downscaledJPEG on iOS).
+    static func downscaledJPEG(_ data: Data, maxPixel: CGFloat, quality: CGFloat = 0.85) -> Data? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixel,
+        ]
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+
+        let output = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            output as CFMutableData, UTType.jpeg.identifier as CFString, 1, nil
+        ) else { return nil }
+        CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: quality] as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        return output as Data
     }
 
     /// First balanced `{…}` in the response — tolerates code fences and prose

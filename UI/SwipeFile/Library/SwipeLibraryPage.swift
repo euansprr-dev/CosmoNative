@@ -127,22 +127,21 @@ struct SwipeLibraryPage: View {
     }
 
     private func quickLook(_ item: SwipeGalleryItem) -> some View {
-        let index = viewModel.visibleItems.firstIndex { $0.id == item.id }
+        let model = viewModel.cardModelsByID[item.id] ?? SwipeCardModel(item: item)
         return SwipeQuickLook(
             expanded: $quickLookExpanded,
             sourceFrame: quickLookSource,
-            heroModel: viewModel.cardModelsByID[item.id] ?? SwipeCardModel(item: item),
+            heroModel: model,
+            panelAspect: model.aspect,
             onRequestClose: closeQuickLook
         ) {
+            // Arrow keys page the preview through the grid — the page-level
+            // keyboard layer owns that; the panel stays chrome-free.
             SwipeQuickLookLibraryContent(
                 item: item,
-                model: viewModel.cardModelsByID[item.id] ?? SwipeCardModel(item: item),
-                hasPrevious: (index ?? 0) > 0,
-                hasNext: index.map { $0 < viewModel.visibleItems.count - 1 } ?? false,
+                model: model,
                 onStudy: { openStudy(itemID: item.id) },
                 onAddToCanvas: { viewModel.addToCanvas(item) },
-                onPrevious: { moveSelection(by: -1) },
-                onNext: { moveSelection(by: 1) },
                 onClose: closeQuickLook
             )
         }
@@ -194,7 +193,7 @@ struct SwipeLibraryPage: View {
 
         let model = viewModel.cardModelsByID[item.id] ?? SwipeCardModel(item: item)
         let source: CGRect? = isQuickLookOpen
-            ? SwipeQuickLookGeometry.panelFrame(in: pageSize)
+            ? SwipeQuickLookGeometry.panelFrame(in: pageSize, aspect: model.aspect)
             : frameStore.frames[item.id]
 
         isQuickLookOpen = false

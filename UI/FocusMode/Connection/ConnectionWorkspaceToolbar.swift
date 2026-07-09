@@ -39,6 +39,7 @@ struct ConnectionWorkspaceToolbar: View {
     private var leadingControls: some View {
         if let atomChrome {
             AtomWindowChromeLeadingControls(context: atomChrome)
+            AtomWindowChromeDivider()
         } else if !isPaneContext {
             toolbarButton(
                 icon: "chevron.left",
@@ -184,6 +185,7 @@ struct ConnectionWorkspaceToolbar: View {
             }
         }
         if let atomChrome {
+            AtomWindowChromeDivider()
             AtomWindowChromeTrailingControls(context: atomChrome)
         }
     }

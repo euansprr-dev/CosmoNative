@@ -2596,27 +2596,34 @@ struct MainView: View {
             }
 
             // Don't show menus when overlays are active or not on a thinkspace
-            guard isThinkspaceActive, !showCommandK, appState.focusedEntity == nil else {
+            guard isThinkspaceActive, !showCommandK, !showConstellation,
+                  appState.focusedEntity == nil else {
                 return event
             }
 
-            // Hit-test against tracked block frames (canvas fills full window width)
+            // Hit-test in canvas space with the live transform (canvas fills
+            // full window width). Returns nil when the canvas isn't the
+            // active surface (library mode) — the event belongs to SwiftUI.
             let canvasLocalPoint = screenPoint
-            if let hitBlockId = blockFrameTracker.hitTest(at: canvasLocalPoint) {
-                // Show block context menu
+            switch blockFrameTracker.rightClickHitTest(at: canvasLocalPoint) {
+            case .block(let hitBlockId):
                 rightClickedBlockId = hitBlockId
                 blockContextMenuPosition = screenPoint
                 withAnimation(.spring(response: 0.2, dampingFraction: 0.75)) {
                     showBlockContextMenu = true
                     showRadialMenu = false
                 }
-            } else {
-                // Show radial menu on empty canvas (existing behavior)
+            case .empty:
+                // Radial creation menu on empty canvas (existing behavior)
                 radialMenuPosition = screenPoint
                 withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
                     showRadialMenu = true
                     showBlockContextMenu = false
                 }
+            case .expandedCluster, nil:
+                // List/board/grid cluster UI (or an unregistered canvas) owns
+                // this click — neither canvas menu is correct here.
+                return event
             }
 
             return nil // Consume the event

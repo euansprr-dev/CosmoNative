@@ -24,6 +24,11 @@ class ConversationMemoryService {
             return
         }
 
+        // Cap stored history: fold the oldest runs into the summary so
+        // long-lived conversations (inline sessions accumulate per surface)
+        // don't grow unboundedly on disk and in load time.
+        conv = Self.foldingOldMessagesIntoSummary(conv)
+
         // Auto-extract topics if not already set
         if conv.topics.isEmpty {
             conv.topics = extractTopics(from: conv)
@@ -57,14 +62,7 @@ class ConversationMemoryService {
         structuredDict["topics"] = conv.topics
         let structuredJSON = (try? JSONSerialization.data(withJSONObject: structuredDict)).flatMap { String(data: $0, encoding: .utf8) }
 
-        let existingAtoms = (try? await atomRepo.fetchAll(type: .systemEvent)) ?? []
-        let existingConv = existingAtoms.first { atom in
-            guard let meta = atom.metadata,
-                  let dict = try? JSONSerialization.jsonObject(with: Data(meta.utf8)) as? [String: Any],
-                  let subtype = dict["subtype"] as? String,
-                  let convId = dict["conversationId"] as? String else { return false }
-            return subtype == "agent_conversation" && convId == conv.id
-        }
+        let existingConv = try? await atomRepo.fetchAgentConversationAtom(conversationId: conv.id)
 
         if var existing = existingConv {
             existing.body = messagesJSON
@@ -86,17 +84,62 @@ class ConversationMemoryService {
     // MARK: - Load Conversation
 
     func loadConversation(id: String) async -> AgentConversation? {
-        let atoms = (try? await atomRepo.fetchAll(type: .systemEvent)) ?? []
-
-        guard let atom = atoms.first(where: { atom in
-            guard let meta = atom.metadata,
-                  let dict = try? JSONSerialization.jsonObject(with: Data(meta.utf8)) as? [String: Any],
-                  let subtype = dict["subtype"] as? String,
-                  let convId = dict["conversationId"] as? String else { return false }
-            return subtype == "agent_conversation" && convId == id
-        }) else { return nil }
-
+        guard let atom = try? await atomRepo.fetchAgentConversationAtom(conversationId: id) else {
+            return nil
+        }
         return decodeConversation(from: atom)
+    }
+
+    // MARK: - History Folding
+
+    private static let maxStoredMessages = 60
+    private static let retainedRecentMessages = 40
+    private static let maxSummaryCharacters = 4000
+
+    /// Deterministically folds the oldest messages into `summary` when the
+    /// conversation exceeds the storage cap. Assistant receipts already carry
+    /// the substance of each run (staged titles, answer digests), so the fold
+    /// keeps user asks + assistant text and drops tool plumbing — no LLM call
+    /// on the hot save path.
+    static func foldingOldMessagesIntoSummary(_ conversation: AgentConversation) -> AgentConversation {
+        guard conversation.messages.count > maxStoredMessages else { return conversation }
+        var conv = conversation
+
+        // Cut at a run boundary (a user message) so tool_use/tool_result pairs
+        // are never split across the fold.
+        let idealCut = conv.messages.count - retainedRecentMessages
+        guard let cut = conv.messages.indices.first(where: {
+            $0 >= idealCut && conv.messages[$0].role == .user
+        }), cut > 0 else { return conversation }
+
+        var lines: [String] = []
+        for message in conv.messages.prefix(cut) {
+            switch message.role {
+            case .user:
+                lines.append("User: \(String(message.content.prefix(140)))")
+            case .assistant:
+                let text = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !text.isEmpty {
+                    lines.append("Cosmo: \(String(text.prefix(180)))")
+                } else if let calls = message.toolCalls, !calls.isEmpty {
+                    lines.append("Cosmo ran: \(calls.map(\.name).joined(separator: ", "))")
+                }
+            case .tool, .system:
+                break
+            }
+        }
+
+        var summary = [conv.summary, lines.joined(separator: "\n")]
+            .compactMap { $0 }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+        if summary.count > maxSummaryCharacters {
+            summary = "…" + String(summary.suffix(maxSummaryCharacters))
+        }
+
+        conv.summary = summary.isEmpty ? conv.summary : summary
+        conv.messages = Array(conv.messages.suffix(from: cut))
+        return conv
     }
 
     // MARK: - Get Recent Conversations

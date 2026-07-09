@@ -265,6 +265,43 @@ final class InboxViewModel {
         captureFieldFocusRequest += 1
     }
 
+    // MARK: - Correction ledger
+
+    /// Atlas move kinds whose ACCEPTS are worth recording as positive examples
+    /// (spatial placements are plentiful; knowledge-graph moves are the signal).
+    private static let atlasMoveKinds: Set<InboxRouteKind> = [
+        .advanceQuestion, .spawnQuestion, .feedConnection,
+        .attachClient, .germinateConnection, .germinateDeepDive
+    ]
+
+    /// Fire-and-forget ledger write: what the user did with this capture, and
+    /// which suggestion (if any) they rejected in doing so. The Atlas router
+    /// replays these as learned rules.
+    private func recordRoutingOutcome(
+        for item: InboxItem,
+        chosenKind: String,
+        chosenLabel: String,
+        countsAsOverride: Bool = true
+    ) {
+        let primary = item.primaryRecommendationValue
+        let hadSuggestion = countsAsOverride
+            && item.hasActionableSuggestion
+            && primary != nil
+            && primary?.kind != .createStandaloneAtom
+        let text = item.rawText
+        let rejectedKind = hadSuggestion ? primary?.kind.rawValue : nil
+        let rejectedLabel = hadSuggestion ? primary?.destinationPath : nil
+        Task.detached {
+            await InboxRoutingCorrectionLedger.shared.record(
+                text: text,
+                chosenKind: chosenKind,
+                chosenLabel: chosenLabel,
+                rejectedKind: rejectedKind,
+                rejectedLabel: rejectedLabel
+            )
+        }
+    }
+
     // MARK: - Core Verbs
 
     func acceptSuggestion(for item: InboxItem) async {
@@ -274,6 +311,15 @@ final class InboxViewModel {
         do {
             if try await executor.executePrimaryRecommendation(item: item) != nil {
                 presentUndoToast(for: item, destination: item.spatialDestinationTitle)
+                if let primary = item.primaryRecommendationValue,
+                   Self.atlasMoveKinds.contains(primary.kind) {
+                    recordRoutingOutcome(
+                        for: item,
+                        chosenKind: primary.kind.rawValue,
+                        chosenLabel: primary.destinationPath,
+                        countsAsOverride: false
+                    )
+                }
             } else {
                 await recoverFromNilExecution(for: item)
             }
@@ -309,6 +355,31 @@ final class InboxViewModel {
         }
     }
 
+    /// Apply a non-primary recommendation (the inspector's "Also possible"
+    /// rows). Choosing an alternate over the primary is teaching signal —
+    /// it lands in the correction ledger.
+    func applyAlternate(_ item: InboxItem, recommendation: InboxRecommendation) async {
+        processingItemIds.insert(item.uuid)
+        defer { processingItemIds.remove(item.uuid) }
+
+        do {
+            if try await executor.executeRecommendation(item: item, recommendation: recommendation) != nil {
+                presentUndoToast(for: item, destination: recommendation.destinationPath)
+                recordRoutingOutcome(
+                    for: item,
+                    chosenKind: recommendation.kind.rawValue,
+                    chosenLabel: recommendation.destinationPath
+                )
+            } else {
+                await recoverFromNilExecution(for: item)
+            }
+        } catch {
+            print("⚠️ [InboxVM] Alternate failed: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "InboxVM.applyAlternate", detail: error.localizedDescription)
+            presentErrorToast("Couldn't apply that suggestion — the capture is still in your inbox.")
+        }
+    }
+
     /// The executor returned nil: the merge target was deleted or the
     /// destination thinkspace couldn't be created. A permanently-missing merge
     /// target falls back to a standalone atom so the item is never stuck;
@@ -334,6 +405,9 @@ final class InboxViewModel {
     func dismiss(item: InboxItem) async {
         do {
             try await inboxRepo.dismiss(uuid: item.uuid)
+            if item.hasActionableSuggestion {
+                recordRoutingOutcome(for: item, chosenKind: "dismiss", chosenLabel: "Dismissed")
+            }
             registerDismissUndo(for: [item])
             presentUndoToast(message: "Dismissed \(item.title ?? String(item.rawText.prefix(40)))")
             loadEmptyStateData()
@@ -387,6 +461,7 @@ final class InboxViewModel {
         do {
             _ = try await executor.executeNew(item: item, atomType: .task)
             presentUndoToast(for: item, verb: "Task created")
+            recordRoutingOutcome(for: item, chosenKind: "task", chosenLabel: "Task")
         } catch {
             print("⚠️ [InboxVM] Make task failed: \(error)")
             PersistenceHealth.note(.writeFailure, context: "InboxVM.makeTask", detail: error.localizedDescription)
@@ -402,6 +477,7 @@ final class InboxViewModel {
         do {
             let atom = try await executor.executeNew(item: item, atomType: .idea)
             presentUndoToast(for: item, verb: "Filed as idea")
+            recordRoutingOutcome(for: item, chosenKind: "idea", chosenLabel: "Standalone idea")
             Task { await IdeaInsightEngine.shared.quickEnrich(atom: atom) }
         } catch {
             print("⚠️ [InboxVM] File as idea failed: \(error)")
@@ -442,6 +518,7 @@ final class InboxViewModel {
             try await inboxRepo.markActioned(uuid: item.uuid)
             let destination = target?.title.map { "\($0) → Questions" } ?? "Inquiry"
             presentUndoToast(for: item, verb: "Asked in \(destination)")
+            recordRoutingOutcome(for: item, chosenKind: "question", chosenLabel: destination)
         } catch {
             print("⚠️ [InboxVM] Ask in deep dive failed: \(error)")
             PersistenceHealth.note(.writeFailure, context: "InboxVM.askInDeepDive", detail: error.localizedDescription)
@@ -458,6 +535,7 @@ final class InboxViewModel {
         do {
             _ = try await executor.executeConnect(item: item, relatedAtomUUIDs: item.relatedAtomUUIDsValue)
             presentUndoToast(for: item, verb: "Connected")
+            recordRoutingOutcome(for: item, chosenKind: "connect", chosenLabel: "New connection")
         } catch {
             print("⚠️ [InboxVM] Connect failed: \(error)")
             PersistenceHealth.note(.writeFailure, context: "InboxVM.connectCapture", detail: error.localizedDescription)

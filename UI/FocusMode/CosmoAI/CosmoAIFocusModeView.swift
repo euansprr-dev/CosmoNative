@@ -97,7 +97,9 @@ struct CosmoAIFocusModeView: View {
         HStack(spacing: 12) {
             // Main sidebar toggle
             if let atomChrome {
-                AtomWindowChromeLeadingControls(context: atomChrome)
+                CosmoChromeIsland {
+                    AtomWindowChromeLeadingControls(context: atomChrome)
+                }
             } else if !isPaneContext {
                 Button {
                     withAnimation(ProMotionSprings.sidebar) {
@@ -181,7 +183,9 @@ struct CosmoAIFocusModeView: View {
             }
 
             if let atomChrome {
-                AtomWindowChromeTrailingControls(context: atomChrome)
+                CosmoChromeIsland {
+                    AtomWindowChromeTrailingControls(context: atomChrome)
+                }
             }
         }
         .padding(.horizontal, 20)

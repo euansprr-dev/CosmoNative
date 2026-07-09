@@ -1,6 +1,59 @@
 import AppKit
 import SwiftUI
 
+/// Reconciles a text-view content parse with the row's existing document
+/// block before it is spliced back into the document.
+///
+/// INVARIANT: the DOCUMENT owns a row's KIND — a content sync carries inline
+/// text only, never a kind change (kind changes ride structural ops:
+/// transform, split, markdown alias, slash command). A parse whose kind
+/// disagrees with the document is a stale re-emission racing one of those
+/// ops, and trusting it in EITHER direction corrupts the row: an empty
+/// heading's first character parses as a paragraph and used to silently
+/// revert the heading; worse, a just-deleted bullet's stale "• " snapshot
+/// parsed as a bullet "upgrade" and resurrected the list kind over the fresh
+/// paragraph — after which the old never-downgrade rule re-imposed the wrong
+/// kind on every subsequent keystroke, leaving the row permanently desynced
+/// (document: bullet, view: plain) and silently breaking every later
+/// transform on it (slash-menu headings appeared to do nothing).
+enum BlockRowSyncPolicy {
+    static func reconciled(parsed nextBlocks: [RichBlock], existingBlock: RichBlock?) -> [RichBlock] {
+        var result = nextBlocks
+        guard let existingBlock,
+              let first = result.first,
+              first.kind != .element,
+              existingBlock.kind != .element else {
+            return result
+        }
+        if first.kind == existingBlock.kind {
+            result[0].id = existingBlock.id
+            restoreRowOnlyFields(&result[0], from: existingBlock)
+            return result
+        }
+        result[0].id = existingBlock.id
+        result[0].kind = existingBlock.kind
+        result[0].heading = existingBlock.heading
+        result[0].checked = existingBlock.kind == .checklist
+            ? (result[0].checked ?? existingBlock.checked ?? false)
+            : nil
+        restoreRowOnlyFields(&result[0], from: existingBlock)
+        return result
+    }
+
+    /// Fields the row's text serializer can't see — callout chrome, toggle
+    /// state, and toggle children live only on the document block, so every
+    /// re-emission from the text view must carry them forward or a keystroke
+    /// silently deletes them.
+    static func restoreRowOnlyFields(_ block: inout RichBlock, from existingBlock: RichBlock) {
+        block.callout = existingBlock.callout
+        block.toggleCollapsed = existingBlock.toggleCollapsed
+        block.rawKind = existingBlock.rawKind
+        if !existingBlock.children.isEmpty, block.children.isEmpty {
+            block.children = existingBlock.children
+        }
+    }
+}
+
 struct BlockTextEditorRow: View {
     @Environment(\.undoManager) private var undoManager
 
@@ -155,47 +208,7 @@ struct BlockTextEditorRow: View {
     }
 
     private func preserveStableIDs(in nextBlocks: [RichBlock], existingBlock: RichBlock?) -> [RichBlock] {
-        var result = nextBlocks
-        guard let existingBlock,
-              let first = result.first,
-              first.kind != .element,
-              existingBlock.kind != .element else {
-            return result
-        }
-        if first.kind == existingBlock.kind {
-            result[0].id = existingBlock.id
-            restoreRowOnlyFields(&result[0], from: existingBlock)
-            return result
-        }
-        // The row owns its block's KIND — a content sync may upgrade a plain
-        // paragraph (typing "# "/"• " converts via the parser), but it must
-        // never DOWNGRADE a styled block back to a paragraph: an empty
-        // heading has no attributed run for typing to inherit, so the first
-        // character parses as a paragraph and used to silently revert the
-        // heading (and swap the block's identity out from under the row).
-        if existingBlock.kind != .paragraph {
-            result[0].id = existingBlock.id
-            result[0].kind = existingBlock.kind
-            result[0].heading = existingBlock.heading
-            result[0].checked = existingBlock.kind == .checklist
-                ? (result[0].checked ?? existingBlock.checked ?? false)
-                : nil
-            restoreRowOnlyFields(&result[0], from: existingBlock)
-        }
-        return result
-    }
-
-    /// Fields the row's text serializer can't see — callout chrome, toggle
-    /// state, and toggle children live only on the document block, so every
-    /// re-emission from the text view must carry them forward or a keystroke
-    /// silently deletes them.
-    private func restoreRowOnlyFields(_ block: inout RichBlock, from existingBlock: RichBlock) {
-        block.callout = existingBlock.callout
-        block.toggleCollapsed = existingBlock.toggleCollapsed
-        block.rawKind = existingBlock.rawKind
-        if !existingBlock.children.isEmpty, block.children.isEmpty {
-            block.children = existingBlock.children
-        }
+        BlockRowSyncPolicy.reconciled(parsed: nextBlocks, existingBlock: existingBlock)
     }
 
     private func handleBoundaryCommand(_ command: EditorBoundaryCommand) -> Bool {
@@ -453,7 +466,7 @@ struct BlockTextEditorRow: View {
             parsed[0].kind = block.kind
             parsed[0].checked = block.checked
             parsed[0].heading = block.heading
-            restoreRowOnlyFields(&parsed[0], from: block)
+            BlockRowSyncPolicy.restoreRowOnlyFields(&parsed[0], from: block)
         }
         guard let replaced = try? BlockOperations.replaceBlocks(
             in: document,

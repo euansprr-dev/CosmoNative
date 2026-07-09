@@ -262,9 +262,11 @@ struct CarouselSlideView: View {
     var body: some View {
         ZStack {
             if item.mediaType == .video {
-                // Video slide — native macOS controls
+                // Video slide — native macOS controls.
+                // AVPlayerView, not SwiftUI VideoPlayer — the latter aborts the
+                // app on first metadata instantiation (see CosmoVideoPlayerView).
                 if let player = player {
-                    VideoPlayer(player: player)
+                    CosmoVideoPlayerView(player: player)
                 } else {
                     // Loading video
                     Rectangle()

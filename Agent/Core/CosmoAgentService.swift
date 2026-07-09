@@ -172,7 +172,7 @@ class CosmoAgentService: ObservableObject {
     nonisolated static let recentToolResultsToKeepUncompressed = 8
 
     nonisolated static func defaultModelTier(for intent: AgentIntent) -> AgentModelTier {
-        .geminiFlashLatest
+        .autoDefault
     }
 
     /// Returns the max tool iterations for a given intent.
@@ -572,13 +572,20 @@ class CosmoAgentService: ObservableObject {
         var llmMessages: [AgentMessage] = []
 
         // Add conversation history with token-aware windowing (WP3)
-        // For lightweight intents (capture/correct), use a smaller window and aggressively
-        // truncate tool results to prevent heavy writing context from overwhelming Haiku.
+        // Inline-assistant conversations get the run-aware window: the last two
+        // runs verbatim, older runs digested — continuity without re-bloating
+        // every call. For other lightweight intents (capture/correct/meta) keep
+        // the tight window that protects Haiku from heavy writing context.
         let lightweightIntents: Set<AgentIntent> = [.capture, .correct, .meta]
         let rawWindow: [AgentMessage]
-        if lightweightIntents.contains(intent) || lightweightContext {
-            // Inline edits are largely independent — keep the history window tight so the
-            // accumulating per-surface conversation doesn't re-bloat every call.
+        if conversation.id.hasPrefix(CosmoInlineAssistantSessionScope.conversationIDPrefix) {
+            rawWindow = Self.buildInlineHistoryWindow(
+                conversation.messages,
+                modelTier: modelTier,
+                reservedOutputTokens: modelTier.maxTokens,
+                reservedSystemTokens: systemPrompt.estimatedTokenCount
+            )
+        } else if lightweightIntents.contains(intent) || lightweightContext {
             rawWindow = buildLightweightWindow(conversation.messages)
         } else {
             rawWindow = Self.buildModelAwareHistoryWindow(
@@ -899,7 +906,7 @@ class CosmoAgentService: ObservableObject {
                 // both are delivered via executor callbacks. Skip the extra text-only turn
                 // the loop would otherwise spend (~10s on a large profile context) just to
                 // write a closing sentence the inline UI never shows.
-                if conversation.id.hasPrefix("cosmo-inline-assistant"),
+                if conversation.id.hasPrefix(CosmoInlineAssistantSessionScope.conversationIDPrefix),
                    response.toolCalls.contains(where: {
                        $0.name == "propose_workspace_edit" || $0.name == "answer_in_assistant_pane"
                    }) {
@@ -908,7 +915,12 @@ class CosmoAgentService: ObservableObject {
                     // or the empty-response fallback below rewrites a successful
                     // run into "I ran out of processing steps" (which the pane
                     // then shows the user, and the conversation history keeps).
-                    finalResponse = trailing.isEmpty ? "Delivered to the workspace for review." : trailing
+                    // The receipt carries the deliverable's substance (title,
+                    // summary, answer digest) so follow-up turns whose window
+                    // truncates the tool arguments still see what was done.
+                    finalResponse = trailing.isEmpty
+                        ? Self.inlineDeliveryReceipt(for: response.toolCalls)
+                        : trailing
                     break
                 }
 
@@ -1819,6 +1831,39 @@ class CosmoAgentService: ObservableObject {
 
     /// One-line summary of tools that already ran when a loop exits abnormally,
     /// so persisted mutations are never invisible half-done work.
+    /// The history record for an inline run that delivered via tool callbacks:
+    /// what was staged/answered, in one or two lines. This is what a future
+    /// turn's window sees when the tool arguments themselves get compacted.
+    nonisolated static func inlineDeliveryReceipt(for toolCalls: [AgentToolCall]) -> String {
+        var parts: [String] = []
+        for call in toolCalls {
+            let args = call.arguments
+            switch call.name {
+            case "propose_workspace_edit":
+                let title = (args["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "workspace edit"
+                let operationCount = (args["operations"] as? [[String: Any]])?.count ?? 0
+                var line = "Staged \"\(title)\""
+                if operationCount > 0 {
+                    line += " (\(operationCount) operation\(operationCount == 1 ? "" : "s"))"
+                }
+                if let summary = args["summary"] as? String, !summary.isEmpty {
+                    line += ": \(String(summary.prefix(200)))"
+                }
+                line += " — awaiting user review."
+                parts.append(line)
+            case "answer_in_assistant_pane":
+                if let answer = args["answer"] as? String, !answer.isEmpty {
+                    parts.append("Answered: \(String(answer.prefix(280)))")
+                } else {
+                    parts.append("Answered in the assistant pane.")
+                }
+            default:
+                break
+            }
+        }
+        return parts.isEmpty ? "Delivered to the workspace for review." : parts.joined(separator: "\n")
+    }
+
     static func partialWorkSummary(_ executedToolLabels: [String]) -> String {
         guard !executedToolLabels.isEmpty else { return "" }
         let shown = executedToolLabels.prefix(8).joined(separator: ", ")
@@ -2149,7 +2194,100 @@ class CosmoAgentService: ObservableObject {
     }
 
     nonisolated private static func estimatedTokens(_ messages: [AgentMessage]) -> Int {
-        messages.reduce(0) { $0 + max(1, $1.content.count / 4) }
+        messages.reduce(0) { $0 + max(1, $1.estimatedPromptCharacters / 4) }
+    }
+
+    // MARK: - Inline Assistant History Window
+
+    /// History window for inline-assistant conversations: the last two complete
+    /// runs stay verbatim (a run starts at a user message), older runs collapse
+    /// to compact assistant-text digests — the session ledger in the volatile
+    /// layer carries the full narrative. The result is then bounded by the
+    /// model-aware token window like any other history.
+    ///
+    /// This replaces the old 4-raw-message chop, which routinely dropped the
+    /// PREVIOUS user ask (one agent turn emits 3+ messages), making follow-ups
+    /// read as brand-new requests.
+    nonisolated static func buildInlineHistoryWindow(
+        _ messages: [AgentMessage],
+        modelTier: AgentModelTier,
+        reservedOutputTokens: Int,
+        reservedSystemTokens: Int
+    ) -> [AgentMessage] {
+        guard !messages.isEmpty else { return messages }
+
+        let userIndices = messages.indices.filter { messages[$0].role == .user }
+        let verbatimStart: Int
+        if userIndices.count >= 2 {
+            verbatimStart = userIndices[userIndices.count - 2]
+        } else {
+            verbatimStart = userIndices.first ?? messages.startIndex
+        }
+
+        var window: [AgentMessage] = []
+        for index in messages.indices {
+            let message = messages[index]
+            if index >= verbatimStart {
+                window.append(message)
+                continue
+            }
+            switch message.role {
+            case .user:
+                // Asks are small and anchor the narrative — keep them.
+                window.append(message)
+            case .assistant:
+                if let digest = digestedToolCallText(message) {
+                    window.append(AgentMessage(role: .assistant, content: digest))
+                } else if !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    window.append(message)
+                }
+            case .tool, .system:
+                // Dropped: the assistant digest above carries the outcome, and
+                // orphaned tool results would be invalid for the API anyway.
+                break
+            }
+        }
+
+        return buildModelAwareHistoryWindow(
+            window,
+            modelTier: modelTier,
+            reservedOutputTokens: reservedOutputTokens,
+            reservedSystemTokens: reservedSystemTokens
+        )
+    }
+
+    /// A compact text stand-in for an older assistant tool-call message:
+    /// keeps what was done and delivered without the full argument payload.
+    nonisolated private static func digestedToolCallText(_ message: AgentMessage) -> String? {
+        guard let toolCalls = message.toolCalls, !toolCalls.isEmpty else { return nil }
+
+        var parts: [String] = []
+        let trailing = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trailing.isEmpty {
+            parts.append(trailing)
+        }
+
+        for call in toolCalls {
+            let args = call.arguments
+            var line = "[Earlier turn: \(call.name)"
+            if let title = args["title"] as? String, !title.isEmpty {
+                line += " — \"\(title)\""
+            }
+            if let operations = args["operations"] as? [[String: Any]], !operations.isEmpty {
+                line += " (\(operations.count) operation\(operations.count == 1 ? "" : "s"))"
+            }
+            if let summary = args["summary"] as? String, !summary.isEmpty {
+                line += ": \(String(summary.prefix(180)))"
+            } else if let answer = args["answer"] as? String, !answer.isEmpty {
+                line += ": \(String(answer.prefix(220)))"
+            } else if let query = args["query"] as? String, !query.isEmpty {
+                line += " for \"\(String(query.prefix(80)))\""
+            }
+            line += "]"
+            parts.append(line)
+        }
+
+        return parts.joined(separator: "\n")
     }
 
     nonisolated static func pruneShadowVisibleMessages(_ conversation: AgentConversation) -> AgentConversation {

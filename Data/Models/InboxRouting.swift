@@ -9,17 +9,85 @@ enum InboxRouteKind: String, Codable, CaseIterable, Sendable {
     case createThinkspaceAndPlace
     case createStandaloneAtom
 
+    // Atlas moves (July 2026) — knowledge-graph destinations beyond folders.
+    // A capture can advance an open inquiry question, become a new research
+    // branch, mature a concept page, or land as an idea for a client.
+    case advanceQuestion
+    case spawnQuestion
+    case feedConnection
+    case attachClient
+    case germinateConnection
+    case germinateDeepDive
+
     var legacyClassification: InboxClassification {
         switch self {
         case .mergeAtom:
             return .merge
         case .placeInExistingCluster, .createClusterAndPlace, .placeInThinkspace, .createThinkspaceAndPlace:
             return .place
+        case .advanceQuestion, .spawnQuestion, .feedConnection, .attachClient,
+             .germinateConnection, .germinateDeepDive:
+            // Actionable destination suggestions — the pill renders like a place.
+            return .place
         case .createStandaloneAtom:
             // v2 only emits a standalone option when the router abstained —
             // the item is unsorted, the option is just the manual-filing default.
             return .unsorted
         }
+    }
+}
+
+/// Typed payload for Atlas moves — destinations in the knowledge graph that
+/// the thinkspace/cluster fields can't describe. Optional on
+/// `InboxRecommendation` so bundles persisted before July 2026 still decode,
+/// and every field is optional so future additions stay decode-tolerant.
+struct InboxAtlasMove: Codable, Equatable, Sendable {
+    // Inquiry graph (advanceQuestion / spawnQuestion)
+    var deepDiveUUID: String?
+    var deepDiveName: String?
+    var questionUUID: String?          // Existing open question to advance
+    var questionTitle: String?
+    var newQuestionTitle: String?      // Cleaned phrasing for a spawned branch
+    var parentQuestionUUID: String?    // Nesting contract: decomposition parent
+
+    // Concept pages (feedConnection)
+    var connectionUUID: String?
+    var connectionName: String?
+    var connectionSection: String?     // ConnectionSectionType rawValue
+
+    // Clients (attachClient)
+    var clientUUID: String?
+    var clientName: String?
+
+    // Germination (germinateConnection / germinateDeepDive)
+    var germinateTitle: String?
+
+    init(
+        deepDiveUUID: String? = nil,
+        deepDiveName: String? = nil,
+        questionUUID: String? = nil,
+        questionTitle: String? = nil,
+        newQuestionTitle: String? = nil,
+        parentQuestionUUID: String? = nil,
+        connectionUUID: String? = nil,
+        connectionName: String? = nil,
+        connectionSection: String? = nil,
+        clientUUID: String? = nil,
+        clientName: String? = nil,
+        germinateTitle: String? = nil
+    ) {
+        self.deepDiveUUID = deepDiveUUID
+        self.deepDiveName = deepDiveName
+        self.questionUUID = questionUUID
+        self.questionTitle = questionTitle
+        self.newQuestionTitle = newQuestionTitle
+        self.parentQuestionUUID = parentQuestionUUID
+        self.connectionUUID = connectionUUID
+        self.connectionName = connectionName
+        self.connectionSection = connectionSection
+        self.clientUUID = clientUUID
+        self.clientName = clientName
+        self.germinateTitle = germinateTitle
     }
 }
 
@@ -84,6 +152,9 @@ struct InboxRecommendation: Codable, Equatable, Identifiable, Sendable {
     let clusterId: String?
     let clusterName: String?
     let placementPlan: InboxPlacementPlan?
+    /// Atlas destination payload (inquiry question, connection section, client…).
+    /// Optional for decode compatibility with pre-July-2026 bundles.
+    let atlasMove: InboxAtlasMove?
 
     init(
         id: String = UUID().uuidString,
@@ -99,7 +170,8 @@ struct InboxRecommendation: Codable, Equatable, Identifiable, Sendable {
         thinkspaceName: String? = nil,
         clusterId: String? = nil,
         clusterName: String? = nil,
-        placementPlan: InboxPlacementPlan? = nil
+        placementPlan: InboxPlacementPlan? = nil,
+        atlasMove: InboxAtlasMove? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -115,6 +187,7 @@ struct InboxRecommendation: Codable, Equatable, Identifiable, Sendable {
         self.clusterId = clusterId
         self.clusterName = clusterName
         self.placementPlan = placementPlan
+        self.atlasMove = atlasMove
     }
 }
 
@@ -213,7 +286,8 @@ extension InboxRecommendation {
             thinkspaceName: thinkspaceName,
             clusterId: clusterId,
             clusterName: clusterName,
-            placementPlan: adjustedPlan
+            placementPlan: adjustedPlan,
+            atlasMove: atlasMove
         )
     }
 }

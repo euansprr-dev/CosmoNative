@@ -730,6 +730,9 @@ final class SwipeFileEngine: ObservableObject {
 
     /// Delete a swipe file and clean up all references app-wide
     func deleteSwipe(atomUUID: String) async throws {
+        // 0. Leave the pattern library — patterns below 2 members dissolve.
+        SwipePatternStore.shared.removeSwipe(atomUUID)
+
         // 1. Look up the atom's row ID before soft-deleting (needed for vector cleanup)
         let entityId: Int64? = try await database.asyncRead { db in
             try Int64.fetchOne(db, sql: "SELECT id FROM atoms WHERE uuid = ?", arguments: [atomUUID])

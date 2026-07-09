@@ -1569,6 +1569,190 @@ final class CommandKSearchPipelineTests: XCTestCase {
         XCTAssertEqual(output.flatResults.first?.atomUUID, "swipe-exact")
     }
 
+    // MARK: - Result order lock (Spotlight contract)
+
+    private func stableOrderRow(
+        _ id: String,
+        source: UnifiedSearchSource = .atoms,
+        snippet: String? = nil,
+        relevance: Double = 0.5,
+        tier: LexicalTier = .titleMatch
+    ) -> UnifiedSearchResult {
+        UnifiedSearchResult(
+            id: id,
+            source: source,
+            resultKind: .atom,
+            title: id,
+            subtitle: nil,
+            snippet: snippet,
+            icon: "lightbulb.fill",
+            accentColor: DS.entityIdea,
+            relevance: relevance,
+            lexicalTier: tier,
+            atomUUID: id,
+            atomType: .idea,
+            thinkspaceId: nil,
+            projectUUID: nil,
+            projectName: nil,
+            thinkspaceNames: [],
+            readwiseBookId: nil
+        )
+    }
+
+    func testStabilizeOrderKeepsVisibleRowsPinnedAndAppendsNewcomers() {
+        let visible: [(source: UnifiedSearchSource, results: [UnifiedSearchResult])] = [
+            (.atoms, [stableOrderRow("atom-a"), stableOrderRow("atom-b")])
+        ]
+        // The late wave ranks a newcomer first and inverts a/b — none of
+        // that may move rows the user is already reading.
+        let incoming: [(source: UnifiedSearchSource, results: [UnifiedSearchResult])] = [
+            (.atoms, [
+                stableOrderRow("atom-new", relevance: 1.0, tier: .exactTitle),
+                stableOrderRow("atom-b", relevance: 0.9),
+                stableOrderRow("atom-a", relevance: 0.4)
+            ])
+        ]
+
+        let stabilized = CommandKUnifiedSearchComposer.stabilizeOrder(visible: visible, incoming: incoming)
+
+        XCTAssertEqual(
+            stabilized.first?.results.map(\.id),
+            ["atom-a", "atom-b", "atom-new"],
+            "visible rows keep their positions; newcomers append below"
+        )
+    }
+
+    func testStabilizeOrderKeepsSectionOrderAndAppendsNewSections() {
+        let visible: [(source: UnifiedSearchSource, results: [UnifiedSearchResult])] = [
+            (.atoms, [stableOrderRow("atom-a")]),
+            (.swipes, [stableOrderRow("swipe-a", source: .swipes)])
+        ]
+        let incoming: [(source: UnifiedSearchSource, results: [UnifiedSearchResult])] = [
+            (.swipes, [stableOrderRow("swipe-a", source: .swipes, relevance: 1.0, tier: .exactTitle)]),
+            (.atoms, [stableOrderRow("atom-a")]),
+            (.ideas, [stableOrderRow("idea-a", source: .ideas)])
+        ]
+
+        let stabilized = CommandKUnifiedSearchComposer.stabilizeOrder(visible: visible, incoming: incoming)
+
+        XCTAssertEqual(
+            stabilized.map(\.source),
+            [.atoms, .swipes, .ideas],
+            "visible sections keep their order; new sections append at the end"
+        )
+    }
+
+    func testStabilizeOrderRefreshesContentAndDropsVanishedRows() {
+        let visible: [(source: UnifiedSearchSource, results: [UnifiedSearchResult])] = [
+            (.atoms, [
+                stableOrderRow("atom-a", snippet: "stale snippet"),
+                stableOrderRow("atom-gone")
+            ])
+        ]
+        let incoming: [(source: UnifiedSearchSource, results: [UnifiedSearchResult])] = [
+            (.atoms, [stableOrderRow("atom-a", snippet: "enriched snippet", relevance: 0.8)])
+        ]
+
+        let stabilized = CommandKUnifiedSearchComposer.stabilizeOrder(visible: visible, incoming: incoming)
+
+        let rows = stabilized.first?.results ?? []
+        XCTAssertEqual(rows.map(\.id), ["atom-a"], "rows absent from the fresh wave drop out")
+        XCTAssertEqual(rows.first?.snippet, "enriched snippet", "position is pinned but content refreshes")
+        XCTAssertEqual(rows.first?.relevance, 0.8)
+    }
+
+    @MainActor
+    func testLateWaveCannotReorderSettledResultsOrMoveSelection() async {
+        let viewModel = CommandKViewModel(
+            userCommandStore: CommandKUserCommandStore(
+                fileURL: FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString)
+                    .appendingPathExtension("json"),
+                seedBuiltIns: false
+            )
+        )
+        defer { viewModel.setSurfaceActive(false) }
+
+        // First wave lands while the settle window is open: free ranking.
+        viewModel.testingApplyUnfilteredResults([
+            RankedResult(
+                atomUUID: "settled-one",
+                atomType: .idea,
+                title: "Settled One",
+                snippet: "first",
+                semanticWeight: 0.9,
+                lexicalTier: .titleMatch,
+                updatedAt: "2026-06-10T00:00:00Z"
+            ),
+            RankedResult(
+                atomUUID: "settled-two",
+                atomType: .idea,
+                title: "Settled Two",
+                snippet: "second",
+                semanticWeight: 0.8,
+                lexicalTier: .titleMatch,
+                updatedAt: "2026-06-10T00:00:00Z"
+            )
+        ])
+        let firstRequest = await viewModel.testingNextSearchRequestID()
+        await viewModel.testingUpdateUnifiedSearch(query: "settled", searchRequestID: firstRequest)
+        XCTAssertEqual(
+            viewModel.unifiedFlatResults.map(\.atomUUID),
+            ["settled-one", "settled-two"]
+        )
+
+        // The user has been reading the list and arrowed to the second row.
+        viewModel.selectedNodeId = "settled-two"
+        viewModel.selectedResultIndex = viewModel.searchSelectionIndex(for: "settled-two")
+        viewModel.testingCloseResultOrderSettleWindow()
+
+        // A late wave (AI-style boost) inverts the ranking and adds a
+        // newcomer that would rank first.
+        viewModel.testingApplyUnfilteredResults([
+            RankedResult(
+                atomUUID: "settled-newcomer",
+                atomType: .idea,
+                title: "Settled Newcomer",
+                snippet: "new exact hit",
+                semanticWeight: 1.0,
+                lexicalTier: .exactTitle,
+                updatedAt: "2026-06-10T00:00:00Z"
+            ),
+            RankedResult(
+                atomUUID: "settled-two",
+                atomType: .idea,
+                title: "Settled Two",
+                snippet: "second",
+                semanticWeight: 0.95,
+                lexicalTier: .titleMatch,
+                updatedAt: "2026-06-10T00:00:00Z"
+            ),
+            RankedResult(
+                atomUUID: "settled-one",
+                atomType: .idea,
+                title: "Settled One",
+                snippet: "first",
+                semanticWeight: 0.4,
+                lexicalTier: .titleMatch,
+                updatedAt: "2026-06-10T00:00:00Z"
+            )
+        ])
+        let lateRequest = await viewModel.testingNextSearchRequestID()
+        await viewModel.testingUpdateUnifiedSearchAsLateWave(query: "settled", searchRequestID: lateRequest)
+
+        // Order is frozen: the rows the user was reading stay put and the
+        // newcomer appends below; the highlighted row never moves.
+        XCTAssertEqual(
+            viewModel.unifiedFlatResults.map(\.atomUUID),
+            ["settled-one", "settled-two", "settled-newcomer"]
+        )
+        XCTAssertEqual(viewModel.selectedNodeId, "settled-two")
+        XCTAssertEqual(
+            viewModel.selectedResultIndex,
+            viewModel.searchSelectionIndex(for: "settled-two")
+        )
+    }
+
     func testHybridFTS5QueryRequiresAllTermsAndQuotesTokens() {
         XCTAssertEqual(
             HybridSearchEngine.prepareFTS5Query("seller financing"),
@@ -2612,8 +2796,11 @@ final class CommandKSearchPipelineTests: XCTestCase {
     }
 
     func testSwipeStudyCreatorSearchDebouncesAndCachesCreatorFetches() throws {
+        // Creator search moved from SwipeStudyFocusModeView into the details
+        // section during the Swipe Study V2 rebuild — the debounce/caching
+        // contract rides with it.
         let source = try String(
-            contentsOf: repositoryRoot.appendingPathComponent("UI/FocusMode/SwipeStudy/SwipeStudyFocusModeView.swift"),
+            contentsOf: repositoryRoot.appendingPathComponent("UI/FocusMode/SwipeStudy/SwipeStudyDetailsSection.swift"),
             encoding: .utf8
         )
 

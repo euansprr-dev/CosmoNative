@@ -94,6 +94,7 @@ final class FlashLiteRouter {
     - Numbered lists of ideas/tasks → multi_create (one item per list entry)
     - "Some ideas for [client]:" followed by a list → multi_create with clientName
     - Extract client names from context ("for josh" → clientName: "josh")
+    - THE NICHE TEST for clientName: when the user does NOT name a client, attach one ONLY if the message's subject matter clearly sits inside that client's stated niche (see CLIENTS). If the subject fits no listed niche, or fits more than one, clientName MUST be null. Familiarity is never evidence — do not default to a frequently used client.
     - Extract format/platform mentions into metadata
     - For idea+URL combos, use capture_swipe_with_idea. When the user says "called", "named", or "titled" followed by a phrase, that phrase is the TITLE parameter — extract it verbatim into "title", not "ideaContext"
     - Dates: "tomorrow" → next day ISO, "today" → current date
@@ -150,7 +151,7 @@ final class FlashLiteRouter {
         do {
             let response = try await ResearchService.shared.analyze(
                 prompt: text,
-                systemPrompt: systemPrompt,
+                systemPrompt: systemPrompt + (await clientRosterSection()),
                 model: Self.modelId,
                 maxTokens: 1024,
                 temperature: 0.0
@@ -181,6 +182,31 @@ final class FlashLiteRouter {
             print("[FlashLiteRouter] Classification failed: \(error.localizedDescription)")
             return nil
         }
+    }
+
+    // MARK: - Client roster (niche-aware attribution)
+
+    /// The client roster with niche lines, appended to the system prompt so
+    /// the model can apply the niche test instead of guessing from phrasing.
+    /// Without this the router only ever matched literal name mentions —
+    /// which is how every unlabeled idea drifted to the most-mentioned client.
+    private func clientRosterSection() async -> String {
+        let clients = ((try? await AtomRepository.shared.fetchAll(type: .clientProfile)) ?? [])
+            .filter { !$0.isDeleted }
+        var lines: [String] = []
+        for client in clients {
+            guard let name = client.title, !name.isEmpty else { continue }
+            let metadata = client.clientMetadata
+            if metadata?.isActive == false { continue }
+            var line = "- \(name)"
+            if let niche = metadata?.niche, !niche.isEmpty {
+                line += " — Niche: \(String(niche.prefix(120)))"
+            }
+            lines.append(line)
+        }
+        guard !lines.isEmpty else { return "" }
+        return "\n\nCLIENTS (the full roster for the niche test — clientName must be one of these or null):\n"
+            + lines.joined(separator: "\n")
     }
 
     // MARK: - Tool Execution

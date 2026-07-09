@@ -78,6 +78,16 @@ enum CosmoInlineDiffLocator {
         range(of: needle, in: haystack) != nil
     }
 
+    /// Whether `needle` locates exactly once — a second locatable occurrence
+    /// after the first match means a sequential apply's "first match" could hit
+    /// the wrong instance. Used by the edit transaction to expand anchors until
+    /// they are unambiguous.
+    static func isUnique(_ needle: String, in haystack: String) -> Bool {
+        guard let first = range(of: needle, in: haystack) else { return false }
+        let remainder = String(haystack[first.upperBound...])
+        return range(of: needle, in: remainder) == nil
+    }
+
     private static func normalizedRange(of needle: String, in haystack: String) -> Range<String.Index>? {
         // Build a whitespace-collapsed projection of the haystack while remembering,
         // for every projected character, the real source indices it came from.
@@ -308,9 +318,19 @@ enum CosmoInlineDiffLocator {
     }
 }
 
+enum CosmoInlineResolvedPlacementKind: Equatable, Sendable {
+    /// originalText located precisely in the source.
+    case located
+    /// Landed via the SLIDE-header fallback (originalText did not locate).
+    case slideHeader
+    /// Nothing located — never-block trailing append at document end.
+    case appendFallback
+}
+
 struct CosmoInlineResolvedTextEdit {
     let range: Range<String.Index>
     let replacementText: String
+    var placementKind: CosmoInlineResolvedPlacementKind = .located
 }
 
 enum CosmoInlineTextEditResolver {
@@ -387,6 +407,11 @@ enum CosmoInlineTextEditResolver {
         return appendPlacement(proposed, in: sourceText)
     }
 
+    /// The destination-slide fallback exists for CONTENT edits whose anchor is
+    /// stale but whose explicit slide target is clear ("put this under slide
+    /// 5"). A pure header RENAME (bare "SLIDE N" → bare "SLIDE M") is the edit
+    /// itself — diverting it used to rewrite the DESTINATION slide's header
+    /// and corrupt every renumber cascade, so renames always locate precisely.
     private static func shouldPreferSlideHeaderFallback(
         for operation: CosmoAssistantProposalOperation,
         proposed: String
@@ -395,7 +420,20 @@ enum CosmoInlineTextEditResolver {
               let originalSlide = leadingSlideNumber(in: operation.originalText ?? "") else {
             return false
         }
-        return explicitTarget != originalSlide
+        guard explicitTarget != originalSlide else { return false }
+        if isBareSlideHeaderLine(operation.originalText), isBareSlideHeaderLine(operation.proposedText) {
+            return false
+        }
+        return true
+    }
+
+    private static func isBareSlideHeaderLine(_ text: String?) -> Bool {
+        guard let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty else { return false }
+        return trimmed.range(
+            of: #"^(?:-{2,}\s*)?SLIDE\s+\d+$"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil
     }
 
     private static func slideHeaderFallback(
@@ -409,12 +447,17 @@ enum CosmoInlineTextEditResolver {
         }
 
         if leadingSlideNumber(in: proposed) == slideNumber {
-            return CosmoInlineResolvedTextEdit(range: headerRange, replacementText: proposed)
+            return CosmoInlineResolvedTextEdit(
+                range: headerRange,
+                replacementText: proposed,
+                placementKind: .slideHeader
+            )
         }
 
         return CosmoInlineResolvedTextEdit(
             range: headerRange.upperBound..<headerRange.upperBound,
-            replacementText: insertionText(proposed)
+            replacementText: insertionText(proposed),
+            placementKind: .slideHeader
         )
     }
 
@@ -442,7 +485,8 @@ enum CosmoInlineTextEditResolver {
             let separator = replacement.hasPrefix("\n") ? "" : "\n"
             return CosmoInlineResolvedTextEdit(
                 range: edit.range,
-                replacementText: rangeHeader.line + separator + replacement
+                replacementText: rangeHeader.line + separator + replacement,
+                placementKind: edit.placementKind
             )
         }
 
@@ -452,7 +496,8 @@ enum CosmoInlineTextEditResolver {
            governingSlideNumber(before: edit.range.lowerBound, in: sourceText) == replacementHeader.number {
             return CosmoInlineResolvedTextEdit(
                 range: edit.range,
-                replacementText: strippedLeadingSlideHeader(from: replacement)
+                replacementText: strippedLeadingSlideHeader(from: replacement),
+                placementKind: edit.placementKind
             )
         }
 
@@ -516,7 +561,8 @@ enum CosmoInlineTextEditResolver {
         let prefix = sourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : "\n\n"
         return CosmoInlineResolvedTextEdit(
             range: sourceText.endIndex..<sourceText.endIndex,
-            replacementText: prefix + proposed
+            replacementText: prefix + proposed,
+            placementKind: .appendFallback
         )
     }
 

@@ -161,7 +161,10 @@ struct CosmoInlineAssistantBar: View {
     // so hover doesn't instantly re-expand what the user just dismissed.
     // Cleared the moment the pointer leaves or the pill is clicked.
     @State private var isHoverSuppressed = false
+    @State private var contextMenuModel = CosmoInlineContextMenuModel()
+    @State private var skillMenuModel = CosmoInlineSkillMenuModel()
     private let skillRegistry = CosmoInlineSkillRegistry()
+    private let skillRecency = CosmoInlineSkillRecencyStore()
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
@@ -206,7 +209,15 @@ struct CosmoInlineAssistantBar: View {
                 removeKeyDownMonitor()
             }
             .sheet(isPresented: $isStudioPresented) {
-                CosmoAssistantStudioView { isStudioPresented = false }
+                CosmoAssistantStudioView(initialSkillDraft: store.pendingStudioSkillDraft) {
+                    isStudioPresented = false
+                    store.pendingStudioSkillDraft = nil
+                }
+            }
+            .onChange(of: store.pendingStudioSkillDraft) { _, draft in
+                // "Promote this run to a skill" — a run card set a prefilled
+                // draft; open the Studio straight into its editor.
+                if draft != nil { isStudioPresented = true }
             }
             .accessibilityElement(children: .contain)
     }
@@ -279,6 +290,11 @@ struct CosmoInlineAssistantBar: View {
         store.phase.symbolName
     }
 
+    /// Name of the armed skill, driving the "/Skill" token wash in the composer.
+    private var armedSkillName: String? {
+        store.selectedSkillID.flatMap { skillRegistry.skill(id: $0)?.name }
+    }
+
     private var phaseIconColor: Color {
         store.phase == .reviewing ? DS.green : DS.accent
     }
@@ -324,6 +340,13 @@ struct CosmoInlineAssistantBar: View {
                             store.acceptSkillSuggestion()
                         }
                         return true
+                    },
+                    tokenWashProvider: { text, selection in
+                        CosmoInlineComposerTokenWashPolicy.rendered(
+                            text: text,
+                            selection: selection,
+                            armedSkillName: armedSkillName
+                        )
                     }
                 )
                     .frame(maxWidth: .infinity)
@@ -459,22 +482,19 @@ struct CosmoInlineAssistantBar: View {
     private var contextMenuLayer: some View {
         if isContextMenuVisible && isExpanded {
             CosmoInlineAssistantContextMenu(
+                model: contextMenuModel,
                 searchText: contextSearchText,
                 selectedAtoms: store.selectedContextAtoms,
-                onSelect: { atom in
-                    selectContext(atom)
+                onCommit: { entry in
+                    commitContextEntry(entry)
                 },
-                onRemove: { atom in
-                    store.removeContext(atom)
-                },
-                onDismiss: {
-                    dismissContextMenu(trimMentionQuery: true)
+                onClear: {
+                    store.selectedContextAtoms.forEach { store.removeContext($0) }
                 }
             )
-            .frame(width: min(max(expandedWidth * 0.62, 360), 460))
             .background(contextMenuFrameReader)
             .offset(x: 16, y: -64)
-            .transition(.scale(scale: 0.96, anchor: .bottomLeading).combined(with: .opacity))
+            .transition(.opacity)
             .zIndex(10)
         }
     }
@@ -483,31 +503,16 @@ struct CosmoInlineAssistantBar: View {
     private var skillMenuLayer: some View {
         if isSkillMenuVisible && isExpanded {
             CosmoInlineAssistantSkillMenu(
+                model: skillMenuModel,
                 searchText: skillSearchText,
                 selectedSkillID: store.selectedSkillID,
-                registry: skillRegistry,
-                onSelect: { skill in
-                    selectSkill(skill)
-                },
-                onClearSession: {
-                    dismissSkillMenu(trimSlashQuery: true)
-                    Task { await store.clearActiveSession() }
-                },
-                onCreateSkill: {
-                    startSkillBuilder()
-                },
-                onOpenStudio: {
-                    dismissSkillMenu(trimSlashQuery: true)
-                    isStudioPresented = true
-                },
-                onDismiss: {
-                    dismissSkillMenu(trimSlashQuery: true)
+                onCommit: { entry in
+                    commitSkillEntry(entry)
                 }
             )
-            .frame(width: min(max(expandedWidth * 0.58, 340), 430))
             .background(contextMenuFrameReader)
             .offset(x: 16, y: -64)
-            .transition(.scale(scale: 0.96, anchor: .bottomLeading).combined(with: .opacity))
+            .transition(.opacity)
             .zIndex(11)
         }
     }
@@ -751,6 +756,35 @@ struct CosmoInlineAssistantBar: View {
         focusComposerSoon()
     }
 
+    private func commitContextEntry(_ entry: CosmoInlineContextMenuModel.Entry) {
+        switch entry {
+        case .attachCurrent(let atom):
+            selectContext(atom)
+        case .atom(let atom, let isSelected):
+            if isSelected {
+                store.removeContext(atom)
+            } else {
+                selectContext(atom)
+            }
+        }
+    }
+
+    private func commitSkillEntry(_ entry: CosmoInlineSkillMenuModel.Entry) {
+        switch entry {
+        case .skill(let skill):
+            skillRecency.recordUse(skill.id)
+            selectSkill(skill)
+        case .utility(.clearSession):
+            dismissSkillMenu(trimSlashQuery: true)
+            Task { await store.clearActiveSession() }
+        case .utility(.createSkill):
+            startSkillBuilder()
+        case .utility(.openStudio):
+            dismissSkillMenu(trimSlashQuery: true)
+            isStudioPresented = true
+        }
+    }
+
     private func selectSkill(_ skill: CosmoInlineSkillDefinition) {
         guard let activeSlash = CosmoInlineSlashSkillParser.activeCommand(
             in: store.composerText,
@@ -837,9 +871,61 @@ struct CosmoInlineAssistantBar: View {
     private func installKeyDownMonitorIfNeeded() {
         guard keyDownMonitor == nil else { return }
         keyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            guard event.keyCode == 53 else { return event }
-            return handleEscape() ? nil : event
+            if event.keyCode == 53 {
+                return handleEscape() ? nil : event
+            }
+            return handleMenuNavigationKey(event) ? nil : event
         }
+    }
+
+    /// Arrow/Return/Tab routing while an inline menu is open — the menus are
+    /// keyboard-first, and Return must select the highlighted row instead of
+    /// falling through to submit the half-typed composer text.
+    private func handleMenuNavigationKey(_ event: NSEvent) -> Bool {
+        guard event.modifierFlags.intersection([.command, .option, .control]).isEmpty else {
+            return false
+        }
+        let menuVisible = (isContextMenuVisible || isSkillMenuVisible) && isExpanded
+
+        switch CosmoAssistantMenuKeyRouter.action(keyCode: event.keyCode, isMenuVisible: menuVisible) {
+        case .moveUp:
+            moveActiveMenuHighlight(-1)
+            return true
+        case .moveDown:
+            moveActiveMenuHighlight(1)
+            return true
+        case .commit:
+            return commitActiveMenuHighlight()
+        case .passthrough:
+            return false
+        }
+    }
+
+    private func moveActiveMenuHighlight(_ delta: Int) {
+        CosmicHaptics.shared.play(.threshold)
+        if isContextMenuVisible {
+            contextMenuModel.moveHighlight(delta)
+        } else if isSkillMenuVisible {
+            skillMenuModel.moveHighlight(delta)
+        }
+    }
+
+    /// Returns false when the visible menu has nothing to commit (no matches)
+    /// so Return/Tab keep their ordinary composer meaning.
+    private func commitActiveMenuHighlight() -> Bool {
+        if isContextMenuVisible {
+            guard let entry = contextMenuModel.highlightedEntry else { return false }
+            CosmicHaptics.shared.play(.selection)
+            commitContextEntry(entry)
+            return true
+        }
+        if isSkillMenuVisible {
+            guard let entry = skillMenuModel.highlightedEntry else { return false }
+            CosmicHaptics.shared.play(.selection)
+            commitSkillEntry(entry)
+            return true
+        }
+        return false
     }
 
     private func removeKeyDownMonitor() {
@@ -916,315 +1002,6 @@ struct CosmoInlineAssistantBar: View {
         return CGPoint(x: location.x, y: contentView.bounds.height - location.y)
     }
 }
-
-private struct CosmoInlineAssistantSkillMenu: View {
-    let searchText: String
-    let selectedSkillID: String?
-    let registry: CosmoInlineSkillRegistry
-    let onSelect: (CosmoInlineSkillDefinition) -> Void
-    let onClearSession: () -> Void
-    let onCreateSkill: () -> Void
-    let onOpenStudio: () -> Void
-    let onDismiss: () -> Void
-
-    @State private var selectedRoute: CosmoInlineAssistantRoute?
-    @State private var hoveredID: String?
-
-    private var skills: [CosmoInlineSkillDefinition] {
-        registry
-            .matchingSlashCommands(query: searchText, limit: 10)
-            .filter { selectedRoute == nil || $0.route == selectedRoute }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-            Divider().overlay(DS.glassBorder)
-            filterStrip
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
-            queryRow
-                .padding(.horizontal, 14)
-                .padding(.bottom, 12)
-            resultsList
-        }
-        .background(DS.surfaceCard.opacity(0.98), in: .rect(cornerRadius: 22))
-        .overlay(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .stroke(DS.glassBorder, lineWidth: 1)
-        )
-        .shadow(color: Color.black.opacity(0.16), radius: 24, x: 0, y: 14)
-    }
-
-    private var header: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "slash.circle.fill")
-                .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(DS.accent)
-                .frame(width: 30, height: 30)
-                .background(DS.accentSoft, in: Circle())
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Skills")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(DS.text)
-                Text("Pick a mode for this inline request")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(DS.textSecondary)
-                    .lineLimit(1)
-            }
-
-            Spacer(minLength: 0)
-
-            Button(action: onDismiss) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .bold))
-                    .frame(width: 28, height: 28)
-                    .background(DS.glassInputFill, in: Circle())
-                    .foregroundStyle(DS.textSecondary)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Close skills menu")
-        }
-        .padding(14)
-    }
-
-    private var filterStrip: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                CosmoInlineContextFilterChip(
-                    title: "All",
-                    systemImage: "square.grid.2x2",
-                    isSelected: selectedRoute == nil,
-                    tint: DS.accent
-                ) {
-                    withAnimation(ProMotionSprings.snappy) {
-                        selectedRoute = nil
-                    }
-                }
-
-                CosmoInlineContextFilterChip(
-                    title: "Edits",
-                    systemImage: "pencil.and.scribble",
-                    isSelected: selectedRoute == .action,
-                    tint: .green
-                ) {
-                    withAnimation(ProMotionSprings.snappy) {
-                        selectedRoute = selectedRoute == .action ? nil : .action
-                    }
-                }
-
-                CosmoInlineContextFilterChip(
-                    title: "Answers",
-                    systemImage: "text.bubble",
-                    isSelected: selectedRoute == .answer,
-                    tint: .blue
-                ) {
-                    withAnimation(ProMotionSprings.snappy) {
-                        selectedRoute = selectedRoute == .answer ? nil : .answer
-                    }
-                }
-            }
-        }
-        .scrollIndicators(.never)
-    }
-
-    private var queryRow: some View {
-        HStack(spacing: 8) {
-            Text("/")
-                .font(.system(size: 14, weight: .bold))
-                .foregroundStyle(DS.accent)
-            Text(queryLabel)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(searchText.isEmpty ? DS.textMuted : DS.text)
-                .lineLimit(1)
-            Spacer(minLength: 0)
-            Text("\(skills.count)")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(DS.textMuted)
-        }
-        .padding(.horizontal, 11)
-        .frame(height: 36)
-        .background(DS.glassInputFill, in: .rect(cornerRadius: 18))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(searchText.isEmpty ? DS.glassBorder : DS.accent.opacity(0.34), lineWidth: 1)
-        )
-    }
-
-    private var resultsList: some View {
-        ScrollView {
-            LazyVStack(spacing: 8) {
-                ForEach(skills) { skill in
-                    skillRow(skill)
-                }
-
-                if skills.isEmpty {
-                    emptyState
-                }
-
-                Divider().overlay(DS.glassBorder)
-                    .padding(.vertical, 4)
-
-                utilityRow(
-                    id: "clear",
-                    icon: "trash",
-                    title: "/clear",
-                    subtitle: "Reset conversation and context for this surface",
-                    accent: .red,
-                    action: onClearSession
-                )
-
-                utilityRow(
-                    id: "create",
-                    icon: "plus.square.dashed",
-                    title: "Create Skill...",
-                    subtitle: "Start a skill-builder prompt",
-                    accent: DS.accent,
-                    action: onCreateSkill
-                )
-
-                utilityRow(
-                    id: "studio",
-                    icon: "slider.horizontal.3",
-                    title: "Assistant Studio...",
-                    subtitle: "Manage skills, personality, and metrics",
-                    accent: DS.accent,
-                    action: onOpenStudio
-                )
-            }
-            .padding(12)
-        }
-        .frame(maxHeight: 320)
-        .background(DS.glassInputFill.opacity(0.34))
-    }
-
-    private func skillRow(_ skill: CosmoInlineSkillDefinition) -> some View {
-        let hovered = hoveredID == skill.id
-        let selected = selectedSkillID == skill.id
-        let accent = skill.route == .action ? Color.green : Color.blue
-
-        return Button {
-            onSelect(skill)
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: skill.icon)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(accent)
-                    .frame(width: 32, height: 32)
-                    .background(accent.opacity(DS.palette.isDark ? 0.20 : 0.12), in: .rect(cornerRadius: 10))
-
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        Text(skill.name)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(DS.text)
-                            .lineLimit(1)
-                        Text(skill.displayedModelLabel)
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(DS.textMuted)
-                            .padding(.horizontal, 6)
-                            .frame(height: 17)
-                            .background(DS.glassInputFill, in: Capsule())
-                    }
-                    Text(skill.summary)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(DS.textSecondary)
-                        .lineLimit(1)
-                }
-
-                Spacer(minLength: 0)
-
-                Image(systemName: selected ? "checkmark.circle.fill" : "arrow.turn.down.right")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(selected ? DS.accent : (hovered ? accent : DS.textMuted))
-            }
-            .padding(.horizontal, 10)
-            .frame(height: 58)
-            .background(rowFill(selected: selected, hovered: hovered), in: .rect(cornerRadius: 14))
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(rowStroke(selected: selected, hovered: hovered, accent: accent), lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            hoveredID = hovering ? skill.id : nil
-        }
-    }
-
-    private func utilityRow(
-        id: String,
-        icon: String,
-        title: String,
-        subtitle: String,
-        accent: Color,
-        action: @escaping () -> Void
-    ) -> some View {
-        let hovered = hoveredID == id
-        return Button(action: action) {
-            HStack(spacing: 10) {
-                Image(systemName: icon)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(accent)
-                    .frame(width: 32, height: 32)
-                    .background(accent.opacity(DS.palette.isDark ? 0.18 : 0.10), in: .rect(cornerRadius: 10))
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(DS.text)
-                    Text(subtitle)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(DS.textSecondary)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 10)
-            .frame(height: 54)
-            .background(hovered ? DS.glassInputFillFocused : DS.surfaceCard.opacity(0.70), in: .rect(cornerRadius: 14))
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(hovered ? accent.opacity(0.22) : DS.glassBorder, lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            hoveredID = hovering ? id : nil
-        }
-    }
-
-    private var emptyState: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "slash.circle")
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(DS.textMuted)
-            Text("No matching skills")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(DS.text)
-            Text("Create one or try a shorter command.")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(DS.textSecondary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 24)
-    }
-
-    private var queryLabel: String {
-        searchText.isEmpty ? "Type after / to choose a skill" : "/\(searchText)"
-    }
-
-    private func rowFill(selected: Bool, hovered: Bool) -> Color {
-        if selected { return DS.accentSoft.opacity(0.72) }
-        return hovered ? DS.glassInputFillFocused : DS.surfaceCard.opacity(0.70)
-    }
-
-    private func rowStroke(selected: Bool, hovered: Bool, accent: Color) -> Color {
-        if selected { return DS.accent.opacity(0.32) }
-        return hovered ? accent.opacity(0.22) : DS.glassBorder
-    }
-}
-
 private struct CosmoInlineAssistantSelectedContextChip: View {
     let atom: Atom
     let onRemove: () -> Void

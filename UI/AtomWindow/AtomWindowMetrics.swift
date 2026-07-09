@@ -4,13 +4,15 @@
 import Foundation
 
 enum AtomWindowMetrics {
-    // Panel dimensions
-    static let defaultWidth: CGFloat = 720
-    static let defaultHeight: CGFloat = 600
+    // Panel dimensions — the default comfortably fits the notes reading
+    // measure (680pt + block gutter + margins); the ceiling leaves room for
+    // the Wide page setting (940pt measure) to actually read wide.
+    static let defaultWidth: CGFloat = 880
+    static let defaultHeight: CGFloat = 640
     static let minWidth: CGFloat = 560
     static let minHeight: CGFloat = 480
-    static let maxWidth: CGFloat = 1200
-    static let maxHeight: CGFloat = 900
+    static let maxWidth: CGFloat = 1440
+    static let maxHeight: CGFloat = 1000
 
     // Chrome
     static let panelCornerRadius: CGFloat = 20

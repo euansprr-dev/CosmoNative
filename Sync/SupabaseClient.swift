@@ -309,6 +309,39 @@ final class SupabaseClient {
         return json.first
     }
 
+    // MARK: - Plain Table Fetch (non-synced tables)
+
+    /// Fetch rows from a table that is NOT a synced GRDB domain (e.g.
+    /// device_push_tokens) — such tables have no uuid column, so the
+    /// fetchChanges sync ordering would 400. RLS scopes rows to the user.
+    func fetchRows(table: String, limit: Int = 100) async throws -> [[String: Any]] {
+        guard var urlComponents = URLComponents(string: "\(baseURL)/rest/v1/\(table)") else {
+            throw SupabaseError.invalidURL
+        }
+        urlComponents.queryItems = [URLQueryItem(name: "limit", value: "\(limit)")]
+
+        guard let url = urlComponents.url else {
+            throw SupabaseError.invalidURL
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        addHeaders(to: &request)
+
+        let (data, response) = try await session.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            throw SupabaseError.fetchFailed
+        }
+
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            throw SupabaseError.invalidResponse
+        }
+
+        return json
+    }
+
     // MARK: - Lightweight Column Fetch (cloud reconciliation)
 
     /// Page through a table fetching only the given columns, ordered by uuid

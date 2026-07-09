@@ -4,6 +4,7 @@
 // a sticky skill session wears its chip above the field.
 // June 2026
 
+import AppKit
 import SwiftUI
 
 struct CosmoInlineAssistantPaneComposer: View {
@@ -14,6 +15,8 @@ struct CosmoInlineAssistantPaneComposer: View {
     @State private var isContextMenuVisible = false
     @State private var contextSearchText = ""
     @State private var skillResolver = CosmoInlineSkillResolver()
+    @State private var contextMenuModel = CosmoInlineContextMenuModel()
+    @State private var keyDownMonitor: Any?
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space6) {
@@ -24,6 +27,8 @@ struct CosmoInlineAssistantPaneComposer: View {
         .overlay(alignment: .topLeading) { contextMenuLayer }
         .animation(ProMotionSprings.snappy, value: isFocused)
         .animation(ProMotionSprings.snappy, value: store.selectedSkillID)
+        .onAppear { installKeyDownMonitorIfNeeded() }
+        .onDisappear { removeKeyDownMonitor() }
     }
 
     // MARK: - Session chips
@@ -113,6 +118,13 @@ struct CosmoInlineAssistantPaneComposer: View {
                     guard store.skillSuggestion != nil else { return false }
                     withAnimation(ProMotionSprings.snappy) { store.acceptSkillSuggestion() }
                     return true
+                },
+                tokenWashProvider: { text, selection in
+                    CosmoInlineComposerTokenWashPolicy.rendered(
+                        text: text,
+                        selection: selection,
+                        armedSkillName: activeSkill?.name
+                    )
                 }
             )
             .frame(maxWidth: .infinity)
@@ -160,18 +172,79 @@ struct CosmoInlineAssistantPaneComposer: View {
     private var contextMenuLayer: some View {
         if isContextMenuVisible {
             CosmoInlineAssistantContextMenu(
+                model: contextMenuModel,
                 searchText: contextSearchText,
                 selectedAtoms: store.selectedContextAtoms,
-                onSelect: { atom in selectContext(atom) },
-                onRemove: { atom in store.removeContext(atom) },
-                onDismiss: { dismissContextMenu(trimMentionQuery: true) }
+                onCommit: { entry in commitContextEntry(entry) },
+                onClear: {
+                    store.selectedContextAtoms.forEach { store.removeContext($0) }
+                }
             )
-            .frame(maxWidth: 460)
             // The menu's bottom edge hangs just above the composer's top.
             .alignmentGuide(.top) { dimensions in dimensions[.bottom] + DS.space4 }
             .padding(.leading, DS.space16)
-            .transition(.scale(scale: 0.96, anchor: .bottomLeading).combined(with: .opacity))
+            .transition(.opacity)
             .zIndex(10)
+        }
+    }
+
+    private func commitContextEntry(_ entry: CosmoInlineContextMenuModel.Entry) {
+        switch entry {
+        case .attachCurrent(let atom):
+            selectContext(atom)
+        case .atom(let atom, let isSelected):
+            if isSelected {
+                store.removeContext(atom)
+            } else {
+                selectContext(atom)
+            }
+        }
+    }
+
+    // MARK: - Keyboard routing
+
+    /// The pane composer's menu is keyboard-first like the bar's: a local
+    /// monitor sees arrows/Return/Tab before the text view and routes them to
+    /// the highlighted row while the menu is open.
+    private func installKeyDownMonitorIfNeeded() {
+        guard keyDownMonitor == nil else { return }
+        keyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            handleMenuNavigationKey(event) ? nil : event
+        }
+    }
+
+    private func removeKeyDownMonitor() {
+        if let keyDownMonitor {
+            NSEvent.removeMonitor(keyDownMonitor)
+        }
+        keyDownMonitor = nil
+    }
+
+    private func handleMenuNavigationKey(_ event: NSEvent) -> Bool {
+        guard event.modifierFlags.intersection([.command, .option, .control]).isEmpty else {
+            return false
+        }
+        if event.keyCode == 53 { // Escape closes the open menu first
+            guard isContextMenuVisible else { return false }
+            dismissContextMenu(trimMentionQuery: true)
+            return true
+        }
+        switch CosmoAssistantMenuKeyRouter.action(keyCode: event.keyCode, isMenuVisible: isContextMenuVisible) {
+        case .moveUp:
+            CosmicHaptics.shared.play(.threshold)
+            contextMenuModel.moveHighlight(-1)
+            return true
+        case .moveDown:
+            CosmicHaptics.shared.play(.threshold)
+            contextMenuModel.moveHighlight(1)
+            return true
+        case .commit:
+            guard let entry = contextMenuModel.highlightedEntry else { return false }
+            CosmicHaptics.shared.play(.selection)
+            commitContextEntry(entry)
+            return true
+        case .passthrough:
+            return false
         }
     }
 

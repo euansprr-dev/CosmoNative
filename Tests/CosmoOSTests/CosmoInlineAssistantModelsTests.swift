@@ -658,7 +658,7 @@ final class CosmoInlineAssistantPaneEmptyStatePolicyTests: XCTestCase {
     func testStartersAdaptToSurfaceKind() {
         XCTAssertEqual(
             CosmoInlineAssistantPaneEmptyStatePolicy.starters(for: .canvas).first?.label,
-            "Organize this canvas"
+            "Organize my workspace"
         )
         XCTAssertEqual(
             CosmoInlineAssistantPaneEmptyStatePolicy.starters(for: .text).map(\.label),

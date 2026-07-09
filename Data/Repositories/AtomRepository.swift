@@ -88,6 +88,37 @@ class AtomRepository: ObservableObject {
         }
     }
 
+    /// Fetch the single system-event atom carrying an agent conversation,
+    /// matched inside the metadata JSON in-database — replaces loading and
+    /// JSON-decoding every system event just to find one conversation.
+    /// JSONSerialization writes each key/value pair contiguously, so the LIKE
+    /// pattern matches regardless of key order in the object.
+    func fetchAgentConversationAtom(conversationId: String) async throws -> Atom? {
+        try await database.asyncRead { db in
+            try Atom
+                .filter(Atom.CodingKeys.type == AtomType.systemEvent.rawValue)
+                .filter(Atom.CodingKeys.isDeleted == false)
+                .filter(sql: "metadata LIKE ?", arguments: ["%\"conversationId\":\"\(conversationId)\"%"])
+                .order(Atom.CodingKeys.updatedAt.desc)
+                .fetchOne(db)
+        }
+    }
+
+    /// Recent content atoms belonging to a client profile — matched inside the
+    /// metadata JSON in-database. Used for voice exemplars in client-scoped
+    /// writing requests.
+    func fetchRecentContent(clientProfileUUID: String, limit: Int = 3) async throws -> [Atom] {
+        try await database.asyncRead { db in
+            try Atom
+                .filter(Atom.CodingKeys.type == AtomType.content.rawValue)
+                .filter(Atom.CodingKeys.isDeleted == false)
+                .filter(sql: "metadata LIKE ?", arguments: ["%\"clientProfileUUID\":\"\(clientProfileUUID)\"%"])
+                .order(Atom.CodingKeys.updatedAt.desc)
+                .limit(limit)
+                .fetchAll(db)
+        }
+    }
+
     /// Fetch a single atom by UUID
     func fetch(uuid: String) async throws -> Atom? {
         try await database.asyncRead { db in

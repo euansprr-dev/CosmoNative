@@ -29,6 +29,15 @@ struct InboxRoutingConfig: Sendable {
     /// Max member atoms sampled per cluster when computing its centroid.
     let centroidSampleLimit: Int = 24
 
+    // MARK: - Stage 2 (Atlas) — taught LLM routing over the destination atlas
+
+    /// Moves below this confidence are dropped before they become
+    /// recommendations — the model was taught that < 0.55 means "drop it",
+    /// this is the belt to that suspender.
+    let atlasMoveMinConfidence: Double = 0.55
+    /// Worked examples from the correction ledger included per routing call.
+    let atlasCorrectionExamples: Int = 8
+
     // MARK: - Search
 
     let searchLimit: Int = 12

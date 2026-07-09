@@ -411,7 +411,9 @@ struct MediaBlockView: View {
     // MARK: - Instagram Video Player (AVPlayer — same as focus mode)
 
     private func igVideoPlayer(player: AVPlayer) -> some View {
-        VideoPlayer(player: player)
+        // AVPlayerView, not SwiftUI VideoPlayer — the latter aborts the app on
+        // first metadata instantiation (see CosmoVideoPlayerView).
+        CosmoVideoPlayerView(player: player)
             .frame(maxWidth: .infinity)
             .frame(height: mediaAreaHeight)
     }

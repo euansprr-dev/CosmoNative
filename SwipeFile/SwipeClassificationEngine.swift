@@ -472,7 +472,8 @@ final class SwipeClassificationEngine: ObservableObject {
 
     /// Find or create a creator atom based on handle/name from the AI response.
     /// Returns the creator's UUID if resolved.
-    private func resolveCreator(handle: String?, name: String?, atom: Atom) async -> String? {
+    /// Internal: SwipeInsightEngine delegates creator resolution here.
+    func resolveCreator(handle: String?, name: String?, atom: Atom) async -> String? {
         guard let handle = handle, !handle.isEmpty else { return nil }
 
         // Skip purely numeric handles (Instagram user IDs leaked through)
@@ -564,7 +565,8 @@ final class SwipeClassificationEngine: ObservableObject {
     }
 
     /// Update creator aggregate stats (swipeCount, avgHookScore, topNarratives)
-    private func updateCreatorStats(creatorUUID: String) async {
+    /// Internal: SwipeInsightEngine delegates stats refresh here.
+    func updateCreatorStats(creatorUUID: String) async {
         guard var creator = try? await AtomRepository.shared.fetch(uuid: creatorUUID) else { return }
         guard var meta = creator.metadataValue(as: CreatorMetadata.self) else { return }
 

@@ -1017,6 +1017,66 @@ enum CommandKUnifiedSearchComposer {
         )
     }
 
+    /// Spotlight order contract: once a result list has been readable past the
+    /// settle window, later pipeline waves (enrichment, background refreshes,
+    /// late gallery loads) must not move rows the user can already see — the
+    /// row they are about to press Return on has to stay where it is.
+    /// Visible rows keep their visible positions while their CONTENT refreshes
+    /// from `incoming`; rows and sections that are genuinely new append below
+    /// the ones already shown; rows absent from `incoming` drop out.
+    static func stabilizeOrder(
+        visible: [(source: UnifiedSearchSource, results: [UnifiedSearchResult])],
+        incoming: [(source: UnifiedSearchSource, results: [UnifiedSearchResult])]
+    ) -> [(source: UnifiedSearchSource, results: [UnifiedSearchResult])] {
+        guard !visible.isEmpty else { return incoming }
+        var incomingBySource: [UnifiedSearchSource: [UnifiedSearchResult]] = [:]
+        for section in incoming {
+            incomingBySource[section.source, default: []] += section.results
+        }
+
+        var stabilized: [(source: UnifiedSearchSource, results: [UnifiedSearchResult])] = []
+        var placedSources = Set<UnifiedSearchSource>()
+        for section in visible {
+            placedSources.insert(section.source)
+            guard let incomingRows = incomingBySource[section.source] else { continue }
+            let rows = stabilizeRowOrder(visible: section.results, incoming: incomingRows)
+            if !rows.isEmpty {
+                stabilized.append((source: section.source, results: rows))
+            }
+        }
+        for section in incoming where !placedSources.contains(section.source) {
+            placedSources.insert(section.source)
+            if !section.results.isEmpty {
+                stabilized.append(section)
+            }
+        }
+        return stabilized
+    }
+
+    private static func stabilizeRowOrder(
+        visible: [UnifiedSearchResult],
+        incoming: [UnifiedSearchResult]
+    ) -> [UnifiedSearchResult] {
+        // Anchor on selectionID, not id: an idea surfaced from the engine and
+        // the same idea rebuilt from its gallery item carry different ids but
+        // the same atomUUID, and the row must stay pinned across that swap.
+        var incomingByID: [String: UnifiedSearchResult] = [:]
+        for row in incoming where incomingByID[row.selectionID] == nil {
+            incomingByID[row.selectionID] = row
+        }
+        var rows: [UnifiedSearchResult] = []
+        var placed = Set<String>()
+        for row in visible {
+            guard placed.insert(row.selectionID).inserted,
+                  let fresh = incomingByID[row.selectionID] else { continue }
+            rows.append(fresh)
+        }
+        for row in incoming where placed.insert(row.selectionID).inserted {
+            rows.append(row)
+        }
+        return rows
+    }
+
     private static func groupedResults(from allResults: [UnifiedSearchResult]) -> [(source: UnifiedSearchSource, results: [UnifiedSearchResult])] {
         var grouped: [UnifiedSearchSource: [UnifiedSearchResult]] = [:]
         for result in allResults {
@@ -1310,9 +1370,42 @@ struct CommandKInstantSwipeCapture {
     }
 
     @MainActor
-    func capture(url: String, hook: String? = nil) async throws -> Atom {
-        let atom = try pendingAtom(for: url, hook: hook)
+    func capture(
+        url: String,
+        hook: String? = nil,
+        notes: String? = nil,
+        clientUUID: String? = nil
+    ) async throws -> Atom {
+        var atom = try pendingAtom(for: url, hook: hook)
+
+        // Notes land the way the capture_swipe agent tool writes them.
+        if let notes, !notes.isEmpty {
+            if (atom.body ?? "").isEmpty {
+                atom.body = notes
+            } else {
+                atom.body = (atom.body ?? "") + "\n\n--- Notes ---\n" + notes
+            }
+        }
+
         let saved = try await AtomRepository.shared.create(atom)
+
+        // Client tag: swipeToClient link + clientUUID in the swipe analysis —
+        // the same contract the capture_swipe agent tool writes.
+        if let clientUUID {
+            _ = try? await AtomRepository.shared.update(uuid: saved.uuid) { current in
+                var links = current.linksList
+                if !links.contains(where: { $0.linkType == .swipeToClient && $0.uuid == clientUUID }) {
+                    links.append(AtomLink.swipeToClient(clientUUID))
+                    current.links = try? String(data: JSONEncoder().encode(links), encoding: .utf8)
+                }
+                if let structured = current.structured,
+                   let data = structured.data(using: .utf8),
+                   var analysis = try? JSONDecoder().decode(SwipeAnalysis.self, from: data) {
+                    analysis.clientUUID = clientUUID
+                    current.structured = try? String(data: JSONEncoder().encode(analysis), encoding: .utf8)
+                }
+            }
+        }
 
         NotificationCenter.default.post(
             name: .researchCreated,
@@ -1846,12 +1939,33 @@ public final class CommandKViewModel {
     }
 
     func testingUpdateUnifiedSearch(query: String, searchRequestID: CommandKSearchRequestID) async {
+        // Behaves like a fresh user-initiated search: the settle window is
+        // open, so this publish may rank freely. Tests that exercise the
+        // order lock close the window explicitly via
+        // testingCloseResultOrderSettleWindow().
+        foregroundSearchStartedAt = Date()
         await updateUnifiedSearch(
             query: query,
             preloadSupportData: false,
             includeThinkspaces: false,
             searchRequestID: searchRequestID
         )
+    }
+
+    /// Publish without reopening the settle window — simulates a late wave
+    /// (enrichment, AI re-rank, background refresh) landing on a list the
+    /// user has already been reading.
+    func testingUpdateUnifiedSearchAsLateWave(query: String, searchRequestID: CommandKSearchRequestID) async {
+        await updateUnifiedSearch(
+            query: query,
+            preloadSupportData: false,
+            includeThinkspaces: false,
+            searchRequestID: searchRequestID
+        )
+    }
+
+    func testingCloseResultOrderSettleWindow() {
+        foregroundSearchStartedAt = .distantPast
     }
     #endif
 
@@ -2001,6 +2115,18 @@ public final class CommandKViewModel {
     /// that the field changed before a debounced replacement search starts.
     private var liveQueryGeneration = 0
 
+    /// When the current foreground (user-initiated) search started. Publishes
+    /// that land within `resultOrderSettleWindow` of this instant may re-rank
+    /// freely — they read as results streaming in. Anything later is
+    /// order-locked: the list a user is reading, and about to press Return
+    /// on, never rearranges (Spotlight contract).
+    private var foregroundSearchStartedAt: Date = .distantPast
+
+    /// How long after a keystroke the result order may still settle. Sized to
+    /// cover the instant → cache → hybrid → enrichment waves on a normal run;
+    /// a wave that misses the window still lands, but merges in place.
+    private var resultOrderSettleWindow: TimeInterval = 0.4
+
     // MARK: - Initialization
 
     public convenience init() {
@@ -2032,6 +2158,11 @@ public final class CommandKViewModel {
                 }
                 guard let self, self.isSurfaceActive else { return }
                 await self.preloadUnifiedSearchSupportData()
+                // Thinkspaces ride the instant unified pass now — warm them
+                // so the first keystroke never awaits a load.
+                if ThinkspaceManager.shared.thinkspaces.isEmpty {
+                    await ThinkspaceManager.shared.loadThinkspaces()
+                }
             }
         } else {
             searchTask?.cancel()
@@ -2343,6 +2474,12 @@ public final class CommandKViewModel {
 
         isShowingRecents = false
         lastSearchedQuery = query
+        if !isBackgroundRefresh {
+            // Reopen the order-settle window only for user-initiated searches.
+            // Background refreshes (sync pulls, agent writes) must merge into
+            // the visible order, never reopen the right to rearrange it.
+            foregroundSearchStartedAt = Date()
+        }
         if !preserveVisibleResults {
             setCurrentPhase(.searching)
             results = []
@@ -2414,6 +2551,9 @@ public final class CommandKViewModel {
             }
             // Merge fresh instant-index matches so atoms created or edited
             // after the cache entry was written still appear.
+            // The badge is honest here: the re-ranker refines cache entries
+            // in place, so a cache hit may carry AI-refined ordering.
+            isAIRanked = SearchReRanker.shared.hasCachedRanking(for: queryForSearch)
             unfilteredResults = Self.mergeRankedResults(primary: cached, additional: instantIndexedResults)
             computeFilterCounts()
             applyFiltersToResults()
@@ -2516,9 +2656,14 @@ public final class CommandKViewModel {
                     // instant-derived lexical tiers too.
                     await QueryResultCache.shared.set(mergedResults, for: cacheKey)
 
-                    // Fire AI re-ranker asynchronously (results reorder after
-                    // 1-2s). Only body/semantic tiers go to the model — title
-                    // matches are ordered lexically and must not be demoted.
+                    // Fire the AI re-ranker asynchronously — but it NEVER
+                    // touches the live list. Once results are on screen their
+                    // order is frozen (Spotlight contract); the model's
+                    // judgment flows into the query cache instead, so the
+                    // NEXT identical query paints in the refined order from
+                    // its first frame. Only body/semantic tiers go to the
+                    // model — title matches are ordered lexically and must
+                    // not be demoted.
                     let queryForReRank = queryForSearch
                     let reRankInputs = mergedResults
                         .filter { $0.lexicalTier >= .keywordInBody }
@@ -2535,20 +2680,18 @@ public final class CommandKViewModel {
                     Task { @MainActor in
                         guard !Task.isCancelled,
                               isSurfaceActive,
-                              isCurrentLiveQueryGeneration(queryGeneration),
-                              await searchPipeline.isCurrent(requestID) else {
+                              isCurrentLiveQueryGeneration(queryGeneration) else {
                             return
                         }
                         let rerankSignpost = CommandKPerformanceInstrumentation.signposter.beginInterval("ai-rerank")
                         if let reRanked = await SearchReRanker.shared.reRank(
                             query: queryForReRank,
                             results: reRankInputs
-                        ), isSurfaceActive,
-                           isCurrentLiveQueryGeneration(queryGeneration),
-                           await searchPipeline.isCurrent(requestID) {
-                            // Rebuild results with AI-boosted semantic weights
+                        ) {
+                            // Rebuild with AI-boosted semantic weights and
+                            // refresh the cache entry in place.
                             let aiScoreMap = Dictionary(uniqueKeysWithValues: reRanked.map { ($0.uuid, $0.blendedScore) })
-                            let reRankedResults = unfilteredResults.map { r in
+                            let reRankedResults = mergedResults.map { r in
                                 if let aiScore = aiScoreMap[r.atomUUID] {
                                     return RankedResult(
                                         atomUUID: r.atomUUID,
@@ -2566,21 +2709,7 @@ public final class CommandKViewModel {
                                 }
                                 return r
                             }
-                            unfilteredResults = reRankedResults.sorted()
-                            applyFiltersToResults()
-                            await performInstantUnifiedSearch(
-                                query: queryForReRank,
-                                preserveSelection: preserveVisibleResults,
-                                searchRequestID: requestID,
-                                queryGeneration: queryGeneration
-                            )
-                            scheduleUnifiedSearchEnrichment(
-                                for: queryForReRank,
-                                preserveSelection: preserveVisibleResults,
-                                searchRequestID: requestID,
-                                queryGeneration: queryGeneration
-                            )
-                            isAIRanked = true
+                            await QueryResultCache.shared.set(reRankedResults.sorted(), for: cacheKey)
                         }
                         CommandKPerformanceInstrumentation.signposter.endInterval("ai-rerank", rerankSignpost)
                     }
@@ -3445,14 +3574,7 @@ public final class CommandKViewModel {
             finishAction()
 
         case .createTask:
-            var arguments: [String: Any] = ["title": form.value(for: .title)]
-            let optional: [(String, CommandKFormFieldID)] = [
-                ("body", .notes), ("priority", .priority), ("intent", .intent), ("dueDate", .date)
-            ]
-            for (key, field) in optional where !form.value(for: field).isEmpty {
-                arguments[key] = form.value(for: field)
-            }
-            _ = try await AgentToolExecutor.shared.execute(toolName: "create_task", arguments: arguments)
+            try await commitComposerTask(draft)
             finishAction()
 
         case .captureInbox:
@@ -3468,20 +3590,65 @@ public final class CommandKViewModel {
 
         case .captureSwipe:
             let hook = form.value(for: .hook)
-            _ = try await CommandKInstantSwipeCapture().capture(
+            let notes = form.value(for: .notes)
+            // Resolve a typed-but-unpicked client name the idea composer's way.
+            var swipeClientUUID = draft.clientUUID
+            var swipeClientName = form.value(for: .client)
+            if swipeClientUUID == nil, !swipeClientName.isEmpty {
+                guard let client = try await AtomRepository.shared.fuzzyFindClient(query: swipeClientName) else {
+                    throw CommandKActionExecutionError.clientNotFound(swipeClientName)
+                }
+                swipeClientUUID = client.uuid
+                swipeClientName = client.title ?? swipeClientName
+            }
+            let swipe = try await CommandKInstantSwipeCapture().capture(
                 url: form.value(for: .url),
-                hook: hook.isEmpty ? nil : hook
+                hook: hook.isEmpty ? nil : hook,
+                notes: notes.isEmpty ? nil : notes,
+                clientUUID: swipeClientUUID
             )
+            // "Spark an idea" — one Save, two atoms, linked both ways.
+            if draft.sparkIdea {
+                let sparkTitle = draft.sparkTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+                let sparkBody = draft.sparkBody.trimmingCharacters(in: .whitespacesAndNewlines)
+                let ideaTitle = !sparkTitle.isEmpty ? sparkTitle
+                    : (!hook.isEmpty ? hook : (swipe.hook ?? "Idea from swipe"))
+                _ = try await createIdeaForClientAtom(
+                    title: ideaTitle,
+                    body: sparkBody.isEmpty ? nil : sparkBody,
+                    clientUUID: swipeClientUUID,
+                    clientName: swipeClientName.isEmpty ? nil : swipeClientName,
+                    captureSource: "command_k_swipe_spark",
+                    context: sparkBody.isEmpty ? nil : sparkBody,
+                    linkedSwipeUUID: swipe.uuid
+                )
+            }
             finishAction()
 
         case .createNote, .createContent:
             // Creating IS editing (the iOS EditorCreationFlow model): make
             // the atom, then open it — hideCommandK, never blanket-close.
+            // The note's opening paragraph rides atom.body (plain text is the
+            // block editor's lenient-decoding path); content's core idea is
+            // metadata the way ContentFocusMode reads it back.
+            let composedBody = form.value(for: .body)
+            var contentMetadata: String?
+            if draft.kind == .createContent {
+                var dict: [String: Any] = [:]
+                if !composedBody.isEmpty { dict["coreIdea"] = composedBody }
+                let format = form.value(for: .format)
+                if !format.isEmpty { dict["contentType"] = format }
+                if !dict.isEmpty,
+                   let data = try? JSONSerialization.data(withJSONObject: dict),
+                   let json = String(data: data, encoding: .utf8) {
+                    contentMetadata = json
+                }
+            }
             let created = try await AtomRepository.shared.create(Atom.new(
                 type: draft.kind == .createNote ? .note : .content,
                 title: form.value(for: .title),
-                body: nil,
-                metadata: nil
+                body: draft.kind == .createNote && !composedBody.isEmpty ? composedBody : nil,
+                metadata: contentMetadata
             ))
             NotificationCenter.default.post(
                 name: CosmoNotification.Entity.created,
@@ -3510,6 +3677,105 @@ public final class CommandKViewModel {
         }
     }
 
+    /// Create a task with everything the composer captured — the same
+    /// TaskMetadata contract the Command Center detail panel writes: day pins
+    /// move together (dueDate/focusDate/whenDate), a recurrence writes rule
+    /// JSON + a timezone-safe seriesAnchorDay so the atom IS the series
+    /// template, and habit/intent attribution resolves the dashboard's way.
+    private func commitComposerTask(_ draft: CommandKComposerDraft) async throws {
+        let form = draft.form
+        // Quick-add phrases leave the title on save — "Gym tomorrow at 3pm"
+        // becomes the task "Gym"; if the whole title was schedule grammar,
+        // keep the raw text over an empty name.
+        let rawTitle = form.value(for: .title)
+        let title = draft.cleanedTitle?.isEmpty == false ? draft.cleanedTitle! : rawTitle
+
+        var metadata = TaskMetadata()
+        let priorityRaw = form.value(for: .priority)
+        metadata.priority = priorityRaw.isEmpty ? "medium" : priorityRaw
+
+        let intentRaw = form.value(for: .intent)
+        let resolvedIntent = TaskIntent(rawValue: intentRaw)
+        if let resolvedIntent {
+            metadata.intent = resolvedIntent.rawValue
+            metadata.intentUUID = CommandCenterIntentEngine.shared.seedID(for: resolvedIntent)
+        }
+
+        // Day pins move together. A separate planned-for day owns focus/when;
+        // the due day stays the deadline.
+        let dueDate = ISO8601.date(from: form.value(for: .date)).map { Calendar.current.startOfDay(for: $0) }
+        let plannedDay = draft.focusDate.map { Calendar.current.startOfDay(for: $0) }
+        if let dueDate {
+            let iso = PlannerumFormatters.iso8601.string(from: dueDate)
+            metadata.dueDate = iso
+            metadata.focusDate = iso
+            metadata.whenDate = iso
+        }
+        if let plannedDay {
+            let iso = PlannerumFormatters.iso8601.string(from: plannedDay)
+            metadata.focusDate = iso
+            metadata.whenDate = iso
+        }
+        if dueDate == nil, plannedDay == nil {
+            metadata.isUnscheduled = true
+        }
+
+        metadata.durationMinutes = draft.durationMinutes
+        metadata.timeGoalMinutes = draft.timeGoalMinutes
+
+        // A parsed time of day ("at 3pm") lands the same field the dashboard's
+        // scheduledTime edit writes.
+        if let time = draft.scheduledTime {
+            metadata.startTime = PlannerumFormatters.iso8601.string(from: time)
+        }
+
+        if !draft.checklist.isEmpty,
+           let data = try? JSONEncoder().encode(draft.checklist),
+           let json = String(data: data, encoding: .utf8) {
+            metadata.checklist = json
+        }
+
+        if let rule = draft.recurrenceRule, let ruleJSON = rule.toJSON() {
+            // The atom is born as the series template (recurrence != nil,
+            // no recurrenceParentUUID) — mirror createRecurringTemplate.
+            metadata.recurrence = ruleJSON
+            metadata.isUnscheduled = nil
+            let anchor = dueDate ?? plannedDay ?? Calendar.current.startOfDay(for: .now)
+            if metadata.dueDate == nil {
+                let iso = PlannerumFormatters.iso8601.string(from: anchor)
+                metadata.dueDate = iso
+                metadata.focusDate = iso
+                metadata.whenDate = iso
+            }
+            metadata.seriesAnchorDay = RecurringSeriesEngine.dayKey(for: anchor)
+        }
+
+        // Habit attribution — same resolution rule as Dashboard.updateTask.
+        // A dismissed habit chip means explicit "no habit".
+        if draft.suppressHabit {
+            metadata.habitAssignmentSource = HabitAssignmentSource.manual.rawValue
+        } else if let resolution = CommandCenterHabitEngine.shared.resolveHabit(title: title, intent: resolvedIntent) {
+            metadata.habitUUID = resolution.definition.id
+            metadata.habitAssignmentSource = resolution.source.rawValue
+            if metadata.intentUUID == nil {
+                metadata.intentUUID = resolution.definition.defaultIntentUUID
+            }
+        }
+
+        let notes = form.value(for: .notes)
+        var metadataJSON: String?
+        if let data = try? JSONEncoder().encode(metadata) {
+            metadataJSON = String(data: data, encoding: .utf8)
+        }
+
+        _ = try await AtomRepository.shared.create(Atom.new(
+            type: .task,
+            title: title,
+            body: notes.isEmpty ? nil : notes,
+            metadata: metadataJSON
+        ))
+    }
+
     private func commitComposerIdea(_ draft: CommandKComposerDraft) async throws {
         let form = draft.form
         // Resolve a typed-but-unpicked brand name the scoped grammar's way.
@@ -3535,7 +3801,8 @@ public final class CommandKViewModel {
             platform: form.value(for: .platform),
             hooks: draft.hooks,
             context: body,
-            outline: draft.outline
+            outline: draft.outline,
+            linkedSwipeUUID: draft.linkedSwipeUUID
         )
     }
 
@@ -4482,7 +4749,8 @@ public final class CommandKViewModel {
         platform: String? = nil,
         hooks: [String] = [],
         context: String? = nil,
-        outline: [String] = []
+        outline: [String] = [],
+        linkedSwipeUUID: String? = nil
     ) async throws -> Atom {
         let trimmedTitle = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTitle.isEmpty else { throw CommandKActionExecutionError.missingIdeaText }
@@ -4500,6 +4768,7 @@ public final class CommandKViewModel {
 
         let hasRichMetadata = contentFormat?.isEmpty == false || platform?.isEmpty == false
             || !trimmedHooks.isEmpty || trimmedContext?.isEmpty == false || !trimmedOutline.isEmpty
+            || linkedSwipeUUID != nil
         if clientUUID != nil || captureSource != nil || hasRichMetadata {
             atom = atom.withUpdatedIdeaMetadata { meta in
                 if let clientUUID {
@@ -4523,6 +4792,13 @@ public final class CommandKViewModel {
                 }
                 if let trimmedContext, !trimmedContext.isEmpty {
                     meta.context = trimmedContext
+                }
+                // Inspired-by swipe: the iOS AtomCreation field contract.
+                if let linkedSwipeUUID {
+                    meta.originSwipeUUID = linkedSwipeUUID
+                    var ids = meta.linkedSwipeIds ?? []
+                    if !ids.contains(linkedSwipeUUID) { ids.append(linkedSwipeUUID) }
+                    meta.linkedSwipeIds = ids
                 }
                 if !trimmedOutline.isEmpty {
                     let model = CodexOutlineModel(
@@ -4552,6 +4828,9 @@ public final class CommandKViewModel {
         if let clientUUID {
             atom = atom.addingLink(.ideaToClient(clientUUID))
         }
+        if let linkedSwipeUUID {
+            atom = atom.addingLink(.ideaToSwipe(linkedSwipeUUID))
+        }
 
         let created = try await AtomRepository.shared.create(atom)
         insertCreatedIdeaIntoGallery(created, clientName: clientName)
@@ -4562,6 +4841,17 @@ public final class CommandKViewModel {
             client.updatedAt = ISO8601.string(from: Date())
             client.localVersion += 1
             _ = try? await AtomRepository.shared.update(client)
+        }
+
+        // Reverse link on the swipe (idempotent — idea side already linked),
+        // mirroring iOS SwipeIdeaLinkService.linkExistingIdea.
+        if let linkedSwipeUUID,
+           var swipe = try? await AtomRepository.shared.fetch(uuid: linkedSwipeUUID),
+           !swipe.linksList.contains(where: { $0.linkType == .swipeToIdea && $0.uuid == created.uuid }) {
+            swipe = swipe.addingLink(.swipeToIdea(created.uuid))
+            swipe.updatedAt = ISO8601.string(from: Date())
+            swipe.localVersion += 1
+            _ = try? await AtomRepository.shared.update(swipe)
         }
 
         NotificationCenter.default.post(
@@ -4664,7 +4954,10 @@ public final class CommandKViewModel {
         await updateUnifiedSearch(
             query: query,
             preloadSupportData: false,
-            includeThinkspaces: false,
+            // Thinkspaces must be in the FIRST paint: any hit that only
+            // arrives in the late enrichment wave gets append-merged under
+            // the order lock instead of ranking where it belongs.
+            includeThinkspaces: true,
             preserveVisibleResultsWhenEmpty: preserveVisibleResultsWhenEmpty,
             preserveSelection: preserveSelection,
             searchRequestID: searchRequestID,
@@ -4856,21 +5149,37 @@ public final class CommandKViewModel {
             unifiedLibraryItemsByID = libraryItemsByID
         }
 
+        // Order lock: reorders are only allowed while the query is still
+        // settling. Once the visible list has been readable past the settle
+        // window, later waves merge in place — visible rows keep their
+        // positions, genuinely new rows append below (Spotlight contract).
+        let orderLocked = hasVisibleUnifiedSearchResults
+            && Date().timeIntervalSince(foregroundSearchStartedAt) > resultOrderSettleWindow
+        let groupedOutput = orderLocked
+            ? CommandKUnifiedSearchComposer.stabilizeOrder(
+                visible: unifiedGroupedResults,
+                incoming: regrouped.groupedResults
+            )
+            : regrouped.groupedResults
+        let flatOutput = groupedOutput.flatMap(\.results)
+
         let swipeItemsByUUID = Dictionary(uniqueKeysWithValues: swipeGalleryItems.map { ($0.atomUUID, $0) })
         let cardItems = CommandKUnifiedSearchComposer.buildCardItems(
-            flatResults: regrouped.flatResults,
+            flatResults: flatOutput,
             libraryItemsByID: libraryItemsByID,
             swipeItemsByUUID: swipeItemsByUUID
         )
 
         setUnifiedSearchResults(
             active: true,
-            grouped: regrouped.groupedResults,
-            flat: regrouped.flatResults,
+            grouped: groupedOutput,
+            flat: flatOutput,
             cards: cardItems
         )
 
-        updateActiveSearchSelection(preservingSelection: preserveSelection)
+        // A locked publish must also keep the user's highlight where it is —
+        // Return has to act on the row that was lit when they pressed it.
+        updateActiveSearchSelection(preservingSelection: preserveSelection || orderLocked)
         refreshSearchFeedback(for: query)
     }
 

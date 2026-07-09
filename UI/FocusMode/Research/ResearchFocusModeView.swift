@@ -441,7 +441,9 @@ struct ResearchFocusModeView: View {
         HStack(spacing: 16) {
             // Main sidebar toggle (standalone only)
             if let atomChrome {
-                AtomWindowChromeLeadingControls(context: atomChrome)
+                CosmoChromeIsland {
+                    AtomWindowChromeLeadingControls(context: atomChrome)
+                }
             } else if !isPaneContext {
                 Button {
                     withAnimation(ProMotionSprings.sidebar) {
@@ -535,7 +537,9 @@ struct ResearchFocusModeView: View {
             }
 
             if let atomChrome {
-                AtomWindowChromeTrailingControls(context: atomChrome)
+                CosmoChromeIsland {
+                    AtomWindowChromeTrailingControls(context: atomChrome)
+                }
             }
 
         }

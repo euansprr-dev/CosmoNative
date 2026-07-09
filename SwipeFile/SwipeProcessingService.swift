@@ -687,37 +687,33 @@ final class SwipeProcessingService {
 
         atom.processingStatus = "analyzing"
 
-        // Run NLP analysis (in-memory only — no DB write yet)
-        print("SwipeProcessingService: Running analysis for \(uuid)")
-        var nlpResult = await SwipeAnalyzer.shared.analyze(atom: atom)
+        // Single insight pass (Sonnet 5) — in-memory only, no DB write yet.
+        // Replaces the old two-step NLP-heuristics + classification pipeline.
+        print("SwipeProcessingService: Running insight analysis for \(uuid)")
+        var insight = await SwipeInsightEngine.shared.analyze(atom: atom)
         if !skipTranscriptWrite {
-            nlpResult.transcriptSlides = finalSlides
-            nlpResult.rawTranscriptSlides = rawSlides
-            nlpResult.transcriptSpeechSegments = speechSegments
-            nlpResult.transcriptionQuality = transcriptionQuality
-            nlpResult.transcriptionWarnings = transcriptionWarnings
+            insight.transcriptSlides = finalSlides
+            insight.rawTranscriptSlides = rawSlides
+            insight.transcriptSpeechSegments = speechSegments
+            insight.transcriptionQuality = transcriptionQuality
+            insight.transcriptionWarnings = transcriptionWarnings
         }
         // A fresh analysis knows nothing about engagement metrics, study state,
         // comments, or manual taxonomy overrides — carry them over before persisting.
-        nlpResult = nlpResult.preservingCuratedFields(from: existingAnalysis)
-        atom = atom.withSwipeAnalysis(nlpResult)
+        insight = insight.preservingCuratedFields(from: existingAnalysis)
+        atom = atom.withSwipeAnalysis(insight)
 
-        // Deep analysis via Claude (in-memory only — no DB write yet)
-        let classifiedResult = await SwipeClassificationEngine.shared.classifyAndAnalyze(
-            atom: atom,
-            model: SwipeClassificationEngine.autoIngestModel
-        )
-        if classifiedResult.isFullyAnalyzed {
-            var enriched = SwipeClassificationEngine.shared.mergeClassification(classifiedResult, into: nlpResult)
-            if !skipTranscriptWrite {
-                enriched.transcriptSlides = finalSlides
-                enriched.rawTranscriptSlides = rawSlides
-                enriched.transcriptSpeechSegments = speechSegments
-                enriched.transcriptionQuality = transcriptionQuality
-                enriched.transcriptionWarnings = transcriptionWarnings
+        // Library headline: short hooks stay verbatim, long hooks arrive
+        // compressed from the insight pass. Same guard as the hook block above;
+        // atom.hook keeps the full first slide either way.
+        if (!userIsEditing || hasPlaceholderTitle),
+           let displayTitle = insight.displayTitle, !displayTitle.isEmpty {
+            atom.title = displayTitle
+            if var rc = atom.richContent {
+                rc.title = displayTitle
+                atom.setRichContent(rc)
             }
-            enriched = enriched.preservingCuratedFields(from: existingAnalysis)
-            atom = atom.withSwipeAnalysis(enriched)
+            didSetHookTitle = true
         }
 
         // Re-index embedding with transcript text (the user's body when their
@@ -776,6 +772,11 @@ final class SwipeProcessingService {
             }
         } catch {
             print("SwipeProcessingService: Failed to persist final analysis: \(error)")
+        }
+
+        // Queue for the cross-swipe pattern weaver (batched — no call here).
+        if atom.swipeAnalysis?.isFullyAnalyzed == true {
+            SwipePatternStore.shared.markPendingWeave(uuid)
         }
 
         // Cache carousel media locally (CDN URLs expire)
@@ -1035,6 +1036,12 @@ enum SwipeMediaMirrorCoordinator {
         guard drainTask == nil else { return }
         drainTask = Task {
             defer { drainTask = nil }
+            // Once per launch: rewrite legacy hook-length titles into short
+            // display headlines (self-guards, cheap no-op when clean).
+            await SwipeTitleBackfill.runBackfillPassIfNeeded()
+            // Once per launch: weave pending swipes into the pattern library
+            // (batched — runs only when enough swipes accumulated or weekly).
+            await SwipePatternWeaver.runIfNeeded()
             while !Task.isCancelled {
                 let before = attemptCounts()
                 await SwipeThumbnailCloudMirror.runBackfillPassIfNeeded()

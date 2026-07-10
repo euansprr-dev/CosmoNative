@@ -3535,6 +3535,20 @@ public final class CommandKViewModel {
         }
     }
 
+    /// Follow-up in the open Cortex conversation: the finished turn joins the
+    /// prior-turn stack and retrieval reruns with the conversation's context.
+    func askCortexFollowUp(_ text: String) {
+        guard let current = askSession, current.phase == .answered else { return }
+        let turns = current.priorTurns + [
+            CommandKAskSession.CompletedTurn(question: current.question, answer: current.answer)
+        ]
+        Task { [weak self] in
+            await CommandKAskEngine.run(question: text, priorTurns: turns) { session in
+                self?.askSession = session
+            }
+        }
+    }
+
     private func openApplication(named appName: String) throws {
         let workspace = NSWorkspace.shared
         let normalizedName = appName.trimmingCharacters(in: .whitespacesAndNewlines)

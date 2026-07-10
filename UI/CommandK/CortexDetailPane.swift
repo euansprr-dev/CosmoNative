@@ -220,6 +220,30 @@ struct CortexDetailPane: View {
                         NotificationCenter.default.post(
                             name: CosmoNotification.NodeGraph.closeCommandK, object: nil
                         )
+                    },
+                    onStartInquiry: { question in
+                        // The knowledge gap becomes work: a question atom
+                        // anchors a fresh inquiry session seeded with it.
+                        viewModel.askSession = nil
+                        Task { @MainActor in
+                            var questionAtom = Atom.new(type: .question, title: question, body: nil)
+                            questionAtom = (try? await AtomRepository.shared.create(questionAtom)) ?? questionAtom
+                            NotificationCenter.default.post(
+                                name: CosmoNotification.Inquiry.startInquiry,
+                                object: nil,
+                                userInfo: [
+                                    "anchorUUID": questionAtom.uuid,
+                                    "anchorType": AtomType.question.rawValue,
+                                    "mainQuestionTitle": question
+                                ]
+                            )
+                            NotificationCenter.default.post(
+                                name: CosmoNotification.NodeGraph.closeCommandK, object: nil
+                            )
+                        }
+                    },
+                    onFollowUp: { text in
+                        viewModel.askCortexFollowUp(text)
                     }
                 )
             } else if let composer = composerContext {

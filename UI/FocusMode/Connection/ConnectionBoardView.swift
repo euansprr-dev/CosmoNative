@@ -18,9 +18,9 @@ struct ConnectionBoardView: View {
     }
 
     /// Repack the masonry whenever the set of cards or their content volume
-    /// changes — filtering, adding/editing items, ghosts arriving.
+    /// changes — filtering, adding/editing items.
     private var layoutFingerprint: [String] {
-        visibleSections.map { "\($0.type.rawValue):\($0.items.count):\($0.ghostSuggestions.count)" }
+        visibleSections.map { "\($0.type.rawValue):\($0.items.count)" }
     }
 
     var body: some View {
@@ -71,8 +71,6 @@ struct ConnectionBoardView: View {
             onAddItem: { document, text in
                 viewModel.addItem(document: document, plainText: text, toSection: section.type)
             },
-            onAcceptGhost: { ghost in viewModel.acceptGhost(ghost, inSection: section.type) },
-            onDismissGhost: { id in viewModel.dismissGhost(id, inSection: section.type) },
             onSourceTap: actions.onSourceTap
         )
     }

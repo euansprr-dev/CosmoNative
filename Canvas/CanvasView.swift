@@ -257,10 +257,6 @@ struct CanvasView: View {
     // Block UUIDs consumed by non-canvas clusters — computed live from clusterEngine state.
     // No caching needed; iterating a handful of clusters is negligible.
 
-    // Ambient knowledge panel
-    @StateObject private var ambientEngine = AmbientFieldEngine()
-    @State private var showAmbientPanel = false
-
     // Crystallization heatmap
     @State private var showCrystallizationHeatmap = false
     @StateObject private var crystallizationEngine = CrystallizationEngine.shared
@@ -286,9 +282,6 @@ struct CanvasView: View {
     /// Library folder currently open — hoisted here so the navigation trail
     /// can drive it (back/forward walks in and out of folders).
     @State private var librarySelectedFolderID: UUID?
-
-    // Provocation engine (AI devil's advocate)
-    @StateObject private var provocationEngine = ProvocationEngine.shared
 
     // Notification observer management - prevent duplicate registrations
     @State private var observersRegistered = false
@@ -389,10 +382,6 @@ struct CanvasView: View {
                 }
                 .allowsHitTesting(thinkspaceMode == .canvas)
 
-                // Provocation markers overlay (screen coordinates, on top of blocks)
-                ProvocationOverlay(provocationEngine: provocationEngine)
-                    .allowsHitTesting(thinkspaceMode == .canvas)
-
                 if thinkspaceMode == .library {
                     thinkspaceLibraryView
                         .transition(.opacity.combined(with: .scale(scale: 0.99)))
@@ -469,20 +458,6 @@ struct CanvasView: View {
                 }
             }
             // Thinkspace sidebar trigger + overlay disabled — UnifiedSidebar + peek rail handle navigation
-            // Ambient knowledge panel (right edge)
-            .overlay(alignment: .trailing) {
-                if showAmbientPanel, let selectedId = selectedBlockId {
-                    let blockUUID = spatialEngine.blocks.first(where: { $0.id == selectedId })?.entityUuid ?? ""
-                    AmbientKnowledgePanel(
-                        engine: ambientEngine,
-                        sourceBlockUUID: blockUUID,
-                        onClose: { showAmbientPanel = false }
-                    )
-                    .padding(.trailing, 16)
-                    .padding(.top, 60)
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
-                }
-            }
             // PERF: Debounced frame tracker updates — only needed for right-click hit testing,
             // so 100ms delay is imperceptible. Previously ran 60-120x/sec during pan/zoom.
             .onChange(of: spatialEngine.blocks.count) { _, _ in
@@ -2636,27 +2611,6 @@ struct CanvasView: View {
                 }
                 return .handled
             }
-            // Cmd+Shift+K: Toggle ambient knowledge panel
-            .onKeyPress(characters: .init(charactersIn: "kK")) { press in
-                guard press.modifiers.contains(.command), press.modifiers.contains(.shift) else {
-                    return .ignored
-                }
-                withAnimation(ProMotionSprings.snappy) {
-                    showAmbientPanel.toggle()
-                }
-                return .handled
-            }
-            // Cmd+Shift+P: Trigger provocation scan on visible blocks
-            .onKeyPress(characters: .init(charactersIn: "pP")) { press in
-                guard press.modifiers.contains(.command), press.modifiers.contains(.shift) else {
-                    return .ignored
-                }
-                let visibleUUIDs = spatialEngine.blocks.map { $0.entityUuid }
-                Task {
-                    await provocationEngine.scanBlocks(atomUUIDs: visibleUUIDs)
-                }
-                return .handled
-            }
             // Cmd+V paste is handled via .performCanvasPaste notification
             // (routed from CosmoCommands pasteboard CommandGroup)
             // Synthesis workspace overlay
@@ -4452,12 +4406,6 @@ struct CanvasView: View {
         // Select new
         if let newIndex = spatialEngine.blocks.firstIndex(where: { $0.id == blockId }) {
             spatialEngine.blocks[newIndex].isSelected = true
-        }
-
-        // Update ambient knowledge context if panel is visible
-        if showAmbientPanel, let block = spatialEngine.blocks.first(where: { $0.id == blockId }) {
-            let queryText = [block.title, block.subtitle ?? ""].joined(separator: " ")
-            ambientEngine.updateContext(focusAtomUUID: block.entityUuid, currentText: queryText)
         }
 
         // Selecting a text-bearing block makes it the inline assistant's editable

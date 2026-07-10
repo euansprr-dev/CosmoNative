@@ -183,8 +183,7 @@ final class ConnectionWorkspaceModel {
         let q = (query ?? searchQuery).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return true }
         if section.type.displayName.localizedCaseInsensitiveContains(q) { return true }
-        if section.items.contains(where: { $0.resolvedPlainText.localizedCaseInsensitiveContains(q) }) { return true }
-        return section.ghostSuggestions.contains { $0.content.localizedCaseInsensitiveContains(q) }
+        return section.items.contains { $0.resolvedPlainText.localizedCaseInsensitiveContains(q) }
     }
 
     func matchingItems(in section: ConnectionSection) -> [ConnectionItem] {

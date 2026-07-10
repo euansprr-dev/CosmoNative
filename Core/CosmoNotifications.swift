@@ -108,10 +108,6 @@ enum CosmoNotification {
         // Zone creation (empty cluster via zone tool)
         static let zoneDrawn = Notification.Name("com.cosmo.canvas.zoneDrawn")
 
-        // Provocation layer
-        static let provocationScanComplete = Notification.Name("com.cosmo.canvas.provocationScanComplete")
-        static let provocationDismissed = Notification.Name("com.cosmo.canvas.provocationDismissed")
-
         // Inbox blocks
         static let createInboxBlock = Notification.Name("com.cosmo.canvas.createInboxBlock")
         static let closeInboxBlock = Notification.Name("com.cosmo.canvas.closeInboxBlock")

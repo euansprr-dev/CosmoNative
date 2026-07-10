@@ -1,8 +1,8 @@
 // CosmoOS/UI/FocusMode/Connection/ConnectionSectionCardView.swift
 // June 2026 — Connection workspace revamp.
 // One scannable card per section on the board: header with count, up to three
-// item previews, inline ghost suggestions, and a quick-add field. Clicking the
-// header opens the section detail in the center column.
+// item previews, and a quick-add field. Clicking the header opens the section
+// detail in the center column.
 
 import SwiftUI
 
@@ -14,20 +14,17 @@ struct ConnectionSectionCardView: View {
     var onOpen: () -> Void = {}
     var onSelect: () -> Void = {}
     var onAddItem: (RichDocument, String) -> Void = { _, _ in }
-    var onAcceptGhost: (GhostSuggestion) -> Void = { _ in }
-    var onDismissGhost: (UUID) -> Void = { _ in }
     var onSourceTap: (String) -> Void = { _ in }
 
     @State private var isHovered = false
 
     private var accent: Color { section.type.accentColor }
     private var previewItems: [ConnectionItem] { Array(section.items.prefix(3)) }
-    private var previewGhosts: [GhostSuggestion] { Array(section.ghostSuggestions.prefix(2)) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space10) {
             header
-            if section.items.isEmpty && previewGhosts.isEmpty {
+            if section.items.isEmpty {
                 emptyPrompt
             } else {
                 previewList
@@ -51,7 +48,7 @@ struct ConnectionSectionCardView: View {
         .onTapGesture(count: 2) { onOpen() }
         .simultaneousGesture(TapGesture().onEnded { onSelect() })
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(section.type.displayName), \(section.itemCount) items, \(section.ghostSuggestions.count) suggestions")
+        .accessibilityLabel("\(section.type.displayName), \(section.itemCount) items")
     }
 
     private var cardSurface: some ShapeStyle {
@@ -131,15 +128,6 @@ struct ConnectionSectionCardView: View {
                 .buttonStyle(.plain)
                 .padding(.leading, 13)
             }
-            ForEach(previewGhosts) { ghost in
-                ConnectionGhostRow(
-                    ghost: ghost,
-                    accent: accent,
-                    onAccept: { onAcceptGhost(ghost) },
-                    onDismiss: { onDismissGhost(ghost.id) },
-                    onSourceTap: { onSourceTap(ghost.sourceAtomUUID) }
-                )
-            }
         }
     }
 }
@@ -180,73 +168,6 @@ struct ConnectionItemPreviewRow: View {
         }
         .padding(.horizontal, isMatch ? DS.space4 : 0)
         .background(isMatch ? accent.opacity(0.10) : .clear, in: .rect(cornerRadius: 4))
-    }
-}
-
-// MARK: - Ghost suggestion row
-
-struct ConnectionGhostRow: View {
-    let ghost: GhostSuggestion
-    let accent: Color
-    let onAccept: () -> Void
-    let onDismiss: () -> Void
-    var onSourceTap: () -> Void = {}
-
-    @State private var isHovered = false
-
-    var body: some View {
-        HStack(alignment: .top, spacing: DS.space8) {
-            Image(systemName: "sparkle")
-                .font(.system(size: 8))
-                .foregroundStyle(accent.opacity(0.7))
-                .padding(.top, 4)
-                .accessibilityHidden(true)
-
-            VStack(alignment: .leading, spacing: DS.space2) {
-                Text(ghost.content)
-                    .font(DS.callout)
-                    .italic()
-                    .foregroundStyle(DS.textSecondary)
-                    .lineLimit(2)
-                Button(action: onSourceTap) {
-                    Text(ghost.sourceAtomTitle)
-                        .font(DS.caption2)
-                        .foregroundStyle(DS.textMuted)
-                        .lineLimit(1)
-                }
-                .buttonStyle(.plain)
-                .help("Open source")
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            HStack(spacing: DS.space4) {
-                Button(action: onAccept) {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(accent)
-                        .frame(width: 20, height: 20)
-                        .background(accent.opacity(0.12), in: Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Accept suggestion")
-
-                Button(action: onDismiss) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(DS.textMuted)
-                        .frame(width: 20, height: 20)
-                        .background(DS.border.opacity(0.5), in: Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Dismiss suggestion")
-            }
-            .opacity(isHovered ? 1 : 0.55)
-        }
-        .padding(DS.space8)
-        .background(accent.opacity(0.05), in: .rect(cornerRadius: 8))
-        .onHover { hovering in
-            withAnimation(ProMotionSprings.hover) { isHovered = hovering }
-        }
     }
 }
 

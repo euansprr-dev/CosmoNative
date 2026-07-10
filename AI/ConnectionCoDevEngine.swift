@@ -132,76 +132,6 @@ class ConnectionCoDevEngine: ObservableObject {
         }
     }
 
-    // MARK: - Generate Ghost Suggestions
-
-    /// Generates 1-3 ghost suggestions per empty section from linked sources.
-    /// Each suggestion has text, source attribution, and target section.
-    func generateGhostSuggestions(
-        connection: Atom,
-        linkedSources: [Atom]
-    ) async throws -> [GhostSuggestion] {
-        guard !linkedSources.isEmpty else { return [] }
-
-        let connectionTitle = connection.title ?? "Untitled Connection"
-
-        // Identify which sections are empty or underdeveloped
-        var emptySections: [ConnectionSectionType] = []
-        if let structured = connection.structured,
-           let data = ConnectionStructuredData.fromJSON(structured) {
-            for section in data.sections where section.items.isEmpty {
-                emptySections.append(section.type)
-            }
-        } else {
-            emptySections = ConnectionSectionType.allCases.filter { $0 != .conceptName }
-        }
-
-        guard !emptySections.isEmpty else { return [] }
-
-        // Build source content digest
-        var sourceDigest = ""
-        for source in linkedSources.prefix(5) {
-            let title = source.title ?? "Untitled"
-            let body = (source.body ?? "").prefix(400)
-            sourceDigest += "[\(title)]: \(body)\n---\n"
-        }
-
-        let sectionNames = emptySections.map { $0.displayName }.joined(separator: ", ")
-
-        let prompt = """
-        You are generating section suggestions for a Connection framework based on linked source materials.
-
-        Connection: "\(connectionTitle)"
-        Empty sections needing suggestions: \(sectionNames)
-
-        Source materials:
-        \(sourceDigest)
-
-        For each empty section, generate 1-2 suggestions ONLY if the source material provides relevant information.
-        Each suggestion must be grounded in a specific source.
-
-        Respond as a list with this exact format (one per line):
-        SECTION: <section name> | SOURCE: <source title> | TEXT: <suggested content for the section>
-
-        Only suggest items with clear source backing. Do not fabricate.
-        """
-
-        do {
-            let response = try await ResearchService.shared.analyze(
-                prompt: prompt,
-                tier: .geminiFlashLatest,
-                maxTokens: 1500
-            )
-
-            return parseGhostSuggestionsResponse(
-                response,
-                linkedSources: linkedSources,
-                emptySections: emptySections
-            )
-        } catch {
-            return []
-        }
-    }
-
     // MARK: - Generate Section Item
 
     /// Produces pre-populated text for a section item when a category chip is clicked.
@@ -408,53 +338,6 @@ class ConnectionCoDevEngine: ObservableObject {
             sourceTitle: sourceTitle,
             sourceUUID: sourceUUID
         )
-    }
-
-    private func parseGhostSuggestionsResponse(
-        _ response: String,
-        linkedSources: [Atom],
-        emptySections: [ConnectionSectionType]
-    ) -> [GhostSuggestion] {
-        var suggestions: [GhostSuggestion] = []
-
-        for line in response.components(separatedBy: "\n") {
-            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard trimmed.contains("SECTION:") && trimmed.contains("TEXT:") else { continue }
-
-            // Parse: SECTION: <name> | SOURCE: <title> | TEXT: <content>
-            let parts = trimmed.components(separatedBy: "|")
-            guard parts.count >= 3 else { continue }
-
-            let sectionPart = parts[0].replacingOccurrences(of: "SECTION:", with: "", options: .caseInsensitive)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            let sourcePart = parts[1].replacingOccurrences(of: "SOURCE:", with: "", options: .caseInsensitive)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            let textPart = parts[2].replacingOccurrences(of: "TEXT:", with: "", options: .caseInsensitive)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-
-            guard let sectionType = matchSectionType(sectionPart.lowercased()),
-                  emptySections.contains(sectionType),
-                  !textPart.isEmpty else { continue }
-
-            // Find matching source atom
-            let matchingSource = linkedSources.first {
-                ($0.title ?? "").lowercased().contains(sourcePart.lowercased()) ||
-                sourcePart.lowercased().contains(($0.title ?? "").lowercased())
-            } ?? linkedSources.first
-
-            guard let source = matchingSource else { continue }
-
-            suggestions.append(GhostSuggestion(
-                content: textPart,
-                sourceAtomUUID: source.uuid,
-                sourceAtomTitle: source.title ?? "Source",
-                sourceSnippet: sourcePart,
-                targetSectionType: sectionType,
-                confidence: 0.75
-            ))
-        }
-
-        return suggestions
     }
 
     private func matchSectionType(_ name: String) -> ConnectionSectionType? {

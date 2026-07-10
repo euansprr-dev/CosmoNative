@@ -103,7 +103,6 @@ struct ConnectionInspectorView: View {
             ConnectionInspectorStatRow(label: "Items", value: "\(viewModel.state.totalItemCount)")
             ConnectionInspectorStatRow(label: "Sections filled", value: "\(viewModel.state.completedSectionCount) of \(ConnectionSectionType.allCases.count)")
             ConnectionInspectorStatRow(label: "Sources", value: "\(sources.linked.count)")
-            ConnectionInspectorStatRow(label: "Suggestions", value: "\(viewModel.state.totalGhostCount)")
         }
     }
 }
@@ -158,7 +157,6 @@ struct ConnectionInspectorSectionDetail: View {
 
             VStack(alignment: .leading, spacing: DS.space6) {
                 ConnectionInspectorStatRow(label: "Items", value: "\(section?.itemCount ?? 0)")
-                ConnectionInspectorStatRow(label: "Suggestions", value: "\(section?.ghostSuggestions.count ?? 0)")
             }
 
             Button("Open Section") {

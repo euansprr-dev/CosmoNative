@@ -26,7 +26,6 @@ struct ConnectionSectionDetailView: View {
                 VStack(alignment: .leading, spacing: DS.space16) {
                     if let section {
                         itemList(section)
-                        ghostList(section)
                     }
                     ConnectionQuickAddField(
                         accent: accent,
@@ -105,27 +104,6 @@ struct ConnectionSectionDetailView: View {
         }
     }
 
-    @ViewBuilder
-    private func ghostList(_ section: ConnectionSection) -> some View {
-        if !section.ghostSuggestions.isEmpty {
-            VStack(alignment: .leading, spacing: DS.space8) {
-                Text("Suggestions")
-                    .font(DS.smallCaps)
-                    .tracking(1.4)
-                    .foregroundStyle(DS.textMuted)
-                ForEach(section.ghostSuggestions) { ghost in
-                    ConnectionGhostRow(
-                        ghost: ghost,
-                        accent: accent,
-                        onAccept: { viewModel.acceptGhost(ghost, inSection: sectionType) },
-                        onDismiss: { viewModel.dismissGhost(ghost.id, inSection: sectionType) },
-                        onSourceTap: { actions.onSourceTap(ghost.sourceAtomUUID) }
-                    )
-                }
-            }
-            .padding(.top, DS.space8)
-        }
-    }
 }
 
 // MARK: - Editable item row

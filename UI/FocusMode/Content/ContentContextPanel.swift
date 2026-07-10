@@ -23,9 +23,6 @@ struct ContentContextPanel: View {
     @State private var isLoadingRelated = false
     @State private var relatedSearchTask: Task<Void, Never>?
     @State private var isGeneratingDraft = false
-    @State private var metaPatternReport: MetaPatternReport?
-    @State private var isLoadingMetaPattern = false
-    @StateObject private var ambientEngine = AmbientFieldEngine()
     @State private var showAllSwipes = false
     @State private var showIntelligence = false
     @State private var isLoading = true
@@ -45,10 +42,7 @@ struct ContentContextPanel: View {
     }
 
     private var hasIntelligenceData: Bool {
-        metaPatternReport != nil
-        || hasDraftIntelligence
-        || !relatedContent.isEmpty
-        || !ambientEngine.ambientResults.isEmpty
+        hasDraftIntelligence || !relatedContent.isEmpty
     }
 
     private var hasDraftIntelligence: Bool {
@@ -92,8 +86,6 @@ struct ContentContextPanel: View {
                     await loadInheritedContext()
                     isLoading = false
                 }
-                let queryText = [atom.title ?? "", String((atom.body ?? "").prefix(200))].joined(separator: " ")
-                ambientEngine.updateContext(focusAtomUUID: atom.uuid, currentText: queryText)
             }
             .onChange(of: state.draftContent) {
                 debounceRelatedRefresh()
@@ -441,7 +433,7 @@ struct ContentContextPanel: View {
 
     @ViewBuilder
     private var intelligenceSection: some View {
-        if hasIntelligenceData || isLoadingMetaPattern || isLoadingRelated {
+        if hasIntelligenceData || isLoadingRelated {
             Button {
                 withAnimation(ProMotionSprings.snappy) {
                     showIntelligence.toggle()
@@ -453,10 +445,8 @@ struct ContentContextPanel: View {
 
             if showIntelligence {
                 VStack(alignment: .leading, spacing: 16) {
-                    whatsWorkingSubsection
                     draftIntelligenceSubsection
                     relatedContentSubsection
-                    ambientKnowledgeSubsection
                 }
             }
         }
@@ -493,116 +483,9 @@ struct ContentContextPanel: View {
 
     private var intelligenceItemCount: Int {
         var count = 0
-        if metaPatternReport != nil { count += 1 }
         if hasDraftIntelligence { count += 1 }
         count += relatedContent.count
-        count += ambientEngine.ambientResults.count
         return count
-    }
-
-    // MARK: - What's Working Subsection
-
-    @ViewBuilder
-    private var whatsWorkingSubsection: some View {
-        if let report = metaPatternReport {
-            whatsWorkingContent(report)
-        } else if isLoadingMetaPattern {
-            HStack(spacing: 8) {
-                ProgressView()
-                    .controlSize(.small)
-                Text("Analyzing patterns...")
-                    .font(DS.caption2)
-                    .foregroundStyle(DS.textMuted)
-            }
-            .padding(10)
-        }
-    }
-
-    @ViewBuilder
-    private func whatsWorkingContent(_ report: MetaPatternReport) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            // Scope badge
-            HStack(spacing: 6) {
-                Image(systemName: "chart.line.uptrend.xyaxis")
-                    .font(.system(size: 9))
-                    .foregroundStyle(Color(hex: "#34D399"))
-                Text("What's Working")
-                    .dsSmallCapsLabel()
-            }
-
-            HStack(spacing: 6) {
-                Image(systemName: "sparkle")
-                    .font(.system(size: 9))
-                    .foregroundStyle(Color(hex: "#34D399"))
-                Text("\(report.platform.capitalized) \(report.format) — \(report.niche)")
-                    .font(DS.caption2)
-                    .fontWeight(.medium)
-                    .foregroundStyle(Color(hex: "#34D399"))
-                Spacer()
-                Text("\(report.sampleSize) swipes")
-                    .font(.system(size: 9, weight: .medium, design: .monospaced))
-                    .foregroundStyle(DS.textMuted)
-            }
-
-            if let topHook = report.dominantHooks.first {
-                HStack(spacing: 8) {
-                    Image(systemName: "text.quote")
-                        .font(DS.caption2)
-                        .foregroundStyle(DS.entityIdea)
-                        .frame(width: 16)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(topHook.hookType)
-                            .font(DS.caption2)
-                            .fontWeight(.medium)
-                            .foregroundStyle(DS.text)
-                        Text("\(String(format: "%.0f", topHook.frequency * 100))% of top content")
-                            .font(.system(size: 9))
-                            .foregroundStyle(DS.textMuted)
-                    }
-                }
-            }
-
-            if let topFw = report.winningStructures.first {
-                HStack(spacing: 8) {
-                    Image(systemName: "rectangle.3.group.fill")
-                        .font(DS.caption2)
-                        .foregroundStyle(Color(hex: "#FBBF24"))
-                        .frame(width: 16)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(topFw.framework)
-                            .font(DS.caption2)
-                            .fontWeight(.medium)
-                            .foregroundStyle(DS.text)
-                        Text("\(String(format: "%.0f", topFw.frequency * 100))% adoption")
-                            .font(.system(size: 9))
-                            .foregroundStyle(DS.textMuted)
-                    }
-                }
-            }
-
-            if !report.trendingTopics.isEmpty {
-                HStack(spacing: 4) {
-                    Image(systemName: "arrow.up.right")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(Color(hex: "#34D399"))
-                        .frame(width: 16)
-                    ForEach(report.trendingTopics.prefix(3), id: \.self) { item in
-                        Text(item)
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundStyle(Color(hex: "#34D399"))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color(hex: "#34D399").opacity(0.12), in: Capsule())
-                    }
-                }
-            }
-        }
-        .padding(12)
-        .dsGlassSection()
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(Color(hex: "#34D399").opacity(0.2), lineWidth: 1)
-        )
     }
 
     // MARK: - Draft Intelligence Subsection
@@ -827,61 +710,6 @@ struct ContentContextPanel: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - Ambient Knowledge Subsection
-
-    @ViewBuilder
-    private var ambientKnowledgeSubsection: some View {
-        if !ambientEngine.ambientResults.isEmpty || ambientEngine.isLoading {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 6) {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 9))
-                        .foregroundStyle(DS.accent)
-                    Text("Ambient")
-                        .dsSmallCapsLabel()
-
-                    Spacer()
-
-                    if !ambientEngine.ambientResults.isEmpty {
-                        Text("\(ambientEngine.ambientResults.count)")
-                            .font(.system(size: 9, weight: .bold, design: .monospaced))
-                            .foregroundStyle(DS.accent)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 2)
-                            .background(DS.accent.opacity(0.15), in: Capsule())
-                    }
-                }
-
-                if ambientEngine.isLoading {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                            .controlSize(.small)
-                            .tint(DS.accent)
-                        Text("Searching...")
-                            .font(DS.caption2)
-                            .foregroundStyle(DS.textMuted)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
-                } else {
-                    ForEach(ambientEngine.ambientResults.prefix(5)) { result in
-                        AmbientResultCard(
-                            result: result,
-                            onPull: {
-                                ambientEngine.pullToCanvas(result: result, sourceBlockUUID: atom.uuid)
-                            },
-                            onDismiss: {
-                                withAnimation(ProMotionSprings.snappy) {
-                                    ambientEngine.dismiss(uuid: result.id)
-                                }
-                            }
-                        )
-                    }
-                }
-            }
-        }
-    }
-
     // MARK: - Section Header
 
     private func sectionHeader(title: String, icon: String) -> some View {
@@ -925,17 +753,8 @@ struct ContentContextPanel: View {
         selectedFramework = metadata.inheritedFramework
         hooks = metadata.inheritedHooks ?? []
 
-        // Load meta-pattern report
-        await loadMetaPattern()
-
         // Search related content
         await refreshRelatedContent()
-    }
-
-    private func loadMetaPattern() async {
-        isLoadingMetaPattern = true
-        defer { isLoadingMetaPattern = false }
-        metaPatternReport = await MetaPatternEngine.shared.getRelevantReport(for: atom)
     }
 
     private func refreshRelatedContent() async {

@@ -237,23 +237,17 @@ struct ConnectionSection: Identifiable, Codable, Equatable {
     let type: ConnectionSectionType
     var items: [ConnectionItem]
     var isExpanded: Bool
-    var showGhostSuggestions: Bool
-    var ghostSuggestions: [GhostSuggestion]
 
     init(
         id: UUID = UUID(),
         type: ConnectionSectionType,
         items: [ConnectionItem] = [],
-        isExpanded: Bool = true,
-        showGhostSuggestions: Bool = true,
-        ghostSuggestions: [GhostSuggestion] = []
+        isExpanded: Bool = true
     ) {
         self.id = id
         self.type = type
         self.items = items
         self.isExpanded = isExpanded
-        self.showGhostSuggestions = showGhostSuggestions
-        self.ghostSuggestions = ghostSuggestions
     }
 
     var itemCount: Int {
@@ -261,7 +255,7 @@ struct ConnectionSection: Identifiable, Codable, Equatable {
     }
 
     var hasContent: Bool {
-        !items.isEmpty || !ghostSuggestions.isEmpty
+        !items.isEmpty
     }
 
     mutating func addItem(_ item: ConnectionItem) {
@@ -276,20 +270,6 @@ struct ConnectionSection: Identifiable, Codable, Equatable {
         if let index = items.firstIndex(where: { $0.id == item.id }) {
             items[index] = item
         }
-    }
-
-    mutating func acceptGhostSuggestion(_ suggestion: GhostSuggestion) {
-        let item = ConnectionItem(
-            content: suggestion.content,
-            sourceAtomUUID: suggestion.sourceAtomUUID,
-            sourceSnippet: suggestion.sourceSnippet
-        )
-        items.append(item)
-        ghostSuggestions.removeAll { $0.id == suggestion.id }
-    }
-
-    mutating func dismissGhostSuggestion(_ id: UUID) {
-        ghostSuggestions.removeAll { $0.id == id }
     }
 }
 
@@ -363,49 +343,6 @@ struct ConnectionItem: Identifiable, Codable, Equatable {
     }
 }
 
-// MARK: - Ghost Suggestion
-
-/// A suggested item from AI analysis of connected atoms
-struct GhostSuggestion: Identifiable, Codable, Equatable {
-    let id: UUID
-    let content: String
-    let sourceAtomUUID: String
-    let sourceAtomTitle: String
-    let sourceSnippet: String
-    let targetSectionType: ConnectionSectionType
-    let confidence: Double  // 0.0 to 1.0
-    let createdAt: Date
-
-    init(
-        id: UUID = UUID(),
-        content: String,
-        sourceAtomUUID: String,
-        sourceAtomTitle: String,
-        sourceSnippet: String,
-        targetSectionType: ConnectionSectionType,
-        confidence: Double
-    ) {
-        self.id = id
-        self.content = content
-        self.sourceAtomUUID = sourceAtomUUID
-        self.sourceAtomTitle = sourceAtomTitle
-        self.sourceSnippet = sourceSnippet
-        self.targetSectionType = targetSectionType
-        self.confidence = min(max(confidence, 0), 1)
-        self.createdAt = Date()
-    }
-
-    /// Formatted confidence percentage
-    var confidencePercent: Int {
-        Int(confidence * 100)
-    }
-
-    /// Whether this suggestion should be shown (confidence > 60%)
-    var shouldShow: Bool {
-        confidence >= 0.6
-    }
-}
-
 // MARK: - Connected Source
 
 /// A source atom referenced by items in this Connection
@@ -428,7 +365,6 @@ struct ConnectionFocusModeState: Codable {
     var sections: [ConnectionSection]
     var viewportState: CanvasViewportState
     var floatingPanelIDs: [UUID]
-    var isGeneratingGhosts: Bool
     var lastModified: Date
 
     // MARK: - V2 "The Crucible" fields (additive, backward-compatible)
@@ -476,7 +412,6 @@ struct ConnectionFocusModeState: Codable {
             .map { ConnectionSection(type: $0) }
         self.viewportState = CanvasViewportState()
         self.floatingPanelIDs = []
-        self.isGeneratingGhosts = false
         self.lastModified = Date()
         self.conceptType = .mentalModel
         self.stationPositionsRaw = [:]
@@ -623,7 +558,7 @@ struct ConnectionFocusModeState: Codable {
     // legacy collaborator keys in old blobs are simply ignored)
 
     private enum CodingKeys: String, CodingKey {
-        case atomUUID, sections, viewportState, floatingPanelIDs, isGeneratingGhosts, lastModified
+        case atomUUID, sections, viewportState, floatingPanelIDs, lastModified
         case conceptType, stationPositionsRaw, forgeMode, liveInsights
         case canvasPositionsRaw, canvasSizesRaw, hiddenPanelsRaw, layoutVersion
     }
@@ -635,7 +570,6 @@ struct ConnectionFocusModeState: Codable {
         self.sections = Self.backfillingMissingSections(decodedSections)
         self.viewportState = try c.decode(CanvasViewportState.self, forKey: .viewportState)
         self.floatingPanelIDs = try c.decode([UUID].self, forKey: .floatingPanelIDs)
-        self.isGeneratingGhosts = try c.decode(Bool.self, forKey: .isGeneratingGhosts)
         self.lastModified = try c.decode(Date.self, forKey: .lastModified)
         // V2 fields — tolerate absence from V1 persisted JSON.
         self.conceptType = try c.decodeIfPresent(ConceptFrameworkType.self, forKey: .conceptType) ?? .mentalModel
@@ -673,7 +607,6 @@ struct ConnectionFocusModeState: Codable {
         try c.encode(sections, forKey: .sections)
         try c.encode(viewportState, forKey: .viewportState)
         try c.encode(floatingPanelIDs, forKey: .floatingPanelIDs)
-        try c.encode(isGeneratingGhosts, forKey: .isGeneratingGhosts)
         try c.encode(lastModified, forKey: .lastModified)
         try c.encode(conceptType, forKey: .conceptType)
         try c.encode(stationPositionsRaw, forKey: .stationPositionsRaw)
@@ -721,30 +654,6 @@ struct ConnectionFocusModeState: Codable {
         }
     }
 
-    // MARK: - Ghost Suggestions
-
-    mutating func setGhostSuggestions(_ suggestions: [GhostSuggestion], forSection type: ConnectionSectionType) {
-        if let index = sections.firstIndex(where: { $0.type == type }) {
-            sections[index].ghostSuggestions = suggestions.filter { $0.shouldShow }
-            lastModified = Date()
-        }
-    }
-
-    mutating func acceptGhost(_ id: UUID, inSection type: ConnectionSectionType) {
-        if let sectionIndex = sections.firstIndex(where: { $0.type == type }),
-           let suggestion = sections[sectionIndex].ghostSuggestions.first(where: { $0.id == id }) {
-            sections[sectionIndex].acceptGhostSuggestion(suggestion)
-            lastModified = Date()
-        }
-    }
-
-    mutating func dismissGhost(_ id: UUID, inSection type: ConnectionSectionType) {
-        if let index = sections.firstIndex(where: { $0.type == type }) {
-            sections[index].dismissGhostSuggestion(id)
-            lastModified = Date()
-        }
-    }
-
     // MARK: - Connected Sources
 
     var connectedSources: [ConnectedSource] {
@@ -778,10 +687,6 @@ struct ConnectionFocusModeState: Codable {
 
     var totalItemCount: Int {
         sections.reduce(0) { $0 + $1.itemCount }
-    }
-
-    var totalGhostCount: Int {
-        sections.reduce(0) { $0 + $1.ghostSuggestions.count }
     }
 
     var completedSectionCount: Int {

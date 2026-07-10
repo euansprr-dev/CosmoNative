@@ -195,7 +195,6 @@ struct ConnectionFocusModeView: View {
             // Sections come from a FRESH DB fetch — never from the UserDefaults
             // blob or the (possibly stale) open-time atom snapshot.
             await viewModel.refreshSectionsFromDatabase()
-            await viewModel.generateGhostSuggestions()
             await loadSources()
             await loadLinkTargets()
             await refreshInsightsIfStale()
@@ -453,7 +452,6 @@ struct ConnectionFocusModeView: View {
 
         suggestedWellSources.removeAll { $0.uuid == source.uuid }
         await loadSources()
-        await viewModel.generateGhostSuggestions()
     }
 
     // MARK: - Insights
@@ -748,53 +746,6 @@ final class ConnectionFocusModeViewModel {
         saveState()
     }
 
-    // MARK: - Ghost Suggestions
-
-    func generateGhostSuggestions() async {
-        state.isGeneratingGhosts = true
-
-        // Get related atoms
-        let relatedUUIDs = await getRelatedAtomUUIDs()
-
-        // Gather existing items to avoid duplicates
-        let existingItems = state.sections.flatMap { $0.items }
-
-        // Generate suggestions
-        let suggestions = await GhostSuggestionEngine.shared.generateSuggestions(
-            connectionTitle: atom.title ?? "",
-            existingItems: existingItems,
-            relatedAtomUUIDs: relatedUUIDs
-        )
-
-        // Apply suggestions to sections
-        for (sectionType, sectionSuggestions) in suggestions {
-            state.setGhostSuggestions(sectionSuggestions, forSection: sectionType)
-        }
-
-        state.isGeneratingGhosts = false
-        saveState()
-    }
-
-    private func getRelatedAtomUUIDs() async -> [String] {
-        do {
-            let queryEngine = GraphQueryEngine()
-            let neighbors = try await queryEngine.getNeighbors(of: atom.uuid, direction: .both, limit: 20)
-            return neighbors.map { $0.node.atomUUID }
-        } catch {
-            return []
-        }
-    }
-
-    func acceptGhost(_ ghost: GhostSuggestion, inSection type: ConnectionSectionType) {
-        sectionsModifiedInFocusMode = true
-        state.acceptGhost(ghost.id, inSection: type)
-        saveState()
-    }
-
-    func dismissGhost(_ id: UUID, inSection type: ConnectionSectionType) {
-        state.dismissGhost(id, inSection: type)
-        saveState()
-    }
 }
 
 // MARK: - Preview

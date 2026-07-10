@@ -663,6 +663,29 @@ struct ContentContextPanel: View {
             tint: CosmoMentionColors.note,
             hits: margin.notes
         )
+        if margin.hasAnyShelf && !margin.didExpand {
+            findMoreFooter
+        }
+    }
+
+    /// One explicit live expansion — the only recall work a user click (not
+    /// typing) triggers.
+    private var findMoreFooter: some View {
+        Button {
+            Task { await margin.findMore(atom: atom, state: state) }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "plus.magnifyingglass")
+                    .font(.system(size: 9))
+                Text("Find more")
+                    .font(DS.caption2)
+            }
+            .foregroundStyle(DS.textMuted)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Run one wider recall pass for this draft")
+        .padding(.leading, 2)
     }
 
     /// Silence over noise: an empty shelf renders nothing at all.
@@ -697,6 +720,7 @@ struct ContentContextPanel: View {
             hit: hit,
             tint: tint,
             typeIcon: iconForAtomType(hit.atomType),
+            perfBadge: margin.perfBadges[hit.atomUuid],
             onOpen: {
                 NotificationCenter.default.post(
                     name: CosmoNotification.Navigation.openBlockInFocusMode,
@@ -704,8 +728,24 @@ struct ContentContextPanel: View {
                     userInfo: ["atomUUID": hit.atomUuid, "asPane": true]
                 )
             },
+            onReference: { referenceSuggestion(hit) },
             onDismiss: { margin.dismiss(hit) }
         )
+    }
+
+    /// "Reference" = insert a mention pill at the caret through the editor
+    /// command bus (the same path @-mentions take).
+    private func referenceSuggestion(_ hit: RecallHit) {
+        Task {
+            guard let referenced = try? await AtomRepository.shared.fetch(uuid: hit.atomUuid),
+                  let entityId = referenced.id else { return }
+            let entityType = EntityType(rawValue: referenced.type.rawValue) ?? .note
+            EditorCommandBus.shared.insertMention(
+                entityType: entityType,
+                entityId: entityId,
+                title: referenced.title ?? "Untitled"
+            )
+        }
     }
 
     // MARK: - Section Header

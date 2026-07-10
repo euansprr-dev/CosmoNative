@@ -19,6 +19,10 @@ final class ContentMarginModel {
     private(set) var swipes: [RecallHit] = []
     private(set) var notes: [RecallHit] = []
     private(set) var isRefreshing = false
+    /// Receipts for own published posts on the Swipes shelf ("yours · 12.4K views").
+    private(set) var perfBadges: [String: String] = [:]
+    /// One explicit "Find more" expansion has run for the current signature.
+    private(set) var didExpand = false
 
     var hasAnyShelf: Bool {
         !concepts.isEmpty || !swipes.isEmpty || !notes.isEmpty
@@ -31,8 +35,8 @@ final class ContentMarginModel {
     // MARK: - Tuning
 
     /// Hits below this blended score never surface (silence over noise).
-    static let confidenceFloor = 0.28
-    static let shelfLimit = 3
+    nonisolated static let confidenceFloor = 0.28
+    nonisolated static let shelfLimit = 3
     /// Draft must grow by this many words before a re-query fires.
     static let minNewWords = 40
     static let debounce: Duration = .seconds(2)
@@ -56,6 +60,8 @@ final class ContentMarginModel {
         concepts = []
         swipes = []
         notes = []
+        perfBadges = [:]
+        didExpand = false
         lastQuerySignature = ""
         lastDraftWordCount = 0
         clientNiche = nil
@@ -103,6 +109,7 @@ final class ContentMarginModel {
         // Unchanged signal → unchanged shelves; don't re-bill the query embed.
         guard query != lastQuerySignature else { return }
         lastQuerySignature = query
+        didExpand = false  // a new intent gets a fresh "Find more"
         lastDraftWordCount = state.draftContent
             .split(whereSeparator: { $0.isWhitespace || $0.isNewline }).count
 
@@ -121,13 +128,25 @@ final class ContentMarginModel {
             text: query, types: [.note, .idea], limit: 6,
             excludeUuids: [requestUUID], minScore: Self.confidenceFloor
         ))
-        let (conceptResults, researchResults, noteResults) = await (conceptHits, researchHits, noteHits)
+        async let ownPostHits = RecallEngine.shared.query(RecallQuery(
+            text: query, types: [.content], limit: 6,
+            excludeUuids: [requestUUID], minScore: Self.confidenceFloor
+        ))
+        let (conceptResults, researchResults, noteResults, ownPostResults) =
+            await (conceptHits, researchHits, noteHits, ownPostHits)
 
         // Session-stability: bind results to the atom captured at request time.
         guard requestUUID == boundAtomUUID else { return }
 
-        // Swipe shelf keeps only actual swipe-file atoms.
-        let swipeResults = await filterSwipes(researchResults)
+        // Swipe shelf: semantic score × format match × engagement percentile,
+        // with published own posts joining the pool (max 1 slot).
+        let intentFormat = atom.metadataValue(as: ContentAtomMetadata.self)?.contentFormat
+            .flatMap(ContentFormat.init(rawValue:))
+        let (swipeResults, badges) = await rankSwipeShelf(
+            swipeHits: researchResults,
+            ownPostHits: ownPostResults,
+            intentFormat: intentFormat
+        )
         guard requestUUID == boundAtomUUID else { return }
 
         // Suppress atoms already referenced by the document's inherited context.
@@ -136,6 +155,48 @@ final class ContentMarginModel {
         concepts = merged(existing: concepts, incoming: conceptResults, excluding: inherited)
         swipes = merged(existing: swipes, incoming: swipeResults, excluding: inherited)
         notes = merged(existing: notes, incoming: noteResults, excluding: inherited)
+        perfBadges.merge(badges) { _, new in new }
+    }
+
+    /// One explicit expansion: a wider, lower-floor query whose results join
+    /// append-only. User-invoked — never on the typing path.
+    func findMore(atom: Atom, state: ContentFocusModeState) async {
+        guard !didExpand, atom.uuid == boundAtomUUID else { return }
+        didExpand = true
+        let query = Self.intentQuery(atom: atom, state: state, niche: await resolvedNiche(atom: atom))
+        guard !query.isEmpty else { return }
+
+        isRefreshing = true
+        defer { isRefreshing = false }
+
+        let floor = Self.confidenceFloor * 0.75
+        async let conceptHits = RecallEngine.shared.query(RecallQuery(
+            text: query, types: [.connection], limit: 8,
+            excludeUuids: [atom.uuid], minScore: floor
+        ))
+        async let noteHits = RecallEngine.shared.query(RecallQuery(
+            text: query, types: [.note, .idea], limit: 8,
+            excludeUuids: [atom.uuid], minScore: floor
+        ))
+        async let researchHits = RecallEngine.shared.query(RecallQuery(
+            text: query, types: [.research], limit: 10,
+            excludeUuids: [atom.uuid], minScore: floor
+        ))
+        let (conceptResults, noteResults, researchResults) = await (conceptHits, noteHits, researchHits)
+        guard atom.uuid == boundAtomUUID else { return }
+
+        let intentFormat = atom.metadataValue(as: ContentAtomMetadata.self)?.contentFormat
+            .flatMap(ContentFormat.init(rawValue:))
+        let (swipeResults, badges) = await rankSwipeShelf(
+            swipeHits: researchResults, ownPostHits: [], intentFormat: intentFormat
+        )
+        guard atom.uuid == boundAtomUUID else { return }
+
+        let inherited = Self.inheritedUuids(atom: atom)
+        concepts = merged(existing: concepts, incoming: conceptResults, excluding: inherited, limit: Self.shelfLimit + 2)
+        swipes = merged(existing: swipes, incoming: swipeResults, excluding: inherited, limit: Self.shelfLimit + 2)
+        notes = merged(existing: notes, incoming: noteResults, excluding: inherited, limit: Self.shelfLimit + 2)
+        perfBadges.merge(badges) { _, new in new }
     }
 
     // MARK: - Query Building
@@ -182,15 +243,120 @@ final class ContentMarginModel {
         return out
     }
 
-    private func filterSwipes(_ hits: [RecallHit]) async -> [RecallHit] {
-        var out: [RecallHit] = []
-        for hit in hits {
+    // MARK: - Swipe Shelf Ranking
+
+    /// A candidate on the swipe shelf with everything the ranking needs.
+    struct SwipeCandidate {
+        let hit: RecallHit
+        let format: ContentFormat?
+        /// Engagement rate when real numbers exist; nil ranks neutral.
+        let engagementRate: Double?
+        let views: Int?
+        let isOwnPost: Bool
+    }
+
+    /// Format affinity: exact format 1.0, same family 0.85, other family 0.6,
+    /// unknown on either side 0.8 (neutral — never punish missing data hard).
+    nonisolated static func formatMultiplier(intent: ContentFormat?, candidate: ContentFormat?) -> Double {
+        guard let intent, let candidate else { return 0.8 }
+        if intent == candidate { return 1.0 }
+        return FormatGroup.group(for: intent) == FormatGroup.group(for: candidate) ? 0.85 : 0.6
+    }
+
+    /// Engagement percentile computed WITHIN the candidate set — performance
+    /// ranks already-relevant results, it never filters the library globally
+    /// (the all-swipes-are-curated rule). Missing numbers rank neutral (0.5).
+    nonisolated static func engagementPercentiles(_ rates: [Double?]) -> [Double] {
+        let known = rates.compactMap { $0 }.sorted()
+        guard known.count > 1 else { return rates.map { _ in 0.5 } }
+        return rates.map { rate in
+            guard let rate else { return 0.5 }
+            let below = known.lastIndex(where: { $0 <= rate }).map { $0 + 1 } ?? 0
+            return Double(below) / Double(known.count)
+        }
+    }
+
+    /// Blend: semantic relevance × format match × (0.5 + percentile/2).
+    /// The engagement term sways within [0.5, 1.0] so a mediocre-performing
+    /// but perfectly-relevant swipe still beats an off-topic viral one.
+    nonisolated static func rank(_ candidates: [SwipeCandidate], intentFormat: ContentFormat?) -> [SwipeCandidate] {
+        let percentiles = engagementPercentiles(candidates.map(\.engagementRate))
+        return zip(candidates, percentiles)
+            .map { candidate, percentile -> (SwipeCandidate, Double) in
+                let score = candidate.hit.score
+                    * formatMultiplier(intent: intentFormat, candidate: candidate.format)
+                    * (0.5 + percentile / 2)
+                return (candidate, score)
+            }
+            .sorted { $0.1 > $1.1 }
+            .map(\.0)
+    }
+
+    /// Build + rank the swipe shelf pool: real swipes from the research hits,
+    /// plus the writer's own PUBLISHED posts (real snapshot numbers) capped at
+    /// one slot so the shelf stays a study surface, not a mirror.
+    private func rankSwipeShelf(
+        swipeHits: [RecallHit],
+        ownPostHits: [RecallHit],
+        intentFormat: ContentFormat?
+    ) async -> (hits: [RecallHit], badges: [String: String]) {
+        var candidates: [SwipeCandidate] = []
+
+        for hit in swipeHits.prefix(Self.shelfLimit * 3) {
             guard let atom = try? await AtomRepository.shared.fetch(uuid: hit.atomUuid),
                   atom.isSwipeFileAtom else { continue }
-            out.append(hit)
+            let analysis = atom.swipeAnalysis
+            candidates.append(SwipeCandidate(
+                hit: hit,
+                format: analysis?.swipeContentFormat,
+                engagementRate: analysis?.engagementRate,
+                views: analysis?.viewsCount,
+                isOwnPost: false
+            ))
+        }
+
+        var badges: [String: String] = [:]
+        var ownCandidates: [SwipeCandidate] = []
+        for hit in ownPostHits.prefix(4) {
+            guard let atom = try? await AtomRepository.shared.fetch(uuid: hit.atomUuid) else { continue }
+            let published = !ContentPublishStore.records(for: atom).isEmpty
+                || atom.metadataValue(as: ContentMetadata.self)?.status == "published"
+            guard published else { continue }
+            let snapshots = await ContentPerfStore.snapshots(forContent: atom.uuid)
+            guard let latest = snapshots.first else { continue }
+            ownCandidates.append(SwipeCandidate(
+                hit: hit,
+                format: atom.metadataValue(as: ContentAtomMetadata.self)?.contentFormat
+                    .flatMap(ContentFormat.init(rawValue:)),
+                engagementRate: latest.engagementRate,
+                views: latest.views,
+                isOwnPost: true
+            ))
+            badges[hit.atomUuid] = "yours · \(Self.compactCount(latest.views)) views"
+        }
+
+        // Own posts share the pool but claim at most ONE visible slot.
+        let ranked = Self.rank(candidates + ownCandidates, intentFormat: intentFormat)
+        var out: [RecallHit] = []
+        var ownUsed = 0
+        for candidate in ranked {
+            if candidate.isOwnPost {
+                guard ownUsed == 0 else { continue }
+                ownUsed += 1
+            }
+            out.append(candidate.hit)
             if out.count >= Self.shelfLimit * 2 { break }
         }
-        return out
+        return (out, badges)
+    }
+
+    nonisolated static func compactCount(_ value: Int) -> String {
+        switch value {
+        case 1_000_000...: return String(format: "%.1fM", Double(value) / 1_000_000)
+        case 10_000...: return String(format: "%.0fK", Double(value) / 1_000)
+        case 1_000...: return String(format: "%.1fK", Double(value) / 1_000)
+        default: return "\(value)"
+        }
     }
 
     /// Append-only merge (order-lock law): rows the writer can already see
@@ -198,19 +364,20 @@ final class ContentMarginModel {
     private func merged(
         existing: [RecallHit],
         incoming: [RecallHit],
-        excluding: Set<String>
+        excluding: Set<String>,
+        limit: Int = ContentMarginModel.shelfLimit
     ) -> [RecallHit] {
         var seen = Set(existing.map(\.atomUuid))
         var out = existing
         for hit in incoming {
-            guard out.count < Self.shelfLimit else { break }
+            guard out.count < limit else { break }
             guard !seen.contains(hit.atomUuid),
                   !dismissed.contains(hit.atomUuid),
                   !excluding.contains(hit.atomUuid) else { continue }
             seen.insert(hit.atomUuid)
             out.append(hit)
         }
-        return Array(out.prefix(Self.shelfLimit))
+        return Array(out.prefix(limit))
     }
 }
 
@@ -222,7 +389,10 @@ struct MarginSuggestionRow: View {
     let hit: RecallHit
     let tint: Color
     let typeIcon: String
+    /// "yours · 12.4K views" on own published posts; nil otherwise.
+    var perfBadge: String?
     var onOpen: () -> Void = {}
+    var onReference: (() -> Void)?
     var onDismiss: () -> Void = {}
 
     @State private var isHovered = false
@@ -238,18 +408,7 @@ struct MarginSuggestionRow: View {
                     .accessibilityHidden(true)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 4) {
-                        Text(hit.title)
-                            .font(DS.caption)
-                            .fontWeight(.medium)
-                            .foregroundStyle(DS.text)
-                            .lineLimit(1)
-                        if let page = hit.page {
-                            Text("p. \(page)")
-                                .font(DS.caption2.monospacedDigit())
-                                .foregroundStyle(DS.textMuted)
-                        }
-                    }
+                    titleLine
                     // The receipt: WHY this surfaced (matched chunk excerpt).
                     Text(hit.matchedText)
                         .font(DS.caption2)
@@ -259,16 +418,7 @@ struct MarginSuggestionRow: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 if isHovered {
-                    Button(action: onDismiss) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 8, weight: .semibold))
-                            .foregroundStyle(DS.textMuted)
-                            .frame(width: 16, height: 16)
-                            .background(DS.border.opacity(0.5), in: Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("Don't suggest this here again")
-                    .accessibilityLabel("Dismiss suggestion")
+                    hoverActions
                 }
             }
             .padding(8)
@@ -283,5 +433,53 @@ struct MarginSuggestionRow: View {
             withAnimation(ProMotionSprings.hover) { isHovered = hovering }
         }
         .accessibilityLabel("\(hit.title). \(hit.matchedText)")
+    }
+
+    private var titleLine: some View {
+        HStack(spacing: 4) {
+            Text(hit.title)
+                .font(DS.caption)
+                .fontWeight(.medium)
+                .foregroundStyle(DS.text)
+                .lineLimit(1)
+            if let page = hit.page {
+                Text("p. \(page)")
+                    .font(DS.caption2.monospacedDigit())
+                    .foregroundStyle(DS.textMuted)
+            }
+            if let perfBadge {
+                Text(perfBadge)
+                    .font(DS.caption2.monospacedDigit())
+                    .foregroundStyle(DS.gilt)
+            }
+        }
+    }
+
+    private var hoverActions: some View {
+        HStack(spacing: 4) {
+            if let onReference {
+                Button(action: onReference) {
+                    Image(systemName: "at")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(DS.textMuted)
+                        .frame(width: 16, height: 16)
+                        .background(DS.border.opacity(0.5), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .help("Reference — insert a mention pill at the caret")
+                .accessibilityLabel("Insert reference")
+            }
+            Button(action: onDismiss) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(DS.textMuted)
+                    .frame(width: 16, height: 16)
+                    .background(DS.border.opacity(0.5), in: Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Don't suggest this here again")
+            .accessibilityLabel("Dismiss suggestion")
+        }
+        .transition(.opacity)
     }
 }

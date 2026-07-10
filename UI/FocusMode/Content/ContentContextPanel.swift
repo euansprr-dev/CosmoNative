@@ -19,9 +19,7 @@ struct ContentContextPanel: View {
     @State private var inheritedConnectionAtoms: [Atom] = []
     @State private var selectedFramework: String?
     @State private var hooks: [String] = []
-    @State private var relatedContent: [RelatedAtomRef] = []
-    @State private var isLoadingRelated = false
-    @State private var relatedSearchTask: Task<Void, Never>?
+    @State private var margin = ContentMarginModel()
     @State private var isGeneratingDraft = false
     @State private var showAllSwipes = false
     @State private var showIntelligence = false
@@ -42,7 +40,7 @@ struct ContentContextPanel: View {
     }
 
     private var hasIntelligenceData: Bool {
-        hasDraftIntelligence || !relatedContent.isEmpty
+        hasDraftIntelligence || margin.hasAnyShelf
     }
 
     private var hasDraftIntelligence: Bool {
@@ -82,13 +80,14 @@ struct ContentContextPanel: View {
                     .frame(width: 1)
             }
             .onAppear {
+                margin.bind(atomUUID: atom.uuid)
                 Task {
                     await loadInheritedContext()
                     isLoading = false
                 }
             }
             .onChange(of: state.draftContent) {
-                debounceRelatedRefresh()
+                margin.noteDraftChanged(atom: atom, state: state)
             }
         }
     }
@@ -433,7 +432,7 @@ struct ContentContextPanel: View {
 
     @ViewBuilder
     private var intelligenceSection: some View {
-        if hasIntelligenceData || isLoadingRelated {
+        if hasIntelligenceData || margin.isRefreshing {
             Button {
                 withAnimation(ProMotionSprings.snappy) {
                     showIntelligence.toggle()
@@ -446,7 +445,7 @@ struct ContentContextPanel: View {
             if showIntelligence {
                 VStack(alignment: .leading, spacing: 16) {
                     draftIntelligenceSubsection
-                    relatedContentSubsection
+                    marginShelves
                 }
             }
         }
@@ -484,7 +483,7 @@ struct ContentContextPanel: View {
     private var intelligenceItemCount: Int {
         var count = 0
         if hasDraftIntelligence { count += 1 }
-        count += relatedContent.count
+        count += margin.totalCount
         return count
     }
 
@@ -642,72 +641,71 @@ struct ContentContextPanel: View {
         }
     }
 
-    // MARK: - Related Content Subsection
+    // MARK: - The Margin (ambient recall shelves)
 
     @ViewBuilder
-    private var relatedContentSubsection: some View {
-        if isLoadingRelated {
-            HStack(spacing: 8) {
-                ProgressView()
-                    .controlSize(.small)
-                Text("Finding related...")
-                    .font(DS.caption2)
-                    .foregroundStyle(DS.textMuted)
-            }
-            .padding(10)
-        } else if !relatedContent.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
+    private var marginShelves: some View {
+        marginShelf(
+            title: "CONCEPTS",
+            icon: "link",
+            tint: CosmoMentionColors.connection,
+            hits: margin.concepts
+        )
+        marginShelf(
+            title: "SWIPES",
+            icon: "bolt.fill",
+            tint: DS.entitySwipe,
+            hits: margin.swipes
+        )
+        marginShelf(
+            title: "NOTES & IDEAS",
+            icon: "note.text",
+            tint: CosmoMentionColors.note,
+            hits: margin.notes
+        )
+    }
+
+    /// Silence over noise: an empty shelf renders nothing at all.
+    @ViewBuilder
+    private func marginShelf(
+        title: String,
+        icon: String,
+        tint: Color,
+        hits: [RecallHit]
+    ) -> some View {
+        if !hits.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
-                    Image(systemName: "link")
+                    Image(systemName: icon)
                         .font(.system(size: 9))
-                        .foregroundStyle(DS.textMuted)
-                    Text("Related")
+                        .foregroundStyle(tint)
+                        .accessibilityHidden(true)
+                    Text(title)
                         .dsSmallCapsLabel()
                 }
-
                 VStack(spacing: 4) {
-                    ForEach(relatedContent.prefix(6)) { ref in
-                        relatedContentCard(ref)
+                    ForEach(hits) { hit in
+                        marginRow(hit, tint: tint)
                     }
                 }
             }
         }
     }
 
-    private func relatedContentCard(_ ref: RelatedAtomRef) -> some View {
-        Button {
-            NotificationCenter.default.post(
-                name: CosmoNotification.Navigation.openBlockInFocusMode,
-                object: nil,
-                userInfo: ["atomUUID": ref.atomUUID]
-            )
-        } label: {
-            HStack(spacing: 8) {
-                RoundedRectangle(cornerRadius: 1)
-                    .fill(ref.tier.accentColor)
-                    .frame(width: 2, height: 28)
-
-                Image(systemName: iconForAtomType(ref.type))
-                    .font(DS.caption2)
-                    .foregroundStyle(colorForAtomType(ref.type))
-                    .frame(width: 14)
-
-                Text(ref.title)
-                    .font(DS.caption2)
-                    .fontWeight(.medium)
-                    .foregroundStyle(DS.text)
-                    .lineLimit(1)
-
-                Spacer()
-
-                Text(String(format: "%.0f%%", ref.relevanceScore * 100))
-                    .font(.system(size: 9, weight: .medium, design: .monospaced))
-                    .foregroundStyle(DS.textMuted)
-            }
-            .padding(8)
-            .dsGlassSection(cornerRadius: 8)
-        }
-        .buttonStyle(.plain)
+    private func marginRow(_ hit: RecallHit, tint: Color) -> some View {
+        MarginSuggestionRow(
+            hit: hit,
+            tint: tint,
+            typeIcon: iconForAtomType(hit.atomType),
+            onOpen: {
+                NotificationCenter.default.post(
+                    name: CosmoNotification.Navigation.openBlockInFocusMode,
+                    object: nil,
+                    userInfo: ["atomUUID": hit.atomUuid, "asPane": true]
+                )
+            },
+            onDismiss: { margin.dismiss(hit) }
+        )
     }
 
     // MARK: - Section Header
@@ -753,113 +751,9 @@ struct ContentContextPanel: View {
         selectedFramework = metadata.inheritedFramework
         hooks = metadata.inheritedHooks ?? []
 
-        // Search related content
-        await refreshRelatedContent()
-    }
-
-    private func refreshRelatedContent() async {
-        let query = atom.title ?? ""
-        guard !query.isEmpty else { return }
-        isLoadingRelated = true
-        defer { isLoadingRelated = false }
-
-        var allRefs: [RelatedAtomRef] = []
-        var seenUUIDs: Set<String> = [atom.uuid]
-
-        // Derive niche from atom metadata for targeted queries
-        let metadata = atom.metadataValue(as: ContentAtomMetadata.self)
-        var niche: String?
-        if let clientUUID = metadata?.clientProfileUUID,
-           let client = try? await AtomRepository.shared.fetch(uuid: clientUUID),
-           let clientMeta = client.metadataValue(as: ClientProfileMetadata.self) {
-            niche = clientMeta.niche
-        }
-
-        // --- Primary tier: Same format research swipes ---
-        do {
-            let primaryQuery = [query, niche].compactMap { $0 }.joined(separator: " ")
-            let primaryResults = try await HybridSearchEngine.shared.search(
-                query: primaryQuery,
-                limit: 6,
-                entityTypes: [.research]
-            )
-            for result in primaryResults where !(seenUUIDs.contains(result.entityUUID ?? "")) {
-                guard allRefs.filter({ $0.tier == .primary }).count < 3 else { break }
-                let uuid = result.entityUUID ?? ""
-                seenUUIDs.insert(uuid)
-                allRefs.append(RelatedAtomRef(
-                    atomUUID: uuid,
-                    title: result.title,
-                    type: AtomType(rawValue: result.entityType.rawValue) ?? .research,
-                    relevanceScore: result.combinedScore,
-                    preview: result.preview,
-                    tier: .primary
-                ))
-            }
-        } catch {
-            print("ContentContextPanel: primary tier search failed: \(error)")
-        }
-
-        // --- Secondary tier: Same niche content atoms ---
-        do {
-            let secondaryQuery = niche ?? query
-            let secondaryResults = try await HybridSearchEngine.shared.search(
-                query: secondaryQuery,
-                limit: 6,
-                entityTypes: [.content]
-            )
-            for result in secondaryResults where !(seenUUIDs.contains(result.entityUUID ?? "")) {
-                guard allRefs.filter({ $0.tier == .secondary }).count < 3 else { break }
-                let uuid = result.entityUUID ?? ""
-                seenUUIDs.insert(uuid)
-                allRefs.append(RelatedAtomRef(
-                    atomUUID: uuid,
-                    title: result.title,
-                    type: AtomType(rawValue: result.entityType.rawValue) ?? .content,
-                    relevanceScore: result.combinedScore,
-                    preview: result.preview,
-                    tier: .secondary
-                ))
-            }
-        } catch {
-            print("ContentContextPanel: secondary tier search failed: \(error)")
-        }
-
-        // --- Tertiary tier: Broad semantic search ---
-        do {
-            let tertiaryResults = try await HybridSearchEngine.shared.search(
-                query: query,
-                limit: 8
-            )
-            for result in tertiaryResults where !(seenUUIDs.contains(result.entityUUID ?? "")) {
-                guard allRefs.filter({ $0.tier == .tertiary }).count < 4 else { break }
-                let uuid = result.entityUUID ?? ""
-                seenUUIDs.insert(uuid)
-                allRefs.append(RelatedAtomRef(
-                    atomUUID: uuid,
-                    title: result.title,
-                    type: AtomType(rawValue: result.entityType.rawValue) ?? .idea,
-                    relevanceScore: result.combinedScore,
-                    preview: result.preview,
-                    tier: .tertiary
-                ))
-            }
-        } catch {
-            print("ContentContextPanel: tertiary tier search failed: \(error)")
-        }
-
-        relatedContent = allRefs
-    }
-
-    private func debounceRelatedRefresh() {
-        guard state.currentStep == .draft else { return }
-
-        relatedSearchTask?.cancel()
-        relatedSearchTask = Task {
-            try? await Task.sleep(nanoseconds: 5_000_000_000) // 5 seconds
-            guard !Task.isCancelled else { return }
-            await refreshRelatedContent()
-        }
+        // Prime the Margin from the intent signal (title + dek + format +
+        // niche) — no draft required, so suggestions exist from second zero.
+        await margin.refresh(atom: atom, state: state)
     }
 
     // MARK: - Helpers

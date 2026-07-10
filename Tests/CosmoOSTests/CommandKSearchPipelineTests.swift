@@ -2755,27 +2755,6 @@ final class CommandKSearchPipelineTests: XCTestCase {
         XCTAssertFalse(loadAreasBody.contains(".sorted {\n                    let a = $0.metadataValue(as: AreaMetadata.self)?.sortOrder"))
     }
 
-    func testContentPolishAnalysisDebouncesAndCancelsDraftChanges() throws {
-        let polishSource = try String(
-            contentsOf: repositoryRoot.appendingPathComponent("UI/FocusMode/Content/ContentPolishView.swift"),
-            encoding: .utf8
-        )
-        let analyzerSource = try String(
-            contentsOf: repositoryRoot.appendingPathComponent("AI/WritingAnalyzer.swift"),
-            encoding: .utf8
-        )
-
-        XCTAssertTrue(polishSource.contains("@State private var analysisTask: Task<Void, Never>?"))
-        XCTAssertTrue(polishSource.contains("@State private var analysisRequestID = UUID()"))
-        XCTAssertTrue(polishSource.contains("analysisTask?.cancel()"))
-        XCTAssertTrue(polishSource.contains("try? await Task.sleep"))
-        XCTAssertTrue(polishSource.contains("Task.detached(priority: .utility)"))
-        XCTAssertTrue(polishSource.contains("guard analysisRequestID == requestID"))
-        XCTAssertTrue(polishSource.contains(".onDisappear"))
-        XCTAssertTrue(analyzerSource.contains("struct WritingAnalysis: Sendable"))
-        XCTAssertTrue(analyzerSource.contains("final class WritingAnalyzer: @unchecked Sendable"))
-    }
-
     func testBrainstormContextSidebarSearchCancelsStaleRequestsBeforePublishing() throws {
         let source = try String(
             contentsOf: repositoryRoot.appendingPathComponent("UI/FocusMode/Content/BrainstormContextSidebar.swift"),

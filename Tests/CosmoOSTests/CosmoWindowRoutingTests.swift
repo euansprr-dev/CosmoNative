@@ -58,7 +58,7 @@ final class CosmoWindowRoutingTests: XCTestCase {
     }
 
     func testAPIKeysSettingsExposeAgentLLMKeyUsedByCraftSkills() throws {
-        let settingsSource = try source("Settings/SanctuarySettingsView.swift")
+        let settingsSource = try source("Settings/CosmoSettingsView.swift")
 
         XCTAssertTrue(settingsSource.contains("Anthropic Agent LLM Key"))
         XCTAssertTrue(settingsSource.contains("keyIdentifier: \"agent_llm\""))
@@ -66,7 +66,7 @@ final class CosmoWindowRoutingTests: XCTestCase {
     }
 
     func testAPIKeyInputsCapturePasteInsideSettingsOverlay() throws {
-        let settingsSource = try source("Settings/SanctuarySettingsView.swift")
+        let settingsSource = try source("Settings/CosmoSettingsView.swift")
 
         XCTAssertTrue(settingsSource.contains("PasteAwareAPIKeyField("))
         XCTAssertTrue(settingsSource.contains("override func performKeyEquivalent(with event: NSEvent) -> Bool"))

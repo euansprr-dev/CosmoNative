@@ -78,6 +78,7 @@ struct AtomWindowChromeActions {
     var toggleBookmark: () -> Void
     var showSearch: () -> Void
     var createAtom: (AtomType) -> Void
+    var showHistory: () -> Void = {}
 }
 
 struct AtomWindowChromePayload {
@@ -212,6 +213,12 @@ struct AtomWindowChromeTrailingControls: View {
             isActive: context.state.isBookmarked,
             activeTint: context.state.typeColor.color,
             action: context.actions.toggleBookmark
+        )
+
+        AtomWindowChromeIconButton(
+            systemName: "clock.arrow.circlepath",
+            help: "Version history",
+            action: context.actions.showHistory
         )
 
         AtomWindowChromeIconButton(

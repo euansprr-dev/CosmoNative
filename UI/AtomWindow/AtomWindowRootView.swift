@@ -6,6 +6,8 @@ import SwiftUI
 struct AtomWindowRootView: View {
     let viewModel: AtomWindowViewModel
 
+    @State private var historyAtom: Atom?
+
     var body: some View {
         atomContent
         .background(atomWindowBackdrop)
@@ -17,6 +19,9 @@ struct AtomWindowRootView: View {
         .compositingGroup()
         .padding(10)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .sheet(item: $historyAtom) { atom in
+            AtomHistorySheet(atom: atom) { historyAtom = nil }
+        }
     }
 
     // MARK: - Content
@@ -144,6 +149,9 @@ struct AtomWindowRootView: View {
             },
             createAtom: { type in
                 Task { await viewModel.createNewAtom(type: type) }
+            },
+            showHistory: {
+                historyAtom = viewModel.currentAtom
             }
         )
     }

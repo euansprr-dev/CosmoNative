@@ -94,6 +94,10 @@ struct CosmoApp: App {
             // Deferred so it never competes with interactive startup.
             try? await Task.sleep(for: .seconds(60))
             _ = await VectorDatabase.shared.reindexMissing()
+
+            // Version-history maintenance: apply the tiered retention policy
+            // (at most once per day; cheap no-op otherwise).
+            await AtomRevisionPruner.pruneIfDue()
         }
 
         // Observe system wake to process swipes captured while asleep

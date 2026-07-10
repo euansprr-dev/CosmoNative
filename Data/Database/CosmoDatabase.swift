@@ -2301,6 +2301,31 @@ class CosmoDatabase: ObservableObject {
             print("✅ agent memory tables created")
         }
 
+        migrator.registerMigration("create_atom_revisions") { db in
+            // Local-only version history: pre-image snapshots written by the
+            // repository/sync write paths before content-changing overwrites.
+            // Never synced, never searched. See AtomRevision.swift.
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS atom_revisions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    atom_uuid TEXT NOT NULL,
+                    type TEXT NOT NULL,
+                    title TEXT,
+                    body TEXT,
+                    structured TEXT,
+                    metadata TEXT,
+                    links TEXT,
+                    local_version INTEGER NOT NULL DEFAULT 0,
+                    source TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_atom_revisions_atom
+                    ON atom_revisions(atom_uuid, created_at DESC);
+            """)
+            print("✅ atom_revisions table created")
+        }
+
         return migrator
     }
 

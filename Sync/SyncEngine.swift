@@ -774,6 +774,15 @@ class SyncEngine: ObservableObject {
         let keyColumn = ["canvas_blocks", "canvas_drawings"].contains(table) ? "id" : "uuid"
         do {
             try await database.asyncWrite { db in
+                // Version history: a remote tombstone is about to soft-delete the
+                // local row — keep its final content (same contract as local delete).
+                if table == Atom.databaseTableName,
+                   let previous = try? Atom
+                       .filter(Atom.CodingKeys.uuid == uuid)
+                       .filter(Atom.CodingKeys.isDeleted == false)
+                       .fetchOne(db) {
+                    AtomRevisionWriter.snapshot(db, of: previous, source: .preDelete)
+                }
                 try CanvasBlockSyncObserver.suppressingSync {
                     try db.execute(
                         sql: """

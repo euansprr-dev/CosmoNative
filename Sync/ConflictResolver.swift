@@ -464,6 +464,11 @@ class ConflictResolver {
 
         do {
             try await database.asyncWrite { db in
+                // Version history: a remote write is about to replace the local
+                // row — keep the local pre-image so sync can never eat content.
+                if table == Atom.databaseTableName {
+                    AtomRevisionWriter.snapshotBeforeRemoteApply(db, uuid: uuid)
+                }
                 try CanvasBlockSyncObserver.suppressingSync {
                     try db.execute(sql: sql, arguments: StatementArguments(finalArgs))
                 }

@@ -402,7 +402,7 @@ class AtomRepository: ObservableObject {
     /// Throws AtomRepositoryError.versionConflict if the atom was modified
     /// since the caller's copy was fetched.
     @discardableResult
-    func update(_ atom: Atom) async throws -> Atom {
+    func update(_ atom: Atom, revisionSource: RevisionSource = .userEdit) async throws -> Atom {
         ConsoleLog.verbose("update() called uuid=\(atom.uuid) expectedVersion=\(atom.localVersion) title=\"\(atom.title?.prefix(50) ?? "nil")\" bodyLen=\(atom.body?.count ?? 0) bodyPreview=\"\(String(atom.body?.prefix(80) ?? "nil"))\"", subsystem: .database)
         var updatedAtom = atom
         updatedAtom.updatedAt = ISO8601.string(from: Date())
@@ -412,6 +412,15 @@ class AtomRepository: ObservableObject {
         let expectedVersion = atom.localVersion // Version the caller read
 
         let rowsAffected = try await database.asyncWrite { db -> Int in
+            // Version history: snapshot the row being replaced, atomically
+            // with the overwrite. Losing a snapshot never blocks the save.
+            if let previous = try? Atom
+                .filter(Atom.CodingKeys.uuid == atomToUpdate.uuid)
+                .fetchOne(db) {
+                AtomRevisionWriter.snapshotIfNeeded(
+                    db, previous: previous, incoming: atomToUpdate, source: revisionSource
+                )
+            }
             try db.execute(
                 sql: """
                     UPDATE atoms SET
@@ -462,6 +471,11 @@ class AtomRepository: ObservableObject {
             let retryVersion = fresh.localVersion
             let retryAtom = merged
             let retryRows = try await database.asyncWrite { db -> Int in
+                // The conflict path replaces the OTHER writer's row — always
+                // snapshot it so the auto-merge can never silently eat content.
+                AtomRevisionWriter.snapshotIfNeeded(
+                    db, previous: fresh, incoming: retryAtom, source: revisionSource
+                )
                 try db.execute(
                     sql: """
                         UPDATE atoms SET
@@ -539,7 +553,7 @@ class AtomRepository: ObservableObject {
     /// snapshot), and queues the change for sync in the same transaction so a
     /// quit-time edit still reaches the cloud on next launch.
     @discardableResult
-    func updateSync(_ atom: Atom) throws -> Atom {
+    func updateSync(_ atom: Atom, revisionSource: RevisionSource = .userEdit) throws -> Atom {
         ConsoleLog.verbose("updateSync() called uuid=\(atom.uuid) version=\(atom.localVersion) bodyLen=\(atom.body?.count ?? 0) bodyPreview=\"\(String(atom.body?.prefix(80) ?? "nil"))\"", subsystem: .database)
         var candidate = atom
         candidate.updatedAt = ISO8601.string(from: Date())
@@ -550,6 +564,15 @@ class AtomRepository: ObservableObject {
         var conflicted = false
 
         let saved: Atom = try database.write { db in
+            // Version history: snapshot the row being replaced (close-save path).
+            if let previous = try? Atom
+                .filter(Atom.CodingKeys.uuid == candidateAtom.uuid)
+                .fetchOne(db) {
+                AtomRevisionWriter.snapshotIfNeeded(
+                    db, previous: previous, incoming: candidateAtom, source: revisionSource
+                )
+            }
+
             func apply(_ row: Atom, expecting expected: Int64) throws -> Bool {
                 try db.execute(
                     sql: """
@@ -800,6 +823,14 @@ class AtomRepository: ObservableObject {
     /// Soft delete an atom by UUID
     func delete(uuid: String) async throws {
         try await database.asyncWrite { db in
+            // Version history: keep the atom's final content so a deleted
+            // note/draft is always recoverable even after the tombstone syncs.
+            if let previous = try? Atom
+                .filter(Atom.CodingKeys.uuid == uuid)
+                .filter(Atom.CodingKeys.isDeleted == false)
+                .fetchOne(db) {
+                AtomRevisionWriter.snapshot(db, of: previous, source: .preDelete)
+            }
             try db.execute(
                 sql: """
                 UPDATE atoms

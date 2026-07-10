@@ -366,7 +366,8 @@ final class CosmoAtomBackedEditableSurface: CosmoEditableSurfaceProvider {
         var updated = atom
         updated.body = written.body
         updated.metadata = written.metadata
-        _ = try await AtomRepository.shared.update(updated)
+        // Assistant applies always leave a revision behind (aiApply source).
+        _ = try await AtomRepository.shared.update(updated, revisionSource: .aiApply)
 
         loadedText = nextDocument.plainText
         return CosmoEditableOperationResult(operationID: operation.id, status: .applied, message: "Applied")

@@ -547,9 +547,6 @@ class CommandCenterDashboardViewModel: ObservableObject {
 
     @Published var habits: [HabitState] = []
 
-    // MARK: - Objectives
-
-    @Published var objectives: [ObjectiveState] = []
 
     // MARK: - Calendar Events
 
@@ -588,7 +585,6 @@ class CommandCenterDashboardViewModel: ObservableObject {
 
     private let plannerum = PlannerumViewModel.shared
     let sessionEngine = DeepWorkSessionEngine.shared
-    private let objectiveEngine = ObjectiveEngine()
     private let calendarService = CalendarSyncService.shared
     private let habitEngine = CommandCenterHabitEngine.shared
     private let intentEngine = CommandCenterIntentEngine.shared
@@ -613,7 +609,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
             return anytimeTasks
         case .someday:
             return somedayTasks
-        case .habits, .reports, .objectives:
+        case .habits, .reports:
             return []
         case .project:
             return projectTasks
@@ -690,8 +686,6 @@ class CommandCenterDashboardViewModel: ObservableObject {
                         await self?.loadTodaySessions()
                         await self?.loadWeeklyReport()
                         await self?.loadHabitReport()
-                    case .objectives:
-                        self?.objectiveEngine.startTracking()
                     case .project:
                         if let uuid = self?.selectedProjectUUID {
                             await self?.loadProjectTasks(projectUUID: uuid)
@@ -783,13 +777,6 @@ class CommandCenterDashboardViewModel: ObservableObject {
             }
             .store(in: &cancellables)
 
-        // React to objective changes
-        objectiveEngine.$objectives
-            .sink { [weak self] objectives in
-                self?.objectives = objectives
-            }
-            .store(in: &cancellables)
-
         // Calendar events (debounced — CalendarSyncService publishes on refresh)
         calendarService.$externalEvents
             .debounce(for: .seconds(1), scheduler: DispatchQueue.main)
@@ -814,59 +801,6 @@ class CommandCenterDashboardViewModel: ObservableObject {
         await loadTodayTimeData()
         await loadTodaySessions()
         await loadWeeklyReport()
-        objectiveEngine.startTracking()
-    }
-
-    // MARK: - Objectives
-
-    func createObjective(
-        title: String,
-        targetValue: Double,
-        unit: String,
-        dataSource: ObjectiveDataSource,
-        quarter: Int? = nil,
-        year: Int? = nil
-    ) async {
-        do {
-            try await objectiveEngine.createObjective(
-                title: title,
-                targetValue: targetValue,
-                unit: unit,
-                dataSource: dataSource,
-                quarter: quarter,
-                year: year
-            )
-        } catch {
-            PersistenceHealth.note(.writeFailure, context: "Dashboard.createObjective", detail: error.localizedDescription)
-        }
-    }
-
-    func updateObjective(
-        id: String,
-        title: String,
-        targetValue: Double,
-        unit: String,
-        dataSource: ObjectiveDataSource
-    ) async {
-        do {
-            try await objectiveEngine.updateObjective(
-                id: id,
-                title: title,
-                targetValue: targetValue,
-                unit: unit,
-                dataSource: dataSource
-            )
-        } catch {
-            PersistenceHealth.note(.writeFailure, context: "Dashboard.updateObjective(\(id.prefix(8)))", detail: error.localizedDescription)
-        }
-    }
-
-    func deleteObjective(id: String) async {
-        do {
-            try await objectiveEngine.deleteObjective(id: id)
-        } catch {
-            PersistenceHealth.note(.writeFailure, context: "Dashboard.deleteObjective(\(id.prefix(8)))", detail: error.localizedDescription)
-        }
     }
 
     private func scheduleRefresh(_ domain: DashboardRefreshDomain, delayNanoseconds: UInt64 = 0) {
@@ -1383,7 +1317,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
         case .someday:
             await loadSomedayTasks()
             await loadCompletedTasks()
-        case .habits, .reports, .objectives:
+        case .habits, .reports:
             await loadCompletedTasks()
         case .project:
             if let uuid = selectedProjectUUID {
@@ -3481,7 +3415,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
             await loadAnytimeTasks()
         case .someday:
             await loadSomedayTasks()
-        case .habits, .reports, .objectives:
+        case .habits, .reports:
             break
         case .project:
             if let uuid = selectedProjectUUID {

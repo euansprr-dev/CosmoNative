@@ -289,8 +289,6 @@ struct CommandCenterMasthead: View {
             return "Practice"
         case .reports:
             return "Review"
-        case .objectives:
-            return "Quarterly"
         default:
             return viewModel.dateText
         }
@@ -319,8 +317,6 @@ struct CommandCenterMasthead: View {
             return "\(complete)/\(viewModel.habits.count) complete today"
         case .reports:
             return "\(formattedTodayTotal) tracked today"
-        case .objectives:
-            return countText(viewModel.objectives.filter { $0.progress < 1 }.count, singular: "active objective", plural: "active objectives")
         case .project, .area:
             return countText(viewModel.currentVisibleTasks.count, singular: "task", plural: "tasks")
         }

@@ -919,7 +919,7 @@ private struct SidebarCommandCenterContext: View {
         case .anytime: count = viewModel.anytimeTasks.count
         case .someday: count = viewModel.somedayTasks.count
         case .logbook: count = viewModel.completedTodayTasks.count
-        case .habits, .reports, .objectives: count = 0
+        case .habits, .reports: count = 0
         case .project, .area: count = 0
         }
         return count > 0 ? count : nil

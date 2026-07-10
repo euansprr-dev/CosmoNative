@@ -93,10 +93,6 @@ struct CommandCenterDashboard: View {
             .transition(.opacity)
 
             Spacer(minLength: 0)
-
-            if shouldShowObjectivesFooter {
-                DashboardObjectivesBar(viewModel: viewModel)
-            }
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, DS.space16)
@@ -114,8 +110,6 @@ struct CommandCenterDashboard: View {
             HabitsSectionView(viewModel: viewModel, composer: composer)
         case .reports:
             ReportsSectionView(viewModel: viewModel)
-        case .objectives:
-            ObjectivesSectionView(viewModel: viewModel)
         case .today, .upcoming, .anytime, .someday, .logbook, .project, .area:
             existingTaskOrProjectContent
         }
@@ -156,12 +150,6 @@ struct CommandCenterDashboard: View {
             viewModel.selectedAreaUUID ?? "no-area",
             viewModel.showReports ? "rail-reports" : "rail-main"
         ].joined(separator: ":")
-    }
-
-    private var shouldShowObjectivesFooter: Bool {
-        viewModel.viewMode != .today &&
-        viewModel.viewMode != .upcoming &&
-        !viewModel.viewMode.isFullPlanningPage
     }
 
     // MARK: - Keyboard Handling
@@ -464,7 +452,6 @@ final class CommandCenterContextProvider: CosmoContextProvider {
                 "completedTodayTasks": "\(viewModel.completedTodayTasks.count)",
                 "trackedToday": "\(viewModel.todayTrackedMinutes)m",
                 "habits": habitSummary(for: viewModel.habits),
-                "objectives": objectiveSummary(for: viewModel.objectives),
                 "visibleTasks": taskSummary(for: visibleTasks)
             ],
             visibleItemCount: visibleTasks.count,
@@ -509,10 +496,4 @@ final class CommandCenterContextProvider: CosmoContextProvider {
             .joined(separator: ", ")
     }
 
-    private func objectiveSummary(for objectives: [ObjectiveState]) -> String {
-        guard !objectives.isEmpty else { return "No objectives visible" }
-        return objectives.prefix(5)
-            .map { "\($0.title) \(Int($0.progress * 100))%" }
-            .joined(separator: ", ")
-    }
 }

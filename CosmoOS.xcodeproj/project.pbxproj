@@ -26,7 +26,6 @@
 		05456CDCCCB52C0C34E422A7 /* AutomationFlowLine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 377049FDD569DDB01B58045D /* AutomationFlowLine.swift */; };
 		058417F833BA0BC4E1F58591 /* HubSearchBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57E70521F56322ABF320B0A8 /* HubSearchBar.swift */; };
 		059DD42B502C02435072BEE9 /* SyncEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDEF42B4D86FA70998859B35 /* SyncEngine.swift */; };
-		059E8FA59DBC7B466F7A3C8A /* ObjectivesSectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87DB50E478AEDF6E52E8EA21 /* ObjectivesSectionView.swift */; };
 		059F40D205F3E6CB7B038A20 /* CosmoAgentService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1582ED4D92B66729C9F3D55A /* CosmoAgentService.swift */; };
 		06219EEBCE87582AD4AF0CF0 /* ProfileTranscriptionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEA7B81575B5546116806834 /* ProfileTranscriptionManager.swift */; };
 		0624FCA7DB24C36027B4DAAB /* InstagramDataProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 963E4CABCFE16BCBC4CA177C /* InstagramDataProvider.swift */; };
@@ -285,7 +284,6 @@
 		549FC1CAC02FA806F3BAF404 /* ContextAssembler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CE426AAA80BF292754575D2 /* ContextAssembler.swift */; };
 		54E80E30EF9D93FB9064C9DF /* CosmoChromeIsland.swift in Sources */ = {isa = PBXBuildFile; fileRef = F62A37494BAB880387329CB9 /* CosmoChromeIsland.swift */; };
 		55A2B8601354033FDFDBC958 /* CrossReferenceEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69BA3C5BD926BCC30BB86132 /* CrossReferenceEngine.swift */; };
-		560C8BFF6619CBB5E98B774E /* DashboardObjectivesBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF238D1603473C7D9429B103 /* DashboardObjectivesBar.swift */; };
 		560CC34BF4ACA95CE29B3FD1 /* SwipeBoardStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2B2D60689C8E7417FB6B73B /* SwipeBoardStore.swift */; };
 		5620661FA35C2267BDAA54FD /* AtomWindowViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08697C1B13377316EA74AD00 /* AtomWindowViewModel.swift */; };
 		567B249B4F1FE3E79768B815 /* IdeaBoardBlockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C4BF8FEB338D306AAD829D2 /* IdeaBoardBlockView.swift */; };
@@ -822,7 +820,6 @@
 		EA2F659AE5FB9646AB2C260F /* TextRegionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D547D40AEBB98B6F88F73607 /* TextRegionView.swift */; };
 		EAD1A3CBC562D183AD80AB14 /* FloatingPanelState.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9951C2B98969647F788AA75 /* FloatingPanelState.swift */; };
 		EAE78C2BAB8D60B6958B3C1D /* LessonPolicyResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A274F6BD76C5347D60A06FD /* LessonPolicyResolver.swift */; };
-		EB903CB1E24394C387C905D8 /* ObjectiveEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9414443FE9E4C2B14C2CF771 /* ObjectiveEngine.swift */; };
 		EC0E4A4D9D140E92C23281BE /* CosmoWindowViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9752D260F6B7D45680019F93 /* CosmoWindowViewModel.swift */; };
 		EC19023E496BD6C987F9E9C8 /* CosmoInlineInquiryQuestion.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD01A4B95DF94190E47236F4 /* CosmoInlineInquiryQuestion.swift */; };
 		EC4FC230E08CEB74819A509F /* BlockSplitter.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0238B198B36559BE91FF053 /* BlockSplitter.swift */; };
@@ -1355,7 +1352,6 @@
 		8713F1649B3E0CFFBEF3460A /* WindowChromeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowChromeView.swift; sourceTree = "<group>"; };
 		878A7FC3C7C03D82AB3C7565 /* ContentStrategyEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentStrategyEngine.swift; sourceTree = "<group>"; };
 		87A783B534C78AA51AB611C8 /* ContextIndexStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextIndexStore.swift; sourceTree = "<group>"; };
-		87DB50E478AEDF6E52E8EA21 /* ObjectivesSectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObjectivesSectionView.swift; sourceTree = "<group>"; };
 		87EBD6DB98444548D84126CD /* CanvasDrawingToolbar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasDrawingToolbar.swift; sourceTree = "<group>"; };
 		880431C0FD36A30243451A62 /* SwipeGalleryCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwipeGalleryCardView.swift; sourceTree = "<group>"; };
 		889CF74720EC0864379983A7 /* InquiryDockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InquiryDockView.swift; sourceTree = "<group>"; };
@@ -1402,7 +1398,6 @@
 		9339D3A34BA913FBEDB98876 /* SplitPaneContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplitPaneContainer.swift; sourceTree = "<group>"; };
 		935DDE0D6305A6C709BE9418 /* CortexReadwiseBrowser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CortexReadwiseBrowser.swift; sourceTree = "<group>"; };
 		9376B898E8A9EDBD9CB9B2C9 /* PaneCanvasView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaneCanvasView.swift; sourceTree = "<group>"; };
-		9414443FE9E4C2B14C2CF771 /* ObjectiveEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObjectiveEngine.swift; sourceTree = "<group>"; };
 		944D959CC420DC6CE575B491 /* CanvasMinimapOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasMinimapOverlay.swift; sourceTree = "<group>"; };
 		94E2AD8597FE0BD2715DEC92 /* CosmoInlineAssistantPaneEmptyState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmoInlineAssistantPaneEmptyState.swift; sourceTree = "<group>"; };
 		95B6D0842E027F48EA0D10C7 /* CaptureMediaStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureMediaStorage.swift; sourceTree = "<group>"; };
@@ -1495,7 +1490,6 @@
 		AE679DE29213468ED067E269 /* CaptureRequestRepository.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptureRequestRepository.swift; sourceTree = "<group>"; };
 		AE7AE792E8296437042D59E9 /* SocialSyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocialSyncService.swift; sourceTree = "<group>"; };
 		AF13C32C4C029CB5957010EC /* ContentFocusModeState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentFocusModeState.swift; sourceTree = "<group>"; };
-		AF238D1603473C7D9429B103 /* DashboardObjectivesBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardObjectivesBar.swift; sourceTree = "<group>"; };
 		AF2865E529F8B15B9B4E1D2F /* VisionPageOCR.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VisionPageOCR.swift; sourceTree = "<group>"; };
 		AFC0167615E8A2C0BA646F35 /* CosmoAgentSettingsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmoAgentSettingsTab.swift; sourceTree = "<group>"; };
 		AFDD80F62CFBDBC7B67ABEF5 /* SidebarThinkspaceSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarThinkspaceSection.swift; sourceTree = "<group>"; };
@@ -2187,7 +2181,6 @@
 				4F5DCAB576D9C69F4DD5C196 /* DashboardFocusTimer.swift */,
 				BEFDA7A2B36018A3931329D7 /* DashboardHabitPanel.swift */,
 				DE8A8D814B9E5EAFD7430DA8 /* DashboardMonthCalendar.swift */,
-				AF238D1603473C7D9429B103 /* DashboardObjectivesBar.swift */,
 				5967A2CDB575219B1E15EE1F /* DashboardReportsPanel.swift */,
 				EB19C30E4E582236664C449D /* DashboardScheduleStrip.swift */,
 				EB076999F3BD5B627C96FE0B /* DashboardShortcutBar.swift */,
@@ -2195,7 +2188,6 @@
 				F2D1BA3CBB0F0A857689E71E /* DashboardTimeTracker.swift */,
 				1C4A9C4BAD56AF4656F56537 /* DashboardViewModeBar.swift */,
 				DA2E667607F9A113A425B45A /* HabitsSectionView.swift */,
-				87DB50E478AEDF6E52E8EA21 /* ObjectivesSectionView.swift */,
 				70B7456B6CD5699FDC3C232A /* ProjectDetailView.swift */,
 				0026BBD3C76F26E7404D03D3 /* ProjectSidebarRow.swift */,
 				B75F217F37187FE94EDFD384 /* ReportsSectionView.swift */,
@@ -2992,7 +2984,6 @@
 				1A274F6BD76C5347D60A06FD /* LessonPolicyResolver.swift */,
 				3DAF696D370D7813562A92C8 /* NoteStructureApplyService.swift */,
 				7EF80D749DBBE6F82594E16C /* NoteStructurePlanModels.swift */,
-				9414443FE9E4C2B14C2CF771 /* ObjectiveEngine.swift */,
 				CD23AEE8E88A0C9D6448F6C6 /* PerplexityService.swift */,
 				711F5F584591926E236F9323 /* PolishEngine.swift */,
 				010FA322E6A3963C4E79E453 /* ProfileMigrationService.swift */,
@@ -4188,7 +4179,6 @@
 				CA6AE0A210257B00D59AC7AE /* DashboardFocusTimer.swift in Sources */,
 				FF14FF4D7C751CFED3C4C285 /* DashboardHabitPanel.swift in Sources */,
 				92891630ADD356E124964A0E /* DashboardMonthCalendar.swift in Sources */,
-				560C8BFF6619CBB5E98B774E /* DashboardObjectivesBar.swift in Sources */,
 				A05C97C04618B1196DD602B3 /* DashboardReportsPanel.swift in Sources */,
 				5F9AE652DD304E09A795BE4A /* DashboardScheduleStrip.swift in Sources */,
 				69234F16320F962934205D31 /* DashboardShortcutBar.swift in Sources */,
@@ -4434,8 +4424,6 @@
 				00D5A7E95A2B4E54678F7850 /* NoteStructureApplyService.swift in Sources */,
 				88D08FC512C14DD42B36F680 /* NoteStructurePlanModels.swift in Sources */,
 				62DF3C7B1B2EA2EA4429DD78 /* NoteWritePolicy.swift in Sources */,
-				EB903CB1E24394C387C905D8 /* ObjectiveEngine.swift in Sources */,
-				059E8FA59DBC7B466F7A3C8A /* ObjectivesSectionView.swift in Sources */,
 				CEC52C39B6EABD0913413C0D /* OrbitingBlocksEngine.swift in Sources */,
 				5EDA137895F7E6B7061B47CA /* PaneCanvasView.swift in Sources */,
 				C7BCB81C5F7C0C1E1297ECDB /* PaneContentView.swift in Sources */,

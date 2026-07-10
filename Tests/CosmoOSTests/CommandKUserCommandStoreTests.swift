@@ -24,16 +24,43 @@ final class CommandKUserCommandStoreTests: XCTestCase {
         XCTAssertEqual(results.map(\.id), ["today"])
     }
 
-    func testBuiltInQuicklinksAreSeededOnFirstLoad() async throws {
+    /// Built-ins that duplicated system commands are retired: only quicklinks
+    /// with no system-command equivalent ship seeded.
+    func testOnlyNonDuplicateBuiltInsAreSeeded() async throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
             .appendingPathExtension("json")
         let store = CommandKUserCommandStore(fileURL: url)
 
-        let results = try await store.searchQuicklinks("swipes")
+        let all = try await store.searchQuicklinks("")
 
-        XCTAssertEqual(results.first?.route, .commandKDomain("swipeGallery"))
-        XCTAssertEqual(results.first?.alias, "swipes")
+        XCTAssertEqual(all.map(\.id), ["inquiries"])
+    }
+
+    /// Users who already have the old built-ins on disk get them removed on
+    /// next load — but only while they still point at the original route.
+    func testRetiredBuiltInsAreMigratedAway() async throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("json")
+        let legacyStore = CommandKUserCommandStore(fileURL: url, seedBuiltIns: false)
+        let now = Date(timeIntervalSince1970: 1)
+        try await legacyStore.saveQuicklink(CommandKQuicklink(
+            id: "swipes", alias: "swipes", title: "Swipe Gallery",
+            route: .commandKDomain("swipeGallery"), query: nil, createdAt: now, updatedAt: now
+        ))
+        // Repurposed retired id: the user pointed "ideas" somewhere else —
+        // migration must not touch it.
+        try await legacyStore.saveQuicklink(CommandKQuicklink(
+            id: "ideas", alias: "ideas", title: "Idea search",
+            route: .savedSearch("spark"), query: "spark", createdAt: now, updatedAt: now
+        ))
+
+        let migrated = CommandKUserCommandStore(fileURL: url)
+        let all = try await migrated.searchQuicklinks("")
+
+        XCTAssertEqual(Set(all.map(\.id)), ["ideas", "inquiries"])
+        XCTAssertEqual(all.first { $0.id == "ideas" }?.route, .savedSearch("spark"))
     }
 
     func testQuicklinkComposerCreatesExecutableDomainAction() {

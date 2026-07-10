@@ -1023,6 +1023,10 @@ class CommandCenterDashboardViewModel: ObservableObject {
             print("❌ Dashboard: Failed to load today tasks for date: \(error)")
         }
 
+        // Resolve schedule-block links for display against the shown day —
+        // block title/color for the badge, occurrence range for "live now".
+        activeTasks = await ScheduleBlockEngine.resolveLinks(in: activeTasks, on: selectedDate)
+
         let sections = CommandCenterTodayTaskSectioning.sectionTasks(
             activeTasks,
             selectedDate: selectedDate,
@@ -1818,6 +1822,44 @@ class CommandCenterDashboardViewModel: ObservableObject {
             try? await AtomRepository.shared.delete(uuid: block.id)
             await refreshScheduleBlocks()
         }
+    }
+
+    // MARK: - Task ↔ block links (iOS contract)
+
+    /// Nest a task inside a schedule block, or unlink with nil. The block
+    /// owns the time — this never time-boxes the task. Key-level merge;
+    /// `mergingTaskMetadata` honors the nil so unlinking removes the key.
+    func setScheduleBlock(taskUUID: String, blockUUID: String?) async {
+        do {
+            guard let atom = try await AtomRepository.shared.fetch(uuid: taskUUID) else { return }
+            guard var meta = taskMetadataForWrite(atom, context: "Dashboard.setScheduleBlock(\(taskUUID.prefix(8)))") else { return }
+            meta.scheduleBlockUUID = blockUUID
+            guard let merged = atom.mergingTaskMetadata(meta, context: "Dashboard.setScheduleBlock(\(taskUUID.prefix(8)))") else { return }
+            try await AtomRepository.shared.update(merged)
+            await refreshTasks()
+        } catch {
+            PersistenceHealth.note(.writeFailure, context: "Dashboard.setScheduleBlock(\(taskUUID.prefix(8)))", detail: error.localizedDescription)
+        }
+    }
+
+    /// The viewed day's tasks nested in `blockID` — open first (overdue,
+    /// then scheduled/unscheduled in their section order), completed after.
+    /// Drives the timeline card nesting and the block context menu.
+    func tasksLinked(toBlock blockID: String) -> [TaskViewModel] {
+        let open = (overdueTasks + scheduledTasks + unscheduledTasks)
+            .filter { $0.scheduleBlockUUID == blockID }
+        let calendar = Calendar.current
+        let completed = completedTasksByDay
+            .first { calendar.isDate($0.date, inSameDayAs: selectedDate) }?
+            .tasks.filter { $0.scheduleBlockUUID == blockID } ?? []
+        return open + completed
+    }
+
+    /// The viewed day's open tasks not yet nested in any block — the
+    /// candidates a block's "Add Task" menu offers.
+    var blockLinkCandidates: [TaskViewModel] {
+        (overdueTasks + scheduledTasks + unscheduledTasks)
+            .filter { $0.scheduleBlockUUID == nil }
     }
 
     // MARK: - Habits

@@ -2531,6 +2531,13 @@ struct TaskMetadata: Codable, Sendable {
     /// Apple Calendar EKEvent identifier for sync
     var calendarEventId: String?
 
+    /// UUID of the schedule_block atom this task nests inside (iOS contract,
+    /// July 2026). The block owns the time; the task just belongs to it — the
+    /// link never time-boxes the task. For repeating blocks the task's own day
+    /// picks the occurrence. Dangling pointers (block deleted/converted)
+    /// resolve to nothing at read time, fail-soft.
+    var scheduleBlockUUID: String?
+
     // MARK: - Session Tracking (WP2)
 
     /// Time goal in minutes. Presence makes this a "timed task": tracked focus time

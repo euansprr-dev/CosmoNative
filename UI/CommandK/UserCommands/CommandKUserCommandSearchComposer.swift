@@ -244,7 +244,8 @@ struct CommandKSystemCommandComposer {
             kind: .navigateCommandCenter,
             icon: "command.circle.fill",
             payload: CommandKActionPayload(rawText: "command center"),
-            aliases: ["command center", "home", "plannerum", "planning", "sanctuary"]
+            // "today" rode a retired built-in quicklink to the same place.
+            aliases: ["command center", "home", "today", "plannerum", "planning", "sanctuary"]
         ),
         SystemCommand(
             id: "system-last-thinkspace",

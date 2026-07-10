@@ -845,9 +845,13 @@ final class CommandKSearchPipelineTests: XCTestCase {
         XCTAssertEqual(viewModel.cortexMode, .searchResults)
         XCTAssertEqual(viewModel.query, "idea")
         // Bare "idea" now leads with the composer action — and the ideas
-        // quicklink still rides alongside it.
+        // destination still rides alongside it, as exactly ONE row (the
+        // system command wins; the same-target quicklink yields to it).
         XCTAssertEqual(viewModel.primaryAction?.kind, .createIdea)
-        XCTAssertTrue(viewModel.userCommandRows.contains { $0.title == "Ideas" })
+        let ideasRows = viewModel.userCommandRows.filter {
+            $0.action.navigationTargetKey == "domain|ideas"
+        }
+        XCTAssertEqual(ideasRows.map(\.title), ["Open Ideas"])
     }
 
     @MainActor
@@ -871,8 +875,14 @@ final class CommandKSearchPipelineTests: XCTestCase {
         viewModel.query = "ideas"
         await viewModel.performSearch(query: "ideas")
 
-        XCTAssertEqual(viewModel.userCommandRows.map(\.title), ["Ideas"])
+        // "ideas" parses to the Open Ideas primary action; the system row
+        // and the same-target quicklink both yield to it — one destination,
+        // one row.
+        XCTAssertTrue(viewModel.userCommandRows.allSatisfy {
+            $0.action.navigationTargetKey != "domain|ideas"
+        })
         XCTAssertEqual(viewModel.activeCommandAction?.kind, .openDomain)
+        XCTAssertEqual(viewModel.activeCommandAction?.payload.domain, "ideas")
     }
 
     @MainActor
@@ -918,13 +928,15 @@ final class CommandKSearchPipelineTests: XCTestCase {
             .appendingPathComponent(UUID().uuidString)
             .appendingPathExtension("json")
         let store = CommandKUserCommandStore(fileURL: url, seedBuiltIns: false)
+        // Distinct destinations (unique saved searches) — the navigation-
+        // target dedupe must never cap these.
         for index in 1...8 {
             try await store.saveQuicklink(CommandKQuicklink(
                 id: "alpha-\(index)",
                 alias: "alpha \(index)",
                 title: "Alpha \(index)",
-                route: .commandKDomain("database"),
-                query: nil,
+                route: .savedSearch("alpha topic \(index)"),
+                query: "alpha topic \(index)",
                 createdAt: Date(timeIntervalSince1970: TimeInterval(index)),
                 updatedAt: Date(timeIntervalSince1970: TimeInterval(index))
             ))

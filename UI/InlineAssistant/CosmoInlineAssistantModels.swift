@@ -1340,7 +1340,7 @@ enum CosmoInlineAssistantSkillRuntime {
             skill.toolBundles.insert(.webResearch)
             skill.panePolicy = .openForResearchBackedAction
             skill.instructions.append(
-                "Because the user asked for research-backed facts, use web_search when local/profile context does not already answer the request, then call both propose_workspace_edit and answer_in_assistant_pane in the same tool turn."
+                "Because the user asked for research-backed facts, use web_search when local/profile context does not already answer the request, then call BOTH propose_workspace_edit and answer_in_assistant_pane in the same tool turn: the staged edit carries your best-supported value, the pane explanation carries the evidence and any alternatives. Research that ends without the staged edit is an incomplete run."
             )
         }
 
@@ -1486,7 +1486,8 @@ enum CosmoInlineAssistantSkillRuntime {
                     "Do not rewrite hooks, claims, slide framing, or user-written copy unless the user explicitly says rewrite, rework, change the wording, make it better, or asks for variations.",
                     "When filling one slide, keep all unaffected lines byte-for-byte the same and only change the requested slide.",
                     "Stage ALL factual replacements in a single propose_workspace_edit call. For each, set originalText to the ENTIRE line/sentence containing the placeholder/number (copied verbatim) and proposedText to that line with only the value filled in — never just the bare number, which fails to locate and dumps the change at the bottom. Include the source/evidence in the rationale.",
-                    "If evidence is missing, leave a clear placeholder and say what data is missing instead of guessing."
+                    "When the evidence supports multiple candidate values, stage the best-supported one and note the alternatives briefly in the rationale or pane explanation — never end the run asking which value to use; the review diff is where the user decides.",
+                    "If evidence is missing entirely, leave a clear placeholder and say what data is missing instead of guessing."
                 ],
                 tokenBudget: 1200,
                 requiresReviewedDiff: true,
@@ -2408,6 +2409,8 @@ enum CosmoInlineAssistantInstructionPrompt {
             return """
             ## Inline Edit Route
             The user likely wants a reviewed edit. Prefer propose_workspace_edit with exact source hashes and operations. Do not rely on prose alone when edits are possible.
+
+            When the request contains an edit instruction — fill in, replace, add, update, rewrite, fix — the run's deliverable IS the staged edit. After any research or reading, pick the best-supported value or wording, stage it with propose_workspace_edit in THIS run, and put confidence notes or alternatives in the pane explanation. The review diff is the user's confirmation step — never end the run asking permission to stage ("Want me to fill it in?" is double-asking), and never deliver only prose when an edit was instructed. Only a pure question, or an explicit research-only ask, ends without a staged edit.
 
             Stage ALL the edits in a SINGLE propose_workspace_edit call with one operation per change — do not split changes across multiple tool calls or multiple turns; that is slower and worse.
 

@@ -136,7 +136,8 @@ final class CosmoWindowRoutingTests: XCTestCase {
 
         // ONE default across all intents — per-intent switching would fragment
         // the prompt cache. The identity of that default is .autoDefault
-        // (currently Sonnet 4.6, the direct-Anthropic daily driver).
+        // (currently Sonnet 5: near-Opus agentic quality at Sonnet pricing,
+        // unified with the inline assistant's default).
         for intent in intents {
             XCTAssertEqual(
                 CosmoAgentService.defaultModelTier(for: intent),
@@ -144,7 +145,7 @@ final class CosmoWindowRoutingTests: XCTestCase {
                 "Auto mode must not switch models for intent \(intent.rawValue)"
             )
         }
-        XCTAssertEqual(AgentModelTier.autoDefault, .strategist)
+        XCTAssertEqual(AgentModelTier.autoDefault, .sonnet5)
     }
 
     func testGeminiFlashChainDoesNotFailOverToAnotherModelWhenLocked() {
@@ -190,7 +191,7 @@ final class CosmoWindowRoutingTests: XCTestCase {
         let geminiOption = CosmoModelOption.all.first { $0.id == "geminiFlashLatest" }
         let gemini35Option = CosmoModelOption.all.first { $0.id == "gemini35Flash" }
 
-        XCTAssertEqual(autoOption?.detail, "Sonnet 4.6 by default")
+        XCTAssertEqual(autoOption?.detail, "Sonnet 5 by default")
         XCTAssertEqual(sonnetOption?.title, "Sonnet 4.6")
         XCTAssertEqual(sonnetOption?.detail, "Daily driver via Claude API")
         XCTAssertEqual(geminiOption?.title, "Gemini 3 Flash")

@@ -43,55 +43,99 @@ enum ScheduleBlockEngine {
         calendar: Calendar = .current
     ) async -> [ScheduleBlockEntry] {
         guard let atoms = try? await repository.fetchAll(type: .scheduleBlock) else { return [] }
-        let dayStart = calendar.startOfDay(for: day)
-        guard let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart) else { return [] }
 
         var items: [ScheduleBlockEntry] = []
         for atom in atoms {
             guard let meta = atom.metadataValue(as: ScheduleBlockMetadata.self),
-                  meta.isAllDay != true,
-                  let templateStart = meta.startTime.flatMap(ISO8601.date(from:)) else { continue }
-            let floor = templateStart.addingTimeInterval(TimeInterval(minimumBlockMinutes * 60))
-            let templateEnd = meta.endTime.flatMap(ISO8601.date(from:)).map { max($0, floor) } ?? floor
-
-            if let rule = meta.recurrence.flatMap(RecurrenceRule.fromJSON) {
-                guard !rule.occurrenceDates(
-                    in: DateInterval(start: dayStart, end: dayEnd),
-                    startingFrom: calendar.startOfDay(for: templateStart),
-                    calendar: calendar
-                ).isEmpty else { continue }
-                let time = calendar.dateComponents([.hour, .minute, .second], from: templateStart)
-                guard let start = calendar.date(
-                    bySettingHour: time.hour ?? 0, minute: time.minute ?? 0, second: time.second ?? 0,
-                    of: dayStart
-                ) else { continue }
-                items.append(ScheduleBlockEntry(
-                    id: atom.uuid,
-                    title: atom.title ?? "Untitled",
-                    start: start,
-                    end: start.addingTimeInterval(templateEnd.timeIntervalSince(templateStart)),
-                    isCompleted: meta.isCompleted ?? false,
-                    colorHex: meta.color,
-                    location: meta.location,
-                    isRecurring: true,
-                    recurrenceText: rule.displayText
-                ))
-            } else {
-                guard calendar.isDate(templateStart, inSameDayAs: day) else { continue }
-                items.append(ScheduleBlockEntry(
-                    id: atom.uuid,
-                    title: atom.title ?? "Untitled",
-                    start: templateStart,
-                    end: templateEnd,
-                    isCompleted: meta.isCompleted ?? false,
-                    colorHex: meta.color,
-                    location: meta.location,
-                    isRecurring: false,
-                    recurrenceText: nil
-                ))
-            }
+                  let range = occurrenceRange(of: meta, on: day, calendar: calendar) else { continue }
+            let rule = meta.recurrence.flatMap(RecurrenceRule.fromJSON)
+            items.append(ScheduleBlockEntry(
+                id: atom.uuid,
+                title: atom.title ?? "Untitled",
+                start: range.start,
+                end: range.end,
+                isCompleted: meta.isCompleted ?? false,
+                colorHex: meta.color,
+                location: meta.location,
+                isRecurring: rule != nil,
+                recurrenceText: rule?.displayText
+            ))
         }
         return items.sorted { $0.start < $1.start }
+    }
+
+    /// A schedule block's slot on `day`, or nil when it doesn't occur there.
+    /// One-offs match their literal day; repeating templates project their
+    /// time-of-day shape onto every day their rule hits (whole-series
+    /// semantics). The one projection shared by the timeline and the
+    /// task-link resolution — identical to iOS ScheduleEngine.occurrenceRange.
+    static func occurrenceRange(
+        of meta: ScheduleBlockMetadata,
+        on day: Date,
+        calendar: Calendar = .current
+    ) -> (start: Date, end: Date)? {
+        guard meta.isAllDay != true,
+              let templateStart = meta.startTime.flatMap(ISO8601.date(from:)) else { return nil }
+        let floor = templateStart.addingTimeInterval(TimeInterval(minimumBlockMinutes * 60))
+        let templateEnd = meta.endTime.flatMap(ISO8601.date(from:)).map { max($0, floor) } ?? floor
+
+        if let rule = meta.recurrence.flatMap(RecurrenceRule.fromJSON) {
+            let dayStart = calendar.startOfDay(for: day)
+            guard let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart),
+                  !rule.occurrenceDates(
+                      in: DateInterval(start: dayStart, end: dayEnd),
+                      startingFrom: calendar.startOfDay(for: templateStart),
+                      calendar: calendar
+                  ).isEmpty else { return nil }
+            let time = calendar.dateComponents([.hour, .minute, .second], from: templateStart)
+            guard let start = calendar.date(
+                bySettingHour: time.hour ?? 0, minute: time.minute ?? 0, second: time.second ?? 0,
+                of: dayStart
+            ) else { return nil }
+            return (start, start.addingTimeInterval(templateEnd.timeIntervalSince(templateStart)))
+        }
+        guard calendar.isDate(templateStart, inSameDayAs: day) else { return nil }
+        return (templateStart, templateEnd)
+    }
+
+    /// Resolve every task's block link for display against `day` (iOS
+    /// TodayEngine parity): title and color come from the block atom;
+    /// start/end are the block's occurrence on the shown day — nil when it
+    /// doesn't occur there, so the badge shows but can never read "live".
+    /// Dangling pointers (block deleted/converted) resolve to all-nil,
+    /// fail-soft — tombstones never come back from the repository.
+    static func resolveLinks(
+        in tasks: [TaskViewModel],
+        on day: Date,
+        repository: AtomRepository = .shared,
+        calendar: Calendar = .current
+    ) async -> [TaskViewModel] {
+        guard tasks.contains(where: { $0.scheduleBlockUUID != nil }),
+              let atoms = try? await repository.fetchAll(type: .scheduleBlock) else { return tasks }
+
+        struct ResolvedBlock {
+            let title: String
+            let colorHex: String?
+            let range: (start: Date, end: Date)?
+        }
+        var blocksByUUID: [String: ResolvedBlock] = [:]
+        for atom in atoms {
+            guard let meta = atom.metadataValue(as: ScheduleBlockMetadata.self) else { continue }
+            blocksByUUID[atom.uuid] = ResolvedBlock(
+                title: atom.title ?? "Untitled",
+                colorHex: meta.color,
+                range: occurrenceRange(of: meta, on: day, calendar: calendar)
+            )
+        }
+        return tasks.map { task in
+            guard let uuid = task.scheduleBlockUUID, let block = blocksByUUID[uuid] else { return task }
+            var linked = task
+            linked.blockTitle = block.title
+            linked.blockColorHex = block.colorHex
+            linked.blockStart = block.range?.start
+            linked.blockEnd = block.range?.end
+            return linked
+        }
     }
 
     /// Promote a schedule block into a real task: the task inherits the

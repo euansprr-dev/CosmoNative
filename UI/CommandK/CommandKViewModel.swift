@@ -421,7 +421,12 @@ enum CommandKRecentComposer {
                     entityId: atom.id ?? 0,
                     relativeDate: relativeTimeString(from: candidate.timestamp),
                     thumbnailURL: researchMeta?.thumbnailUrl,
-                    preview: atom.body
+                    // 500 chars fills a 4pt thumbnail page — a full body
+                    // (e.g. a video transcript) freezes Text layout.
+                    preview: CommandKPreviewExcerpt.clampOptional(
+                        atom.body,
+                        limit: CommandKPreviewExcerpt.thumbnailLimit
+                    )
                 )
             }
     }
@@ -2733,32 +2738,42 @@ public final class CommandKViewModel {
     }
 
     private func loadUserCommandRows(for query: String) async -> [CommandKUserCommandRow] {
-        let primaryActionID = primaryAction?.id
         let systemRows = systemCommandComposer.rows(for: query)
-            .filter { $0.action.id != primaryActionID }
+        let quicklinkRows: [CommandKUserCommandRow]
         do {
-            let quicklinks = try await userCommandStore.searchQuicklinks(query)
-            let quicklinkRows = userCommandComposer.rows(for: quicklinks)
-                .filter { row in
-                    !systemRows.contains { Self.commandRowsShareNavigationTarget($0, row) }
-                }
-            return systemRows + quicklinkRows
+            quicklinkRows = userCommandComposer.rows(for: try await userCommandStore.searchQuicklinks(query))
         } catch {
-            return systemRows
+            quicklinkRows = []
         }
+        return Self.dedupedCommandRows(
+            primaryAction: primaryAction,
+            systemRows: systemRows,
+            quicklinkRows: quicklinkRows
+        )
     }
 
-    private static func commandRowsShareNavigationTarget(
-        _ lhs: CommandKUserCommandRow,
-        _ rhs: CommandKUserCommandRow
-    ) -> Bool {
-        switch (lhs.action.kind, rhs.action.kind) {
-        case (.openDomain, .openDomain):
-            return lhs.action.payload.domain == "swipeGallery" &&
-                rhs.action.payload.domain == "swipeGallery"
-        default:
-            return false
+    /// One row per destination: the parsed primary action claims its target
+    /// first, then system commands, then quicklinks — so a quicklink (or a
+    /// second system command) that navigates somewhere already listed never
+    /// renders a duplicate row.
+    static func dedupedCommandRows(
+        primaryAction: CommandKAction?,
+        systemRows: [CommandKUserCommandRow],
+        quicklinkRows: [CommandKUserCommandRow]
+    ) -> [CommandKUserCommandRow] {
+        var seenTargets = Set<String>()
+        if let key = primaryAction?.navigationTargetKey {
+            seenTargets.insert(key)
         }
+        let primaryID = primaryAction?.id
+
+        func claims(_ row: CommandKUserCommandRow) -> Bool {
+            if row.action.id == primaryID { return false }
+            guard let key = row.action.navigationTargetKey else { return true }
+            return seenTargets.insert(key).inserted
+        }
+
+        return systemRows.filter(claims) + quicklinkRows.filter(claims)
     }
 
     /// Fallback to direct atom search if HybridSearchEngine fails

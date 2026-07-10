@@ -215,6 +215,35 @@ final class CosmoInlineEditTransactionTests: XCTestCase {
         XCTAssertTrue(result.issues.first?.contains("renumberSequence") == true)
     }
 
+    func testValidatorToleratesPreExistingDuplicateHeaders() {
+        // The user's own document already has two SLIDE 4 headers (their typo).
+        // An unrelated body edit must NOT be vetoed for a flaw it didn't cause
+        // — this exact case blocked a real "fill in the number" edit.
+        let deck = """
+        SLIDE 3
+        You make $850-$1,200 per bed...
+
+        SLIDE 4
+        There are X americans in need of transitional housing...
+
+        SLIDE 4
+        And this is why your local county will bring you residents
+
+        SLIDE 5
+        Luckily, it's stupid simple:
+        """
+        let result = CosmoInlineProposalValidator.validate(
+            operations: [replacement(
+                "There are X americans in need of transitional housing...",
+                "There are ~40 million americans in need of transitional housing..."
+            )],
+            sourceText: deck,
+            summary: "Filled in the Slide 4 number — ~40 million."
+        )
+
+        XCTAssertTrue(result.isValid, result.issues.joined(separator: " | "))
+    }
+
     func testValidatorAcceptsCleanRenumberAndReturnsOutline() {
         let deck = slideDeck(count: 4)
         let operations = CosmoInlineSeriesExpansion.renumberOperations(

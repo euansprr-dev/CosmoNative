@@ -30,12 +30,15 @@ final class CosmoEditableSurfaceRegistry {
         CosmoInlineAssistantCacheWarmer.warmIfNeeded()
         CosmoInlineAmbientContextPack.shared.prefetch(for: snapshot)
         CosmoInlineSkillAutoRunner.shared.surfaceActivated(snapshot: snapshot)
+        // A highlight from a previous document must not follow the user here.
+        CosmoInlineAssistantStore.shared.clearSelectionIfForeign(toActiveSurfaceID: provider.surfaceID)
     }
 
     func activate(surfaceID: String) {
         guard providers[surfaceID]?.provider != nil else { return }
         activationOrder.removeAll { $0 == surfaceID }
         activationOrder.append(surfaceID)
+        CosmoInlineAssistantStore.shared.clearSelectionIfForeign(toActiveSurfaceID: surfaceID)
     }
 
     /// Hot-path activation (typing, focus events): no-op when the surface is
@@ -48,6 +51,9 @@ final class CosmoEditableSurfaceRegistry {
     func unregister(surfaceID: String) {
         providers.removeValue(forKey: surfaceID)
         activationOrder.removeAll { $0 == surfaceID }
+        // A closed document's highlight dies with it — even when no new
+        // editable surface takes over (e.g. returning to the library).
+        CosmoInlineAssistantStore.shared.clearSelectionIfOwned(bySurfaceID: surfaceID)
     }
 
     private func cleanupReleasedProviders() {

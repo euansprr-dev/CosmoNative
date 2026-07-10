@@ -639,7 +639,10 @@ private struct CommandKIdeaPreviewPane: View {
     }
 
     private var contextText: String? {
-        firstNonEmpty([item.context, item.body])
+        CommandKPreviewExcerpt.clampOptional(
+            firstNonEmpty([item.context, item.body]),
+            limit: CommandKPreviewExcerpt.thumbnailLimit
+        )
     }
 
     private func firstNonEmpty(_ values: [String?]) -> String? {

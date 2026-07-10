@@ -110,6 +110,44 @@ struct CommandKAction: Identifiable, Equatable {
             .joined(separator: "|")
     }
 
+    /// Where this action lands, independent of how the row was authored.
+    /// Quicklinks, system commands, and parsed primary actions that navigate
+    /// to the same place share one key — the rail shows each destination once
+    /// (unlike `id`, which keeps quicklink identity for selection/editing).
+    /// nil = not a navigation (creation/capture actions never dedupe).
+    var navigationTargetKey: String? {
+        switch kind {
+        case .openDomain:
+            return payload.domain.map { "domain|\($0)" }
+        case .openSwipeGallery:
+            return "swipe-gallery-page"
+        case .navigateCommandCenter:
+            return "command-center"
+        case .navigateLastThinkspace:
+            return "last-thinkspace"
+        case .openThinkspace:
+            return payload.thinkspaceID.map { "thinkspace|\($0)" }
+        case .openAtom:
+            return payload.atomUUID.map { "atom|\($0)" }
+        case .savedSearch:
+            return payload.queryText.map {
+                "search|\($0.lowercased().trimmingCharacters(in: .whitespacesAndNewlines))"
+            }
+        case .openBrowser:
+            // Bare "open browser" is one destination; a URL/query search is
+            // its own action every time.
+            return (payload.url == nil && payload.queryText == nil) ? "browser" : nil
+        case .openCosmoPane:
+            return "cosmo-pane"
+        case .openCosmoWindow:
+            return "cosmo-window"
+        case .openApp:
+            return payload.title.map { "app|\($0.lowercased())" }
+        default:
+            return nil
+        }
+    }
+
     var isExecutable: Bool {
         switch kind {
         case .captureSwipe:
@@ -146,6 +184,10 @@ enum CommandKVisualStyle: String, Equatable {
     case document
     case browser
     case swipeFile
+    /// Browse Swipes — the shelf you flick through inside Command-K.
+    case swipeShelf
+    /// Open Swipe Gallery — the full-screen gallery page.
+    case swipeGalleryPage
     case cosmo
     case commandCenter
     case thinkspace
@@ -227,7 +269,7 @@ struct CommandKVisualIdentity: Equatable {
                 badge: "WEB"
             )
         case .openSwipeGallery:
-            return CommandKVisualIdentity(style: .swipeFile, symbolName: "rectangle.stack.fill", title: "Swipe Gallery", subtitle: "All Swipes", badge: "OPEN")
+            return CommandKVisualIdentity(style: .swipeGalleryPage, symbolName: "rectangle.stack.fill", title: "Swipe Gallery", subtitle: "All Swipes", badge: "OPEN")
         case .openDomain:
             return domain(action.payload.domain, title: action.title, symbolName: action.icon)
         case .openAtom:
@@ -338,7 +380,7 @@ struct CommandKVisualIdentity: Equatable {
     private static func domain(_ rawDomain: String?, title: String, symbolName: String) -> CommandKVisualIdentity {
         switch rawDomain {
         case "swipeGallery":
-            return CommandKVisualIdentity(style: .swipeFile, symbolName: "bolt.fill", title: "Swipe File", subtitle: "Captures and hooks", badge: "SWIPE")
+            return CommandKVisualIdentity(style: .swipeShelf, symbolName: "rectangle.stack", title: "Swipe File", subtitle: "Captures and hooks", badge: "BROWSE")
         case "ideas":
             return CommandKVisualIdentity(style: .idea, symbolName: "lightbulb.fill", title: "Ideas", subtitle: "Sparks and notes", badge: "IDEA")
         case "readwise":

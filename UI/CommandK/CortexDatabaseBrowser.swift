@@ -543,6 +543,28 @@ struct SpotlightDocCard: View {
 
 // MARK: - Mini Document Page (full text at thumbnail scale)
 
+/// ⌘K preview surfaces must never typeset unbounded text: SwiftUI `Text`
+/// runs a full CoreText metrics pass over the entire string on the main
+/// thread, so one transcript-sized atom body freezes the whole app.
+/// Clamp inside the shared leaf views (so no caller can regress) AND at
+/// the display-model choke points (so giant strings never ride view state).
+enum CommandKPreviewExcerpt {
+    /// Fills a 4pt-font thumbnail page with room to spare.
+    static let thumbnailLimit = 500
+    /// Serif reading excerpt in the detail pane's fixed-height preview card.
+    static let readingLimit = 3000
+
+    static func clamp(_ text: String, limit: Int) -> String {
+        let excerpt = text.prefix(limit)
+        guard excerpt.endIndex < text.endIndex else { return text }
+        return String(excerpt) + "…"
+    }
+
+    static func clampOptional(_ text: String?, limit: Int) -> String? {
+        text.map { clamp($0, limit: limit) }
+    }
+}
+
 struct SpotlightPageContent: View {
     let text: String
     let accentColor: Color
@@ -554,8 +576,8 @@ struct SpotlightPageContent: View {
                 .fill(accentColor.opacity(0.4))
                 .frame(height: 2)
 
-            // Full text rendered tiny — creates document texture
-            Text(text)
+            // Excerpt rendered tiny — creates document texture
+            Text(CommandKPreviewExcerpt.clamp(text, limit: CommandKPreviewExcerpt.thumbnailLimit))
                 .font(.system(size: 4, weight: .regular))
                 .foregroundStyle(Color(white: 0.25))
                 .multilineTextAlignment(.leading)
@@ -595,7 +617,10 @@ struct SpotlightConnectionPreview: View {
             // No data — show all sections as empty
             return Self.sectionDefs.map { ($0.label, $0.color, false) }
         }
-        let blocks = Set(preview.components(separatedBy: "\n\n").compactMap {
+        // Section headers live at the top of the text; never scan an
+        // unbounded body on the render path.
+        let scanText = String(preview.prefix(4000))
+        let blocks = Set(scanText.components(separatedBy: "\n\n").compactMap {
             $0.components(separatedBy: "\n").first
         })
         return Self.sectionDefs.map { def in

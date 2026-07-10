@@ -157,6 +157,7 @@ struct DashboardScheduleStrip: View {
         let height = max(blockHeight(from: block.start, to: block.end), 16)
         let tint = block.colorHex.map(Color.init(hex:)) ?? DS.accent
         let isPast = block.end < Date()
+        let linkedTasks = viewModel.tasksLinked(toBlock: block.id)
 
         HStack(spacing: 0) {
             RoundedRectangle(cornerRadius: 2)
@@ -187,6 +188,8 @@ struct DashboardScheduleStrip: View {
                         .font(.system(size: 8))
                         .foregroundColor(DS.textMuted)
                 }
+
+                nestedTaskLines(linkedTasks, tint: tint, cardHeight: height)
             }
             .padding(.leading, 4)
             .padding(.trailing, 6)
@@ -206,6 +209,8 @@ struct DashboardScheduleStrip: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.trailing, 4)
         .contextMenu {
+            blockTaskMenu(block, linkedTasks: linkedTasks)
+            Divider()
             Button {
                 viewModel.convertScheduleBlockToTask(block)
             } label: {
@@ -225,9 +230,85 @@ struct DashboardScheduleStrip: View {
                 Label(block.isRecurring ? "Delete Series" : "Delete Block", systemImage: "trash")
             }
         }
-        .help(block.isRecurring
+        .help(blockHelp(block, linkedTasks: linkedTasks))
+    }
+
+    // MARK: - Nested tasks (iOS planner parity)
+
+    /// Tasks nested in the block, drawn as quiet lines under the title —
+    /// display-only; assignment lives in the context menu. Everything shows
+    /// when it fits; a half-fit shows some plus "N more"; one spare line
+    /// collapses to "N tasks"; no room leaves it to the tooltip.
+    @ViewBuilder
+    private func nestedTaskLines(_ tasks: [TaskViewModel], tint: Color, cardHeight: CGFloat) -> some View {
+        let budget = max(0, Int((cardHeight - 30) / 12))
+        if budget > 0, !tasks.isEmpty {
+            let rows = tasks.count <= budget ? tasks : Array(tasks.prefix(max(0, budget - 1)))
+            let overflow = tasks.count - rows.count
+            VStack(alignment: .leading, spacing: 1) {
+                ForEach(rows, id: \.id) { task in
+                    HStack(spacing: 3) {
+                        Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
+                            .font(.system(size: 7))
+                            .foregroundColor(task.isCompleted ? tint : DS.textMuted)
+                        Text(task.title)
+                            .font(.system(size: 8))
+                            .foregroundColor(task.isCompleted ? DS.textMuted : DS.textSecondary)
+                            .strikethrough(task.isCompleted, color: DS.textMuted)
+                            .lineLimit(1)
+                    }
+                }
+                if overflow > 0 {
+                    Text(rows.isEmpty ? "\(overflow) task\(overflow == 1 ? "" : "s")" : "\(overflow) more")
+                        .font(.system(size: 8, weight: .medium))
+                        .foregroundColor(tint)
+                }
+            }
+            .padding(.top, 1)
+            .accessibilityHidden(true)
+        }
+    }
+
+    /// Link/unlink tasks without leaving the timeline: the day's open,
+    /// unassigned tasks nest in one click; a nested task pops back out. The
+    /// block owns the time — nesting never retimes the task.
+    @ViewBuilder
+    private func blockTaskMenu(_ block: ScheduleBlockEntry, linkedTasks: [TaskViewModel]) -> some View {
+        let candidates = viewModel.blockLinkCandidates
+        Menu {
+            if candidates.isEmpty {
+                Text("No open tasks to add")
+            } else {
+                ForEach(candidates, id: \.id) { task in
+                    Button(task.title) {
+                        Task { await viewModel.setScheduleBlock(taskUUID: task.uuid, blockUUID: block.id) }
+                    }
+                }
+            }
+        } label: {
+            Label("Add Task to Block", systemImage: "plus.circle")
+        }
+        if !linkedTasks.isEmpty {
+            Menu {
+                ForEach(linkedTasks, id: \.id) { task in
+                    Button(task.title) {
+                        Task { await viewModel.setScheduleBlock(taskUUID: task.uuid, blockUUID: nil) }
+                    }
+                }
+            } label: {
+                Label("Remove Task from Block", systemImage: "minus.circle")
+            }
+        }
+    }
+
+    private func blockHelp(_ block: ScheduleBlockEntry, linkedTasks: [TaskViewModel]) -> String {
+        var line = block.isRecurring
             ? "\(block.title) — \(block.recurrenceText ?? "repeats"). Edits apply to every occurrence."
-            : block.title)
+            : block.title
+        if !linkedTasks.isEmpty {
+            line += "\nTasks: " + linkedTasks.map(\.title).joined(separator: ", ")
+        }
+        return line
     }
 
     // MARK: - Session Block

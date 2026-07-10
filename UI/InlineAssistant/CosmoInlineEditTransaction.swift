@@ -377,17 +377,27 @@ enum CosmoInlineProposalValidator {
     // MARK: Numbering simulation
 
     /// Compares the SLIDE-header number sequence before and after the simulated
-    /// apply. Duplicates, or a sequence that was clean and is no longer, are
-    /// blocking — the model gets the resulting outline and fixes it in-run.
+    /// apply. Only DEGRADATIONS the edit itself causes are blocking — a
+    /// document whose numbering was already imperfect (a pre-existing duplicate
+    /// header the user typed) must never veto an unrelated body edit. The model
+    /// gets the resulting outline and fixes its operations in-run.
     static func slideNumberingIssue(original: String, simulated: String) -> String? {
         let before = slideNumbers(in: original)
         let after = slideNumbers(in: simulated)
         guard !after.isEmpty else { return nil }
 
-        let duplicates = Dictionary(grouping: after, by: { $0 }).filter { $0.value.count > 1 }.keys.sorted()
-        if !duplicates.isEmpty {
+        // A number is a blocking duplicate only when the edit INCREASED how
+        // often it appears (new collision), not when the document already had it.
+        let beforeCounts = Dictionary(grouping: before, by: { $0 }).mapValues(\.count)
+        let newDuplicates = Dictionary(grouping: after, by: { $0 })
+            .filter { number, occurrences in
+                occurrences.count > 1 && occurrences.count > (beforeCounts[number] ?? 0)
+            }
+            .keys
+            .sorted()
+        if !newDuplicates.isEmpty {
             return numberingMessage(
-                "the result has duplicate slide numbers (\(duplicates.map(String.init).joined(separator: ", ")))",
+                "the edit introduces duplicate slide numbers (\(newDuplicates.map(String.init).joined(separator: ", ")))",
                 after: after
             )
         }

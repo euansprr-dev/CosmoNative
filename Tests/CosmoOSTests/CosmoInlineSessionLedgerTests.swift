@@ -247,6 +247,21 @@ final class CosmoInlineSessionLedgerTests: XCTestCase {
         XCTAssertTrue(receipt.contains("Answered: Numbering runs clean 1-26 now."))
     }
 
+    func testToolResultSucceededDistinguishesDeliveryFromRejection() {
+        // A validation-rejected proposal is NOT a deliverable: the loop must
+        // continue so the model reads the error and stages a corrected one —
+        // ending the run here once showed "Staged … awaiting review" with
+        // nothing staged.
+        XCTAssertFalse(CosmoAgentService.toolResultSucceeded(
+            #"{"error": "The proposal was NOT staged — fix these and call propose_workspace_edit again"}"#
+        ))
+        XCTAssertFalse(CosmoAgentService.toolResultSucceeded(#"{"success": false}"#))
+        XCTAssertTrue(CosmoAgentService.toolResultSucceeded(
+            #"{"success": true, "proposalId": "abc", "operationCount": 1}"#
+        ))
+        XCTAssertTrue(CosmoAgentService.toolResultSucceeded("plain engine string result"))
+    }
+
     func testInlineDeliveryReceiptFallsBackForUnknownCalls() {
         let receipt = CosmoAgentService.inlineDeliveryReceipt(for: [
             AgentToolCall(id: "1", name: "recall", argumentsJSON: #"{"query":"x"}"#)

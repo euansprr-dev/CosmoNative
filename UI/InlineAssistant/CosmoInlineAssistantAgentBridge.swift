@@ -214,6 +214,52 @@ struct CosmoInlineAssistantAgentBridge {
             )
             response = retry.0
         }
+        // Contract backstop: an action-routed run's deliverable is the STAGED
+        // EDIT. If the model answered but staged nothing (it asked permission
+        // instead — "want me to fill it in?"), give it ONE continuation to
+        // stage its recommendation. The review diff is the user's confirmation
+        // step; a chat question before staging is double-asking. Runs that
+        // genuinely contained no edit instruction answer normally and pass
+        // straight through.
+        if route == .action,
+           preparedRequest.pipelineSteps.isEmpty,
+           !Task.isCancelled,
+           store.proposals.count == proposalCount,
+           store.paneMessages.filter({ $0.role == .assistant && $0.proposalID == nil }).count > paneAnswerCount {
+            print("[AGENT-PERF] inline stage-contract nudge: action run answered without staging")
+            store.receiveToolActivity(.started(
+                name: "inline_thinking",
+                displayLabel: "Staging the edit…",
+                args: [:]
+            ))
+            let nudge = await CosmoAgentService.shared.processMessage(
+                "Continue: the request included an edit instruction, and you answered without staging anything. Stage your recommended edit NOW with one propose_workspace_edit call (in-place operations, best-supported values; note alternatives briefly in the summary). Only if the original request truly asked for no document change, reply with a one-line answer_in_assistant_pane instead.",
+                conversationId: preparedRequest.conversationID,
+                source: .inApp,
+                tierOverride: preparedRequest.tierOverride,
+                intentOverride: preparedRequest.intentOverride,
+                systemPromptOverride: preparedRequest.systemPromptOverride,
+                volatileContextOverride: preparedRequest.volatileContextOverride,
+                responseMode: preparedRequest.responseMode,
+                profileToolBundles: preparedRequest.profileToolBundles,
+                forcedToolBundles: preparedRequest.forcedToolBundles,
+                lightweightContext: true,
+                onToolActivity: { event in
+                    Task { @MainActor in
+                        store.receiveToolActivity(event)
+                    }
+                },
+                onPaneAnswerDelta: { delta in
+                    Task { @MainActor in
+                        store.receivePaneAnswerDelta(delta)
+                    }
+                }
+            )
+            if !nudge.0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                response = nudge.0
+            }
+        }
+
         CosmoAgentService.shared.noteInlinePrefixWritten()
         let perfTotalMs = Int(Date().timeIntervalSince(perfStart) * 1000)
         print("[AGENT-PERF] inline TOTAL=\(perfTotalMs)ms (prepare=\(perfPrepareMs)ms, agentLoop=\(perfTotalMs - perfPrepareMs)ms)")

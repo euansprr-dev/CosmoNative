@@ -75,7 +75,11 @@ enum CommandKDomainRailItem: Identifiable {
         switch self {
         case .library(let item): return item.preview
         case .swipe(let item): return item.hookText
-        case .idea(let item): return item.context ?? item.body ?? item.hooks.first
+        case .idea(let item):
+            return CommandKPreviewExcerpt.clampOptional(
+                item.context ?? item.body ?? item.hooks.first,
+                limit: CommandKPreviewExcerpt.thumbnailLimit
+            )
         case .readwise(let book): return book.highlights.first?.text ?? "\(book.numHighlights) saved highlights"
         }
     }

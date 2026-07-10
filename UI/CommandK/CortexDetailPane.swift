@@ -84,7 +84,11 @@ enum CortexDetailSubject {
         case .result(let r): return r.snippet ?? r.subtitle
         case .library(let item): return item.preview
         case .swipe(let item): return item.hookText
-        case .idea(let item): return item.context ?? item.body ?? item.hooks.first
+        case .idea(let item):
+            return CommandKPreviewExcerpt.clampOptional(
+                item.context ?? item.body ?? item.hooks.first,
+                limit: CommandKPreviewExcerpt.thumbnailLimit
+            )
         case .readwise(let book): return book.highlights.first?.text ?? "\(book.numHighlights) saved highlights"
         case .action(let action): return action.scopedIdeaPreviewText ?? action.subtitle ?? action.payload.rawText
         default: return nil
@@ -337,7 +341,9 @@ private struct CortexPreviewBlock: View {
     private var readingText: String? {
         let t = atom?.body ?? subject.previewText
         guard let t, !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-        return t
+        // Excerpt only: typesetting a full transcript-sized body in one Text
+        // freezes the main thread for the whole layout pass.
+        return CommandKPreviewExcerpt.clamp(t, limit: CommandKPreviewExcerpt.readingLimit)
     }
 
     private func readingCard(_ text: String) -> some View {
@@ -824,7 +830,7 @@ private struct CortexIdeaDomainPreview: View {
                     previewList("OUTLINE", values: Array(item.outline.prefix(4)))
                 }
                 if contextText == nil, item.hooks.isEmpty, item.outline.isEmpty {
-                    Text(item.body ?? "No idea context captured yet.")
+                    Text(CommandKPreviewExcerpt.clampOptional(item.body, limit: CommandKPreviewExcerpt.readingLimit) ?? "No idea context captured yet.")
                         .font(DS.dateSerif)
                         .italic()
                         .foregroundStyle(DS.inkFaded)
@@ -838,7 +844,10 @@ private struct CortexIdeaDomainPreview: View {
     }
 
     private var contextText: String? {
-        item.context ?? item.body
+        CommandKPreviewExcerpt.clampOptional(
+            item.context ?? item.body,
+            limit: CommandKPreviewExcerpt.thumbnailLimit
+        )
     }
 
     private func previewSection(_ title: String, text: String) -> some View {

@@ -828,6 +828,12 @@ class CosmoAgentService: ObservableObject {
                 llmMessages.append(assistantMsg)
                 conversation.append(assistantMsg)
 
+                // Inline deliverables that actually SUCCEEDED this iteration.
+                // A propose_workspace_edit rejected by validation is not a
+                // deliverable — the loop must continue so the model reads the
+                // structured error and stages a corrected proposal.
+                var deliveredInlineToolCalls: [AgentToolCall] = []
+
                 let generationTools: Set<String> = ["generate_draft", "generate_outline", "generate_hooks", "write_draft"]
                 for toolCall in response.toolCalls {
                     // User pressed Stop — do NOT execute the remaining tools of this
@@ -859,6 +865,11 @@ class CosmoAgentService: ObservableObject {
                     // Emit tool activity completed event
                     let preview = extractResultSummary(result, toolName: toolCall.name)
                     onToolActivity?(.completed(name: toolCall.name, displayLabel: displayLabel, resultPreview: preview))
+
+                    if toolCall.name == "propose_workspace_edit" || toolCall.name == "answer_in_assistant_pane",
+                       Self.toolResultSucceeded(result) {
+                        deliveredInlineToolCalls.append(toolCall)
+                    }
 
                     // Track created atom UUIDs in conversation memory
                     if let data = result.data(using: .utf8),
@@ -906,10 +917,13 @@ class CosmoAgentService: ObservableObject {
                 // both are delivered via executor callbacks. Skip the extra text-only turn
                 // the loop would otherwise spend (~10s on a large profile context) just to
                 // write a closing sentence the inline UI never shows.
+                // Break ONLY when a deliverable actually landed. Breaking on the
+                // mere presence of the tool CALL once ended runs whose proposal
+                // had been rejected by validation — the user saw "Staged …
+                // awaiting review" with nothing staged, and the model never got
+                // to read the error and fix its operations.
                 if conversation.id.hasPrefix(CosmoInlineAssistantSessionScope.conversationIDPrefix),
-                   response.toolCalls.contains(where: {
-                       $0.name == "propose_workspace_edit" || $0.name == "answer_in_assistant_pane"
-                   }) {
+                   !deliveredInlineToolCalls.isEmpty {
                     let trailing = response.content?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                     // The run SUCCEEDED — finalResponse must not stay empty here,
                     // or the empty-response fallback below rewrites a successful
@@ -919,7 +933,7 @@ class CosmoAgentService: ObservableObject {
                     // summary, answer digest) so follow-up turns whose window
                     // truncates the tool arguments still see what was done.
                     finalResponse = trailing.isEmpty
-                        ? Self.inlineDeliveryReceipt(for: response.toolCalls)
+                        ? Self.inlineDeliveryReceipt(for: deliveredInlineToolCalls)
                         : trailing
                     break
                 }
@@ -1831,6 +1845,19 @@ class CosmoAgentService: ObservableObject {
 
     /// One-line summary of tools that already ran when a loop exits abnormally,
     /// so persisted mutations are never invisible half-done work.
+    /// Whether a tool result represents success: no "error" key and, when a
+    /// "success" flag exists, it is true. Non-JSON results count as success
+    /// (engine-level tools return plain strings).
+    nonisolated static func toolResultSucceeded(_ result: String) -> Bool {
+        guard let data = result.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return true
+        }
+        if json["error"] != nil { return false }
+        if let success = json["success"] as? Bool { return success }
+        return true
+    }
+
     /// The history record for an inline run that delivered via tool callbacks:
     /// what was staged/answered, in one or two lines. This is what a future
     /// turn's window sees when the tool arguments themselves get compacted.

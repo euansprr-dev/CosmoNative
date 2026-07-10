@@ -117,7 +117,11 @@ struct CommandKIconVisualTile: View {
         case .browser:
             browserMotif
         case .swipeFile:
-            swipeMotif
+            CommandKSwipeReelMotif(accent: accent, scale: scale)
+        case .swipeShelf:
+            CommandKSwipeShelfMotif(accent: accent, scale: scale)
+        case .swipeGalleryPage:
+            CommandKSwipeGalleryPageMotif(accent: accent, scale: scale)
         case .cosmo:
             cosmoMotif
         default:
@@ -148,32 +152,6 @@ struct CommandKIconVisualTile: View {
             }
         }
         .padding(scale == .rail ? 5 : DS.space20)
-    }
-
-    private var swipeMotif: some View {
-        ZStack {
-            ForEach(0..<3, id: \.self) { index in
-                RoundedRectangle(cornerRadius: scale == .rail ? 4 : 10, style: .continuous)
-                    .fill(index == 2 ? accent.opacity(0.18) : CommandKPreviewPaper.fill.opacity(0.72))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: scale == .rail ? 4 : 10, style: .continuous)
-                            .strokeBorder(accent.opacity(0.18), lineWidth: scale.strokeWidth)
-                    )
-                    .frame(
-                        width: scale == .rail ? 20 : 86,
-                        height: scale == .rail ? 28 : 116
-                    )
-                    .offset(
-                        x: CGFloat(index - 1) * (scale == .rail ? 4 : 16),
-                        y: CGFloat(1 - index) * (scale == .rail ? 2 : 7)
-                    )
-            }
-
-            Image(systemName: identity.symbolName)
-                .font(.system(size: scale.iconSize, weight: .bold))
-                .foregroundStyle(accent)
-        }
-        .padding(scale == .rail ? 4 : DS.space20)
     }
 
     private var cosmoMotif: some View {
@@ -213,6 +191,171 @@ struct CommandKIconVisualTile: View {
             }
         }
         .padding(scale == .rail ? 4 : DS.space20)
+    }
+}
+
+// MARK: - Swipe motifs (the swipe-card grammar in miniature)
+
+/// Shared ink for the swipe miniatures. A swipe is media with the hook
+/// riding a bottom scrim — the same grammar as the real cards on both
+/// platforms, so the motif is an honest miniature, not an icon collage.
+private enum CommandKSwipeMotifInk {
+    static let media = Color(white: 0.24)
+    static let mediaDeep = Color(white: 0.10)
+    static let hookLine = Color.white.opacity(0.85)
+    static let hookLineSoft = Color.white.opacity(0.48)
+    static let playWash = Color.white.opacity(0.20)
+
+    static var mediaFill: LinearGradient {
+        LinearGradient(colors: [media, mediaDeep], startPoint: .top, endPoint: .bottom)
+    }
+}
+
+/// One miniature reel card: dark media, bottom hook lines, optional play seal.
+private struct CommandKMiniReelCard: View {
+    let accent: Color
+    let width: CGFloat
+    let height: CGFloat
+    var hookLines: Int = 2
+    var showsPlay: Bool = false
+
+    private var cornerRadius: CGFloat { max(3, height * 0.09) }
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(CommandKSwipeMotifInk.mediaFill)
+            .overlay(alignment: .bottomLeading) { hookScrim }
+            .overlay { if showsPlay { playSeal } }
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(accent.opacity(0.28), lineWidth: 0.5)
+            )
+            .frame(width: width, height: height)
+    }
+
+    private var hookScrim: some View {
+        VStack(alignment: .leading, spacing: max(1.5, height * 0.03)) {
+            ForEach(0..<hookLines, id: \.self) { line in
+                Capsule(style: .continuous)
+                    .fill(line == 0 ? CommandKSwipeMotifInk.hookLine : CommandKSwipeMotifInk.hookLineSoft)
+                    .frame(width: width * (line == 0 ? 0.62 : 0.4), height: max(1.5, height * 0.032))
+            }
+        }
+        .padding(.leading, width * 0.14)
+        .padding(.bottom, height * 0.1)
+    }
+
+    private var playSeal: some View {
+        Circle()
+            .fill(CommandKSwipeMotifInk.playWash)
+            .frame(width: height * 0.26, height: height * 0.26)
+            .overlay(
+                Image(systemName: "play.fill")
+                    .font(.system(size: height * 0.11, weight: .bold))
+                    .foregroundStyle(CommandKSwipeMotifInk.hookLine)
+                    .offset(x: height * 0.012)
+            )
+            .offset(y: -height * 0.08)
+    }
+}
+
+/// A single swipe: one reel card, the honest object.
+struct CommandKSwipeReelMotif: View {
+    let accent: Color
+    let scale: CommandKIconVisualScale
+
+    var body: some View {
+        CommandKMiniReelCard(
+            accent: accent,
+            width: scale == .rail ? 24 : 64,
+            height: scale == .rail ? 38 : 104,
+            showsPlay: true
+        )
+        .padding(scale == .rail ? 4 : DS.space16)
+    }
+}
+
+/// Browse Swipes: a masonry shelf — three staggered reel cards, the thing
+/// you actually flick through inside Command-K.
+struct CommandKSwipeShelfMotif: View {
+    let accent: Color
+    let scale: CommandKIconVisualScale
+
+    private var cardWidth: CGFloat { scale == .rail ? 8.5 : 38 }
+    private var heights: [CGFloat] {
+        scale == .rail ? [28, 38, 23] : [80, 104, 66]
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: scale == .rail ? 2 : DS.space8) {
+            CommandKMiniReelCard(accent: accent, width: cardWidth, height: heights[0], hookLines: 1)
+            CommandKMiniReelCard(
+                accent: accent,
+                width: cardWidth,
+                height: heights[1],
+                showsPlay: scale == .detail
+            )
+            CommandKMiniReelCard(accent: accent, width: cardWidth, height: heights[2], hookLines: 1)
+        }
+        .padding(scale == .rail ? 4 : DS.space16)
+    }
+}
+
+/// Open Swipe Gallery: the full-screen page in miniature — a paper sheet
+/// with its masthead and a two-column masonry inside.
+struct CommandKSwipeGalleryPageMotif: View {
+    let accent: Color
+    let scale: CommandKIconVisualScale
+
+    private var pageWidth: CGFloat { scale == .rail ? 30 : 118 }
+    private var pageHeight: CGFloat { scale == .rail ? 42 : 106 }
+    private var inset: CGFloat { scale == .rail ? 3 : 9 }
+    private var gutter: CGFloat { scale == .rail ? 2 : 6 }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: gutter) {
+            masthead
+            masonryColumns
+        }
+        .padding(inset)
+        .frame(width: pageWidth, height: pageHeight)
+        .background(
+            RoundedRectangle(cornerRadius: scale == .rail ? 4 : 10, style: .continuous)
+                .fill(CommandKPreviewPaper.fill)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: scale == .rail ? 4 : 10, style: .continuous)
+                .strokeBorder(accent.opacity(0.28), lineWidth: 0.5)
+        )
+        .padding(scale == .rail ? 4 : DS.space16)
+    }
+
+    private var masthead: some View {
+        HStack(spacing: gutter) {
+            Image(systemName: "bolt.fill")
+                .font(.system(size: scale == .rail ? 3.5 : 7, weight: .semibold))
+                .foregroundStyle(accent)
+            Capsule(style: .continuous)
+                .fill(accent.opacity(0.30))
+                .frame(width: pageWidth * 0.34, height: scale == .rail ? 1.5 : 3.5)
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var masonryColumns: some View {
+        let cardWidth = (pageWidth - inset * 2 - gutter) / 2
+        let tall = pageHeight * 0.36
+        let short = pageHeight * 0.23
+        return HStack(alignment: .top, spacing: gutter) {
+            VStack(spacing: gutter) {
+                CommandKMiniReelCard(accent: accent, width: cardWidth, height: tall, hookLines: 1)
+                CommandKMiniReelCard(accent: accent, width: cardWidth, height: short, hookLines: 1)
+            }
+            VStack(spacing: gutter) {
+                CommandKMiniReelCard(accent: accent, width: cardWidth, height: short, hookLines: 1)
+                CommandKMiniReelCard(accent: accent, width: cardWidth, height: tall, hookLines: 1)
+            }
+        }
     }
 }
 
@@ -261,7 +404,7 @@ struct CommandKActionVisualPreview: View {
 
     private var accent: Color {
         switch identity.style {
-        case .swipeFile:
+        case .swipeFile, .swipeShelf, .swipeGalleryPage:
             return DS.entitySwipe
         case .cosmo:
             return DS.gilt

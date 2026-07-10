@@ -269,8 +269,11 @@ struct InboxView: View {
     @ViewBuilder
     private var undoToastOverlay: some View {
         if viewModel.showUndoToast {
+            // Bottom-trailing, not bottom-center — the floating assistant bar
+            // owns the bottom-center lane and was covering the toast.
             InboxUndoToast(viewModel: viewModel)
-                .padding(.horizontal, DS.space24)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.trailing, DS.space24)
                 .padding(.bottom, viewModel.isMultiSelectActive ? 92 : DS.space20)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
         }

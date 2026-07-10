@@ -182,10 +182,6 @@ struct ContentFocusModeView: View {
     @State private var polishDebounceTask: Task<Void, Never>?
     @State private var polishAnalysisRequestID = UUID()
 
-    // AI Draft generation state
-    @State private var isGeneratingDraft = false
-    @State private var draftGenerationError: String?
-
     // Scriptorium V2 state
     @State private var zenMode: Bool = false
     @State private var hasAppeared: Bool = false
@@ -846,10 +842,6 @@ struct ContentFocusModeView: View {
             Rectangle()
                 .fill(DS.sepiaSubtle)
                 .frame(width: 120, height: 0.5)
-
-            if localDraftContent.isEmpty {
-                aiDraftButton
-            }
 
             // Main draft editor — replaced by an in-document diff while a reviewed
             // assistant proposal is pending, then restored once changes are resolved.
@@ -1901,101 +1893,6 @@ struct ContentFocusModeView: View {
             }
         }
         return result.isEmpty ? "\(value)" : result
-    }
-
-    // MARK: - AI Draft Button
-
-    @ViewBuilder
-    private var aiDraftButton: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if isGeneratingDraft {
-                AIWritingProgressView()
-                    .frame(maxWidth: .infinity, minHeight: 300)
-                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
-            } else {
-                Button(action: generateAIDraft) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "sparkles")
-                            .font(DS.caption)
-                        Text("Generate Draft")
-                            .font(DS.buttonText)
-                    }
-                    .foregroundStyle(DS.accent)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: DS.radiusSmall)
-                            .fill(DS.accentSoft)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: DS.radiusSmall)
-                                    .stroke(DS.accent.opacity(0.2), lineWidth: 1)
-                            )
-                    )
-                }
-                .buttonStyle(.plain)
-            }
-
-            if let error = draftGenerationError {
-                Text(error)
-                    .font(DS.footnote)
-                    .foregroundStyle(.orange.opacity(0.8))
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.bottom, 16)
-    }
-
-    private func generateAIDraft() {
-        isGeneratingDraft = true
-        draftGenerationError = nil
-
-        let contentUUID = atom.uuid
-
-        Task {
-            do {
-                // Call cloud engine on Railway directly — runs the full pipeline:
-                // Block 1 (codex) + Block 2 (client) + Block 3A (blueprint)
-                // → single session: plan → write_draft → self-edit
-                // The engine reads all context from the content atom in Supabase
-                let result = try await CloudWritingClient.shared.generateDraft(
-                    contentUUID: contentUUID,
-                    userDirection: viewModel.state.contentDescription.isEmpty
-                        ? nil : viewModel.state.contentDescription
-                )
-
-                // The engine's write_draft tool saved to atom.body via Supabase
-                // Fetch the updated atom to get the draft
-                if let updated = try? await AtomRepository.shared.fetch(uuid: contentUUID),
-                   let body = updated.body, !body.isEmpty {
-                    await MainActor.run {
-                        // Reset local-edit guard so onChange won't block this update
-                        draftEditedLocally = false
-                        let richDoc = RichDocument.migrateLegacy(body)
-                        // Set both rich document and plain text on viewModel
-                        viewModel.state.richDraftDocument = richDoc
-                        viewModel.state.draftContent = body
-                        // Directly update editor bindings (belt-and-suspenders)
-                        localDraftContent = body
-                        draftDocument = richDoc
-                        updateDraftHeadingOutline(from: richDoc)
-                        lastAIGeneratedDraft = body
-                        viewModel.state.save()
-                    }
-                }
-
-                await MainActor.run {
-                    isGeneratingDraft = false
-                    if !result.success {
-                        draftGenerationError = result.error ?? result.message
-                    }
-                }
-            } catch {
-                await MainActor.run {
-                    isGeneratingDraft = false
-                    draftGenerationError = error.localizedDescription
-                }
-            }
-        }
     }
 
     // MARK: - Polish Analysis

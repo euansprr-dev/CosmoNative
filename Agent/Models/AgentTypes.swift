@@ -378,9 +378,13 @@ enum AgentConfirmationTier: String, Codable, Sendable {
 enum AgentModelTier: String, Codable, Sendable {
     /// The tier auto mode runs on when nothing picks a model — ONE stable
     /// default for every intent (per-intent switching fragments the prompt
-    /// cache). Direct-Anthropic daily driver; the old Gemini-preview default
-    /// was slow/queued on OpenRouter and never matched the live provider.
-    static let autoDefault: AgentModelTier = .strategist
+    /// cache). Sonnet 5: near-Opus quality on agentic/coding work at Sonnet
+    /// pricing ($2/$10 intro through 2026-08-31, then $3/$15 — same sticker
+    /// as Sonnet 4.6), and it unifies auto mode with the inline assistant's
+    /// default so both surfaces ride one model. Note: Sonnet 5 runs adaptive
+    /// thinking by default (thinking + text share max_tokens — keep headroom)
+    /// and its tokenizer produces ~30% more tokens for the same text.
+    static let autoDefault: AgentModelTier = .sonnet5
 
     case sensor      // Haiku 4.5 — cheap bulk analysis, classification, scoring
     case strategist  // Sonnet 4.6 — daily driver conversations, outlines, re-ranking, strategy
@@ -437,7 +441,9 @@ enum AgentModelTier: String, Codable, Sendable {
         case .sensor: return 4096
         case .strategist: return 8192
         case .writer: return 16384
-        case .sonnet5: return 8192
+        // Sonnet 5 thinks adaptively by default and thinking + response share
+        // max_tokens — 8192 risked truncating heavy agentic turns.
+        case .sonnet5: return 16384
         case .gpt55Thinking: return 16384
         case .opus47: return 16384
         case .gptChatLatest: return 8192

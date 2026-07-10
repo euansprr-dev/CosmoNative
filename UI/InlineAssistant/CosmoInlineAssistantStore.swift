@@ -1407,6 +1407,25 @@ final class CosmoInlineAssistantStore: ObservableObject {
     /// that feed the surface snapshot). Editors report nil/empty on deselection;
     /// an editor that is NOT the current selection's owner can't wipe another
     /// editor's chip by clearing its own stale selection.
+    /// A selection is only true while its owning surface is the ACTIVE one.
+    /// Called from the surface registry's activation choke points: navigating
+    /// to a different document must never carry the previous document's
+    /// highlight (the owning editor is unmounted and can no longer clear it,
+    /// and `reportSelection`'s ownership guard rightly ignores other editors).
+    func clearSelectionIfForeign(toActiveSurfaceID surfaceID: String) {
+        guard let owner = currentSelectionSurfaceID, owner != surfaceID else { return }
+        currentSelectionSurfaceID = nil
+        if currentSelection != nil { currentSelection = nil }
+    }
+
+    /// The owning editor is going away (document closed) — its highlight goes
+    /// with it, even when no new editable surface takes over.
+    func clearSelectionIfOwned(bySurfaceID surfaceID: String) {
+        guard currentSelectionSurfaceID == surfaceID else { return }
+        currentSelectionSurfaceID = nil
+        if currentSelection != nil { currentSelection = nil }
+    }
+
     func reportSelection(_ selection: CosmoEditableSelection?, forSurfaceID surfaceID: String) {
         let normalized = (selection?.isEmpty == false) ? selection : nil
         if normalized == nil {

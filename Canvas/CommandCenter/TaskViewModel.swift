@@ -117,6 +117,27 @@ public struct TaskViewModel: Identifiable, Equatable, Sendable {
     public let createdAt: Date
     public let updatedAt: Date
 
+    // MARK: - Schedule Block Link (iOS contract, July 2026)
+
+    /// UUID of the schedule_block atom this task nests inside. The block owns
+    /// the time — the link never time-boxes the task. Raw pointer straight
+    /// from metadata; the display fields below are resolved per shown day by
+    /// `ScheduleBlockEngine.resolveLinks` and stay nil for dangling links.
+    public var scheduleBlockUUID: String? = nil
+    public var blockTitle: String? = nil
+    public var blockColorHex: String? = nil
+    /// The block's occurrence range on the SHOWN day — nil when the block
+    /// doesn't occur that day (badge still shows; it just can't read "live").
+    public var blockStart: Date? = nil
+    public var blockEnd: Date? = nil
+
+    /// True while `date` sits inside the block's occurrence on the shown day —
+    /// the "this is what I should be doing now" signal.
+    public func blockIsLive(at date: Date = Date()) -> Bool {
+        guard let blockStart, let blockEnd else { return false }
+        return (blockStart...blockEnd).contains(date)
+    }
+
     // MARK: - Virtual Recurrence Occurrence
 
     /// When this VM represents a *computed* occurrence of a recurring series, the occurrence
@@ -597,7 +618,7 @@ extension TaskViewModel {
             parsedTitleMentions = (try? JSONDecoder().decode([RichMention].self, from: data)) ?? []
         }
 
-        return TaskViewModel(
+        var vm = TaskViewModel(
             id: atom.uuid,
             uuid: atom.uuid,
             title: atom.title ?? "Untitled Task",
@@ -643,6 +664,10 @@ extension TaskViewModel {
             createdAt: PlannerumFormatters.iso8601.date(from: atom.createdAt) ?? Date(),
             updatedAt: PlannerumFormatters.iso8601.date(from: atom.updatedAt) ?? Date()
         )
+        // Raw block pointer; display fields resolve per shown day later
+        // (ScheduleBlockEngine.resolveLinks), fail-soft for dangling links.
+        vm.scheduleBlockUUID = metadata?.scheduleBlockUUID
+        return vm
     }
 }
 
@@ -657,7 +682,7 @@ extension TaskViewModel {
     /// grouping/sorting); it defaults to the occurrence day for completed occurrences.
     func makingOccurrence(_ occ: RecurringSeriesEngine.VirtualOccurrence, completedAt: Date? = nil) -> TaskViewModel {
         let completed = occ.status == .completed
-        return TaskViewModel(
+        var vm = TaskViewModel(
             id: occ.id,
             uuid: uuid,
             title: occ.title,
@@ -705,6 +730,9 @@ extension TaskViewModel {
             occurrenceDay: occ.day,
             occurrenceStatus: occ.status
         )
+        // The template's block link speaks for every occurrence.
+        vm.scheduleBlockUUID = scheduleBlockUUID
+        return vm
     }
 }
 

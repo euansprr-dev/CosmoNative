@@ -243,6 +243,14 @@ final class InboxIngestService {
             while let self, let uuid = self.dequeueNext() {
                 guard let item = try? await self.inboxRepo.fetch(uuid: uuid),
                       item.status == .pending else { continue }
+                // A page scan still owed its LLM transcript classifies as
+                // gibberish and locks it in (the transcript upgrade only
+                // touches still-pending items). Wait — the transcription
+                // worker re-enqueues after the transcript lands, and its
+                // attempt cap clears the flag on hopeless pages.
+                if await Self.shouldDeferClassification(item: item) {
+                    continue
+                }
                 await self.classifyAndStore(item: item, excludedAtomUUIDs: [])
             }
             self?.drainTask = nil
@@ -254,6 +262,36 @@ final class InboxIngestService {
         let uuid = queuedItemUuids.removeFirst()
         queuedSet.remove(uuid)
         return uuid
+    }
+
+    /// Re-enqueue a still-pending item whose deferred classification can now
+    /// run — called by the transcription worker when a transcript lands (or
+    /// it gives up on a page).
+    func reclassifyIfPending(uuid: String) {
+        enqueueForClassification(uuid)
+    }
+
+    /// A capture that names attachments (`attachmentUUIDs` in metadata, set
+    /// by the iPhone) must not classify until every named row has synced in
+    /// AND finished (or exhausted) its LLM transcription pass. Rows can land
+    /// after their inbox item — classifying early reads the Vision gibberish.
+    /// Progress is guaranteed: the worker re-enqueues on completion, and
+    /// every sync pull republishes pending items into this queue.
+    static func shouldDeferClassification(item: InboxItem) async -> Bool {
+        guard let metadata = item.metadata,
+              let data = metadata.data(using: .utf8),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let expected = dict["attachmentUUIDs"] as? [String], !expected.isEmpty
+        else { return false }
+
+        guard let rows = try? await MediaAttachmentRepository.shared.fetch(
+            owner: .inboxItem, ownerUUID: item.uuid
+        ) else { return true }
+
+        if rows.count < expected.count { return true }
+        return rows.contains { row in
+            row.metadata?.contains(#""needsLLMPass":true"#) == true
+        }
     }
 
     private func classifyAndStore(item: InboxItem, excludedAtomUUIDs: [String]) async {

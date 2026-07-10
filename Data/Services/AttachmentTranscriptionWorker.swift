@@ -66,6 +66,7 @@ final class AttachmentTranscriptionWorker {
             }
 
             await upgradeOwnerText(attachment: attachment, transcript: result.transcript)
+            kickDeferredClassification(for: attachment)
         } catch {
             // Count the attempt so an unreadable page can't loop forever.
             _ = try? await MediaAttachmentRepository.shared.trackedMutation(uuid: attachment.uuid) { mutable in
@@ -80,8 +81,20 @@ final class AttachmentTranscriptionWorker {
                 }
                 return true
             }
+            if attempts + 1 >= maxAttempts {
+                // The page is a lost cause — release its deferred
+                // classification rather than stranding the inbox item.
+                kickDeferredClassification(for: attachment)
+            }
             print("AttachmentTranscriptionWorker: pass \(attempts + 1) failed for \(attachment.uuid): \(error)")
         }
+    }
+
+    /// Classification of the owning inbox item waits for this transcript
+    /// (InboxIngestService.shouldDeferClassification) — release it.
+    private func kickDeferredClassification(for attachment: MediaAttachment) {
+        guard attachment.ownerType == MediaAttachmentOwner.inboxItem.rawValue else { return }
+        InboxIngestService.shared.reclassifyIfPending(uuid: attachment.ownerUUID)
     }
 
     /// A pending inbox capture's text upgrades to the transcript — but only

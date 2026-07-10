@@ -31,6 +31,11 @@ struct TaskDetailPanel: View {
     @State private var recurrenceDays: Set<DayOfWeek> = []
     @State private var recurrenceHasLoaded = false
 
+    // Schedule-block membership: the blocks occurring on the task's planned
+    // day (plus the currently linked block, wherever it lives).
+    @State private var editedScheduleBlockUUID: String? = nil
+    @State private var availableBlocks: [ScheduleBlockEntry] = []
+
     @State private var showDeleteConfirmation = false
     @State private var seriesCompletionCount = 0
 
@@ -95,6 +100,7 @@ struct TaskDetailPanel: View {
         .onAppear {
             syncStateFromTask()
             Task { await loadRecurrence() }
+            Task { await loadAvailableBlocks() }
         }
         .onChange(of: task) { oldTask, newTask in
             // Same-task external updates only — uuid changes cross-fade below
@@ -119,6 +125,7 @@ struct TaskDetailPanel: View {
             recurrenceRule = nil
             showDeleteConfirmation = false
             Task { await loadRecurrence() }
+            Task { await loadAvailableBlocks() }
             scrollProxy.scrollTo("detail-top", anchor: .top)
             withAnimation(.easeIn(duration: 0.16)) { contentOpacity = 1 }
         }
@@ -138,6 +145,7 @@ struct TaskDetailPanel: View {
         editedHabitUUID = task.habitUUID
         editedLinkedAtoms = task.linkedAtoms
         editedTitleMentions = task.titleMentions
+        editedScheduleBlockUUID = task.scheduleBlockUUID
         titleEditScope = .currentOnly
     }
 
@@ -310,7 +318,91 @@ struct TaskDetailPanel: View {
                     schedulingChip("Someday", state: "someday")
                 }
             }
+
+            // Schedule block — nest the task inside a block on its planned
+            // day. The block owns the time; this never time-boxes the task.
+            if !availableBlocks.isEmpty {
+                detailRow(label: "Block", icon: "calendar.day.timeline.left") {
+                    blockPicker
+                }
+            }
         }
+    }
+
+    /// Menu of the planned day's blocks, each with its palette swatch;
+    /// "None" pops the task back out of its block.
+    private var blockPicker: some View {
+        Menu {
+            Button("None") {
+                editedScheduleBlockUUID = nil
+                Task { await viewModel.setScheduleBlock(taskUUID: task.uuid, blockUUID: nil) }
+            }
+            Divider()
+            ForEach(availableBlocks) { block in
+                Button {
+                    editedScheduleBlockUUID = block.id
+                    Task { await viewModel.setScheduleBlock(taskUUID: task.uuid, blockUUID: block.id) }
+                } label: {
+                    if editedScheduleBlockUUID == block.id {
+                        Label(block.title, systemImage: "checkmark")
+                    } else {
+                        Text(block.title)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 5) {
+                if let selected = availableBlocks.first(where: { $0.id == editedScheduleBlockUUID }) {
+                    RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                        .fill(selected.colorHex.map(Color.init(hex:)) ?? DS.accent)
+                        .frame(width: 7, height: 7)
+                    Text(selected.title)
+                        .font(DS.buttonText)
+                        .foregroundStyle(DS.text)
+                        .lineLimit(1)
+                } else {
+                    Text("Add to block")
+                        .font(DS.cardMeta)
+                        .foregroundStyle(DS.textMuted)
+                }
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(DS.textMuted)
+            }
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Nest this task inside a time block — the block keeps its own hours.")
+    }
+
+    /// Blocks the task could nest in: those occurring on its planned day
+    /// (when ?? deadline ?? today). A link to a block that doesn't occur that
+    /// day still shows (prepended) so the picker never lies about state; a
+    /// dangling link (block deleted) hides quietly — the repository never
+    /// returns tombstones.
+    private func loadAvailableBlocks() async {
+        let day = task.whenDate ?? task.deadline ?? Date()
+        var blocks = await ScheduleBlockEngine.blocks(on: day)
+        if let linked = task.scheduleBlockUUID, !blocks.contains(where: { $0.id == linked }) {
+            if let atom = try? await AtomRepository.shared.fetch(uuid: linked),
+               atom.type == .scheduleBlock,
+               let meta = atom.metadataValue(as: ScheduleBlockMetadata.self) {
+                blocks.insert(ScheduleBlockEntry(
+                    id: atom.uuid,
+                    title: atom.title ?? "Untitled",
+                    start: meta.startTime.flatMap(ISO8601.date(from:)) ?? day,
+                    end: meta.endTime.flatMap(ISO8601.date(from:)) ?? day,
+                    isCompleted: meta.isCompleted ?? false,
+                    colorHex: meta.color,
+                    location: meta.location,
+                    isRecurring: meta.recurrence.flatMap(RecurrenceRule.fromJSON) != nil,
+                    recurrenceText: nil
+                ), at: 0)
+            }
+        }
+        availableBlocks = blocks
     }
 
     @ViewBuilder

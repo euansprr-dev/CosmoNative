@@ -2281,7 +2281,7 @@ struct CosmoModelOption: Identifiable {
             id: "auto",
             tier: nil,
             title: "Auto",
-            detail: "Sonnet 4.6 by default",
+            detail: "Sonnet 5 by default",
             icon: "wand.and.stars"
         ),
         CosmoModelOption(

@@ -1,6 +1,8 @@
 // CosmoOS/UI/InlineAssistant/CosmoAssistantStudioView.swift
-// The Assistant Studio — one panel to manage skills, tune the personality
-// character sheet, and read the assistant's own scorecard.
+// The Assistant Studio — skills, the personality character sheet, and the
+// assistant's scorecard, spoken in the Settings surface grammar: flat header
+// over a hairline, small-caps section headers with quiet counts, grouped
+// boxes with inset dividers, and an in-place editor face (no stacked sheets).
 
 import SwiftUI
 
@@ -81,7 +83,7 @@ final class CosmoInlineAssistantMetrics {
     }
 }
 
-// MARK: - Studio
+// MARK: - Studio shell
 
 struct CosmoAssistantStudioView: View {
     enum Tab: String, CaseIterable, Identifiable {
@@ -90,377 +92,123 @@ struct CosmoAssistantStudioView: View {
         case metrics = "Metrics"
 
         var id: String { rawValue }
-
-        var icon: String {
-            switch self {
-            case .skills: return "wand.and.stars"
-            case .personality: return "person.crop.circle"
-            case .metrics: return "chart.bar"
-            }
-        }
     }
 
-    /// A prefilled skill draft ("promote this run to a skill") — the Skills
-    /// tab opens straight into the editor with it.
+    /// A prefilled skill draft ("promote this run to a skill") — the shell
+    /// opens straight into the editor face with it.
     var initialSkillDraft: CosmoInlineSkillDefinition? = nil
     let onDismiss: () -> Void
 
     @State private var selectedTab: Tab = .skills
-    @State private var closeHovered = false
-    @Namespace private var tabNamespace
+    @State private var skills: [CosmoInlineSkillDefinition] = []
+    @State private var acceptStats: [String: (accepted: Int, total: Int)] = [:]
+    @State private var editingSkill: CosmoInlineSkillDefinition?
+    @State private var didPresentInitialDraft = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private let store = CosmoInlineSkillStore.defaultForRuntime()
+
+    private var isEditing: Bool { editingSkill != nil }
 
     var body: some View {
-        VStack(spacing: DS.space12) {
-            header
-            tabContent
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        ZStack {
+            listFace
+                .opacity(isEditing ? 0 : 1)
+                .scaleEffect(isEditing ? 0.98 : 1)
+                .allowsHitTesting(!isEditing)
+
+            if let editingSkill {
+                editorFace(for: editingSkill)
+                    .transition(reduceMotion
+                        ? .opacity
+                        : .opacity.combined(with: .scale(scale: 1.02)))
+            }
         }
-        .padding(.top, DS.space12)
-        .padding(.horizontal, DS.space12)
-        .padding(.bottom, DS.space16)
         .frame(width: 920, height: 680)
         .background(DS.bg)
+        .animation(reduceMotion ? .easeOut(duration: 0.2) : ProMotionSprings.gentle, value: editingSkill?.id)
+        .task {
+            reload()
+            if let initialSkillDraft, !didPresentInitialDraft {
+                didPresentInitialDraft = true
+                editingSkill = initialSkillDraft
+            }
+        }
+    }
+
+    // MARK: List face
+
+    private var listFace: some View {
+        VStack(spacing: 0) {
+            header
+            Rectangle()
+                .fill(DS.sidebarMaterialBorder.opacity(0.45))
+                .frame(height: 1)
+            tabContent
+        }
     }
 
     private var header: some View {
-        ZStack {
-            HStack(spacing: DS.space12) {
-                titleBlock
-                Spacer()
-                closeButton
-            }
-
-            tabSwitcher
-        }
-        .padding(.leading, DS.space16)
-        .padding(.trailing, DS.space8)
-        .padding(.vertical, DS.space8)
-        .modifier(CosmoAssistantStudioHeaderChrome())
-    }
-
-    private var titleBlock: some View {
-        VStack(alignment: .leading, spacing: 1) {
+        HStack(spacing: DS.space12) {
             Text("Assistant Studio")
-                .font(DS.pageTitle)
+                .font(DS.headline)
                 .foregroundStyle(DS.text)
                 .lineLimit(1)
 
-            Text("Skills, prompts, models, and routing contracts")
-                .font(DS.caption)
-                .foregroundStyle(DS.textMuted)
-                .lineLimit(1)
-        }
-        .frame(maxWidth: 330, alignment: .leading)
-    }
+            Spacer()
 
-    private var tabSwitcher: some View {
-        CosmoAssistantStudioTabSwitcher(
-            selectedTab: $selectedTab,
-            namespace: tabNamespace
-        )
-    }
+            CosmoAssistantStudioTabSwitcher(selectedTab: $selectedTab)
 
-    private var closeButton: some View {
-        Button(action: onDismiss) {
-            Image(systemName: "xmark")
-                .font(DS.caption.weight(.semibold))
-                .frame(width: 32, height: 32)
-                .foregroundStyle(closeHovered ? DS.text : DS.textSecondary)
-                .background(
-                    closeHovered ? DS.glassInputFillFocused : DS.glassInputFill.opacity(0.72),
-                    in: Circle()
-                )
-                .contentShape(Circle())
+            FloatingOverlayCloseButton(action: onDismiss)
+                .keyboardShortcut(isEditing ? nil : KeyboardShortcut(.escape, modifiers: []))
+                .help("Close Assistant Studio (Esc)")
+                .accessibilityLabel("Close Assistant Studio")
         }
-        .buttonStyle(.plain)
-        .scaleEffect(closeHovered ? 1.04 : 1)
-        .animation(ProMotionSprings.hover, value: closeHovered)
-        .onHover { closeHovered = $0 }
-        .cosmoClickCursor()
-        .keyboardShortcut(.escape, modifiers: [])
-        .help("Close Assistant Studio (Esc)")
-        .accessibilityLabel("Close Assistant Studio")
+        .padding(.horizontal, DS.space24)
+        .padding(.vertical, DS.space16)
     }
 
     @ViewBuilder
     private var tabContent: some View {
         switch selectedTab {
-        case .skills: CosmoStudioSkillsTab(initialDraft: initialSkillDraft)
-        case .personality: CosmoStudioPersonalityTab()
-        case .metrics: CosmoStudioMetricsTab()
-        }
-    }
-}
-
-private struct CosmoAssistantStudioHeaderChrome: ViewModifier {
-    private let cornerRadius: CGFloat = 28
-
-    func body(content: Content) -> some View {
-        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-
-        content
-            .clipShape(shape)
-            .glassEffect(.regular.tint(DS.glassPanelTint), in: shape)
-            .background {
-                shape
-                    .fill(DS.surface.opacity(0.56))
-                    .shadow(color: DS.glassPanelShadow.opacity(0.72), radius: 22, x: 0, y: 8)
-                    .shadow(color: DS.glassPanelShadow.opacity(0.24), radius: 5, x: 0, y: 1)
-            }
-    }
-}
-
-private struct CosmoAssistantStudioTabSwitcher: View {
-    @Binding var selectedTab: CosmoAssistantStudioView.Tab
-    let namespace: Namespace.ID
-
-    var body: some View {
-        HStack(spacing: DS.space2) {
-            ForEach(Array(CosmoAssistantStudioView.Tab.allCases.enumerated()), id: \.element.id) { index, tab in
-                CosmoAssistantStudioTabButton(
-                    tab: tab,
-                    index: index,
-                    selectedTab: $selectedTab,
-                    namespace: namespace
-                )
-            }
-        }
-        .padding(3)
-        .background(DS.glassInputFill.opacity(0.68), in: Capsule())
-        .overlay {
-            Capsule()
-                .stroke(DS.glassBorder.opacity(0.72), lineWidth: 1)
-        }
-    }
-}
-
-private struct CosmoAssistantStudioTabButton: View {
-    let tab: CosmoAssistantStudioView.Tab
-    let index: Int
-    @Binding var selectedTab: CosmoAssistantStudioView.Tab
-    let namespace: Namespace.ID
-
-    private var isSelected: Bool { selectedTab == tab }
-
-    var body: some View {
-        Button {
-            withAnimation(ProMotionSprings.focusTransition) {
-                selectedTab = tab
-            }
-        } label: {
-            label
-        }
-        .buttonStyle(.plain)
-        .keyboardShortcut(shortcut, modifiers: .command)
-        .help("\(tab.rawValue) (⌘\(index + 1))")
-        .accessibilityLabel(tab.rawValue)
-        .accessibilityValue(isSelected ? "Selected" : "")
-    }
-
-    private var label: some View {
-        HStack(spacing: DS.space4) {
-            Image(systemName: tab.icon)
-                .font(DS.caption.weight(.semibold))
-                .frame(width: 13)
-
-            Text(tab.rawValue)
-                .font(DS.caption.weight(.semibold))
-        }
-        .foregroundStyle(isSelected ? DS.text : DS.textMuted)
-        .padding(.horizontal, DS.space10)
-        .padding(.vertical, 7)
-        .frame(minWidth: 102)
-        .background(selectionBackground)
-        .contentShape(Capsule())
-    }
-
-    @ViewBuilder
-    private var selectionBackground: some View {
-        if isSelected {
-            Capsule()
-                .fill(DS.surfaceElevated)
-                .matchedGeometryEffect(id: "assistant-studio-tab", in: namespace)
-                .overlay {
-                    Capsule()
-                        .stroke(DS.glassBorder, lineWidth: 1)
-                }
-        }
-    }
-
-    private var shortcut: KeyEquivalent {
-        KeyEquivalent(Character(String(index + 1)))
-    }
-}
-
-// MARK: - Skills Tab
-
-private struct CosmoStudioSkillsTab: View {
-    var initialDraft: CosmoInlineSkillDefinition? = nil
-
-    @State private var skills: [CosmoInlineSkillDefinition] = []
-    @State private var editingSkill: CosmoInlineSkillDefinition?
-    @State private var acceptStats: [String: (accepted: Int, total: Int)] = [:]
-    @State private var didPresentInitialDraft = false
-
-    private let store = CosmoInlineSkillStore.defaultForRuntime()
-
-    var body: some View {
-        VStack(spacing: DS.space16) {
-            skillsHero
-
-            ScrollView {
-                LazyVStack(spacing: DS.space8) {
-                    routerTestPanel
-
-                    sectionLabel("Custom skills")
-                    if customSkills.isEmpty {
-                        emptyCustomState
-                    }
-                    ForEach(customSkills) { skill in
-                        skillRow(skill, isBuiltin: false)
-                    }
-
-                    sectionLabel("Built-in skills")
-                    ForEach(builtinSkills) { skill in
-                        skillRow(skill, isBuiltin: true)
-                    }
-                }
-                .padding(.horizontal, DS.space2)
-                .padding(.bottom, DS.space16)
-            }
-            .scrollEdgeEffectStyle(.soft, for: .all)
-        }
-        .padding(.horizontal, DS.space16)
-        .padding(.top, DS.space8)
-        .padding(.bottom, DS.space4)
-        .task {
-            reload()
-            if let initialDraft, !didPresentInitialDraft {
-                didPresentInitialDraft = true
-                editingSkill = initialDraft
-            }
-        }
-        .sheet(item: $editingSkill) { skill in
-            CosmoStudioSkillEditor(
-                skill: skill,
-                onSave: { updated in
-                    store.save(updated)
-                    editingSkill = nil
+        case .skills:
+            CosmoStudioSkillListTab(
+                customSkills: skills.filter { !$0.isBuiltin },
+                builtinSkills: skills.filter(\.isBuiltin),
+                acceptStats: acceptStats,
+                store: store,
+                onEdit: { editingSkill = $0 },
+                onCreate: { createSkill() },
+                onToggleEnabled: { skill, enabled in setEnabled(skill, enabled) },
+                onDelete: { skill in
+                    store.delete(id: skill.id)
                     reload()
-                },
-                onCancel: { editingSkill = nil }
+                }
             )
+        case .personality:
+            CosmoStudioPersonalityTab()
+        case .metrics:
+            CosmoStudioMetricsTab()
         }
     }
 
-    private var skillsHero: some View {
-        HStack(alignment: .center, spacing: DS.space16) {
-            VStack(alignment: .leading, spacing: DS.space4) {
-                Text("Skill Agents")
-                    .font(DS.title2.weight(.semibold))
-                    .foregroundStyle(DS.text)
+    // MARK: Editor face
 
-                Text("Create routable mini-agents with their own model, context, tools, examples, and verification rule.")
-                    .font(DS.callout)
-                    .foregroundStyle(DS.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Spacer()
-
-            Button {
-                editingSkill = newSkillTemplate()
-            } label: {
-                Label("New Skill", systemImage: "plus")
-                    .font(DS.callout.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, DS.space12)
-                    .padding(.vertical, 8)
-                    .background(DS.accent, in: Capsule())
-                    .overlay {
-                        Capsule()
-                            .stroke(.white.opacity(0.22), lineWidth: 1)
-                    }
-            }
-            .buttonStyle(.plain)
-            .cosmoClickCursor()
-            .keyboardShortcut("n", modifiers: .command)
-            .help("Create skill (⌘N)")
-            .accessibilityLabel("Create new skill")
-        }
-        .padding(.horizontal, DS.space10)
-        .padding(.vertical, DS.space6)
+    private func editorFace(for skill: CosmoInlineSkillDefinition) -> some View {
+        CosmoStudioSkillEditorFace(
+            skill: skill,
+            onSave: { updated in
+                var saved = updated
+                saved.updatedAt = Date()
+                store.save(saved)
+                editingSkill = nil
+                reload()
+            },
+            onCancel: { editingSkill = nil }
+        )
     }
 
-    private var customSkills: [CosmoInlineSkillDefinition] {
-        skills.filter { !$0.isBuiltin }
-    }
-
-    private var builtinSkills: [CosmoInlineSkillDefinition] {
-        skills.filter(\.isBuiltin)
-    }
-
-    // MARK: Router test panel
-
-    @State private var routerTestPhrase = ""
-    @State private var routerTestResult: String?
-
-    /// Type a phrase, see which skill the embedding router would pick and its
-    /// score — routing quality stops being a guess.
-    private var routerTestPanel: some View {
-        VStack(alignment: .leading, spacing: DS.space6) {
-            sectionLabel("Test routing")
-            HStack(spacing: DS.space8) {
-                TextField("Type a request the way you would ask it…", text: $routerTestPhrase)
-                    .textFieldStyle(.plain)
-                    .font(DS.callout)
-                    .padding(.horizontal, DS.space10)
-                    .padding(.vertical, 7)
-                    .background(DS.surface, in: .rect(cornerRadius: 8))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(DS.borderSubtle, lineWidth: 1)
-                    }
-                    .onSubmit { runRouterTest() }
-
-                Button("Route") { runRouterTest() }
-                    .buttonStyle(.plain)
-                    .font(DS.callout.weight(.semibold))
-                    .foregroundStyle(DS.accent)
-                    .cosmoClickCursor()
-                    .disabled(routerTestPhrase.trimmingCharacters(in: .whitespaces).isEmpty)
-                    .accessibilityLabel("Test skill routing")
-            }
-            if let routerTestResult {
-                Text(routerTestResult)
-                    .font(DS.caption)
-                    .foregroundStyle(DS.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(.bottom, DS.space8)
-    }
-
-    private func runRouterTest() {
-        let phrase = routerTestPhrase.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !phrase.isEmpty else { return }
-        routerTestResult = "Routing…"
-        Task {
-            let suggestion = await CosmoInlineSkillAutoRouter.shared.suggestion(
-                for: phrase,
-                registry: CosmoInlineSkillRegistry(store: store)
-            )
-            let plan = CosmoInlineAssistantSkillRuntime.plan(for: phrase, surfaceKind: nil)
-            var lines: [String] = []
-            if let suggestion {
-                lines.append("Embedding router: \(suggestion.skillName) (score \(String(format: "%.2f", suggestion.score)))")
-            } else {
-                lines.append("Embedding router: no skill above threshold")
-            }
-            lines.append("Keyword plan: \(plan.primarySkill.name) → \(plan.route == .action ? "edit" : "answer") route")
-            routerTestResult = lines.joined(separator: "\n")
-        }
-    }
+    // MARK: Data
 
     private func reload() {
         let registry = CosmoInlineSkillRegistry(store: store)
@@ -486,145 +234,20 @@ private struct CosmoStudioSkillsTab: View {
         acceptStats = stats
     }
 
-    private func sectionLabel(_ text: String) -> some View {
-        Text(text)
-            .font(DS.caption.weight(.semibold))
-            .foregroundStyle(DS.textMuted)
-            .textCase(.uppercase)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.top, DS.space8)
+    private func setEnabled(_ skill: CosmoInlineSkillDefinition, _ enabled: Bool) {
+        var updated = skill
+        updated.isEnabled = enabled
+        updated.updatedAt = Date()
+        store.save(updated)
+        reload()
     }
 
-    private var emptyCustomState: some View {
-        VStack(alignment: .leading, spacing: DS.space8) {
-            Label("No custom skills yet", systemImage: "wand.and.stars")
-                .font(DS.headline)
-                .foregroundStyle(DS.text)
-
-            Text("Create one here, or ask the assistant to build one from a live dry run. Skills work best when they include trigger language, context, examples, and a verification rule.")
-                .font(DS.callout)
-                .foregroundStyle(DS.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Button {
-                editingSkill = newSkillTemplate()
-            } label: {
-                Label("Create first skill", systemImage: "plus")
-                    .font(DS.caption.weight(.semibold))
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(DS.accent)
-            .cosmoClickCursor()
-            .help("Create first skill")
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, DS.space10)
-        .padding(.vertical, DS.space8)
+    private func createSkill() {
+        guard editingSkill == nil else { return }
+        editingSkill = Self.newSkillTemplate()
     }
 
-    private func skillRow(_ skill: CosmoInlineSkillDefinition, isBuiltin: Bool) -> some View {
-        HStack(spacing: DS.space12) {
-            Image(systemName: skill.icon)
-                .font(DS.callout)
-                .foregroundStyle(skill.isEnabled ? DS.accent : DS.textMuted)
-                .frame(width: 26)
-                .accessibilityHidden(true)
-
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: DS.space6) {
-                    Text(skill.name)
-                        .font(DS.callout.weight(.medium))
-                        .foregroundStyle(skill.isEnabled ? DS.text : DS.textMuted)
-                    tierBadge(skill)
-                    routeBadge(skill)
-                }
-                Text(skill.summary)
-                    .font(DS.caption)
-                    .foregroundStyle(DS.textMuted)
-                    .lineLimit(2)
-                if let stat = acceptStats[skill.id], stat.total > 0 {
-                    Text("\(Int(Double(stat.accepted) / Double(stat.total) * 100))% accepted · \(stat.total) outcomes")
-                        .font(DS.caption2)
-                        .foregroundStyle(DS.textMuted)
-                }
-            }
-
-            Spacer()
-
-            if isBuiltin {
-                Button("Inspect") { editingSkill = editableCopy(of: skill) }
-                    .buttonStyle(.plain)
-                    .font(DS.caption.weight(.medium))
-                    .foregroundStyle(DS.accent)
-                    .cosmoClickCursor()
-                    .help("Inspect this built-in prompt and save a custom version")
-            } else {
-                Toggle("", isOn: enabledBinding(for: skill))
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                    .labelsHidden()
-                    .accessibilityLabel("\(skill.name) enabled")
-
-                Button("Edit") { editingSkill = skill }
-                    .buttonStyle(.plain)
-                    .font(DS.caption.weight(.medium))
-                    .foregroundStyle(DS.accent)
-                    .cosmoClickCursor()
-
-                Button {
-                    store.delete(id: skill.id)
-                    reload()
-                } label: {
-                    Image(systemName: "trash")
-                        .font(DS.caption)
-                        .foregroundStyle(DS.textMuted)
-                }
-                .buttonStyle(.plain)
-                .cosmoClickCursor()
-                .help("Delete \(skill.name)")
-                .accessibilityLabel("Delete \(skill.name)")
-            }
-        }
-        .padding(DS.space12)
-        .background(DS.surface, in: .rect(cornerRadius: 10))
-        .overlay {
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(DS.borderSubtle, lineWidth: 1)
-        }
-    }
-
-    private func tierBadge(_ skill: CosmoInlineSkillDefinition) -> some View {
-        Text(skill.displayedModelLabel)
-            .font(DS.caption2.weight(.semibold))
-            .foregroundStyle(DS.textSecondary)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 1)
-            .background(DS.surfaceElevated, in: Capsule())
-    }
-
-    private func routeBadge(_ skill: CosmoInlineSkillDefinition) -> some View {
-        Text(skill.route == .action ? "Diff" : "Answer")
-            .font(DS.caption2.weight(.semibold))
-            .foregroundStyle(skill.route == .action ? DS.green : DS.textSecondary)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 1)
-            .background(DS.surfaceElevated, in: Capsule())
-    }
-
-    private func enabledBinding(for skill: CosmoInlineSkillDefinition) -> Binding<Bool> {
-        Binding(
-            get: { skill.isEnabled },
-            set: { newValue in
-                var updated = skill
-                updated.isEnabled = newValue
-                updated.updatedAt = Date()
-                store.save(updated)
-                reload()
-            }
-        )
-    }
-
-    private func editableCopy(of builtin: CosmoInlineSkillDefinition) -> CosmoInlineSkillDefinition {
+    static func editableCopy(of builtin: CosmoInlineSkillDefinition) -> CosmoInlineSkillDefinition {
         var copy = builtin
         copy.id = UUID().uuidString
         copy.name = "\(builtin.name) Copy"
@@ -634,7 +257,7 @@ private struct CosmoStudioSkillsTab: View {
         return copy
     }
 
-    private func newSkillTemplate() -> CosmoInlineSkillDefinition {
+    static func newSkillTemplate() -> CosmoInlineSkillDefinition {
         CosmoInlineSkillDefinition.custom(
             name: "Untitled Skill",
             icon: "wand.and.stars",
@@ -664,10 +287,424 @@ private struct CosmoStudioSkillsTab: View {
     }
 }
 
-// MARK: - Skill Editor
+// MARK: - Tab switcher
 
-private struct CosmoStudioSkillEditor: View {
-    @State var skill: CosmoInlineSkillDefinition
+private struct CosmoAssistantStudioTabSwitcher: View {
+    @Binding var selectedTab: CosmoAssistantStudioView.Tab
+
+    var body: some View {
+        HStack(spacing: 3) {
+            ForEach(Array(CosmoAssistantStudioView.Tab.allCases.enumerated()), id: \.element.id) { index, tab in
+                segment(tab, index: index)
+            }
+        }
+        .padding(3)
+        .background(DS.glassSectionFill, in: Capsule(style: .continuous))
+        .overlay(Capsule(style: .continuous).stroke(DS.glassBorder, lineWidth: 1))
+        .animation(ProMotionSprings.snappy, value: selectedTab)
+    }
+
+    private func segment(_ tab: CosmoAssistantStudioView.Tab, index: Int) -> some View {
+        let isSelected = selectedTab == tab
+        return Button {
+            selectedTab = tab
+        } label: {
+            Text(tab.rawValue)
+                .font(DS.callout)
+                .fontWeight(isSelected ? .semibold : .regular)
+                .foregroundStyle(isSelected ? DS.text : DS.textMuted)
+                .frame(width: 92)
+                .padding(.vertical, DS.space6)
+                .background(
+                    isSelected ? AnyShapeStyle(DS.surfaceElevated) : AnyShapeStyle(Color.clear),
+                    in: Capsule(style: .continuous)
+                )
+                .overlay {
+                    if isSelected {
+                        Capsule(style: .continuous)
+                            .stroke(DS.border, lineWidth: 0.5)
+                    }
+                }
+                .contentShape(Capsule(style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
+        .help("\(tab.rawValue) (⌘\(index + 1))")
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+    }
+}
+
+// MARK: - Skills tab
+
+private struct CosmoStudioSkillListTab: View {
+    let customSkills: [CosmoInlineSkillDefinition]
+    let builtinSkills: [CosmoInlineSkillDefinition]
+    let acceptStats: [String: (accepted: Int, total: Int)]
+    let store: CosmoInlineSkillStore
+    let onEdit: (CosmoInlineSkillDefinition) -> Void
+    let onCreate: () -> Void
+    let onToggleEnabled: (CosmoInlineSkillDefinition, Bool) -> Void
+    let onDelete: (CosmoInlineSkillDefinition) -> Void
+
+    @State private var hasAppeared = false
+    @State private var routerTestPhrase = ""
+    @State private var routerResults: [String] = []
+    @State private var isRouting = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: DS.space24) {
+                customSection
+                    .studioCascade(hasAppeared: hasAppeared, index: 0, reduceMotion: reduceMotion)
+                builtinSection
+                    .studioCascade(hasAppeared: hasAppeared, index: 1, reduceMotion: reduceMotion)
+                routerSection
+                    .studioCascade(hasAppeared: hasAppeared, index: 2, reduceMotion: reduceMotion)
+            }
+            .padding(DS.space24)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .scrollEdgeEffectStyle(.soft, for: .all)
+        .onAppear {
+            // Flip one frame after mount so the cascade actually animates.
+            Task { @MainActor in
+                withAnimation(ProMotionSprings.gentle) { hasAppeared = true }
+            }
+        }
+    }
+
+    // MARK: Custom skills
+
+    private var customSection: some View {
+        VStack(alignment: .leading, spacing: DS.space12) {
+            SettingsSectionHeader(label: "CUSTOM SKILLS", detail: "\(customSkills.count)")
+            SettingsGroupedBox {
+                if customSkills.isEmpty {
+                    emptyTeachingRow
+                } else {
+                    customRows
+                }
+                SettingsRowDivider(inset: 0)
+                addRow
+            }
+        }
+    }
+
+    private var customRows: some View {
+        let lastID = customSkills.last?.id
+        return VStack(spacing: 0) {
+            ForEach(customSkills) { skill in
+                CosmoStudioSkillRow(
+                    skill: skill,
+                    detail: rowDetail(for: skill),
+                    isBuiltin: false,
+                    onTap: { onEdit(skill) },
+                    onToggleEnabled: { onToggleEnabled(skill, $0) },
+                    onDelete: { onDelete(skill) }
+                )
+                if skill.id != lastID {
+                    SettingsRowDivider()
+                }
+            }
+        }
+    }
+
+    private var emptyTeachingRow: some View {
+        VStack(spacing: DS.space6) {
+            Image(systemName: "wand.and.stars")
+                .font(.system(size: 20, weight: .regular))
+                .foregroundStyle(DS.textMuted)
+                .accessibilityHidden(true)
+            Text("Teach Cosmo a workflow")
+                .font(DS.callout.weight(.medium))
+                .foregroundStyle(DS.textSecondary)
+            Text("A skill is a routable mini-agent: trigger language, context, an example, and a verification rule. Create one here or promote a great run from the assistant.")
+                .font(DS.footnote)
+                .foregroundStyle(DS.textMuted)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 460)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, DS.space24)
+        .padding(.horizontal, DS.space16)
+    }
+
+    private var addRow: some View {
+        HStack {
+            Button(action: onCreate) {
+                HStack(spacing: DS.space4) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 10, weight: .medium))
+                    Text("New skill")
+                        .font(DS.caption)
+                }
+                .foregroundStyle(DS.accent)
+                .padding(.horizontal, DS.space10)
+                .padding(.vertical, DS.space6)
+                .background(DS.accentSoft, in: Capsule(style: .continuous))
+                .contentShape(Capsule(style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .cosmoClickCursor()
+            .keyboardShortcut("n", modifiers: .command)
+            .help("Create a skill (⌘N)")
+            .accessibilityLabel("Create new skill")
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, DS.space12)
+        .padding(.vertical, DS.space10)
+    }
+
+    // MARK: Built-in skills
+
+    private var builtinSection: some View {
+        VStack(alignment: .leading, spacing: DS.space12) {
+            SettingsSectionHeader(label: "BUILT-IN SKILLS", detail: "\(builtinSkills.count)")
+            SettingsGroupedBox {
+                builtinRows
+            }
+            Text("Built-ins ship with Cosmo. Open one to inspect its prompt and save a custom copy you can edit.")
+                .font(DS.footnote)
+                .foregroundStyle(DS.textMuted)
+        }
+    }
+
+    private var builtinRows: some View {
+        let lastID = builtinSkills.last?.id
+        return VStack(spacing: 0) {
+            ForEach(builtinSkills) { skill in
+                CosmoStudioSkillRow(
+                    skill: skill,
+                    detail: rowDetail(for: skill),
+                    isBuiltin: true,
+                    onTap: { onEdit(CosmoAssistantStudioView.editableCopy(of: skill)) }
+                )
+                if skill.id != lastID {
+                    SettingsRowDivider()
+                }
+            }
+        }
+    }
+
+    private func rowDetail(for skill: CosmoInlineSkillDefinition) -> String {
+        var parts = [skill.displayedModelLabel]
+        parts.append(skill.route == .action ? "Diff" : "Answer")
+        if let stat = acceptStats[skill.id], stat.total > 0 {
+            parts.append("\(Int(Double(stat.accepted) / Double(stat.total) * 100))% accepted")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    // MARK: Router test
+
+    private var routerSection: some View {
+        VStack(alignment: .leading, spacing: DS.space12) {
+            SettingsSectionHeader(label: "TEST ROUTING")
+            SettingsGroupedBox {
+                routerInputRow
+                if isRouting || !routerResults.isEmpty {
+                    SettingsRowDivider(inset: 0)
+                    routerResultRows
+                }
+            }
+            Text("Type a request the way you'd ask it — see which skill the router picks before you rely on it.")
+                .font(DS.footnote)
+                .foregroundStyle(DS.textMuted)
+        }
+    }
+
+    private var routerInputRow: some View {
+        HStack(spacing: DS.space8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(DS.textMuted)
+                .accessibilityHidden(true)
+
+            TextField("Try a request…", text: $routerTestPhrase)
+                .textFieldStyle(.plain)
+                .font(DS.callout)
+                .foregroundStyle(DS.text)
+                .onSubmit { runRouterTest() }
+                .accessibilityLabel("Routing test phrase")
+
+            Button(action: runRouterTest) {
+                Text("Route")
+                    .font(DS.caption.weight(.medium))
+                    .foregroundStyle(canRoute ? DS.accent : DS.textMuted)
+                    .padding(.horizontal, DS.space10)
+                    .padding(.vertical, DS.space6)
+                    .background(canRoute ? AnyShapeStyle(DS.accentSoft) : AnyShapeStyle(DS.glassSectionFill), in: Capsule(style: .continuous))
+                    .contentShape(Capsule(style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .cosmoClickCursor()
+            .disabled(!canRoute)
+            .help("Test skill routing")
+        }
+        .padding(.horizontal, DS.space16)
+        .padding(.vertical, DS.space10)
+        .frame(minHeight: 44)
+    }
+
+    @ViewBuilder
+    private var routerResultRows: some View {
+        VStack(alignment: .leading, spacing: DS.space4) {
+            if isRouting {
+                Text("Routing…")
+                    .font(DS.footnote)
+                    .foregroundStyle(DS.textMuted)
+            } else {
+                ForEach(routerResults, id: \.self) { line in
+                    Text(line)
+                        .font(DS.footnote)
+                        .foregroundStyle(DS.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .padding(.horizontal, DS.space16)
+        .padding(.vertical, DS.space10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var canRoute: Bool {
+        !routerTestPhrase.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    private func runRouterTest() {
+        let phrase = routerTestPhrase.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !phrase.isEmpty else { return }
+        withAnimation(ProMotionSprings.snappy) { isRouting = true }
+        Task {
+            let suggestion = await CosmoInlineSkillAutoRouter.shared.suggestion(
+                for: phrase,
+                registry: CosmoInlineSkillRegistry(store: store)
+            )
+            let plan = CosmoInlineAssistantSkillRuntime.plan(for: phrase, surfaceKind: nil)
+            var lines: [String] = []
+            if let suggestion {
+                lines.append("Embedding router: \(suggestion.skillName) (score \(String(format: "%.2f", suggestion.score)))")
+            } else {
+                lines.append("Embedding router: no skill above threshold")
+            }
+            lines.append("Keyword plan: \(plan.primarySkill.name) → \(plan.route == .action ? "edit" : "answer") route")
+            withAnimation(ProMotionSprings.snappy) {
+                routerResults = lines
+                isRouting = false
+            }
+        }
+    }
+}
+
+// MARK: - Skill row
+
+private struct CosmoStudioSkillRow: View {
+    let skill: CosmoInlineSkillDefinition
+    let detail: String
+    let isBuiltin: Bool
+    let onTap: () -> Void
+    var onToggleEnabled: ((Bool) -> Void)? = nil
+    var onDelete: (() -> Void)? = nil
+
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: DS.space10) {
+            tapTarget
+            trailing
+        }
+        .padding(.horizontal, DS.space16)
+        .padding(.vertical, DS.space10)
+        .frame(minHeight: 44)
+        .background(isHovered ? DS.surfaceHover : Color.clear)
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+        }
+    }
+
+    private var tapTarget: some View {
+        Button(action: onTap) {
+            HStack(spacing: DS.space12) {
+                iconChip
+                titleBlock
+                Spacer(minLength: DS.space8)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(isBuiltin ? "Inspect this built-in and save a custom copy" : "Edit \(skill.name)")
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(skill.name). \(skill.summary)")
+    }
+
+    private var iconChip: some View {
+        Image(systemName: skill.icon)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(skill.isEnabled ? DS.accent : DS.textMuted)
+            .frame(width: 28, height: 28)
+            .background(
+                (skill.isEnabled ? DS.accent : DS.textMuted).opacity(0.1),
+                in: .rect(cornerRadius: 8, style: .continuous)
+            )
+            .accessibilityHidden(true)
+    }
+
+    private var titleBlock: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(skill.name)
+                .font(DS.callout.weight(.medium))
+                .foregroundStyle(skill.isEnabled ? DS.text : DS.textMuted)
+                .lineLimit(1)
+            Text(skill.summary)
+                .font(DS.footnote)
+                .foregroundStyle(DS.textMuted)
+                .lineLimit(1)
+        }
+    }
+
+    private var trailing: some View {
+        HStack(spacing: DS.space10) {
+            if isHovered, let onDelete {
+                Button(action: onDelete) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(DS.red.opacity(0.8))
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Delete \(skill.name)")
+                .accessibilityLabel("Delete \(skill.name)")
+                .transition(.opacity)
+            }
+
+            Text(detail)
+                .font(DS.footnote.monospacedDigit())
+                .foregroundStyle(DS.textMuted)
+                .lineLimit(1)
+
+            if let onToggleEnabled {
+                Toggle("", isOn: Binding(get: { skill.isEnabled }, set: onToggleEnabled))
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .labelsHidden()
+                    .accessibilityLabel("\(skill.name) enabled")
+            }
+
+            Image(systemName: "chevron.right")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(DS.textMuted)
+                .accessibilityHidden(true)
+        }
+    }
+}
+
+// MARK: - Skill editor face
+
+private struct CosmoStudioSkillEditorFace: View {
+    @State private var skill: CosmoInlineSkillDefinition
     let onSave: (CosmoInlineSkillDefinition) -> Void
     let onCancel: () -> Void
 
@@ -676,8 +713,10 @@ private struct CosmoStudioSkillEditor: View {
     @State private var tokenBudgetText: String
     @State private var exampleInputText: String
     @State private var exampleOutputText: String
+    @State private var showPromptPreview = false
+    @State private var hasAppeared = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private static let routes: [CosmoInlineAssistantRoute] = [.action, .answer]
     private static let panePolicies: [CosmoInlineSkillPanePolicy] = [
         .neverForAction,
         .openForAnswer,
@@ -702,255 +741,529 @@ private struct CosmoStudioSkillEditor: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            editorHeader
-            HStack(spacing: 0) {
-                editorForm
-                Divider()
-                promptPreview
-                    .frame(width: 310)
-            }
-            editorFooter
+            header
+            Rectangle()
+                .fill(DS.sidebarMaterialBorder.opacity(0.45))
+                .frame(height: 1)
+            form
         }
-        .frame(width: 860, height: 690)
-        .background(DS.bg)
+        .onAppear {
+            Task { @MainActor in
+                withAnimation(ProMotionSprings.gentle) { hasAppeared = true }
+            }
+        }
     }
 
-    private var editorHeader: some View {
-        HStack(spacing: DS.space12) {
-            Image(systemName: skill.icon.isEmpty ? "wand.and.stars" : skill.icon)
-                .font(DS.title3.weight(.semibold))
-                .foregroundStyle(DS.accent)
-                .frame(width: 42, height: 42)
-                .background(DS.accentSoft, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    // MARK: Header
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(skill.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "New Skill" : skill.name)
-                    .font(DS.title2.weight(.semibold))
-                    .foregroundStyle(DS.text)
-                    .lineLimit(1)
-
-                Text("Skill-agent contract")
-                    .font(DS.caption)
-                    .foregroundStyle(DS.textMuted)
-            }
-
+    private var header: some View {
+        HStack(spacing: DS.space8) {
+            backButton
+            iconMark(size: 24)
+            Text(displayName)
+                .font(DS.headline)
+                .foregroundStyle(DS.text)
+                .lineLimit(1)
             Spacer()
-
-            routeBadge
+            saveButton
         }
-        .padding(DS.space16)
-        .cosmoGlassPanel(role: .floatingAssistant, cornerRadius: 22)
-        .padding(DS.space12)
+        .padding(.horizontal, DS.space24)
+        .padding(.vertical, DS.space16)
     }
 
-    private var editorForm: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: DS.space16) {
-                section("Identity", icon: "sparkles") {
-                    studioTextField("Name", placeholder: "Skill name", text: $skill.name)
-                    studioTextField("SF Symbol", placeholder: "wand.and.stars", text: $skill.icon)
-                    studioTextField("Summary", placeholder: "One sentence on what it does", text: $skill.summary)
-                }
-
-                section("Routing", icon: "point.3.connected.trianglepath.dotted") {
-                    studioTextField(
-                        "Trigger description",
-                        placeholder: "When should this trigger, in the user's words?",
-                        text: Binding(
-                            get: { skill.triggerDescription ?? "" },
-                            set: { skill.triggerDescription = trimmedOptional($0) }
-                        )
-                    )
-                    studioTextField(
-                        "Trigger phrases",
-                        placeholder: "e.g. reel script, hook rewrite, client voice",
-                        text: $triggerPhrasesText
-                    )
-                }
-
-                section("Execution", icon: "slider.horizontal.3") {
-                    pickersRow
-
-                    Toggle("Requires reviewed diff", isOn: $skill.requiresReviewedDiff)
-                        .font(DS.callout)
-                        .toggleStyle(.checkbox)
-                        .foregroundStyle(DS.text)
-
-                    HStack(spacing: DS.space10) {
-                        studioTextField("Output contract", placeholder: "reviewed_diff", text: $skill.outputContract)
-                        studioTextField("Token budget", placeholder: "1600", text: $tokenBudgetText)
-                            .frame(width: 130)
-                    }
-                }
-
-                section("Context", icon: "rectangle.stack.badge.person.crop") {
-                    contextGrid
-                }
-
-                section("Tools", icon: "wrench.and.screwdriver") {
-                    toolGrid
-                }
-
-                section("Prompt", icon: "text.alignleft") {
-                    studioTextEditor("Instructions", text: $instructionsText, minHeight: 148)
-                    studioTextField(
-                        "Verification",
-                        placeholder: "e.g. no invented metrics; every edit is visible in the diff",
-                        text: Binding(
-                            get: { skill.verification ?? "" },
-                            set: { skill.verification = trimmedOptional($0) }
-                        )
-                    )
-                }
-
-                section("Example", icon: "quote.bubble") {
-                    studioTextEditor("Input", text: $exampleInputText, minHeight: 86)
-                    studioTextEditor("Ideal output", text: $exampleOutputText, minHeight: 108)
-                }
+    private var backButton: some View {
+        Button(action: onCancel) {
+            HStack(spacing: DS.space4) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 10, weight: .semibold))
+                Text("Skills")
+                    .font(DS.callout)
             }
-            .padding(DS.space16)
+            .foregroundStyle(DS.textSecondary)
+            .padding(.vertical, DS.space4)
+            .padding(.trailing, DS.space6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .keyboardShortcut(.escape, modifiers: [])
+        .help("Back without saving (Esc)")
+    }
+
+    private var saveButton: some View {
+        Button(action: save) {
+            Text("Save Skill")
+                .font(DS.caption.weight(.semibold))
+                .foregroundStyle(canSave ? DS.textOnAccent : DS.textMuted)
+                .padding(.horizontal, DS.space16)
+                .padding(.vertical, DS.space6)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(canSave ? AnyShapeStyle(DS.accent) : AnyShapeStyle(DS.glassSectionFill))
+                )
+                .contentShape(Capsule(style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .cosmoClickCursor()
+        .disabled(!canSave)
+        .keyboardShortcut(.return, modifiers: .command)
+        .help("Save skill (⌘↩)")
+    }
+
+    private var displayName: String {
+        let trimmed = skill.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "New Skill" : trimmed
+    }
+
+    // MARK: Form
+
+    private var form: some View {
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: DS.space24) {
+                identityStrip
+                    .studioCascade(hasAppeared: hasAppeared, index: 0, reduceMotion: reduceMotion)
+                behaviorSection
+                    .studioCascade(hasAppeared: hasAppeared, index: 1, reduceMotion: reduceMotion)
+                triggersSection
+                    .studioCascade(hasAppeared: hasAppeared, index: 2, reduceMotion: reduceMotion)
+                contextSection
+                    .studioCascade(hasAppeared: hasAppeared, index: 3, reduceMotion: reduceMotion)
+                toolsSection
+                    .studioCascade(hasAppeared: hasAppeared, index: 4, reduceMotion: reduceMotion)
+                promptSection
+                    .studioCascade(hasAppeared: hasAppeared, index: 5, reduceMotion: reduceMotion)
+                exampleSection
+                    .studioCascade(hasAppeared: hasAppeared, index: 6, reduceMotion: reduceMotion)
+                runtimeSection
+                    .studioCascade(hasAppeared: hasAppeared, index: 7, reduceMotion: reduceMotion)
+            }
+            .padding(DS.space24)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .scrollEdgeEffectStyle(.soft, for: .all)
     }
 
-    private var pickersRow: some View {
-        HStack(spacing: DS.space8) {
-            Picker("Route", selection: $skill.route) {
-                ForEach(Self.routes, id: \.rawValue) { route in
-                    Text(routeLabel(route)).tag(route)
-                }
-            }
-            .pickerStyle(.menu)
+    // MARK: Identity strip (the hero — sits directly on the page)
 
-            Picker("Model", selection: $skill.preferredModelTier) {
-                Text("Auto").tag(nil as AgentModelTier?)
-                ForEach(AgentModelTier.skillSelectableCases, id: \.rawValue) { tier in
-                    Text(tier.displayLabel).tag(Optional.some(tier))
-                }
+    private var identityStrip: some View {
+        HStack(alignment: .center, spacing: DS.space16) {
+            iconMark(size: 56)
+            VStack(alignment: .leading, spacing: DS.space4) {
+                TextField("Name this skill", text: $skill.name)
+                    .textFieldStyle(.plain)
+                    .font(DS.pageTitle)
+                    .foregroundStyle(DS.text)
+                    .accessibilityLabel("Skill name")
+                TextField("One sentence on what it does", text: $skill.summary)
+                    .textFieldStyle(.plain)
+                    .font(DS.subheadline)
+                    .foregroundStyle(DS.textSecondary)
+                    .accessibilityLabel("Skill summary")
+                TextField("wand.and.stars", text: $skill.icon)
+                    .textFieldStyle(.plain)
+                    .font(DS.footnote.monospaced())
+                    .foregroundStyle(DS.textMuted)
+                    .frame(maxWidth: 220)
+                    .help("SF Symbol shown for this skill")
+                    .accessibilityLabel("SF Symbol name")
             }
-            .pickerStyle(.menu)
-
-            Picker("Pane", selection: $skill.panePolicy) {
-                ForEach(Self.panePolicies, id: \.rawValue) { policy in
-                    Text(panePolicyLabel(policy)).tag(policy)
-                }
-            }
-            .pickerStyle(.menu)
+            Spacer(minLength: 0)
         }
-        .font(DS.caption)
     }
 
-    private var contextGrid: some View {
-        LazyVGrid(
-            columns: [GridItem(.adaptive(minimum: 142), spacing: DS.space6)],
-            alignment: .leading,
-            spacing: DS.space6
+    private func iconMark(size: CGFloat) -> some View {
+        Image(systemName: skill.icon.isEmpty ? "wand.and.stars" : skill.icon)
+            .font(.system(size: size * 0.4, weight: .semibold))
+            .foregroundStyle(DS.accent)
+            .frame(width: size, height: size)
+            .background(DS.accentSoft, in: .rect(cornerRadius: size * 0.28, style: .continuous))
+            .accessibilityHidden(true)
+    }
+
+    // MARK: Behavior
+
+    private var behaviorSection: some View {
+        section(label: "BEHAVIOR") {
+            SettingsRow(icon: "arrow.triangle.branch", title: "Route") { routePicker }
+            SettingsRowDivider()
+            SettingsRow(icon: "cpu", title: "Model") { modelPicker }
+            SettingsRowDivider()
+            SettingsRow(icon: "sidebar.right", title: "Answer pane") { panePicker }
+            SettingsRowDivider()
+            SettingsRow(
+                icon: "checkmark.seal",
+                title: "Requires reviewed diff",
+                subtitle: "Every visible change lands as a diff you approve"
+            ) { reviewedDiffToggle }
+            SettingsRowDivider()
+            SettingsRow(icon: "signature", title: "Output contract") { contractField }
+            SettingsRowDivider()
+            SettingsRow(icon: "gauge.with.needle", title: "Token budget") { budgetField }
+        }
+    }
+
+    private var routePicker: some View {
+        Picker("", selection: $skill.route) {
+            Text("Reviewed diff").tag(CosmoInlineAssistantRoute.action)
+            Text("Pane answer").tag(CosmoInlineAssistantRoute.answer)
+        }
+        .pickerStyle(.menu)
+        .labelsHidden()
+        .fixedSize()
+        .accessibilityLabel("Route")
+    }
+
+    private var modelPicker: some View {
+        Picker("", selection: $skill.preferredModelTier) {
+            Text("Auto").tag(nil as AgentModelTier?)
+            ForEach(AgentModelTier.skillSelectableCases, id: \.rawValue) { tier in
+                Text(tier.displayLabel).tag(Optional.some(tier))
+            }
+        }
+        .pickerStyle(.menu)
+        .labelsHidden()
+        .fixedSize()
+        .accessibilityLabel("Model")
+    }
+
+    private var panePicker: some View {
+        Picker("", selection: $skill.panePolicy) {
+            ForEach(Self.panePolicies, id: \.rawValue) { policy in
+                Text(panePolicyLabel(policy)).tag(policy)
+            }
+        }
+        .pickerStyle(.menu)
+        .labelsHidden()
+        .fixedSize()
+        .accessibilityLabel("Answer pane policy")
+    }
+
+    private var reviewedDiffToggle: some View {
+        Toggle("", isOn: $skill.requiresReviewedDiff)
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .labelsHidden()
+            .accessibilityLabel("Requires reviewed diff")
+    }
+
+    private var contractField: some View {
+        TextField("reviewed_diff", text: $skill.outputContract)
+            .textFieldStyle(.plain)
+            .font(DS.footnote.monospaced())
+            .foregroundStyle(DS.textSecondary)
+            .multilineTextAlignment(.trailing)
+            .frame(width: 160)
+            .accessibilityLabel("Output contract")
+    }
+
+    private var budgetField: some View {
+        TextField("1600", text: $tokenBudgetText)
+            .textFieldStyle(.plain)
+            .font(DS.footnote.monospacedDigit())
+            .foregroundStyle(DS.textSecondary)
+            .multilineTextAlignment(.trailing)
+            .frame(width: 80)
+            .accessibilityLabel("Token budget")
+    }
+
+    // MARK: Triggers
+
+    private var triggersSection: some View {
+        section(
+            label: "TRIGGERS",
+            footer: "The router matches these against what the user types — write them in the user's words."
         ) {
-            ForEach(CosmoInlineAssistantSkillContext.allCases, id: \.rawValue) { context in
-                contractChip(
-                    title: context.displayName,
-                    icon: contextIcon(context),
-                    isSelected: skill.requiredContext.contains(context)
-                ) {
-                    toggle(context)
+            fieldRow(
+                label: "When to use",
+                placeholder: "When should this trigger, in the user's words?",
+                text: Binding(
+                    get: { skill.triggerDescription ?? "" },
+                    set: { skill.triggerDescription = trimmedOptional($0) }
+                )
+            )
+            SettingsRowDivider()
+            fieldRow(
+                label: "Trigger phrases",
+                placeholder: "reel script, hook rewrite, client voice",
+                text: $triggerPhrasesText
+            )
+        }
+    }
+
+    // MARK: Context & tools
+
+    private var contextSection: some View {
+        section(
+            label: "CONTEXT",
+            detail: "\(skill.requiredContext.count) of \(CosmoInlineAssistantSkillContext.allCases.count)",
+            footer: "Only what the skill actually needs — smaller context means faster, cheaper runs."
+        ) {
+            pillGrid {
+                ForEach(CosmoInlineAssistantSkillContext.allCases, id: \.rawValue) { context in
+                    selectionPill(
+                        title: context.displayName,
+                        icon: contextIcon(context),
+                        isSelected: skill.requiredContext.contains(context)
+                    ) {
+                        toggle(context)
+                    }
                 }
             }
         }
     }
 
-    private var toolGrid: some View {
+    private var toolsSection: some View {
+        section(
+            label: "TOOLS",
+            detail: "\(skill.toolBundles.count) of \(AgentToolBundle.allCases.count)"
+        ) {
+            pillGrid {
+                ForEach(AgentToolBundle.allCases) { bundle in
+                    selectionPill(
+                        title: bundle.displayName,
+                        icon: bundle.icon,
+                        isSelected: skill.toolBundles.contains(bundle)
+                    ) {
+                        toggle(bundle)
+                    }
+                    .help(bundle.accessDescription)
+                }
+            }
+        }
+    }
+
+    private func pillGrid<Content: View>(@ViewBuilder content: () -> Content) -> some View {
         LazyVGrid(
             columns: [GridItem(.adaptive(minimum: 150), spacing: DS.space6)],
             alignment: .leading,
             spacing: DS.space6
         ) {
-            ForEach(AgentToolBundle.allCases) { bundle in
-                contractChip(
-                    title: bundle.displayName,
-                    icon: bundle.icon,
-                    isSelected: skill.toolBundles.contains(bundle)
-                ) {
-                    toggle(bundle)
-                }
-                .help(bundle.accessDescription)
+            content()
+        }
+        .padding(.horizontal, DS.space16)
+        .padding(.vertical, DS.space12)
+    }
+
+    private func selectionPill(
+        title: String,
+        icon: String,
+        isSelected: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: DS.space4) {
+                Image(systemName: icon)
+                    .font(.system(size: 10, weight: .medium))
+                    .frame(width: 14)
+                Text(title)
+                    .font(DS.caption)
+                    .fontWeight(isSelected ? .semibold : .regular)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 0)
             }
+            .foregroundStyle(isSelected ? DS.accent : DS.textSecondary)
+            .padding(.horizontal, DS.space10)
+            .padding(.vertical, DS.space6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                isSelected ? AnyShapeStyle(DS.accentSoft) : AnyShapeStyle(Color.clear),
+                in: Capsule(style: .continuous)
+            )
+            .overlay(
+                Capsule(style: .continuous)
+                    .stroke(isSelected ? DS.accent.opacity(0.35) : DS.glassBorder, lineWidth: 1)
+            )
+            .contentShape(Capsule(style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .animation(ProMotionSprings.snappy, value: isSelected)
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+    }
+
+    // MARK: Prompt & example
+
+    private var promptSection: some View {
+        section(
+            label: "INSTRUCTIONS",
+            footer: "One instruction per line — teach how, with zero ambiguity."
+        ) {
+            editorRow(text: $instructionsText, minHeight: 140, accessibilityLabel: "Skill instructions")
+            SettingsRowDivider()
+            fieldRow(
+                label: "Verification",
+                placeholder: "e.g. no invented metrics; every edit is visible in the diff",
+                text: Binding(
+                    get: { skill.verification ?? "" },
+                    set: { skill.verification = trimmedOptional($0) }
+                )
+            )
         }
     }
 
-    private var promptPreview: some View {
+    private var exampleSection: some View {
+        section(
+            label: "EXAMPLE",
+            footer: "The strongest teacher — one realistic request and the shape of a great result."
+        ) {
+            editorRow(
+                label: "Request",
+                text: $exampleInputText,
+                minHeight: 72,
+                accessibilityLabel: "Example request"
+            )
+            SettingsRowDivider()
+            editorRow(
+                label: "Ideal output",
+                text: $exampleOutputText,
+                minHeight: 96,
+                accessibilityLabel: "Example ideal output"
+            )
+        }
+    }
+
+    // MARK: Runtime preview
+
+    private var runtimeSection: some View {
         VStack(alignment: .leading, spacing: DS.space12) {
-            Label("Runtime Prompt", systemImage: "curlybraces")
-                .font(DS.headline)
-                .foregroundStyle(DS.text)
-
-            Text("Exact skill block injected after local routing resolves this skill.")
-                .font(DS.caption)
-                .foregroundStyle(DS.textMuted)
-                .fixedSize(horizontal: false, vertical: true)
-
-            ScrollView {
-                Text(promptBlockPreview)
-                    .font(DS.caption.monospaced())
-                    .foregroundStyle(DS.textSecondary)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(DS.space10)
+            SettingsSectionHeader(label: "RUNTIME")
+            SettingsGroupedBox {
+                runtimeSummaryRow
+                if showPromptPreview {
+                    SettingsRowDivider(inset: 0)
+                    promptPreview
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
             }
-            .frame(maxHeight: .infinity)
-            .background(DS.glassInputFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(DS.glassBorder, lineWidth: 1)
-            }
-
-            VStack(alignment: .leading, spacing: DS.space6) {
-                metricLine("Model", value: skill.displayedModelLabel)
-                metricLine("Context", value: "\(skill.requiredContext.count)")
-                metricLine("Tools", value: "\(skill.toolBundles.count)")
-                metricLine("Budget", value: "\(draftSkill.tokenBudget)")
-            }
-            .padding(DS.space10)
-            .dsGlassSection(cornerRadius: 12)
         }
-        .padding(.trailing, DS.space16)
-        .padding(.vertical, DS.space16)
     }
 
-    private var editorFooter: some View {
-        HStack {
-            Button(action: onCancel) {
-                Label("Cancel", systemImage: "xmark")
+    private var runtimeSummaryRow: some View {
+        HStack(spacing: DS.space12) {
+            Image(systemName: "curlybraces")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(DS.accent)
+                .frame(width: 28, height: 28)
+                .background(DS.accentSoft, in: .rect(cornerRadius: 8, style: .continuous))
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Prompt block")
+                    .font(DS.callout.weight(.medium))
+                    .foregroundStyle(DS.text)
+                Text(runtimeMetaLine)
+                    .font(DS.footnote.monospacedDigit())
+                    .foregroundStyle(DS.textMuted)
             }
-                .buttonStyle(.plain)
-                .foregroundStyle(DS.textSecondary)
-                .cosmoClickCursor()
-                .keyboardShortcut(.escape, modifiers: [])
 
             Spacer()
 
-            Button {
-                var updated = draftSkill
-                updated.updatedAt = Date()
-                onSave(updated)
-            } label: {
-                Label("Save Skill", systemImage: "checkmark")
-            }
-            .buttonStyle(.borderedProminent)
-            .keyboardShortcut(.return, modifiers: .command)
-            .disabled(!canSave)
+            previewToggle
         }
-        .font(DS.callout.weight(.medium))
-        .padding(DS.space16)
+        .padding(.horizontal, DS.space16)
+        .padding(.vertical, DS.space12)
+        .accessibilityElement(children: .combine)
     }
 
-    private var routeBadge: some View {
-        Label(routeLabel(skill.route), systemImage: skill.route == .action ? "text.badge.checkmark" : "bubble.left.and.text.bubble.right")
-            .font(DS.caption.weight(.semibold))
-            .foregroundStyle(skill.route == .action ? DS.green : DS.accent)
-            .padding(.horizontal, DS.space8)
-            .padding(.vertical, 5)
-            .background(DS.glassInputFill, in: Capsule())
+    private var runtimeMetaLine: String {
+        let draft = draftSkill
+        return "\(draft.displayedModelLabel) · \(draft.requiredContext.count) context · \(draft.toolBundles.count) tools · \(draft.tokenBudget) tokens"
     }
+
+    private var previewToggle: some View {
+        Button {
+            withAnimation(ProMotionSprings.gentle) { showPromptPreview.toggle() }
+        } label: {
+            HStack(spacing: DS.space4) {
+                Text(showPromptPreview ? "Hide prompt" : "Show prompt")
+                    .font(DS.caption.weight(.medium))
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+                    .rotationEffect(.degrees(showPromptPreview ? 180 : 0))
+            }
+            .foregroundStyle(DS.textSecondary)
+            .padding(.horizontal, DS.space10)
+            .padding(.vertical, DS.space6)
+            .background(DS.glassSectionFill, in: Capsule(style: .continuous))
+            .contentShape(Capsule(style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .help("The exact skill block injected after routing resolves this skill")
+    }
+
+    private var promptPreview: some View {
+        ScrollView {
+            Text(promptBlockPreview)
+                .font(DS.caption.monospaced())
+                .foregroundStyle(DS.textSecondary)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxHeight: 260)
+        .padding(.horizontal, DS.space16)
+        .padding(.vertical, DS.space12)
+    }
+
+    // MARK: Section & field helpers
+
+    private func section<Content: View>(
+        label: String,
+        detail: String? = nil,
+        footer: String? = nil,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: DS.space12) {
+            SettingsSectionHeader(label: label, detail: detail)
+            SettingsGroupedBox { content() }
+            if let footer {
+                Text(footer)
+                    .font(DS.footnote)
+                    .foregroundStyle(DS.textMuted)
+            }
+        }
+    }
+
+    private func fieldRow(label: String, placeholder: String, text: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: DS.space4) {
+            Text(label)
+                .font(DS.footnote.weight(.medium))
+                .foregroundStyle(DS.textMuted)
+            TextField(placeholder, text: text)
+                .textFieldStyle(.plain)
+                .font(DS.callout)
+                .foregroundStyle(DS.text)
+                .accessibilityLabel(label)
+        }
+        .padding(.horizontal, DS.space16)
+        .padding(.vertical, DS.space10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func editorRow(
+        label: String? = nil,
+        text: Binding<String>,
+        minHeight: CGFloat,
+        accessibilityLabel: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: DS.space4) {
+            if let label {
+                Text(label)
+                    .font(DS.footnote.weight(.medium))
+                    .foregroundStyle(DS.textMuted)
+            }
+            TextEditor(text: text)
+                .font(DS.callout)
+                .foregroundStyle(DS.text)
+                .scrollContentBackground(.hidden)
+                .frame(minHeight: minHeight)
+                .padding(DS.space8)
+                .dsGlassInput()
+                .accessibilityLabel(accessibilityLabel)
+        }
+        .padding(.horizontal, DS.space16)
+        .padding(.vertical, DS.space10)
+    }
+
+    // MARK: Draft assembly
 
     private var draftSkill: CosmoInlineSkillDefinition {
         var copy = skill
@@ -992,113 +1305,9 @@ private struct CosmoStudioSkillEditor: View {
         (Int(tokenBudgetText.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0) > 0
     }
 
-    private func section<Content: View>(
-        _ title: String,
-        icon: String,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: DS.space10) {
-            Label(title, systemImage: icon)
-                .font(DS.caption.weight(.semibold))
-                .foregroundStyle(DS.text)
-            content()
-        }
-        .padding(DS.space12)
-        .dsGlassSection(cornerRadius: 14)
-    }
-
-    private func studioTextField(
-        _ label: String,
-        placeholder: String,
-        text: Binding<String>
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(label)
-                .font(DS.caption2.weight(.semibold))
-                .foregroundStyle(DS.textMuted)
-
-            TextField(placeholder, text: text)
-                .textFieldStyle(.plain)
-                .font(DS.callout)
-                .foregroundStyle(DS.text)
-                .padding(.horizontal, DS.space10)
-                .padding(.vertical, 8)
-                .background(DS.glassInputFill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(DS.glassBorder, lineWidth: 1)
-                }
-        }
-    }
-
-    private func studioTextEditor(
-        _ label: String,
-        text: Binding<String>,
-        minHeight: CGFloat
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(label)
-                .font(DS.caption2.weight(.semibold))
-                .foregroundStyle(DS.textMuted)
-
-            TextEditor(text: text)
-                .font(DS.caption.monospaced())
-                .foregroundStyle(DS.text)
-                .scrollContentBackground(.hidden)
-                .frame(minHeight: minHeight)
-                .padding(8)
-                .background(DS.glassInputFill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(DS.glassBorder, lineWidth: 1)
-                }
-        }
-    }
-
-    private func contractChip(
-        title: String,
-        icon: String,
-        isSelected: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: icon)
-                    .font(DS.caption)
-                    .frame(width: 14)
-                Text(title)
-                    .font(DS.caption.weight(.medium))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                Spacer(minLength: 0)
-            }
-            .foregroundStyle(isSelected ? DS.text : DS.textSecondary)
-            .padding(.horizontal, DS.space8)
-            .padding(.vertical, 7)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(isSelected ? DS.accentSoft : DS.glassInputFill, in: Capsule())
-            .overlay {
-                Capsule()
-                    .stroke(isSelected ? DS.accent.opacity(0.42) : DS.glassBorder, lineWidth: 1)
-            }
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .cosmoClickCursor()
-        .animation(ProMotionSprings.snappy, value: isSelected)
-    }
-
-    private func metricLine(_ label: String, value: String) -> some View {
-        HStack {
-            Text(label)
-                .font(DS.caption2)
-                .foregroundStyle(DS.textMuted)
-            Spacer()
-            Text(value)
-                .font(DS.caption2.weight(.semibold))
-                .foregroundStyle(DS.text)
-                .lineLimit(1)
-        }
+    private func save() {
+        guard canSave else { return }
+        onSave(draftSkill)
     }
 
     private func toggle(_ context: CosmoInlineAssistantSkillContext) {
@@ -1114,13 +1323,6 @@ private struct CosmoStudioSkillEditor: View {
             skill.toolBundles.remove(bundle)
         } else {
             skill.toolBundles.insert(bundle)
-        }
-    }
-
-    private func routeLabel(_ route: CosmoInlineAssistantRoute) -> String {
-        switch route {
-        case .action: return "Reviewed diff"
-        case .answer: return "Pane answer"
         }
     }
 
@@ -1154,148 +1356,228 @@ private struct CosmoStudioSkillEditor: View {
     }
 }
 
-// MARK: - Personality Tab
+// MARK: - Personality tab
 
 private struct CosmoStudioPersonalityTab: View {
     @State private var text: String = CosmoInlineAssistantPersonalityStore.shared.currentText
     @State private var didSave = false
+    @State private var hasAppeared = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DS.space12) {
-            Text("Cosmo's character sheet. Edits apply to every inline request — voice is taught best by the paired examples, so edit those before the rules. Changing this rewrites the prompt cache once.")
-                .font(DS.caption)
-                .foregroundStyle(DS.textMuted)
-                .fixedSize(horizontal: false, vertical: true)
-
-            TextEditor(text: $text)
-                .font(DS.caption.monospaced())
-                .scrollContentBackground(.hidden)
-                .padding(8)
-                .background(DS.surface, in: .rect(cornerRadius: 10))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(DS.borderSubtle, lineWidth: 1)
-                }
-                .accessibilityLabel("Personality character sheet")
-
-            HStack {
-                Button("Reset to default") {
-                    CosmoInlineAssistantPersonalityStore.shared.resetToDefault()
-                    text = CosmoInlineAssistantPersonalityStore.shared.currentText
-                    didSave = false
-                }
-                .buttonStyle(.plain)
-                .font(DS.caption.weight(.medium))
-                .foregroundStyle(DS.textSecondary)
-                .cosmoClickCursor()
-
-                Spacer()
-
-                if didSave {
-                    Label("Saved", systemImage: "checkmark")
-                        .font(DS.caption)
-                        .foregroundStyle(DS.green)
-                        .transition(.opacity)
-                }
-
-                Button("Save personality") {
-                    CosmoInlineAssistantPersonalityStore.shared.save(text)
-                    text = CosmoInlineAssistantPersonalityStore.shared.currentText
-                    withAnimation(ProMotionSprings.snappy) { didSave = true }
-                }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.return, modifiers: .command)
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: DS.space24) {
+                characterSection
+                    .studioCascade(hasAppeared: hasAppeared, index: 0, reduceMotion: reduceMotion)
+            }
+            .padding(DS.space24)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .scrollEdgeEffectStyle(.soft, for: .all)
+        .onAppear {
+            Task { @MainActor in
+                withAnimation(ProMotionSprings.gentle) { hasAppeared = true }
             }
         }
-        .padding(DS.space16)
+    }
+
+    private var characterSection: some View {
+        VStack(alignment: .leading, spacing: DS.space12) {
+            SettingsSectionHeader(label: "CHARACTER SHEET")
+            SettingsGroupedBox {
+                explainerRow
+                SettingsRowDivider(inset: 0)
+                sheetEditor
+                SettingsRowDivider(inset: 0)
+                footerRow
+            }
+        }
+    }
+
+    private var explainerRow: some View {
+        Text("Applies to every inline request. Voice is taught best by the paired examples — edit those before the rules. Saving rewrites the prompt cache once.")
+            .font(DS.footnote)
+            .foregroundStyle(DS.textMuted)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, DS.space16)
+            .padding(.vertical, DS.space12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var sheetEditor: some View {
+        TextEditor(text: $text)
+            .font(DS.caption.monospaced())
+            .foregroundStyle(DS.text)
+            .scrollContentBackground(.hidden)
+            .frame(minHeight: 380)
+            .padding(DS.space8)
+            .dsGlassInput()
+            .padding(.horizontal, DS.space16)
+            .padding(.vertical, DS.space12)
+            .accessibilityLabel("Personality character sheet")
+    }
+
+    private var footerRow: some View {
+        HStack(spacing: DS.space10) {
+            Button("Reset to default") {
+                CosmoInlineAssistantPersonalityStore.shared.resetToDefault()
+                text = CosmoInlineAssistantPersonalityStore.shared.currentText
+                didSave = false
+            }
+            .buttonStyle(.plain)
+            .font(DS.caption.weight(.medium))
+            .foregroundStyle(DS.textSecondary)
+            .cosmoClickCursor()
+            .help("Restore the shipped character sheet")
+
+            Spacer()
+
+            if didSave {
+                Label("Saved", systemImage: "checkmark")
+                    .font(DS.footnote)
+                    .foregroundStyle(DS.textMuted)
+                    .transition(.opacity)
+            }
+
+            Button(action: savePersonality) {
+                Text("Save")
+                    .font(DS.caption.weight(.semibold))
+                    .foregroundStyle(DS.textOnAccent)
+                    .padding(.horizontal, DS.space16)
+                    .padding(.vertical, DS.space6)
+                    .background(DS.accent, in: Capsule(style: .continuous))
+                    .contentShape(Capsule(style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .cosmoClickCursor()
+            .keyboardShortcut(.return, modifiers: .command)
+            .help("Save personality (⌘↩)")
+        }
+        .padding(.horizontal, DS.space16)
+        .padding(.vertical, DS.space12)
+    }
+
+    private func savePersonality() {
+        CosmoInlineAssistantPersonalityStore.shared.save(text)
+        text = CosmoInlineAssistantPersonalityStore.shared.currentText
+        withAnimation(ProMotionSprings.snappy) { didSave = true }
     }
 }
 
-// MARK: - Metrics Tab
+// MARK: - Metrics tab
 
 private struct CosmoStudioMetricsTab: View {
     private var metrics: CosmoInlineAssistantMetrics { .shared }
+
     @State private var cacheSnapshot = LLMCacheTelemetry.shared.current()
+    @State private var hasAppeared = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: DS.space12) {
-                Text("Since launch. These numbers are the contract: warm cache reads, sub-second first tokens, edits that locate and get accepted.")
-                    .font(DS.caption)
-                    .foregroundStyle(DS.textMuted)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                metricsGrid
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: DS.space24) {
+                explainer
+                    .studioCascade(hasAppeared: hasAppeared, index: 0, reduceMotion: reduceMotion)
+                speedSection
+                    .studioCascade(hasAppeared: hasAppeared, index: 1, reduceMotion: reduceMotion)
+                outcomeSection
+                    .studioCascade(hasAppeared: hasAppeared, index: 2, reduceMotion: reduceMotion)
             }
-            .padding(DS.space16)
+            .padding(DS.space24)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .scrollEdgeEffectStyle(.soft, for: .all)
         .task { cacheSnapshot = LLMCacheTelemetry.shared.current() }
-    }
-
-    private var metricsGrid: some View {
-        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: DS.space8) {
-            metricCard(
-                title: "Cache read ratio",
-                value: cacheSnapshot.requestCount > 0
-                    ? "\(Int(cacheSnapshot.readRatio * 100))%"
-                    : "—",
-                detail: "target ≥ 85% · \(cacheSnapshot.requestCount) LLM calls",
-                healthy: cacheSnapshot.requestCount == 0 || cacheSnapshot.readRatio >= 0.5
-            )
-            metricCard(
-                title: "First token",
-                value: metrics.averageTTFTMs.map { "\($0) ms" } ?? "—",
-                detail: "avg time to first streamed answer token",
-                healthy: (metrics.averageTTFTMs ?? 0) < 1500
-            )
-            metricCard(
-                title: "Proposal staged",
-                value: metrics.averageProposalLatencyMs.map { "\($0) ms" } ?? "—",
-                detail: "avg request → reviewable diff",
-                healthy: (metrics.averageProposalLatencyMs ?? 0) < 4000
-            )
-            metricCard(
-                title: "Accept rate",
-                value: metrics.acceptRate.map { "\(Int($0 * 100))%" } ?? "—",
-                detail: "\(metrics.operationsAccepted) accepted · \(metrics.operationsRejected) rejected",
-                healthy: (metrics.acceptRate ?? 1) >= 0.6
-            )
-            metricCard(
-                title: "Conflict rate",
-                value: metrics.conflictRate.map { "\(Int($0 * 100))%" } ?? "—",
-                detail: "edits that no longer located — locator health",
-                healthy: (metrics.conflictRate ?? 0) <= 0.1
-            )
-            metricCard(
-                title: "Activity",
-                value: "\(metrics.requestCount)",
-                detail: "\(metrics.proposalsStaged) proposals · \(metrics.paneAnswers) answers",
-                healthy: true
-            )
+        .onAppear {
+            Task { @MainActor in
+                withAnimation(ProMotionSprings.gentle) { hasAppeared = true }
+            }
         }
     }
 
-    private func metricCard(title: String, value: String, detail: String, healthy: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title)
-                .font(DS.caption.weight(.semibold))
-                .foregroundStyle(DS.textMuted)
-                .textCase(.uppercase)
+    private var explainer: some View {
+        Text("Since launch. These numbers are the contract: warm cache reads, sub-second first tokens, edits that locate and get accepted.")
+            .font(DS.footnote)
+            .foregroundStyle(DS.textMuted)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var speedSection: some View {
+        VStack(alignment: .leading, spacing: DS.space12) {
+            SettingsSectionHeader(label: "SPEED")
+            SettingsGroupedBox {
+                metricRow(
+                    icon: "arrow.triangle.2.circlepath",
+                    title: "Cache read ratio",
+                    subtitle: "target ≥ 85% · \(cacheSnapshot.requestCount) LLM calls",
+                    value: cacheSnapshot.requestCount > 0
+                        ? "\(Int(cacheSnapshot.readRatio * 100))%"
+                        : "—",
+                    healthy: cacheSnapshot.requestCount == 0 || cacheSnapshot.readRatio >= 0.5
+                )
+                SettingsRowDivider()
+                metricRow(
+                    icon: "bolt",
+                    title: "First token",
+                    subtitle: "avg time to first streamed answer token",
+                    value: metrics.averageTTFTMs.map { "\($0) ms" } ?? "—",
+                    healthy: (metrics.averageTTFTMs ?? 0) < 1500
+                )
+                SettingsRowDivider()
+                metricRow(
+                    icon: "clock",
+                    title: "Proposal staged",
+                    subtitle: "avg request → reviewable diff",
+                    value: metrics.averageProposalLatencyMs.map { "\($0) ms" } ?? "—",
+                    healthy: (metrics.averageProposalLatencyMs ?? 0) < 4000
+                )
+            }
+        }
+    }
+
+    private var outcomeSection: some View {
+        VStack(alignment: .leading, spacing: DS.space12) {
+            SettingsSectionHeader(label: "OUTCOMES")
+            SettingsGroupedBox {
+                metricRow(
+                    icon: "checkmark.circle",
+                    title: "Accept rate",
+                    subtitle: "\(metrics.operationsAccepted) accepted · \(metrics.operationsRejected) rejected",
+                    value: metrics.acceptRate.map { "\(Int($0 * 100))%" } ?? "—",
+                    healthy: (metrics.acceptRate ?? 1) >= 0.6
+                )
+                SettingsRowDivider()
+                metricRow(
+                    icon: "exclamationmark.triangle",
+                    title: "Conflict rate",
+                    subtitle: "edits that no longer located — locator health",
+                    value: metrics.conflictRate.map { "\(Int($0 * 100))%" } ?? "—",
+                    healthy: (metrics.conflictRate ?? 0) <= 0.1
+                )
+                SettingsRowDivider()
+                metricRow(
+                    icon: "chart.bar",
+                    title: "Activity",
+                    subtitle: "\(metrics.proposalsStaged) proposals · \(metrics.paneAnswers) answers",
+                    value: "\(metrics.requestCount)",
+                    healthy: true
+                )
+            }
+        }
+    }
+
+    private func metricRow(
+        icon: String,
+        title: String,
+        subtitle: String,
+        value: String,
+        healthy: Bool
+    ) -> some View {
+        SettingsRow(icon: icon, title: title, subtitle: subtitle) {
             Text(value)
-                .font(DS.title2.weight(.semibold))
+                .font(DS.callout.weight(.semibold).monospacedDigit())
                 .foregroundStyle(healthy ? DS.text : DS.red)
-            Text(detail)
-                .font(DS.caption2)
-                .foregroundStyle(DS.textMuted)
+                .contentTransition(.numericText())
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(DS.space12)
-        .background(DS.surface, in: .rect(cornerRadius: 10))
-        .overlay {
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(DS.borderSubtle, lineWidth: 1)
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(title): \(value). \(detail)")
     }
 }

@@ -351,6 +351,9 @@ final class AnthropicProvider: LLMProvider, @unchecked Sendable {
 
     private func resolvedMaxTokens(for model: String) -> Int {
         if model.contains("opus") { return 16384 }
+        // Sonnet 5 runs adaptive thinking by default; thinking + response
+        // share max_tokens, so it needs the extra headroom.
+        if model.contains("sonnet-5") { return 16384 }
         if model.contains("sonnet") { return 8192 }
         return 4096
     }

@@ -752,6 +752,8 @@ struct DashboardTaskList: View {
                         .foregroundStyle(resolvedHabit.accent.opacity(0.9))
                 }
 
+                taskBlockBadge(task)
+
                 if let projectName = task.projectName {
                     Text(projectName)
                         .font(DS.caption2)
@@ -773,6 +775,39 @@ struct DashboardTaskList: View {
                         .foregroundStyle(DS.textMuted)
                 }
             }
+        }
+    }
+
+    // MARK: - Block Badge (iOS parity)
+
+    /// The block-membership badge — the same bare icon-plus-text grammar as
+    /// the row's other meta labels, never a pill. Quiet by default (a small
+    /// swatch in the block's color, muted text); while the block's occurrence
+    /// is live the swatch becomes a play glyph and the name takes the color —
+    /// "this is what I should be doing now".
+    @ViewBuilder
+    private func taskBlockBadge(_ task: TaskViewModel) -> some View {
+        if let blockTitle = task.blockTitle {
+            let tint = task.blockColorHex.map(Color.init(hex:)) ?? DS.accent
+            let isLive = !task.isCompleted && task.blockIsLive()
+            HStack(spacing: 3) {
+                if isLive {
+                    Image(systemName: "play.circle.fill")
+                        .font(.system(size: 9))
+                        .foregroundStyle(tint)
+                } else {
+                    RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                        .fill(tint)
+                        .frame(width: 6, height: 6)
+                }
+                Text(blockTitle)
+                    .font(DS.caption2)
+                    .foregroundStyle(isLive ? tint : DS.textMuted)
+                    .lineLimit(1)
+            }
+            .help(isLive ? "In block \(blockTitle) — happening now" : "In block \(blockTitle)")
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("In block \(blockTitle)\(isLive ? ", happening now" : "")")
         }
     }
 

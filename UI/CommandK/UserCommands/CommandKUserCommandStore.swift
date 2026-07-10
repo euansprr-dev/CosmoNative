@@ -12,11 +12,27 @@ actor CommandKUserCommandStore {
         self.state = (try? Self.load(from: fileURL)) ?? CommandKUserCommandState()
 
         if seedBuiltIns {
+            var changed = false
+
+            // Retired built-ins duplicated system commands row-for-row
+            // ("swipes" ≡ Browse Swipes, "ideas" ≡ Open Ideas, …). Remove
+            // previously seeded copies — but only while they still point at
+            // the original route, so a user-repurposed alias survives.
+            state.quicklinks.removeAll { quicklink in
+                guard let retiredRoute = Self.retiredBuiltInRoutes[quicklink.id],
+                      quicklink.route == retiredRoute else { return false }
+                changed = true
+                return true
+            }
+
             let builtIns = Self.builtInQuicklinks()
             let existingIDs = Set(state.quicklinks.map(\.id))
             let missing = builtIns.filter { !existingIDs.contains($0.id) }
             if !missing.isEmpty {
                 state.quicklinks.append(contentsOf: missing)
+                changed = true
+            }
+            if changed {
                 try? Self.persist(state, to: fileURL)
             }
         }
@@ -116,54 +132,22 @@ actor CommandKUserCommandStore {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Built-ins that were pure duplicates of system commands ("swipes"
+    /// mirrored Browse Swipes, "ideas" mirrored Open Ideas, "today" mirrored
+    /// Go to Command Center, "library"/"database" mirrored Open Library).
+    /// The system commands own those destinations; keyed by id → the route
+    /// each built-in originally shipped with.
+    static let retiredBuiltInRoutes: [String: CommandKQuicklinkRoute] = [
+        "today": .commandCenter,
+        "swipes": .commandKDomain("swipeGallery"),
+        "ideas": .commandKDomain("ideas"),
+        "library": .commandKDomain("database"),
+        "database": .commandKDomain("database")
+    ]
+
     private static func builtInQuicklinks() -> [CommandKQuicklink] {
         let now = Date(timeIntervalSince1970: 1)
         return [
-            CommandKQuicklink(
-                id: "today",
-                alias: "today",
-                title: "Today",
-                route: .commandCenter,
-                query: nil,
-                createdAt: now,
-                updatedAt: now
-            ),
-            CommandKQuicklink(
-                id: "swipes",
-                alias: "swipes",
-                title: "Swipe Gallery",
-                route: .commandKDomain("swipeGallery"),
-                query: nil,
-                createdAt: now,
-                updatedAt: now
-            ),
-            CommandKQuicklink(
-                id: "ideas",
-                alias: "ideas",
-                title: "Ideas",
-                route: .commandKDomain("ideas"),
-                query: nil,
-                createdAt: now,
-                updatedAt: now
-            ),
-            CommandKQuicklink(
-                id: "library",
-                alias: "library",
-                title: "Library",
-                route: .commandKDomain("database"),
-                query: nil,
-                createdAt: now,
-                updatedAt: now
-            ),
-            CommandKQuicklink(
-                id: "database",
-                alias: "database",
-                title: "Database",
-                route: .commandKDomain("database"),
-                query: nil,
-                createdAt: now,
-                updatedAt: now
-            ),
             CommandKQuicklink(
                 id: "inquiries",
                 alias: "inquiries",

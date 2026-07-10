@@ -403,10 +403,14 @@ final class CosmoInlineAssistantRoutingTests: XCTestCase {
         XCTAssertEqual(request.tierOverride, .strategist)
     }
 
-    func testDailyDriverModelResolvesToDirectAnthropicSonnet46() {
-        XCTAssertEqual(CosmoAgentService.defaultModelTier(for: .query), .strategist)
-        XCTAssertEqual(AgentModelTier.strategist.modelId, "anthropic/claude-sonnet-4.6")
-        XCTAssertEqual(AgentProvider.anthropic.defaultModel, "claude-sonnet-4-6")
+    func testDailyDriverModelResolvesToDirectAnthropicSonnet5() {
+        XCTAssertEqual(CosmoAgentService.defaultModelTier(for: .query), .sonnet5)
+        XCTAssertEqual(AgentModelTier.sonnet5.modelId, "anthropic/claude-sonnet-5")
+        XCTAssertEqual(
+            AnthropicProvider.nativeModelID(AgentModelTier.sonnet5.modelId),
+            "claude-sonnet-5"
+        )
+        // Sonnet 4.6 stays the failover target — its mapping must hold too.
         XCTAssertEqual(
             AnthropicProvider.nativeModelID(AgentModelTier.strategist.modelId),
             "claude-sonnet-4-6"
@@ -1175,6 +1179,51 @@ final class CosmoInlineAssistantRoutingTests: XCTestCase {
         XCTAssertTrue(resolved.promptBlock.contains("## Resolved Inline Skill Context"))
         XCTAssertTrue(resolved.promptBlock.contains("Josh bought a San Diego duplex."))
         XCTAssertTrue(resolved.promptBlock.lowercased().contains("use them directly"))
+    }
+
+    func testActionRouteTeachesStagedEditAsTheDeliverable() {
+        // The delivery contract: an edit instruction resolves into a STAGED
+        // EDIT in the same run — research feeds the edit, the review diff is
+        // the confirmation, and asking permission to stage is forbidden.
+        let prompt = CosmoInlineAssistantInstructionPrompt.make(route: .action, snapshot: nil)
+        XCTAssertTrue(prompt.contains("the run's deliverable IS the staged edit"))
+        XCTAssertTrue(prompt.contains("never end the run asking permission to stage"))
+
+        // The research-backed fill path repeats it at the skill layer.
+        let plan = CosmoInlineAssistantSkillRuntime.plan(
+            for: "Research and fill in the number in slide 4",
+            surfaceKind: .text
+        )
+        XCTAssertEqual(plan.route, .action)
+        XCTAssertTrue(plan.primarySkill.instructions.contains {
+            $0.contains("Research that ends without the staged edit is an incomplete run")
+        })
+    }
+
+    func testSelectionChipNeverSurvivesNavigationToAnotherSurface() {
+        let store = CosmoInlineAssistantStore(agentBridge: .mock)
+        store.reportSelection(
+            CosmoEditableSelection(text: "This is Ben Mallah. He owns…", containingLine: nil),
+            forSurfaceID: "content:atom-a"
+        )
+        XCTAssertNotNil(store.currentSelection)
+
+        // Re-activating the OWNING surface keeps the highlight.
+        store.clearSelectionIfForeign(toActiveSurfaceID: "content:atom-a")
+        XCTAssertNotNil(store.currentSelection)
+
+        // Navigating to a different document kills it — the owning editor is
+        // unmounted and can never clear it itself (the stale-chip bug).
+        store.clearSelectionIfForeign(toActiveSurfaceID: "content:atom-b")
+        XCTAssertNil(store.currentSelection)
+
+        // Closing the owning document kills it even with no successor surface.
+        store.reportSelection(
+            CosmoEditableSelection(text: "another highlight", containingLine: nil),
+            forSurfaceID: "content:atom-c"
+        )
+        store.clearSelectionIfOwned(bySurfaceID: "content:atom-c")
+        XCTAssertNil(store.currentSelection)
     }
 
     func testExplicitClientReferenceHandlesPossessiveProfilePrompt() {

@@ -1510,7 +1510,7 @@ struct CommandCenterScheduleSection: View {
         VStack(alignment: .leading, spacing: DS.space8) {
             glassSectionLabel("Quick")
 
-            CodexFlowLayout(spacing: DS.space8) {
+            CosmoFlowLayout(spacing: DS.space8) {
                 ForEach(quickChipModels) { model in
                     CommandCenterScheduleQuickChip(model: model) {
                         onSelect(model.selection)

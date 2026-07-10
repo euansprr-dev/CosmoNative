@@ -16,20 +16,8 @@ public enum CosmoNotificationType: String, CaseIterable, Sendable {
     case streakMilestone            // Hit 7, 30, 60, 90, 180, 365 days
     case streakProtected            // Auto-freeze used
 
-    // Level notifications
-    case levelUp                    // Cosmo Index level up
-    case dimensionLevelUp           // Dimension level up
-    case neloMilestone              // Hit NELO tier threshold
-    case neloRegression             // NELO dropped significantly
-
-    // Badge notifications
-    case badgeUnlocked              // New badge earned
-    case badgeNearCompletion        // 90%+ progress on badge
-
-    // Quest notifications
-    case questsAvailable            // New daily quests ready
-    case questNearCompletion        // Quest almost done
-    case questsExpiring             // Quests about to expire
+    // NOTE: XP-era types (levelUp, badges, quests, NELO) removed with the
+    // Level System — nothing schedules them and no payloads persist them.
 
     // Health notifications
     case readinessUpdate            // Morning readiness score
@@ -49,12 +37,6 @@ public enum CosmoNotificationType: String, CaseIterable, Sendable {
             return .summary
         case .streakAtRisk, .streakBroken, .streakMilestone, .streakProtected:
             return .streak
-        case .levelUp, .dimensionLevelUp, .neloMilestone, .neloRegression:
-            return .level
-        case .badgeUnlocked, .badgeNearCompletion:
-            return .badge
-        case .questsAvailable, .questNearCompletion, .questsExpiring:
-            return .quest
         case .readinessUpdate, .hrvAnomaly, .recoveryRecommendation:
             return .health
         case .deepWorkReminder, .deepWorkComplete:
@@ -70,7 +52,7 @@ public enum CosmoNotificationType: String, CaseIterable, Sendable {
         // bypass the deep-work deferral (and quiet hours — the user set the timer).
         case .timedGoalReached:
             return .critical
-        case .levelUp, .badgeUnlocked, .streakMilestone:
+        case .streakMilestone:
             return .high
         case .streakAtRisk, .morningSummary, .readinessUpdate:
             return .medium
@@ -83,9 +65,6 @@ public enum CosmoNotificationType: String, CaseIterable, Sendable {
 public enum NotificationCategory: String, Sendable {
     case summary
     case streak
-    case level
-    case badge
-    case quest
     case health
     case deepWork
     case timedGoal

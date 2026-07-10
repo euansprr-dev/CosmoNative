@@ -117,7 +117,7 @@ struct SwipeDiscoveryFilterPanel: View {
                     .font(DS.subheadline.weight(.semibold))
                     .foregroundStyle(DS.textSecondary)
             }
-            CodexFlowLayout(spacing: 7) {
+            CosmoFlowLayout(spacing: 7) {
                 ForEach(Array(Filter.allCases), id: \.self) { option in
                     SwipeFilterSegmentChip(label: label(option), isSelected: option == selection.wrappedValue) {
                         withAnimation(ProMotionSprings.snappy) { selection.wrappedValue = option }
@@ -132,7 +132,7 @@ struct SwipeDiscoveryFilterPanel: View {
     private var followersSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             SwipeFilterSectionHeader(title: "Followers")
-            CodexFlowLayout(spacing: 7) {
+            CosmoFlowLayout(spacing: 7) {
                 ForEach(SwipeDiscoveryFilterPresentation.followerPresets) { preset in
                     SwipeFilterSegmentChip(label: preset.label, isSelected: model.query.followerRange == preset.range) {
                         withAnimation(ProMotionSprings.snappy) { model.query.followerRange = preset.range }

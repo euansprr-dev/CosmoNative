@@ -249,10 +249,13 @@ final class DailyBriefEngine {
 
     // MARK: - Cache
 
+    /// The brief's "day" starts at 4 a.m. local — a 1 a.m. open still shows
+    /// yesterday's brief instead of composing tomorrow's early.
     private static func localDayKey(_ date: Date = Date()) -> String {
+        let shifted = date.addingTimeInterval(-4 * 3600)
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: date)
+        return formatter.string(from: shifted)
     }
 
     private func loadCached() -> DailyBrief? {

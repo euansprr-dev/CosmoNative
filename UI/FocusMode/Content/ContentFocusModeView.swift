@@ -212,6 +212,7 @@ struct ContentFocusModeView: View {
     @State private var showSwipeAttachmentEditor = false
     @State private var showExportSheet = false
     @State private var showPerfEntrySheet = false
+    @State private var showHistorySheet = false
 
     enum DraftSaveState { case idle, saving, saved, failed }
 
@@ -618,6 +619,9 @@ struct ContentFocusModeView: View {
         }
         .sheet(isPresented: $showPerfEntrySheet) {
             ContentPerfEntrySheet(atom: atom) { showPerfEntrySheet = false }
+        }
+        .sheet(isPresented: $showHistorySheet) {
+            AtomHistorySheet(atom: atom) { showHistorySheet = false }
         }
         .sheet(isPresented: $showSwipeAttachmentEditor) {
             ContentSwipeAttachmentEditor(
@@ -1054,6 +1058,10 @@ struct ContentFocusModeView: View {
             }
             Button("Record Performance…", systemImage: "chart.line.uptrend.xyaxis") {
                 showPerfEntrySheet = true
+            }
+            Divider()
+            Button("History…", systemImage: "clock.arrow.circlepath") {
+                showHistorySheet = true
             }
         } label: {
             surfaceControlIcon("paperplane", isActive: false)

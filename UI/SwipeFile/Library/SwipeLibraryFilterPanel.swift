@@ -66,7 +66,7 @@ struct SwipeLibraryFilterPanel: View {
     }
 
     private var hookTypeChips: some View {
-        CodexFlowLayout(spacing: 7) {
+        CosmoFlowLayout(spacing: 7) {
             ForEach(SwipeHookType.allCases, id: \.rawValue) { hookType in
                 SwipeFilterSegmentChip(
                     label: hookType.displayName,
@@ -79,7 +79,7 @@ struct SwipeLibraryFilterPanel: View {
     }
 
     private var narrativeChips: some View {
-        CodexFlowLayout(spacing: 7) {
+        CosmoFlowLayout(spacing: 7) {
             ForEach(NarrativeStyle.allCases, id: \.rawValue) { narrative in
                 SwipeFilterSegmentChip(
                     label: narrative.displayName,
@@ -92,7 +92,7 @@ struct SwipeLibraryFilterPanel: View {
     }
 
     private var formatChips: some View {
-        CodexFlowLayout(spacing: 7) {
+        CosmoFlowLayout(spacing: 7) {
             ForEach(ContentFormat.allCases, id: \.rawValue) { format in
                 SwipeFilterSegmentChip(
                     label: format.displayName,

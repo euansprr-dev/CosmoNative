@@ -179,7 +179,7 @@ struct ProfileChipEditorRow: View {
     @ViewBuilder
     private var chipFlow: some View {
         if !chips.isEmpty {
-            CodexFlowLayout(spacing: DS.space4) {
+            CosmoFlowLayout(spacing: DS.space4) {
                 ForEach(chips, id: \.self) { chip in
                     chipView(chip)
                 }

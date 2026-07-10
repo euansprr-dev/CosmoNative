@@ -107,7 +107,7 @@ struct SkillsAndPromptsSettingsTab: View {
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundStyle(DS.textMuted)
 
-                    sanctuaryButtons(
+                    sectionSaveButtons(
                         onSave: { promptStore.saveUnifiedSystemPrompt() },
                         onReset: { promptStore.resetUnifiedToDefault() },
                         isDirty: promptStore.isUnifiedDirty
@@ -157,7 +157,7 @@ struct SkillsAndPromptsSettingsTab: View {
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundStyle(DS.textMuted)
 
-                    sanctuaryButtons(
+                    sectionSaveButtons(
                         onSave: { promptStore.saveMethodology() },
                         onReset: { promptStore.resetToDefault() },
                         isDirty: promptStore.isDirty
@@ -207,7 +207,7 @@ struct SkillsAndPromptsSettingsTab: View {
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundStyle(DS.textMuted)
 
-                    sanctuaryButtons(
+                    sectionSaveButtons(
                         onSave: { promptStore.savePlatformConstraints() },
                         onReset: { promptStore.resetPlatformConstraintsToDefault() },
                         isDirty: promptStore.isPlatformConstraintsDirty
@@ -1146,7 +1146,7 @@ struct SkillsAndPromptsSettingsTab: View {
     // MARK: - Shared Helpers
 
     @ViewBuilder
-    private func sanctuaryButtons(onSave: @escaping () -> Void, onReset: @escaping () -> Void, isDirty: Bool) -> some View {
+    private func sectionSaveButtons(onSave: @escaping () -> Void, onReset: @escaping () -> Void, isDirty: Bool) -> some View {
         HStack(spacing: DS.space12) {
             Button(action: onSave) {
                 HStack(spacing: DS.space4) {

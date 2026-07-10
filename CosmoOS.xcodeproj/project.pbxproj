@@ -48,7 +48,6 @@
 		09AFABA529D6BC33CCB32B92 /* IdeaFocusModeViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F2A2D408A8ACCF79CEC2BA0 /* IdeaFocusModeViewModel.swift */; };
 		0A622D78EEEE6A875FC2A113 /* CommandCenterSurfaceKit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96138FD7BC9A0A5B8F154426 /* CommandCenterSurfaceKit.swift */; };
 		0A6DAFEC6F7526B0A4260875 /* IdeaInspectorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97C2372BD9BEBDFC7D6720A2 /* IdeaInspectorView.swift */; };
-		0BD8ABC16217ACE6A621003B /* CodexFlowLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = D25ACB9AC5554D26F643D8CB /* CodexFlowLayout.swift */; };
 		0BDEAC3535957AD0D26465E0 /* InquiryUnderstandingEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD9A3256EC2C74E38A10B245 /* InquiryUnderstandingEngine.swift */; };
 		0BE356B9A450E575649A4409 /* InquiryKindBadgeMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9907789EDB2AB9007D2F3DBF /* InquiryKindBadgeMenu.swift */; };
 		0BE552B597DEC8EBC7BA74EE /* CommandKActionPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDBE6B810987413798EB7FB9 /* CommandKActionPanel.swift */; };
@@ -541,6 +540,7 @@
 		A2EA7C6390D8C7701E260B7D /* CommandKCapturePreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = C321B55770CA1231B8C444FC /* CommandKCapturePreview.swift */; };
 		A30D14CCE949C4FF464F8FFD /* VoicePillWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40BC28B57B439BB86AA9B5E7 /* VoicePillWindow.swift */; };
 		A3745785C9EAADB4BB04DD71 /* SupabaseClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60F31C795B4917561C273C20 /* SupabaseClient.swift */; };
+		A3F00E2C221E7B4C3E63D758 /* CosmoFlowLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CBEA8F992805BBF5F100EF3 /* CosmoFlowLayout.swift */; };
 		A47E6AB1C0E03BF1269AF2B7 /* SwipeLibraryPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42C8BC7B2C5027D084AF9EA6 /* SwipeLibraryPage.swift */; };
 		A489701884CFCC819FA09FF4 /* InboxItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCB85AC924AE37E836256AAC /* InboxItem.swift */; };
 		A4D20D0626B5CC54868307EE /* SwipeLibraryHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2F4A98A7F3D5E1C93B576EB /* SwipeLibraryHeader.swift */; };
@@ -1035,6 +1035,7 @@
 		2BB2E23E35CA88F75406D6C2 /* InquiryRoutingReceiptView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InquiryRoutingReceiptView.swift; sourceTree = "<group>"; };
 		2C7829068125D7586394C50B /* EditorPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorPresentation.swift; sourceTree = "<group>"; };
 		2C8A5A5CF650AB8E4ECA4E6E /* TelegramBridgeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TelegramBridgeService.swift; sourceTree = "<group>"; };
+		2CBEA8F992805BBF5F100EF3 /* CosmoFlowLayout.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CosmoFlowLayout.swift; sourceTree = "<group>"; };
 		2CD048F139D34C94B1C5C5F3 /* CosmoKeyablePanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmoKeyablePanel.swift; sourceTree = "<group>"; };
 		2CF7FFB8882DA2BD424E59F7 /* TaskTitleMentionField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskTitleMentionField.swift; sourceTree = "<group>"; };
 		2D2D24A09A17F5FC94002436 /* AtomRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AtomRepository.swift; sourceTree = "<group>"; };
@@ -1610,7 +1611,6 @@
 		D1AF9ABBFDF6601F3D43015B /* VoiceTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceTypes.swift; sourceTree = "<group>"; };
 		D1CC62D20E543BF5678FFAAD /* CosmoGlassPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmoGlassPanel.swift; sourceTree = "<group>"; };
 		D1E6F5C3C902FF8146518825 /* AgentPreference.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentPreference.swift; sourceTree = "<group>"; };
-		D25ACB9AC5554D26F643D8CB /* CodexFlowLayout.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CodexFlowLayout.swift; sourceTree = "<group>"; };
 		D2CCC6BDF008C1F22DE69548 /* ContentDraftView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentDraftView.swift; sourceTree = "<group>"; };
 		D2E9000CF209280B9CC15FEA /* RecallStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RecallStore.swift; path = Recall/RecallStore.swift; sourceTree = "<group>"; };
 		D308B216DEEA8F3E6CBD1B69 /* CosmoSettingsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CosmoSettingsView.swift; sourceTree = "<group>"; };
@@ -1841,8 +1841,8 @@
 		05F742A45D6C4D49683E4E0A /* Shared */ = {
 			isa = PBXGroup;
 			children = (
-				D25ACB9AC5554D26F643D8CB /* CodexFlowLayout.swift */,
 				0EAA70DCA272BFEB9A232C15 /* AtomHistorySheet.swift */,
+				2CBEA8F992805BBF5F100EF3 /* CosmoFlowLayout.swift */,
 			);
 			path = Shared;
 			sourceTree = "<group>";
@@ -4685,7 +4685,6 @@
 				B039D279C83334E1528D2049 /* CanvasClusterLayoutResolver.swift in Sources */,
 				FF7367464092B93511121F0D /* CosmoAssistantMenuKit.swift in Sources */,
 				7203EEA7D8E35E050EA0AE43 /* CosmoInlineAssistantSkillMenu.swift in Sources */,
-				0BD8ABC16217ACE6A621003B /* CodexFlowLayout.swift in Sources */,
 				941833CC28BF4E86F21DFE57 /* ContentPipelineMetadata.swift in Sources */,
 				89501E0BF44434187CAD1464 /* ContentPipelineService.swift in Sources */,
 				2204770AE29C58FB2D4DFAAA /* ProactiveNotificationService.swift in Sources */,
@@ -4712,6 +4711,7 @@
 				57F9A023D868F647902C3A34 /* TasteEngine.swift in Sources */,
 				BD482C5DA55FC48B5EB29A2C /* ProfileTasteSection.swift in Sources */,
 				ED8B08CCEDEF5B077B4C9D92 /* PDFHighlight.swift in Sources */,
+				A3F00E2C221E7B4C3E63D758 /* CosmoFlowLayout.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

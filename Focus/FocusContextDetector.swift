@@ -235,15 +235,9 @@ public final class FocusContextDetector: ObservableObject {
         updateContext(context)
     }
 
-    /// Called when entering a Sanctuary dimension
-    public func onDimensionActivated(dimension: String) {
-        let context = FocusContext(
-            type: .dimension,
-            navigationSection: "sanctuary",
-            dimensionType: dimension
-        )
-        updateContext(context)
-    }
+    // onDimensionActivated removed — the Sanctuary dimension surface no
+    // longer exists; nothing entered this context. The .dimension case stays
+    // as an inert state so persisted context strings keep decoding.
 
     /// Called when focus is cleared (e.g., returning to home)
     public func clearFocus() {

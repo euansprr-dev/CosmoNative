@@ -1,9 +1,9 @@
-// CosmoOS/UI/Codex/CodexFlowLayout.swift
+// CosmoOS/UI/Codex/CosmoFlowLayout.swift
 // Shared flow layout for wrapping tags and pills.
 
 import SwiftUI
 
-struct CodexFlowLayout: Layout {
+struct CosmoFlowLayout: Layout {
     var spacing: CGFloat = 6
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {

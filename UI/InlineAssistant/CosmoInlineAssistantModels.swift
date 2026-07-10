@@ -15,6 +15,7 @@ enum CosmoEditableSurfaceKind: String, Codable, Equatable, Sendable {
 
 enum CosmoInlineAssistantSkillID: String, Codable, CaseIterable, Equatable, Hashable, Sendable {
     case contentReview
+    case critique
     case voiceVariations
     case inlineEdit
     case factFill
@@ -1410,9 +1411,35 @@ enum CosmoInlineAssistantSkillRuntime {
                 requiresReviewedDiff: false,
                 icon: "text.badge.checkmark",
                 summary: "Reviews the open draft against real swipe transcripts and their engagement numbers — performance read, slide notes, top moves.",
-                triggerPhrases: ["review", "feedback", "critique", "content feedback"],
+                triggerPhrases: ["review", "feedback", "content feedback"],
                 preferredModelTier: .strategist,
                 panePolicy: .openForAnswer
+            )
+        case .critique:
+            return CosmoInlineAssistantSkill(
+                id: .critique,
+                name: "Critique",
+                description: "Judges the draft against the learned taste profile and stages surgical fixes as reviewed edits.",
+                route: .action,
+                requiredContext: [.activeSurface, .currentFocus, .clientProfile, .voiceLessons, .bestPerformingContent],
+                toolBundles: [.workspaceEditing, .contentSearch, .clientProfiles, .writing, .strategy],
+                outputContract: "reviewed_diff",
+                instructions: [
+                    "Judge the active draft ONLY against the LEARNED TASTE block (pinned rules and beliefs) and the draft's own intent signal (title, dek, format, client niche). No generic writing advice.",
+                    "Check pinned [RULE] entries first — a violated pinned rule is always worth an edit. Beliefs are strong defaults; cite the one you are enforcing.",
+                    "Stage at most 6 surgical operations in a single propose_workspace_edit call. For each change, set originalText to the ENTIRE line/sentence containing the target (copied verbatim) and proposedText to that line with only the fix — never a short fragment.",
+                    "Every operation's rationale names the specific taste belief or intent mismatch it fixes (e.g. 'pinned rule: never open with a rhetorical question'). No rationale, no edit.",
+                    "Silence over noise: if the draft already honors the taste profile, stage NOTHING and reply in one sentence that it holds up, naming its strongest beat. Never invent cosmetic edits to look useful.",
+                    "If no taste profile exists for this scope yet, say so plainly and point at the Profile Studio Taste section — do not critique from general knowledge.",
+                    "Respect slide-delimited structure; keep all unaffected lines byte-for-byte identical."
+                ],
+                tokenBudget: 1600,
+                requiresReviewedDiff: true,
+                icon: "checkmark.seal",
+                summary: "Holds the draft up against your learned taste — pinned rules first — and stages at most six surgical fixes as reviewed edits.",
+                triggerPhrases: ["critique", "crit", "taste check", "hold it against my taste"],
+                preferredModelTier: .strategist,
+                panePolicy: .neverForAction
             )
         case .voiceVariations:
             return CosmoInlineAssistantSkill(

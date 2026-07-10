@@ -262,18 +262,11 @@ final class CosmoAIFocusModeViewModel: ObservableObject {
 
     // MARK: - Auto-Surface Related
     private func autoSurfaceRelated(query: String) async {
-        do {
-            let results = try await VectorDatabase.shared.search(query: query, limit: 3, minSimilarity: 0.4)
-            for result in results {
-                if let uuid = result.entityUUID,
-                   !surfacedAtoms.contains(where: { $0.uuid == uuid }) {
-                    if let atom = try await AtomRepository.shared.fetch(uuid: uuid) {
-                        surfacedAtoms.append(atom)
-                    }
-                }
+        let hits = await RecallEngine.shared.query(RecallQuery(text: query, limit: 3, minScore: 0.4))
+        for hit in hits where !surfacedAtoms.contains(where: { $0.uuid == hit.atomUuid }) {
+            if let atom = try? await AtomRepository.shared.fetch(uuid: hit.atomUuid) {
+                surfacedAtoms.append(atom)
             }
-        } catch {
-            // Silent failure for suggestions
         }
     }
 

@@ -821,17 +821,18 @@ struct InlineEntityCard: View {
     private func resolveEntity() {
         // Try to resolve the entity from the database by title
         Task {
-            // Search for entity by title in vector database or entity stores
-            // This is a simplified lookup - in production would use proper search
-            if let result = try? await VectorDatabase.shared.search(
-                query: reference.title,
-                limit: 1,
-                entityTypeFilter: reference.entityType == "unknown" ? nil : reference.entityType
+            // Resolve the referenced entity through the Recall index.
+            let types: Set<AtomType>? = reference.entityType == "unknown"
+                ? nil
+                : AtomType(rawValue: reference.entityType).map { [$0] }
+            if let hit = await RecallEngine.shared.query(
+                RecallQuery(text: reference.title, types: types, limit: 1)
             ).first {
+                let atom = try? await AtomRepository.shared.fetch(uuid: hit.atomUuid)
                 resolvedEntity = ResolvedGlassEntity(
-                    entityType: result.entityType,
-                    entityId: result.entityId,
-                    title: result.text ?? reference.title
+                    entityType: hit.atomType.rawValue,
+                    entityId: atom?.id ?? 0,
+                    title: hit.title
                 )
             }
         }

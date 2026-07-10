@@ -80,6 +80,13 @@ actor RecallIndexer {
         scheduleDrain()
     }
 
+    /// UUID-only variant for callers that write outside AtomRepository —
+    /// the drain fetches the fresh atom itself.
+    func noteAtomChanged(uuid: String) async {
+        await enqueue(uuid: uuid)
+        scheduleDrain()
+    }
+
     func noteAtomDeleted(_ uuid: String) async {
         await RecallStore.shared.removeEntity(uuid)
         try? await CosmoDatabase.shared.asyncWrite { db in

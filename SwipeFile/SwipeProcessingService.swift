@@ -716,19 +716,8 @@ final class SwipeProcessingService {
             didSetHookTitle = true
         }
 
-        // Re-index embedding with transcript text (the user's body when their
-        // transcript was protected, the fresh auto-transcript otherwise)
-        var textToEmbed = ""
-        if let hook = atom.hook { textToEmbed += hook + " " }
-        textToEmbed += skipTranscriptWrite ? (atom.body ?? "") : combined
-        if !textToEmbed.isEmpty {
-            try? await VectorDatabase.shared.index(
-                text: String(textToEmbed.prefix(2000)),
-                entityType: "research",
-                entityId: atom.id ?? 0,
-                entityUUID: atom.uuid
-            )
-        }
+        // Re-index the recall embedding now that the transcript landed.
+        await RecallIndexer.shared.noteAtomChanged(uuid: atom.uuid)
 
         // SINGLE WRITE: Persist all accumulated changes (transcript + NLP + classification + status) at once.
         // On version conflict (common for cloud-captured swipes where sync bumps the version during

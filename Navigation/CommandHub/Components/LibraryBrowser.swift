@@ -413,14 +413,16 @@ struct LibraryBrowser: View {
         contextVector: [Float]
     ) async -> Float {
         do {
-            let results = try await VectorDatabase.shared.searchByVector(
-                embedding: contextVector,
-                limit: 100,
-                entityTypeFilter: entityType.rawValue,
-                minSimilarity: 0.0
-            )
-
-            return results.first { $0.entityId == entityId }?.similarity ?? 0
+            guard let uuid = try await CosmoDatabase.shared.asyncRead({ db in
+                try String.fetchOne(
+                    db,
+                    sql: "SELECT uuid FROM atoms WHERE type = ? AND id = ? LIMIT 1",
+                    arguments: [entityType.rawValue, entityId]
+                )
+            }) else { return 0 }
+            return await RecallStore.shared.bestSimilarities(
+                entityUuids: [uuid], query: contextVector
+            )[uuid] ?? 0
         } catch {
             return 0
         }

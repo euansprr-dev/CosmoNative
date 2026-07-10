@@ -1343,17 +1343,7 @@ class AgentToolExecutor {
             if let hook = item.hook { textToEmbed += hook + " " }
             if let summary = item.summary { textToEmbed += summary }
             if !textToEmbed.isEmpty {
-                do {
-                    try await VectorDatabase.shared.index(
-                        text: textToEmbed,
-                        entityType: "research",
-                        entityId: item.id ?? 0,
-                        entityUUID: item.uuid
-                    )
-                } catch {
-                    // Recoverable via VectorDatabase.reindexMissing — but visible.
-                    PersistenceHealth.note(.writeFailure, context: "VectorIndex.research(\(item.uuid.prefix(8)))", detail: error.localizedDescription)
-                }
+                await RecallIndexer.shared.noteAtomChanged(uuid: item.uuid)
             }
         }
 
@@ -1562,20 +1552,9 @@ class AgentToolExecutor {
             atom.links = try? String(data: JSONEncoder().encode(links), encoding: .utf8)
         })
 
-        // 9. Generate embedding for the idea in background
+        // 9. Recall index in background (drain re-reads the atom)
         Task {
-            let textToEmbed = [ideaTitle, ideaBody].joined(separator: " ")
-            do {
-                try await VectorDatabase.shared.index(
-                    text: textToEmbed,
-                    entityType: "idea",
-                    entityId: ideaAtom.id ?? 0,
-                    entityUUID: ideaAtom.uuid
-                )
-            } catch {
-                // Recoverable via VectorDatabase.reindexMissing — but visible.
-                PersistenceHealth.note(.writeFailure, context: "VectorIndex.idea(\(ideaAtom.uuid.prefix(8)))", detail: error.localizedDescription)
-            }
+            await RecallIndexer.shared.noteAtomChanged(uuid: ideaAtom.uuid)
         }
 
         // Post notification for UI updates
@@ -1676,17 +1655,7 @@ class AgentToolExecutor {
         Task {
             let textToEmbed = [title, body ?? ""].joined(separator: " ").trimmingCharacters(in: .whitespaces)
             if !textToEmbed.isEmpty {
-                do {
-                    try await VectorDatabase.shared.index(
-                        text: textToEmbed,
-                        entityType: "research",
-                        entityId: item.id ?? 0,
-                        entityUUID: item.uuid
-                    )
-                } catch {
-                    // Recoverable via VectorDatabase.reindexMissing — but visible.
-                    PersistenceHealth.note(.writeFailure, context: "VectorIndex.research(\(item.uuid.prefix(8)))", detail: error.localizedDescription)
-                }
+                await RecallIndexer.shared.noteAtomChanged(uuid: item.uuid)
             }
         }
 

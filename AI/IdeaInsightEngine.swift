@@ -72,19 +72,19 @@ final class IdeaInsightEngine: ObservableObject {
         }
 
         do {
-            // Search the vector database for research entities (swipe files are research atoms)
-            let vectorResults = try await VectorDatabase.shared.search(
-                query: ideaText,
+            // Recall search over research entities (swipe files are research atoms)
+            let vectorResults = await RecallEngine.shared.query(RecallQuery(
+                text: ideaText,
+                types: [.research],
                 limit: maxVectorSearchResults,
-                entityTypeFilter: "research",
-                minSimilarity: 0.3
-            )
+                minScore: 0.3
+            ))
 
             // Filter to swipe file atoms only and load their analysis
             var matches: [SwipeMatch] = []
 
             for result in vectorResults {
-                guard let entityUUID = result.entityUUID else { continue }
+                let entityUUID = result.atomUuid
 
                 // Load the atom to check if it is actually a swipe file
                 guard let atom = try? await AtomRepository.shared.fetch(uuid: entityUUID),
@@ -98,8 +98,8 @@ final class IdeaInsightEngine: ObservableObject {
                 let match = SwipeMatch(
                     swipeAtomUUID: atom.uuid,
                     title: atom.title ?? "Untitled Swipe",
-                    similarityScore: Double(result.similarity),
-                    matchReason: buildMatchReason(similarity: Double(result.similarity), analysis: analysis),
+                    similarityScore: result.score,
+                    matchReason: buildMatchReason(similarity: result.score, analysis: analysis),
                     hookType: analysis?.hookType,
                     frameworkType: analysis?.frameworkType,
                     hookText: analysis?.hookText ?? meta?.hook,
@@ -481,13 +481,13 @@ final class IdeaInsightEngine: ObservableObject {
         guard !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
 
         do {
-            // Search vector DB for idea entities
-            let vectorResults = try await VectorDatabase.shared.search(
-                query: searchText,
+            // Recall search for idea entities
+            let vectorResults = await RecallEngine.shared.query(RecallQuery(
+                text: searchText,
+                types: [.idea],
                 limit: 10,
-                entityTypeFilter: "idea",
-                minSimilarity: Float(autoLinkThreshold)
-            )
+                minScore: autoLinkThreshold
+            ))
 
             // Accumulate the swipe-side links and write them ONCE at the end —
             // building each write from the original `swipeAtom` snapshot meant
@@ -495,10 +495,8 @@ final class IdeaInsightEngine: ObservableObject {
             var swipeLinksToAdd: [AtomLink] = []
 
             for result in vectorResults {
-                guard let ideaUUID = result.entityUUID,
-                      Double(result.similarity) >= autoLinkThreshold else {
-                    continue
-                }
+                let ideaUUID = result.atomUuid
+                guard result.score >= autoLinkThreshold else { continue }
 
                 // Load the idea atom
                 guard var ideaAtom = try? await AtomRepository.shared.fetch(uuid: ideaUUID),
@@ -527,7 +525,7 @@ final class IdeaInsightEngine: ObservableObject {
                 do {
                     try await AtomRepository.shared.update(ideaAtom)
                     swipeLinksToAdd.append(.swipeToIdea(ideaAtom.uuid))
-                    print("IdeaInsightEngine: Auto-linked idea '\(ideaAtom.title ?? "Untitled")' to swipe '\(swipeAtom.title ?? "Untitled")' (similarity: \(String(format: "%.2f", result.similarity)))")
+                    print("IdeaInsightEngine: Auto-linked idea '\(ideaAtom.title ?? "Untitled")' to swipe '\(swipeAtom.title ?? "Untitled")' (similarity: \(String(format: "%.2f", result.score)))")
                 } catch {
                     PersistenceHealth.note(
                         .writeFailure,
@@ -594,17 +592,8 @@ final class IdeaInsightEngine: ObservableObject {
             print("IdeaInsightEngine: Failed to update atom metadata: \(error.localizedDescription)")
         }
 
-        // Index in vector database for future swipe matching
-        do {
-            try await VectorDatabase.shared.index(
-                text: ideaText,
-                entityType: "idea",
-                entityId: atom.id ?? 0,
-                entityUUID: atom.uuid
-            )
-        } catch {
-            print("IdeaInsightEngine: Failed to index idea in vector DB: \(error.localizedDescription)")
-        }
+        // Recall index for future swipe matching
+        await RecallIndexer.shared.noteAtomChanged(uuid: atom.uuid)
     }
 
     // MARK: - 9. Full Analysis

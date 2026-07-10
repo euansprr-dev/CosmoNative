@@ -549,30 +549,8 @@ final class SwipeFileEngine: ObservableObject {
     // MARK: - Semantic Embedding
 
     private func generateEmbedding(for item: Research) async {
-        // Combine hook + content for embedding
-        var textToEmbed = ""
-        if let hook = item.hook {
-            textToEmbed += hook + " "
-        }
-        if let summary = item.summary {
-            textToEmbed += summary
-        }
-
-        guard !textToEmbed.isEmpty else { return }
-
-        // Use existing vector database for embedding
-        // This integrates with the telepathic semantic layer
-        do {
-            try await VectorDatabase.shared.index(
-                text: textToEmbed,
-                entityType: "research",
-                entityId: item.id ?? 0,
-                entityUUID: item.uuid
-            )
-            print("SwipeFile: Generated embedding for item \(item.id ?? -1)")
-        } catch {
-            print("SwipeFile: Failed to generate embedding: \(error)")
-        }
+        // Recall index: the drain re-reads the atom, so this is just an enqueue.
+        await RecallIndexer.shared.noteAtomChanged(uuid: item.uuid)
     }
 
     // MARK: - Carousel Thumbnail Caching
@@ -771,11 +749,9 @@ final class SwipeFileEngine: ObservableObject {
             }
         }
 
-        // 4. Remove vector embedding
-        if let entityId = entityId {
-            Task {
-                try? await VectorDatabase.shared.deleteEntity(entityType: "research", entityId: entityId)
-            }
+        // 4. Remove recall vectors (index cascade law)
+        Task {
+            await RecallIndexer.shared.noteAtomDeleted(atomUUID)
         }
 
         // 5. Post notification for UI refresh (gallery, search results, etc.)

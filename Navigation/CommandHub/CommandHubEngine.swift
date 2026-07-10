@@ -708,16 +708,17 @@ class CommandHubEngine: ObservableObject {
         }
 
         do {
-            // Query VectorDatabase for vectors matching this entity
-            let results = try await VectorDatabase.shared.searchByVector(
-                embedding: contextVector,
-                limit: 100,
-                entityTypeFilter: entityType.rawValue,
-                minSimilarity: 0.0 // Get all matches, we'll use the score
-            )
-
-            // Find this specific entity's similarity
-            let similarity = results.first { $0.entityId == entityId }?.similarity ?? 0
+            // Recall vectors are keyed by uuid; resolve then score in one sweep.
+            guard let uuid = try await CosmoDatabase.shared.asyncRead({ db in
+                try String.fetchOne(
+                    db,
+                    sql: "SELECT uuid FROM atoms WHERE type = ? AND id = ? LIMIT 1",
+                    arguments: [entityType.rawValue, entityId]
+                )
+            }) else { return 0 }
+            let similarity = await RecallStore.shared.bestSimilarities(
+                entityUuids: [uuid], query: contextVector
+            )[uuid] ?? 0
 
             // Cache the result
             contextSimilarityCache[cacheKey] = similarity

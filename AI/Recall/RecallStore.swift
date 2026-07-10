@@ -193,6 +193,38 @@ actor RecallStore {
             }
     }
 
+    /// First-chunk vector per entity — centroid math (inbox routing fallback).
+    func embeddings(forEntityUuids uuids: [String]) async -> [String: [Float]] {
+        guard !uuids.isEmpty else { return [:] }
+        let wanted = Set(uuids)
+        let vectors = await loadedCache()
+        var out: [String: [Float]] = [:]
+        for item in vectors where item.chunkIndex == 0 && wanted.contains(item.entityUuid) {
+            out[item.entityUuid] = item.embedding
+        }
+        return out
+    }
+
+    /// Max chunk similarity per entity for a candidate set — the re-rank stage
+    /// of hybrid search (one cache sweep, no per-candidate roundtrips).
+    func bestSimilarities(
+        entityUuids: Set<String>,
+        query: [Float]
+    ) async -> [String: Float] {
+        guard !entityUuids.isEmpty, !query.isEmpty else { return [:] }
+        let vectors = await loadedCache()
+        var best: [String: Float] = [:]
+        for item in vectors where entityUuids.contains(item.entityUuid) {
+            guard item.embedding.count == query.count else { continue }
+            var similarity: Float = 0
+            vDSP_dotpr(item.embedding, 1, query, 1, &similarity, vDSP_Length(query.count))
+            if similarity > (best[item.entityUuid] ?? -1) {
+                best[item.entityUuid] = similarity
+            }
+        }
+        return best
+    }
+
     // MARK: - Cache
 
     private func loadedCache() async -> [CachedVector] {

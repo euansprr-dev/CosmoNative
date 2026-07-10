@@ -274,33 +274,29 @@ public struct LinkedContactsSection: View {
         errorMessage = nil
 
         do {
-            // 1. Get embedding for research content
-            let vectorDB = VectorDatabase.shared
-
-            // 2. Search for semantically similar content
-            let results = try await vectorDB.search(
-                query: researchContent,
+            // Semantic neighbors via the Recall engine.
+            let hits = await RecallEngine.shared.query(RecallQuery(
+                text: researchContent,
                 limit: 10,
-                minSimilarity: 0.6
-            )
+                minScore: 0.6
+            ))
 
-            // 3. Filter out self and already linked
-            let existingIds = Set(relatedEntities.map { "\($0.entityType):\($0.entityId)" })
-            let newResults = results.filter { result in
-                let key = "\(result.entityType):\(result.entityId)"
-                return key != "research:\(researchId)" && !existingIds.contains(key)
+            // Filter out self and already linked.
+            let existingIds = Set(relatedEntities.compactMap(\.entityUUID))
+            let newResults = hits.filter { hit in
+                !existingIds.contains(hit.atomUuid)
             }
 
-            // 4. Convert to LinkedEntity
-            let newEntities = newResults.map { result in
+            // Convert to LinkedEntity.
+            let newEntities = newResults.map { hit in
                 LinkedEntity(
-                    id: "\(result.entityType):\(result.entityId)",
-                    entityType: result.entityType,
-                    entityId: result.entityId,
-                    entityUUID: result.entityUUID,
-                    title: result.text?.prefix(50).description ?? "Untitled",
-                    preview: result.text?.prefix(100).description,
-                    similarity: result.similarity,
+                    id: "\(hit.atomType.rawValue):\(hit.atomUuid)",
+                    entityType: hit.atomType.rawValue,
+                    entityId: 0,
+                    entityUUID: hit.atomUuid,
+                    title: hit.title,
+                    preview: String(hit.matchedText.prefix(100)),
+                    similarity: Float(hit.score),
                     linkType: .semanticallySimilar
                 )
             }

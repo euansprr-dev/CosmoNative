@@ -146,7 +146,6 @@ public actor ContextAssembler {
     // MARK: - Dependencies
 
     private let database: CosmoDatabase
-    private let vectorDatabase: VectorDatabase
 
     // MARK: - Token Estimation
 
@@ -158,7 +157,51 @@ public actor ContextAssembler {
     @MainActor
     private init() {
         self.database = CosmoDatabase.shared
-        self.vectorDatabase = VectorDatabase.shared
+    }
+
+
+    // MARK: - Semantic Search Adapter (Recall)
+
+    private struct SemanticResult {
+        let entityType: String
+        let entityId: Int64
+        let entityUUID: String?
+        let text: String?
+        let similarity: Float
+    }
+
+    /// Legacy-shaped semantic search over the Recall engine. The old
+    /// "swipefile" filter maps to research atoms (swipes ARE research atoms).
+    private func vectorSearch(
+        query: String,
+        limit: Int,
+        entityTypeFilter: String? = nil,
+        minSimilarity: Float = 0
+    ) async throws -> [SemanticResult] {
+        var types: Set<AtomType>? = nil
+        if let entityTypeFilter {
+            switch entityTypeFilter {
+            case "swipefile", "research": types = [.research]
+            case "connection": types = [.connection]
+            case "idea": types = [.idea]
+            default: types = AtomType(rawValue: entityTypeFilter).map { [$0] }
+            }
+        }
+        let hits = await RecallEngine.shared.query(RecallQuery(
+            text: query,
+            types: types,
+            limit: limit,
+            minScore: Double(minSimilarity)
+        ))
+        return hits.map { hit in
+            SemanticResult(
+                entityType: hit.atomType.rawValue,
+                entityId: 0,
+                entityUUID: hit.atomUuid,
+                text: hit.matchedText,
+                similarity: Float(hit.score)
+            )
+        }
     }
 
     // MARK: - Main Assembly API
@@ -434,7 +477,7 @@ public actor ContextAssembler {
 
         // Search vector database for relevant content
         do {
-            let searchResults = try await vectorDatabase.search(
+            let searchResults = try await vectorSearch(
                 query: query,
                 limit: 50,
                 minSimilarity: 0.4
@@ -492,15 +535,15 @@ public actor ContextAssembler {
 
         do {
             // Use vector search if query provided, otherwise get recent
-            let results: [VectorSearchResult]
+            let results: [SemanticResult]
             if let query = query {
-                results = try await vectorDatabase.search(
+                results = try await vectorSearch(
                     query: query,
                     limit: limit,
                     entityTypeFilter: "swipefile"
                 )
             } else {
-                results = try await vectorDatabase.search(
+                results = try await vectorSearch(
                     query: "viral content hooks engagement",
                     limit: limit,
                     entityTypeFilter: "swipefile"
@@ -530,7 +573,7 @@ public actor ContextAssembler {
         var sources: [SourceReference] = []
 
         do {
-            let results = try await vectorDatabase.search(
+            let results = try await vectorSearch(
                 query: query,
                 limit: limit,
                 entityTypeFilter: "connection"
@@ -561,7 +604,7 @@ public actor ContextAssembler {
         var sources: [SourceReference] = []
 
         do {
-            let results = try await vectorDatabase.search(
+            let results = try await vectorSearch(
                 query: query,
                 limit: limit,
                 entityTypeFilter: "idea"
@@ -597,7 +640,7 @@ public actor ContextAssembler {
         var sources: [SourceReference] = []
 
         do {
-            let results = try await vectorDatabase.search(
+            let results = try await vectorSearch(
                 query: domain,
                 limit: limit
             )

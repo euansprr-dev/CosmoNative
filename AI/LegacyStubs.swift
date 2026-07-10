@@ -213,9 +213,45 @@ public class SafetyMonitor: ObservableObject {
     }
 }
 
+// MARK: - Vector Search Result (legacy shape)
+
+/// Result shape of the retired VectorDatabase, kept for the legacy HotContext
+/// surfaces (ghost cards, JARVIS assembly). New code uses RecallHit.
+public struct VectorSearchResult: Identifiable, Sendable {
+    public let id: Int64
+    public let entityType: String
+    public let entityId: Int64
+    public let entityUUID: String?
+    public let similarity: Float
+    public let text: String?
+    public let metadata: [String: String]?
+
+    public init(
+        id: Int64,
+        entityType: String,
+        entityId: Int64,
+        entityUUID: String?,
+        similarity: Float,
+        text: String?,
+        metadata: [String: String]?
+    ) {
+        self.id = id
+        self.entityType = entityType
+        self.entityId = entityId
+        self.entityUUID = entityUUID
+        self.similarity = similarity
+        self.text = text
+        self.metadata = metadata
+    }
+
+    public var identifier: String {
+        "\(entityType):\(entityId)"
+    }
+}
+
 // MARK: - MLXEmbeddingService Stub
 
-/// Stub for deleted MLXEmbeddingService - use VectorDatabase.shared for embeddings
+/// Stub for the deleted MLXEmbeddingService — semantic search lives in AI/Recall now
 @MainActor
 class MLXEmbeddingService: ObservableObject {
     static let shared = MLXEmbeddingService()
@@ -225,21 +261,21 @@ class MLXEmbeddingService: ObservableObject {
 
     private init() {}
 
-    /// Deprecated - use VectorDatabase.shared.embed() instead
+    /// Deprecated — use RecallEmbedding.embedText
     func embed(_ text: String) async throws -> [Float] {
-        print("⚠️ MLXEmbeddingService.embed() is deprecated - use VectorDatabase.shared")
+        print("⚠️ MLXEmbeddingService.embed() is deprecated - use RecallEmbedding")
         return []
     }
 
-    /// Deprecated - embeddings are now managed by VectorDatabase
+    /// Deprecated — embeddings are managed by the Recall indexer
     func loadModel() async {
         print("⚠️ MLXEmbeddingService.loadModel() is deprecated")
         isReady = true
     }
 
-    /// Deprecated - similarity search is now in VectorDatabase
+    /// Deprecated — similarity search lives in RecallEngine
     func findSimilar(_ embedding: [Float], topK: Int = 5) async throws -> [(uuid: String, score: Float)] {
-        print("⚠️ MLXEmbeddingService.findSimilar() is deprecated - use VectorDatabase.shared")
+        print("⚠️ MLXEmbeddingService.findSimilar() is deprecated - use RecallEngine")
         return []
     }
 }

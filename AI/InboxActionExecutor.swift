@@ -787,19 +787,7 @@ final class InboxActionExecutor {
     }
 
     private func reindex(atom: Atom) async {
-        let text = [atom.title, atom.body].compactMap { $0 }.joined(separator: "\n\n")
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        do {
-            try await VectorDatabase.shared.index(
-                text: text,
-                entityType: atom.type.rawValue,
-                entityId: atom.id ?? 0,
-                entityUUID: atom.uuid
-            )
-        } catch {
-            print("⚠️ [InboxAction] Vector reindex failed for \(atom.uuid): \(error)")
-            PersistenceHealth.note(.writeFailure, context: "InboxActionExecutor.reindex", detail: "vector index failed for \(atom.uuid): \(error.localizedDescription)")
-        }
+        await RecallIndexer.shared.noteAtomChanged(atom)
     }
 
     private func blendMerge(existing: String, newContext: String, title: String) async -> String {

@@ -108,33 +108,24 @@ final class SmartOrganizer {
                 return []
             }
 
-            // Get text content for embedding
+            // Get text content for the recall query
             let searchText = [atom.title, atom.body].compactMap { $0 }.joined(separator: " ")
             guard !searchText.isEmpty else { return [] }
 
-            // Generate embedding and search
-            let embedding = try await DaemonXPCClient.shared.embed(text: searchText)
-            let truncated = Array(embedding.prefix(VectorConfig.matryoshkaDimension))
+            let hits = await RecallEngine.shared.query(RecallQuery(
+                text: searchText,
+                limit: limit,
+                excludeUuids: [atomUUID]
+            ))
 
-            // Search via VectorDatabase
-            let results = try await VectorDatabase.shared.searchByVector(
-                embedding: truncated,
-                limit: limit + 1 // +1 to exclude self
-            )
-
-            // Convert to RelatedAtomResult, excluding the source atom
             var related: [RelatedAtomResult] = []
-            for result in results {
-                guard result.entityUUID != atomUUID else { continue }
-                guard related.count < limit else { break }
-
-                let relatedAtom = try? await AtomRepository.shared.fetch(uuid: result.entityUUID ?? "")
+            for hit in hits {
                 related.append(RelatedAtomResult(
-                    uuid: result.entityUUID ?? "",
-                    title: relatedAtom?.title ?? "Untitled",
-                    atomType: relatedAtom?.type ?? .idea,
-                    similarity: result.similarity,
-                    preview: relatedAtom?.body.flatMap { String($0.prefix(80)) }
+                    uuid: hit.atomUuid,
+                    title: hit.title,
+                    atomType: hit.atomType,
+                    similarity: Float(hit.score),
+                    preview: String(hit.matchedText.prefix(80))
                 ))
             }
 

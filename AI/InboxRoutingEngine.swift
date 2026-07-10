@@ -452,7 +452,7 @@ actor InboxRoutingEngine {
                     memberUUIDs: cluster.blockUUIDs
                 ) else { continue }
 
-                let semantic = Double(VectorDatabase.cosine(queryVector, centroid))
+                let semantic = Double(RecallVectorMath.dot(queryVector, centroid))
                 let lexical = textMatchScore(
                     queryTokens: queryTokens,
                     candidate: "\(cluster.name) \(cluster.intent ?? "") \(metadata.name)"
@@ -475,7 +475,7 @@ actor InboxRoutingEngine {
                 forDestination: "thinkspace-\(atom.uuid)",
                 memberUUIDs: thinkspaceMembers
             ) {
-                let semantic = Double(VectorDatabase.cosine(queryVector, centroid))
+                let semantic = Double(RecallVectorMath.dot(queryVector, centroid))
                 let lexical = textMatchScore(queryTokens: queryTokens, candidate: metadata.name)
                     * config.lexicalBonusWeight
                 thinkspaceScores.append(
@@ -714,7 +714,7 @@ actor InboxRoutingEngine {
         let key = hasher.finalize()
 
         if let cached = captureEmbeddingCache[key] { return cached }
-        guard let vector = try? await VectorDatabase.shared.embedText(String(text.prefix(2000))) else {
+        guard let vector = try? await RecallEmbedding.embedText(text) else {
             return nil
         }
         // Bound the cache — captures are transient.
@@ -735,7 +735,7 @@ actor InboxRoutingEngine {
             return cached.vector
         }
 
-        guard let vectors = try? await VectorDatabase.shared.embeddings(forEntityUUIDs: sample),
+        guard case let vectors = await RecallStore.shared.embeddings(forEntityUuids: sample),
               !vectors.isEmpty else {
             return nil
         }

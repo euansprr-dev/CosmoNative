@@ -117,6 +117,19 @@ struct CloudEmbeddingClient: RecallEmbeddingClient {
     }
 }
 
+// MARK: - Shared Text Embedding Helper
+
+/// One-line access for callers that need raw vectors (centroid math, context
+/// scoring). Vectors come back L2-normalized — cosine is a plain dot product.
+enum RecallEmbedding {
+    static func embedText(_ text: String) async throws -> [Float] {
+        guard let vector = try await CloudEmbeddingClient().embed([String(text.prefix(2_000))]).first else {
+            throw RecallEmbeddingError.notConfigured
+        }
+        return vector
+    }
+}
+
 // MARK: - Deterministic Fake (tests, offline development)
 
 /// Hash-bucketed bag-of-words embedding: texts sharing vocabulary land near

@@ -1,7 +1,7 @@
 // CosmoOS/Cosmo/HybridSearchEngine.swift
 // Hybrid BM25 + Vector Search for Telepathic Voice Assistant
 // Combines fast keyword search with semantic understanding
-// Uses DaemonXPCClient for real 768d embeddings, truncated to 256d Matryoshka
+// Query embeddings come from the Recall cloud client; stored vectors live in recall_vectors
 
 import Foundation
 import Accelerate
@@ -16,10 +16,8 @@ final class HybridSearchEngine: ObservableObject {
     // MARK: - Dependencies
 
     private let database = CosmoDatabase.shared
-    private let semanticEngine = SemanticSearchEngine.shared
 
     /// Vector dimension used for search (Matryoshka truncation)
-    private let vectorDimension = VectorConfig.matryoshkaDimension  // 256
 
     // MARK: - Configuration
 
@@ -137,16 +135,15 @@ final class HybridSearchEngine: ObservableObject {
             )
         }
 
-        // Stage 2: Generate query embedding for vector similarity via DaemonXPCClient
+        // Stage 2: Generate query embedding for vector similarity (Recall
+        // cloud client — the daemon embedding path was a dormant stub).
         let queryVector: [Float]
         do {
-            let fullVector = try await DaemonXPCClient.shared.embed(text: query)
-            try Task.checkCancellation()
-            // Truncate 768d → 256d Matryoshka to match stored vectors
-            queryVector = Array(fullVector.prefix(vectorDimension))
-            if fullVector.count != vectorDimension {
-                print("  📐 Truncated query vector \(fullVector.count)d → \(queryVector.count)d")
+            guard let vector = try await CloudEmbeddingClient().embed([query]).first else {
+                throw RecallEmbeddingError.notConfigured
             }
+            try Task.checkCancellation()
+            queryVector = vector
         } catch is CancellationError {
             throw CancellationError()
         } catch {
@@ -427,10 +424,10 @@ final class HybridSearchEngine: ObservableObject {
         excludedEntityUUIDs: Set<String>
     ) async throws -> [SearchResult] {
         try Task.checkCancellation()
-        let fullVector = try await DaemonXPCClient.shared.embed(text: query)
+        guard let queryVector = try? await CloudEmbeddingClient().embed([query]).first else {
+            return []
+        }
         try Task.checkCancellation()
-        // Truncate 768d → 256d Matryoshka to match stored vectors
-        let queryVector = Array(fullVector.prefix(vectorDimension))
         return try await pureVectorSearch(
             queryVector: queryVector,
             limit: limit,
@@ -440,7 +437,7 @@ final class HybridSearchEngine: ObservableObject {
         )
     }
 
-    /// Pure vector search with pre-computed query vector
+    /// Pure vector search with pre-computed query vector (Recall index sweep)
     private func pureVectorSearch(
         queryVector: [Float],
         limit: Int,
@@ -449,89 +446,57 @@ final class HybridSearchEngine: ObservableObject {
         excludedEntityUUIDs: Set<String> = []
     ) async throws -> [SearchResult] {
         try Task.checkCancellation()
-        let minSimilarity = self.minSimilarity
-        let excludeTypeRaw = excludeEntity.0?.rawValue
-        let excludeId = excludeEntity.1
         var allowedTypeRawValues = entityTypes.map { Set($0.map(\.rawValue)) }
         if entityTypes?.contains(.journal) == true {
             allowedTypeRawValues?.insert(AtomType.journalEntry.rawValue)
         }
 
-        // This loop can cover every chunk in the library — decode and score on
-        // the database queue, never the main actor.
-        let results: [(entityType: String, entityId: Int64, title: String, text: String, similarity: Float)] =
-            try await database.asyncRead { db in
-                let excludedTypes = AtomType.searchExcludedRawValues
-                let chunks = try SemanticChunk
-                    .filter(!excludedTypes.contains(Column("entity_type")))
-                    .order(Column("created_at").desc)
-                    .fetchAll(db)
-
-                var scored: [(entityType: String, entityId: Int64, title: String, text: String, similarity: Float)] = []
-                for chunk in chunks {
-                    // Skip excluded entity
-                    if let excludeTypeRaw, let excludeId,
-                       chunk.entityType == excludeTypeRaw,
-                       chunk.entityId == excludeId {
-                        continue
-                    }
-
-                    // Filter by entity types
-                    if let allowedTypeRawValues, !allowedTypeRawValues.contains(chunk.entityType) {
-                        continue
-                    }
-
-                    guard let vectorData = chunk.vector,
-                          let chunkVec = Self.decodeVector(vectorData) else { continue }
-
-                    let similarity = Self.truncatedCosineSimilarity(queryVector, chunkVec)
-
-                    if similarity >= minSimilarity {
-                        scored.append((
-                            entityType: chunk.entityType,
-                            entityId: chunk.entityId,
-                            title: chunk.fieldName ?? "Untitled",
-                            text: chunk.text,
-                            similarity: similarity
-                        ))
-                    }
-                }
-                return scored
-            }
+        // Over-fetch chunks so entity-level dedupe still fills the limit.
+        let hits = await RecallStore.shared.search(
+            embedding: queryVector,
+            limit: max(limit * 4, 24),
+            entityTypes: allowedTypeRawValues,
+            minSimilarity: minSimilarity
+        )
         try Task.checkCancellation()
 
-        // Deduplicate by entity (keep highest similarity)
+        // Deduplicate by entity (hits arrive similarity-sorted).
         var seen: Set<String> = []
-        var deduplicated: [(entityType: String, entityId: Int64, title: String, text: String, similarity: Float)] = []
-
-        let sorted = results.sorted { $0.similarity > $1.similarity }
-
-        for result in sorted {
-            let key = "\(result.entityType)-\(result.entityId)"
-            if !seen.contains(key) {
-                seen.insert(key)
-                deduplicated.append(result)
-            }
+        var deduplicated: [RecallVectorHit] = []
+        for hit in hits where !seen.contains(hit.entityUuid) {
+            seen.insert(hit.entityUuid)
+            deduplicated.append(hit)
         }
 
-        // Enrich with entity details and return
+        // Hydrate atoms for id/title enrichment.
+        let uuids = deduplicated.map(\.entityUuid)
+        let atoms: [String: Atom] = (try? await database.asyncRead { db in
+            let fetched = try Atom
+                .filter(uuids.contains(Column("uuid")))
+                .filter(Column("is_deleted") == false)
+                .fetchAll(db)
+            return Dictionary(uniqueKeysWithValues: fetched.map { ($0.uuid, $0) })
+        }) ?? [:]
+
         var enrichedResults: [SearchResult] = []
-        for result in deduplicated.prefix(limit) {
-            try Task.checkCancellation()
-            guard let entityType = Self.mapAtomTypeToEntityType(result.entityType) else { continue }
-            let uuid = await resolveUUID(entityType: result.entityType, entityId: result.entityId)
-            if let uuid, excludedEntityUUIDs.contains(uuid) {
+        for hit in deduplicated {
+            guard enrichedResults.count < limit else { break }
+            guard !excludedEntityUUIDs.contains(hit.entityUuid) else { continue }
+            guard let atom = atoms[hit.entityUuid] else { continue }
+            if let excludeTypeRaw = excludeEntity.0?.rawValue, let excludeId = excludeEntity.1,
+               atom.type.rawValue == excludeTypeRaw, atom.id == excludeId {
                 continue
             }
+            guard let entityType = Self.mapAtomTypeToEntityType(hit.entityType) else { continue }
             enrichedResults.append(SearchResult(
                 entityType: entityType,
-                entityId: result.entityId,
-                entityUUID: uuid,
-                title: result.title,
-                preview: String(result.text.prefix(200)),
+                entityId: atom.id ?? 0,
+                entityUUID: hit.entityUuid,
+                title: atom.title?.isEmpty == false ? atom.title! : "Untitled",
+                preview: String(hit.text.prefix(200)),
                 bm25Score: 0,
-                vectorSimilarity: Double(result.similarity),
-                combinedScore: Double(result.similarity),
+                vectorSimilarity: Double(hit.similarity),
+                combinedScore: Double(hit.similarity),
                 matchReason: .semanticSimilarity
             ))
         }
@@ -539,84 +504,16 @@ final class HybridSearchEngine: ObservableObject {
     }
 
     /// Max vector similarity per entity UUID for a batch of candidates,
-    /// computed in a single database read with decode + cosine running on the
-    /// database queue instead of one main-actor roundtrip per candidate.
+    /// computed in one sweep over the Recall index's in-memory matrix.
     private func batchVectorSimilarity(
         entityUUIDs: [String],
         queryVector: [Float]
     ) async throws -> [String: Float] {
         guard !entityUUIDs.isEmpty else { return [:] }
-        return try await database.asyncRead { db in
-            let placeholders = entityUUIDs.map { _ in "?" }.joined(separator: ", ")
-            let rows = try Row.fetchAll(
-                db,
-                sql: "SELECT entity_uuid, vector FROM semantic_chunks WHERE entity_uuid IN (\(placeholders))",
-                arguments: StatementArguments(entityUUIDs)
-            )
-
-            var best: [String: Float] = [:]
-            for row in rows {
-                guard let uuid = row["entity_uuid"] as? String,
-                      let vectorData = row["vector"] as? Data,
-                      let chunkVector = Self.decodeVector(vectorData) else { continue }
-                let similarity = Self.truncatedCosineSimilarity(queryVector, chunkVector)
-                if similarity > (best[uuid] ?? 0) {
-                    best[uuid] = similarity
-                }
-            }
-            return best
-        }
-    }
-
-    /// Cosine similarity that tolerates dimension mismatches by truncating the
-    /// larger vector (Matryoshka embeddings share their leading dimensions).
-    private nonisolated static func truncatedCosineSimilarity(_ queryVector: [Float], _ chunkVector: [Float]) -> Float {
-        let (a, b): ([Float], [Float])
-        if chunkVector.count == queryVector.count {
-            (a, b) = (queryVector, chunkVector)
-        } else if chunkVector.count > queryVector.count {
-            (a, b) = (queryVector, Array(chunkVector.prefix(queryVector.count)))
-        } else {
-            (a, b) = (Array(queryVector.prefix(chunkVector.count)), chunkVector)
-        }
-        return cosineSimilarity(a, b)
-    }
-
-    // MARK: - Vector Similarity Lookup
-
-    /// Get vector similarity for a specific entity
-    private func getVectorSimilarity(
-        entityType: String,
-        entityId: Int64,
-        queryVector: [Float]
-    ) async -> Float {
-        do {
-            let chunks = try await database.asyncRead { db in
-                try SemanticChunk
-                    .filter(Column("entity_type") == entityType)
-                    .filter(Column("entity_id") == entityId)
-                    .fetchAll(db)
-            }
-
-            // Find max similarity across all chunks for this entity
-            var maxSimilarity: Float = 0
-
-            for chunk in chunks {
-                if Task.isCancelled { return 0 }
-                guard let vectorData = chunk.vector,
-                      let chunkVector = Self.decodeVector(vectorData) else {
-                    continue
-                }
-
-                let similarity = Self.truncatedCosineSimilarity(queryVector, chunkVector)
-                maxSimilarity = max(maxSimilarity, similarity)
-            }
-
-            return maxSimilarity
-
-        } catch {
-            return 0
-        }
+        return await RecallStore.shared.bestSimilarities(
+            entityUuids: Set(entityUUIDs),
+            query: queryVector
+        )
     }
 
     /// Map AtomType raw value string to EntityType (handles journal_entry → .journal).
@@ -631,7 +528,7 @@ final class HybridSearchEngine: ObservableObject {
 
     // MARK: - Context Boosting
 
-    /// Apply context-based boosting to search results
+    /// Apply context-based boosting to search results (one Recall sweep).
     private func applyContextBoost(
         results: [SearchResult],
         context: VoiceContextSnapshot
@@ -640,76 +537,30 @@ final class HybridSearchEngine: ObservableObject {
             return results
         }
 
-        var boostedResults: [SearchResult] = []
+        let uuids = Set(results.compactMap(\.entityUUID))
+        let similarities = await RecallStore.shared.bestSimilarities(
+            entityUuids: uuids, query: contextVector
+        )
 
-        for result in results {
-            if Task.isCancelled { return results }
-            let contextSimilarity = await getVectorSimilarity(
-                entityType: result.entityType.rawValue,
+        return results.map { result in
+            guard let uuid = result.entityUUID,
+                  let contextSimilarity = similarities[uuid],
+                  contextSimilarity > 0.5 else { return result }
+            let boost = Double(contextSimilarity) * 0.2  // Up to 20% boost
+            return SearchResult(
+                entityType: result.entityType,
                 entityId: result.entityId,
-                queryVector: contextVector
+                entityUUID: result.entityUUID,
+                title: result.title,
+                preview: result.preview,
+                bm25Score: result.bm25Score,
+                vectorSimilarity: result.vectorSimilarity,
+                combinedScore: result.combinedScore + boost,
+                matchReason: .contextRelevant,
+                updatedAt: result.updatedAt,
+                matchedAllTerms: result.matchedAllTerms
             )
-
-            // Boost score if similar to editing context
-            if contextSimilarity > 0.5 {
-                let boost = Double(contextSimilarity) * 0.2  // Up to 20% boost
-                boostedResults.append(SearchResult(
-                    entityType: result.entityType,
-                    entityId: result.entityId,
-                    entityUUID: result.entityUUID,
-                    title: result.title,
-                    preview: result.preview,
-                    bm25Score: result.bm25Score,
-                    vectorSimilarity: result.vectorSimilarity,
-                    combinedScore: result.combinedScore + boost,
-                    matchReason: .contextRelevant,
-                    updatedAt: result.updatedAt,
-                    matchedAllTerms: result.matchedAllTerms
-                ))
-            } else {
-                boostedResults.append(result)
-            }
-        }
-
-        return boostedResults
-    }
-
-    // MARK: - Vector Utilities
-
-    private nonisolated static func decodeVector(_ data: Data) -> [Float]? {
-        let floatSize = MemoryLayout<Float>.size
-        let elementCount = data.count / floatSize
-
-        guard [256, 384, 768, 1024].contains(elementCount) else {
-            print("  ⚠️ Vector dimension mismatch: got \(elementCount)d, expected 256/384/768/1024")
-            return nil
-        }
-
-        return data.withUnsafeBytes { bytes in
-            Array(bytes.bindMemory(to: Float.self))
         }
     }
 
-    private nonisolated static func cosineSimilarity(_ a: [Float], _ b: [Float]) -> Float {
-        guard a.count == b.count, !a.isEmpty else { return 0 }
-
-        var dotProduct: Float = 0
-        var normA: Float = 0
-        var normB: Float = 0
-
-        vDSP_dotpr(a, 1, b, 1, &dotProduct, vDSP_Length(a.count))
-        vDSP_dotpr(a, 1, a, 1, &normA, vDSP_Length(a.count))
-        vDSP_dotpr(b, 1, b, 1, &normB, vDSP_Length(b.count))
-
-        let denominator = sqrt(normA) * sqrt(normB)
-        guard denominator > 0 else { return 0 }
-
-        return dotProduct / denominator
-    }
-}
-
-// MARK: - SemanticChunk Extension (for type access)
-
-private extension HybridSearchEngine {
-    // Uses SemanticChunk from SemanticSearchEngine.swift
 }

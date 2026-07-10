@@ -125,7 +125,7 @@ actor InboxDestinationAtlas {
         var scored: [InboxAtlasKind: [ScoredEntry]] = [:]
         for entry in all {
             guard let vector = await embedding(for: entry) else { continue }
-            let similarity = Double(VectorDatabase.cosine(queryVector, vector))
+            let similarity = Double(RecallVectorMath.dot(queryVector, vector))
             scored[entry.kind, default: []].append(ScoredEntry(entry: entry, similarity: similarity))
         }
         for kind in scored.keys {
@@ -153,7 +153,7 @@ actor InboxDestinationAtlas {
         if let cached = embeddingCache[entry.key], cached.fingerprint == fingerprint {
             return cached.vector
         }
-        guard let vector = try? await VectorDatabase.shared.embedText(String(entry.embeddingText.prefix(1000))) else {
+        guard let vector = try? await RecallEmbedding.embedText(String(entry.embeddingText.prefix(1000))) else {
             return nil
         }
         embeddingCache[entry.key] = EmbeddingEntry(fingerprint: fingerprint, vector: vector)

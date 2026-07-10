@@ -124,10 +124,17 @@ final class AtomRevisionTests: XCTestCase {
         XCTAssertEqual(keep.count, dates.count)
     }
 
+    /// Align a date to the start of its retention bucket so offsets can't
+    /// straddle an epoch boundary and flake by time of day.
+    private func bucketAligned(_ date: Date, bucketSeconds: Double) -> Date {
+        Date(timeIntervalSince1970: (date.timeIntervalSince1970 / bucketSeconds).rounded(.down) * bucketSeconds)
+    }
+
     func testRetentionThinsWeekOldToHourly() {
         let now = Date()
-        let base = now.addingTimeInterval(-3 * 86_400) // 3 days old
-        // 4 revisions inside the SAME hour bucket + 1 in another hour
+        // 3 days old, aligned to an hour edge: 4 revisions in ONE hour bucket
+        // + 1 two hours later.
+        let base = bucketAligned(now.addingTimeInterval(-3 * 86_400), bucketSeconds: 3_600)
         let dates = [
             base, base.addingTimeInterval(60), base.addingTimeInterval(120),
             base.addingTimeInterval(180), base.addingTimeInterval(7_200),
@@ -138,7 +145,7 @@ final class AtomRevisionTests: XCTestCase {
 
     func testRetentionThinsMonthOldToDaily() {
         let now = Date()
-        let base = now.addingTimeInterval(-30 * 86_400)
+        let base = bucketAligned(now.addingTimeInterval(-30 * 86_400), bucketSeconds: 86_400)
         let dates = [
             base, base.addingTimeInterval(3_600), base.addingTimeInterval(7_200),
             base.addingTimeInterval(86_400 + 3_600),

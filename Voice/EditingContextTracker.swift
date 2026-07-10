@@ -158,10 +158,9 @@ final class EditingContextTracker: ObservableObject {
         defer { isUpdatingContext = false }
 
         do {
-            // Generate embedding for context via DaemonXPCClient
-            let fullEmbedding = try await DaemonXPCClient.shared.embed(text: contextText)
-            // Truncate 768d → 256d Matryoshka to match stored vectors
-            contextVector = Array(fullEmbedding.prefix(VectorConfig.matryoshkaDimension))
+            // Embed the editing context through the Recall cloud client so it
+            // matches the stored index dimension.
+            contextVector = try await RecallEmbedding.embedText(contextText)
             lastContextUpdate = Date()
 
             // Extract concepts (simple keyword extraction)

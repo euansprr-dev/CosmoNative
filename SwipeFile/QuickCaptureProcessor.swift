@@ -415,26 +415,8 @@ final class QuickCaptureProcessor: ObservableObject {
     }
 
     private func generateEmbedding(for research: Research) async {
-        var textToEmbed = ""
-        if let title = research.title {
-            textToEmbed += title + " "
-        }
-        if let summary = research.summary {
-            textToEmbed += summary
-        }
-
-        guard !textToEmbed.isEmpty else { return }
-
-        do {
-            try await VectorDatabase.shared.index(
-                text: textToEmbed,
-                entityType: "research",
-                entityId: research.id ?? 0,
-                entityUUID: research.uuid
-            )
-        } catch {
-            print("QuickCapture: Failed to generate embedding: \(error)")
-        }
+        // Recall index: the drain re-reads the atom, so this is just an enqueue.
+        await RecallIndexer.shared.noteAtomChanged(uuid: research.uuid)
     }
 
     // MARK: - Notifications

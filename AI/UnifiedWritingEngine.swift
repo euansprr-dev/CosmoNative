@@ -248,13 +248,12 @@ final class UnifiedWritingEngine: ObservableObject {
 
     private let writerModel = ContentModelTier.writer.rawValue
     private let brainstormModel = ContentModelTier.writer.rawValue  // Opus for ALL phases — outline quality matters
-    private let scorecardModel = ContentModelTier.strategist.rawValue
     private let maxRetries = 2
     private let promptCacheTTL = "1h"
     private let tokenSummarizationThreshold = 100_000  // Opus 4.6 has 1M context — don't summarize mid-session
 
     /// Optional model override for Telegram A/B testing (Opus vs GPT 5.4).
-    /// When set, replaces writerModel/brainstormModel but NOT scorecardModel.
+    /// When set, replaces writerModel/brainstormModel.
     var writerModelOverride: String?
 
     // MARK: - Phase-Aware Model Selection
@@ -648,7 +647,7 @@ final class UnifiedWritingEngine: ObservableObject {
             transitionText = """
             [Phase transition: \(from.label) → Polish]
             The draft is complete (\(wordCount) words).
-            Focus on refinement: scorecard evaluation, voice drift correction, CTA strengthening.
+            Focus on refinement: voice drift correction, CTA strengthening, weak-section rewrites.
             Be surgical, not wholesale.
             """
         }
@@ -677,12 +676,6 @@ final class UnifiedWritingEngine: ObservableObject {
         failure rules to avoid. Then use write_draft to output the complete draft.
         """
         _ = await sendMessage(prompt, phase: .draft)
-    }
-
-    /// Run the scorecard evaluation on the current draft.
-    func runScorecard() async {
-        let prompt = "Evaluate the current draft using run_scorecard. Review the results and suggest specific improvements."
-        _ = await sendMessage(prompt, phase: .polish)
     }
 
     /// Perform an inline edit (expand/condense/rephrase) on selected text.
@@ -1706,16 +1699,6 @@ final class UnifiedWritingEngine: ObservableObject {
             required: ["query"]
         ))
 
-        // run_scorecard — polish
-        if phase == .polish {
-            tools.append(buildTool(
-                name: "run_scorecard",
-                description: "Evaluate the current draft against quality criteria (Hook, Copy, CTA, Voice Match, Structural Alignment). Returns detailed scores and suggestions.",
-                properties: [:],
-                required: []
-            ))
-        }
-
         return tools
     }
 
@@ -1807,10 +1790,6 @@ final class UnifiedWritingEngine: ObservableObject {
 
                 case "get_client_profile":
                     resultContent = await handleGetClientProfile(call.input)
-                    isError = false
-
-                case "run_scorecard":
-                    resultContent = await handleRunScorecard()
                     isError = false
 
                 case "list_client_posts":
@@ -2199,41 +2178,6 @@ final class UnifiedWritingEngine: ObservableObject {
         }
 
         var result = "Draft written (\(wordCount) words, format: \(formatStr))\(evalSummary)\(validationNote)\(voiceNote)\(complianceNote)"
-
-        // Auto-refine: evaluate and improve if needed
-        if refinementIterations < 2, let atom = contentAtom {
-            do {
-                // Refresh atom to get latest draft content
-                let freshAtom = try? await database.asyncRead { db in
-                    try Atom.filter(Column("uuid") == atom.uuid).filter(Column("is_deleted") == false).fetchOne(db)
-                }
-                if let fresh = freshAtom, let focusState = ContentFocusModeState.from(atom: fresh) {
-                    let engine = ContentScorecardEngine()
-                    let scorecard = try await engine.evaluate(contentAtom: fresh, state: focusState)
-
-                    let weakDimensions = scorecard.slideAnalysis.isEmpty
-                        ? [(name: "Hook", score: scorecard.hookScore.score, suggestions: scorecard.hookScore.suggestions),
-                           (name: "Copy", score: scorecard.copyScore.score, suggestions: scorecard.copyScore.suggestions),
-                           (name: "CTA", score: scorecard.ctaScore.score, suggestions: scorecard.ctaScore.suggestions)]
-                            .filter { $0.score < 7 }
-                        : [(name: "Hook", score: scorecard.hookScore.score, suggestions: scorecard.hookScore.suggestions),
-                           (name: "Copy", score: scorecard.copyScore.score, suggestions: scorecard.copyScore.suggestions),
-                           (name: "CTA", score: scorecard.ctaScore.score, suggestions: scorecard.ctaScore.suggestions)]
-                            .filter { $0.score < 7 }
-
-                    if !weakDimensions.isEmpty {
-                        let feedback = weakDimensions.map { dim in
-                            "[\(dim.name)] \(String(format: "%.1f", dim.score))/10: \(dim.suggestions.joined(separator: "; "))"
-                        }.joined(separator: "\n")
-
-                        refinementIterations += 1
-                        result += "\n\nAUTO-REFINEMENT PASS \(refinementIterations)/2:\nThe following dimensions scored below threshold:\n\(feedback)\n\nRevise ONLY the weak sections. Keep everything scoring 7+ unchanged. Use the write_draft tool with your improved version."
-                    }
-                }
-            } catch {
-                print("Self-refine scorecard failed: \(error)")
-            }
-        }
 
         return result
     }
@@ -2680,53 +2624,6 @@ final class UnifiedWritingEngine: ObservableObject {
 
         print("🔧 [UnifiedWritingEngine] Loaded swipe body into reference material: \(title) (\(body.count) chars)")
         return cachedReferenceMaterial[cacheKey]!
-    }
-
-    private func handleRunScorecard() async -> String {
-        guard let atom = contentAtom else { return "Error: no content atom loaded" }
-
-        guard let focusState = ContentFocusModeState.from(atom: atom),
-              !focusState.draftContent.isEmpty else {
-            return "Error: no draft content to evaluate"
-        }
-
-        do {
-            let engine = ContentScorecardEngine()
-            let scorecard = try await engine.evaluate(contentAtom: atom, state: focusState)
-
-            var lines: [String] = []
-            lines.append("=== SCORECARD RESULTS ===")
-            lines.append("Hook: \(String(format: "%.1f", scorecard.hookScore.score))/10")
-            lines.append("Copy: \(String(format: "%.1f", scorecard.copyScore.score))/10")
-            lines.append("CTA: \(String(format: "%.1f", scorecard.ctaScore.score))/10")
-            lines.append("Voice Match: \(String(format: "%.0f", scorecard.voiceMatch.percentage))%")
-            lines.append("Structural Alignment: \(String(format: "%.0f", scorecard.structuralAlignment.alignmentScore))%")
-            lines.append("Overall Confidence: \(scorecard.overallConfidence)%")
-
-            if !scorecard.hookScore.suggestions.isEmpty {
-                lines.append("\nHook suggestions: \(scorecard.hookScore.suggestions.joined(separator: "; "))")
-            }
-            if !scorecard.copyScore.suggestions.isEmpty {
-                lines.append("Copy suggestions: \(scorecard.copyScore.suggestions.joined(separator: "; "))")
-            }
-            if !scorecard.voiceMatch.drifts.isEmpty {
-                lines.append("Voice drifts found: \(scorecard.voiceMatch.drifts.count)")
-                for drift in scorecard.voiceMatch.drifts.prefix(3) {
-                    lines.append("  Line \(drift.lineNumber): \(drift.issue)")
-                }
-            }
-
-            // Post scorecard result for view
-            NotificationCenter.default.post(
-                name: .unifiedEngineScorecardResult,
-                object: nil,
-                userInfo: ["scorecard": scorecard]
-            )
-
-            return lines.joined(separator: "\n")
-        } catch {
-            return "Scorecard error: \(error.localizedDescription)"
-        }
     }
 
     /// Analyze patterns across all loaded swipe examples (WP4).
@@ -4119,7 +4016,6 @@ final class UnifiedWritingEngine: ObservableObject {
         case "get_client_profile":
             let client = clientMeta?.clientName ?? ""
             return client.isEmpty ? "Loading client profile" : "Loading profile: \(client)"
-        case "run_scorecard": return "Running scorecard\(shortTitle)"
         case "list_client_posts": return "Browsing client posts"
         case "read_client_post": return "Loading client post"
         case "read_swipe_body": return "Loading swipe body"
@@ -4268,5 +4164,4 @@ extension Notification.Name {
     static let unifiedEngineDescriptionUpdate = Notification.Name("unifiedEngineDescriptionUpdate")
     static let unifiedEngineDraftUpdate = Notification.Name("unifiedEngineDraftUpdate")
     static let unifiedEngineSectionEdit = Notification.Name("unifiedEngineSectionEdit")
-    static let unifiedEngineScorecardResult = Notification.Name("unifiedEngineScorecardResult")
 }

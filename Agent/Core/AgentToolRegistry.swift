@@ -638,17 +638,6 @@ class AgentToolRegistry {
                     "required": [] as [String]
                 ]
             ),
-            LLMToolDefinition(
-                name: "score_draft",
-                description: "Run the content scorecard engine on a draft and return hook, copy, CTA, voice match, structural alignment, slide analysis, and guided feedback.",
-                parametersSchema: [
-                    "type": "object",
-                    "properties": [
-                        "contentUUID": ["type": "string", "description": "UUID of the content atom to score"] as [String: Any]
-                    ] as [String: Any],
-                    "required": ["contentUUID"]
-                ]
-            ),
         ]
     }
 

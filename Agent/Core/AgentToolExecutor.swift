@@ -238,7 +238,6 @@ class AgentToolExecutor {
         case "generate_hooks": return try await generateHooks(arguments)
         // Scoring
         case "get_beat_patterns": return try await getBeatPatterns(arguments)
-        case "score_draft": return try await scoreDraft(arguments)
         // Client Profiles
         case "list_client_profiles": return try await listClientProfiles(arguments)
         case "get_client_profile": return try await getClientProfile(arguments)
@@ -3619,71 +3618,6 @@ class AgentToolExecutor {
             "patterns": items,
             "count": items.count
         ] as [String: Any])
-    }
-
-    private func scoreDraft(_ args: [String: Any]) async throws -> String {
-        guard let contentUUID = args["contentUUID"] as? String else {
-            return jsonError("Missing required parameter: contentUUID")
-        }
-        guard let contentAtom = try await atomRepo.fetch(uuid: contentUUID) else {
-            return jsonError("Content atom not found: \(contentUUID)")
-        }
-
-        guard let state = ContentFocusModeState.from(atom: contentAtom) else {
-            return jsonError("Could not load content state for \(contentUUID). Ensure the content has a draft body.")
-        }
-
-        let engine = ContentScorecardEngine()
-        do {
-            let scorecard = try await engine.evaluate(contentAtom: contentAtom, state: state)
-
-            var result: [String: Any] = [
-                "success": true,
-                "contentUUID": contentUUID,
-                "hookScore": scorecard.hookScore.score,
-                "copyScore": scorecard.copyScore.score,
-                "ctaScore": scorecard.ctaScore.score,
-                "voiceMatchPercentage": scorecard.voiceMatch.percentage,
-                "structuralAlignmentScore": scorecard.structuralAlignment.alignmentScore,
-                "overallConfidence": scorecard.overallConfidence,
-                "hookSuggestions": scorecard.hookScore.suggestions,
-                "copySuggestions": scorecard.copyScore.suggestions,
-                "ctaSuggestions": scorecard.ctaScore.suggestions,
-                "structuralSuggestions": scorecard.structuralAlignment.suggestions,
-                "draftBeats": scorecard.structuralAlignment.draftBeats,
-                "recommendedBeats": scorecard.structuralAlignment.recommendedBeats,
-                "slideCount": scorecard.slideAnalysis.count
-            ]
-
-            if let originality = scorecard.originalityScore {
-                result["originalityScore"] = originality.score
-                result["originalitySuggestions"] = originality.suggestions
-            }
-
-            if !scorecard.voiceMatch.drifts.isEmpty {
-                let driftSummaries: [[String: Any]] = scorecard.voiceMatch.drifts.prefix(5).map { drift in
-                    [
-                        "lineNumber": drift.lineNumber,
-                        "issue": drift.issue,
-                        "suggestion": drift.suggestion
-                    ] as [String: Any]
-                }
-                result["voiceDrifts"] = driftSummaries
-            }
-
-            let feedback = engine.generateGuidedFeedback(
-                scores: scorecard,
-                matchedSwipes: [],
-                clientVoice: nil
-            )
-            if !feedback.isEmpty {
-                result["guidedFeedback"] = feedback
-            }
-
-            return jsonEncode(result)
-        } catch {
-            return jsonError("Scorecard evaluation failed: \(error.localizedDescription)")
-        }
     }
 
     private func updateContent(_ args: [String: Any]) async throws -> String {

@@ -307,13 +307,6 @@ class TelegramRichMessages {
             sections.append("  \u{270F}\u{FE0F} Writing Engine: \(toolNames.joined(separator: ", "))")
         }
 
-        // Scorecard
-        let scorecardCalls = trace.toolCalls.filter { $0.name.contains("score") }
-        for call in scorecardCalls {
-            if let summary = call.resultSummary {
-                sections.append("  \u{1F4CA} Scorecard: \(summary)")
-            }
-        }
 
         // Learned skills applied
         if let summary = trace.skillsSummary {

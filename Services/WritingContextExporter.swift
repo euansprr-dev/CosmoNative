@@ -155,9 +155,8 @@ final class WritingContextExporter {
             with: "Include the analysis in your response."
         )
 
-        // Replace ContentScorecard reference
         p = p.replacingOccurrences(
-            of: "Score against ContentScorecard, revise any dimension below 7/10.",
+            of: "Review each dimension of the draft and revise anything weak.",
             with: "Self-score each dimension (voice match, format compliance, hook strength, structural integrity, CTA) — revise any below 7/10."
         )
 

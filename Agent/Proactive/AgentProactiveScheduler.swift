@@ -70,7 +70,6 @@ class AgentProactiveScheduler: ObservableObject {
     private var intelligentAlertTimer: Timer?
     private var standingInstructionTimer: Timer?
     private var nightlyConsolidationTimer: Timer?
-    private var performanceCalibrationTimer: Timer?
     private var heartbeatTimer: Timer?
     private var lastHeartbeatAt: Date?
     private var deferredMessages: [(chatId: String, tag: String)] = []
@@ -98,7 +97,6 @@ class AgentProactiveScheduler: ObservableObject {
         scheduleIntelligentAlerts()
         scheduleStandingInstructions()
         scheduleNightlyConsolidation()
-        schedulePerformanceCalibration()
         scheduleHeartbeat()
     }
 
@@ -109,7 +107,6 @@ class AgentProactiveScheduler: ObservableObject {
         intelligentAlertTimer?.invalidate()
         standingInstructionTimer?.invalidate()
         nightlyConsolidationTimer?.invalidate()
-        performanceCalibrationTimer?.invalidate()
         heartbeatTimer?.invalidate()
         scheduleAll()
     }
@@ -305,58 +302,6 @@ class AgentProactiveScheduler: ObservableObject {
 
         print("[ProactiveScheduler] Consolidation complete: \(allLessons.count) lessons reviewed, \(pruned) pruned")
         logDeliveryAttempt(type: "nightly_consolidation", success: true)
-    }
-
-    // MARK: - Performance Calibration
-
-    /// Schedule periodic performance calibration — runs every 6 hours to match
-    /// synced social metrics against content scorecard predictions.
-    private func schedulePerformanceCalibration() {
-        performanceCalibrationTimer = Timer.scheduledTimer(withTimeInterval: 21600, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                await self?.firePerformanceCalibration()
-            }
-        }
-    }
-
-    private func firePerformanceCalibration() async {
-        let syncService = SocialSyncService.shared
-        let recentPosts = syncService.allRecentPosts
-
-        // Match synced posts to published content atoms by caption/title similarity
-        for post in recentPosts.prefix(10) {
-            guard let caption = post.caption, !caption.isEmpty else { continue }
-
-            // Search for matching content atoms
-            do {
-                let results = try await HybridSearchEngine.shared.search(
-                    query: String(caption.prefix(100)),
-                    limit: 3
-                )
-
-                // Find a content atom that matches
-                guard let match = results.first(where: { $0.entityType == .content }),
-                      let uuid = match.entityUUID, let contentUUID = UUID(uuidString: uuid) else {
-                    continue
-                }
-
-                // Calibrate scorecard from actual engagement
-                await ContentScorecardEngine().calibrateFromPerformance(
-                    contentUUID: contentUUID,
-                    actualEngagement: [
-                        "views": Double(post.views),
-                        "likes": Double(post.likes),
-                        "comments": Double(post.comments),
-                        "shares": Double(post.shares),
-                        "saves": Double(post.saves)
-                    ]
-                )
-            } catch {
-                print("[ProactiveScheduler] Performance calibration search failed: \(error.localizedDescription)")
-            }
-        }
-
-        logDeliveryAttempt(type: "performance_calibration", success: true)
     }
 
     // MARK: - Heartbeat Daemon

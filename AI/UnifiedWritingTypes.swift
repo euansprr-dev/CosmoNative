@@ -233,9 +233,6 @@ struct SetDescriptionParams: Codable {
     let description: String
 }
 
-struct RunScorecardParams: Codable {
-    // No parameters needed — evaluates current draft
-}
 
 struct ThinkParams: Codable {
     let thought: String
@@ -634,7 +631,7 @@ enum ContentModelTier: String {
 // MARK: - Telegram Writer Model Selection
 
 /// Available writer models for Telegram A/B testing.
-/// Scorecard stays on Sonnet — this only affects brainstorm/draft/polish phases.
+/// Affects brainstorm/draft/polish phases.
 enum TelegramWriterModel: String, CaseIterable {
     case opus = "anthropic/claude-opus-4.6"
     case gpt5 = "openai/gpt-5.4"

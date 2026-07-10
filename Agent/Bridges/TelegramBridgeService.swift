@@ -56,9 +56,9 @@ private actor TelegramWritingProgressTracker {
         "load_client_profile", "select_swipes", "load_swipe", "load_best_performers",
         "load_preferences", "load_skill_modules",
         // Agent-level writing tools
-        "generate_outline", "generate_draft", "generate_hooks", "revise_draft", "score_draft",
+        "generate_outline", "generate_draft", "generate_hooks", "revise_draft",
         // Engine inner-loop writing tools
-        "update_outline", "write_draft", "add_hooks", "run_scorecard",
+        "update_outline", "write_draft", "add_hooks",
     ]
 
     // MARK: - Init
@@ -114,7 +114,6 @@ private actor TelegramWritingProgressTracker {
         case "generate_outline", "update_outline": return "outline"
         case "generate_draft", "write_draft": return "draft"
         case "generate_hooks", "add_hooks": return "hooks"
-        case "score_draft", "run_scorecard": return "score"
         case "revise_draft": return "revise"
         default: return nil
         }
@@ -157,9 +156,6 @@ private actor TelegramWritingProgressTracker {
             return "Hooks generated"
         case "revise_draft":
             return "Draft revised"
-        case "score_draft", "run_scorecard":
-            if let preview = resultPreview, !preview.isEmpty { return "Scorecard: \(String(preview.prefix(60)))" }
-            return "Scorecard complete"
         default:
             return name.replacingOccurrences(of: "_", with: " ").capitalized
         }

@@ -1216,9 +1216,6 @@ struct ContentFocusModeView: View {
     private var scriptoriumMarginRail: some View {
         scriptoriumMarginaliaContainer {
             VStack(alignment: .leading, spacing: DS.space18) {
-                if isPolishModeActive, viewModel.state.contentScorecard != nil {
-                    scoreMarginaliaSection
-                }
                 if !draftHeadingOutline.isEmpty {
                     draftSectionsMarginaliaSection
                 }
@@ -1420,21 +1417,6 @@ struct ContentFocusModeView: View {
                 viewModel.state.save()
             }
         )
-    }
-
-    private var scoreMarginaliaSection: some View {
-        MarginaliaDisclosureSection(
-            "SCORE",
-            storageKey: "content.score",
-            defaultExpanded: true
-        ) {
-            Text("analyzing…")
-                .font(DS.dateSerif)
-                .italic()
-                .foregroundStyle(focusTextMuted.opacity(0.6))
-            // Full scorecard dimension render will ship in V1.5 — polish analysis
-            // (WritingAnalyzer) still drives inline highlights via polishAnalysis.
-        }
     }
 
     private var hasVoiceChip: Bool {

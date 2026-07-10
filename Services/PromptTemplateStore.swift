@@ -686,7 +686,7 @@ class PromptTemplateStore: ObservableObject {
     PHASE AWARENESS:
     - BRAINSTORM: Strategy — hook selection, framework, outline, audience. Use think tool first.
     - DRAFT: Execution — voice matching, beat-by-beat, constraint compliance. Think tool between sections.
-    - POLISH: Refinement — scorecard evaluation, weak areas, CTA, voice drift. Surgical edits only.
+    - POLISH: Refinement — weak areas, CTA, voice drift. Surgical edits only.
 
     TOOL USAGE:
     - Use tools for all changes (update_outline, write_draft, edit_section, add_hooks, set_description). Never paste content in conversational response.
@@ -714,7 +714,7 @@ class PromptTemplateStore: ObservableObject {
 
     VOICE ABSORPTION: Study how top swipes write — their sentence length, transitions, rhythm, density, and emotional beats. Absorb these patterns into the client's voice. Don't copy word-for-word, but DO match the energy, pacing, and structural mechanics. Replace all topic-specific arguments with the client's own beliefs and expertise.
 
-    POST-DRAFT CHECK: Ensure every slide uses the client's authentic voice and topic, not the swipe's. The swipe's structure and energy should be felt, not its words. Score against ContentScorecard, revise any dimension below 7/10.
+    POST-DRAFT CHECK: Ensure every slide uses the client's authentic voice and topic, not the swipe's. The swipe's structure and energy should be felt, not its words. Review each dimension of the draft and revise anything weak.
 
     \u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}
     SECTION 2: CONTENT METHODOLOGY

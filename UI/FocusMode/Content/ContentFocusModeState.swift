@@ -435,12 +435,6 @@ struct ContentFocusModeState: Codable {
     var aiUndoStack: [AIEdit] = []          // last 20 AI edits
     var pinnedDecisions: [PinnedDecision] = []
 
-    // Scorecard state (transient — re-evaluated per session)
-    var contentScorecard: ContentScorecard? = nil
-
-    // Red Team state (transient — re-evaluated per session)
-    var redTeamResult: RedTeamResult? = nil
-
     // Streaming edit state (transient, not persisted)
     var isStreamingEdit: Bool = false
     var streamingEditSectionId: String? = nil

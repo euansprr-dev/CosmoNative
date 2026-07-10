@@ -12,6 +12,7 @@ enum DashboardViewMode: String, CaseIterable {
     case logbook
     case habits
     case reports
+    case queue
     case project       // Viewing a specific project
     case area          // Viewing all tasks in an area
 
@@ -22,21 +23,21 @@ enum DashboardViewMode: String, CaseIterable {
 
     /// Planning modes shown in sidebar navigation
     static var planningLists: [DashboardViewMode] {
-        [.habits, .reports]
+        [.habits, .reports, .queue]
     }
 
     var showsTaskList: Bool {
         switch self {
         case .today, .upcoming, .anytime, .someday, .logbook, .project, .area:
             return true
-        case .habits, .reports:
+        case .habits, .reports, .queue:
             return false
         }
     }
 
     var isFullPlanningPage: Bool {
         switch self {
-        case .habits, .reports:
+        case .habits, .reports, .queue:
             return true
         case .today, .upcoming, .anytime, .someday, .logbook, .project, .area:
             return false
@@ -52,6 +53,7 @@ enum DashboardViewMode: String, CaseIterable {
         case .logbook: return "Logbook"
         case .habits: return "Habits"
         case .reports: return "Reports"
+        case .queue: return "Queue"
         case .project: return "Project"
         case .area: return "Area"
         }
@@ -66,6 +68,7 @@ enum DashboardViewMode: String, CaseIterable {
         case .logbook: return "book.closed"
         case .habits: return "repeat"
         case .reports: return "chart.bar"
+        case .queue: return "paperplane"
         case .project: return "folder.fill"
         case .area: return "square.stack.fill"
         }
@@ -80,6 +83,7 @@ enum DashboardViewMode: String, CaseIterable {
         case .logbook: return DS.green
         case .habits: return DS.entityIdea
         case .reports: return DS.info
+        case .queue: return DS.entityContent
         case .project, .area: return DS.accent
         }
     }
@@ -187,7 +191,7 @@ struct DashboardViewModeBar: View {
         case .anytime: return anytimeCount
         case .someday: return somedayCount
         case .logbook: return completedCount
-        case .habits, .reports, .project, .area: return 0
+        case .habits, .reports, .queue, .project, .area: return 0
         }
     }
 }

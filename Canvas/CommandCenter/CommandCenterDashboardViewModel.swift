@@ -609,7 +609,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
             return anytimeTasks
         case .someday:
             return somedayTasks
-        case .habits, .reports:
+        case .habits, .reports, .queue:
             return []
         case .project:
             return projectTasks
@@ -686,6 +686,8 @@ class CommandCenterDashboardViewModel: ObservableObject {
                         await self?.loadTodaySessions()
                         await self?.loadWeeklyReport()
                         await self?.loadHabitReport()
+                    case .queue:
+                        break // The queue page loads its own content atoms.
                     case .project:
                         if let uuid = self?.selectedProjectUUID {
                             await self?.loadProjectTasks(projectUUID: uuid)
@@ -1317,7 +1319,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
         case .someday:
             await loadSomedayTasks()
             await loadCompletedTasks()
-        case .habits, .reports:
+        case .habits, .reports, .queue:
             await loadCompletedTasks()
         case .project:
             if let uuid = selectedProjectUUID {
@@ -3415,7 +3417,7 @@ class CommandCenterDashboardViewModel: ObservableObject {
             await loadAnytimeTasks()
         case .someday:
             await loadSomedayTasks()
-        case .habits, .reports:
+        case .habits, .reports, .queue:
             break
         case .project:
             if let uuid = selectedProjectUUID {

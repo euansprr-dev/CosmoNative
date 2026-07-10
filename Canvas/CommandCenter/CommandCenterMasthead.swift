@@ -317,6 +317,8 @@ struct CommandCenterMasthead: View {
             return "\(complete)/\(viewModel.habits.count) complete today"
         case .reports:
             return "\(formattedTodayTotal) tracked today"
+        case .queue:
+            return "Scheduled, drafted, and published content"
         case .project, .area:
             return countText(viewModel.currentVisibleTasks.count, singular: "task", plural: "tasks")
         }

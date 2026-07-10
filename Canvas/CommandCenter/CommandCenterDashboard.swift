@@ -110,6 +110,8 @@ struct CommandCenterDashboard: View {
             HabitsSectionView(viewModel: viewModel, composer: composer)
         case .reports:
             ReportsSectionView(viewModel: viewModel)
+        case .queue:
+            ContentQueueSectionView(viewModel: viewModel)
         case .today, .upcoming, .anytime, .someday, .logbook, .project, .area:
             existingTaskOrProjectContent
         }

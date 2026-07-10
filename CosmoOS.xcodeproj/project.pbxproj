@@ -204,6 +204,7 @@
 		3FE94A25E8BD9B85B3B95735 /* CosmoMarkdown.swift in Sources */ = {isa = PBXBuildFile; fileRef = 104DB71B6C8643EFDFB4D419 /* CosmoMarkdown.swift */; };
 		3FFF0307805B75905B09165D /* WritingAIModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = C90606D1A6C0DFD6ECACFE1F /* WritingAIModels.swift */; };
 		402BE9519DC0A4970D99FF6B /* ContentFocusModeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD38B44989B1E14897B93302 /* ContentFocusModeView.swift */; };
+		4041E275B0DD44F95F296B29 /* ContentQueueSectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CBBB75588E7BC4B3206B1FF /* ContentQueueSectionView.swift */; };
 		40D620CFACD2C724DAAEF5A4 /* CaptureRequestRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE679DE29213468ED067E269 /* CaptureRequestRepository.swift */; };
 		40E8730DCE50CAE2027C8428 /* BrainstormContextSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89641C676B12C9B78DF411FE /* BrainstormContextSidebar.swift */; };
 		4146A5CC8901FE05BECF5382 /* InboxSectionHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1970FC75844F92B1BF1A8CE4 /* InboxSectionHeader.swift */; };
@@ -1287,6 +1288,7 @@
 		6C3EB66373A6DABACFB22D0A /* ConstellationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConstellationView.swift; sourceTree = "<group>"; };
 		6C5BDD24CC00BC11D0E850D0 /* FocusBlockInspectorOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusBlockInspectorOverlay.swift; sourceTree = "<group>"; };
 		6C82281972414C82A86F84FA /* InboxCaptureBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxCaptureBar.swift; sourceTree = "<group>"; };
+		6CBBB75588E7BC4B3206B1FF /* ContentQueueSectionView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ContentQueueSectionView.swift; sourceTree = "<group>"; };
 		6CE426AAA80BF292754575D2 /* ContextAssembler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextAssembler.swift; sourceTree = "<group>"; };
 		6D4B87F61A1858F32D2DFB6B /* BlockCommandCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockCommandCatalog.swift; sourceTree = "<group>"; };
 		6D5DC0FA1F86CFA767324EA4 /* FocusBlockContextMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusBlockContextMenu.swift; sourceTree = "<group>"; };
@@ -2222,6 +2224,7 @@
 				C554926B0971EEF36345374D /* UpcomingBoardView.swift */,
 				AD9F8B4B215CDE41BE591EE9 /* WeeklyReportData.swift */,
 				82F95BB259A8803939B9AB13 /* ZoneContentView.swift */,
+				6CBBB75588E7BC4B3206B1FF /* ContentQueueSectionView.swift */,
 			);
 			path = CommandCenter;
 			sourceTree = "<group>";
@@ -4756,6 +4759,7 @@
 				26268C4B92EBD55BF70B8412 /* ContentExportFormatter.swift in Sources */,
 				587134F7FCFBC0AABEDB5165 /* ContentPerfSnapshot.swift in Sources */,
 				25BAB1AB08120132A33F65A3 /* ContentShipSheet.swift in Sources */,
+				4041E275B0DD44F95F296B29 /* ContentQueueSectionView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

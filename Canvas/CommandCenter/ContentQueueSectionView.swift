@@ -100,11 +100,17 @@ enum ContentQueueLoader {
 struct ContentQueueSectionView: View {
     @ObservedObject var viewModel: CommandCenterDashboardViewModel
 
+    enum QueueLens: String, CaseIterable {
+        case list = "List"
+        case month = "Month"
+    }
+
     @State private var items: [ContentQueueItem] = []
     @State private var perfByContent: [String: ContentPerfSnapshot] = [:]
     @State private var isLoading = true
     @State private var exportItem: ContentQueueItem?
     @State private var perfItem: ContentQueueItem?
+    @State private var lens: QueueLens = .list
 
     var body: some View {
         CommandCenterPlanningPageScaffold(
@@ -112,7 +118,7 @@ struct ContentQueueSectionView: View {
             icon: "paperplane",
             subtitle: subtitle,
             accent: DS.entityContent,
-            actions: { EmptyView() },
+            actions: { lensToggle },
             content: { content }
         )
         .task { await reload() }
@@ -149,6 +155,37 @@ struct ContentQueueSectionView: View {
 
     // MARK: - Content
 
+    private var lensToggle: some View {
+        HStack(spacing: 2) {
+            ForEach(QueueLens.allCases, id: \.self) { candidate in
+                Button {
+                    withAnimation(ProMotionSprings.snappy) { lens = candidate }
+                } label: {
+                    Text(candidate.rawValue)
+                        .font(DS.caption)
+                        .padding(.horizontal, DS.space10)
+                        .padding(.vertical, 4)
+                        .background(
+                            lens == candidate ? DS.accentSoft : Color.clear,
+                            in: Capsule()
+                        )
+                        .overlay(
+                            Capsule().stroke(
+                                lens == candidate ? DS.accent.opacity(0.35) : DS.borderSubtle,
+                                lineWidth: 1
+                            )
+                        )
+                        .foregroundStyle(lens == candidate ? DS.text : DS.textSecondary)
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help(candidate == .list ? "Scheduled list" : "Month at a glance")
+                .accessibilityLabel("\(candidate.rawValue) lens")
+                .accessibilityAddTraits(lens == candidate ? [.isButton, .isSelected] : .isButton)
+            }
+        }
+    }
+
     private var content: some View {
         ScrollView(.vertical) {
             LazyVStack(alignment: .leading, spacing: DS.space20) {
@@ -158,6 +195,19 @@ struct ContentQueueSectionView: View {
                         .padding(.top, DS.space24)
                 } else if items.isEmpty {
                     emptyState
+                } else if lens == .month {
+                    QueueMonthLens(
+                        items: items.filter { !$0.isPublished },
+                        clientColor: { clientColor($0) },
+                        onOpen: { openItem($0) },
+                        onReschedule: { uuid, day in
+                            Task {
+                                await ContentQueueLoader.setSchedule(day, status: nil, for: uuid)
+                                await reload()
+                            }
+                        }
+                    )
+                    unscheduledTray
                 } else {
                     scheduledGroups
                     unscheduledTray
@@ -216,6 +266,10 @@ struct ContentQueueSectionView: View {
                             queueRow(item)
                         }
                     }
+                    // Drop a row on a day to reschedule it there.
+                    .dropDestination(for: String.self) { uuids, _ in
+                        reschedule(uuids, to: group.day)
+                    }
                 }
             }
         }
@@ -240,7 +294,32 @@ struct ContentQueueSectionView: View {
                     queueRow(item)
                 }
             }
+            // Drop a scheduled row here to unschedule it.
+            .dropDestination(for: String.self) { uuids, _ in
+                var handled = false
+                for uuid in uuids where items.contains(where: { $0.atom.uuid == uuid && $0.scheduledAt != nil }) {
+                    handled = true
+                    Task {
+                        await ContentQueueLoader.setSchedule(nil, status: nil, for: uuid)
+                        await reload()
+                    }
+                }
+                return handled
+            }
         }
+    }
+
+    /// Shared drop handler: reschedule dragged queue rows onto a day.
+    private func reschedule(_ uuids: [String], to day: Date) -> Bool {
+        var handled = false
+        for uuid in uuids where items.contains(where: { $0.atom.uuid == uuid }) {
+            handled = true
+            Task {
+                await ContentQueueLoader.setSchedule(day, status: nil, for: uuid)
+                await reload()
+            }
+        }
+        return handled
     }
 
     @ViewBuilder
@@ -303,6 +382,15 @@ struct ContentQueueSectionView: View {
             RoundedRectangle(cornerRadius: 10)
                 .stroke(DS.borderSubtle, lineWidth: 1)
         )
+        // Rows drag by atom uuid; day groups, month days, and the drafts
+        // tray are the drop targets.
+        .draggable(item.atom.uuid) {
+            Text(item.title)
+                .font(DS.caption)
+                .padding(.horizontal, DS.space10)
+                .padding(.vertical, 4)
+                .background(DS.surfaceElevated, in: Capsule())
+        }
         .contentShape(.rect(cornerRadius: 10))
         .onTapGesture { openItem(item) }
     }
@@ -428,5 +516,193 @@ struct ContentQueueSectionView: View {
         if calendar.isDateInToday(date) { return "Today" }
         if calendar.isDateInTomorrow(date) { return "Tmrw" }
         return date.formatted(.dateTime.month(.abbreviated).day())
+    }
+}
+
+// MARK: - Month Lens
+
+/// The queue's month-at-a-glance: client-colored dots on scheduled days,
+/// click a day for its posts, drag a row onto a day to reschedule.
+private struct QueueMonthLens: View {
+    let items: [ContentQueueItem]
+    let clientColor: (ContentQueueItem) -> Color
+    let onOpen: (ContentQueueItem) -> Void
+    let onReschedule: (String, Date) -> Void
+
+    @State private var displayedMonth = Date()
+    @State private var selectedDay: Date?
+    @State private var hoveredDay: Date?
+
+    private let calendar = Calendar.current
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 4), count: 7)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.space10) {
+            monthHeader
+            weekdayLabels
+            dayGrid
+        }
+        .padding(DS.space16)
+        .background(DS.surfaceElevated, in: .rect(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(DS.borderSubtle, lineWidth: 1))
+    }
+
+    private var monthHeader: some View {
+        HStack {
+            Text(displayedMonth.formatted(.dateTime.month(.wide).year()))
+                .font(DS.headline)
+                .foregroundStyle(DS.text)
+                .contentTransition(.numericText())
+            Spacer()
+            Button { step(-1) } label: {
+                Image(systemName: "chevron.left").font(DS.caption)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(DS.textSecondary)
+            .help("Previous month")
+            .accessibilityLabel("Previous month")
+            Button { step(1) } label: {
+                Image(systemName: "chevron.right").font(DS.caption)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(DS.textSecondary)
+            .help("Next month")
+            .accessibilityLabel("Next month")
+        }
+    }
+
+    private func step(_ direction: Int) {
+        withAnimation(ProMotionSprings.snappy) {
+            displayedMonth = calendar.date(byAdding: .month, value: direction, to: displayedMonth) ?? displayedMonth
+        }
+    }
+
+    private var weekdayLabels: some View {
+        LazyVGrid(columns: columns, spacing: 4) {
+            ForEach(Array(["M", "T", "W", "T", "F", "S", "S"].enumerated()), id: \.offset) { _, label in
+                Text(label)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.textMuted)
+            }
+        }
+    }
+
+    private var monthDays: [Date?] {
+        guard let interval = calendar.dateInterval(of: .month, for: displayedMonth),
+              let firstWeekday = calendar.dateComponents([.weekday], from: interval.start).weekday else {
+            return []
+        }
+        // Monday-first offset.
+        let leading = (firstWeekday + 5) % 7
+        let dayCount = calendar.range(of: .day, in: .month, for: displayedMonth)?.count ?? 30
+        var cells: [Date?] = Array(repeating: nil, count: leading)
+        for day in 0..<dayCount {
+            cells.append(calendar.date(byAdding: .day, value: day, to: interval.start))
+        }
+        return cells
+    }
+
+    private func posts(on day: Date) -> [ContentQueueItem] {
+        items.filter { item in
+            guard let date = item.scheduledAt else { return false }
+            return calendar.isDate(date, inSameDayAs: day)
+        }
+    }
+
+    private var dayGrid: some View {
+        LazyVGrid(columns: columns, spacing: 4) {
+            ForEach(Array(monthDays.enumerated()), id: \.offset) { _, day in
+                if let day {
+                    dayCell(day)
+                } else {
+                    Color.clear.frame(height: 44)
+                }
+            }
+        }
+    }
+
+    private func dayCell(_ day: Date) -> some View {
+        let dayPosts = posts(on: day)
+        let isToday = calendar.isDateInToday(day)
+        let isHovered = hoveredDay == day
+        return Button {
+            if !dayPosts.isEmpty { selectedDay = day }
+        } label: {
+            VStack(spacing: 3) {
+                Text("\(calendar.component(.day, from: day))")
+                    .font(DS.caption.monospacedDigit())
+                    .foregroundStyle(isToday ? DS.accent : DS.textSecondary)
+                    .fontWeight(isToday ? .semibold : .regular)
+                HStack(spacing: 2) {
+                    ForEach(dayPosts.prefix(3)) { item in
+                        Circle()
+                            .fill(clientColor(item))
+                            .frame(width: 5, height: 5)
+                    }
+                    if dayPosts.count > 3 {
+                        Text("+\(dayPosts.count - 3)")
+                            .font(.system(size: 8))
+                            .foregroundStyle(DS.textMuted)
+                    }
+                }
+                .frame(height: 6)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 44)
+            .background(
+                isHovered || isToday ? DS.accentSoft.opacity(isToday ? 1 : 0.5) : Color.clear,
+                in: .rect(cornerRadius: 8)
+            )
+            .contentShape(.rect(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in hoveredDay = hovering ? day : nil }
+        .dropDestination(for: String.self) { uuids, _ in
+            guard !uuids.isEmpty else { return false }
+            for uuid in uuids { onReschedule(uuid, day) }
+            return true
+        }
+        .popover(
+            isPresented: Binding(
+                get: { selectedDay == day },
+                set: { if !$0 { selectedDay = nil } }
+            ),
+            arrowEdge: .bottom
+        ) {
+            dayPopover(day, posts: dayPosts)
+        }
+        .accessibilityLabel(
+            dayPosts.isEmpty
+                ? day.formatted(.dateTime.month().day())
+                : "\(day.formatted(.dateTime.month().day())), \(dayPosts.count) scheduled"
+        )
+    }
+
+    private func dayPopover(_ day: Date, posts: [ContentQueueItem]) -> some View {
+        VStack(alignment: .leading, spacing: DS.space6) {
+            Text(day.formatted(.dateTime.weekday(.wide).month().day()))
+                .font(DS.caption.weight(.semibold))
+                .foregroundStyle(DS.textMuted)
+            ForEach(posts) { item in
+                Button {
+                    selectedDay = nil
+                    onOpen(item)
+                } label: {
+                    HStack(spacing: DS.space8) {
+                        Circle()
+                            .fill(clientColor(item))
+                            .frame(width: 6, height: 6)
+                        Text(item.title)
+                            .font(DS.caption)
+                            .foregroundStyle(DS.text)
+                            .lineLimit(1)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(DS.space12)
+        .frame(minWidth: 220, alignment: .leading)
     }
 }

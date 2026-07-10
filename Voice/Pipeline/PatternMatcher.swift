@@ -13,8 +13,9 @@ actor PatternMatcher {
     // MARK: - Pattern Definitions
 
     /// All registered patterns, ordered by priority.
-    /// Level System, Deep Work, and Journal patterns are added at the beginning for priority.
-    private lazy var patterns: [CommandPattern] = Self.levelSystemPatterns + Self.deepWorkPatterns + Self.journalPatterns + [
+    /// Deep Work patterns are added at the beginning for priority.
+    /// (Level System and Journal patterns removed with the XP/Quest system.)
+    private lazy var patterns: [CommandPattern] = Self.deepWorkPatterns + [
         // ===== SINGLE-WORD NAVIGATION SHORTCUTS (Tier 0 - Instant) =====
         // These must come FIRST for priority - they are the fastest path
         CommandPattern(

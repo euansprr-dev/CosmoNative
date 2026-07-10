@@ -1427,13 +1427,14 @@ private struct LibraryMediaThumbnail: View {
         }
     }
 
-    @ViewBuilder
     private var local: some View {
-        if let nsImage = LibraryLocalImageCache.image(at: source) {
-            Image(nsImage: nsImage)
+        // Async + downsampled: the old sync NSImage(contentsOfFile:) decoded
+        // full-resolution files on the main thread during grid scrolling.
+        LocalFileThumbnail(path: source) { image in
+            image
                 .resizable()
                 .aspectRatio(contentMode: .fill)
-        } else {
+        } placeholder: {
             LibraryMediaFallback(accent: accent)
         }
     }
@@ -1451,17 +1452,6 @@ private struct LibraryMediaFallback: View {
                 .foregroundStyle(accent.opacity(0.35))
         }
         .accessibilityHidden(true)
-    }
-}
-
-private enum LibraryLocalImageCache {
-    static let cache = NSCache<NSString, NSImage>()
-
-    static func image(at path: String) -> NSImage? {
-        if let hit = cache.object(forKey: path as NSString) { return hit }
-        guard let image = NSImage(contentsOfFile: path) else { return nil }
-        cache.setObject(image, forKey: path as NSString)
-        return image
     }
 }
 

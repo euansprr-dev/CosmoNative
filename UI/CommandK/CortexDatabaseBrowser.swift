@@ -740,14 +740,15 @@ struct SpotlightImageContent: View {
         }
     }
 
-    @ViewBuilder
     private var localThumbnail: some View {
-        if let nsImage = NSImage(contentsOfFile: urlString) {
-            Image(nsImage: nsImage)
+        // Async + downsampled: the old sync NSImage(contentsOfFile:) decoded
+        // full-resolution files on the main thread while the grid scrolled.
+        LocalFileThumbnail(path: urlString) { image in
+            image
                 .resizable()
                 .aspectRatio(contentMode: .fill)
                 .accessibilityLabel("Image thumbnail")
-        } else {
+        } placeholder: {
             SpotlightFauxPage(accentColor: DS.textMuted)
         }
     }

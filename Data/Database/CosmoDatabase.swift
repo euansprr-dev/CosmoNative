@@ -76,8 +76,15 @@ class CosmoDatabase: ObservableObject {
             config.busyMode = .timeout(5.0)
             dbQueue = try DatabaseQueue(path: dbPath.path, configuration: config)
 
-            // Daily safety backup BEFORE migrations touch the file.
-            Self.performDailyBackupIfNeeded(dbPath: dbPath)
+            // Daily safety backup. When a migration is about to run, take it
+            // synchronously BEFORE migrating so a bad migration stays
+            // recoverable. On every other launch, defer the copy off the
+            // launch path — the file is 250MB+ and the synchronous copy was
+            // costing 1–2s of cold open once per day.
+            let hasPendingMigrations = !((try? dbQueue.read { try migrator.hasCompletedMigrations($0) }) ?? false)
+            if hasPendingMigrations {
+                Self.performDailyBackupIfNeeded(dbPath: dbPath)
+            }
 
             // Configure PRAGMA settings - ALL must be outside transactions
             // These settings modify the database behavior and can't be changed mid-transaction
@@ -105,6 +112,18 @@ class CosmoDatabase: ObservableObject {
             isReady = true
             print("✅ Database ready at: \(dbPath.path)")
 
+            // Deferred daily backup (no migration ran, so pre/post state is
+            // identical) + periodic file maintenance. Both run well after the
+            // interactive startup settles; the online backup API is safe
+            // against the live WAL database.
+            if !hasPendingMigrations {
+                Task.detached(priority: .background) {
+                    try? await Task.sleep(for: .seconds(15))
+                    Self.performDailyBackupIfNeeded(dbPath: dbPath)
+                    await Self.performMaintenanceIfNeeded()
+                }
+            }
+
         } catch {
             self.error = "Database initialization failed: \(error.localizedDescription)"
             print("❌ Database error: \(error)")
@@ -114,9 +133,10 @@ class CosmoDatabase: ObservableObject {
     // MARK: - Backups
 
     /// Copy the database into Cosmo/backups/ at most once per day, keeping the
-    /// last 3 copies. Runs before migrations so a bad migration is recoverable.
+    /// last 3 copies. Runs before migrations when one is pending (so a bad
+    /// migration is recoverable); otherwise deferred off the launch path.
     /// Uses SQLite's online backup (via GRDB) so a hot WAL doesn't corrupt the copy.
-    private static func performDailyBackupIfNeeded(dbPath: URL) {
+    private nonisolated static func performDailyBackupIfNeeded(dbPath: URL) {
         guard !isRunningTests, FileManager.default.fileExists(atPath: dbPath.path) else { return }
 
         let backupDir = dbPath.deletingLastPathComponent().deletingLastPathComponent()
@@ -147,6 +167,52 @@ class CosmoDatabase: ObservableObject {
         }
     }
 
+    // MARK: - Maintenance
+
+    private nonisolated static let maintenanceStampKey = "com.cosmo.lastDbMaintenance"
+    private nonisolated static let maintenanceInterval: TimeInterval = 7 * 24 * 3600
+
+    /// Weekly file maintenance: FTS index optimize + VACUUM. The July 2026
+    /// audit found ~38% of the database file was free pages (sync_queue payload
+    /// churn leaves them behind); VACUUM returns them to the filesystem, which
+    /// also shrinks every future daily backup. Runs only on the deferred
+    /// background path — never during interactive startup — and waits an extra
+    /// beat so launch-time sync traffic isn't contending with the write lock.
+    private nonisolated static func performMaintenanceIfNeeded() async {
+        guard !ProcessInfo.processInfo.isRunningTests else { return }
+        let defaults = UserDefaults.standard
+        if let last = defaults.object(forKey: maintenanceStampKey) as? Date,
+           Date().timeIntervalSince(last) < maintenanceInterval {
+            return
+        }
+
+        // Let launch-time sync pushes/pulls drain before taking long locks.
+        try? await Task.sleep(for: .seconds(45))
+
+        let queue = await MainActor.run { shared.isReady ? shared.dbQueue : nil }
+        guard let queue else { return }
+
+        let start = Date()
+        do {
+            // Best-effort FTS housekeeping; a missing FTS table is non-fatal.
+            queue.inDatabase { db in
+                try? db.execute(sql: "INSERT INTO atoms_fts(atoms_fts) VALUES('optimize')")
+                try? db.execute(sql: "INSERT INTO context_chunks_fts(context_chunks_fts) VALUES('optimize')")
+            }
+            // VACUUM cannot run inside a transaction; inDatabase executes it
+            // bare. GRDB serializes it against this process's other writes and
+            // the cross-process busy timeout covers the daemon/web app.
+            try queue.inDatabase { db in
+                try db.execute(sql: "VACUUM")
+            }
+            defaults.set(Date(), forKey: maintenanceStampKey)
+            let seconds = Date().timeIntervalSince(start)
+            print("🧹 Database maintenance (FTS optimize + VACUUM) done in \(String(format: "%.1f", seconds))s")
+        } catch {
+            print("⚠️ Database maintenance failed (continuing): \(error)")
+        }
+    }
+
     // MARK: - Database Path
     static var databasePath: URL {
         if isRunningTests {
@@ -169,7 +235,7 @@ class CosmoDatabase: ObservableObject {
             .appendingPathComponent("Databases.db")
     }
 
-    private static var isRunningTests: Bool {
+    private nonisolated static var isRunningTests: Bool {
         ProcessInfo.processInfo.isRunningTests
     }
 

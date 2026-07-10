@@ -4,7 +4,6 @@
 
 @preconcurrency import GRDB
 import Foundation
-import Combine
 
 @MainActor
 class AtomRepository: ObservableObject {
@@ -19,51 +18,12 @@ class AtomRepository: ObservableObject {
     private let database = CosmoDatabase.shared
     private let changeTracker = ChangeTracker.shared
 
-    @Published var atoms: [Atom] = []
-    @Published var isLoading = false
-    @Published var error: String?
-
-    private var cancellables = Set<AnyCancellable>()
-
     // MARK: - Editing Lock Registry
     // Prevents background processors and sync from overwriting user edits
     private var editingLocks: [String: Date] = [:]
     private let editingLockExpiry: TimeInterval = 300 // 5 minutes safety valve
 
-    private init() {
-        observeAtoms()
-    }
-
-    // MARK: - Observation
-
-    private func observeAtoms() {
-        guard database.isReady else {
-            // Retry once database is ready
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                self?.observeAtoms()
-            }
-            return
-        }
-
-        database.observe { db in
-            try Atom
-                .filter(Atom.CodingKeys.isDeleted == false)
-                .order(Atom.CodingKeys.updatedAt.desc)
-                .fetchAll(db)
-        }
-        .receive(on: DispatchQueue.main)
-        .sink(
-            receiveCompletion: { [weak self] completion in
-                if case .failure(let error) = completion {
-                    self?.error = error.localizedDescription
-                }
-            },
-            receiveValue: { [weak self] atoms in
-                self?.atoms = atoms
-            }
-        )
-        .store(in: &cancellables)
-    }
+    private init() {}
 
     // MARK: - Fetch Operations
 

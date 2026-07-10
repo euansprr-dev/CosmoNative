@@ -760,25 +760,39 @@ private struct CaptureLaneQueueRow: View {
     // status dot otherwise.
     @ViewBuilder
     private var leadingPreview: some View {
-        if let thumbnail = attachments.compactMap(\.thumbnailPath).first,
-           let image = NSImage(contentsOfFile: thumbnail) {
-            Image(nsImage: image)
-                .resizable()
-                .scaledToFill()
-                .frame(width: 40, height: 40)
-                .clipShape(.rect(cornerRadius: 8))
-                .accessibilityLabel("Capture attachment preview")
-        } else if let first = attachments.first {
+        if let thumbnail = attachments.compactMap(\.thumbnailPath).first {
+            // Async + downsampled: the old sync NSImage(contentsOfFile:)
+            // decoded a full-res JPEG on the main thread on every row render.
+            // While loading (or if the file is unreadable) the attachment
+            // icon stands in — same look as the old decode-failure branch.
+            LocalFileThumbnail(path: thumbnail, maxPixelSize: 120) { image in
+                image
+                    .resizable()
+                    .scaledToFill()
+            } placeholder: {
+                attachmentIconWell
+            }
+            .frame(width: 40, height: 40)
+            .clipShape(.rect(cornerRadius: 8))
+            .accessibilityLabel("Capture attachment preview")
+        } else if attachments.first != nil {
+            attachmentIconWell
+        } else {
+            Circle()
+                .fill(item.status == .failed ? DS.red : DS.accent)
+                .frame(width: 7, height: 7)
+                .accessibilityHidden(true)
+        }
+    }
+
+    @ViewBuilder
+    private var attachmentIconWell: some View {
+        if let first = attachments.first {
             Image(systemName: icon(for: first.kind))
                 .font(DS.callout)
                 .foregroundStyle(DS.accent)
                 .frame(width: 40, height: 40)
                 .background(DS.accentSoft, in: .rect(cornerRadius: 8))
-                .accessibilityHidden(true)
-        } else {
-            Circle()
-                .fill(item.status == .failed ? DS.red : DS.accent)
-                .frame(width: 7, height: 7)
                 .accessibilityHidden(true)
         }
     }

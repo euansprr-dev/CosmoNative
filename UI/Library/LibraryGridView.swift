@@ -256,16 +256,22 @@ struct LibraryCardView: View {
     @ViewBuilder
     private var previewContent: some View {
         if let thumbnailURL = item.thumbnailURL {
-            if item.atomType == .image, let nsImage = NSImage(contentsOfFile: thumbnailURL) {
-                // Local image file — load directly, contained in GeometryReader to prevent overflow
-                GeometryReader { geo in
-                    Image(nsImage: nsImage)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .frame(width: geo.size.width, height: geo.size.height)
+            if item.atomType == .image, !thumbnailURL.hasPrefix("http") {
+                // Local image file — async downsampled decode (the old sync
+                // NSImage(contentsOfFile:) ran on the main thread per render),
+                // contained in GeometryReader to prevent overflow
+                LocalFileThumbnail(path: thumbnailURL) { image in
+                    GeometryReader { geo in
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: geo.size.width, height: geo.size.height)
+                    }
+                    .frame(height: previewHeight)
+                    .clipped()
+                } placeholder: {
+                    fallbackPreview
                 }
-                .frame(height: previewHeight)
-                .clipped()
             } else if let url = URL(string: thumbnailURL) {
                 AsyncImage(url: url) { phase in
                     switch phase {

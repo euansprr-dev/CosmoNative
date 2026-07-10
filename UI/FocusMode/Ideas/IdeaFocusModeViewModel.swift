@@ -209,7 +209,7 @@ final class IdeaFocusModeViewModel {
         terminationCancellable = NotificationCenter.default
             .publisher(for: .cosmoAppWillTerminate)
             .sink { [weak self] _ in
-                self?.saveOnClose()
+                self?.flushForTermination()
             }
 
         // Load client profiles in background
@@ -599,9 +599,6 @@ final class IdeaFocusModeViewModel {
             idea = try await AtomRepository.shared.update(updatedIdea)
             selectedStatus = .inProduction
 
-            // Award 10 XP to creative dimension for idea activation
-            await awardActivationXP(contentUUID: contentAtom.uuid)
-
             // Notify the Ideas Library to remove this idea (it's now a content piece)
             NotificationCenter.default.post(
                 name: Notification.Name("ideaActivated"),
@@ -635,16 +632,6 @@ final class IdeaFocusModeViewModel {
         let formatter = ISO8601DateFormatter()
         guard let date = formatter.date(from: lastAnalyzed) else { return true }
         return Date().timeIntervalSince(date) > 3600
-    }
-
-    /// Award 10 XP for idea activation (promote to content).
-    private func awardActivationXP(contentUUID: String) async {
-        let pipelineService = ContentPipelineService()
-        await pipelineService.awardContentXP(
-            xp: 10,
-            reason: "Idea activated to content",
-            contentUUID: contentUUID
-        )
     }
 
     /// Generate an AI-suggested outline for the content using ResearchService.
@@ -1158,6 +1145,36 @@ final class IdeaFocusModeViewModel {
     /// Force immediate synchronous save — blocks until the DB write completes.
     /// Guarantees data is persisted before the view/app exits.
     func saveOnClose() {
+        autoSaveTask?.cancel()
+        let sequence = nextSaveSequence(markModified: true)
+        let snapshot = makeSaveSnapshot()
+        sessionState.selectedHookIndex = selectedHookIndex
+        sessionState.save()
+
+        // Async close save: the focus-exit animation must never block on the
+        // DB write lock (cross-process busy timeout is 5s). The registry
+        // escort preserves the quit guarantee — terminating mid-write flushes
+        // the captured snapshot synchronously; the commit unregisters it.
+        let escortID = "idea-close-\(idea.uuid)"
+        DirtyEditorRegistry.shared.register(id: escortID) { [weak self] in
+            guard let self else { return }
+            _ = try? self.writeSnapshotSync(snapshot, sequence: sequence)
+        }
+        Task { @MainActor in
+            defer { DirtyEditorRegistry.shared.unregister(id: escortID) }
+            do {
+                if let savedAtom = try await self.writeSnapshot(snapshot, sequence: sequence) {
+                    self.idea = savedAtom
+                }
+            } catch {
+                print("IdeaFocusMode: close save failed: \(error)")
+            }
+        }
+    }
+
+    /// Termination flush — must stay synchronous: the process is about to
+    /// exit, so an async write would never commit.
+    func flushForTermination() {
         autoSaveTask?.cancel()
         let sequence = nextSaveSequence(markModified: true)
         let snapshot = makeSaveSnapshot()

@@ -1385,51 +1385,6 @@ struct AutoLinkSuggestionMetadata: Codable, Sendable {
     }
 }
 
-/// Metadata for insightExtraction atoms - AI-extracted insights
-struct InsightExtractionMetadata: Codable, Sendable {
-    /// Source atom UUID this insight was extracted from
-    let sourceAtomUUID: String
-
-    /// Type of insight
-    let insightType: InsightType
-
-    /// The extracted insight text
-    let insightText: String
-
-    /// Confidence in this extraction (0-1)
-    let confidence: Double
-
-    /// Keywords related to this insight
-    let keywords: [String]
-
-    /// Suggested actions based on this insight
-    let suggestedActions: [String]
-
-    /// Linked atom UUIDs (related content)
-    let linkedAtomUUIDs: [String]
-
-    /// When this insight was extracted
-    let extractedAt: Date
-
-    init(
-        sourceAtomUUID: String,
-        insightType: InsightType,
-        insightText: String,
-        confidence: Double,
-        keywords: [String] = [],
-        suggestedActions: [String] = [],
-        linkedAtomUUIDs: [String] = [],
-        extractedAt: Date = Date()
-    ) {
-        self.sourceAtomUUID = sourceAtomUUID
-        self.insightType = insightType
-        self.insightText = insightText
-        self.confidence = confidence
-        self.keywords = keywords
-        self.suggestedActions = suggestedActions
-        self.linkedAtomUUIDs = linkedAtomUUIDs
-        self.extractedAt = extractedAt
-    }
-}
-
-// Note: InsightType is now defined in ReflectionMetadata.swift
+// InsightExtractionMetadata removed with the XP/Level/Quest system (its
+// InsightType lived in the deleted ReflectionMetadata.swift and nothing
+// referenced the struct anymore).

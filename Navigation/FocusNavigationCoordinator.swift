@@ -90,6 +90,7 @@ final class FocusNavigationCoordinator {
     func close() {
         openTask?.cancel()
         guard let appState, appState.focusedEntity != nil else { return }
+        AppPerformanceInstrumentation.event("focus-close")
         withAnimation(transitionAnimation) {
             appState.focusedEntity = nil
         }
@@ -106,6 +107,7 @@ final class FocusNavigationCoordinator {
 
     private func present(_ entity: EntitySelection, anchor: UnitPoint) {
         guard let appState else { return }
+        AppPerformanceInstrumentation.event("focus-open")
         entranceAnchor = anchor
         // One assignment covers both fresh opens and doc→doc swaps: the
         // overlay's `.id(focusedEntity)` remount cross-fades removal and

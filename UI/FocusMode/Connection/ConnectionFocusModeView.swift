@@ -610,9 +610,50 @@ final class ConnectionFocusModeViewModel {
         }
     }
 
-    /// Force immediate synchronous title save (called on view disappear) — blocks until DB write completes.
+    /// Immediate title save (title commit / view disappear). The write itself
+    /// is async so the UI never blocks on the DB write lock (cross-process
+    /// busy timeout is 5s); the DirtyEditorRegistry escort keeps the quit
+    /// guarantee — terminating mid-write flushes synchronously.
     func flushTitleSave() {
         titleSaveTask?.cancel()
+        let escortID = "connection-title-\(atom.uuid)"
+        DirtyEditorRegistry.shared.register(id: escortID) { [weak self] in
+            self?.flushTitleSaveSync()
+        }
+        let titleDocument = RichDocumentPersistence.normalizedTitleDocument(
+            self.titleDocument.isEmpty ? RichDocument.migrateLegacy(editableTitle) : self.titleDocument
+        )
+        let atomUUID = atom.uuid
+        Task { @MainActor in
+            defer { DirtyEditorRegistry.shared.unregister(id: escortID) }
+            do {
+                try await CosmoDatabase.shared.asyncWrite { db in
+                    var existingMetadata: String?
+                    if let row = try Row.fetchOne(db, sql: "SELECT metadata FROM atoms WHERE uuid = ?", arguments: [atomUUID]) {
+                        existingMetadata = row["metadata"]
+                    }
+                    let fields = RichDocumentPersistence.writeAtomDocuments(
+                        existingMetadata: existingMetadata,
+                        titleDocument: titleDocument
+                    )
+                    try db.execute(
+                        sql: "UPDATE atoms SET title = ?, metadata = ?, updated_at = ?, _local_version = _local_version + 1, _local_pending = 1 WHERE uuid = ?",
+                        arguments: [fields.title, fields.metadata, ISO8601.string(from: Date()), atomUUID]
+                    )
+                }
+                // Sync: queue for Supabase push
+                if let updatedAtom = try? await AtomRepository.shared.fetch(uuid: atomUUID) {
+                    // skipVersionIncrement: raw SQL already did _local_version + 1
+                    await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom, skipVersionIncrement: true)
+                }
+            } catch {
+                print("❌ Connection title flush failed: \(error)")
+            }
+        }
+    }
+
+    /// Synchronous title save — escort/termination path only.
+    private func flushTitleSaveSync() {
         let titleDocument = RichDocumentPersistence.normalizedTitleDocument(
             self.titleDocument.isEmpty ? RichDocument.migrateLegacy(editableTitle) : self.titleDocument
         )

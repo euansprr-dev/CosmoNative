@@ -110,6 +110,8 @@ final class DeepDiveOverviewViewModel {
     // MARK: - Loading
 
     func load() async {
+        let signpost = AppPerformanceInstrumentation.begin("deepdive-load")
+        defer { AppPerformanceInstrumentation.end("deepdive-load", signpost) }
         // Reload root atom (in case Telegram capture mutated it while view was open).
         if let fresh = try? await AtomRepository.shared.fetch(uuid: atom.uuid) {
             // Clean up legacy appended-markdown bodies into structured revisions.
@@ -134,7 +136,11 @@ final class DeepDiveOverviewViewModel {
         topicInboxItems = loadedInbox.routed
         suggestedInboxItems = loadedInbox.suggested
         extracts = loadedExt
-        gardenerProposals = await InquiryGardener.shared.review(deepDiveUUID: atom.uuid)
+        gardenerProposals = await InquiryGardener.shared.review(
+            deepDiveUUID: atom.uuid,
+            preloadedQuestions: loadedQs,
+            preloadedExtracts: loadedExt
+        )
     }
 
     // MARK: - Tending (the Gardener's proposals)

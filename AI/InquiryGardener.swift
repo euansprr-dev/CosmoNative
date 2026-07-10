@@ -285,7 +285,15 @@ final class InquiryGardener {
     private var lastRunByTopic: [String: Date] = [:]
     private let minimumInterval: TimeInterval = 30 * 60
 
-    func review(deepDiveUUID: String, force: Bool = false) async -> [InquiryGardenerProposal] {
+    /// `preloadedQuestions`/`preloadedExtracts` let a caller that already
+    /// fetched the topic's atoms (DeepDiveOverviewViewModel.load) share them
+    /// instead of re-running the same queries; nil falls back to self-fetch.
+    func review(
+        deepDiveUUID: String,
+        force: Bool = false,
+        preloadedQuestions: [Atom]? = nil,
+        preloadedExtracts: [Atom]? = nil
+    ) async -> [InquiryGardenerProposal] {
         if !force,
            let last = lastRunByTopic[deepDiveUUID],
            Date().timeIntervalSince(last) < minimumInterval {
@@ -293,8 +301,18 @@ final class InquiryGardener {
         }
         lastRunByTopic[deepDiveUUID] = Date()
 
-        let questions = (try? await InquiryRepository.shared.fetchQuestions(forDeepDive: deepDiveUUID)) ?? []
-        let extracts = (try? await InquiryRepository.shared.fetchExtracts(forDeepDive: deepDiveUUID)) ?? []
+        let questions: [Atom]
+        if let preloadedQuestions {
+            questions = preloadedQuestions
+        } else {
+            questions = (try? await InquiryRepository.shared.fetchQuestions(forDeepDive: deepDiveUUID)) ?? []
+        }
+        let extracts: [Atom]
+        if let preloadedExtracts {
+            extracts = preloadedExtracts
+        } else {
+            extracts = (try? await InquiryRepository.shared.fetchExtracts(forDeepDive: deepDiveUUID)) ?? []
+        }
         guard questions.count >= 2 else { return [] }
 
         var conceptsByQuestion: [String: Set<String>] = [:]

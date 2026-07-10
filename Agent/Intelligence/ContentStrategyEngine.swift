@@ -41,9 +41,10 @@ class ContentStrategyEngine {
         let published = await fetchPublishedContent()
         let readyIdeas = await fetchReadyIdeas()
         let performanceAtoms = await fetchPerformanceAtoms()
+        let swipesByUUID = await inheritedSwipeLookup(for: published)
 
         // Build performance maps from published content
-        let hookPerf = buildHookPerformanceMap(published: published, performanceAtoms: performanceAtoms)
+        let hookPerf = buildHookPerformanceMap(published: published, performanceAtoms: performanceAtoms, swipesByUUID: swipesByUUID)
         let frameworkPerf = buildFrameworkPerformanceMap(published: published, performanceAtoms: performanceAtoms)
 
         // Analyze swipe library distribution
@@ -255,7 +256,8 @@ class ContentStrategyEngine {
 
         // Gap 1: Hook types in swipes but not in published content
         let swipeHookCounts = countSwipesByHookType(swipes)
-        let publishedHookCounts = countPublishedByHookType(published)
+        let swipesByUUID = await inheritedSwipeLookup(for: published)
+        let publishedHookCounts = countPublishedByHookType(published, swipesByUUID: swipesByUUID)
 
         let underusedHooks = swipeHookCounts.filter { hookType, swipeCount in
             swipeCount >= minimumSampleSize && (publishedHookCounts[hookType] ?? 0) == 0
@@ -334,7 +336,8 @@ class ContentStrategyEngine {
     ) async -> AgentPerformancePrediction {
         let published = await fetchPublishedContent()
         let performanceAtoms = await fetchPerformanceAtoms()
-        let hookPerf = buildHookPerformanceMap(published: published, performanceAtoms: performanceAtoms)
+        let swipesByUUID = await inheritedSwipeLookup(for: published)
+        let hookPerf = buildHookPerformanceMap(published: published, performanceAtoms: performanceAtoms, swipesByUUID: swipesByUUID)
         let frameworkPerf = buildFrameworkPerformanceMap(published: published, performanceAtoms: performanceAtoms)
 
         // Hook score: how well does this hook type perform for the user?
@@ -462,7 +465,8 @@ class ContentStrategyEngine {
     /// Links performance atoms back to their parent content via metadata.
     private func buildHookPerformanceMap(
         published: [Atom],
-        performanceAtoms: [Atom]
+        performanceAtoms: [Atom],
+        swipesByUUID: [String: Atom]
     ) -> [String: Double] {
         // Build a map from content UUID -> engagement rate
         var contentEngagement: [String: [Double]] = [:]
@@ -481,7 +485,7 @@ class ContentStrategyEngine {
             guard let contentMeta = contentAtom.metadataValue(as: ContentAtomMetadata.self) else { continue }
 
             // Try to determine hook type from inherited hooks or swipe analysis
-            let hookType = resolveHookType(for: contentAtom, contentMeta: contentMeta)
+            let hookType = resolveHookType(for: contentAtom, contentMeta: contentMeta, swipesByUUID: swipesByUUID)
             guard let hook = hookType else { continue }
 
             let engagements = contentEngagement[contentAtom.uuid] ?? []
@@ -535,8 +539,13 @@ class ContentStrategyEngine {
     }
 
     /// Attempt to resolve the hook type for a content atom by checking inherited hooks
-    /// or linked swipe analyses.
-    private func resolveHookType(for atom: Atom, contentMeta: ContentAtomMetadata) -> String? {
+    /// or linked swipe analyses. `swipesByUUID` is batch-fetched once per analysis pass
+    /// via `inheritedSwipeLookup(for:)`.
+    private func resolveHookType(
+        for atom: Atom,
+        contentMeta: ContentAtomMetadata,
+        swipesByUUID: [String: Atom]
+    ) -> String? {
         // Check inherited hooks from idea activation
         if let hooks = contentMeta.inheritedHooks, let first = hooks.first {
             return first
@@ -544,13 +553,30 @@ class ContentStrategyEngine {
 
         // Check linked swipe UUIDs and use their hook type
         if let swipeUUIDs = contentMeta.inheritedSwipeUUIDs, let firstUUID = swipeUUIDs.first {
-            if let swipeAtom = try? AtomRepository.shared.atoms.first(where: { $0.uuid == firstUUID }),
+            if let swipeAtom = swipesByUUID[firstUUID],
                let analysis = swipeAtom.swipeAnalysis {
                 return analysis.hookType?.rawValue
             }
         }
 
         return nil
+    }
+
+    /// Batch-load every swipe atom referenced by the published atoms' inherited
+    /// swipe UUIDs. One query per analysis pass instead of an in-memory mirror
+    /// of the whole atoms table.
+    private func inheritedSwipeLookup(for published: [Atom]) async -> [String: Atom] {
+        var uuids: Set<String> = []
+        for atom in published {
+            if let meta = atom.metadataValue(as: ContentAtomMetadata.self),
+               let swipeUUIDs = meta.inheritedSwipeUUIDs,
+               let first = swipeUUIDs.first {
+                uuids.insert(first)
+            }
+        }
+        guard !uuids.isEmpty else { return [:] }
+        let atoms = (try? await AtomRepository.shared.fetchBatch(uuids: Array(uuids))) ?? []
+        return Dictionary(atoms.map { ($0.uuid, $0) }, uniquingKeysWith: { first, _ in first })
     }
 
     // MARK: - Private Counting Helpers
@@ -586,11 +612,11 @@ class ContentStrategyEngine {
         return counts
     }
 
-    private func countPublishedByHookType(_ published: [Atom]) -> [String: Int] {
+    private func countPublishedByHookType(_ published: [Atom], swipesByUUID: [String: Atom]) -> [String: Int] {
         var counts: [String: Int] = [:]
         for atom in published {
             if let meta = atom.metadataValue(as: ContentAtomMetadata.self),
-               let hook = resolveHookType(for: atom, contentMeta: meta) {
+               let hook = resolveHookType(for: atom, contentMeta: meta, swipesByUUID: swipesByUUID) {
                 counts[hook, default: 0] += 1
             }
         }

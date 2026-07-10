@@ -783,6 +783,7 @@ struct MainView: View {
             }
         }
         .onChange(of: currentDestination) { _, newDest in
+            AppPerformanceInstrumentation.event("destination-switch")
             // Dismiss focus mode when navigating via sidebar
             FocusNavigationCoordinator.shared.close()
             // Track last-used thinkspace for T-key navigation

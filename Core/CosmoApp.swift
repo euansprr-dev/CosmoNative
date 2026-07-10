@@ -63,6 +63,8 @@ struct CosmoApp: App {
     }
 
     private func initializeApp() {
+        // Interval from here to MainView's first onAppear ≈ blocking launch work.
+        AppPerformanceInstrumentation.event("app-init-start")
         // Migrate Supabase credentials from hardcoded to Keychain (one-time)
         APIKeys.seedSupabaseIfNeeded()
 
@@ -288,11 +290,6 @@ struct CosmoApp: App {
                     statePersistence?.saveSelectedSection(section)
                 }
             }
-        }
-
-        // Save state periodically
-        Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { _ in
-            // State auto-saves on change, but this ensures periodic saves
         }
 
         // Telegram bridge is started in the auth Task above (after checkExistingSession)

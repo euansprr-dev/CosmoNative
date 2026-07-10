@@ -3365,9 +3365,33 @@ class ContentFocusModeViewModel: ObservableObject {
         phaseChangeCancellable?.cancel()
         phaseChangeCancellable = nil
         toolNotificationCancellables.removeAll()
-        writeSequence += 1  // Invalidate any in-flight async writes from writeToAtom()
-        flushTitleUpdateSync()
-        writeToAtomSync()
+        titleUpdateTask?.cancel()
+
+        // Async close save: the focus-exit animation must never block on the
+        // DB write lock (the cross-process busy timeout is 5s — a lock held by
+        // CosmoVoiceDaemon could freeze the UI that long). The registry escort
+        // preserves the quit guarantee: terminating mid-write flushes the same
+        // state synchronously; once the async write commits it unregisters.
+        // (The VM's own cosmoAppWillTerminate handler skips after isClosed.)
+        let escortID = "content-close-\(atom.uuid)"
+        DirtyEditorRegistry.shared.register(id: escortID) { [weak self] in
+            self?.flushTitleUpdateSync()
+            self?.writeToAtomSync()
+        }
+        let pendingTitle = pendingTitleDocument
+        let pendingPlain = pendingTitlePlainText
+        Task { @MainActor in
+            if let pendingTitle {
+                let trimmed = pendingPlain ?? RichDocumentPersistence.titlePlainText(from: pendingTitle)
+                await self.persistTitleUpdate(titleDocument: pendingTitle, trimmed: trimmed)
+            }
+            // writeToAtom bumps writeSequence itself, invalidating any
+            // still-queued debounced writes, and snapshots state on the main
+            // actor before hopping to the write queue.
+            self.writeToAtom { _ in
+                DirtyEditorRegistry.shared.unregister(id: escortID)
+            }
+        }
     }
 
     /// Persist conversation messages directly to the atom's metadata in GRDB

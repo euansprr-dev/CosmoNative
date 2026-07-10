@@ -234,10 +234,18 @@ final class InquiryRepository {
     }
 
     /// Inquiry Sessions scoped to a Deep Dive.
+    /// Metadata is decoded once per atom — the accessor parses JSON on every
+    /// call, so filtering/sorting through it decoded per comparison.
     func fetchSessions(forDeepDive uuid: String) async throws -> [Atom] {
         let list = try await atoms.fetchAll(type: .inquirySession)
-        return list.filter { $0.inquirySessionMetadata?.parentDeepDiveUUID == uuid }
-            .sorted { ($0.inquirySessionMetadata?.lastActiveAt ?? "") > ($1.inquirySessionMetadata?.lastActiveAt ?? "") }
+        return list
+            .compactMap { atom -> (atom: Atom, lastActiveAt: String)? in
+                guard let meta = atom.inquirySessionMetadata,
+                      meta.parentDeepDiveUUID == uuid else { return nil }
+                return (atom, meta.lastActiveAt)
+            }
+            .sorted { $0.lastActiveAt > $1.lastActiveAt }
+            .map(\.atom)
     }
 
     /// Extracts captured during sessions of a Deep Dive.
@@ -247,16 +255,19 @@ final class InquiryRepository {
     }
 
     /// Sources linked to the Deep Dive (research/note/swipe atoms surfaced by deepDiveSource links).
+    /// One batched query (the serial per-uuid loop awaited a round trip per
+    /// source); link order is preserved by reordering the batch result.
     func fetchSources(forDeepDive deepDive: Atom) async throws -> [Atom] {
         let sourceUUIDs = deepDive.linksOfType(.deepDiveSource).compactMap { $0.uuid }
-        guard !sourceUUIDs.isEmpty else { return [] }
-        var atomsLoaded: [Atom] = []
-        for uuid in sourceUUIDs {
-            if let atom = try await atoms.fetch(uuid: uuid) {
-                atomsLoaded.append(atom)
-            }
-        }
-        return atomsLoaded
+        return try await fetchInLinkOrder(uuids: sourceUUIDs)
+    }
+
+    /// Batch-fetch atoms by uuid, returned in the given order (dropping misses).
+    private func fetchInLinkOrder(uuids: [String]) async throws -> [Atom] {
+        guard !uuids.isEmpty else { return [] }
+        let loaded = try await atoms.fetchBatch(uuids: uuids)
+        let byUUID = Dictionary(loaded.map { ($0.uuid, $0) }, uniquingKeysWith: { first, _ in first })
+        return uuids.compactMap { byUUID[$0] }
     }
 
     /// Create or find a durable research atom for a URL. Source tabs are views; this atom is the source object.
@@ -360,16 +371,10 @@ final class InquiryRepository {
     }
 
     /// Connections crystallized within this Deep Dive.
+    /// One batched query in link order (was a serial per-uuid await loop).
     func fetchConnections(forDeepDive deepDive: Atom) async throws -> [Atom] {
         let uuids = deepDive.linksOfType(.deepDiveConnection).compactMap { $0.uuid }
-        guard !uuids.isEmpty else { return [] }
-        var atomsLoaded: [Atom] = []
-        for uuid in uuids {
-            if let atom = try await atoms.fetch(uuid: uuid) {
-                atomsLoaded.append(atom)
-            }
-        }
-        return atomsLoaded
+        return try await fetchInLinkOrder(uuids: uuids)
     }
 
     // MARK: - Inquiry Session

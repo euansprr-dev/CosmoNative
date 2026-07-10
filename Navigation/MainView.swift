@@ -2182,9 +2182,13 @@ struct MainView: View {
                     return nil
                 }
 
-                // 5. Command-K — peel the composer form, then the actions
-                // panel, then the palette
+                // 5. Command-K — peel the Ask-Cortex answer, then the composer
+                // form, then the actions panel, then the palette
                 if showCommandK {
+                    if commandKViewModel.askSession != nil {
+                        commandKViewModel.askSession = nil
+                        return nil
+                    }
                     if commandKViewModel.isComposerFocused {
                         commandKViewModel.isComposerFocused = false
                         return nil

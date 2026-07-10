@@ -199,7 +199,30 @@ struct CortexDetailPane: View {
 
     var body: some View {
         Group {
-            if let composer = composerContext {
+            if let viewModel, let ask = viewModel.askSession {
+                CommandKAskPane(
+                    session: ask,
+                    onOpenSource: { source in
+                        NotificationCenter.default.post(
+                            name: CosmoNotification.Navigation.openBlockInFocusMode,
+                            object: nil,
+                            userInfo: ["atomUUID": source.atomUuid]
+                        )
+                        viewModel.askSession = nil
+                        NotificationCenter.default.post(
+                            name: CosmoNotification.NodeGraph.closeCommandK, object: nil
+                        )
+                    },
+                    onAskCosmo: { question in
+                        viewModel.askSession = nil
+                        CosmoInlineAssistantStore.shared.openPane()
+                        CosmoInlineAssistantStore.shared.submitPrompt(question)
+                        NotificationCenter.default.post(
+                            name: CosmoNotification.NodeGraph.closeCommandK, object: nil
+                        )
+                    }
+                )
+            } else if let composer = composerContext {
                 CommandKComposerPane(viewModel: composer.viewModel, action: composer.action)
             } else if case .empty = subject {
                 emptyState

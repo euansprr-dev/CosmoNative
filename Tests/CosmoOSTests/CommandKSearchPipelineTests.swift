@@ -2755,6 +2755,22 @@ final class CommandKSearchPipelineTests: XCTestCase {
         XCTAssertFalse(loadAreasBody.contains(".sorted {\n                    let a = $0.metadataValue(as: AreaMetadata.self)?.sortOrder"))
     }
 
+    func testAskCortexGrammarParsesQuestionPrefix() {
+        // `?<question>` claims the query before navigation aliases can.
+        let action = CommandKActionParser.parse( "?what did I learn about hooks")
+        XCTAssertEqual(action?.kind, .askCortex)
+        XCTAssertEqual(action?.payload.body, "what did I learn about hooks")
+
+        let aliased = CommandKActionParser.parse( "recall: swipe structures for storytelling")
+        XCTAssertEqual(aliased?.kind, .askCortex)
+        XCTAssertEqual(aliased?.payload.body, "swipe structures for storytelling")
+
+        // A bare "?" has no question — no action row.
+        XCTAssertNil(CommandKActionParser.parse( "?"))
+        // Plain queries keep their existing parse.
+        XCTAssertNotEqual(CommandKActionParser.parse( "home")?.kind, .askCortex)
+    }
+
     func testBrainstormContextSidebarSearchCancelsStaleRequestsBeforePublishing() throws {
         let source = try String(
             contentsOf: repositoryRoot.appendingPathComponent("UI/FocusMode/Content/BrainstormContextSidebar.swift"),

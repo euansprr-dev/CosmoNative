@@ -1599,6 +1599,11 @@ public final class CommandKViewModel {
     /// and the keyboard layer need to see it.
     var composerDraft: CommandKComposerDraft?
 
+    /// Live Ask-Cortex session shown in the detail pane. Set when an
+    /// `?<question>` action executes; Escape peels it before the palette
+    /// closes (same layer contract as the composer).
+    var askSession: CommandKAskSession?
+
     /// True while keyboard focus is inside the composer form. Escape peels
     /// this layer first (returns focus to the search field, palette stays).
     public var isComposerFocused = false
@@ -1865,6 +1870,7 @@ public final class CommandKViewModel {
     private func resetComposerState() {
         composerDraft = nil
         isComposerFocused = false
+        askSession = nil
     }
 
     private func shouldPublishPrimaryActionUpdate(
@@ -3517,6 +3523,15 @@ public final class CommandKViewModel {
             CosmoInlineAssistantStore.shared.openPane()
             CosmoInlineAssistantStore.shared.submitPrompt(body)
             finishAction()
+
+        case .askCortex:
+            guard let question = action.payload.body else { return }
+            // Keep the palette open — the answer renders in the detail pane.
+            Task { [weak self] in
+                await CommandKAskEngine.run(question: question) { session in
+                    self?.askSession = session
+                }
+            }
         }
     }
 

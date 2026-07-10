@@ -333,7 +333,7 @@ private struct CommandKActionPreviewRow: View {
             return DS.entityConnection
         case .navigateCommandCenter, .openBrowser, .openSwipeGallery, .openDomain, .openApp, .openAtom, .savedSearch:
             return DS.accent
-        case .openCosmoPane, .openCosmoWindow, .askCosmo:
+        case .openCosmoPane, .openCosmoWindow, .askCosmo, .askCortex:
             return DS.gilt
         }
     }

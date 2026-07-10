@@ -25,6 +25,7 @@ enum CommandKActionKind: String, Equatable {
     case openCosmoPane
     case openCosmoWindow
     case askCosmo
+    case askCortex
 }
 
 struct CommandKActionPayload: Equatable {
@@ -86,7 +87,7 @@ struct CommandKAction: Identifiable, Equatable {
             components = [kind.rawValue, payload.destinationName]
         case .createIdea:
             components = [kind.rawValue, payload.clientName]
-        case .createTask, .createNote, .createContent, .createThinkspace, .captureInbox, .askCosmo:
+        case .createTask, .createNote, .createContent, .createThinkspace, .captureInbox, .askCosmo, .askCortex:
             components = [kind.rawValue]
         case .navigateCommandCenter, .navigateLastThinkspace, .openSwipeGallery, .openCosmoPane, .openCosmoWindow:
             components = [kind.rawValue]
@@ -174,7 +175,7 @@ struct CommandKAction: Identifiable, Equatable {
             return payload.title?.isEmpty == false
         case .openCosmoPane, .openCosmoWindow:
             return true
-        case .askCosmo:
+        case .askCosmo, .askCortex:
             return payload.body?.isEmpty == false
         }
     }
@@ -295,6 +296,14 @@ struct CommandKVisualIdentity: Equatable {
                 title: "App",
                 subtitle: action.payload.title ?? "macOS app",
                 badge: "APP"
+            )
+        case .askCortex:
+            return CommandKVisualIdentity(
+                style: .cosmo,
+                symbolName: "circle.hexagongrid.circle",
+                title: "Cortex",
+                subtitle: "Answer from your knowledge",
+                badge: "RECALL"
             )
         case .openCosmoPane, .openCosmoWindow, .askCosmo:
             return CommandKVisualIdentity(
@@ -459,6 +468,10 @@ enum CommandKActionParser {
     static func parse(_ rawQuery: String) -> CommandKAction? {
         let trimmed = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
+
+        if let cortex = parseAskCortex(trimmed) {
+            return cortex
+        }
 
         if let navigation = parseNavigation(trimmed) {
             return navigation
@@ -964,6 +977,25 @@ enum CommandKActionParser {
                 )
             )
         }
+    }
+
+    /// `?<question>` (or `recall: <question>`) — answer from the user's own
+    /// knowledge base with citations, honestly gated when the cortex is empty.
+    private static func parseAskCortex(_ text: String) -> CommandKAction? {
+        var body: String?
+        if text.hasPrefix("?") {
+            body = String(text.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
+        } else if text.lowercased().hasPrefix("recall:") {
+            body = String(text.dropFirst("recall:".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard let body, !body.isEmpty else { return nil }
+        return CommandKAction(
+            kind: .askCortex,
+            title: "Ask your cortex",
+            subtitle: body,
+            icon: "circle.hexagongrid.circle",
+            payload: CommandKActionPayload(body: body, rawText: text)
+        )
     }
 
     private static func parseAskCosmo(_ text: String) -> CommandKAction? {

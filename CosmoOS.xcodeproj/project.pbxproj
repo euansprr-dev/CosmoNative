@@ -847,6 +847,7 @@
 		F23803B1C9E72992D5B24BEF /* IdeaManuscriptEditors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07942182EC7686DB405C7B9D /* IdeaManuscriptEditors.swift */; };
 		F24E8A6F73C8945B5179ADAD /* DeleteBlockAction.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0348D33BEDECE87480B1EF8 /* DeleteBlockAction.swift */; };
 		F28BD17A6058A62FDB3B1C10 /* CosmicHaptics.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFF9BFF380AB4DA7648ADC7E /* CosmicHaptics.swift */; };
+		F30A99E8F4010A63AC6E23FF /* CommandKAskCortex.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91A0224793B9C4FB6ECDB107 /* CommandKAskCortex.swift */; };
 		F32020954335F8B6655B0B38 /* FocusTransitionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86A32BC52B9460AC2F47FAB6 /* FocusTransitionCoordinator.swift */; };
 		F37C16371CAB6C5B88715B01 /* ProfileManagementTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04857F9A6D9A07F35178200D /* ProfileManagementTab.swift */; };
 		F37D2929DAEA4878A3093DAA /* YouTubeTranscriptService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 668E91D754CE45438309E1B2 /* YouTubeTranscriptService.swift */; };
@@ -1394,6 +1395,7 @@
 		90B88168CFC6ECEE30BC09D0 /* RichTextEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RichTextEditor.swift; sourceTree = "<group>"; };
 		914E85F1FE480601B71B1F2B /* SelectionFormattingMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectionFormattingMenu.swift; sourceTree = "<group>"; };
 		915B66D73377441B2010E2A9 /* PaneEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaneEnvironment.swift; sourceTree = "<group>"; };
+		91A0224793B9C4FB6ECDB107 /* CommandKAskCortex.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CommandKAskCortex.swift; sourceTree = "<group>"; };
 		91DCBAACFA841DE9D1FF6354 /* ElementBlockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ElementBlockView.swift; sourceTree = "<group>"; };
 		92824BA7158A05B80C2A3603 /* CosmoInlineAssistantPaneComposer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmoInlineAssistantPaneComposer.swift; sourceTree = "<group>"; };
 		930B0BBE210442E37B94AE19 /* ConnectionSectionCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionSectionCardView.swift; sourceTree = "<group>"; };
@@ -3371,6 +3373,7 @@
 				18ABECAE4597D6CCC4EDEE33 /* Capture */,
 				D292E970D8B164FA66FB4B20 /* Forms */,
 				F4B0915841D854D25D7B8032 /* UserCommands */,
+				91A0224793B9C4FB6ECDB107 /* CommandKAskCortex.swift */,
 			);
 			path = CommandK;
 			sourceTree = "<group>";
@@ -4732,6 +4735,7 @@
 				E08F8DE8C3DDD82F6556C081 /* RecallIndexer.swift in Sources */,
 				659E7859F1C4122F6177C40A /* RecallEngine.swift in Sources */,
 				FE696A1FF510A10C00B4ADB4 /* RecallIndexStatusCard.swift in Sources */,
+				F30A99E8F4010A63AC6E23FF /* CommandKAskCortex.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

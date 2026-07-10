@@ -63,6 +63,7 @@
 		0D472E223C8BEEF10BA10D1D /* DeepDivePortalBlockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FB7D47229C912DFB753DBD5 /* DeepDivePortalBlockView.swift */; };
 		0E7647BC9B61859A8AE0680E /* DesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C5DF578D8BA8B3D5DB502BF /* DesignSystem.swift */; };
 		0EA2DCE90EDBD9EB56C2CF02 /* StickyNoteBlockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2611490AC9ABA6AEF3C4B35C /* StickyNoteBlockView.swift */; };
+		0F957C01C64F8B66D6E83B5D /* DailyBriefEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = D375813A65EC307A883D3F9A /* DailyBriefEngine.swift */; };
 		0F95C4E60D3D5D6D5E154DEB /* AsyncSemaphore.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC80D4B123A3A2BA0D76DC6B /* AsyncSemaphore.swift */; };
 		0FD0B850F828D41DDDC51EBD /* AtomWindowPanelController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ACCE6DA8AE2A5880F0379F7 /* AtomWindowPanelController.swift */; };
 		1112134E3BF67C013BF1A8EC /* LassoGestureDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAC4F8DB62BA7DA944439C89 /* LassoGestureDetector.swift */; };
@@ -1645,6 +1646,7 @@
 		D2E9000CF209280B9CC15FEA /* RecallStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RecallStore.swift; path = Recall/RecallStore.swift; sourceTree = "<group>"; };
 		D308B216DEEA8F3E6CBD1B69 /* CosmoSettingsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CosmoSettingsView.swift; sourceTree = "<group>"; };
 		D32AEF159390081601401E5D /* AtomWindowRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AtomWindowRootView.swift; sourceTree = "<group>"; };
+		D375813A65EC307A883D3F9A /* DailyBriefEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DailyBriefEngine.swift; sourceTree = "<group>"; };
 		D47D2505029A431A7CCCEE03 /* ChangeTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChangeTracker.swift; sourceTree = "<group>"; };
 		D4C2F9E4B380B479874300E8 /* ResearchFocusModeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResearchFocusModeView.swift; sourceTree = "<group>"; };
 		D547D40AEBB98B6F88F73607 /* TextRegionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextRegionView.swift; sourceTree = "<group>"; };
@@ -3042,6 +3044,7 @@
 				0EE5D79D8ECDB7EF33AC9FB2 /* InboxAtlasRouter.swift */,
 				DB86E1CEBCEE03926E225808 /* InboxDestinationAtlas.swift */,
 				E1ADFCBE9940A7707208CDDA /* Recall */,
+				D375813A65EC307A883D3F9A /* DailyBriefEngine.swift */,
 			);
 			path = AI;
 			sourceTree = "<group>";
@@ -4760,6 +4763,7 @@
 				587134F7FCFBC0AABEDB5165 /* ContentPerfSnapshot.swift in Sources */,
 				25BAB1AB08120132A33F65A3 /* ContentShipSheet.swift in Sources */,
 				4041E275B0DD44F95F296B29 /* ContentQueueSectionView.swift in Sources */,
+				0F957C01C64F8B66D6E83B5D /* DailyBriefEngine.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

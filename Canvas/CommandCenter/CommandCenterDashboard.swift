@@ -130,6 +130,11 @@ struct CommandCenterDashboard: View {
         } else {
             CommandCenterMasthead(viewModel: viewModel)
 
+            if viewModel.viewMode == .today {
+                DailyBriefCard()
+                    .cascadeIn(hasAppeared, index: 0)
+            }
+
             DashboardTimeTracker(viewModel: viewModel)
                 .cascadeIn(hasAppeared, index: 0)
 

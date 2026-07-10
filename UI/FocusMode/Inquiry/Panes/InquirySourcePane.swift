@@ -15,6 +15,7 @@ struct InquirySourcePane: View {
     @State private var showingURLEntry = false
     @State private var urlEntry: String = ""
     @State private var lastSelectedText: String = ""
+    @State private var lastPDFSelection: PDFSelectionDetail?
     @State private var readerMode: Bool = true
     @State private var showSaveAsMenu: Bool = false
     @State private var sourceSearchDraft: String = ""
@@ -361,6 +362,7 @@ struct InquirySourcePane: View {
             PDFSourceContainer(
                 tab: tab,
                 lastSelectedText: $lastSelectedText,
+                lastPDFSelection: $lastPDFSelection,
                 onTextExtracted: { text in
                     guard let uuid = tab.sourceUUID else { return }
                     Task { await viewModel.persistExtractedPDFText(text, sourceUUID: uuid) }
@@ -484,10 +486,28 @@ struct InquirySourcePane: View {
             )
             viewModel.registerSavedExtract(extract, sourceTabId: tab.id)
             viewModel.scheduleSave()
+            await persistPDFHighlightIfNeeded(tab: tab, captureUuid: extract.uuid)
             lastSelectedText = ""
         } catch {
             print("[InquirySourcePane] saveSelection failed: \(error)")
         }
+    }
+
+    /// A capture from the Reading Room leaves a persistent visual mark: the
+    /// selection's page + line quads land in pdf_highlights, linked to the
+    /// capture atom, and the open reader rehydrates immediately.
+    private func persistPDFHighlightIfNeeded(tab: SourceTab, captureUuid: String?) async {
+        guard tab.kind == .pdf,
+              let sourceUUID = tab.sourceUUID,
+              let detail = lastPDFSelection else { return }
+        await PDFHighlightStore.record(
+            atomUuid: sourceUUID,
+            page: detail.pageIndex,
+            quads: detail.quads,
+            text: detail.text,
+            captureUuid: captureUuid
+        )
+        lastPDFSelection = nil
     }
 
     private func deepenFromSelection(_ tab: SourceTab) async {
@@ -516,6 +536,7 @@ struct InquirySourcePane: View {
         }
         if let extractAtom {
             viewModel.registerSavedExtract(extractAtom, sourceTabId: tab.id)
+            await persistPDFHighlightIfNeeded(tab: tab, captureUuid: extractAtom.uuid)
         }
 
         // 2. Auto-title the branch question (V1: just use selection prefix)

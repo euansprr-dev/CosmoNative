@@ -350,33 +350,34 @@ struct ResearchCoreView: View {
 
     // MARK: - PDF Content
 
+    /// The Reading Room, embedded: the same reader the inquiry source pane
+    /// uses (search, thumbnails, persistent highlights, page-marked text →
+    /// Recall) instead of the old open-in-browser placeholder.
+    @State private var pdfSelectedText: String = ""
+    @State private var pdfSelection: PDFSelectionDetail?
+
     private var pdfContent: some View {
-        VStack(spacing: 12) {
-            // PDF preview placeholder
-            RoundedRectangle(cornerRadius: 12)
-                .fill(DS.border)
-                .frame(height: 300)
-                .overlay(
-                    VStack(spacing: 12) {
-                        Image(systemName: "doc.text.fill")
-                            .font(.system(size: 48))
-                            .foregroundColor(accentColor.opacity(0.5))
-
-                        Text("PDF Document")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(DS.textSecondary)
-
-                        Button("Open PDF") {
-                            onOpenInBrowser()
-                        }
-                        .buttonStyle(.plain)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .background(accentColor.opacity(0.2), in: Capsule())
-                        .foregroundColor(accentColor)
-                    }
-                )
-        }
+        PDFSourceContainer(
+            urlString: atom.metadataValue(as: ResearchMetadata.self)?.url,
+            sourceUUID: atom.uuid,
+            lastSelectedText: $pdfSelectedText,
+            lastPDFSelection: $pdfSelection,
+            onTextExtracted: { text in
+                let uuid = atom.uuid
+                Task {
+                    // Persist page-marked text once so Recall indexes it —
+                    // same never-clobber rule as the inquiry path.
+                    guard let fresh = try? await AtomRepository.shared.fetch(uuid: uuid),
+                          (fresh.body ?? "").count < 200 else { return }
+                    var updated = fresh
+                    updated.body = text
+                    _ = try? await AtomRepository.shared.update(updated)
+                }
+            }
+        )
+        .frame(minHeight: 480)
+        .clipShape(.rect(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(DS.borderSubtle, lineWidth: 1))
     }
 
     // MARK: - Social Content

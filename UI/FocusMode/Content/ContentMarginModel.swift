@@ -238,11 +238,18 @@ struct MarginSuggestionRow: View {
                     .accessibilityHidden(true)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(hit.title)
-                        .font(DS.caption)
-                        .fontWeight(.medium)
-                        .foregroundStyle(DS.text)
-                        .lineLimit(1)
+                    HStack(spacing: 4) {
+                        Text(hit.title)
+                            .font(DS.caption)
+                            .fontWeight(.medium)
+                            .foregroundStyle(DS.text)
+                            .lineLimit(1)
+                        if let page = hit.page {
+                            Text("p. \(page)")
+                                .font(DS.caption2.monospacedDigit())
+                                .foregroundStyle(DS.textMuted)
+                        }
+                    }
                     // The receipt: WHY this surfaced (matched chunk excerpt).
                     Text(hit.matchedText)
                         .font(DS.caption2)

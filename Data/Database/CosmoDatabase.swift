@@ -2410,6 +2410,27 @@ class CosmoDatabase: ObservableObject {
             print("✅ taste engine tables created")
         }
 
+        migrator.registerMigration("create_pdf_highlights") { db in
+            // Reading Room highlights: visual marks on a PDF source, linked to
+            // the capture atom the selection produced. Quads are page-space
+            // rects (JSON array) rehydrated as PDFAnnotation overlays on open.
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS pdf_highlights (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    atom_uuid TEXT NOT NULL,
+                    page INTEGER NOT NULL,
+                    quads TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    capture_uuid TEXT,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_pdf_highlights_atom
+                    ON pdf_highlights(atom_uuid);
+            """)
+            print("✅ pdf_highlights table created")
+        }
+
         return migrator
     }
 

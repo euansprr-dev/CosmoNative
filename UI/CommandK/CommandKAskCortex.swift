@@ -35,6 +35,8 @@ struct CommandKAskSource: Identifiable, Equatable {
     let atomType: AtomType
     let title: String
     let excerpt: String
+    /// PDF locator when the matched chunk came from a page-marked document.
+    let page: Int?
 
     var id: Int { index }
 }
@@ -74,7 +76,8 @@ enum CommandKAskEngine {
                 atomUuid: hit.atomUuid,
                 atomType: hit.atomType,
                 title: hit.title,
-                excerpt: hit.matchedText
+                excerpt: hit.matchedText,
+                page: hit.page
             )
         }
         session.phase = .answering
@@ -248,6 +251,11 @@ struct CommandKAskPane: View {
                     .font(DS.caption)
                     .foregroundStyle(DS.textSecondary)
                     .lineLimit(1)
+                if let page = source.page {
+                    Text("p. \(page)")
+                        .font(DS.caption2.monospacedDigit())
+                        .foregroundStyle(DS.textMuted)
+                }
                 Spacer(minLength: 0)
             }
             .padding(.vertical, 3)
@@ -255,6 +263,9 @@ struct CommandKAskPane: View {
         }
         .buttonStyle(.plain)
         .help(String(source.excerpt.prefix(200)))
-        .accessibilityLabel("Source \(source.index): \(source.title)")
+        .accessibilityLabel(
+            source.page.map { "Source \(source.index): \(source.title), page \($0)" }
+                ?? "Source \(source.index): \(source.title)"
+        )
     }
 }

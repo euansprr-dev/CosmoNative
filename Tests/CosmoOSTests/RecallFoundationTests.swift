@@ -131,4 +131,70 @@ final class RecallFoundationTests: XCTestCase {
         XCTAssertLessThan(scores["pasta"]!, scores["hooks"]!)
         XCTAssertLessThan(scores["sleep"]!, scores["hooks"]!)
     }
+
+    // MARK: - Page-marked documents (Reading Room citations)
+
+    func testPagedSegmentsParseMarkersAndStripBookkeeping() throws {
+        let text = """
+        Attention Is All You Need
+
+        [[page 1]]
+        The dominant sequence transduction models are based on recurrent networks.
+
+        [[page 2]]
+        We propose the Transformer.
+
+        [[truncated after page 2]]
+        """
+        let segments = try XCTUnwrap(RecallDocumentBuilder.pagedSegments(text))
+        XCTAssertEqual(segments.count, 3)
+        XCTAssertNil(segments[0].page, "the pre-marker head (title) carries no page")
+        XCTAssertEqual(segments[1].page, 1)
+        XCTAssertEqual(segments[2].page, 2)
+        XCTAssertFalse(segments[2].text.contains("[[truncated"), "bookkeeping markers never reach embeddings")
+        XCTAssertFalse(segments[1].text.contains("[[page"))
+    }
+
+    func testPagedSegmentsNilForPlainDocuments() {
+        XCTAssertNil(RecallDocumentBuilder.pagedSegments("Just a note about hooks and pacing."))
+    }
+
+    func testChunksStampPagesForPDFBackedAtoms() {
+        var atom = Atom.new(type: .research, title: "Transformer paper", body: nil)
+        atom.body = "[[page 1]]\nAttention mechanisms.\n\n[[page 7]]\nScaled dot-product attention details."
+        let chunks = RecallDocumentBuilder.chunks(for: atom)
+        XCTAssertFalse(chunks.isEmpty)
+        XCTAssertTrue(chunks.contains { $0.page == 1 })
+        XCTAssertTrue(chunks.contains { $0.page == 7 })
+        XCTAssertFalse(chunks.contains { $0.text.contains("[[page") })
+    }
+
+    func testPlainAtomChunksCarryNoPage() {
+        var atom = Atom.new(type: .note, title: "Hook note", body: nil)
+        atom.body = "Open with a claim."
+        let chunks = RecallDocumentBuilder.chunks(for: atom)
+        XCTAssertFalse(chunks.isEmpty)
+        XCTAssertTrue(chunks.allSatisfy { $0.page == nil })
+    }
+
+    // MARK: - PDF highlight quads
+
+    func testHighlightQuadRoundTrip() {
+        let rects = [CGRect(x: 10, y: 620.5, width: 380, height: 14), CGRect(x: 10, y: 604, width: 122, height: 14)]
+        let encoded = PDFHighlight.encodeQuads(rects)
+        let highlight = PDFHighlight(
+            id: nil, atomUuid: "src-1", page: 6, quads: encoded,
+            text: "the selection", captureUuid: "cap-1",
+            createdAt: "2026-07-10T09:00:00Z"
+        )
+        XCTAssertEqual(highlight.quadRects, rects)
+    }
+
+    func testHighlightQuadsRejectMalformedJSON() {
+        let highlight = PDFHighlight(
+            id: nil, atomUuid: "src-1", page: 0, quads: "not json",
+            text: "x", captureUuid: nil, createdAt: "2026-07-10T09:00:00Z"
+        )
+        XCTAssertTrue(highlight.quadRects.isEmpty)
+    }
 }

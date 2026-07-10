@@ -67,7 +67,10 @@ enum RecallDocumentBuilder {
     }
 
     /// Paragraph-packed chunks with a title prefix on every chunk so each
-    /// vector knows what document it belongs to.
+    /// vector knows what document it belongs to. PDF-extracted bodies carry
+    /// `[[page N]]` markers (written by PDFSourceStore.extractText); chunks
+    /// from those documents are stamped with their page so recall citations
+    /// can say "p. 12" and deep-link into the reader.
     static func chunks(for atom: Atom) -> [RecallChunk] {
         let text = documentText(for: atom)
         guard !text.isEmpty else { return [] }
@@ -75,14 +78,52 @@ enum RecallDocumentBuilder {
         let title = atom.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let prefix = title.isEmpty ? "" : "\(title)\n"
 
-        let pieces = packedParagraphs(text)
+        let pieces: [(text: String, page: Int?)]
+        if let paged = pagedSegments(text) {
+            pieces = paged.flatMap { segment in
+                packedParagraphs(segment.text).map { ($0, segment.page) }
+            }
+        } else {
+            pieces = packedParagraphs(text).map { ($0, nil) }
+        }
+
         return pieces.prefix(maxChunksPerAtom).enumerated().map { index, piece in
             // Don't double-prefix the first chunk, which already starts with the title.
-            let chunkText = (index == 0 || prefix.isEmpty || piece.hasPrefix(title))
-                ? piece
-                : prefix + piece
-            return RecallChunk(index: index, text: chunkText)
+            let chunkText = (index == 0 || prefix.isEmpty || piece.text.hasPrefix(title))
+                ? piece.text
+                : prefix + piece.text
+            return RecallChunk(index: index, text: chunkText, page: piece.page)
         }
+    }
+
+    /// Split a page-marked body into per-page segments, stripping the markers
+    /// (they're noise in an embedding). Returns nil when the text carries no
+    /// markers, so plain documents take the fast path.
+    static func pagedSegments(_ text: String) -> [(text: String, page: Int?)]? {
+        guard text.contains("[[page ") else { return nil }
+        let pattern = /\[\[page (\d+)\]\]/
+        let matches = text.matches(of: pattern)
+        guard !matches.isEmpty else { return nil }
+
+        var segments: [(text: String, page: Int?)] = []
+        // Anything before the first marker (usually the title) has no page.
+        let head = String(text[text.startIndex..<matches[0].range.lowerBound])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !head.isEmpty { segments.append((head, nil)) }
+
+        for (offset, match) in matches.enumerated() {
+            let start = match.range.upperBound
+            let end = offset + 1 < matches.count ? matches[offset + 1].range.lowerBound : text.endIndex
+            var body = String(text[start..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
+            // The extractor's truncation note is bookkeeping, not content.
+            if let truncated = body.range(of: "[[truncated after page") {
+                body = String(body[body.startIndex..<truncated.lowerBound])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            guard !body.isEmpty else { continue }
+            segments.append((body, Int(match.output.1)))
+        }
+        return segments.isEmpty ? nil : segments
     }
 
     /// Split on blank lines, pack paragraphs into ~chunkTarget windows, and

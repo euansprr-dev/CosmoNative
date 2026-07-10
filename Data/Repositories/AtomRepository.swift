@@ -867,6 +867,11 @@ class AtomRepository: ObservableObject {
             await RecallIndexer.shared.noteAtomDeleted(uuid)
         }
 
+        // Reading Room marks cascade with the source atom AND the capture atom.
+        Task.detached(priority: .utility) {
+            await PDFHighlightStore.removeForAtom(uuid)
+        }
+
         // Sync to NodeGraph
         do {
             try await NodeGraphEngine.shared.handleAtomDeleted(atomUUID: uuid)

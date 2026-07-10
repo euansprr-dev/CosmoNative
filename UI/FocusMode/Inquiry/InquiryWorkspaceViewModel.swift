@@ -1235,10 +1235,14 @@ final class InquiryWorkspaceViewModel {
     func openURLSource(_ rawURL: String) async {
         let canonical = InquiryRepository.shared.canonicalURL(rawURL)
         guard let url = URL(string: canonical) else { return }
-        let title = url.host ?? canonical
+        // PDFs get the Reading Room, not the web view.
+        let isPDF = url.pathExtension.lowercased() == "pdf" || url.isFileURL
+        let title = isPDF
+            ? url.deletingPathExtension().lastPathComponent
+            : (url.host ?? canonical)
         do {
             let source = try await InquiryRepository.shared.createOrFindURLSource(urlString: canonical, title: title)
-            let tab = openTab(for: source, url: canonical, title: title)
+            let tab = openTab(for: source, url: canonical, title: title, kind: isPDF ? .pdf : .web)
             upsertSourceRef(for: source, tab: tab, url: canonical, title: title, addedByUser: true)
             activeSourceTabId = tab.id
             appendActivity(
@@ -1442,12 +1446,36 @@ final class InquiryWorkspaceViewModel {
         scheduleSave()
     }
 
-    private func openTab(for source: Atom, url: String, title: String) -> SourceTab {
+    /// Import a local PDF into the Reading Room: copy it into the app's
+    /// source store (originals can move), then open it as a .pdf tab.
+    func openLocalPDF(fileURL: URL) async {
+        do {
+            let stored = try PDFSourceStore.importLocalFile(fileURL)
+            await openURLSource(stored.absoluteString)
+        } catch {
+            print("Inquiry: local PDF import failed: \(error)")
+        }
+    }
+
+    /// Persist a PDF's page-marked extracted text onto its source atom (once).
+    /// The repository save hook carries it into the Recall index, so the
+    /// paper becomes recallable the moment it's opened.
+    func persistExtractedPDFText(_ text: String, sourceUUID: String) async {
+        guard !text.isEmpty else { return }
+        guard let atom = try? await AtomRepository.shared.fetch(uuid: sourceUUID) else { return }
+        // Never clobber a body someone already wrote/annotated.
+        guard (atom.body ?? "").count < 200 else { return }
+        var updated = atom
+        updated.body = text
+        _ = try? await AtomRepository.shared.update(updated)
+    }
+
+    private func openTab(for source: Atom, url: String, title: String, kind: SourceTab.Kind = .web) -> SourceTab {
         if let existing = structured.sourceTabs.first(where: { $0.sourceUUID == source.uuid }) {
             return existing
         }
         let tab = SourceTab(
-            kind: .web,
+            kind: kind,
             sourceUUID: source.uuid,
             url: url,
             title: source.title ?? title,

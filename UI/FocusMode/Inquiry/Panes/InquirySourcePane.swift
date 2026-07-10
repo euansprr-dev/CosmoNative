@@ -5,6 +5,8 @@
 //   - Tab bar with branch awareness, URL/quick-open input, selection mini-menu.
 
 import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
 
 @MainActor
 struct InquirySourcePane: View {
@@ -75,6 +77,17 @@ struct InquirySourcePane: View {
                 }
                 .buttonStyle(.plain)
                 .help("Open source")
+                Button {
+                    pickLocalPDF()
+                } label: {
+                    Image(systemName: "doc.badge.plus")
+                        .font(.system(size: 11, weight: .semibold))
+                        .padding(6)
+                        .background(DS.surfaceHover, in: Circle())
+                        .foregroundStyle(CosmoColors.textSecondary)
+                }
+                .buttonStyle(.plain)
+                .help("Open a PDF from disk")
                 Spacer()
                 if let activeTab = activeTab, activeTab.kind == .web {
                     readerToggle
@@ -310,6 +323,15 @@ struct InquirySourcePane: View {
         }
     }
 
+    private func pickLocalPDF() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.pdf]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        Task { await viewModel.openLocalPDF(fileURL: url) }
+    }
+
     private func openURLEntry() async {
         let trimmed = urlEntry.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -335,8 +357,17 @@ struct InquirySourcePane: View {
             } else {
                 tabUnavailable
             }
-        case .pdf, .youTube:
-            // V1.1: PDFKit + YouTube transcript wiring.
+        case .pdf:
+            PDFSourceContainer(
+                tab: tab,
+                lastSelectedText: $lastSelectedText,
+                onTextExtracted: { text in
+                    guard let uuid = tab.sourceUUID else { return }
+                    Task { await viewModel.persistExtractedPDFText(text, sourceUUID: uuid) }
+                }
+            )
+        case .youTube:
+            // V1.1: YouTube transcript wiring.
             phasedComingSoonView(for: tab)
         }
     }

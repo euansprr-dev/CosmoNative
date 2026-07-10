@@ -473,6 +473,7 @@
 		8F19C04D4A7504D60CB00414 /* ConnectionFocusModeState.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1EE8041AF5A4795F4DA9BCE /* ConnectionFocusModeState.swift */; };
 		8F3116E1733C524B860D7859 /* SettingsSurfaceKit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 363623549A4180AADC531210 /* SettingsSurfaceKit.swift */; };
 		8F8CF76B013387AD0958D4B5 /* AIWritingProgressView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F47F04A5F323CF01D6842951 /* AIWritingProgressView.swift */; };
+		90B80594BD70E14CA519B8DF /* PDFSourceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7B9C60FC5D32A91AC4AA705 /* PDFSourceView.swift */; };
 		9105A51339B4763625926294 /* InstagramAutoTranscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34B5641346F7F5F9D745CE95 /* InstagramAutoTranscriber.swift */; };
 		914AAF94AEA46BCFBCE62D08 /* CrystallizationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17BD6B13CF7B16D73CE5B89 /* CrystallizationEngine.swift */; };
 		91ACA03AB96A28224F6C38BB /* CommandKCaptureRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4E9352A172F5923B1EE26E6 /* CommandKCaptureRouter.swift */; };
@@ -1649,6 +1650,7 @@
 		D6AC930FD36314607F7EC94D /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		D74DADF66BC57E4994FFA4DD /* ToolActivityStreamView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolActivityStreamView.swift; sourceTree = "<group>"; };
 		D75BD406ED9F504B6823FB4F /* CosmoInlineSkillAutoRunner.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CosmoInlineSkillAutoRunner.swift; sourceTree = "<group>"; };
+		D7B9C60FC5D32A91AC4AA705 /* PDFSourceView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PDFSourceView.swift; sourceTree = "<group>"; };
 		D8117015893BC704EA9CE3BD /* ApifyInstagramProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApifyInstagramProvider.swift; sourceTree = "<group>"; };
 		D8334DC567886FF9380FC4AF /* InquiryLiveRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InquiryLiveRouter.swift; sourceTree = "<group>"; };
 		D83B38147823FF34E324A214 /* GraphEdge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GraphEdge.swift; sourceTree = "<group>"; };
@@ -2112,6 +2114,7 @@
 			children = (
 				7FCFA23DC68203F9B1229785 /* InternalSourceView.swift */,
 				CC1E86ACDA48124427F08929 /* WebSourceView.swift */,
+				D7B9C60FC5D32A91AC4AA705 /* PDFSourceView.swift */,
 			);
 			path = Source;
 			sourceTree = "<group>";
@@ -4740,6 +4743,7 @@
 				FE696A1FF510A10C00B4ADB4 /* RecallIndexStatusCard.swift in Sources */,
 				F30A99E8F4010A63AC6E23FF /* CommandKAskCortex.swift in Sources */,
 				7B04B3CF8E240DC7E4058AAA /* ContentMarginModel.swift in Sources */,
+				90B80594BD70E14CA519B8DF /* PDFSourceView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

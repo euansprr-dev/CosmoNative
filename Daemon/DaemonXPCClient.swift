@@ -263,51 +263,9 @@ public final class DaemonXPCClient: ObservableObject, DaemonXPCClientProtocol, S
         }
     }
 
-    // MARK: - Embedding Operations
-
-    /// Embed single text (Matryoshka 256d output)
-    public func embed(text: String) async throws -> [Float] {
-        let data = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
-            do {
-                let proxy = try getProxyWithErrorHandler()
-                proxy.embed(text: text) { data, error in
-                    if let error = error {
-                        continuation.resume(throwing: error)
-                    } else if let data = data {
-                        continuation.resume(returning: data)
-                    } else {
-                        continuation.resume(throwing: DaemonClientError.noResponse)
-                    }
-                }
-            } catch {
-                continuation.resume(throwing: error)
-            }
-        }
-
-        return try JSONDecoder().decode([Float].self, from: data)
-    }
-
-    /// Batch embed multiple texts (more efficient)
-    public func embedBatch(texts: [String]) async throws -> [[Float]] {
-        let data = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
-            do {
-                let proxy = try getProxyWithErrorHandler()
-                proxy.embedBatch(texts: texts) { data, error in
-                    if let error = error {
-                        continuation.resume(throwing: error)
-                    } else if let data = data {
-                        continuation.resume(returning: data)
-                    } else {
-                        continuation.resume(throwing: DaemonClientError.noResponse)
-                    }
-                }
-            } catch {
-                continuation.resume(throwing: error)
-            }
-        }
-
-        return try JSONDecoder().decode([[Float]].self, from: data)
-    }
+    // Embedding operations removed — the on-device embedding model never
+    // loaded (stub threw on every call); all embeddings go through the Recall
+    // cloud client (`RecallEmbedding` / `CloudEmbeddingClient`).
 
     // MARK: - ASR Operations (Tiered)
 
@@ -708,8 +666,10 @@ public enum DaemonClientError: LocalizedError, Sendable {
 // MARK: - Convenience Extensions
 
 extension DaemonXPCClient {
-    /// Wait for daemon to be ready with models loaded (with timeout)
-    /// For voice commands to work, we need both embedding AND ASR to be loaded
+    /// Wait for daemon to be ready with models loaded (with timeout).
+    /// Voice needs ASR only — embeddings run through the Recall cloud client,
+    /// and the old on-device embedding model never loaded, so gating readiness
+    /// on it made every caller eat the full timeout.
     public func waitForReady(timeout: Duration = .seconds(30)) async -> Bool {
         let deadline = ContinuousClock.now + timeout
         var lastStatus: DaemonStatus?
@@ -720,14 +680,13 @@ extension DaemonXPCClient {
             if let status = await getStatus() {
                 lastStatus = status
 
-                // Check if essential models are loaded (need embedding AND ASR for voice)
-                if status.embeddingLoaded && status.asrL1Loaded {
-                    print("DaemonXPCClient: Daemon ready - embedding and ASR models loaded")
+                if status.asrL1Loaded {
+                    print("DaemonXPCClient: Daemon ready - ASR model loaded")
                     return true
                 }
 
                 // Log progress every few seconds
-                print("DaemonXPCClient: Waiting... (LLM: \(status.llmLoaded), Embedding: \(status.embeddingLoaded), ASR: \(status.asrL1Loaded))")
+                print("DaemonXPCClient: Waiting... (LLM: \(status.llmLoaded), ASR: \(status.asrL1Loaded))")
             }
 
             try? await Task.sleep(for: .milliseconds(500))
@@ -735,11 +694,7 @@ extension DaemonXPCClient {
 
         // Timeout - log final status
         if let status = lastStatus {
-            print("DaemonXPCClient: Timeout waiting for models (LLM: \(status.llmLoaded), Embedding: \(status.embeddingLoaded), ASR: \(status.asrL1Loaded))")
-            // Return true if at least embedding is loaded, but warn about ASR
-            if status.embeddingLoaded && !status.asrL1Loaded {
-                print("⚠️ DaemonXPCClient: ASR not loaded - voice commands will use fallback")
-            }
+            print("DaemonXPCClient: Timeout waiting for models (LLM: \(status.llmLoaded), ASR: \(status.asrL1Loaded))")
         } else {
             print("DaemonXPCClient: Timeout - no status received from daemon")
         }

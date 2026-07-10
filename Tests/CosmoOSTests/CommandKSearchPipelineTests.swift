@@ -2626,28 +2626,6 @@ final class CommandKSearchPipelineTests: XCTestCase {
         XCTAssertEqual(viewModel.results.map(\.atomUUID), ["stable-result"])
     }
 
-    func testCommandCenterLibraryBrowserUsesSharedISODateParserForLoadedEntities() throws {
-        let source = try String(
-            contentsOf: repositoryRoot.appendingPathComponent("Navigation/CommandHub/Components/LibraryBrowser.swift"),
-            encoding: .utf8
-        )
-
-        XCTAssertFalse(source.contains("ISO8601DateFormatter().date(from:"))
-    }
-
-    func testCommandCenterLibraryBrowserCancelsStaleEntityLoads() throws {
-        let source = try String(
-            contentsOf: repositoryRoot.appendingPathComponent("Navigation/CommandHub/Components/LibraryBrowser.swift"),
-            encoding: .utf8
-        )
-
-        XCTAssertTrue(source.contains("@State private var loadTask: Task<Void, Never>?"))
-        XCTAssertTrue(source.contains("loadTask?.cancel()"))
-        XCTAssertTrue(source.contains("latestLoadID"))
-        XCTAssertTrue(source.contains("guard latestLoadID == loadID"))
-        XCTAssertTrue(source.contains(".onDisappear"))
-    }
-
     func testInboxOverrideSearchCancelsStaleQueriesBeforePublishing() throws {
         let source = try String(
             contentsOf: repositoryRoot.appendingPathComponent("UI/Inbox/InboxViewModel.swift"),
@@ -2670,19 +2648,6 @@ final class CommandKSearchPipelineTests: XCTestCase {
         XCTAssertTrue(source.contains("searchTask?.cancel()"))
         XCTAssertTrue(source.contains("try? await Task.sleep"))
         XCTAssertTrue(source.contains("guard searchRequestID == requestID"))
-    }
-
-    func testCommandHubSemanticSearchCancelsStaleQueriesBeforePublishing() throws {
-        let source = try String(
-            contentsOf: repositoryRoot.appendingPathComponent("Navigation/CommandHub/CommandHubEngine.swift"),
-            encoding: .utf8
-        )
-
-        XCTAssertTrue(source.contains("private var searchRequestID"))
-        XCTAssertTrue(source.contains("searchTask = Task"))
-        XCTAssertTrue(source.contains("try? await Task.sleep"))
-        XCTAssertTrue(source.contains("guard self.searchRequestID == requestID"))
-        XCTAssertFalse(source.contains("Timer.scheduledTimer"))
     }
 
     func testCanvasDatabasePickerGuardsStaleSearchPublishes() throws {

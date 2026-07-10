@@ -418,10 +418,11 @@ final class CosmoInlineSkillAutoRouter {
 
     private func embed(_ text: String) async -> [Float]? {
         if let cached = await EmbeddingCache.shared.get(for: text) { return cached }
-        guard let full = try? await DaemonXPCClient.shared.embed(text: text) else { return nil }
-        let truncated = Array(full.prefix(256)) // Matryoshka truncation, matches stored vectors
-        await EmbeddingCache.shared.set(truncated, for: text)
-        return truncated
+        // Recall cloud embeddings (the old daemon path threw on every call).
+        // Skill vectors are cached per-launch, so dims stay consistent.
+        guard let vector = try? await RecallEmbedding.embedText(text) else { return nil }
+        await EmbeddingCache.shared.set(vector, for: text)
+        return vector
     }
 
     static func cosineSimilarity(_ a: [Float], _ b: [Float]) -> Float {

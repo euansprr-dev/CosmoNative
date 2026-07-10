@@ -409,13 +409,13 @@ final class CosmoCraftSkillRunner {
 
     // MARK: - Embedding
 
-    /// Same daemon + cache + Matryoshka truncation the skill auto-router uses.
+    /// Same Recall cloud client + cache the skill auto-router uses (the old
+    /// daemon embedding path threw on every call).
     nonisolated private static let daemonEmbedder: CraftComparableSelector.Embedder = { text in
         if let cached = await EmbeddingCache.shared.get(for: text) { return cached }
-        guard let full = try? await DaemonXPCClient.shared.embed(text: text) else { return nil }
-        let truncated = Array(full.prefix(256))
-        await EmbeddingCache.shared.set(truncated, for: text)
-        return truncated
+        guard let vector = try? await RecallEmbedding.embedText(text) else { return nil }
+        await EmbeddingCache.shared.set(vector, for: text)
+        return vector
     }
 }
 

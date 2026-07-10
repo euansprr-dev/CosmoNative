@@ -203,11 +203,24 @@ class PaneManager: ObservableObject {
 
     // MARK: - Pane Lifecycle
 
+    /// Snapshot every expanded pane the pending focus/pin change is about to
+    /// collapse — synchronously, BEFORE the state mutation, while its pixels
+    /// are still laid out on screen. The spine shows these pixels as its
+    /// page edge.
+    private func capturePageEdges(nextFocused: String?, nextPinned: String?) {
+        let expandedNext = Set([nextFocused, nextPinned].compactMap { $0 })
+        for id in Set([focusedPaneId, pinnedPaneId].compactMap { $0 }) where !expandedNext.contains(id) {
+            PaneSpineSnapshotStore.shared.capture(paneId: id)
+        }
+    }
+
     /// Open a new pane. Silently ignores if content is already open or max reached.
     func openPane(_ content: PaneContent) {
         // Check duplicates
         guard !panes.contains(where: { $0.id == content.id }) else { return }
         guard panes.count < maxPanes else { return }
+
+        capturePageEdges(nextFocused: content.id, nextPinned: pinnedPaneId)
 
         let isFirst = panes.isEmpty
         panes.append(content)
@@ -233,6 +246,7 @@ class PaneManager: ObservableObject {
         let closedPane = panes[index]
         let closedId = closedPane.id
         panes.remove(at: index)
+        PaneSpineSnapshotStore.shared.discard(paneId: closedId)
 
         if pinnedPaneId == closedId {
             pinnedPaneId = nil
@@ -300,6 +314,7 @@ class PaneManager: ObservableObject {
     /// Close all panes and reset state.
     func closeAllPanes() {
         panes.removeAll()
+        PaneSpineSnapshotStore.shared.discardAll()
         focusedPaneId = nil
         pinnedPaneId = nil
         withAnimation(ProMotionSprings.snappy) {
@@ -314,6 +329,7 @@ class PaneManager: ObservableObject {
     /// Expand a pane to reading width; everything else collapses to spines.
     func focusPane(_ id: String) {
         guard panes.contains(where: { $0.id == id }) else { return }
+        capturePageEdges(nextFocused: id, nextPinned: pinnedPaneId)
         focusedPaneId = id
         activatePane(id)
     }
@@ -343,7 +359,9 @@ class PaneManager: ObservableObject {
     func togglePin(_ id: String? = nil) {
         guard let target = id ?? focusedPaneId,
               panes.contains(where: { $0.id == target }) else { return }
-        pinnedPaneId = (pinnedPaneId == target) ? nil : target
+        let nextPinned = (pinnedPaneId == target) ? nil : target
+        capturePageEdges(nextFocused: focusedPaneId, nextPinned: nextPinned)
+        pinnedPaneId = nextPinned
     }
 
     // MARK: - Active Pane Management
@@ -366,6 +384,7 @@ class PaneManager: ObservableObject {
 
     func openOrActivateCollaborator(target: CollaborationTarget, presetId: String?) {
         let collaborator = PaneContent.collaborator(target: target, presetId: presetId)
+        capturePageEdges(nextFocused: collaborator.id, nextPinned: pinnedPaneId)
 
         if let existingIndex = panes.firstIndex(where: { $0.id == collaborator.id }) {
             panes[existingIndex] = collaborator
@@ -396,6 +415,7 @@ class PaneManager: ObservableObject {
 
     func openOrActivateCosmoWindow() {
         let cosmoWindow = PaneContent.cosmoWindow
+        capturePageEdges(nextFocused: cosmoWindow.id, nextPinned: pinnedPaneId)
 
         if panes.contains(where: { $0.id == cosmoWindow.id }) {
             activePaneId = cosmoWindow.id
@@ -418,6 +438,7 @@ class PaneManager: ObservableObject {
 
     func openOrActivateInlineAssistant() {
         let assistant = PaneContent.inlineAssistant
+        capturePageEdges(nextFocused: assistant.id, nextPinned: pinnedPaneId)
 
         if panes.contains(where: { $0.id == assistant.id }) {
             activePaneId = assistant.id

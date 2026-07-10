@@ -249,14 +249,14 @@ actor CosmoMemoryService {
         }
     }
 
-    /// 256-dim Matryoshka truncation — MUST match every other stored vector in
-    /// the app (⌘K, skill router) or similarity math silently breaks.
+    /// Recall cloud embeddings (L2-normalized). The old daemon path threw on
+    /// every call, so no legacy 256-dim vectors were ever persisted — blobs
+    /// written from here on all share the cloud model's dimension.
     private static func embed(_ text: String) async -> [Float]? {
         if let cached = await EmbeddingCache.shared.get(for: text) { return cached }
-        guard let full = try? await DaemonXPCClient.shared.embed(text: text) else { return nil }
-        let truncated = Array(full.prefix(256))
-        await EmbeddingCache.shared.set(truncated, for: text)
-        return truncated
+        guard let vector = try? await RecallEmbedding.embedText(text) else { return nil }
+        await EmbeddingCache.shared.set(vector, for: text)
+        return vector
     }
 
     private static func blob(from vector: [Float]) -> Data {

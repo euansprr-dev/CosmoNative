@@ -149,9 +149,8 @@ class ResearchProcessor: ObservableObject {
             processed = try await processWebsite(url: url, researchId: researchId)
         }
 
-        // Index embeddings after final write.
-        await SemanticSearchEngine.shared.indexResearch(processed)
-
+        // Recall indexing happens via the AtomRepository save hook — no
+        // explicit index call needed here.
         NotificationCenter.default.post(
             name: .researchProcessingComplete,
             object: nil,

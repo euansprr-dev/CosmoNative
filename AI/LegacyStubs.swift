@@ -41,6 +41,12 @@ extension Notification.Name {
     /// Legacy notification for showing settings
     static let showSettings = Notification.Name("showSettings")
 
+    /// Section navigation (previously declared in the deleted CosmoCore.swift)
+    static let navigateToSection = Notification.Name("navigateToSection")
+
+    /// Canvas block set changed (previously declared in the deleted CosmoCore.swift)
+    static let canvasBlocksChanged = Notification.Name("com.cosmo.canvasBlocksChanged")
+
     static let closeSelectedBlock = Notification.Name("closeSelectedBlock")
     static let deleteSpecificBlock = Notification.Name("deleteSpecificBlock")
     static let moveBlockToTime = Notification.Name("moveBlockToTime")

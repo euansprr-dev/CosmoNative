@@ -10,8 +10,6 @@ struct CosmoApp: App {
     @StateObject private var appState = AppState()
     @StateObject private var database = CosmoDatabase.shared
     @StateObject private var voiceEngine = VoiceEngine.shared
-    @StateObject private var cosmoCore = CosmoCore.shared
-    @StateObject private var semanticSearch = SemanticSearchEngine.shared
     @StateObject private var notifications = ProactiveNotificationService.shared
     @StateObject private var syncEngine = SyncEngine.shared
     @StateObject private var statePersistence = StatePersistence.shared
@@ -35,8 +33,6 @@ struct CosmoApp: App {
                 .environmentObject(appState)
                 .environmentObject(database)
                 .environmentObject(voiceEngine)
-                .environmentObject(cosmoCore)
-                .environmentObject(semanticSearch)
                 .environmentObject(syncEngine)
                 .environmentObject(statePersistence)
                 .environmentObject(networkMonitor)
@@ -333,15 +329,6 @@ struct CosmoApp: App {
 
             guard !Task.isCancelled else { return }
             await NoteRepairService.shared.repairNotesIfNeeded()
-
-            guard !Task.isCancelled else { return }
-
-            guard !Task.isCancelled else { return }
-
-            guard !Task.isCancelled else { return }
-
-            guard !Task.isCancelled else { return }
-            await semanticSearch.indexAllEntities()
 
             try? await Task.sleep(for: .seconds(4))
             guard !Task.isCancelled else { return }

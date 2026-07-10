@@ -75,8 +75,22 @@ enum PaneSlotPresentationPolicy {
     static let spineWidth: CGFloat = 44
     static let minimumContentWidth: CGFloat = 420
     static let collapsedContentClearance: CGFloat = 60
-    static let hoverDwellMilliseconds = 150
+    /// Dwell is the commit gesture; the hover caption is the glance. 300ms is
+    /// long enough to read a caption and retreat, short enough that a
+    /// deliberate rest still feels instant. (Was 150ms when spines were
+    /// anonymous bars and hover had nothing to say.)
+    static let hoverDwellMilliseconds = 300
     static let defaultInterSlotSpacing: CGFloat = 6
+    /// Extra width the hovered spine borrows from the focused pane — the page
+    /// slides out from under the stack a touch before dwell commits.
+    static let spineHoverReveal: CGFloat = 12
+    /// Scale at which the page-edge sliver renders the pane's pixels. Small
+    /// enough to read as texture (Stage Manager-style impression), large
+    /// enough that a document's title strokes stay recognizable.
+    static let sliverScale: CGFloat = 0.32
+    /// Width of pane content (in points) the sliver capture needs to cover
+    /// the spine at full hover reveal.
+    static var sliverSourceWidth: CGFloat { (spineWidth + spineHoverReveal) / sliverScale }
 
     static func interSlotSpacing(leftIsExpanded: Bool, rightIsExpanded: Bool) -> CGFloat {
         if !leftIsExpanded && rightIsExpanded { return 0 }
@@ -102,6 +116,8 @@ struct PaneDeckView: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    @State private var hoveredSpineId: String?
+
     private let spineWidth: CGFloat = paneSpineWidth
 
     var body: some View {
@@ -117,6 +133,7 @@ struct PaneDeckView: View {
                         isPinned: paneManager.pinnedPaneId == pane.id,
                         isActive: paneManager.activePaneId == pane.id,
                         isContextOwner: paneManager.contextOwnerPaneId == pane.id,
+                        isSpineHovered: hoveredSpineId == pane.id,
                         expandedWidth: layout.contentWidths[pane.id] ?? slotWidth,
                         slotWidth: slotWidth,
                         position: index + 1,
@@ -128,6 +145,13 @@ struct PaneDeckView: View {
                         onClose: {
                             withAnimation(deckSpring) {
                                 paneManager.closePane(pane)
+                            }
+                        },
+                        onSpineHover: { hovering in
+                            if hovering {
+                                hoveredSpineId = pane.id
+                            } else if hoveredSpineId == pane.id {
+                                hoveredSpineId = nil
                             }
                         }
                     )
@@ -141,6 +165,9 @@ struct PaneDeckView: View {
                 }
             }
             .animation(deckSpring, value: deckSignature)
+            .overlayPreferenceValue(PaneSpineCaptionPreferenceKey.self) { captions in
+                spineCaptionOverlay(captions)
+            }
         }
         .padding(.vertical, 0)
     }
@@ -153,7 +180,32 @@ struct PaneDeckView: View {
     /// so width changes animate as a single choreographed move.
     private var deckSignature: String {
         let ids = paneManager.panes.map(\.id).joined(separator: "|")
-        return "\(ids)#\(paneManager.focusedPaneId ?? "")#\(paneManager.pinnedPaneId ?? "")"
+        return "\(ids)#\(paneManager.focusedPaneId ?? "")#\(paneManager.pinnedPaneId ?? "")#\(hoveredSpineId ?? "")"
+    }
+
+    /// Floating glass caption beside the hovered spine — the title in reading
+    /// orientation, where rotated spine text used to be.
+    @ViewBuilder
+    private func spineCaptionOverlay(_ captions: [PaneSpineCaptionValue]) -> some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .topLeading) {
+                Color.clear
+                ForEach(captions, id: \.paneId) { caption in
+                    let rect = proxy[caption.bounds]
+                    PaneSpineCaptionPill(caption: caption)
+                        .fixedSize()
+                        .alignmentGuide(.leading) { d in
+                            -(max(8, rect.minX - 10 - d.width))
+                        }
+                        .alignmentGuide(.top) { _ in
+                            -(rect.minY + 14)
+                        }
+                        .transition(.opacity)
+                }
+            }
+            .animation(reduceMotion ? nil : ProMotionSprings.hover, value: captions.map(\.paneId))
+        }
+        .allowsHitTesting(false)
     }
 
     // MARK: Layout
@@ -216,6 +268,19 @@ struct PaneDeckView: View {
                 : focusedWidth
         }
 
+        // Page-edge hover reveal: the hovered spine borrows a little width
+        // from the focused pane, so the page slides out from under the stack.
+        // Content widths are computed above from the un-borrowed layout —
+        // only clips move on hover, content never reflows.
+        if let hovered = hoveredSpineId,
+           !expanded.contains(hovered),
+           let hoveredWidth = widths[hovered],
+           let currentFocusedWidth = widths[focusedId],
+           currentFocusedWidth - PaneSlotPresentationPolicy.spineHoverReveal > PaneSlotPresentationPolicy.minimumContentWidth {
+            widths[hovered] = hoveredWidth + PaneSlotPresentationPolicy.spineHoverReveal
+            widths[focusedId] = currentFocusedWidth - PaneSlotPresentationPolicy.spineHoverReveal
+        }
+
         return DeckLayout(
             widths: widths,
             expandedIds: expanded,
@@ -251,11 +316,13 @@ private struct PaneSlotView: View {
     let isPinned: Bool
     let isActive: Bool
     let isContextOwner: Bool
+    let isSpineHovered: Bool
     let expandedWidth: CGFloat
     let slotWidth: CGFloat
     let position: Int
     let onFocus: () -> Void
     let onClose: () -> Void
+    let onSpineHover: (Bool) -> Void
 
     var body: some View {
         let contentWidth = PaneSlotPresentationPolicy.contentWidth(for: expandedWidth)
@@ -268,6 +335,13 @@ private struct PaneSlotView: View {
                 onClose: onClose
             )
             .frame(width: contentWidth)
+            // Invisible anchor tracking the content's frame — PaneManager
+            // snapshots this region the instant before the pane collapses,
+            // and the spine shows those pixels as its page edge.
+            .background {
+                PaneSpineSnapshotAnchor(paneId: pane.id)
+                    .allowsHitTesting(false)
+            }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             // NSView-backed editors and scroll views can keep painting through
             // opacity/clipping. Move collapsed content out of the spine slot
@@ -293,12 +367,14 @@ private struct PaneSlotView: View {
                 position: position,
                 isInteractive: !isExpanded,
                 onFocus: onFocus,
-                onClose: onClose
+                onClose: onClose,
+                onHoverChange: onSpineHover
             )
             // Fixed spine width: the slot is wider than 44pt for most of the
             // collapse spring, and a maxWidth-infinity spine would stretch
-            // across it as a half-screen glass sheet.
-            .frame(width: paneSpineWidth)
+            // across it as a half-screen glass sheet. Hover adds the reveal
+            // (the slot widens in lockstep via the deck layout).
+            .frame(width: paneSpineWidth + (isSpineHovered ? PaneSlotPresentationPolicy.spineHoverReveal : 0))
             .opacity(isExpanded ? 0 : 1)
             .allowsHitTesting(!isExpanded)
             .zIndex(isExpanded ? 0 : 1)
@@ -328,9 +404,11 @@ private struct PaneSlotView: View {
 
 // MARK: - Pane Spine
 
-/// A collapsed pane: 44pt bar with the type glyph up top, the title running
-/// vertically, and the entity tint as a leading rule. Click — or rest the
-/// pointer on it — to focus. Hover reveals the close affordance.
+/// A collapsed pane rendered as a page edge: the pane's own pixels (captured
+/// the instant before collapse) peek out as a sliver of paper, tucked under
+/// the focused pane — no glyph, no rotated label. The entity tint survives as
+/// a thin binding rule. Hover pulls the page out a touch and floats a glass
+/// caption with the title; click — or rest the pointer for a beat — to focus.
 private struct PaneSpineView: View {
     let pane: PaneContent
     let position: Int
@@ -339,91 +417,125 @@ private struct PaneSpineView: View {
     let isInteractive: Bool
     let onFocus: () -> Void
     let onClose: () -> Void
+    /// Reports hover to the deck, which widens this slot by the hover reveal.
+    let onHoverChange: (Bool) -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovered = false
     @State private var title: String = ""
     @State private var dwellTask: Task<Void, Never>?
 
+    private var displayTitle: String {
+        title.isEmpty ? PaneSpineInfo.fallbackTitle(for: pane) : title
+    }
+
     var body: some View {
-        VStack(spacing: 10) {
-            topGlyph
-            verticalTitle
-            Spacer(minLength: 0)
-        }
-        .padding(.top, 10)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(spineBackground)
-        .overlay(alignment: .leading) { tintRule }
-        .overlay(spineBorder)
-        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .onTapGesture(perform: onFocus)
-        .onHover(perform: handleHover)
-        .help("\(title.isEmpty ? PaneSpineInfo.fallbackTitle(for: pane) : title) (⌘⌃\(position))")
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(title.isEmpty ? PaneSpineInfo.fallbackTitle(for: pane) : title) pane, collapsed")
-        .accessibilityAddTraits(.isButton)
-        .task(id: pane.id) {
-            title = await PaneSpineInfo.title(for: pane)
-        }
-        .onChange(of: isInteractive) { _, interactive in
-            // The slot expanded under the pointer — hover-exit won't fire for
-            // the now-hidden spine, so clear the dwell and hover state manually.
-            if !interactive {
+        pageEdge
+            .overlay(alignment: .leading) { tintRule }
+            .overlay(alignment: .top) { closeButton }
+            .overlay(spineBorder)
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .onTapGesture(perform: onFocus)
+            .onHover(perform: handleHover)
+            .anchorPreference(
+                key: PaneSpineCaptionPreferenceKey.self,
+                value: .bounds,
+                transform: captionPreference
+            )
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(displayTitle) pane, collapsed")
+            .accessibilityAddTraits(.isButton)
+            .task(id: pane.id) {
+                title = await PaneSpineInfo.title(for: pane)
+            }
+            .onChange(of: isInteractive) { _, interactive in
+                // The slot expanded under the pointer — hover-exit won't fire
+                // for the now-hidden spine, so clear dwell and hover manually.
+                if !interactive {
+                    dwellTask?.cancel()
+                    dwellTask = nil
+                    isHovered = false
+                    onHoverChange(false)
+                }
+            }
+            .onDisappear {
                 dwellTask?.cancel()
                 dwellTask = nil
-                isHovered = false
+                onHoverChange(false)
             }
-        }
-        .onDisappear {
-            dwellTask?.cancel()
-            dwellTask = nil
-        }
     }
 
     // MARK: Pieces
 
-    private var topGlyph: some View {
-        ZStack {
-            Image(systemName: PaneSpineInfo.glyph(for: pane))
-                .font(DS.subheadline)
-                .foregroundStyle(PaneSpineInfo.tint(for: pane))
-                .opacity(isHovered ? 0 : 1)
+    /// The paper: pane background with the captured sliver of real content on
+    /// top, fading into blank paper. Recessed under a faint wash at rest; the
+    /// wash lifts on hover — the page pulled forward.
+    private var pageEdge: some View {
+        ZStack(alignment: .topLeading) {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(DS.bg)
 
-            Button(action: onClose) {
-                Image(systemName: "xmark")
-                    .font(DS.caption)
-                    .foregroundStyle(DS.textSecondary)
-                    .frame(width: 24, height: 24)
-                    .background(Circle().fill(DS.glassSectionFill))
-                    .contentShape(Circle())
+            if let sliver = PaneSpineSnapshotStore.shared.slivers[pane.id] {
+                sliverImage(sliver)
+            } else {
+                fallbackGlyph
             }
-            .buttonStyle(.plain)
-            .opacity(isHovered ? 1 : 0)
-            .allowsHitTesting(isHovered)
-            .help("Close pane")
-            .accessibilityLabel("Close pane")
+
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(DS.text.opacity(isHovered ? 0 : 0.04))
         }
-        .frame(width: 28, height: 28)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .animation(reduceMotion ? nil : ProMotionSprings.hover, value: isHovered)
     }
 
-    private var verticalTitle: some View {
-        // The text lays out 168pt wide and is only VISUALLY rotated —
-        // rotationEffect does not rotate its hit-test frame, so without the
-        // hit-testing kill below the title is a 168pt-wide horizontal hover
-        // strip poking ~70pt past each side of the 44pt spine (it reached the
-        // neighboring document's scrollbar and triggered dwell focus).
-        Text(title.isEmpty ? PaneSpineInfo.fallbackTitle(for: pane) : title)
-            .font(DS.subheadline.weight(.medium))
-            .foregroundStyle(isHovered ? DS.text : DS.textSecondary)
-            .lineLimit(1)
-            .truncationMode(.tail)
-            .frame(width: 168, alignment: .leading)
-            .rotationEffect(.degrees(90), anchor: .center)
-            .frame(width: 28, height: 176)
-            .clipped()
-            .allowsHitTesting(false)
+    private func sliverImage(_ image: NSImage) -> some View {
+        Image(nsImage: image)
+            .overlay(alignment: .bottom) {
+                LinearGradient(
+                    colors: [DS.bg.opacity(0), DS.bg],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: 48)
+            }
+            .accessibilityHidden(true)
+    }
+
+    /// Pre-first-collapse only (no pixels captured yet): quiet paper with the
+    /// type glyph — never a rotated label.
+    private var fallbackGlyph: some View {
+        Image(systemName: PaneSpineInfo.glyph(for: pane))
+            .font(DS.subheadline)
+            .foregroundStyle(PaneSpineInfo.tint(for: pane).opacity(0.85))
+            .frame(width: paneSpineWidth, height: 44)
+            .accessibilityHidden(true)
+    }
+
+    private var closeButton: some View {
+        Button(action: onClose) {
+            Image(systemName: "xmark")
+                .font(DS.caption)
+                .foregroundStyle(DS.textSecondary)
+                .frame(width: 24, height: 24)
+                .background(Circle().fill(DS.glassSectionFill))
+                .contentShape(Circle().inset(by: -6))
+        }
+        .buttonStyle(.plain)
+        .padding(.top, 8)
+        .opacity(isHovered ? 1 : 0)
+        .allowsHitTesting(isHovered && isInteractive)
+        .onHover { inside in
+            // Pointer intent on the close affordance is "close", not "focus" —
+            // hold the dwell while it's there, resume when it leaves.
+            if inside {
+                dwellTask?.cancel()
+            } else if isHovered && isInteractive {
+                scheduleDwell()
+            }
+        }
+        .help("Close pane")
+        .accessibilityLabel("Close pane")
+        .animation(reduceMotion ? nil : ProMotionSprings.hover, value: isHovered)
     }
 
     private var tintRule: some View {
@@ -433,14 +545,20 @@ private struct PaneSpineView: View {
             .padding(.vertical, 8)
     }
 
-    private var spineBackground: some View {
-        RoundedRectangle(cornerRadius: 8, style: .continuous)
-            .fill(isHovered ? DS.glassSectionFill : DS.glassCardFill)
-    }
-
     private var spineBorder: some View {
         RoundedRectangle(cornerRadius: 8, style: .continuous)
             .strokeBorder(DS.glassBorder, lineWidth: 0.5)
+    }
+
+    private func captionPreference(_ anchor: Anchor<CGRect>) -> [PaneSpineCaptionValue] {
+        guard isHovered && isInteractive else { return [] }
+        return [PaneSpineCaptionValue(
+            paneId: pane.id,
+            title: displayTitle,
+            shortcut: "⌘⌃\(position)",
+            tint: PaneSpineInfo.tint(for: pane),
+            bounds: anchor
+        )]
     }
 
     // MARK: Hover dwell
@@ -455,17 +573,171 @@ private struct PaneSpineView: View {
         withAnimation(reduceMotion ? nil : ProMotionSprings.hover) {
             isHovered = active
         }
+        onHoverChange(active)
         dwellTask?.cancel()
         guard active else {
             dwellTask = nil
             return
         }
+        scheduleDwell()
+    }
+
+    private func scheduleDwell() {
+        dwellTask?.cancel()
         dwellTask = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(PaneSlotPresentationPolicy.hoverDwellMilliseconds))
             guard !Task.isCancelled else { return }
             onFocus()
         }
     }
+}
+
+// MARK: - Spine Caption
+
+/// Payload a hovered spine publishes for the deck-level caption overlay.
+private struct PaneSpineCaptionValue {
+    let paneId: String
+    let title: String
+    let shortcut: String
+    let tint: Color
+    let bounds: Anchor<CGRect>
+}
+
+private struct PaneSpineCaptionPreferenceKey: PreferenceKey {
+    static let defaultValue: [PaneSpineCaptionValue] = []
+    static func reduce(value: inout [PaneSpineCaptionValue], nextValue: () -> [PaneSpineCaptionValue]) {
+        value.append(contentsOf: nextValue())
+    }
+}
+
+/// The hovered spine's title in reading orientation — a small floating glass
+/// capsule beside the page edge, where rotated spine text used to be.
+private struct PaneSpineCaptionPill: View {
+    let caption: PaneSpineCaptionValue
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(caption.tint)
+                .frame(width: 6, height: 6)
+            Text(caption.title)
+                .font(DS.subheadline.weight(.medium))
+                .foregroundStyle(DS.text)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: 220, alignment: .leading)
+            Text(caption.shortcut)
+                .font(DS.caption)
+                .foregroundStyle(DS.textMuted)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .glassEffect(.regular, in: .capsule)
+        .accessibilityHidden(true)
+    }
+}
+
+// MARK: - Page-Edge Snapshot Store
+
+/// The spine is a page edge: it shows the pane's real pixels, captured the
+/// instant before a focus change collapses the pane (PaneManager calls
+/// `capture` while the old layout is still on screen). Same window-layer
+/// `cacheDisplay` path as canvas thumbnails — the scale-not-crop semantics
+/// this relies on are pinned by CanvasScreenshotScaledCaptureTests.
+@MainActor
+@Observable
+final class PaneSpineSnapshotStore {
+    static let shared = PaneSpineSnapshotStore()
+
+    /// paneId → downsampled page-edge image, sized for direct display.
+    private(set) var slivers: [String: NSImage] = [:]
+
+    @ObservationIgnored
+    private var anchors: [String: WeakAnchor] = [:]
+
+    private struct WeakAnchor {
+        weak var view: NSView?
+    }
+
+    func register(_ view: NSView, for paneId: String) {
+        anchors[paneId] = WeakAnchor(view: view)
+    }
+
+    /// Snapshot the leading strip of a pane's rendered pixels. The caller
+    /// must invoke this BEFORE the collapse mutation, while the pane is still
+    /// laid out expanded. Skipped when a covering overlay is up — the capture
+    /// composites the window's layer tree, and a stale page edge beats a
+    /// corrupted one.
+    func capture(paneId: String) {
+        guard let anchor = anchors[paneId]?.view,
+              let window = anchor.window,
+              let contentView = window.contentView,
+              !ConstellationPresentationState.shared.isOnScreen,
+              !CommandKPalettePresentationState.shared.isOnScreen else { return }
+
+        let full = anchor.convert(anchor.bounds, to: contentView)
+        guard full.width > 100, full.height > 100 else { return }
+
+        let rect = CGRect(
+            x: full.minX,
+            y: full.minY,
+            width: min(PaneSlotPresentationPolicy.sliverSourceWidth, full.width),
+            height: full.height
+        )
+        let scale = PaneSlotPresentationPolicy.sliverScale
+        let displaySize = CGSize(
+            width: (rect.width * scale).rounded(),
+            height: (rect.height * scale).rounded()
+        )
+        // 2x pixels at the display size — Retina-crisp at a fraction of the
+        // memory of a full capture (the sliver never shows more than this).
+        guard displaySize.width >= 1, displaySize.height >= 1,
+              let rep = NSBitmapImageRep(
+                bitmapDataPlanes: nil,
+                pixelsWide: Int(displaySize.width * 2),
+                pixelsHigh: Int(displaySize.height * 2),
+                bitsPerSample: 8,
+                samplesPerPixel: 4,
+                hasAlpha: true,
+                isPlanar: false,
+                colorSpaceName: .calibratedRGB,
+                bytesPerRow: 0,
+                bitsPerPixel: 0
+              ) else { return }
+        rep.size = rect.size
+        contentView.cacheDisplay(in: rect, to: rep)
+
+        let image = NSImage(size: displaySize)
+        image.addRepresentation(rep)
+        slivers[paneId] = image
+    }
+
+    func discard(paneId: String) {
+        slivers[paneId] = nil
+        anchors[paneId] = nil
+    }
+
+    func discardAll() {
+        slivers.removeAll()
+        anchors.removeAll()
+    }
+}
+
+/// Invisible AppKit anchor that lets the store convert a pane's content frame
+/// into window coordinates for capture.
+private struct PaneSpineSnapshotAnchor: NSViewRepresentable {
+    let paneId: String
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        let id = paneId
+        DispatchQueue.main.async {
+            PaneSpineSnapshotStore.shared.register(view, for: id)
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
 // MARK: - Spine Info

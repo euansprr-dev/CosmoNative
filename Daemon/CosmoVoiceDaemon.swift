@@ -1,6 +1,6 @@
 // CosmoOS/Daemon/CosmoVoiceDaemon.swift
 // XPC daemon keeping ML models hot in RAM
-// Hosts: FunctionGemma 270M (primary), Hermes 3 (fallback), nomic-embed-text-v1.5, WhisperKit ASR
+// Hosts: FunctionGemma 270M (primary), Hermes 3 (fallback), WhisperKit ASR
 // Also handles AXContextService for "God Mode" context capture
 // macOS 26+ optimized
 // Model change: Qwen 0.5B + Hermes 3B → FunctionGemma 270M (6x RAM reduction, <300ms latency)
@@ -127,13 +127,8 @@ private func daemonLog(_ message: String) {
     /// Check if FunctionGemma is loaded and ready
     func isFunctionGemmaReady(reply: @escaping @Sendable (Bool) -> Void)
 
-    // MARK: - Embedding Operations
-
-    /// Embed single text
-    func embed(text: String, reply: @escaping @Sendable (Data?, Error?) -> Void)
-
-    /// Batch embed multiple texts (more efficient)
-    func embedBatch(texts: [String], reply: @escaping @Sendable (Data?, Error?) -> Void)
+    // Embedding operations removed — on-device embeddings never shipped; the
+    // app embeds through the Recall cloud client instead.
 
     // MARK: - ASR Operations (Tiered)
 
@@ -247,7 +242,6 @@ public final class CosmoVoiceDaemon: NSObject, CosmoVoiceDaemonProtocol, @unchec
     private var llmEngine: HermesLLMEngine?
     private var quickLLMEngine: QuickLLMEngine?  // Qwen 0.5B for fast entity extraction (DEPRECATED)
     private var functionGemmaEngine: DaemonMLXFunctionGemmaEngine?  // FunctionGemma 270M - primary Micro-Brain
-    private var embeddingEngine: NomicEmbeddingEngine?
     private var asrL1Engine: Qwen3ASREngine?
     private var asrL2Engine: WhisperL2Engine?
     private var axContextService: AXContextService?
@@ -272,14 +266,13 @@ public final class CosmoVoiceDaemon: NSObject, CosmoVoiceDaemonProtocol, @unchec
         // Load models in parallel
         // Micro-Brain Architecture:
         // - FunctionGemma 270M: Primary function calling (~550MB)
-        // - Embedding: nomic-embed-text-v1.5 (~0.5GB)
         // - ASR: WhisperKit (streaming transcription)
         // NOTE: Hermes 3B removed - no longer needed, saves ~2GB RAM
+        // NOTE: On-device embeddings removed - the app embeds via the Recall cloud client
         await withTaskGroup(of: Void.self) { group in
             group.addTask { await self.loadFunctionGemma() }  // Primary: FunctionGemma 270M (~550MB)
             // group.addTask { await self.loadLLM() }         // REMOVED: Hermes 3B (~2GB) - FunctionGemma handles all function calls
             // group.addTask { await self.loadQuickLLM() }    // DEPRECATED: Qwen 0.5B
-            group.addTask { await self.loadEmbedding() }
             group.addTask { await self.loadASRL1() }
             group.addTask { await self.loadAXContext() }
         }
@@ -309,25 +302,6 @@ public final class CosmoVoiceDaemon: NSObject, CosmoVoiceDaemonProtocol, @unchec
         } catch {
             daemonLog("CosmoVoiceDaemon: Failed to load Quick LLM: \(error)")
             quickLLMEngine = nil
-        }
-    }
-
-    private func loadEmbedding() async {
-        do {
-            let engine = try await MLXNomicEmbeddingEngine()
-            // Validate the model actually works by doing a test embedding
-            daemonLog("CosmoVoiceDaemon: Validating embedding model...")
-            let testEmbedding = try await engine.embed(text: "test")
-            guard testEmbedding.count == 256 else {
-                daemonLog("CosmoVoiceDaemon: Embedding model validation failed - wrong dimension: \(testEmbedding.count)")
-                return
-            }
-            embeddingEngine = engine
-            daemonLog("CosmoVoiceDaemon: nomic-embed-text-v1.5 loaded and validated (~0.5GB)")
-        } catch {
-            daemonLog("CosmoVoiceDaemon: Failed to load embedding model: \(error)")
-            // Ensure engine is nil so status reports correctly
-            embeddingEngine = nil
         }
     }
 
@@ -605,42 +579,6 @@ public final class CosmoVoiceDaemon: NSObject, CosmoVoiceDaemonProtocol, @unchec
         }
     }
 
-    // MARK: - Embedding Operations
-
-    public func embed(text: String, reply: @escaping @Sendable (Data?, Error?) -> Void) {
-        Task { @Sendable in
-            guard let engine = embeddingEngine else {
-                reply(nil, DaemonError.modelNotLoaded("nomic embedding"))
-                return
-            }
-
-            do {
-                let embedding = try await engine.embed(text: text)
-                let data = try JSONEncoder().encode(embedding)
-                reply(data, nil)
-            } catch {
-                reply(nil, error)
-            }
-        }
-    }
-
-    public func embedBatch(texts: [String], reply: @escaping @Sendable (Data?, Error?) -> Void) {
-        Task { @Sendable in
-            guard let engine = embeddingEngine else {
-                reply(nil, DaemonError.modelNotLoaded("nomic embedding"))
-                return
-            }
-
-            do {
-                let embeddings = try await engine.embedBatch(texts: texts)
-                let data = try JSONEncoder().encode(embeddings)
-                reply(data, nil)
-            } catch {
-                reply(nil, error)
-            }
-        }
-    }
-
     // MARK: - ASR Operations
 
     public func startL1ASRStream(
@@ -854,7 +792,7 @@ public final class CosmoVoiceDaemon: NSObject, CosmoVoiceDaemonProtocol, @unchec
                 llmLoaded: llmEngine != nil,
                 quickLLMLoaded: quickLLMEngine != nil,
                 functionGemmaLoaded: functionGemmaEngine != nil,
-                embeddingLoaded: embeddingEngine != nil,
+                embeddingLoaded: false,  // on-device embeddings removed; kept for status wire-compat
                 asrL1Loaded: asrL1Engine != nil,
                 asrL2Loaded: asrL2Engine != nil,
                 ramUsageMB: ramUsageMB,
@@ -877,8 +815,7 @@ public final class CosmoVoiceDaemon: NSObject, CosmoVoiceDaemonProtocol, @unchec
     }
 
     public func unloadEmbeddingModel(reply: @escaping @Sendable () -> Void) {
-        embeddingEngine = nil
-        daemonLog("CosmoVoiceDaemon: Embedding model unloaded (saved ~0.5GB)")
+        // No-op: on-device embeddings removed. Kept for XPC protocol compatibility.
         reply()
     }
 
@@ -928,12 +865,6 @@ protocol HermesLLMEngine {
     func getKVCacheSizeMB() async -> Int64
     func flushKVCache() async
     func shutdown() async
-}
-
-protocol NomicEmbeddingEngine {
-    init() async throws
-    func embed(text: String) async throws -> [Float]
-    func embedBatch(texts: [String]) async throws -> [[Float]]
 }
 
 protocol Qwen3ASREngine {
@@ -1368,31 +1299,6 @@ final class MLXQuickLLMEngine: QuickLLMEngine {
             }
         }
         return nil
-    }
-}
-
-// MARK: - Real MLX Embedding Engine (nomic-embed-text-v1.5)
-
-/// Embedding engine — DORMANT.
-///
-/// The pinned `mlx-swift-lm` `MLXEmbedders` API drifted (`ModelContainer` was
-/// removed upstream), and on-device voice/embeddings are unused. This stub
-/// keeps the daemon target compiling without depending on the broken module:
-/// `init` reports the model as unavailable, so the daemon advertises
-/// `embeddingLoaded == false` and every caller (HybridSearchEngine, agent
-/// conversation memory, SmartOrganizer) falls back to keyword/BM25 search,
-/// which they already handle gracefully.
-final class MLXNomicEmbeddingEngine: NomicEmbeddingEngine {
-    init() async throws {
-        throw DaemonError.modelNotLoaded("nomic embedding (on-device embeddings disabled)")
-    }
-
-    func embed(text: String) async throws -> [Float] {
-        throw DaemonError.modelNotLoaded("nomic embedding (on-device embeddings disabled)")
-    }
-
-    func embedBatch(texts: [String]) async throws -> [[Float]] {
-        throw DaemonError.modelNotLoaded("nomic embedding (on-device embeddings disabled)")
     }
 }
 

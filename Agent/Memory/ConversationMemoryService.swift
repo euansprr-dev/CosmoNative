@@ -167,38 +167,33 @@ class ConversationMemoryService {
 
     // MARK: - Semantic Search
 
-    /// Vector-based semantic search over conversation summaries and content
+    /// Vector-based semantic search over conversation summaries and content.
+    /// Embeds the query and every candidate summary in ONE batched Recall
+    /// cloud call (vectors come back L2-normalized, so cosine = dot).
     func semanticSearch(query: String, limit: Int = 5) async -> [AgentConversation] {
-        // Try vector search first via DaemonXPCClient embeddings
         do {
-            let queryVector = try await DaemonXPCClient.shared.embed(text: query)
-            let truncatedQuery = Array(queryVector.prefix(256))
-
             let allConversations = await getRecentConversations(limit: 50)
-
-            // Score each conversation by embedding similarity to its summary/content
-            var scored: [(conv: AgentConversation, score: Float)] = []
-
+            var candidates: [(conv: AgentConversation, text: String)] = []
             for conv in allConversations {
                 let searchText = conv.summary ?? conv.messages.suffix(5).map(\.content).joined(separator: " ")
                 guard !searchText.isEmpty else { continue }
-
-                do {
-                    let convVector = try await DaemonXPCClient.shared.embed(text: String(searchText.prefix(500)))
-                    let truncatedConv = Array(convVector.prefix(256))
-                    let similarity = cosineSimilarity(truncatedQuery, truncatedConv)
-                    scored.append((conv: conv, score: similarity))
-                } catch {
-                    continue
-                }
+                candidates.append((conv, String(searchText.prefix(500))))
             }
 
-            let results = scored
-                .sorted { $0.score > $1.score }
-                .prefix(limit)
-                .map(\.conv)
-
-            if !results.isEmpty { return results }
+            if !candidates.isEmpty {
+                let texts = [String(query.prefix(500))] + candidates.map(\.text)
+                let vectors = try await CloudEmbeddingClient().embed(texts)
+                if vectors.count == texts.count, let queryVector = vectors.first {
+                    let results = zip(candidates, vectors.dropFirst())
+                        .map { candidate, vector in
+                            (conv: candidate.conv, score: cosineSimilarity(queryVector, vector))
+                        }
+                        .sorted { $0.score > $1.score }
+                        .prefix(limit)
+                        .map(\.conv)
+                    if !results.isEmpty { return results }
+                }
+            }
         } catch {
             // Fall through to keyword search
         }

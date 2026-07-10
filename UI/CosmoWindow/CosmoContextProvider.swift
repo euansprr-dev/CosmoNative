@@ -33,7 +33,7 @@ enum CosmoContextType: String, Codable, Sendable {
     case plannerum
     case dayTimeline
     case thinkspaceCanvas
-    case sanctuary
+    case inbox
     case cosmoAIFocusMode
     case none
 
@@ -51,7 +51,7 @@ enum CosmoContextType: String, Codable, Sendable {
         case .plannerum: return "Plannerum"
         case .dayTimeline: return "Day Timeline"
         case .thinkspaceCanvas: return "Thinkspace"
-        case .sanctuary: return "Sanctuary"
+        case .inbox: return "Inbox"
         case .cosmoAIFocusMode: return "Cosmo AI"
         case .none: return ""
         }
@@ -71,7 +71,7 @@ enum CosmoContextType: String, Codable, Sendable {
         case .plannerum: return "calendar"
         case .dayTimeline: return "clock"
         case .thinkspaceCanvas: return "square.grid.3x3"
-        case .sanctuary: return "sparkles"
+        case .inbox: return "tray"
         case .cosmoAIFocusMode: return "brain"
         case .none: return "circle"
         }

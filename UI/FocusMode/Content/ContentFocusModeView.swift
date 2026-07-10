@@ -605,7 +605,7 @@ struct ContentFocusModeView: View {
             return .handled
         }
         .sheet(isPresented: $showSettings) {
-            SanctuarySettingsView()
+            CosmoSettingsView()
         }
         .sheet(isPresented: $showSwipeAttachmentEditor) {
             ContentSwipeAttachmentEditor(

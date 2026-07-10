@@ -1,4 +1,4 @@
-// CosmoOS/Settings/SanctuarySettingsView.swift
+// CosmoOS/Settings/CosmoSettingsView.swift
 // Consolidated Settings Hub — unified settings for all CosmoOS configuration
 // Now presented as a floating overlay panel with Command-K aesthetic
 
@@ -75,9 +75,9 @@ extension Notification.Name {
     static let clientProfilesChanged = Notification.Name("com.cosmo.settings.clientProfilesChanged")
 }
 
-// MARK: - SanctuarySettingsView
+// MARK: - CosmoSettingsView
 
-struct SanctuarySettingsView: View {
+struct CosmoSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     var onClose: (() -> Void)? = nil
     /// When set, the shell opens directly in the Profile Studio.
@@ -2182,6 +2182,6 @@ private struct ElementDefinitionSettingsRow: View {
 
 #if DEBUG
 #Preview {
-    SanctuarySettingsView()
+    CosmoSettingsView()
 }
 #endif

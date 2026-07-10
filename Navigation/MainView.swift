@@ -809,7 +809,7 @@ struct MainView: View {
             case .commandCenter:
                 vm.updateContextManually(type: .commandCenter)
             case .inbox:
-                vm.updateContextManually(type: .sanctuary)
+                vm.updateContextManually(type: .inbox)
             case .thinkspace:
                 vm.updateContextManually(type: .thinkspaceCanvas)
             case .discover, .swipeFile:
@@ -2745,7 +2745,7 @@ struct MainView: View {
                 }
             }
 
-            SanctuarySettingsView(onClose: {
+            CosmoSettingsView(onClose: {
                 withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
                     showSettings = false
                 }

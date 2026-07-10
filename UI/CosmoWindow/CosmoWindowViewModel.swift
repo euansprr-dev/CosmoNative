@@ -1079,7 +1079,7 @@ final class CosmoWindowViewModel: ObservableObject {
                 "What should I focus on next?",
                 "Turn this into a plan"
             ]
-        case .sanctuary:
+        case .inbox:
             return [
                 "What deserves attention today?",
                 "Summarize my current state",

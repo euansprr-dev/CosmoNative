@@ -213,7 +213,7 @@ struct ResearchFocusModeView: View {
         }
         // Settings sheet
         .sheet(isPresented: $showSettings) {
-            SanctuarySettingsView()
+            CosmoSettingsView()
         }
         // Research Agent sheet
         .sheet(isPresented: $showResearchAgentSheet) {

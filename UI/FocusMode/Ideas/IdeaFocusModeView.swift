@@ -417,7 +417,7 @@ struct IdeaFocusModeView: View {
         if showProfileEditor {
             ZStack {
                 FloatingOverlayBackdrop { showProfileEditor = false }
-                SanctuarySettingsView(
+                CosmoSettingsView(
                     onClose: { showProfileEditor = false },
                     launchStudio: .create,
                     onProfileCreated: { newProfile in

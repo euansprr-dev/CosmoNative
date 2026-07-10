@@ -616,7 +616,7 @@ final class ConnectionFocusModeViewModel {
     /// guarantee — terminating mid-write flushes synchronously.
     func flushTitleSave() {
         titleSaveTask?.cancel()
-        let escortID = "connection-title-\(atom.uuid)"
+        let escortID = "connection-title-\(atom.uuid)-\(UUID().uuidString.prefix(8))"
         DirtyEditorRegistry.shared.register(id: escortID) { [weak self] in
             self?.flushTitleSaveSync()
         }

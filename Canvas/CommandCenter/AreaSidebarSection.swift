@@ -8,7 +8,7 @@ struct AreaSidebarSection: View {
 
     let area: Atom
     let projects: [Atom]
-    @ObservedObject var viewModel: CommandCenterDashboardViewModel
+    var viewModel: CommandCenterDashboardViewModel
 
     @State private var isCollapsed = false
 

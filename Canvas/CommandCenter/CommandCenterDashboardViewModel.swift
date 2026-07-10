@@ -460,31 +460,42 @@ enum CommandCenterTaskScheduling {
 // MARK: - ViewModel
 
 @MainActor
-class CommandCenterDashboardViewModel: ObservableObject {
+@Observable
+final class CommandCenterDashboardViewModel {
 
     // MARK: - View Mode
 
-    @Published var viewMode: DashboardViewMode = .today
+    var viewMode: DashboardViewMode = .today {
+        didSet {
+            guard oldValue != viewMode else { return }
+            handleViewModeChange(viewMode)
+        }
+    }
 
     // MARK: - Date Selection
 
-    @Published var selectedDate: Date = Date()
+    var selectedDate: Date = Date() {
+        didSet {
+            guard !Calendar.current.isDate(oldValue, inSameDayAs: selectedDate) else { return }
+            handleSelectedDateChange()
+        }
+    }
 
     // MARK: - Sectioned Tasks (Today view)
 
-    @Published var overdueTasks: [TaskViewModel] = []
-    @Published var scheduledTasks: [TaskViewModel] = []
-    @Published var unscheduledTasks: [TaskViewModel] = []
-    @Published var completedTodayTasks: [TaskViewModel] = []
-    @Published var completedTasksByDay: [(date: Date, tasks: [TaskViewModel])] = []
+    var overdueTasks: [TaskViewModel] = []
+    var scheduledTasks: [TaskViewModel] = []
+    var unscheduledTasks: [TaskViewModel] = []
+    var completedTodayTasks: [TaskViewModel] = []
+    var completedTasksByDay: [(date: Date, tasks: [TaskViewModel])] = []
 
     // MARK: - Upcoming (Upcoming view)
 
-    @Published var upcomingDayGroups: [UpcomingDayViewModel] = []
-    @Published var upcomingWeekOffset: Int = 0
-    @Published var upcomingCalendarEvents: [String: [CalendarEvent]] = [:]  // keyed by date string
-    @Published var upcomingCalendarScope: UpcomingCalendarScope = .week
-    @Published var upcomingAnchorDate: Date = Calendar.current.startOfDay(for: Date())
+    var upcomingDayGroups: [UpcomingDayViewModel] = []
+    var upcomingWeekOffset: Int = 0
+    var upcomingCalendarEvents: [String: [CalendarEvent]] = [:]  // keyed by date string
+    var upcomingCalendarScope: UpcomingCalendarScope = .week
+    var upcomingAnchorDate: Date = Calendar.current.startOfDay(for: Date())
 
     var upcomingWeekStart: Date {
         CommandCenterCalendarLayout.mondayStartingWeek(containing: upcomingAnchorDate)
@@ -522,63 +533,63 @@ class CommandCenterDashboardViewModel: ObservableObject {
 
     // MARK: - Things 3 Smart Lists
 
-    @Published var anytimeTasks: [TaskViewModel] = []
-    @Published var somedayTasks: [TaskViewModel] = []
-    @Published var logbookTasks: [TaskViewModel] = []
+    var anytimeTasks: [TaskViewModel] = []
+    var somedayTasks: [TaskViewModel] = []
+    var logbookTasks: [TaskViewModel] = []
 
     // MARK: - Areas & Projects (Sidebar)
 
-    @Published var areas: [Atom] = []
-    @Published var projects: [Atom] = []
-    @Published var selectedProjectUUID: String?
-    @Published var selectedAreaUUID: String?
-    @Published var projectTasks: [TaskViewModel] = []
-    @Published var projectHeadings: [ProjectHeading] = []
+    var areas: [Atom] = []
+    var projects: [Atom] = []
+    var selectedProjectUUID: String?
+    var selectedAreaUUID: String?
+    var projectTasks: [TaskViewModel] = []
+    var projectHeadings: [ProjectHeading] = []
 
     // MARK: - Timeline Sessions
 
-    @Published var todaySessions: [SessionTimelineEntry] = []
+    var todaySessions: [SessionTimelineEntry] = []
 
     // MARK: - Keyboard Selection
 
-    @Published var selectedTaskIndex: Int?
+    var selectedTaskIndex: Int?
 
     // MARK: - Habits
 
-    @Published var habits: [HabitState] = []
+    var habits: [HabitState] = []
 
 
     // MARK: - Calendar Events
 
-    @Published var todayEvents: [CalendarEvent] = []
+    var todayEvents: [CalendarEvent] = []
 
     // MARK: - Schedule Blocks (pure time blocking — iOS planner parity)
 
     /// The viewed day's schedule blocks, recurring templates already
     /// projected (ScheduleBlockEngine mirrors the iOS contract).
-    @Published var todayScheduleBlocks: [ScheduleBlockEntry] = []
+    var todayScheduleBlocks: [ScheduleBlockEntry] = []
 
     // MARK: - Quick Stats
 
 
     // MARK: - Reports
 
-    @Published var weeklyReportData: WeeklyReportData?
-    @Published var showReports: Bool = false
-    @Published var selectedReportTab: ReportTab = .week
-    @Published var reportWeekOffset: Int = 0
-    @Published var reportMonthOffset: Int = 0
-    @Published var habitReportData: HabitReportData?
+    var weeklyReportData: WeeklyReportData?
+    var showReports: Bool = false
+    var selectedReportTab: ReportTab = .week
+    var reportWeekOffset: Int = 0
+    var reportMonthOffset: Int = 0
+    var habitReportData: HabitReportData?
 
     // MARK: - Time Tracking
 
-    @Published var todayTrackedMinutes: Int = 0
-    @Published var todayIntentSummaries: [IntentSummary] = []
-    @Published var completedArrivalToken: Int = 0
+    var todayTrackedMinutes: Int = 0
+    var todayIntentSummaries: [IntentSummary] = []
+    var completedArrivalToken: Int = 0
 
     // MARK: - Task Add
 
-    @Published var newTaskTitle: String = ""
+    var newTaskTitle: String = ""
     var pendingTaskDate: Date?
 
     // MARK: - Dependencies
@@ -632,74 +643,105 @@ class CommandCenterDashboardViewModel: ObservableObject {
         guard startsRefreshing else { return }
 
         setupBindings()
-        Task {
-            await RecurringSeriesEngine.shared.runCleanSlateMigrationIfNeeded()
-            await TaskDayPinRepair.runIfNeeded()
-            await refreshAll()
+    }
+
+    // MARK: - Initial Load (deferred to the dashboard's first appearance)
+
+    /// One-time migrations + first full refresh. Lives here instead of init so
+    /// creating the VM at app launch (MainView owns it) costs nothing; the
+    /// dashboard's `.task` runs this on first visit.
+    @ObservationIgnored private var hasPerformedInitialLoad = false
+    /// Arrival cascade plays once per app session (view-local state reset on
+    /// every remount and re-ran the entrance on each revisit).
+    var hasPlayedArrivalCascade = false
+    @ObservationIgnored private var hasLoadedAreas = false
+    @ObservationIgnored private var hasLoadedAnytime = false
+    @ObservationIgnored private var hasLoadedSomeday = false
+
+    func startInitialLoadIfNeeded() async {
+        guard !hasPerformedInitialLoad else { return }
+        hasPerformedInitialLoad = true
+        await RecurringSeriesEngine.shared.runCleanSlateMigrationIfNeeded()
+        await TaskDayPinRepair.runIfNeeded()
+        await refreshAll()
+    }
+
+    /// Revisit-guards: the VM persists across destination switches, so these
+    /// warm loads run once — mode switches and the change-signature refresh
+    /// keep the data fresh afterwards.
+    func loadAreasIfNeeded() async {
+        guard !hasLoadedAreas else { return }
+        hasLoadedAreas = true
+        await loadAreas()
+    }
+
+    func loadAnytimeTasksIfNeeded() async {
+        guard !hasLoadedAnytime else { return }
+        hasLoadedAnytime = true
+        await loadAnytimeTasks()
+    }
+
+    func loadSomedayTasksIfNeeded() async {
+        guard !hasLoadedSomeday else { return }
+        hasLoadedSomeday = true
+        await loadSomedayTasks()
+    }
+
+    // MARK: - Property-change handlers (were Combine $-sinks pre-@Observable)
+
+    private func handleSelectedDateChange() {
+        Task { [weak self] in
+            guard let self else { return }
+            if self.viewMode == .upcoming {
+                self.upcomingAnchorDate = Calendar.current.startOfDay(for: self.selectedDate)
+                self.syncUpcomingWeekOffset()
+                await self.loadUpcomingTasks()
+            } else {
+                await self.refreshTasks()
+            }
+            self.refreshCalendarEvents()
+            await self.refreshScheduleBlocks()
+        }
+    }
+
+    private func handleViewModeChange(_ mode: DashboardViewMode) {
+        Task { [weak self] in
+            switch mode {
+            case .today:
+                await self?.refreshTasks()
+            case .upcoming:
+                await self?.loadUpcomingTasks()
+            case .logbook:
+                await self?.loadCompletedTasks()
+            case .anytime:
+                await self?.loadAnytimeTasks()
+            case .someday:
+                await self?.loadSomedayTasks()
+            case .habits:
+                await self?.loadHabits()
+                await self?.loadHabitReport()
+                await self?.loadTodayTimeData()
+            case .reports:
+                await self?.loadTodayTimeData()
+                await self?.loadTodaySessions()
+                await self?.loadWeeklyReport()
+                await self?.loadHabitReport()
+            case .queue:
+                break // The queue page loads its own content atoms.
+            case .project:
+                if let uuid = self?.selectedProjectUUID {
+                    await self?.loadProjectTasks(projectUUID: uuid)
+                }
+            case .area:
+                break
+            }
+            self?.selectedTaskIndex = nil
         }
     }
 
     // MARK: - Bindings
 
     private func setupBindings() {
-        // React to date changes
-        $selectedDate
-            .removeDuplicates { Calendar.current.isDate($0, inSameDayAs: $1) }
-            .sink { [weak self] _ in
-                Task { [weak self] in
-                    guard let self else { return }
-                    if self.viewMode == .upcoming {
-                        self.upcomingAnchorDate = Calendar.current.startOfDay(for: self.selectedDate)
-                        self.syncUpcomingWeekOffset()
-                        await self.loadUpcomingTasks()
-                    } else {
-                        await self.refreshTasks()
-                    }
-                    self.refreshCalendarEvents()
-                    await self.refreshScheduleBlocks()
-                }
-            }
-            .store(in: &cancellables)
-
-        // React to view mode changes
-        $viewMode
-            .removeDuplicates()
-            .sink { [weak self] mode in
-                Task { [weak self] in
-                    switch mode {
-                    case .today:
-                        await self?.refreshTasks()
-                    case .upcoming:
-                        await self?.loadUpcomingTasks()
-                    case .logbook:
-                        await self?.loadCompletedTasks()
-                    case .anytime:
-                        await self?.loadAnytimeTasks()
-                    case .someday:
-                        await self?.loadSomedayTasks()
-                    case .habits:
-                        await self?.loadHabits()
-                        await self?.loadHabitReport()
-                        await self?.loadTodayTimeData()
-                    case .reports:
-                        await self?.loadTodayTimeData()
-                        await self?.loadTodaySessions()
-                        await self?.loadWeeklyReport()
-                        await self?.loadHabitReport()
-                    case .queue:
-                        break // The queue page loads its own content atoms.
-                    case .project:
-                        if let uuid = self?.selectedProjectUUID {
-                            await self?.loadProjectTasks(projectUUID: uuid)
-                        }
-                    case .area:
-                        break
-                    }
-                    self?.selectedTaskIndex = nil
-                }
-            }
-            .store(in: &cancellables)
-
         NotificationCenter.default.publisher(for: .NSCalendarDayChanged)
             .sink { [weak self] _ in
                 self?.handleCurrentDayChange()
@@ -794,15 +836,22 @@ class CommandCenterDashboardViewModel: ObservableObject {
     // MARK: - Refresh
 
     func refreshAll() async {
-        await intentEngine.refreshDefinitions()
-        await habitEngine.refreshDefinitions()
-        await refreshTasks()
+        // Definition refreshes feed the loaders below — they run first.
+        async let intentDefs: Void = intentEngine.refreshDefinitions()
+        async let habitDefs: Void = habitEngine.refreshDefinitions()
+        _ = await (intentDefs, habitDefs)
+
+        // Independent loads write disjoint state — one concurrent wave
+        // instead of the nine sequential awaits this used to be (the first
+        // dashboard paint waited on the full chain).
         refreshCalendarEvents()
-        await refreshScheduleBlocks()
-        await loadHabits()
-        await loadTodayTimeData()
-        await loadTodaySessions()
-        await loadWeeklyReport()
+        async let tasks: Void = refreshTasks()
+        async let schedule: Void = refreshScheduleBlocks()
+        async let habitStates: Void = loadHabits()
+        async let timeData: Void = loadTodayTimeData()
+        async let sessions: Void = loadTodaySessions()
+        async let weekly: Void = loadWeeklyReport()
+        _ = await (tasks, schedule, habitStates, timeData, sessions, weekly)
     }
 
     private func scheduleRefresh(_ domain: DashboardRefreshDomain, delayNanoseconds: UInt64 = 0) {

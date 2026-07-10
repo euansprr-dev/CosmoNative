@@ -8,7 +8,7 @@ struct DashboardTaskList: View {
 
     private let rowChromeInset: CGFloat = DS.space8
 
-    @ObservedObject var viewModel: CommandCenterDashboardViewModel
+    var viewModel: CommandCenterDashboardViewModel
     @ObservedObject private var sessionEngine = DeepWorkSessionEngine.shared
     let composer: CommandCenterComposerController
     var onSelectTask: ((TaskViewModel) -> Void)?

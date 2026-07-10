@@ -7,22 +7,26 @@ import SwiftUI
 
 struct CommandCenterDashboard: View {
 
-    @StateObject private var viewModel: CommandCenterDashboardViewModel
+    @State private var viewModel: CommandCenterDashboardViewModel
     @State private var contextProvider: CommandCenterContextProvider
     @State private var composer = CommandCenterComposerController()
     @State private var selectedTaskForDetail: TaskViewModel?
-    /// First-load arrival choreography — the page assembles once, never loops.
-    @State private var hasAppeared = false
     @Environment(\.isPaneContext) private var isPaneContext
     @Environment(\.isPaneContextOwner) private var isPaneContextOwner
     private let showsInternalSidebar: Bool
+
+    /// First-load arrival choreography — lives on the VM so the cascade plays
+    /// once per app session, not on every destination revisit (the VM persists
+    /// in MainView; a view-local flag reset on every remount and re-ran the
+    /// whole entrance).
+    private var hasAppeared: Bool { viewModel.hasPlayedArrivalCascade }
 
     init(
         viewModel: CommandCenterDashboardViewModel? = nil,
         showsInternalSidebar: Bool = true
     ) {
         let dashboardViewModel = viewModel ?? CommandCenterDashboardViewModel()
-        _viewModel = StateObject(wrappedValue: dashboardViewModel)
+        _viewModel = State(initialValue: dashboardViewModel)
         _contextProvider = State(initialValue: CommandCenterContextProvider(viewModel: dashboardViewModel))
         self.showsInternalSidebar = showsInternalSidebar
     }
@@ -41,28 +45,31 @@ struct CommandCenterDashboard: View {
             .padding(DS.space24)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .task {
-                await viewModel.loadAreas()
-                await viewModel.loadAnytimeTasks()
-                await viewModel.loadSomedayTasks()
+                // First visit: migrations + refreshAll (moved out of the VM's
+                // init so app launch no longer pays them); revisits hit the
+                // loadIfNeeded guards and render the warm data instantly.
+                await viewModel.startInitialLoadIfNeeded()
+                await viewModel.loadAreasIfNeeded()
+                await viewModel.loadAnytimeTasksIfNeeded()
+                await viewModel.loadSomedayTasksIfNeeded()
                 publishCommandCenterContext()
-                if !hasAppeared {
+                if !viewModel.hasPlayedArrivalCascade {
                     // One frame at rest, then the cascade — flipped in the
                     // same update, sections would mount already-visible.
                     try? await Task.sleep(for: .milliseconds(16))
-                    hasAppeared = true
+                    viewModel.hasPlayedArrivalCascade = true
                 }
             }
             .onAppear(perform: publishCommandCenterContext)
             .onChange(of: isPaneContextOwner) { _, _ in publishCommandCenterContext() }
             .onChange(of: viewModel.viewMode) { _, mode in
+                // The context provider pulls from the VM lazily, so a republish
+                // on mode change (plus appear/pane-owner) replaces the old
+                // per-objectWillChange republish that fired on every VM change.
+                publishCommandCenterContext()
                 guard mode.isFullPlanningPage else { return }
                 selectedTaskForDetail = nil
                 composer.dismiss()
-            }
-            .onReceive(viewModel.objectWillChange) { _ in
-                DispatchQueue.main.async {
-                    publishCommandCenterContext()
-                }
             }
 
             CommandCenterComposerHost(viewModel: viewModel, composer: composer)

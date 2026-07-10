@@ -503,9 +503,11 @@ struct NoteFocusModeView: View {
             DispatchQueue.main.async {
                 NoteFocusLog.debug("[FOCUS-NOTE] onDisappear(deferred) — saving uuid=\(atom.uuid) bodyLen=\(plainContent.count) bodyPreview=\"\(String(plainContent.prefix(80)))\"")
                 saveClosed = true
-                saveAtomImmediately()
+                // Async close save (escorted): the exit animation never blocks
+                // on the write lock; it also releases the editing lock once
+                // the write commits.
+                saveAtomOnCloseAsync()
                 floatingBlocksManager.saveImmediately()
-                AtomRepository.shared.releaseEditingLock(uuid: atom.uuid)
                 // Mirror any local-only note images to the shared bucket so
                 // they render on iPhone. Runs after the close save, off the
                 // editing path — idempotent once every image has a remoteURL.
@@ -2025,64 +2027,22 @@ struct NoteFocusModeView: View {
             NoteFocusLog.debug("[FOCUS-NOTE] saveAtomImmediately() SKIPPED — no local edits, avoiding stale overwrite uuid=\(atom.uuid)")
             return
         }
-        let titleDocumentCopy = titleDocument
-        let bodyDocumentCopy = bodyDocument
-        let plainContentCopy = plainContent
-        let tagsCopy = tags
-        let noteStyleCopy = noteStyle
-        let uuid = atom.uuid
-        let hasLocalBodyEditsCopy = hasLocalBodyEdits
+        let closeSnapshot = makeCloseSnapshot()
+        let titleDocumentCopy = closeSnapshot.titleDocument
+        let bodyDocumentCopy = closeSnapshot.bodyDocument
+        let plainContentCopy = closeSnapshot.plainContent
+        let tagsCopy = closeSnapshot.tags
+        let uuid = closeSnapshot.uuid
         AtomRepository.shared.refreshEditingLock(uuid: uuid)
 
         do {
-            let snapshot = try database.write { db -> NoteDocumentSnapshot in
-                var existingMetadata: String?
-                var existingBody: String?
-                if let row = try Row.fetchOne(db, sql: "SELECT metadata, body FROM atoms WHERE uuid = ?", arguments: [uuid]) {
-                    existingMetadata = row["metadata"]
-                    existingBody = row["body"]
-                }
-
-                let snapshot = RichDocumentPersistence.noteSnapshot(
-                    existingMetadata: existingMetadata,
-                    titleDocument: titleDocumentCopy,
-                    bodyDocument: bodyDocumentCopy,
-                    plainBodyText: plainContentCopy
-                )
-                guard NoteWritePolicy.allowsBodyWrite(
-                    existingBody: existingBody,
-                    proposedBody: snapshot.bodyPlainText,
-                    hasLocalEdits: hasLocalBodyEditsCopy
-                ) else {
-                    throw NoteSaveError.rejectedEmptyOverwrite(uuid: uuid)
-                }
-                let metadataString = Self.metadataString(for: snapshot, tags: tagsCopy, style: noteStyleCopy)
-
-                try db.execute(
-                    sql: """
-                    UPDATE atoms
-                    SET title = ?,
-                        body = ?,
-                        metadata = ?,
-                        updated_at = ?,
-                        _local_version = _local_version + 1,
-                        _local_pending = 1
-                    WHERE uuid = ?
-                    """,
-                    arguments: [
-                        snapshot.atomTitle,
-                        snapshot.bodyPlainText,
-                        metadataString ?? snapshot.metadata,
-                        ISO8601.string(from: Date()),
-                        uuid
-                    ]
-                )
-                return snapshot
+            let snapshot = try database.write { db in
+                try Self.persistCloseSnapshot(closeSnapshot, in: db)
             }
             if plainContent == plainContentCopy {
                 hasLocalBodyEdits = false
             }
-            if tags == tagsCopy && titleDocument == titleDocumentCopy && noteStyle == noteStyleCopy {
+            if tags == tagsCopy && titleDocument == titleDocumentCopy && noteStyle == closeSnapshot.noteStyle {
                 hasLocalMetaEdits = false
             }
             lastPersistedTags = tagsCopy
@@ -2116,6 +2076,149 @@ struct NoteFocusModeView: View {
         }
     }
 
+    // MARK: - Close Snapshot (shared by the sync terminate path and async close path)
+
+    /// Value copy of everything the close write needs — no view state, so the
+    /// write can run from an async task or a terminate flusher after the view
+    /// is gone.
+    private struct NoteCloseSnapshot {
+        let uuid: String
+        let titleDocument: RichDocument
+        let bodyDocument: RichDocument
+        let plainContent: String
+        let tags: [String]
+        let noteStyle: NoteDocumentStyle
+        let hasLocalBodyEdits: Bool
+    }
+
+    private func makeCloseSnapshot() -> NoteCloseSnapshot {
+        NoteCloseSnapshot(
+            uuid: atom.uuid,
+            titleDocument: titleDocument,
+            bodyDocument: bodyDocument,
+            plainContent: plainContent,
+            tags: tags,
+            noteStyle: noteStyle,
+            hasLocalBodyEdits: hasLocalBodyEdits
+        )
+    }
+
+    /// The close-save write body, extracted over value copies. Same SQL and
+    /// NoteWritePolicy guard the sync path always had. Nonisolated: runs on
+    /// the DB queue inside asyncWrite as well as on main (sync/terminate).
+    private nonisolated static func persistCloseSnapshot(
+        _ closeSnapshot: NoteCloseSnapshot,
+        in db: Database
+    ) throws -> NoteDocumentSnapshot {
+        var existingMetadata: String?
+        var existingBody: String?
+        if let row = try Row.fetchOne(db, sql: "SELECT metadata, body FROM atoms WHERE uuid = ?", arguments: [closeSnapshot.uuid]) {
+            existingMetadata = row["metadata"]
+            existingBody = row["body"]
+        }
+
+        let snapshot = RichDocumentPersistence.noteSnapshot(
+            existingMetadata: existingMetadata,
+            titleDocument: closeSnapshot.titleDocument,
+            bodyDocument: closeSnapshot.bodyDocument,
+            plainBodyText: closeSnapshot.plainContent
+        )
+        guard NoteWritePolicy.allowsBodyWrite(
+            existingBody: existingBody,
+            proposedBody: snapshot.bodyPlainText,
+            hasLocalEdits: closeSnapshot.hasLocalBodyEdits
+        ) else {
+            throw NoteSaveError.rejectedEmptyOverwrite(uuid: closeSnapshot.uuid)
+        }
+        let metadataString = Self.metadataString(for: snapshot, tags: closeSnapshot.tags, style: closeSnapshot.noteStyle)
+
+        try db.execute(
+            sql: """
+            UPDATE atoms
+            SET title = ?,
+                body = ?,
+                metadata = ?,
+                updated_at = ?,
+                _local_version = _local_version + 1,
+                _local_pending = 1
+            WHERE uuid = ?
+            """,
+            arguments: [
+                snapshot.atomTitle,
+                snapshot.bodyPlainText,
+                metadataString ?? snapshot.metadata,
+                ISO8601.string(from: Date()),
+                closeSnapshot.uuid
+            ]
+        )
+        return snapshot
+    }
+
+    /// Close-path save: async write with a DirtyEditorRegistry escort so the
+    /// focus-exit animation never blocks on the DB write lock (cross-process
+    /// busy timeout is 5s). Quitting mid-write flushes the same captured
+    /// snapshot synchronously via the escort. The terminate notification path
+    /// keeps calling the sync `saveAtomImmediately()`.
+    private func saveAtomOnCloseAsync() {
+        NoteFocusLog.debug("[FOCUS-NOTE] saveAtomOnCloseAsync() — uuid=\(atom.uuid) titleLen=\(titlePlainText.count) bodyLen=\(plainContent.count) hasLocalBodyEdits=\(hasLocalBodyEdits) hasLocalMetaEdits=\(hasLocalMetaEdits)")
+        guard hasLocalBodyEdits || hasLocalMetaEdits else {
+            NoteFocusLog.debug("[FOCUS-NOTE] saveAtomOnCloseAsync() SKIPPED — no local edits, avoiding stale overwrite uuid=\(atom.uuid)")
+            AtomRepository.shared.releaseEditingLock(uuid: atom.uuid)
+            return
+        }
+        let closeSnapshot = makeCloseSnapshot()
+        let uuid = closeSnapshot.uuid
+        AtomRepository.shared.refreshEditingLock(uuid: uuid)
+
+        // Unique per close: rapid close→reopen→close of the same note must not
+        // let the first write's completion unregister the second's escort.
+        let escortID = "note-close-\(uuid)-\(UUID().uuidString.prefix(8))"
+        DirtyEditorRegistry.shared.register(id: escortID) {
+            // Terminate before the async write committed: flush the same
+            // snapshot synchronously (value copies only — safe after the
+            // view is gone). Dead-letter on failure, like the sync path.
+            do {
+                _ = try CosmoDatabase.shared.write { db in
+                    try Self.persistCloseSnapshot(closeSnapshot, in: db)
+                }
+            } catch {
+                if !(error is NoteSaveError) {
+                    Self.stashDeadLetterStatic(for: closeSnapshot)
+                }
+                PersistenceHealth.note(.writeFailure, context: "noteFocus.closeSave.terminate", detail: "uuid=\(uuid): \(error)")
+            }
+        }
+
+        Task { @MainActor in
+            defer {
+                DirtyEditorRegistry.shared.unregister(id: escortID)
+                AtomRepository.shared.releaseEditingLock(uuid: uuid)
+            }
+            do {
+                let snapshot = try await CosmoDatabase.shared.asyncWrite { db in
+                    try Self.persistCloseSnapshot(closeSnapshot, in: db)
+                }
+                postNoteFocusState(snapshot: snapshot, atomUUID: uuid, notifyRichDocumentObservers: false)
+                // Sync: queue for Supabase push
+                if let updatedAtom = try? await CosmoDatabase.shared.asyncRead({ db in
+                    try Atom.filter(Column("uuid") == uuid).fetchOne(db)
+                }) {
+                    // skipVersionIncrement: raw SQL already did _local_version + 1
+                    await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom, skipVersionIncrement: true)
+                }
+            } catch {
+                // Last chance to persist this session — dead-letter so the
+                // next open restores it. (Empty-overwrite rejection is not a
+                // loss — skip it.)
+                if !(error is NoteSaveError) {
+                    Self.stashDeadLetterStatic(for: closeSnapshot)
+                }
+                PersistenceHealth.note(.writeFailure, context: "noteFocus.closeSave", detail: "uuid=\(uuid): \(error)")
+                print("Failed to save note (close): \(error)")
+            }
+        }
+    }
+
     // MARK: - Dead Letter (failed close save)
 
     private struct NoteSaveDeadLetter: Codable {
@@ -2127,8 +2230,25 @@ struct NoteFocusModeView: View {
         var savedAt: Date
     }
 
-    private static func deadLetterKey(forAtomUUID uuid: String) -> String {
+    private nonisolated static func deadLetterKey(forAtomUUID uuid: String) -> String {
         "noteSaveDeadLetter.\(uuid)"
+    }
+
+    /// Dead-letter a close snapshot without touching view state — usable from
+    /// the terminate escort after the view is gone.
+    private nonisolated static func stashDeadLetterStatic(for closeSnapshot: NoteCloseSnapshot) {
+        let encoder = JSONEncoder()
+        let letter = NoteSaveDeadLetter(
+            body: closeSnapshot.plainContent,
+            title: RichDocumentPersistence.titlePlainText(from: closeSnapshot.titleDocument),
+            tags: closeSnapshot.tags,
+            bodyDocumentJSON: (try? encoder.encode(closeSnapshot.bodyDocument)).flatMap { String(data: $0, encoding: .utf8) },
+            titleDocumentJSON: (try? encoder.encode(closeSnapshot.titleDocument)).flatMap { String(data: $0, encoding: .utf8) },
+            savedAt: Date()
+        )
+        guard let data = try? encoder.encode(letter) else { return }
+        UserDefaults.standard.set(data, forKey: deadLetterKey(forAtomUUID: closeSnapshot.uuid))
+        NoteFocusLog.debug("[FOCUS-NOTE] stashed dead letter — uuid=\(closeSnapshot.uuid) bodyLen=\(closeSnapshot.plainContent.count)")
     }
 
     private func stashDeadLetter(

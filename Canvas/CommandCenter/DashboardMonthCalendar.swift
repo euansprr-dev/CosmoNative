@@ -7,7 +7,7 @@ import SwiftUI
 
 struct DashboardMonthCalendar: View {
 
-    @ObservedObject var viewModel: CommandCenterDashboardViewModel
+    var viewModel: CommandCenterDashboardViewModel
 
     @State private var displayedMonth: Date = Date()
     @State private var hoveredDay: Int?

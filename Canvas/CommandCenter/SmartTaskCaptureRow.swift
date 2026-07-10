@@ -7,7 +7,7 @@ import Combine
 
 struct SmartTaskCaptureRow: View {
 
-    @ObservedObject var viewModel: CommandCenterDashboardViewModel
+    @Bindable var viewModel: CommandCenterDashboardViewModel
     var contextProjectUUID: String? = nil
     var contextHeadingUUID: String? = nil
     var placeholderText: String = "Add task... (try \"Write at 6pm every Tue\")"

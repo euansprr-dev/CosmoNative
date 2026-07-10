@@ -42,7 +42,7 @@ struct CommandCenterInboxChip: View {
 
 struct CommandCenterMasthead: View {
 
-    @ObservedObject var viewModel: CommandCenterDashboardViewModel
+    var viewModel: CommandCenterDashboardViewModel
     @Environment(\.isPaneContext) private var isPaneContext
 
     var body: some View {

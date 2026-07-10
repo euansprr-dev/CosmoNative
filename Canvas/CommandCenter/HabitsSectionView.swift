@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct HabitsSectionView: View {
-    @ObservedObject var viewModel: CommandCenterDashboardViewModel
+    var viewModel: CommandCenterDashboardViewModel
     let composer: CommandCenterComposerController
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -185,7 +185,7 @@ private struct HabitTodayHero: View {
 }
 
 private struct HabitPracticeList: View {
-    @ObservedObject var viewModel: CommandCenterDashboardViewModel
+    var viewModel: CommandCenterDashboardViewModel
     let composer: CommandCenterComposerController
     let animateProgress: Bool
 
@@ -380,7 +380,7 @@ private struct HabitPlanningRow: View {
 }
 
 private struct HabitRecoveryPane: View {
-    @ObservedObject var viewModel: CommandCenterDashboardViewModel
+    var viewModel: CommandCenterDashboardViewModel
 
     var body: some View {
         CommandCenterMaterialPanel(cornerRadius: 14, contentPadding: DS.space12) {
@@ -444,7 +444,7 @@ private struct HabitRecoveryPane: View {
 }
 
 private struct HabitConsistencyPane: View {
-    @ObservedObject var viewModel: CommandCenterDashboardViewModel
+    var viewModel: CommandCenterDashboardViewModel
 
     var body: some View {
         CommandCenterMaterialPanel(cornerRadius: 14, contentPadding: DS.space12) {

@@ -1155,7 +1155,7 @@ final class IdeaFocusModeViewModel {
         // DB write lock (cross-process busy timeout is 5s). The registry
         // escort preserves the quit guarantee — terminating mid-write flushes
         // the captured snapshot synchronously; the commit unregisters it.
-        let escortID = "idea-close-\(idea.uuid)"
+        let escortID = "idea-close-\(idea.uuid)-\(UUID().uuidString.prefix(8))"
         DirtyEditorRegistry.shared.register(id: escortID) { [weak self] in
             guard let self else { return }
             _ = try? self.writeSnapshotSync(snapshot, sequence: sequence)

@@ -262,7 +262,7 @@ enum CommandCenterCalendarLayout {
 }
 
 struct UpcomingBoardView: View {
-    @ObservedObject var viewModel: CommandCenterDashboardViewModel
+    var viewModel: CommandCenterDashboardViewModel
     let composer: CommandCenterComposerController
 
     @State private var selectedEntryID: String?

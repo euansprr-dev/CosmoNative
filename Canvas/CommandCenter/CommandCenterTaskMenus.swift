@@ -109,7 +109,7 @@ final class CommandCenterComposerController {
 }
 
 struct CommandCenterComposerHost: View {
-    @ObservedObject var viewModel: CommandCenterDashboardViewModel
+    var viewModel: CommandCenterDashboardViewModel
     let composer: CommandCenterComposerController
 
     @State private var seriesDeleteTarget: TaskViewModel?
@@ -1025,7 +1025,7 @@ struct CommandCenterTaskActionComposer: View {
 }
 
 struct CommandCenterIntentPickerComposer: View {
-    @ObservedObject var viewModel: CommandCenterDashboardViewModel
+    var viewModel: CommandCenterDashboardViewModel
     let taskTitle: String
     let currentIntentUUID: String?
     let onSelect: (String?) -> Void

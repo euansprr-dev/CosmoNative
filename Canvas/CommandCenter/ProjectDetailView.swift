@@ -7,7 +7,7 @@ import SwiftUI
 struct ProjectDetailView: View {
 
     let project: Atom
-    @ObservedObject var viewModel: CommandCenterDashboardViewModel
+    var viewModel: CommandCenterDashboardViewModel
     @State private var isEditingNotes = false
     @State private var editedNotes = ""
     @State private var newHeadingTitle = ""

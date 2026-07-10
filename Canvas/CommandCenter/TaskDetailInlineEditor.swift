@@ -6,7 +6,7 @@ import SwiftUI
 
 struct TaskDetailInlineEditor: View {
 
-    @ObservedObject var viewModel: CommandCenterDashboardViewModel
+    var viewModel: CommandCenterDashboardViewModel
     let task: TaskViewModel
     var onDismiss: () -> Void
 

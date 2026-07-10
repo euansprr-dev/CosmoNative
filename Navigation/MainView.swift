@@ -158,7 +158,7 @@ struct MainView: View {
     @State private var diveCoverFailsafeTask: Task<Void, Never>?
     @State private var spokesPillar: Atom?
     @State private var inboxRoute: SidebarInboxRoute = .global
-    @StateObject private var commandCenterViewModel = CommandCenterDashboardViewModel()
+    @State private var commandCenterViewModel = CommandCenterDashboardViewModel()
     @State private var swipeLibraryViewModel = SwipeLibraryViewModel()
     @State private var swipeDiscoverModel = SwipeDiscoverModel()
     // Simple sidebar state: closed/open. Open sidebar reserves layout space.
@@ -174,13 +174,16 @@ struct MainView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     // Split-pane system
     @StateObject private var paneManager = PaneManager()
-    @ObservedObject private var inlineAssistantStore = CosmoInlineAssistantStore.shared
 
-    // Deep work session engine (singleton — survives navigation changes)
-    @ObservedObject private var sessionEngine = DeepWorkSessionEngine.shared
+    // Deep work session engine: referenced in event handlers only — MainView
+    // must NOT observe it (its elapsedSeconds publishes every second during a
+    // session, which re-ran this whole body at 1Hz).
 
-    // Cross-thinkspace drag manager (sidebar spring-loaded folders)
-    @StateObject private var crossDragManager = CrossThinkspaceDragManager()
+    // Cross-thinkspace drag manager (sidebar spring-loaded folders).
+    // Held as plain @State — NOT observed here: its floatingPosition mutates
+    // per pointer frame mid-drag; CrossThinkspaceDragPreviewHost is the only
+    // view that observes it (CanvasView gets it via environmentObject).
+    @State private var crossDragManager = CrossThinkspaceDragManager()
 
     @State private var focusModeNavigationTask: Task<Void, Never>?
     @State private var focusModeNavigationRequestID = UUID()
@@ -260,10 +263,10 @@ struct MainView: View {
                 // Bottom assistant composer: answers open the side pane, actions stay as diff proposals.
                 VStack {
                     Spacer()
-                    CosmoInlineAssistantReviewOverlay(store: inlineAssistantStore)
+                    CosmoInlineAssistantReviewOverlay(store: CosmoInlineAssistantStore.shared)
                         .padding(.bottom, 8)
 
-                    CosmoInlineAssistantBar(store: inlineAssistantStore) {
+                    CosmoInlineAssistantBar(store: CosmoInlineAssistantStore.shared) {
                         openInlineAssistantPane()
                     }
                     .padding(.bottom, 24)
@@ -528,10 +531,13 @@ struct MainView: View {
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: glassCenter.isVisible)
         .animation(.spring(response: 0.25, dampingFraction: 0.85), value: swipeFileEngine.showInstagramModal)
         .animation(.spring(response: 0.25, dampingFraction: 0.85), value: showSettings)
-        .onChange(of: inlineAssistantStore.isPaneRequested) { _, isRequested in
+        // onReceive, not onChange: MainView deliberately does NOT observe the
+        // assistant store (its composerText publishes per keystroke and its
+        // run state per stream event — each would re-run this whole body).
+        .onReceive(CosmoInlineAssistantStore.shared.$isPaneRequested.removeDuplicates()) { isRequested in
             guard isRequested else { return }
             openInlineAssistantPane()
-            inlineAssistantStore.dismissPaneRequest()
+            CosmoInlineAssistantStore.shared.dismissPaneRequest()
         }
         .onReceive(NotificationCenter.default.publisher(for: .showCommandPalette)) { _ in
             presentCommandK()
@@ -1026,14 +1032,11 @@ struct MainView: View {
                     }
                 }
 
-                if crossDragManager.isOverSidebar || crossDragManager.hasThinkspaceSwitched,
-                   let block = crossDragManager.draggedBlock {
-                    CrossThinkspaceDragPreview(block: block)
-                        .position(crossDragManager.floatingPosition)
-                        .transition(.scale(scale: 0.8).combined(with: .opacity))
-                        .zIndex(10000)
-                        .allowsHitTesting(false)
-                }
+                // Host isolation: the manager's floatingPosition writes per
+                // pointer frame during a cross-thinkspace drag — only this
+                // host re-evaluates, never MainView's body.
+                CrossThinkspaceDragPreviewHost(manager: crossDragManager)
+                    .zIndex(10000)
 
                 // Study surfaces draw the trail island inside their own chrome
                 // row (DeepDiveStudyBar) so it shares the islands' baseline —
@@ -2400,8 +2403,8 @@ struct MainView: View {
                !event.modifierFlags.contains(.command),
                !isKeyboardInputReserved() {
                 if case .commandCenter = currentDestination,
-                   sessionEngine.activeSession == nil {
-                    sessionEngine.startSession(
+                   DeepWorkSessionEngine.shared.activeSession == nil {
+                    DeepWorkSessionEngine.shared.startSession(
                         taskUUID: nil,
                         taskTitle: "Quick Session",
                         intent: .deepThink,
@@ -3189,5 +3192,25 @@ struct CosmoTrashView: View {
             PersistenceHealth.note(.writeFailure, context: "Trash.purge(\(atom.uuid.prefix(8)))", detail: error.localizedDescription)
         }
         purgeCandidate = nil
+    }
+}
+
+// MARK: - Cross-Thinkspace Drag Preview Host
+
+/// The one view that observes CrossThinkspaceDragManager. Its
+/// `floatingPosition` publishes on every pointer frame during a
+/// cross-thinkspace drag — isolating the observation here keeps those
+/// 120Hz writes from re-evaluating MainView's whole body.
+private struct CrossThinkspaceDragPreviewHost: View {
+    @ObservedObject var manager: CrossThinkspaceDragManager
+
+    var body: some View {
+        if manager.isOverSidebar || manager.hasThinkspaceSwitched,
+           let block = manager.draggedBlock {
+            CrossThinkspaceDragPreview(block: block)
+                .position(manager.floatingPosition)
+                .transition(.scale(scale: 0.8).combined(with: .opacity))
+                .allowsHitTesting(false)
+        }
     }
 }

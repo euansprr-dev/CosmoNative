@@ -98,7 +98,7 @@ enum ContentQueueLoader {
 // MARK: - Page
 
 struct ContentQueueSectionView: View {
-    @ObservedObject var viewModel: CommandCenterDashboardViewModel
+    var viewModel: CommandCenterDashboardViewModel
 
     enum QueueLens: String, CaseIterable {
         case list = "List"

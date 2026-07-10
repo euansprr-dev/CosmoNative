@@ -56,7 +56,7 @@ enum DashboardReportChrome {
 
 struct DashboardReportsPanel: View {
 
-    @ObservedObject var viewModel: CommandCenterDashboardViewModel
+    var viewModel: CommandCenterDashboardViewModel
     @State private var chartAnimated = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 

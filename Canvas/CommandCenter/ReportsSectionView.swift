@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct ReportsSectionView: View {
-    @ObservedObject var viewModel: CommandCenterDashboardViewModel
+    var viewModel: CommandCenterDashboardViewModel
 
     @State private var scope: ReportPageScope = .week
     @State private var chartAnimated = false
@@ -285,7 +285,7 @@ private struct ReportNavigatorButton: View {
 }
 
 private struct TodaySessionTimeline: View {
-    @ObservedObject var viewModel: CommandCenterDashboardViewModel
+    var viewModel: CommandCenterDashboardViewModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space10) {
@@ -393,7 +393,7 @@ private struct TodayTimelineRow: View {
 }
 
 private struct TodayFocusQualityPane: View {
-    @ObservedObject var viewModel: CommandCenterDashboardViewModel
+    var viewModel: CommandCenterDashboardViewModel
 
     var body: some View {
         CommandCenterMaterialPanel(cornerRadius: 14, contentPadding: DS.space12) {
@@ -447,7 +447,7 @@ private struct TodayFocusQualityPane: View {
 }
 
 private struct TodayAttributionPane: View {
-    @ObservedObject var viewModel: CommandCenterDashboardViewModel
+    var viewModel: CommandCenterDashboardViewModel
 
     var body: some View {
         CommandCenterMaterialPanel(cornerRadius: 14, contentPadding: DS.space12) {

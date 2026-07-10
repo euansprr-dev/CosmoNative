@@ -7,7 +7,7 @@ import SwiftUI
 
 struct DashboardFocusTimer: View {
 
-    @ObservedObject var viewModel: CommandCenterDashboardViewModel
+    var viewModel: CommandCenterDashboardViewModel
     @ObservedObject private var sessionEngine = DeepWorkSessionEngine.shared
 
     private var session: ActiveDeepWorkSession? {

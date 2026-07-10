@@ -20,6 +20,9 @@ enum ThinkspaceSidebarMetrics {
 
 struct ThinkspaceSidebar: View {
     @ObservedObject var manager: ThinkspaceManager
+    /// Navigation caches live on their own store so fills re-render only the
+    /// views that show them (this sidebar), not every manager observer.
+    @ObservedObject private var navCache = ThinkspaceNavigationCacheStore.shared
     @Binding var isVisible: Bool
 
     @AppStorage("thinkspaceSidebarLocked") private var isLocked: Bool = false
@@ -99,7 +102,7 @@ struct ThinkspaceSidebar: View {
         for thinkspace in filteredThinkspaces {
             items.append(.thinkspace(thinkspace, projectId: thinkspace.projectUuid))
             if expandedThinkspaces.contains(thinkspace.id),
-               let docs = manager.childDocsCache[thinkspace.id] {
+               let docs = navCache.childDocsCache[thinkspace.id] {
                 for doc in docs {
                     items.append(.childDoc(doc, thinkspaceId: thinkspace.id))
                 }
@@ -419,7 +422,7 @@ struct ThinkspaceSidebar: View {
                         projectColor: project.map { projectColor(for: $0) } ?? DS.textMuted,
                         isExpanded: expandedThinkspaces.contains(thinkspace.id),
                         onToggleExpand: { toggleThinkspaceExpand(thinkspace) },
-                        childDocs: manager.childDocsCache[thinkspace.id] ?? [],
+                        childDocs: navCache.childDocsCache[thinkspace.id] ?? [],
                         isLoadingChildren: childDocsLoading.contains(thinkspace.id),
                         hoveredChildDocId: hoveredChildDocId,
                         onChildDocTap: { doc in navigateToChildDoc(doc) },
@@ -645,7 +648,7 @@ struct ThinkspaceSidebar: View {
                 expandedThinkspaces.remove(thinkspace.id)
             } else {
                 expandedThinkspaces.insert(thinkspace.id)
-                if manager.childDocsCache[thinkspace.id] == nil {
+                if navCache.childDocsCache[thinkspace.id] == nil {
                     childDocsLoading.insert(thinkspace.id)
                     Task {
                         await manager.fetchChildDocs(for: thinkspace.id)

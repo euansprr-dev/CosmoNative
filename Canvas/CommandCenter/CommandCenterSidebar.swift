@@ -6,7 +6,7 @@ import SwiftUI
 
 struct CommandCenterSidebar: View {
 
-    @ObservedObject var viewModel: CommandCenterDashboardViewModel
+    var viewModel: CommandCenterDashboardViewModel
 
     var body: some View {
         ScrollView(.vertical) {

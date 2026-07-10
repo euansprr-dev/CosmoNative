@@ -308,7 +308,7 @@ struct UnifiedSidebar: View {
     @Binding var activeContext: SidebarContext
     @Binding var panelWidth: CGFloat
     @ObservedObject var thinkspaceManager: ThinkspaceManager
-    @ObservedObject var commandCenterViewModel: CommandCenterDashboardViewModel
+    var commandCenterViewModel: CommandCenterDashboardViewModel
     var cornerRadius: CGFloat = UnifiedSidebarMetrics.panelCornerRadius
     var sidebarButtonTitle: String = "Close sidebar"
     var sidebarButtonHelp: String = "Close sidebar"
@@ -787,7 +787,7 @@ private struct SidebarContextRow: View {
 // MARK: - Command Center Context
 
 private struct SidebarCommandCenterContext: View {
-    @ObservedObject var viewModel: CommandCenterDashboardViewModel
+    var viewModel: CommandCenterDashboardViewModel
     @Binding var currentDestination: SidebarDestination
     var onNavigate: () -> Void = {}
 

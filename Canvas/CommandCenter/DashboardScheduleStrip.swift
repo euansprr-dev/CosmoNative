@@ -7,7 +7,7 @@ import SwiftUI
 
 struct DashboardScheduleStrip: View {
 
-    @ObservedObject var viewModel: CommandCenterDashboardViewModel
+    var viewModel: CommandCenterDashboardViewModel
     @State private var nowPulse = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 

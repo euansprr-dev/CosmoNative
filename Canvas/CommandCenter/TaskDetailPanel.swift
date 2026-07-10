@@ -7,7 +7,7 @@ import SwiftUI
 struct TaskDetailPanel: View {
 
     let task: TaskViewModel
-    @ObservedObject var viewModel: CommandCenterDashboardViewModel
+    var viewModel: CommandCenterDashboardViewModel
     let composer: CommandCenterComposerController
     var onDeleted: (String) -> Void = { _ in }
 

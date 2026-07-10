@@ -179,6 +179,41 @@ struct ThinkspaceNavigationData: Equatable {
     let blockInventory: [ChildDoc]
 }
 
+// MARK: - Thinkspace Navigation Cache Store
+
+/// The sidebar/library navigation caches, split off ThinkspaceManager so a
+/// cache fill doesn't invalidate every ThinkspaceManager observer — MainView
+/// observes the manager, and these dictionaries change on every inventory
+/// fetch (each expanded sidebar row, every library-mode entry). Only views
+/// that render cache contents (ThinkspaceSidebar) observe this store.
+@MainActor
+final class ThinkspaceNavigationCacheStore: ObservableObject {
+    static let shared = ThinkspaceNavigationCacheStore()
+
+    /// Cached child docs per thinkspace ID
+    @Published private(set) var childDocsCache: [String: [ChildDoc]] = [:]
+
+    /// Cached thinkspace navigation payloads used by the unified sidebar.
+    @Published private(set) var navigationCache: [String: ThinkspaceNavigationData] = [:]
+
+    private init() {}
+
+    func store(navigationData: ThinkspaceNavigationData, docs: [ChildDoc], for thinkspaceId: String) {
+        navigationCache[thinkspaceId] = navigationData
+        childDocsCache[thinkspaceId] = docs
+    }
+
+    func invalidate(thinkspaceId: String?) {
+        if let id = thinkspaceId {
+            childDocsCache.removeValue(forKey: id)
+            navigationCache.removeValue(forKey: id)
+        } else {
+            childDocsCache.removeAll()
+            navigationCache.removeAll()
+        }
+    }
+}
+
 // MARK: - Thinkspace Manager
 
 /// Manages Thinkspace CRUD operations and switching
@@ -200,11 +235,10 @@ class ThinkspaceManager: ObservableObject {
     /// Loading state
     @Published private(set) var isLoading = false
 
-    /// Cached child docs per thinkspace ID
-    @Published private(set) var childDocsCache: [String: [ChildDoc]] = [:]
-
-    /// Cached thinkspace navigation payloads used by the unified sidebar.
-    @Published private(set) var navigationCache: [String: ThinkspaceNavigationData] = [:]
+    /// Non-reactive forwarding accessors — reactive readers observe
+    /// ThinkspaceNavigationCacheStore.shared directly.
+    var childDocsCache: [String: [ChildDoc]] { ThinkspaceNavigationCacheStore.shared.childDocsCache }
+    var navigationCache: [String: ThinkspaceNavigationData] { ThinkspaceNavigationCacheStore.shared.navigationCache }
 
     /// Sidebar visibility state - shared for coordinating UI elements
     @Published var isSidebarVisible: Bool = false
@@ -962,11 +996,14 @@ class ThinkspaceManager: ObservableObject {
             }
 
             let childThinkspaces = childThinkspaces(of: thinkspaceId)
-            navigationCache[thinkspaceId] = ThinkspaceNavigationData(
-                childThinkspaces: childThinkspaces,
-                blockInventory: docs
+            ThinkspaceNavigationCacheStore.shared.store(
+                navigationData: ThinkspaceNavigationData(
+                    childThinkspaces: childThinkspaces,
+                    blockInventory: docs
+                ),
+                docs: docs,
+                for: thinkspaceId
             )
-            childDocsCache[thinkspaceId] = docs
         } catch {
             print("❌ Failed to fetch child docs: \(error)")
         }
@@ -981,13 +1018,7 @@ class ThinkspaceManager: ObservableObject {
 
     /// Invalidate child docs cache (called after thinkspace data changes)
     func invalidateChildDocsCache(for thinkspaceId: String? = nil) {
-        if let id = thinkspaceId {
-            childDocsCache.removeValue(forKey: id)
-            navigationCache.removeValue(forKey: id)
-        } else {
-            childDocsCache.removeAll()
-            navigationCache.removeAll()
-        }
+        ThinkspaceNavigationCacheStore.shared.invalidate(thinkspaceId: thinkspaceId)
     }
 
     // MARK: - Private Methods

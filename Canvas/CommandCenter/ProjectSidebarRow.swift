@@ -8,7 +8,7 @@ struct ProjectSidebarRow: View {
 
     let project: Atom
     let isSelected: Bool
-    @ObservedObject var viewModel: CommandCenterDashboardViewModel
+    var viewModel: CommandCenterDashboardViewModel
 
     private var projectMeta: ProjectMetadata? {
         project.metadataValue(as: ProjectMetadata.self)

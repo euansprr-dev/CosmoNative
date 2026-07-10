@@ -3391,7 +3391,7 @@ class ContentFocusModeViewModel: ObservableObject {
         // preserves the quit guarantee: terminating mid-write flushes the same
         // state synchronously; once the async write commits it unregisters.
         // (The VM's own cosmoAppWillTerminate handler skips after isClosed.)
-        let escortID = "content-close-\(atom.uuid)"
+        let escortID = "content-close-\(atom.uuid)-\(UUID().uuidString.prefix(8))"
         DirtyEditorRegistry.shared.register(id: escortID) { [weak self] in
             self?.flushTitleUpdateSync()
             self?.writeToAtomSync()

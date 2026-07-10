@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct DashboardHabitPanel: View {
-    @ObservedObject var viewModel: CommandCenterDashboardViewModel
+    var viewModel: CommandCenterDashboardViewModel
     let composer: CommandCenterComposerController
 
     @State private var animateProgress = false

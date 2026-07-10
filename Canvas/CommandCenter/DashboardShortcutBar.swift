@@ -6,7 +6,7 @@ import SwiftUI
 
 struct DashboardShortcutBar: View {
 
-    @ObservedObject var viewModel: CommandCenterDashboardViewModel
+    var viewModel: CommandCenterDashboardViewModel
     var isEditing: Bool
     var isTimerRunning: Bool
 

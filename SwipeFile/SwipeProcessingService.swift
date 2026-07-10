@@ -15,6 +15,10 @@ struct SwipeTranscriptionOutput: Sendable {
     let carouselItems: [CarouselItem]?
     let mediaData: InstagramMediaData
     let sourceURL: URL
+    /// Whether the cloud worker had ALREADY completed this swipe when the local
+    /// pass started. If it hadn't, but has by persist time, the worker won the
+    /// race — the local (poorer) result is discarded instead of overwriting it.
+    let cloudCompleteAtStart: Bool
 }
 
 // MARK: - SwipeProcessingService
@@ -148,7 +152,7 @@ final class SwipeProcessingService {
         do {
             return try await CosmoDatabase.shared.asyncRead { db in
                 let rows = try Row.fetchAll(db, sql: """
-                    SELECT uuid, metadata FROM atoms
+                    SELECT uuid, metadata, updated_at FROM atoms
                     WHERE type = 'research'
                     AND is_deleted = 0
                     AND metadata LIKE '%"isSwipeFile":true%'
@@ -159,10 +163,12 @@ final class SwipeProcessingService {
                 return rows.compactMap { row in
                     guard let uuid = row["uuid"] as? String else { return nil }
                     let metadata = (row["metadata"] as? String) ?? ""
-                    // The Railway worker claims swipes (processingWorker:"cloud");
-                    // the Mac is the FALLBACK tier — skip live cloud claims and
-                    // take over only when the claim went stale (worker died).
-                    if Self.hasLiveCloudClaim(metadataJSON: metadata) { return nil }
+                    // Railway-first: the cloud worker owns instagram/youtube/
+                    // twitter swipes. The Mac is strictly the fallback tier —
+                    // it steps in only when the worker's claim went stale, its
+                    // retry budget ran out, or it never showed up at all.
+                    let updatedAt = (row["updated_at"] as? String).flatMap(ISO8601.date(from:))
+                    if !Self.macMayProcess(metadataJSON: metadata, updatedAt: updatedAt) { return nil }
                     let needsForcedRetry =
                         metadata.contains("\"processingStatus\":\"partial\"") ||
                         metadata.contains("\"processingStatus\":\"extraction_failed\"")
@@ -178,11 +184,15 @@ final class SwipeProcessingService {
     /// A cloud claim is live when the worker stamped it within the last 15
     /// minutes and the swipe is mid-pipeline. Anything older is fair game.
     nonisolated static func hasLiveCloudClaim(metadataJSON: String) -> Bool {
-        guard metadataJSON.contains("\"processingWorker\":\"cloud\""),
-              let data = metadataJSON.data(using: .utf8),
+        guard let data = metadataJSON.data(using: .utf8),
               let meta = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return false
         }
+        return hasLiveCloudClaim(meta: meta, now: Date())
+    }
+
+    private nonisolated static func hasLiveCloudClaim(meta: [String: Any], now: Date) -> Bool {
+        guard meta["processingWorker"] as? String == "cloud" else { return false }
         let status = meta["processingStatus"] as? String ?? ""
         guard ["pending", "extracting", "transcribing", "analyzing"].contains(status) else { return false }
         guard let claimedStr = meta["processingClaimedAt"] as? String,
@@ -191,7 +201,95 @@ final class SwipeProcessingService {
             // in-flight statuses as live (conservative against double work).
             return status != "pending"
         }
-        return Date().timeIntervalSince(claimedAt) < 15 * 60
+        return now.timeIntervalSince(claimedAt) < 15 * 60
+    }
+
+    // MARK: - Railway-First Policy
+
+    /// Grace the Railway worker gets to claim a fresh pending swipe before the
+    /// Mac steps in. The worker ticks every 15 seconds and finishes a swipe in
+    /// one to two minutes — minutes of silence means it is down or unreachable.
+    nonisolated static let cloudPendingGrace: TimeInterval = 10 * 60
+    /// Slack past the worker's own scheduled retry (`processingRetryAfter`)
+    /// before the Mac concludes the worker missed its window and takes over.
+    nonisolated static let cloudRetryGrace: TimeInterval = 5 * 60
+    /// Mirror of the worker's MAX_CLOUD_RETRIES — at this count it has given up.
+    nonisolated static let cloudMaxRetries = 5
+
+    /// The Railway worker owns instagram / youtube / twitter swipes — the same
+    /// scope check as `inWorkerScope` in cosmo-cloud-agent/src/swipes/types.ts.
+    /// Everything else (websites, tiktok, …) is Mac-only. A matching
+    /// contentSource alone qualifies — some swipes carry their URL only in
+    /// structured.sourceUrl, which the worker reads but metadata doesn't have.
+    nonisolated static func isCloudWorkerScoped(url: String?, contentSource: String?) -> Bool {
+        let url = url ?? ""
+        let source = (contentSource ?? "").lowercased()
+        func urlMatches(_ pattern: String) -> Bool {
+            url.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
+        }
+        if source.contains("instagram") || urlMatches(#"instagram\.com"#) { return true }
+        if source.contains("youtube") || urlMatches(#"youtube\.com|youtu\.be"#) { return true }
+        if source == "twitter" || urlMatches(#"twitter\.com|(^|/|\.)x\.com"#) { return true }
+        return false
+    }
+
+    /// Railway-first: may the Mac process this swipe right now, or does the
+    /// cloud worker still own it? The worker is the primary pipeline for its
+    /// scope; the Mac is strictly the fallback tier and only steps in when the
+    /// worker has demonstrably failed or gone quiet:
+    ///   • in-flight claim gone stale (worker died mid-swipe)
+    ///   • pending with no worker activity past the grace window (worker down)
+    ///   • failed/partial with the worker's retry budget exhausted, or its
+    ///     scheduled retry missed by more than the grace window
+    nonisolated static func macMayProcess(
+        metadataJSON: String?,
+        updatedAt: Date?,
+        now: Date = Date()
+    ) -> Bool {
+        guard let metadataJSON,
+              let data = metadataJSON.data(using: .utf8),
+              let meta = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return true
+        }
+        guard isCloudWorkerScoped(
+            url: meta["url"] as? String,
+            contentSource: meta["contentSource"] as? String
+        ) else {
+            return true
+        }
+
+        let status = meta["processingStatus"] as? String ?? "pending"
+        switch status {
+        case "extracting", "transcribing", "analyzing":
+            return !hasLiveCloudClaim(meta: meta, now: now)
+        case "pending":
+            guard let updatedAt else { return false }
+            return now.timeIntervalSince(updatedAt) > cloudPendingGrace
+        case "partial", "extraction_failed":
+            let attempts = (meta["cloudRetryCount"] as? NSNumber)?.intValue ?? 0
+            if attempts >= cloudMaxRetries { return true }
+            if let retryStr = meta["processingRetryAfter"] as? String,
+               let retryAt = ISO8601.date(from: retryStr) {
+                return now.timeIntervalSince(retryAt) > cloudRetryGrace
+            }
+            // No cloud bookkeeping at all — the worker has never touched it.
+            guard let updatedAt else { return false }
+            return now.timeIntervalSince(updatedAt) > cloudPendingGrace
+        default:
+            // complete / error — nothing contended; existing skip logic decides.
+            return true
+        }
+    }
+
+    /// True when the cloud worker marked this swipe complete.
+    nonisolated static func isCloudComplete(metadataJSON: String?) -> Bool {
+        guard let metadataJSON,
+              let data = metadataJSON.data(using: .utf8),
+              let meta = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return false
+        }
+        return meta["processingWorker"] as? String == "cloud"
+            && meta["processingStatus"] as? String == "complete"
     }
 
     /// Check if a swipe is currently being processed
@@ -212,11 +310,6 @@ final class SwipeProcessingService {
             return
         }
         inFlightUUIDs.insert(uuid)
-
-        // Protect this atom from remote sync overwrites during long processing
-        Task { @MainActor in
-            await SyncEngine.shared.setExtendedFence(uuid: uuid)
-        }
 
         Task.detached { [weak self] in
             if let output = await self?.transcribe(uuid: uuid, forceExtractionRetry: forceExtractionRetry) {
@@ -285,6 +378,16 @@ final class SwipeProcessingService {
             return nil
         }
 
+        // Step 1a: Railway-first. Every entry point funnels through here
+        // (scanner, realtime push, UI actions) — if the cloud worker still owns
+        // this swipe, the Mac stays out of its way entirely: no status writes,
+        // no racing transcription that would overwrite the worker's result.
+        if !Self.macMayProcess(metadataJSON: atom.metadata, updatedAt: ISO8601.date(from: atom.updatedAt)) {
+            print("SwipeProcessingService: \(uuid.prefix(8)) belongs to the cloud worker — deferring (Railway-first)")
+            return nil
+        }
+        let cloudCompleteAtStart = Self.isCloudComplete(metadataJSON: atom.metadata)
+
         // Step 1b: A transcript the user edited by hand is terminal — background
         // transcription must never re-run over deliberate edits (including
         // carousels whose slide count the user reduced on purpose).
@@ -330,6 +433,12 @@ final class SwipeProcessingService {
             print("SwipeProcessingService: Atom \(uuid) already has transcript + \(atom.swipeAnalysis?.transcriptSlides?.count ?? 0) slides, skipping")
             return nil
         }
+
+        // The local pass is definitely running from here — protect this atom
+        // from remote sync overwrites during long processing. (Set only AFTER
+        // the Railway-first gate: a fence on a deferred swipe would block the
+        // cloud worker's own result from syncing down.)
+        await SyncEngine.shared.setExtendedFence(uuid: uuid)
 
         // Update status (brief MainActor hop)
         atom.processingStatus = "extracting"
@@ -531,7 +640,8 @@ final class SwipeProcessingService {
             result: transcriptionResult,
             carouselItems: carouselItems,
             mediaData: mediaData,
-            sourceURL: url
+            sourceURL: url,
+            cloudCompleteAtStart: cloudCompleteAtStart
         )
     }
 
@@ -560,6 +670,15 @@ final class SwipeProcessingService {
         // Re-fetch atom to avoid overwriting concurrent changes
         guard var atom = try? await AtomRepository.shared.fetch(uuid: uuid) else {
             print("SwipeProcessingService: Could not re-fetch atom \(uuid) for persist")
+            return
+        }
+
+        // Railway-first: the cloud worker completed this swipe while the local
+        // pass was running — its result wins, ours is discarded. (Without this,
+        // the Mac's slower pipeline landed last and overwrote the worker's full
+        // carousel transcript with a poorer one.)
+        if Self.isCloudComplete(metadataJSON: atom.metadata), !output.cloudCompleteAtStart {
+            print("SwipeProcessingService: Cloud worker completed \(uuid.prefix(8)) mid-pass — discarding local result (Railway-first)")
             return
         }
 
@@ -736,6 +855,12 @@ final class SwipeProcessingService {
         } catch let error as AtomRepositoryError where error.isVersionConflict {
             print("SwipeProcessingService: Version conflict for \(uuid), retrying with latest version")
             if var latest = try? await AtomRepository.shared.fetch(uuid: uuid) {
+                // Railway-first: the conflicting writer may BE the cloud worker
+                // finishing this exact swipe — never re-apply on top of that.
+                if Self.isCloudComplete(metadataJSON: latest.metadata), !output.cloudCompleteAtStart {
+                    print("SwipeProcessingService: Conflict was the cloud worker completing \(uuid.prefix(8)) — discarding local result (Railway-first)")
+                    return
+                }
                 // Merge analysis results onto the latest version — only the
                 // fields this pass actually produced, preserving anything the
                 // concurrent writer (or the user) changed in the meantime.

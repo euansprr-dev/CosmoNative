@@ -2583,31 +2583,44 @@ final class InstagramAutoTranscriber: Sendable {
         shortcode: String? = nil,
         progressHandler: @escaping @Sendable (TranscriptionProgress) -> Void
     ) async -> TranscriptionResult {
-        let imageItems = deduplicatedCarouselItems(items.filter { $0.mediaType == .image })
-        guard !imageItems.isEmpty else {
+        // Video slides are transcribed from their poster frame (thumbnailURL) —
+        // parity with the cloud worker. Filtering them out entirely (the old
+        // behavior) meant a carousel of 1-second text-on-video slides produced
+        // only its image slides' text.
+        let allItems = deduplicatedCarouselItems(items)
+        guard !allItems.isEmpty else {
             return transcriptionResult(rawSlides: [], contentType: .empty, averageOCRConfidence: 0)
         }
 
-        print("InstagramAutoTranscriber: Starting carousel transcription (\(imageItems.count) images)")
+        print("InstagramAutoTranscriber: Starting carousel transcription (\(allItems.count) slides)")
 
         var slides: [TranscriptSlide] = []
         var totalConfidence: Float = 0
+        var attemptedCount = 0
         var lowOCRItems: [(index: Int, jpegData: Data, slideIndex: Int)] = []
         var warnings: [String] = []
 
         // Phase 1: Download images and run Vision OCR
-        for (idx, item) in imageItems.enumerated() {
-            let progress = Double(idx) / Double(imageItems.count)
+        for (idx, item) in allItems.enumerated() {
+            let progress = Double(idx) / Double(allItems.count)
             progressHandler(.recognizingText(progress))
+
+            // Image slides OCR their media; video slides OCR their poster frame.
+            guard let ocrSourceURL = item.mediaType == .image ? item.mediaURL : item.thumbnailURL else {
+                slides.append(TranscriptSlide(text: "", slideNumber: idx + 1, source: .visionOCR))
+                warnings.append("Some video slides had no poster frame to transcribe.")
+                continue
+            }
+            attemptedCount += 1
 
             let cacheKey = InstagramCarouselImageCache.cacheKey(
                 shortcode: shortcode,
                 index: item.index,
-                url: item.mediaURL
+                url: ocrSourceURL
             )
 
             // Download/cache image
-            guard let imageData = await downloadImage(url: item.mediaURL, stableKey: cacheKey) else {
+            guard let imageData = await downloadImage(url: ocrSourceURL, stableKey: cacheKey) else {
                 slides.append(TranscriptSlide(text: "", slideNumber: idx + 1, source: .visionOCR))
                 warnings.append("Some carousel slides could not be downloaded.")
                 continue
@@ -2676,10 +2689,10 @@ final class InstagramAutoTranscriber: Sendable {
         progressHandler(.complete)
 
         let nonEmptySlides = slides.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        let avgConfidence = imageItems.isEmpty ? Float(0) : totalConfidence / Float(imageItems.count)
+        let avgConfidence = attemptedCount == 0 ? Float(0) : totalConfidence / Float(attemptedCount)
         let contentType: TranscriptionContentType = nonEmptySlides.isEmpty ? .empty : .textOnly
 
-        print("InstagramAutoTranscriber: Carousel transcription complete — \(nonEmptySlides.count)/\(imageItems.count) slides with text")
+        print("InstagramAutoTranscriber: Carousel transcription complete — \(nonEmptySlides.count)/\(allItems.count) slides with text")
 
         var result = transcriptionResult(
             rawSlides: slides,

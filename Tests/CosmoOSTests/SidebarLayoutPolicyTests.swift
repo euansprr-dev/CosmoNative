@@ -119,7 +119,6 @@ final class SidebarLayoutPolicyTests: XCTestCase {
         let destinations: [SidebarDestination] = [
             .commandCenter,
             .inbox,
-            .codex,
             .discover(section: .discover),
             .discover(section: .creators),
             .swipeFile(section: .all),

@@ -79,8 +79,11 @@ final class PaneManagerBrowserPaneTests: XCTestCase {
         )
     }
 
-    func testCollapsedPaneHoverDwellMatchesFastSpineReveal() {
-        XCTAssertEqual(PaneSlotPresentationPolicy.hoverDwellMilliseconds, 150)
+    func testCollapsedPaneHoverDwellAllowsCaptionGlanceBeforeCommit() {
+        // Page-edge spines float a title caption on hover: dwell must be long
+        // enough to read the caption and retreat (a glance), short enough
+        // that a deliberate rest still commits quickly.
+        XCTAssertEqual(PaneSlotPresentationPolicy.hoverDwellMilliseconds, 300)
     }
 
     func testLeftCollapsedSpineTouchesFollowingExpandedPane() throws {

@@ -31,13 +31,18 @@ import {
   normalizeCreatorHandle, resolveCreator,
 } from './analyze';
 import {
-  appleSeconds, ExtractedMedia, SpeechSegmentJSON, SwipeExtractionError, TranscriptSlideJSON,
+  appleSeconds, ExtractedMedia, inWorkerScope, SpeechSegmentJSON, SwipeExtractionError, TranscriptSlideJSON,
 } from './types';
 import { randomUUID } from 'crypto';
 
 const CLAIM_STALE_MINUTES = 15;
 const MAX_CLOUD_RETRIES = 5;
 const CONCURRENCY = 3;
+
+/// UUIDs this process is currently working on. The API kick and the cron tick
+/// both call processSwipe — without this, a swipe kicked at capture time gets
+/// processed twice in parallel (two Apify runs, racing writes).
+const inFlightUUIDs = new Set<string>();
 
 const PLACEHOLDER_TITLES = new Set([
   'Instagram Post', 'Instagram Reel', 'Instagram', 'YouTube Video',
@@ -152,6 +157,12 @@ export async function fetchCandidates(): Promise<Atom[]> {
     const meta = atom.metadata ?? {};
     const status = meta.processingStatus as string | undefined;
 
+    // Out-of-scope swipes (websites, tiktok, …) belong to the Mac pipeline —
+    // never surface them as candidates.
+    if (!inWorkerScope(meta.url ?? '', (meta.contentSource ?? '') as string)) return false;
+    // Already being worked on by this process (API kick in flight).
+    if (inFlightUUIDs.has(atom.uuid)) return false;
+
     // In-flight statuses: only reclaim stale claims (crashed worker / dead Mac run).
     if (status === 'extracting' || status === 'transcribing' || status === 'analyzing') {
       // NaN-checked, not truthiness — epoch 0 is a VALID (very stale) claim.
@@ -173,6 +184,21 @@ export async function fetchCandidates(): Promise<Atom[]> {
 }
 
 export async function processSwipe(uuid: string): Promise<void> {
+  // One pass per swipe per process — the capture-time API kick and the cron
+  // tick used to double-process the same swipe (two Apify runs, racing writes).
+  if (inFlightUUIDs.has(uuid)) {
+    console.log(`⏭ swipe ${uuid.slice(0, 8)} already in flight — skipping duplicate`);
+    return;
+  }
+  inFlightUUIDs.add(uuid);
+  try {
+    await processSwipeInner(uuid);
+  } finally {
+    inFlightUUIDs.delete(uuid);
+  }
+}
+
+async function processSwipeInner(uuid: string): Promise<void> {
   const atom = await fetchAtom(uuid);
   if (!atom || atom.is_deleted) return;
   const meta = atom.metadata ?? {};
@@ -181,12 +207,9 @@ export async function processSwipe(uuid: string): Promise<void> {
   const url: string = meta.url ?? atom.structured?.sourceUrl ?? '';
   const source: string = (meta.contentSource ?? '').toLowerCase();
 
-  // Scope: instagram / youtube / twitter. Everything else stays untouched
-  // for the Mac pipeline (websites etc. have richer local handling).
+  if (!url || !inWorkerScope(url, source)) return;
   const isInstagram = source.includes('instagram') || /instagram\.com/i.test(url);
   const isYouTube = source.includes('youtube') || /youtube\.com|youtu\.be/i.test(url);
-  const isTwitter = source === 'twitter' || /twitter\.com|(^|\.)x\.com/i.test(url);
-  if (!url || (!isInstagram && !isYouTube && !isTwitter)) return;
 
   console.log(`🌀 processing swipe ${uuid.slice(0, 8)} (${source || 'url'})`);
   setProgress(uuid, 'extracting', 0.04);

@@ -363,3 +363,38 @@ const mirrored = annotateSlidesWithVoiceover(
 assert.ok(!mirrored[0].text.includes('[Voiceover:'), 'mirrored speech never annotates');
 
 console.log('✅ reelVideoUnderstanding tests passed');
+
+// ── Worker scope: candidates and processSwipe must agree ────────────────────
+
+import { inWorkerScope, SwipeExtractionError } from '../src/swipes/types';
+
+assert.ok(inWorkerScope('https://www.instagram.com/p/Dalun2ODxrf/', 'instagram_post'));
+assert.ok(inWorkerScope('https://youtu.be/NgeyFln7RGk?si=x', 'youtube'));
+assert.ok(inWorkerScope('https://www.youtube.com/watch?v=abc123', ''));
+assert.ok(inWorkerScope('https://x.com/user/status/1', ''), 'bare x.com is in scope');
+assert.ok(inWorkerScope('https://twitter.com/user/status/1', 'twitter'));
+assert.ok(!inWorkerScope('https://example.com/article', 'website'), 'websites stay with the Mac');
+assert.ok(!inWorkerScope('https://www.tiktok.com/@u/video/1', 'tiktok'), 'tiktok stays with the Mac');
+assert.ok(inWorkerScope('', 'instagram_post'), 'contentSource alone qualifies (URL may live in structured.sourceUrl)');
+
+console.log('✅ worker scope tests passed');
+
+// YouTube videos without captions fail PERMANENTLY (no retry churn)
+import { fetchYouTubeTranscript } from '../src/swipes/fetchers';
+void (async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response('<html>no captions here</html>', { status: 200 })) as typeof fetch;
+  try {
+    await assert.rejects(
+      () => fetchYouTubeTranscript('dQw4w9WgXcQ'),
+      (err: unknown) => err instanceof SwipeExtractionError && err.permanent === true,
+      'caption-less video must throw a permanent SwipeExtractionError'
+    );
+    console.log('✅ permanent-failure test passed');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+})().catch(err => {
+  console.error(err);
+  process.exit(1);
+});

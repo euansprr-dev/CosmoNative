@@ -67,3 +67,19 @@ export class SwipeExtractionError extends Error {
     this.name = 'SwipeExtractionError';
   }
 }
+
+/** The worker's scope: instagram / youtube / twitter. Everything else stays
+ *  untouched for the Mac pipeline (websites etc. have richer local handling).
+ *  Shared by fetchCandidates and processSwipe so the candidate list never
+ *  contains swipes the pipeline would refuse — an out-of-scope pending swipe
+ *  used to surface as a phantom "candidate" on every 15s tick, forever.
+ *  The Mac mirrors this check (SwipeProcessingService.isCloudWorkerScoped)
+ *  to decide which swipes to leave to this worker.
+ *  A matching contentSource alone qualifies — candidates are scoped from
+ *  metadata only, and some swipes carry their URL in structured.sourceUrl. */
+export function inWorkerScope(url: string, source: string): boolean {
+  const s = source.toLowerCase();
+  return s.includes('instagram') || /instagram\.com/i.test(url)
+    || s.includes('youtube') || /youtube\.com|youtu\.be/i.test(url)
+    || s === 'twitter' || /twitter\.com|(^|\/|\.)x\.com/i.test(url);
+}

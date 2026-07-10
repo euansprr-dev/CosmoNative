@@ -3,7 +3,7 @@
 // oEmbed — minimal ports of the Mac's YouTubeTranscriptFetcher / XEmbedFetcher.
 
 import { XMLParser } from 'fast-xml-parser';
-import { SpeechSegmentJSON } from './types';
+import { SpeechSegmentJSON, SwipeExtractionError } from './types';
 
 export function youtubeVideoId(url: string): string | null {
   const patterns = [
@@ -30,7 +30,9 @@ export async function fetchYouTubeTranscript(videoId: string): Promise<SpeechSeg
 
   const marker = '"captionTracks":';
   const start = html.indexOf(marker);
-  if (start < 0) throw new Error('No caption tracks found');
+  // Permanent: a video with no caption tracks won't grow them on retry —
+  // retrying every backoff window churned one dead swipe for thousands of runs.
+  if (start < 0) throw new SwipeExtractionError('No caption tracks found', true);
   const arrayStart = html.indexOf('[', start);
   const arrayEnd = findBalancedEnd(html, arrayStart);
   if (arrayStart < 0 || arrayEnd < 0) throw new Error('Malformed caption track JSON');
@@ -43,7 +45,7 @@ export async function fetchYouTubeTranscript(videoId: string): Promise<SpeechSeg
   const track = tracks.find(t => t.languageCode?.startsWith('en') && t.kind !== 'asr')
     ?? tracks.find(t => t.languageCode?.startsWith('en'))
     ?? tracks[0];
-  if (!track?.baseUrl) throw new Error('No usable caption track');
+  if (!track?.baseUrl) throw new SwipeExtractionError('No usable caption track', true);
 
   const captionResponse = await fetch(track.baseUrl.replace(/\\u0026/g, '&'), {
     signal: AbortSignal.timeout(20_000),

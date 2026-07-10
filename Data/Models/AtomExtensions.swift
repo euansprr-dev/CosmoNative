@@ -277,12 +277,44 @@ extension Atom {
         get { metadataValue(as: ResearchMetadata.self) }
     }
 
-    /// Helper to update research metadata
+    /// Helper to update research metadata.
+    ///
+    /// Merges the changed keys INTO the existing metadata JSON instead of
+    /// replacing it wholesale. Research metadata carries keys that don't exist
+    /// on `ResearchMetadata` — the Railway worker's bookkeeping
+    /// (`processingWorker`, `processingClaimedAt`, `cloudRetryCount`,
+    /// `processingRetryAfter`) and its mirrored-media URLs
+    /// (`carouselImageStorageURLs`, `videoStorageURL`, `thumbnailStorageURL`).
+    /// The old encode-replace silently deleted all of them on every Mac write,
+    /// which reset the worker's retry backoff and turned one failing swipe
+    /// into an endless cloud/Mac rewrite war.
     private mutating func updateResearchMetadata(_ update: (inout ResearchMetadata) -> Void) {
-        var meta = researchMetadata ?? ResearchMetadata()
-        update(&meta)
-        if let encoded = try? JSONEncoder().encode(meta),
-           let jsonString = String(data: encoded, encoding: .utf8) {
+        let before = researchMetadata ?? ResearchMetadata()
+        var after = before
+        update(&after)
+
+        guard let afterData = try? JSONEncoder().encode(after),
+              let afterDict = (try? JSONSerialization.jsonObject(with: afterData)) as? [String: Any] else {
+            return
+        }
+
+        var merged: [String: Any] = [:]
+        if let existingData = metadata?.data(using: .utf8),
+           let existingDict = (try? JSONSerialization.jsonObject(with: existingData)) as? [String: Any] {
+            merged = existingDict
+        }
+        // A key the caller explicitly nilled must actually clear (encode omits
+        // nils, so diff `before` against `after` to find deletions).
+        if let beforeData = try? JSONEncoder().encode(before),
+           let beforeDict = (try? JSONSerialization.jsonObject(with: beforeData)) as? [String: Any] {
+            for key in beforeDict.keys where afterDict[key] == nil {
+                merged.removeValue(forKey: key)
+            }
+        }
+        for (key, value) in afterDict { merged[key] = value }
+
+        if let data = try? JSONSerialization.data(withJSONObject: merged),
+           let jsonString = String(data: data, encoding: .utf8) {
             self.metadata = jsonString
         }
     }

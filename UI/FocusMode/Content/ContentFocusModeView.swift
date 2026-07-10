@@ -210,6 +210,8 @@ struct ContentFocusModeView: View {
     @State private var availableClientProfiles: [Atom] = []
     @State private var hoveredSwipeUUID: String?
     @State private var showSwipeAttachmentEditor = false
+    @State private var showExportSheet = false
+    @State private var showPerfEntrySheet = false
 
     enum DraftSaveState { case idle, saving, saved, failed }
 
@@ -606,6 +608,16 @@ struct ContentFocusModeView: View {
         }
         .sheet(isPresented: $showSettings) {
             CosmoSettingsView()
+        }
+        .sheet(isPresented: $showExportSheet) {
+            ContentExportSheet(
+                atom: atom,
+                draft: viewModel.state.draftContent,
+                onClose: { showExportSheet = false }
+            )
+        }
+        .sheet(isPresented: $showPerfEntrySheet) {
+            ContentPerfEntrySheet(atom: atom) { showPerfEntrySheet = false }
         }
         .sheet(isPresented: $showSwipeAttachmentEditor) {
             ContentSwipeAttachmentEditor(
@@ -1032,9 +1044,30 @@ struct ContentFocusModeView: View {
                 voiceChipButton
             }
             writingAIButton
+            shipButton
             documentStyleButton
             focusBandMenu
         }
+    }
+
+    /// Ship & measure: export the draft platform-perfect, or record real
+    /// performance numbers for a published post.
+    private var shipButton: some View {
+        Menu {
+            Button("Export…", systemImage: "paperplane") {
+                showExportSheet = true
+            }
+            Button("Record Performance…", systemImage: "chart.line.uptrend.xyaxis") {
+                showPerfEntrySheet = true
+            }
+        } label: {
+            surfaceControlIcon("paperplane", isActive: false)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .help("Ship & measure")
+        .accessibilityLabel("Export or record performance")
     }
 
     private var writingAIButton: some View {

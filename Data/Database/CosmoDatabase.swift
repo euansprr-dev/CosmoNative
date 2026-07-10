@@ -2358,6 +2358,30 @@ class CosmoDatabase: ObservableObject {
             print("✅ recall index tables created")
         }
 
+        migrator.registerMigration("create_content_perf_snapshots") { db in
+            // Manual performance entries for published content — dated,
+            // per-platform, multiple snapshots per post over time.
+            // Feeds the taste engine and own-post recall ranking.
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS content_perf_snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    content_uuid TEXT NOT NULL,
+                    platform TEXT NOT NULL,
+                    views INTEGER NOT NULL DEFAULT 0,
+                    likes INTEGER NOT NULL DEFAULT 0,
+                    comments INTEGER NOT NULL DEFAULT 0,
+                    shares INTEGER NOT NULL DEFAULT 0,
+                    saves INTEGER NOT NULL DEFAULT 0,
+                    follows_gained INTEGER NOT NULL DEFAULT 0,
+                    captured_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_content_perf_content
+                    ON content_perf_snapshots(content_uuid, captured_at DESC);
+            """)
+            print("✅ content_perf_snapshots table created")
+        }
+
         return migrator
     }
 

@@ -331,12 +331,29 @@ final class SwipeStudyModel {
             fresh = fresh.markingStudied()
             analysis = fresh
             Task { await persistAnalysisToCurrentAtom(fresh, context: "markStudied") }
+            recordStudyTasteSignal(analysis: nil)
             return
         }
         guard current.studiedAt == nil else { return }
         let studied = current.markingStudied()
         analysis = studied
         Task { await persistAnalysisToCurrentAtom(studied, context: "markStudied") }
+        recordStudyTasteSignal(analysis: studied)
+    }
+
+    /// What the user chooses to study is a taste signal: it tells the
+    /// distiller which formats and hooks they gravitate toward.
+    private func recordStudyTasteSignal(analysis: SwipeAnalysis?) {
+        let title = displayAtom.title ?? "Untitled swipe"
+        var parts = ["Studied swipe: \(title)"]
+        if let format = analysis?.swipeContentFormat?.rawValue {
+            parts.append("format: \(format)")
+        }
+        if let hook = analysis?.hookText, !hook.isEmpty {
+            parts.append("hook: \(String(hook.prefix(120)))")
+        }
+        let content = parts.joined(separator: " — ")
+        Task { await TasteStore.record(kind: .swipeStudy, clientUuid: nil, content: content) }
     }
 
     private func fetchYouTubeTranscriptIfMissing() async {
@@ -685,6 +702,16 @@ final class SwipeStudyModel {
         current.classifiedAt = Date()
         analysis = current
         Task { await persistAnalysisToCurrentAtom(current, context: "taxonomyOverride") }
+        // A hand-corrected classification is a strong taxonomy belief.
+        let title = displayAtom.title ?? "Untitled swipe"
+        let format = current.swipeContentFormat?.rawValue ?? "unclassified"
+        Task {
+            await TasteStore.record(
+                kind: .swipeStudy,
+                clientUuid: nil,
+                content: "Corrected swipe classification: \(title) is a \(format)"
+            )
+        }
     }
 
     // MARK: - Slide helpers

@@ -563,5 +563,6 @@ extension Notification.Name {
     static let researchCreated = Notification.Name("researchCreated")
     static let researchProcessingStarted = Notification.Name("researchProcessingStarted")
     static let researchProcessingComplete = Notification.Name("researchProcessingComplete")
+    static let researchProcessingProgress = Notification.Name("researchProcessingProgress")
     static let createResearchBlock = Notification.Name("createResearchBlock")
 }

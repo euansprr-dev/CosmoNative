@@ -99,6 +99,9 @@ struct TasteSignal: Codable, FetchableRecord, PersistableRecord, Identifiable, S
         case editRejected = "edit_rejected"
         case perfEntry = "perf_entry"
         case explicitRule = "explicit_rule"
+        /// Swipe-study actions: what the user chose to study, and format
+        /// corrections they made — interest + taxonomy beliefs.
+        case swipeStudy = "swipe_study"
     }
 
     var id: Int64?

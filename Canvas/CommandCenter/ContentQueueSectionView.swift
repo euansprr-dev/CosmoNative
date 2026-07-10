@@ -346,10 +346,19 @@ struct ContentQueueSectionView: View {
             Button("Next week") { schedule(item, daysAhead: 7) }
             Divider()
             if !item.isPublished {
-                Button("Mark Published") {
-                    Task {
-                        await ContentQueueLoader.setSchedule(item.scheduledAt, status: "published", for: item.atom.uuid)
-                        await reload()
+                Menu("Mark Published on…") {
+                    ForEach(SocialPlatform.allCases, id: \.self) { platform in
+                        Button(platform.displayName) {
+                            Task {
+                                // Publish record (platform + time) — feeds client
+                                // aggregates and the Margin's own-post pool.
+                                await ContentPublishStore.markPublished(
+                                    atomUuid: item.atom.uuid,
+                                    platform: platform.rawValue
+                                )
+                                await reload()
+                            }
+                        }
                     }
                 }
             }

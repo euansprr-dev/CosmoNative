@@ -15,9 +15,22 @@ struct ContentExportSheet: View {
     @State private var platform: ExportPlatform = .xThread
     @State private var copiedIndex: Int?
     @State private var copiedAll = false
+    @State private var publishURL = ""
+    @State private var didPublish = false
 
     private var sections: [ExportSection] {
         ContentExportFormatter.format(draft, for: platform)
+    }
+
+    /// The social platform a publish record is stamped with for the selected
+    /// export format.
+    private var publishPlatform: SocialPlatform {
+        switch platform {
+        case .xThread, .xPost: return .x
+        case .linkedIn: return .linkedin
+        case .instagramCaption, .carouselSlides: return .instagram
+        case .newsletterMarkdown: return .substack
+        }
     }
 
     var body: some View {
@@ -73,6 +86,7 @@ struct ContentExportSheet: View {
                         platform = candidate
                         copiedIndex = nil
                         copiedAll = false
+                        didPublish = false  // each platform gets its own publish record
                     } label: {
                         HStack(spacing: 5) {
                             Image(systemName: candidate.icon)
@@ -162,25 +176,60 @@ struct ContentExportSheet: View {
     }
 
     private var footer: some View {
-        HStack {
-            Text(sections.count == 1 ? "1 section" : "\(sections.count) sections")
-                .font(DS.caption)
-                .foregroundStyle(DS.textMuted)
-            Spacer()
-            Button(copiedAll ? "Copied All" : "Copy All") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(
-                    ContentExportFormatter.combined(sections), forType: .string
-                )
-                copiedAll = true
-                copiedIndex = nil
+        VStack(spacing: DS.space8) {
+            publishRow
+            HStack {
+                Text(sections.count == 1 ? "1 section" : "\(sections.count) sections")
+                    .font(DS.caption)
+                    .foregroundStyle(DS.textMuted)
+                Spacer()
+                Button(copiedAll ? "Copied All" : "Copy All") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(
+                        ContentExportFormatter.combined(sections), forType: .string
+                    )
+                    copiedAll = true
+                    copiedIndex = nil
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(sections.isEmpty)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
-            .disabled(sections.isEmpty)
         }
         .padding(.horizontal, DS.space20)
         .padding(.vertical, DS.space10)
+    }
+
+    /// Copy is half the ship — the record is the other half. Marking published
+    /// stamps a per-platform publish record (platform + URL + time) that feeds
+    /// the queue, the client's real aggregates, and the Margin's own-post pool.
+    private var publishRow: some View {
+        HStack(spacing: DS.space8) {
+            TextField("Post URL (optional)", text: $publishURL)
+                .textFieldStyle(.roundedBorder)
+                .font(DS.caption)
+            Button {
+                let url = publishURL.trimmingCharacters(in: .whitespacesAndNewlines)
+                Task {
+                    await ContentPublishStore.markPublished(
+                        atomUuid: atom.uuid,
+                        platform: publishPlatform.rawValue,
+                        url: url.isEmpty ? nil : url
+                    )
+                    didPublish = true
+                }
+            } label: {
+                Label(
+                    didPublish ? "Published" : "Mark Published on \(publishPlatform.displayName)",
+                    systemImage: didPublish ? "checkmark.circle.fill" : "paperplane.fill"
+                )
+                .font(DS.caption)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(didPublish || sections.isEmpty)
+            .foregroundStyle(didPublish ? DS.green : DS.textSecondary)
+        }
     }
 }
 
@@ -351,6 +400,8 @@ struct ContentPerfEntrySheet: View {
                 content: "\(atom.title ?? "Untitled") [\(platform.rawValue)]: \(snapshot.views) views, \(snapshot.engagement) engagement (\(String(format: "%.1f", snapshot.engagementRate * 100))%)"
             )
             await TasteDistiller.distillIfDue(clientUuid: clientUuid)
+            // Real numbers also correct the client dossier's aggregates.
+            await ClientPerfAggregator.recomputeForContent(atom)
             didSave = true
             history = await ContentPerfStore.snapshots(forContent: atom.uuid)
         }

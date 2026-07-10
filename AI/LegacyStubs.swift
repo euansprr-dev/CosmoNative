@@ -44,6 +44,10 @@ extension Notification.Name {
     /// Section navigation (previously declared in the deleted CosmoCore.swift)
     static let navigateToSection = Notification.Name("navigateToSection")
 
+    /// Entity open requests (previously declared in the deleted CosmoChatView.swift);
+    /// posted by canvas blocks + LinkedContactsSection, observed in CosmoApp.
+    static let openEntity = Notification.Name("openEntity")
+
     /// Canvas block set changed (previously declared in the deleted CosmoCore.swift)
     static let canvasBlocksChanged = Notification.Name("com.cosmo.canvasBlocksChanged")
 

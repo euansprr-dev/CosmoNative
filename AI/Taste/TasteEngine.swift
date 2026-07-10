@@ -314,20 +314,31 @@ enum TasteDistiller {
             return
         }
 
-        // Merge contract: pinned and struck beliefs are the user's — untouchable.
-        let pinned = existing.filter(\.pinned)
-        let struckTexts = Set(existing.filter(\.struck).map { $0.text.lowercased() })
-        let merged = pinned + distilled.filter { belief in
-            !struckTexts.contains(belief.text.lowercased())
-                && !pinned.contains { $0.text.lowercased() == belief.text.lowercased() }
-        }
-
-        profile.beliefs = Array(merged.prefix(maxBeliefs))
+        profile.beliefs = mergeContract(existing: existing, distilled: distilled)
         profile.version += 1
         profile.distilledSignalCount += signals.count
         await TasteStore.save(profile)
         await TasteStore.markDistilled(signals.compactMap(\.id))
         print("TasteDistiller: profile v\(profile.version) — \(profile.beliefs.count) beliefs from \(signals.count) signals")
+    }
+
+    /// Merge contract: pinned and struck beliefs are the user's — untouchable.
+    /// Struck rows are TOMBSTONES: they carry forward in the saved profile
+    /// (outside the active-belief cap) so the ban survives every future
+    /// distill; without that the belief resurrects two distills later.
+    static func mergeContract(
+        existing: [TasteBelief],
+        distilled: [TasteBelief],
+        maxBeliefs: Int = TasteDistiller.maxBeliefs
+    ) -> [TasteBelief] {
+        let pinned = existing.filter { $0.pinned && !$0.struck }
+        let struck = existing.filter(\.struck)
+        let struckTexts = Set(struck.map { $0.text.lowercased() })
+        let merged = pinned + distilled.filter { belief in
+            !struckTexts.contains(belief.text.lowercased())
+                && !pinned.contains { $0.text.lowercased() == belief.text.lowercased() }
+        }
+        return Array(merged.prefix(maxBeliefs)) + struck
     }
 
     static func parseBeliefs(_ response: String) -> [TasteBelief]? {
@@ -412,6 +423,80 @@ extension TasteStore {
         await MainActor.run {
             NotificationCenter.default.post(name: .cosmoTasteChanged, object: nil)
         }
+    }
+
+    // MARK: - Belief mutations (Profile Studio Taste section)
+
+    /// Transform the belief list in place and bump the profile version.
+    /// Every mutation notifies `.cosmoTasteChanged` so engine caches drop.
+    static func mutateBeliefs(
+        clientUuid: String?,
+        _ transform: (inout [TasteBelief]) -> Void
+    ) async {
+        guard var profile = await profile(clientUuid: clientUuid) else { return }
+        var beliefs = profile.beliefs
+        transform(&beliefs)
+        profile.beliefs = beliefs
+        profile.version += 1
+        await save(profile)
+        await MainActor.run {
+            NotificationCenter.default.post(name: .cosmoTasteChanged, object: nil)
+        }
+    }
+
+    /// Strike = tombstone. The belief stays in the profile as a struck row
+    /// (so the distiller can honor the tombstone forever) and a negative
+    /// signal teaches the next distill why it died.
+    static func strikeBelief(id: String, clientUuid: String?) async {
+        var struckText: String?
+        await mutateBeliefs(clientUuid: clientUuid) { beliefs in
+            guard let index = beliefs.firstIndex(where: { $0.id == id }) else { return }
+            beliefs[index].struck = true
+            beliefs[index].pinned = false
+            struckText = beliefs[index].text
+        }
+        if let struckText {
+            await record(
+                kind: .explicitRule,
+                clientUuid: clientUuid,
+                content: "STRUCK BELIEF (do not re-derive): \(struckText)"
+            )
+        }
+    }
+
+    static func setPinned(id: String, pinned: Bool, clientUuid: String?) async {
+        await mutateBeliefs(clientUuid: clientUuid) { beliefs in
+            guard let index = beliefs.firstIndex(where: { $0.id == id }) else { return }
+            beliefs[index].pinned = pinned
+        }
+    }
+
+    /// A user edit makes the belief theirs: text changes AND it pins, because
+    /// user-authored wording is never auto-modified (WS6 invariant).
+    static func editBelief(id: String, newText: String, clientUuid: String?) async {
+        let trimmed = newText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 8 else { return }
+        await mutateBeliefs(clientUuid: clientUuid) { beliefs in
+            guard let index = beliefs.firstIndex(where: { $0.id == id }) else { return }
+            beliefs[index].text = trimmed
+            beliefs[index].pinned = true
+            beliefs[index].confidence = 1.0
+        }
+    }
+
+    /// Provenance summary for the section header popovers: how many of each
+    /// signal kind ground this scope's profile.
+    static func signalKindCounts(clientUuid: String?) async -> [(kind: String, count: Int)] {
+        let rows: [(String, Int)] = (try? await CosmoDatabase.shared.asyncRead { db in
+            guard (try? db.tableExists(TasteSignal.databaseTableName)) ?? false else { return [] }
+            let request = clientUuid == nil
+                ? "SELECT kind, COUNT(*) FROM taste_signals WHERE client_uuid IS NULL GROUP BY kind"
+                : "SELECT kind, COUNT(*) FROM taste_signals WHERE client_uuid = ? GROUP BY kind"
+            let arguments: StatementArguments = clientUuid == nil ? [] : [clientUuid]
+            return try Row.fetchAll(db, sql: request, arguments: arguments)
+                .map { ($0[0] as String, $0[1] as Int) }
+        }) ?? []
+        return rows.sorted { $0.1 > $1.1 }.map { (kind: $0.0, count: $0.1) }
     }
 }
 

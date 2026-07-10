@@ -20,8 +20,10 @@ struct ProfileStudioView: View {
                     .studioCascade(hasAppeared: hasAppeared, index: 1, reduceMotion: reduceMotion)
                 ProfileContextSection(store: store)
                     .studioCascade(hasAppeared: hasAppeared, index: 2, reduceMotion: reduceMotion)
-                ProfileIntelligenceCard(store: store)
+                ProfileTasteSection(store: store)
                     .studioCascade(hasAppeared: hasAppeared, index: 3, reduceMotion: reduceMotion)
+                ProfileIntelligenceCard(store: store)
+                    .studioCascade(hasAppeared: hasAppeared, index: 4, reduceMotion: reduceMotion)
                 Spacer(minLength: DS.space24)
             }
             .padding(DS.space24)

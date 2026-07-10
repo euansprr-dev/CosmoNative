@@ -7,15 +7,14 @@ final class CommandCenterPlanningNavigationTests: XCTestCase {
     }
 
     func testPlanningModesMatchSidebarOrder() {
-        XCTAssertEqual(DashboardViewMode.planningLists, [.habits, .reports, .objectives])
-        XCTAssertEqual(DashboardViewMode.planningLists.map(\.label), ["Habits", "Reports", "Objectives"])
-        XCTAssertEqual(DashboardViewMode.planningLists.map(\.icon), ["repeat", "chart.bar", "scope"])
+        XCTAssertEqual(DashboardViewMode.planningLists, [.habits, .reports, .queue])
+        XCTAssertEqual(DashboardViewMode.planningLists.map(\.label), ["Habits", "Reports", "Queue"])
+        XCTAssertEqual(DashboardViewMode.planningLists.map(\.icon), ["repeat", "chart.bar", "paperplane"])
     }
 
     func testPlanningModesAreNotTaskLists() {
         XCTAssertFalse(DashboardViewMode.habits.showsTaskList)
         XCTAssertFalse(DashboardViewMode.reports.showsTaskList)
-        XCTAssertFalse(DashboardViewMode.objectives.showsTaskList)
         XCTAssertTrue(DashboardViewMode.today.showsTaskList)
         XCTAssertTrue(DashboardViewMode.anytime.showsTaskList)
     }

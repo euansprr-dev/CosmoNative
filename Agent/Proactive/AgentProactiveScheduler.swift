@@ -277,30 +277,20 @@ class AgentProactiveScheduler: ObservableObject {
     }
 
     private func fireNightlyConsolidation() async {
-        print("[ProactiveScheduler] Running nightly lesson consolidation")
-
-        // Load all lessons including low-confidence ones
-        let allLessons = await LessonExtractor.shared.loadLessons(clientUUID: nil, minConfidence: 0.0)
-
-        var pruned = 0
-        for lesson in allLessons {
-            // Prune lessons with confidence below 0.1
-            if lesson.confidence < 0.1 {
-                await LessonExtractor.shared.updateConfidence(lessonID: lesson.id, confirmed: false)
-                pruned += 1
-                continue
-            }
-
-            // Decay stale lessons that haven't been confirmed in 30+ days
-            let daysSinceConfirmed = Calendar.current.dateComponents(
-                [.day], from: lesson.lastConfirmedAt, to: Date()
-            ).day ?? 0
-            if daysSinceConfirmed > 30 && lesson.confidence > 0.3 {
-                await LessonExtractor.shared.updateConfidence(lessonID: lesson.id, confirmed: false)
-            }
+        print("[ProactiveScheduler] Running nightly taste distillation")
+        // Distill any scope with enough undistilled signals: the personal
+        // profile plus every client that accumulated signals.
+        await TasteDistiller.distillIfDue(clientUuid: nil)
+        let clientScopes: [String] = (try? await CosmoDatabase.shared.asyncRead { db in
+            guard (try? db.tableExists(TasteSignal.databaseTableName)) ?? false else { return [] }
+            return try String.fetchAll(
+                db,
+                sql: "SELECT DISTINCT client_uuid FROM taste_signals WHERE client_uuid IS NOT NULL AND distilled = 0"
+            )
+        }) ?? []
+        for scope in clientScopes {
+            await TasteDistiller.distillIfDue(clientUuid: scope)
         }
-
-        print("[ProactiveScheduler] Consolidation complete: \(allLessons.count) lessons reviewed, \(pruned) pruned")
         logDeliveryAttempt(type: "nightly_consolidation", success: true)
     }
 

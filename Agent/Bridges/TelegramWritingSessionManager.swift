@@ -381,27 +381,14 @@ class TelegramWritingSessionManager {
               !finalDraft.isEmpty,
               generatedDraft != finalDraft else { return }
 
-        let clientUUID = session.clientUUID.flatMap { UUID(uuidString: $0) }
         let contentFormat = session.contentFormat ?? "unknown"
 
-        let lessons = await LessonExtractor.shared.extractLessons(
+        // The taste engine learns from the edit itself — no confirmation loop.
+        await TasteStore.recordDraftEdit(
             generated: generatedDraft,
             edited: finalDraft,
-            clientUUID: clientUUID,
-            contentFormat: contentFormat,
-            initialConfidence: 0.3
-        )
-
-        // Queue each lesson for Telegram confirmation
-        for lesson in lessons {
-            await LessonExtractor.shared.queueForConfirmation(lesson)
-        }
-
-        await ExperienceBufferService.shared.storeExperience(
-            generated: generatedDraft,
-            edited: finalDraft,
-            clientUUID: clientUUID,
-            contentFormat: contentFormat
+            clientUuid: session.clientUUID,
+            format: contentFormat
         )
     }
 

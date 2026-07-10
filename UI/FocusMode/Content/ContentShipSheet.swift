@@ -343,6 +343,14 @@ struct ContentPerfEntrySheet: View {
         )
         Task {
             try? await ContentPerfStore.record(snapshot)
+            // Real numbers are taste signals: what the audience rewarded.
+            let clientUuid = atom.metadataValue(as: ContentAtomMetadata.self)?.clientProfileUUID
+            await TasteStore.record(
+                kind: .perfEntry,
+                clientUuid: clientUuid,
+                content: "\(atom.title ?? "Untitled") [\(platform.rawValue)]: \(snapshot.views) views, \(snapshot.engagement) engagement (\(String(format: "%.1f", snapshot.engagementRate * 100))%)"
+            )
+            await TasteDistiller.distillIfDue(clientUuid: clientUuid)
             didSave = true
             history = await ContentPerfStore.snapshots(forContent: atom.uuid)
         }

@@ -654,17 +654,12 @@ struct ContentFocusModeView: View {
         lastAIGeneratedDraft = nil
 
         Task {
-            _ = await LessonExtractor.shared.extractLessons(
+            // The richest taste signal: the user reshaped an AI draft.
+            await TasteStore.recordDraftEdit(
                 generated: previousDraft,
                 edited: currentDraft,
-                clientUUID: clientUUID,
-                contentFormat: contentFormat
-            )
-            await ExperienceBufferService.shared.storeExperience(
-                generated: previousDraft,
-                edited: currentDraft,
-                clientUUID: clientUUID,
-                contentFormat: contentFormat
+                clientUuid: clientUUID?.uuidString,
+                format: contentFormat
             )
         }
     }

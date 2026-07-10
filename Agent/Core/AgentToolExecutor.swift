@@ -941,72 +941,14 @@ class AgentToolExecutor {
         ] as [String: Any])
     }
 
-    // MARK: - Swipe Adaptation
+    // MARK: - Swipe Adaptation (retired)
 
+    /// The adaptation engine was replaced by the taste engine; the writing
+    /// engine consumes taste beliefs + raw swipe search directly. The tool
+    /// stays registered as a graceful stub for older prompts.
     private func adaptSwipesForClient(_ args: [String: Any]) async throws -> String {
-        guard let clientName = args["clientName"] as? String else {
-            return jsonError("Missing required parameter: clientName")
-        }
-        let timeFilter = args["timeFilter"] as? String
-        let maxResults = min(args["maxResults"] as? Int ?? 10, 25)
-
-        onToolActivity?(.started(name: "adapt_swipes_for_client", displayLabel: "Scoring swipe library for \(clientName)...", args: ["clientName": clientName]))
-
-        do {
-            let result = try await SwipeAdaptationEngine.shared.adaptSwipesForClient(
-                clientName: clientName,
-                timeFilter: timeFilter,
-                maxResults: maxResults
-            )
-
-            let ideas: [[String: Any]] = result.adaptedIdeas.enumerated().map { (idx, idea) in
-                // Map sourceIndex back to source swipe title
-                let sourceTitle: String
-                if idea.sourceIndex >= 1 && idea.sourceIndex <= result.sourceSwipes.count {
-                    sourceTitle = result.sourceSwipes[idea.sourceIndex - 1].title
-                } else {
-                    sourceTitle = "Unknown source"
-                }
-
-                return [
-                    "adaptedHook": idea.adaptedHook,
-                    "hookVariants": idea.hookVariants ?? [idea.adaptedHook],
-                    "ideaTitle": idea.ideaTitle,
-                    "ideaBody": idea.ideaBody,
-                    "sourceSwipeTitle": sourceTitle,
-                    "hookType": idea.hookType,
-                    "suggestedFramework": idea.suggestedFramework,
-                    "adaptationReasoning": idea.adaptationReasoning,
-                    "whyItWorks": idea.whyItWorks ?? idea.adaptationReasoning,
-                    "confidence": idea.confidence
-                ] as [String: Any]
-            }
-
-            var response: [String: Any] = [
-                "clientName": result.clientName,
-                "totalSwipesScanned": result.totalSwipesScanned,
-                "candidatesEvaluated": result.candidatesEvaluated,
-                "adaptedIdeas": ideas,
-                "count": ideas.count,
-                "timeFilter": result.timeFilter ?? "all time"
-            ]
-
-            if let engineError = result.engineError {
-                response["error"] = engineError
-                response["message"] = "The adaptation engine encountered an error. The ideas below may be incomplete."
-            }
-
-            if ideas.isEmpty && result.candidatesEvaluated > 0 {
-                response["warning"] = "Screening found \(result.candidatesEvaluated) candidates but adaptation generated 0 ideas. This likely indicates an API error."
-            }
-
-            return jsonEncode(response as [String: Any])
-        } catch {
-            return jsonError("Swipe adaptation failed: \(error.localizedDescription)")
-        }
+        jsonError("adapt_swipes_for_client was retired — search swipes directly and rely on the client's taste profile")
     }
-
-    // MARK: - List All Swipes
 
     private func listAllSwipes(_ args: [String: Any]) async throws -> String {
         let limit = args["limit"] as? Int ?? 50
@@ -3745,20 +3687,14 @@ class AgentToolExecutor {
             let evidence = lessonDict["evidence"] as? String ?? "Explicitly shared by user"
             let intent = lessonDict["intent"] as? String
 
-            let targetModuleOverride = lessonDict["targetModule"] as? String
-            let targetModuleId = targetModuleOverride ?? PromptTemplateStore.categoryToModuleMap[category]
-            let lesson = InferredLesson(
-                clientUUID: clientUUID,
-                rule: rule,
-                evidence: evidence,
-                category: category,
-                confidence: 0.9,  // High confidence for explicit user lessons
-                intent: intent,
-                source: .explicitUser,
-                enforcement: .hard,  // Explicit user saves are always hard rules
-                targetModuleId: targetModuleId
-            )
-            await LessonExtractor.shared.storeLesson(lesson)
+            _ = evidence
+            _ = intent
+            // Explicit user rules become PINNED taste beliefs — active
+            // immediately, never auto-modified by the distiller.
+            let tasteCategory = ["voice", "structure", "format", "cta"].contains(category)
+                ? category
+                : (category == "hook_style" ? "hooks" : "voice")
+            await TasteStore.addPinnedRule(rule, category: tasteCategory, clientUuid: clientUUID)
             savedCount += 1
         }
 
@@ -3782,7 +3718,33 @@ class AgentToolExecutor {
             }
         }
 
-        let lessons = await LessonExtractor.shared.loadLessons(clientUUID: clientUUID, intent: intentFilter)
+        // Taste beliefs replace the retired lesson store.
+        var lessons: [InferredLesson] = []
+        if let scoped = await TasteStore.profile(clientUuid: clientUUID?.uuidString) {
+            lessons += scoped.beliefs.filter { !$0.struck }.map { belief in
+                InferredLesson(
+                    clientUUID: clientUUID?.uuidString,
+                    rule: belief.text,
+                    evidence: "\(belief.sources) signals",
+                    category: belief.category,
+                    confidence: belief.confidence,
+                    intent: intentFilter,
+                    enforcement: belief.pinned ? .hard : .advisory
+                )
+            }
+        }
+        if let personal = await TasteStore.profile(clientUuid: nil) {
+            lessons += personal.beliefs.filter { !$0.struck }.map { belief in
+                InferredLesson(
+                    rule: belief.text,
+                    evidence: "\(belief.sources) signals",
+                    category: belief.category,
+                    confidence: belief.confidence,
+                    intent: intentFilter,
+                    enforcement: belief.pinned ? .hard : .advisory
+                )
+            }
+        }
 
         let filtered: [InferredLesson]
         if let categoryFilter = categoryFilter {

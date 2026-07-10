@@ -724,7 +724,7 @@ class AgentContextAssembler {
         }
 
         let intentStr = intent?.rawValue
-        let (result, trackedLessons) = await LessonPolicyResolver.resolveForAgent(
+        let (result, trackedLessons) = await TasteContext.resolveForAgent(
             clientUUID: clientUUID,
             intent: intentStr
         )

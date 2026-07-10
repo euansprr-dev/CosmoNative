@@ -335,13 +335,10 @@ struct CosmoApp: App {
             await NoteRepairService.shared.repairNotesIfNeeded()
 
             guard !Task.isCancelled else { return }
-            await LessonExtractor.shared.migrateExistingLessons()
 
             guard !Task.isCancelled else { return }
-            await LessonExtractor.shared.migrateEnforcementLevels()
 
             guard !Task.isCancelled else { return }
-            await LessonExtractor.shared.migrateModuleLessonsToAtoms()
 
             guard !Task.isCancelled else { return }
             await semanticSearch.indexAllEntities()

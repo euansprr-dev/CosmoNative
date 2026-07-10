@@ -369,11 +369,25 @@ final class CosmoAtomBackedEditableSurface: CosmoEditableSurfaceProvider {
         // Assistant applies always leave a revision behind (aiApply source).
         _ = try await AtomRepository.shared.update(updated, revisionSource: .aiApply)
 
+        // Accepted assistant edits are taste signals.
+        let clientUuid = updated.metadataValue(as: ContentAtomMetadata.self)?.clientProfileUUID
+        await TasteStore.record(
+            kind: .editAccepted,
+            clientUuid: clientUuid,
+            content: "Accepted assistant edit (\(operation.rationale.prefix(80))): \(operation.proposedText?.prefix(150) ?? "")"
+        )
+
         loadedText = nextDocument.plainText
         return CosmoEditableOperationResult(operationID: operation.id, status: .applied, message: "Applied")
     }
 
     func reject(operation: CosmoAssistantProposalOperation) async -> CosmoEditableOperationResult {
-        CosmoEditableOperationResult(operationID: operation.id, status: .rejected, message: "Rejected")
+        // Rejections are taste signals too — what the user did NOT want.
+        await TasteStore.record(
+            kind: .editRejected,
+            clientUuid: nil,
+            content: "Rejected assistant edit (\(operation.rationale.prefix(80))): \(operation.proposedText?.prefix(150) ?? "")"
+        )
+        return CosmoEditableOperationResult(operationID: operation.id, status: .rejected, message: "Rejected")
     }
 }

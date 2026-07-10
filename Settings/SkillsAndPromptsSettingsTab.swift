@@ -1049,7 +1049,20 @@ struct SkillsAndPromptsSettingsTab: View {
     // MARK: - Actions
 
     private func loadLearnedSkills() async {
-        learnedSkills = await LessonExtractor.shared.loadLessons(minConfidence: 0.0)
+        // Learned skills now come from the taste profiles (client + personal).
+        var beliefs: [InferredLesson] = []
+        if let personal = await TasteStore.profile(clientUuid: nil) {
+            beliefs += personal.beliefs.filter { !$0.struck }.map { belief in
+                InferredLesson(
+                    rule: belief.text,
+                    evidence: "\(belief.sources) signals",
+                    category: belief.category,
+                    confidence: belief.confidence,
+                    enforcement: belief.pinned ? .hard : .advisory
+                )
+            }
+        }
+        learnedSkills = beliefs
     }
 
     private func saveEditedSkill(_ skill: InferredLesson) {

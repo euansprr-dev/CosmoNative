@@ -897,9 +897,10 @@ class TelegramBridgeService: ObservableObject {
         // If user is replying with a corrected rule, handle it before anything else
         if let lessonIDStr = pendingLessonCorrections[chatId] {
             pendingLessonCorrections.removeValue(forKey: chatId)
-            if let lessonID = UUID(uuidString: lessonIDStr) {
-                await LessonExtractor.shared.correctLesson(lessonID: lessonID, correctedRule: text)
-                await sendMessage(chatId: chatId, text: "Got it — rule updated and saved.")
+            if UUID(uuidString: lessonIDStr) != nil {
+                // Corrected rules land as pinned taste beliefs now.
+                await TasteStore.addPinnedRule(text, category: "voice", clientUuid: nil)
+                await sendMessage(chatId: chatId, text: "Got it — rule updated and saved to your taste profile.")
             }
             return
         }
@@ -922,18 +923,10 @@ class TelegramBridgeService: ObservableObject {
                 if corrected.action == "add_to_module", let moduleId = corrected.moduleId {
                     // Store as canonical lesson atom (no longer duplicated into module content)
                     let category = PromptTemplateStore.categoryToModuleMap.first(where: { $0.value == moduleId })?.key ?? "general"
-                    let lesson = InferredLesson(
-                        rule: text,
-                        evidence: "User-edited module suggestion",
-                        category: category,
-                        confidence: 0.95,
-                        source: .explicitUser,
-                        enforcement: .hard,
-                        targetModuleId: moduleId
-                    )
-                    await LessonExtractor.shared.storeLesson(lesson)
+                    _ = category
+                    await TasteStore.addPinnedRule(text, category: "voice", clientUuid: nil)
                     let moduleName = PromptTemplateStore.shared.modules.first(where: { $0.id == moduleId })?.title ?? moduleId
-                    await sendMessage(chatId: chatId, text: "Saved as lesson (mapped to \(moduleName)).")
+                    await sendMessage(chatId: chatId, text: "Saved to your taste profile (was: \(moduleName)).")
                 } else if corrected.action == "create_module",
                           let newId = corrected.newModuleId,
                           let newTitle = corrected.newModuleTitle {
@@ -1043,32 +1036,9 @@ class TelegramBridgeService: ObservableObject {
 
     // MARK: - Lesson Confirmation Flow
 
-    /// Send pending lesson confirmations to the user via Telegram inline buttons.
-    /// Shows the target skill module so the user knows where the rule will be added.
-    func sendPendingLessonConfirmations(chatId: String) async {
-        let lessons = await LessonExtractor.shared.drainPendingConfirmations()
-        guard !lessons.isEmpty else { return }
-
-        for lesson in lessons.prefix(2) {
-            let targetModule = PromptTemplateStore.shared.moduleForCategory(lesson.category)
-            let moduleName = targetModule?.title ?? "Learned Skills"
-
-            let text = "I noticed a pattern from your edits.\n\n_\(lesson.rule)_\n\nI'd add this to *\(moduleName)*."
-
-            let buttons: [[Any]] = [[
-                ["text": "Yes, add it", "callback_data": "lesson_yes:\(lesson.id.uuidString)"],
-                ["text": "Different module", "callback_data": "lesson_reroute:\(lesson.id.uuidString)"],
-            ], [
-                ["text": "Edit rule", "callback_data": "lesson_correct:\(lesson.id.uuidString)"],
-                ["text": "Discard", "callback_data": "lesson_no:\(lesson.id.uuidString)"]
-            ]]
-            await sendMessage(chatId: chatId, text: text, parseMode: "Markdown", replyMarkup: buttons)
-        }
-    }
-
-    // MARK: - Module Suggestion Confirmation Flow
-
-    /// Send pending module suggestions to the user via Telegram inline buttons.
+    /// Lesson confirmations retired — the taste engine learns from edits
+    /// directly, no Telegram confirmation loop.
+    func sendPendingLessonConfirmations(chatId: String) async {}
     func sendPendingModuleSuggestions(chatId: String) async {
         let suggestions = AgentToolExecutor.shared.drainPendingModuleSuggestions()
         guard !suggestions.isEmpty else { return }
@@ -1948,20 +1918,12 @@ class TelegramBridgeService: ObservableObject {
             let (response, _) = await CosmoAgentService.shared.processMessage("what should I work on first?", conversationId: chatIdStr, source: .telegram)
             await sendLongMessage(chatId: chatIdStr, text: response)
         }
-        // Handle lesson confirmation buttons
+        // Handle lesson confirmation buttons (legacy — the taste engine
+        // learns from edits directly; stale buttons answer gracefully)
         else if data.hasPrefix("lesson_yes:") {
-            let uuidStr = String(data.dropFirst("lesson_yes:".count))
-            if let lessonID = UUID(uuidString: uuidStr) {
-                await LessonExtractor.shared.updateConfidence(lessonID: lessonID, confirmed: true, fastConfirm: true)
-                // Confirmed lessons are now canonical atoms (no module duplication)
-                await sendMessage(chatId: chatIdStr, text: "Got it — rule saved as hard rule.")
-            }
+            await sendMessage(chatId: chatIdStr, text: "Noted — taste now learns from your edits automatically, no confirmations needed.")
         } else if data.hasPrefix("lesson_no:") {
-            let uuidStr = String(data.dropFirst("lesson_no:".count))
-            if let lessonID = UUID(uuidString: uuidStr) {
-                await LessonExtractor.shared.updateConfidence(lessonID: lessonID, confirmed: false)
-                await sendMessage(chatId: chatIdStr, text: "Discarded.")
-            }
+            await sendMessage(chatId: chatIdStr, text: "Discarded.")
         } else if data.hasPrefix("lesson_correct:") {
             let uuidStr = String(data.dropFirst("lesson_correct:".count))
             pendingLessonCorrections[chatIdStr] = uuidStr
@@ -1981,36 +1943,17 @@ class TelegramBridgeService: ObservableObject {
             }
             await sendMessage(chatId: chatIdStr, text: "Which module should this go to?", replyMarkup: moduleButtons)
         } else if data.hasPrefix("lesson_tomod:") {
-            let payload = String(data.dropFirst("lesson_tomod:".count))
-            let parts = payload.split(separator: ":", maxSplits: 1)
-            guard parts.count == 2,
-                  let lessonID = UUID(uuidString: String(parts[0])) else { return }
-            let moduleId = String(parts[1])
-
-            await LessonExtractor.shared.updateConfidence(lessonID: lessonID, confirmed: true, fastConfirm: true)
-            // Lesson is confirmed as canonical atom with targetModuleId for UI grouping
-            let moduleName = PromptTemplateStore.shared.modules.first(where: { $0.id == moduleId })?.title ?? moduleId
-            await sendMessage(chatId: chatIdStr, text: "Saved as hard rule (mapped to \(moduleName)).")
+            await sendMessage(chatId: chatIdStr, text: "Modules no longer hold rules — your taste profile does. It's already learning from your edits.")
         }
         // Handle module suggestion buttons
         else if data.hasPrefix("module_approve:") {
             let suggestionId = String(data.dropFirst("module_approve:".count))
             if let suggestion = pendingModuleSuggestions.removeValue(forKey: suggestionId) {
                 if suggestion.action == "add_to_module", let moduleId = suggestion.moduleId {
-                    // Store as canonical lesson atom (no longer duplicated into module content)
-                    let category = PromptTemplateStore.categoryToModuleMap.first(where: { $0.value == moduleId })?.key ?? "general"
-                    let lesson = InferredLesson(
-                        rule: suggestion.content,
-                        evidence: "Approved module suggestion",
-                        category: category,
-                        confidence: 0.95,
-                        source: .explicitUser,
-                        enforcement: .hard,
-                        targetModuleId: moduleId
-                    )
-                    await LessonExtractor.shared.storeLesson(lesson)
+                    // Approved suggestions land as pinned taste beliefs.
+                    await TasteStore.addPinnedRule(suggestion.content, category: "voice", clientUuid: nil)
                     let moduleName = PromptTemplateStore.shared.modules.first(where: { $0.id == moduleId })?.title ?? moduleId
-                    await sendMessage(chatId: chatIdStr, text: "Saved as lesson (mapped to \(moduleName)).")
+                    await sendMessage(chatId: chatIdStr, text: "Saved to your taste profile (was: \(moduleName)).")
                 } else if suggestion.action == "create_module",
                           let newId = suggestion.newModuleId,
                           let newTitle = suggestion.newModuleTitle {

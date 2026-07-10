@@ -229,7 +229,6 @@ final class UnifiedWritingEngine: ObservableObject {
     private(set) var conversationSummary: String = ""
     private var isCancelled = false
     private var refinementIterations = 0
-    private var cachedExperienceBuffer: String = ""
 
     /// On-demand reference material cache — bodies loaded via tools persist in Block 3.
     private var cachedReferenceMaterial: [String: String] = [:]
@@ -282,14 +281,13 @@ final class UnifiedWritingEngine: ObservableObject {
         self.cachedContextVersion = nil
         self.selectedSwipes = []
         self.refinementIterations = 0
-        self.cachedExperienceBuffer = ""
         self.cachedReferenceMaterial = [:]
         self.clientPostIndex = []
 
         // Observe lesson changes to invalidate Block 2 cache (new/confirmed/corrected lessons)
         if lessonChangeObserver == nil {
             lessonChangeObserver = NotificationCenter.default.addObserver(
-                forName: .cosmoLessonChanged,
+                forName: .cosmoTasteChanged,
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
@@ -344,14 +342,14 @@ final class UnifiedWritingEngine: ObservableObject {
         buildCachedBlocks(contentAtom: contentAtom)
         print("🔧 [UnifiedWritingEngine] Block1 length: \(cachedBlock1?.count ?? 0) chars, Block2 length: \(cachedBlock2?.count ?? 0) chars")
 
-        // Load learned lessons + preferences for this client via LessonPolicyResolver
+        // Load the client's taste profile (learned beliefs + pinned rules)
         let contentMeta = contentAtom.metadataValue(as: ContentAtomMetadata.self)
         if let clientUUID = contentMeta?.clientProfileUUID {
             onContextActivity?(.started(name: "load_preferences", displayLabel: "Loading learned rules", args: [:]))
 
             // Resolve lessons from canonical atom storage (single source of truth)
             let format = detectContentFormat().rawValue
-            let policy = await LessonPolicyResolver.resolveForWritingEngine(
+            let policy = await TasteContext.resolveForWritingEngine(
                 clientUUID: clientUUID,
                 intent: "draft",
                 format: format
@@ -383,23 +381,6 @@ final class UnifiedWritingEngine: ObservableObject {
                 print("🔧 [UnifiedWritingEngine] Injected batch analysis insights into Block 2")
             }
 
-            // Pre-fetch experience buffer for Block 3
-            let contentTitle = contentAtom.title ?? contentAtom.body ?? ""
-            let formatStr = detectContentFormat().rawValue
-            let experiences = await loadRelevantExperiences(clientUUID: clientUUID, format: formatStr, topic: contentTitle)
-            if !experiences.isEmpty {
-                var expLines: [String] = []
-                expLines.append("--- PAST WRITING EXPERIENCES ---")
-                expLines.append("Learn from these examples — they show how this client modifies AI-generated content:")
-                for exp in experiences.prefix(2) {
-                    expLines.append("Generated: \(String(exp.generated.prefix(200)))...")
-                    expLines.append("Client edited to: \(String(exp.edited.prefix(200)))...")
-                    expLines.append("Key changes: \(exp.diffSummary)")
-                    expLines.append("")
-                }
-                cachedExperienceBuffer = expLines.joined(separator: "\n")
-                print("🔧 [UnifiedWritingEngine] Pre-fetched \(experiences.count) experience entries for Block 3")
-            }
         }
 
         // D1: Emit skill modules loaded event
@@ -1398,12 +1379,6 @@ final class UnifiedWritingEngine: ObservableObject {
             lines.append("")
         }
 
-        // Experience buffer (pre-fetched during initialize)
-        if !cachedExperienceBuffer.isEmpty {
-            lines.append("")
-            lines.append(cachedExperienceBuffer)
-        }
-
         let result = lines.joined(separator: "\n")
         cachedBlock3A = result
         return result
@@ -2162,7 +2137,7 @@ final class UnifiedWritingEngine: ObservableObject {
         var complianceNote = ""
         let contentMeta2 = contentAtom?.metadataValue(as: ContentAtomMetadata.self)
         let clientUUID2 = contentMeta2?.clientProfileUUID
-        let policy = await LessonPolicyResolver.resolveForWritingEngine(
+        let policy = await TasteContext.resolveForWritingEngine(
             clientUUID: clientUUID2,
             intent: "draft",
             format: formatStr
@@ -3764,7 +3739,7 @@ final class UnifiedWritingEngine: ObservableObject {
 
     // MARK: - Learning Bridge
 
-    /// Load simple key-value user preferences (NOT lessons — those come from LessonPolicyResolver).
+    /// Load simple key-value user preferences (beliefs come from TasteContext).
     private func loadUserPreferences(clientUUID: String) async -> [(key: String, value: String)] {
         var prefs: [(key: String, value: String)] = []
 
@@ -3825,35 +3800,6 @@ final class UnifiedWritingEngine: ObservableObject {
         }
         return lines.joined(separator: "\n")
     }
-
-    private func loadRelevantExperiences(clientUUID: String, format: String, topic: String) async -> [(generated: String, edited: String, diffSummary: String)] {
-        var experiences: [(generated: String, edited: String, diffSummary: String)] = []
-
-        if let atoms = try? await database.asyncRead({ db in
-            try Atom.filter(Column("type") == AtomType.agentLearning.rawValue)
-                .order(Column("created_at").desc)
-                .limit(10)
-                .fetchAll(db)
-        }) {
-            for atom in atoms {
-                if let metadata = atom.metadataValue(as: [String: String].self),
-                   let expType = metadata["type"],
-                   expType == "experience",
-                   let expClientUUID = metadata["clientUUID"],
-                   expClientUUID == clientUUID {
-                    if let body = atom.body,
-                       let data = body.data(using: .utf8),
-                       let exp = try? JSONDecoder().decode(ExperienceEntry.self, from: data) {
-                        experiences.append((generated: exp.generatedExcerpt, edited: exp.editedExcerpt, diffSummary: exp.diffSummary))
-                    }
-                }
-            }
-        }
-
-        return experiences
-    }
-
-    // MARK: - Helpers
 
     private func appendTopTranscripts(to lines: inout [String], profileAtom: Atom, category: ProfileDocumentCategory, label: String) {
         let transcripts = ClientIntelligenceEngine.shared.getTopTranscripts(

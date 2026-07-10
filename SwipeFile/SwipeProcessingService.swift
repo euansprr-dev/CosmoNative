@@ -225,7 +225,6 @@ final class SwipeProcessingService {
                 // Auto-generate hook adaptations for each client profile
                 if !skipAutoAdaptation {
                     if let atom = try? await AtomRepository.shared.fetch(uuid: uuid) {
-                        await SwipeAdaptationEngine.shared.generateAdaptationsForSwipe(swipeAtom: atom)
                     }
                 }
             }

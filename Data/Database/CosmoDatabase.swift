@@ -2382,6 +2382,34 @@ class CosmoDatabase: ObservableObject {
             print("✅ content_perf_snapshots table created")
         }
 
+        migrator.registerMigration("create_taste_engine") { db in
+            // Taste engine: append-only signals + one versioned belief
+            // profile per scope (client uuid, or NULL for the personal voice).
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS taste_signals (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    client_uuid TEXT,
+                    kind TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    distilled INTEGER NOT NULL DEFAULT 0
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_taste_signals_scope
+                    ON taste_signals(client_uuid, distilled);
+
+                CREATE TABLE IF NOT EXISTS taste_profiles (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    client_uuid TEXT UNIQUE,
+                    version INTEGER NOT NULL DEFAULT 0,
+                    beliefs_json TEXT NOT NULL DEFAULT '[]',
+                    distilled_signal_count INTEGER NOT NULL DEFAULT 0,
+                    updated_at TEXT NOT NULL
+                );
+            """)
+            print("✅ taste engine tables created")
+        }
+
         return migrator
     }
 

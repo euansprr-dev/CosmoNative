@@ -414,22 +414,7 @@ struct ContentFocusModeView: View {
                 }
             }
 
-            // XP award — italic serif gilt, no glow
-            if let xp = viewModel.xpAwarded {
-                VStack {
-                    Spacer()
-                    Text("+\(xp) · \(viewModel.state.currentStep.label.lowercased()) complete")
-                        .font(DS.dateSerif)
-                        .italic()
-                        .foregroundStyle(DS.gilt)
-                        .transition(.opacity.combined(with: .move(edge: .bottom)))
-                        .padding(.bottom, 120)
-                }
-                .animation(ProMotionSprings.cardEntrance, value: viewModel.xpAwarded)
-                .zIndex(200)
-            }
         }
-        .animation(ProMotionSprings.gentle, value: viewModel.xpAwarded)
         .animation(ProMotionSprings.snappy, value: zenMode)
         .animation(ProMotionSprings.snappy, value: isPolishModeActive)
         .cosmoSurfaceKeyWindowActivation(surfaceID: "content:\(atom.uuid)")
@@ -2990,7 +2975,6 @@ class ContentFocusModeViewModel: ObservableObject {
     // MARK: - Published State
 
     @Published var state: ContentFocusModeState
-    @Published var xpAwarded: Int? = nil  // Set briefly to show XP animation
     @Published var displayPhase: ContentPhase = .ideation  // Currently displayed phase (UI-driven)
 
     // MARK: - Properties
@@ -3526,16 +3510,8 @@ class ContentFocusModeViewModel: ObservableObject {
             while currentIdx < targetIdx {
                 do {
                     _ = try await pipelineService.advancePhase(contentUUID: atom.uuid)
-                    let xp = ContentPhase.allCases[currentIdx + 1].completionXP
-                    if xp > 0 {
-                        xpAwarded = xp
-                        // Clear after animation
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-                            self?.xpAwarded = nil
-                        }
-                    }
                     currentIdx += 1
-                    print("Content focus: advanced to \(ContentPhase.allCases[currentIdx].displayName), XP: \(xp)")
+                    print("Content focus: advanced to \(ContentPhase.allCases[currentIdx].displayName)")
 
                     // Refresh atom from DB to get updated metadata
                     if let freshAtom = try? await AtomRepository.shared.fetch(uuid: atom.uuid) {

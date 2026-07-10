@@ -31,7 +31,6 @@ actor VoiceCommandPipeline {
     private let microBrain: MicroBrainOrchestrator  // Replaces Qwen 0.5B + Hermes 1.5B
     private let bigBrain: ClaudeAPIClient           // Replaces GeminiAPI
     private var atomRepo: AtomRepository?
-    private var queryHandler: LevelSystemQueryHandler?  // Lazy-loaded from MainActor
 
     // Metrics
     private var totalCommands: Int = 0
@@ -59,16 +58,6 @@ actor VoiceCommandPipeline {
         let repo = await MainActor.run { AtomRepository.shared }
         atomRepo = repo
         return repo
-    }
-
-    /// Get or lazily initialize the LevelSystemQueryHandler from the MainActor
-    private func getQueryHandler() async -> LevelSystemQueryHandler {
-        if let handler = queryHandler {
-            return handler
-        }
-        let handler = await MainActor.run { LevelSystemQueryHandler.shared }
-        queryHandler = handler
-        return handler
     }
 
     // MARK: - Main Processing
@@ -240,15 +229,9 @@ actor VoiceCommandPipeline {
         _ = CFAbsoluteTimeGetCurrent()  // Execute start time (used for debugging if needed)
 
         do {
-            // Handle query actions specially - they return a response, not atoms
+            // Stats/level queries were retired with the XP system.
             if action.action == .query {
-                let queryResponse = try await getQueryHandler().executeQuery(action)
-                let durationMs = Int((CFAbsoluteTimeGetCurrent() - startTime) * 1000)
-                totalLatencyMs += durationMs
-
-                logger.info("Query executed in \(durationMs)ms (tier: \(voiceAtom.tier.rawValue))")
-
-                return VoiceResult.query(queryResponse, tier: voiceAtom.tier, durationMs: durationMs)
+                return VoiceResult.failure("Stats queries are no longer supported", tier: voiceAtom.tier)
             }
 
             // Standard atom operations

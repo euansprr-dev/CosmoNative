@@ -349,7 +349,6 @@ enum CosmoNotification {
 
     // MARK: - Gamification Notifications
     enum Gamification {
-        static let xpAwarded = Notification.Name("xpAwarded")
         static let taskCompleted = Notification.Name("com.cosmo.gamification.taskCompleted")
     }
 
@@ -846,7 +845,6 @@ extension CosmoNotification.Voice.TranscriptPayload: NotificationPayload {}
 // (Moved from deleted XPTracerView.swift and ActiveFocusBar.swift)
 
 extension Notification.Name {
-    public static let xpAwarded = Notification.Name("xpAwarded")
     public static let focusSessionStarted = Notification.Name("focusSessionStarted")
     public static let focusSessionPaused = Notification.Name("focusSessionPaused")
     public static let focusSessionCompleted = Notification.Name("focusSessionCompleted")
@@ -875,31 +873,6 @@ enum CosmoAssistantHotkeyRouter {
         notificationCenter.post(
             name: CosmoNotification.Navigation.openInlineAssistant,
             object: nil
-        )
-    }
-}
-
-/// Triggers an XP tracer animation
-public struct XPAwardHelper {
-    public static func awardXP(
-        amount: Int,
-        from sourceFrame: CGRect,
-        to targetFrame: CGRect,
-        in coordinateSpace: CoordinateSpace = .global,
-        dimensionColors: [Color] = [.orange]
-    ) {
-        let sourceCenter = CGPoint(x: sourceFrame.midX, y: sourceFrame.midY)
-        let targetCenter = CGPoint(x: targetFrame.midX, y: targetFrame.midY)
-
-        NotificationCenter.default.post(
-            name: .xpAwarded,
-            object: nil,
-            userInfo: [
-                "xpAmount": amount,
-                "sourcePosition": sourceCenter,
-                "targetPosition": targetCenter,
-                "colors": dimensionColors
-            ]
         )
     }
 }

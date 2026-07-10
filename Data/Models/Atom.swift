@@ -2341,7 +2341,13 @@ public enum TaskCategoryType: String, Codable, CaseIterable, Sendable {
     }
 }
 
-/// Extension to add numeric range to existing EnergyLevel
+/// Task energy requirement (formerly defined beside the retired voice journal router).
+public enum EnergyLevel: String, Codable, Sendable {
+    case high = "high"
+    case medium = "medium"
+    case low = "low"
+}
+
 extension EnergyLevel: CaseIterable {
     public static var allCases: [EnergyLevel] { [.low, .medium, .high] }
 
@@ -2932,12 +2938,11 @@ struct CrystallizationMetadata: Codable, Sendable {
 
 /// Metadata for journal entry atoms
 struct JournalEntryMetadata: Codable, Sendable {
-    var source: String?
-    var status: String?
-    var errorMessage: String?
-    var mood: MoodCategory?
-    var topics: [String]?
-    var sentiment: Double?
+    var source: String? = nil
+    var status: String? = nil
+    var errorMessage: String? = nil
+    var topics: [String]? = nil
+    var sentiment: Double? = nil
 }
 
 /// Metadata for schedule block atoms

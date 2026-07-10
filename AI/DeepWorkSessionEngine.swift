@@ -10,6 +10,17 @@ import Foundation
 import Combine
 import AppKit
 
+// MARK: - Session State
+
+/// Current state of a focus session (formerly lived beside the retired session timer manager)
+public enum SessionState: String, Codable, Sendable {
+    case idle           // No active session
+    case running        // Timer actively counting
+    case paused         // Timer paused
+    case completing     // Session ending, processing results
+    case completed      // Session finished
+}
+
 // MARK: - Deep Work Session (Internal Model)
 
 /// Represents a live deep work session with distraction tracking (engine-internal model)
@@ -314,8 +325,7 @@ class DeepWorkSessionEngine: ObservableObject {
         // Find atoms created during this session
         let outputAtomUUIDs = await findOutputAtoms(since: session.startedAt)
 
-        // Open-ended sessions still need XP to scale with actual time spent.
-        let xpEarned = 15 + Int((focusScore / 100.0) * (Double(effectivePlannedMinutes) / 30.0) * 10.0)
+        _ = effectivePlannedMinutes
 
         // Create session metadata
         let sessionMetadata = DeepWorkSessionMetadata(
@@ -332,7 +342,7 @@ class DeepWorkSessionEngine: ObservableObject {
             habitUUID: session.habitUUID,
             habitTitleSnapshot: session.habitTitleSnapshot,
             outputAtomUUIDs: outputAtomUUIDs,
-            xpEarned: xpEarned,
+            xpEarned: nil,
             notes: notes
         )
 
@@ -357,9 +367,6 @@ class DeepWorkSessionEngine: ObservableObject {
         habitGoalContext = nil
         timedGoalPrompt = nil
 
-        // Award XP with dimension routing
-        let allocations = await awardXP(amount: xpEarned, session: session)
-
         // Build result for summary card
         let result = DeepWorkSessionResult(
             sessionId: session.id,
@@ -370,9 +377,7 @@ class DeepWorkSessionEngine: ObservableObject {
             focusScore: focusScore,
             distractionCount: distractionCount,
             outputAtomCount: outputAtomUUIDs.count,
-            xpEarned: xpEarned,
-            notes: notes,
-            dimensionAllocations: allocations
+            notes: notes
         )
 
         sessionResult = result
@@ -386,7 +391,6 @@ class DeepWorkSessionEngine: ObservableObject {
             object: nil,
             userInfo: [
                 "sessionId": session.id,
-                "xpEarned": xpEarned,
                 "actualMinutes": actualMinutes,
                 "focusScore": focusScore
             ]
@@ -795,62 +799,6 @@ class DeepWorkSessionEngine: ObservableObject {
             print("DeepWorkSessionEngine: Failed to update task session tracking - \(error)")
         }
     }
-
-    private func awardXP(amount: Int, session: ActiveDeepWorkSession) async -> [DimensionXPAllocation] {
-        let allocations = DimensionXPRouter.routeXP(
-            intent: session.intent,
-            baseXP: amount,
-            focusScore: focusScore
-        )
-
-        for alloc in allocations {
-            await awardDimensionXP(amount: alloc.xp, dimension: alloc.dimension, session: session)
-        }
-
-        return allocations
-    }
-
-    private func awardDimensionXP(amount: Int, dimension: String, session: ActiveDeepWorkSession) async {
-        let metadata: [String: Any] = [
-            "xpAmount": amount,
-            "source": "deepWorkSession",
-            "sessionId": session.id,
-            "intent": session.intent.rawValue,
-            "dimension": dimension
-        ]
-
-        let metadataString: String
-        if let data = try? JSONSerialization.data(withJSONObject: metadata),
-           let json = String(data: data, encoding: .utf8) {
-            metadataString = json
-        } else {
-            metadataString = "{}"
-        }
-
-        let atom = Atom.new(
-            type: .xpEvent,
-            title: "+\(amount) XP",
-            body: "Deep work session: \(session.taskTitle)",
-            metadata: metadataString
-        )
-
-        do {
-            try await atomRepository.create(atom)
-
-            NotificationCenter.default.post(
-                name: .xpAwarded,
-                object: nil,
-                userInfo: [
-                    "amount": amount,
-                    "source": "deepWorkSession",
-                    "dimension": dimension
-                ]
-            )
-        } catch {
-            print("DeepWorkSessionEngine: Failed to award XP - \(error)")
-        }
-    }
-
 }
 
 // MARK: - Notification Names
@@ -875,7 +823,5 @@ struct DeepWorkSessionResult: Sendable {
     let focusScore: Double
     let distractionCount: Int
     let outputAtomCount: Int
-    let xpEarned: Int
     let notes: String?
-    let dimensionAllocations: [DimensionXPAllocation]
 }

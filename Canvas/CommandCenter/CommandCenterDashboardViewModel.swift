@@ -4,16 +4,9 @@
 
 import SwiftUI
 import Combine
+import GRDB
 
 // MARK: - Stub Types (Plannerum directory deleted)
-
-/// Minimal stub for XP progress display (Plannerum deleted)
-struct XPProgressState {
-    var level: Int = 1
-    var currentXP: Int = 0
-    var nextLevelXP: Int = 100
-    var progress: Double { Double(currentXP) / Double(max(1, nextLevelXP)) }
-}
 
 /// Minimal stub for PlannerumViewModel (Plannerum deleted)
 /// Provides today-task loading, completion, and quick-add that the dashboard depends on.
@@ -22,9 +15,6 @@ class PlannerumViewModel: ObservableObject {
     static let shared = PlannerumViewModel()
 
     @Published var todayTasks: [TaskViewModel] = []
-    @Published var xpProgress: XPProgressState = XPProgressState()
-
-    let liveQuestEngine = QuestEngine()
 
     func loadTodayTasks() async {
         do {
@@ -146,21 +136,27 @@ enum RecurringTaskTitleEditScope: String, CaseIterable, Sendable {
 
 private struct DashboardAtomSubsetSignature: Equatable {
     let count: Int
-    let fingerprint: Int
+    let versionSum: Int64
+    let latestUpdatedAt: String
 
-    init(atoms: [Atom], matching types: Set<AtomType>) {
-        var count = 0
-        var hasher = Hasher()
-
-        for atom in atoms where types.contains(atom.type) {
-            count += 1
-            hasher.combine(atom.uuid)
-            hasher.combine(atom.localVersion)
-            hasher.combine(atom.updatedAt)
-        }
-
-        self.count = count
-        self.fingerprint = hasher.finalize()
+    /// SQL-aggregate signature: any insert/update/delete in the subset moves
+    /// count, the _local_version sum, or MAX(updated_at). Replaces hashing a
+    /// full decoded atoms array (the old AtomRepository.$atoms mirror decoded
+    /// every atom in the database on every write, app-wide).
+    static func fetch(_ db: Database, types: [AtomType]) throws -> DashboardAtomSubsetSignature {
+        let typeList = types.map { "'\($0.rawValue)'" }.joined(separator: ",")
+        let row = try Row.fetchOne(db, sql: """
+            SELECT COUNT(*) AS c,
+                   COALESCE(SUM(_local_version), 0) AS v,
+                   COALESCE(MAX(updated_at), '') AS u
+            FROM atoms
+            WHERE is_deleted = 0 AND type IN (\(typeList))
+            """)
+        return DashboardAtomSubsetSignature(
+            count: row?["c"] ?? 0,
+            versionSum: row?["v"] ?? 0,
+            latestUpdatedAt: row?["u"] ?? ""
+        )
     }
 }
 
@@ -169,10 +165,12 @@ private struct DashboardAtomRefreshSignature: Equatable {
     let deepWork: DashboardAtomSubsetSignature
     let scheduleBlocks: DashboardAtomSubsetSignature
 
-    init(atoms: [Atom]) {
-        self.tasks = DashboardAtomSubsetSignature(atoms: atoms, matching: [.task])
-        self.deepWork = DashboardAtomSubsetSignature(atoms: atoms, matching: [.deepWorkBlock])
-        self.scheduleBlocks = DashboardAtomSubsetSignature(atoms: atoms, matching: [.scheduleBlock])
+    static func fetch(_ db: Database) throws -> DashboardAtomRefreshSignature {
+        DashboardAtomRefreshSignature(
+            tasks: try DashboardAtomSubsetSignature.fetch(db, types: [.task]),
+            deepWork: try DashboardAtomSubsetSignature.fetch(db, types: [.deepWorkBlock]),
+            scheduleBlocks: try DashboardAtomSubsetSignature.fetch(db, types: [.scheduleBlock])
+        )
     }
 }
 
@@ -565,8 +563,6 @@ class CommandCenterDashboardViewModel: ObservableObject {
 
     // MARK: - Quick Stats
 
-    @Published var xpProgress: XPProgressState = XPProgressState()
-    @Published var currentStreak: Int = 0
 
     // MARK: - Reports
 
@@ -736,13 +732,20 @@ class CommandCenterDashboardViewModel: ObservableObject {
             }
             .store(in: &cancellables)
 
-        AtomRepository.shared.$atoms
-            .map(DashboardAtomRefreshSignature.init)
-            .debounce(for: .milliseconds(350), scheduler: DispatchQueue.main)
-            .sink { [weak self] signature in
+        // Atom-change signal via a cheap SQL aggregate observation — fires on
+        // any atoms write but never decodes rows (the old full-table
+        // AtomRepository.$atoms mirror re-decoded every atom per write).
+        CosmoDatabase.shared.observe { db in
+            try DashboardAtomRefreshSignature.fetch(db)
+        }
+        .debounce(for: .milliseconds(350), scheduler: DispatchQueue.main)
+        .sink(
+            receiveCompletion: { _ in },
+            receiveValue: { [weak self] signature in
                 self?.handleAtomRefreshSignature(signature)
             }
-            .store(in: &cancellables)
+        )
+        .store(in: &cancellables)
 
         habitEngine.$definitions
             .removeDuplicates()
@@ -787,13 +790,6 @@ class CommandCenterDashboardViewModel: ObservableObject {
             }
             .store(in: &cancellables)
 
-        // React to XP changes
-        plannerum.$xpProgress
-            .sink { [weak self] xp in
-                self?.xpProgress = xp
-            }
-            .store(in: &cancellables)
-
         // Calendar events (debounced — CalendarSyncService publishes on refresh)
         calendarService.$externalEvents
             .debounce(for: .seconds(1), scheduler: DispatchQueue.main)
@@ -819,8 +815,6 @@ class CommandCenterDashboardViewModel: ObservableObject {
         await loadTodaySessions()
         await loadWeeklyReport()
         objectiveEngine.startTracking()
-        xpProgress = plannerum.xpProgress
-        currentStreak = plannerum.liveQuestEngine.streaks.values.max() ?? 0
     }
 
     // MARK: - Objectives
@@ -1889,7 +1883,6 @@ class CommandCenterDashboardViewModel: ObservableObject {
             )
         }
         assignIfChanged(\.habits, to: nextHabits)
-        assignIfChanged(\.currentStreak, to: plannerum.liveQuestEngine.streaks.values.max() ?? 0)
     }
 
     var availableHabitDefinitions: [HabitDefinition] {

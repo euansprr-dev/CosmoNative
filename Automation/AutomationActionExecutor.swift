@@ -467,13 +467,6 @@ class AutomationActionExecutor {
         atom.metadata = Self.encodeMetadata(metaDict)
         let _ = try await AtomRepository.shared.update(atom)
 
-        // Award pipeline XP
-        NotificationCenter.default.post(
-            name: .xpAwarded,
-            object: nil,
-            userInfo: ["xpAmount": 15, "dimension": "creative"]
-        )
-
         print("⚡ [Automation] Advanced pipeline: \(currentPhase) → \(nextPhase) for \(context.atom.uuid)")
     }
 
@@ -558,21 +551,10 @@ class AutomationActionExecutor {
 
     // MARK: - Gamification
 
+    /// The XP system was retired; the `awardXP` action case remains for
+    /// persisted-rule decode compatibility but is now a no-op.
     private func handleAwardXP(_ action: AutomationAction, context: AutomationContext) {
-        let amount = Int(action.configNumber("amount") ?? 10)
-        let dimension = action.configString("dimension") ?? "cognitive"
-
-        NotificationCenter.default.post(
-            name: .xpAwarded,
-            object: nil,
-            userInfo: [
-                "xpAmount": amount,
-                "dimension": dimension,
-                "source": "automation"
-            ]
-        )
-
-        print("⚡ [Automation] Awarded \(amount) XP (\(dimension)) for \(context.atom.uuid)")
+        print("⚡ [Automation] awardXP action ignored (XP system retired) for \(context.atom.uuid)")
     }
 
     // MARK: - Template Interpolation

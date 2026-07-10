@@ -33,22 +33,17 @@ public final class ContentPipelineService: ObservableObject {
     // MARK: - Dependencies
 
     private let database: any DatabaseWriter
-    private let levelService: LevelSystemService
     private let analyticsEngine: ContentAnalyticsEngine
-    private let predictionEngine: PerformancePredictionEngine
 
     private var cancellables = Set<AnyCancellable>()
 
     // MARK: - Initialization
 
     public init(
-        database: (any DatabaseWriter)? = nil,
-        levelService: LevelSystemService? = nil
+        database: (any DatabaseWriter)? = nil
     ) {
         self.database = database ?? (CosmoDatabase.shared.dbQueue! as any DatabaseWriter)
-        self.levelService = levelService ?? LevelSystemService(database: CosmoDatabase.shared.dbQueue!)
         self.analyticsEngine = ContentAnalyticsEngine(database: self.database)
-        self.predictionEngine = PerformancePredictionEngine(database: self.database)
 
         Task {
             await loadActiveContent()
@@ -107,9 +102,6 @@ public final class ContentPipelineService: ObservableObject {
             try newAtom.insert(db)
             return newAtom
         }
-
-        // Award XP for starting new content
-        await awardContentXP(xp: 5, reason: "Started new content: \(title)", contentUUID: atom.uuid)
 
         await loadActiveContent()
         return atom
@@ -202,18 +194,6 @@ public final class ContentPipelineService: ObservableObject {
             await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom, skipVersionIncrement: true)
         }
 
-        // Award XP for phase completion
-        await awardContentXP(
-            xp: nextPhase.completionXP,
-            reason: "Completed \(currentPhase.displayName) phase",
-            contentUUID: contentUUID
-        )
-
-        // If published, generate performance prediction
-        if nextPhase == .published {
-            await generatePerformancePrediction(for: contentUUID)
-        }
-
         await loadActiveContent()
         return phaseAtom
     }
@@ -270,8 +250,6 @@ public final class ContentPipelineService: ObservableObject {
             try await advancePhase(contentUUID: contentUUID, notes: "Auto-advanced on publish")
         }
 
-        // Award XP for publishing
-        await awardContentXP(xp: 20, reason: "Published to \(platform.displayName)", contentUUID: contentUUID)
 
         return publishAtom
     }
@@ -355,96 +333,10 @@ public final class ContentPipelineService: ObservableObject {
             return atom
         }
 
-        // Award XP based on performance
-        let xp = perfMetadata.estimatedXP
-        if xp > 0 {
-            await awardContentXP(
-                xp: xp,
-                reason: isViral ? "Viral content on \(platform.displayName)!" : "Content performance on \(platform.displayName)",
-                contentUUID: contentUUID
-            )
-        }
-
         // Update aggregate metrics
         await calculateMetrics()
 
-        // Check for performance matching (actual vs predicted)
-        await performanceMatching(contentUUID: contentUUID, actualImpressions: impressions)
-
         return performanceAtom
-    }
-
-    // MARK: - Performance Matching
-
-    /// Compare actual performance to predictions and award bonus XP
-    private func performanceMatching(contentUUID: String, actualImpressions: Int) async {
-        guard let contentAtom = try? await fetchContentAtom(uuid: contentUUID),
-              let metadata = contentAtom.metadataValue(as: ContentAtomMetadata.self),
-              let predicted = metadata.predictedReach else {
-            return
-        }
-
-        let ratio = Double(actualImpressions) / Double(predicted)
-
-        // Award bonus XP for exceeding predictions
-        if ratio >= 2.0 {
-            await awardContentXP(
-                xp: 100,
-                reason: "Exceeded prediction by 2x+!",
-                contentUUID: contentUUID
-            )
-        } else if ratio >= 1.5 {
-            await awardContentXP(
-                xp: 50,
-                reason: "Exceeded prediction by 50%",
-                contentUUID: contentUUID
-            )
-        } else if ratio >= 1.0 {
-            await awardContentXP(
-                xp: 25,
-                reason: "Met performance prediction",
-                contentUUID: contentUUID
-            )
-        }
-
-        // Record the performance match result
-        await predictionEngine.recordPredictionResult(
-            contentUUID: contentUUID,
-            predicted: predicted,
-            actual: actualImpressions
-        )
-    }
-
-    // MARK: - Predictions
-
-    /// Generate performance prediction for content
-    private func generatePerformancePrediction(for contentUUID: String) async {
-        guard let contentAtom = try? await fetchContentAtom(uuid: contentUUID),
-              var metadata = contentAtom.metadataValue(as: ContentAtomMetadata.self) else {
-            return
-        }
-
-        // Calculate prediction based on historical data
-        let prediction = await predictionEngine.predictPerformance(
-            platform: metadata.platform ?? .twitter,
-            wordCount: metadata.wordCount,
-            clientUUID: metadata.clientProfileUUID
-        )
-
-        metadata.predictedReach = prediction.reach
-        metadata.predictedEngagement = prediction.engagementRate
-
-        var updatedAtom = contentAtom
-        updatedAtom.metadata = mergedMetadataJSON(metadata, existing: contentAtom.metadata)
-        let atomToUpdate = updatedAtom
-
-        do {
-            try await database.write { db in
-                try atomToUpdate.update(db)
-            }
-        } catch {
-            print("ContentPipelineService: Failed to update prediction metadata: \(error)")
-        }
     }
 
     // MARK: - Client Profiles
@@ -542,15 +434,6 @@ public final class ContentPipelineService: ObservableObject {
 
         // Update content atom with new word count
         try await updateContentWordCount(contentUUID: contentUUID, wordCount: newWordCount)
-
-        // Award XP for writing
-        if draftMetadata.wordsAdded > 100 {
-            await awardContentXP(
-                xp: 10,
-                reason: "Added \(draftMetadata.wordsAdded) words",
-                contentUUID: contentUUID
-            )
-        }
 
         return draftAtom
     }
@@ -855,42 +738,6 @@ public final class ContentPipelineService: ObservableObject {
         return draftPackage
     }
 
-    func awardContentXP(xp: Int, reason: String, contentUUID: String) async {
-        do {
-            try await database.write { db in
-                // Create XP event atom
-                var xpAtom = Atom.new(
-                    type: .xpEvent,
-                    title: "+\(xp) XP",
-                    body: reason
-                )
-                if let metaData = try? JSONEncoder().encode([
-                    "xp": String(xp),
-                    "dimension": "creative",
-                    "source": "content_pipeline",
-                    "contentUUID": contentUUID
-                ]) {
-                    xpAtom.metadata = String(data: metaData, encoding: .utf8)
-                }
-                try xpAtom.insert(db)
-
-                // Update level state
-                if var state = try CosmoLevelState.fetchOne(db) {
-                    state.addXP(xp, dimension: "creative")
-                    try state.update(db)
-                }
-            }
-
-            // Post notification
-            NotificationCenter.default.post(
-                name: .xpAwarded,
-                object: nil,
-                userInfo: ["xp": xp, "reason": reason, "dimension": "creative"]
-            )
-        } catch {
-            // XP award failed silently
-        }
-    }
 }
 
 // MARK: - Content Atom Metadata

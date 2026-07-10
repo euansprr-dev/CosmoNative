@@ -666,20 +666,6 @@ actor VoiceWorkoutHandler {
             newAtom.metadata = String(data: metadataJSON, encoding: .utf8)
             try newAtom.insert(db)
 
-            // Award XP for manual workout logging
-            var xp = 10  // Base XP for logging
-            if let duration = durationMinutes {
-                if duration >= 60 { xp += 15 }
-                else if duration >= 30 { xp += 10 }
-                else if duration >= 15 { xp += 5 }
-            }
-
-            // Update level state
-            if var state = try CosmoLevelState.fetchOne(db) {
-                state.addXP(xp, dimension: "physiological")
-                try state.update(db)
-            }
-
             return newAtom
         }
 

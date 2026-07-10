@@ -28,7 +28,6 @@ public final class HealthKitSyncService: ObservableObject {
     private let healthStore: HKHealthStore
     private let configuration: HealthKitConfiguration
     private let atomFactory: HealthKitAtomFactory
-    private let levelIntegration: HealthKitLevelIntegration
     private let database: any DatabaseWriter
 
     // Observation queries
@@ -52,7 +51,6 @@ public final class HealthKitSyncService: ObservableObject {
         self.configuration = configuration
         self.healthStore = configuration.healthStore
         self.atomFactory = HealthKitAtomFactory(configuration: configuration)
-        self.levelIntegration = HealthKitLevelIntegration()
     }
 
     // MARK: - Authorization
@@ -191,8 +189,6 @@ public final class HealthKitSyncService: ObservableObject {
                     insertingAtom.id = db.lastInsertedRowID
                 }
 
-                // Award XP for workout
-                await awardWorkoutXP(workout: workout, atom: atom)
 
                 // Update local state
                 todayWorkouts.append(atom)
@@ -262,9 +258,6 @@ public final class HealthKitSyncService: ObservableObject {
                 let key = "steps_milestone_\(milestone)_\(Date().formatted(date: .numeric, time: .omitted))"
                 if UserDefaults.standard.bool(forKey: key) { continue }
 
-                // Award XP for milestone
-                let xp = milestone / 500  // 10 XP per 5000 steps
-                await awardActivityXP(xp: xp, reason: "\(milestone.formatted()) steps reached")
 
                 UserDefaults.standard.set(true, forKey: key)
             }
@@ -366,8 +359,6 @@ public final class HealthKitSyncService: ObservableObject {
                     insertingAtom.id = db.lastInsertedRowID
                 }
 
-                // Award small XP for HRV tracking
-                await awardActivityXP(xp: 5, reason: "HRV measurement synced")
             }
         } catch {
             syncError = error
@@ -448,117 +439,8 @@ public final class HealthKitSyncService: ObservableObject {
             allRingsClosed: moveCalories >= moveGoal && exerciseMinutes >= exerciseGoal && standHours >= standGoal
         )
 
-        // Check for ring closure XP
-        Task {
-            await checkRingClosureXP()
-        }
     }
 
-    private func checkRingClosureXP() async {
-        guard let summary = todayActivitySummary else { return }
-
-        let dateKey = Date().formatted(date: .numeric, time: .omitted)
-
-        // Move ring
-        if summary.moveProgress >= 1.0 {
-            let key = "move_ring_closed_\(dateKey)"
-            if !UserDefaults.standard.bool(forKey: key) {
-                await awardActivityXP(xp: 15, reason: "Move ring closed")
-                UserDefaults.standard.set(true, forKey: key)
-            }
-        }
-
-        // Exercise ring
-        if summary.exerciseProgress >= 1.0 {
-            let key = "exercise_ring_closed_\(dateKey)"
-            if !UserDefaults.standard.bool(forKey: key) {
-                await awardActivityXP(xp: 15, reason: "Exercise ring closed")
-                UserDefaults.standard.set(true, forKey: key)
-            }
-        }
-
-        // Stand ring
-        if summary.standProgress >= 1.0 {
-            let key = "stand_ring_closed_\(dateKey)"
-            if !UserDefaults.standard.bool(forKey: key) {
-                await awardActivityXP(xp: 10, reason: "Stand ring closed")
-                UserDefaults.standard.set(true, forKey: key)
-            }
-        }
-
-        // All rings bonus
-        if summary.allRingsClosed {
-            let key = "all_rings_closed_\(dateKey)"
-            if !UserDefaults.standard.bool(forKey: key) {
-                await awardActivityXP(xp: 25, reason: "All activity rings closed")
-                UserDefaults.standard.set(true, forKey: key)
-            }
-        }
-    }
-
-    // MARK: - XP Awards
-
-    private func awardWorkoutXP(workout: HKWorkout, atom: Atom) async {
-        var xp = 20  // Base XP for any workout
-
-        let durationMinutes = workout.duration / 60
-
-        // Duration bonus
-        if durationMinutes >= 60 { xp += 20 }
-        else if durationMinutes >= 45 { xp += 15 }
-        else if durationMinutes >= 30 { xp += 10 }
-
-        // Calories bonus
-        if let calories = workout.totalEnergyBurned?.doubleValue(for: .kilocalorie()) {
-            if calories >= 500 { xp += 15 }
-            else if calories >= 300 { xp += 10 }
-            else if calories >= 150 { xp += 5 }
-        }
-
-        // Type bonus for high-intensity workouts
-        let workoutType = CosmoWorkoutType.from(activityType: workout.workoutActivityType)
-        if workoutType.strainMultiplier >= 0.9 {
-            xp += 10
-        }
-
-        await awardActivityXP(xp: xp, reason: "Workout: \(workoutType.rawValue.capitalized)")
-    }
-
-    private func awardActivityXP(xp: Int, reason: String) async {
-        do {
-            try await database.write { db in
-                // Create XP event atom
-                var xpAtom = Atom.new(
-                    type: .xpEvent,
-                    title: "+\(xp) XP",
-                    body: reason
-                )
-                if let jsonData = try? JSONSerialization.data(withJSONObject: [
-                    "xp": String(xp),
-                    "dimension": "physiological",
-                    "source": "healthkit"
-                ], options: []) {
-                    xpAtom.metadata = String(data: jsonData, encoding: .utf8)
-                }
-                try xpAtom.insert(db)
-
-                // Update level state
-                if var state = try CosmoLevelState.fetchOne(db) {
-                    state.addXP(xp, dimension: "physiological")
-                    try state.update(db)
-                }
-            }
-
-            // Post notification
-            NotificationCenter.default.post(
-                name: .xpAwarded,
-                object: nil,
-                userInfo: ["xp": xp, "reason": reason, "dimension": "physiological"]
-            )
-        } catch {
-            syncError = error
-        }
-    }
 
     // MARK: - Manual Sync
 

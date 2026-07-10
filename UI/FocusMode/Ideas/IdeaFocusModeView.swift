@@ -285,11 +285,8 @@ struct IdeaFocusModeView: View {
         VStack(spacing: 0) {
             AtelierSheetHeader(title: "BLUEPRINT") { showBlueprintSheet = false }
             if let blueprint = viewModel.selectedBlueprint {
-                BlueprintDisplayView(
-                    blueprintAtom: blueprint,
-                    displayMode: Bindable(viewModel).blueprintDisplayMode
-                )
-                .padding(DS.space24)
+                BlueprintDisplayView(blueprintAtom: blueprint)
+                    .padding(DS.space24)
             } else {
                 Text("No blueprint selected")
                     .font(DS.callout)

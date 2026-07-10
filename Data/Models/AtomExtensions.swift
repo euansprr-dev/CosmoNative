@@ -1055,25 +1055,9 @@ extension Atom {
     }
 }
 
-// MARK: - Codex Accessors
+// MARK: - Idea Outline Accessors
 
 extension Atom {
-    /// Decode CodexElement from structured JSON (for .codexElement atoms)
-    var codexElement: CodexElement? {
-        guard type == .codexElement,
-              let structured = structured,
-              let data = structured.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(CodexElement.self, from: data)
-    }
-
-    /// Decode CodexWalkthrough from structured JSON (for .codexWalkthrough atoms)
-    var codexWalkthroughData: CodexWalkthrough? {
-        guard type == .codexWalkthrough,
-              let structured = structured,
-              let data = structured.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(CodexWalkthrough.self, from: data)
-    }
-
     /// Decode CodexOutlineModel from ideaMetadata.codexOutline JSON string
     var ideaCodexOutline: CodexOutlineModel? {
         guard let jsonString = ideaMetadata?.codexOutline,
@@ -1103,16 +1087,6 @@ extension Atom {
               let data = jsonString.data(using: .utf8),
               let recs = try? JSONDecoder().decode([ArcRecommendation].self, from: data) else { return [] }
         return recs
-    }
-
-    /// Canonical name for codex elements (convenience for lookups)
-    var codexCanonicalName: String? {
-        codexElement?.canonicalName
-    }
-
-    /// Category for codex elements
-    var codexCategory: CodexElementCategory? {
-        codexElement?.category
     }
 
     // MARK: - Smart Template Accessors

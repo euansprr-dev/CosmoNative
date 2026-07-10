@@ -44,14 +44,6 @@ struct SidebarNavSection: View {
                 destination: .inbox,
                 badge: inboxUnreadCount
             )
-
-            navRow(
-                id: "codex",
-                icon: "atom",
-                label: "Codex",
-                destination: .codex,
-                badge: nil
-            )
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

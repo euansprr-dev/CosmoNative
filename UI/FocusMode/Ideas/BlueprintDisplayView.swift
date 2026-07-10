@@ -1,19 +1,17 @@
 // CosmoOS/UI/FocusMode/Ideas/BlueprintDisplayView.swift
-// Displays a blueprint/swipe atom — slide text with physics breakdown.
+// Displays a blueprint/swipe atom as a slide-by-slide text breakdown.
 // Premium redesign — April 2026
 
 import SwiftUI
 
 struct BlueprintDisplayView: View {
     let blueprintAtom: Atom
-    @Binding var displayMode: BlueprintDisplayMode
 
     @State private var appeared = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space12) {
             blueprintTitle
-            BlueprintPhysicsToggle(mode: $displayMode)
             slideContent
         }
         .onAppear {
@@ -62,9 +60,6 @@ struct BlueprintDisplayView: View {
         VStack(alignment: .leading, spacing: DS.space8) {
             quarkSlideHeader(quark)
             quarkSlideText(quark)
-            if displayMode == .physics {
-                quarkPhysicsTags(quark)
-            }
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -77,9 +72,6 @@ struct BlueprintDisplayView: View {
     private func quarkSlideHeader(_ quark: SlideQuark) -> some View {
         HStack(spacing: 6) {
             slideNumberBadge(quark.slideNumber)
-            if let speechAct = quark.speechAct.type, !speechAct.isEmpty {
-                CodexConceptTag(name: speechAct, color: CodexElementCategory.speechAct.color)
-            }
         }
     }
 
@@ -91,77 +83,6 @@ struct BlueprintDisplayView: View {
                 .foregroundStyle(DS.text)
                 .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    // MARK: - Physics Tags (shown in physics mode)
-
-    private func quarkPhysicsTags(_ quark: SlideQuark) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            physicsTagsDivider
-            readerDeltaTags(quark)
-            frameTags(quark)
-            techniqueTags(quark)
-            proofMotivationTags(quark)
-        }
-    }
-
-    private var physicsTagsDivider: some View {
-        Rectangle()
-            .fill(DS.borderSubtle)
-            .frame(height: 0.5)
-            .padding(.vertical, 2)
-    }
-
-    @ViewBuilder
-    private func readerDeltaTags(_ quark: SlideQuark) -> some View {
-        if let deltas = quark.readerDeltas, !deltas.isEmpty {
-            CodexFlowLayout(spacing: 4) {
-                ForEach(Array(deltas.enumerated()), id: \.offset) { _, delta in
-                    if let type = delta.type, !type.isEmpty {
-                        CodexConceptTag(name: type, color: CodexElementCategory.readerDelta.color)
-                    }
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func frameTags(_ quark: SlideQuark) -> some View {
-        CodexFlowLayout(spacing: 4) {
-            if let frame = quark.frame?.type, !frame.isEmpty {
-                CodexConceptTag(name: frame, color: CodexElementCategory.frame.color)
-            }
-            if let distance = quark.experientialDistance?.type, !distance.isEmpty {
-                CodexConceptTag(name: distance, color: CodexElementCategory.distance.color)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func techniqueTags(_ quark: SlideQuark) -> some View {
-        if let techniques = quark.techniques, !techniques.isEmpty {
-            CodexFlowLayout(spacing: 4) {
-                ForEach(Array(techniques.enumerated()), id: \.offset) { _, tech in
-                    CodexConceptTag(name: tech.technique, color: CodexElementCategory.technique.color)
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func proofMotivationTags(_ quark: SlideQuark) -> some View {
-        let hasProof = quark.proofType?.type != nil
-        let hasMotivation = quark.motivation?.type != nil
-        if hasProof || hasMotivation {
-            CodexFlowLayout(spacing: 4) {
-                if let proof = quark.proofType?.type, !proof.isEmpty {
-                    CodexConceptTag(name: proof, color: CodexElementCategory.proofType.color)
-                }
-                if let motivation = quark.motivation?.type, !motivation.isEmpty {
-                    CodexConceptTag(name: motivation, color: CodexElementCategory.motivation.color)
-                }
-            }
         }
     }
 

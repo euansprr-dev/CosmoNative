@@ -16,6 +16,8 @@ struct WorkspaceSnapshot: Codable, Equatable {
     enum Destination: Codable, Equatable {
         case commandCenter
         case inbox
+        // Retired surface — kept so persisted snapshots that reference it keep
+        // decoding; restore maps it to Command Center (decode law).
         case codex
         case discover
         case swipeFile
@@ -114,7 +116,7 @@ struct WorkspaceSnapshot: Codable, Equatable {
         switch destination {
         case .commandCenter: return .commandCenter
         case .inbox: return .inbox
-        case .codex: return .codex
+        case .codex: return .commandCenter
         case .discover: return .discover(section: .discover)
         case .swipeFile: return .swipeFile(section: .home)
         case .thinkspace(let id): return .thinkspace(id: id)
@@ -147,7 +149,6 @@ extension WorkspaceSnapshot.Destination {
         switch sidebar {
         case .commandCenter: self = .commandCenter
         case .inbox: self = .inbox
-        case .codex: self = .codex
         case .discover: self = .discover
         case .swipeFile: self = .swipeFile
         case .thinkspace(let id): self = .thinkspace(id: id)
@@ -158,7 +159,7 @@ extension WorkspaceSnapshot.Destination {
         switch self {
         case .commandCenter: return "square.grid.2x2"
         case .inbox: return "tray"
-        case .codex: return "books.vertical"
+        case .codex: return "square.grid.2x2"
         case .discover: return "safari"
         case .swipeFile: return "bookmark"
         case .thinkspace: return "rectangle.3.group"

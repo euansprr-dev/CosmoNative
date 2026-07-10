@@ -10,7 +10,6 @@ import AppKit
 enum SidebarDestination: Equatable, Hashable {
     case commandCenter
     case inbox
-    case codex
     case discover(section: SwipeDiscoverySectionSelection)
     case swipeFile(section: SwipeLibrarySectionSelection)
     case thinkspace(id: String)
@@ -1020,18 +1019,6 @@ private struct SidebarInboxContext: View {
                 }
             }
 
-            VStack(alignment: .leading, spacing: 4) {
-                SidebarContextLabel(title: "Library")
-                SidebarContextRow(
-                    title: "Books",
-                    icon: "books.vertical",
-                    subtitle: "Codex library",
-                    isActive: currentDestination == .codex,
-                    tint: DS.textSecondary
-                ) {
-                    openBooks()
-                }
-            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .task {
@@ -1193,12 +1180,6 @@ private struct SidebarInboxContext: View {
         onNavigate()
     }
 
-    private func openBooks() {
-        withAnimation(ProMotionSprings.snappy) {
-            currentDestination = .codex
-        }
-        onNavigate()
-    }
 }
 
 // MARK: - Swipe File Context

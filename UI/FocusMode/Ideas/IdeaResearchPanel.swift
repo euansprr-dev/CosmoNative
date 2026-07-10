@@ -160,7 +160,7 @@ struct IdeaResearchPanel: View {
     private func researchCardFooter(_ result: IdeaResearchResult, proofColor: Color) -> some View {
         HStack(spacing: 6) {
             if let proofType = result.proofType, !proofType.isEmpty {
-                CodexConceptTag(name: proofType, color: proofColor)
+                proofTypeTag(proofType, color: proofColor)
             }
             Text(result.source)
                 .font(DS.caption2)
@@ -171,6 +171,15 @@ struct IdeaResearchPanel: View {
                 linkButton(url)
             }
         }
+    }
+
+    private func proofTypeTag(_ name: String, color: Color) -> some View {
+        Text(name)
+            .font(DS.caption2)
+            .foregroundStyle(color)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(color.opacity(DS.opacitySubtle), in: Capsule())
     }
 
     // MARK: - Subviews

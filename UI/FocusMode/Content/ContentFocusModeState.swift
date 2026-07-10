@@ -420,7 +420,6 @@ struct ContentFocusModeState: Codable {
     var inheritedIdeaContext: String = ""
     var inheritedChatHistory: [IdeaChatMessage]?
     var codexElementNames: [String] = []
-    var blueprintDisplayMode: BlueprintDisplayMode = .text
 
     // Sidebar panel expand/collapse state
     var outlinePanelExpanded: Bool = true
@@ -462,7 +461,7 @@ struct ContentFocusModeState: Codable {
         // Codex-era fields
         case codexOutline, inheritedResearchResults, inheritedArcRecommendations
         case inheritedCreativeDirection, inheritedIdeaContext, inheritedChatHistory
-        case codexElementNames, blueprintDisplayMode
+        case codexElementNames
         case outlinePanelExpanded, blueprintPanelExpanded, researchPanelExpanded
         case profilePanelExpanded, arcPanelExpanded, contextPanelExpanded
         case chatPanelExpanded, codexRefPanelExpanded

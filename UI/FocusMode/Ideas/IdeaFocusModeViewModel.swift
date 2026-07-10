@@ -150,7 +150,6 @@ final class IdeaFocusModeViewModel {
     var researchResults: [IdeaResearchResult] = []
     var chatHistory: [IdeaChatMessage] = []
     var arcRecommendations: [ArcRecommendation] = []
-    var blueprintDisplayMode: BlueprintDisplayMode = .text
 
     // MARK: - Overlay State
 
@@ -347,12 +346,10 @@ final class IdeaFocusModeViewModel {
     }
 
     /// Generate arc type recommendations from the idea context using Gemini Flash.
+    /// Recommendations are grounded in the idea text and the swipe library —
+    /// the retired Codex element catalog no longer feeds this.
     func generateArcRecommendations() async {
         do {
-            try await CodexRepository.shared.loadIfNeeded()
-            let arcShapes = try await CodexRepository.shared.arcShapes()
-            let arcData = arcShapes.map { ($0.1.canonicalName, $0.1.definition, $0.1.frequency ?? "") }
-
             let swipes = try await AtomRepository.shared.fetchAll(type: .research)
             let bpTitles = swipes
                 .filter { $0.isSwipeFileAtom }
@@ -362,7 +359,6 @@ final class IdeaFocusModeViewModel {
             let result = try await ArcRecommendationAgent.shared.recommend(
                 ideaText: editableBody,
                 clientNiche: linkedClient?.title,
-                arcShapes: arcData,
                 blueprintTitles: bpTitles
             )
             self.arcRecommendations = result.arcRecommendations

@@ -798,8 +798,6 @@ struct MainView: View {
                 switchToThinkspaceForDestination(id: id)
             case .inbox:
                 break
-            case .codex:
-                break
             case .discover, .swipeFile:
                 break
             }
@@ -813,8 +811,6 @@ struct MainView: View {
                 vm.updateContextManually(type: .sanctuary)
             case .thinkspace:
                 vm.updateContextManually(type: .thinkspaceCanvas)
-            case .codex:
-                vm.updateContextManually(type: .commandCenter)
             case .discover, .swipeFile:
                 vm.updateContextManually(type: .commandCenter)
             }
@@ -1483,8 +1479,6 @@ struct MainView: View {
             activeSidebarContext = .inbox
         case .thinkspace:
             activeSidebarContext = .thinkspaces
-        case .codex:
-            activeSidebarContext = .inbox
         case .discover, .swipeFile:
             activeSidebarContext = .swipeFile
         }
@@ -1594,7 +1588,6 @@ struct MainView: View {
         case .commandCenter: return ThinkspaceManager.commandCenterUUID
         case .thinkspace(let id): return id
         case .inbox: return nil
-        case .codex: return nil
         case .discover: return nil
         case .swipeFile: return nil
         }
@@ -1636,12 +1629,6 @@ struct MainView: View {
                     viewModel: commandCenterViewModel,
                     showsInternalSidebar: false
                 )
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(DS.bg)
-                    .offset(x: contentPushOffset)
-                    .transition(.opacity)
-            } else if case .codex = currentDestination {
-                CodexNavigationView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(DS.bg)
                     .offset(x: contentPushOffset)
@@ -1798,7 +1785,6 @@ struct MainView: View {
         switch destination {
         case .commandCenter: return ("Command Center", "square.grid.2x2")
         case .inbox: return ("Inbox", "tray")
-        case .codex: return ("Codex", "books.vertical")
         case .discover: return ("Discover", "safari")
         case .swipeFile: return ("Swipe File", "bookmark")
         case .thinkspace(let id):

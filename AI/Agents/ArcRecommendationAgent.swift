@@ -19,21 +19,21 @@ final class ArcRecommendationAgent {
     func recommend(
         ideaText: String,
         clientNiche: String?,
-        arcShapes: [(name: String, definition: String, frequency: String)],
         blueprintTitles: [(title: String, arcShape: String)]
     ) async throws -> RecommendationResult {
-        let arcList = arcShapes.map { "- \($0.name): \($0.definition) (\($0.frequency))" }.joined(separator: "\n")
         let bpList = blueprintTitles.map { "- \($0.title) (arc: \($0.arcShape))" }.joined(separator: "\n")
 
         let prompt = """
-        You are a Content Physics arc advisor. Given a post idea, recommend the best structural approaches.
+        You are a content structure advisor. Given a post idea, recommend the best structural approaches.
 
         POST IDEA:
         \(ideaText)
         \(clientNiche.map { "\nCLIENT NICHE: \($0)" } ?? "")
 
-        AVAILABLE ARC TYPES:
-        \(arcList)
+        Recommend arc shapes from well-established short-form content structures — for example:
+        Problem → Solution, Transformation (before/after), Contrarian Take, Personal Story Arc,
+        Listicle / Framework Breakdown, Question → Answer, Myth vs. Reality, Journey / Process Walkthrough.
+        Prefer whichever genuinely fits this idea; do not force a match.
 
         AVAILABLE BLUEPRINTS:
         \(bpList)

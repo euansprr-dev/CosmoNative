@@ -466,6 +466,13 @@ struct CosmoSettingsView: View {
                 readwiseCard
             }
 
+            settingsSection(
+                title: "RECALL INDEX",
+                detail: "The semantic index behind related-knowledge suggestions and recall search."
+            ) {
+                RecallIndexStatusCard()
+            }
+
             settingsSection(title: "SCREEN TIME") {
                 comingSoonCard(icon: "hourglass", name: "Screen Time", accentColor: DS.orange)
             }
@@ -674,6 +681,15 @@ struct CosmoSettingsView: View {
                 keyIdentifier: "apify",
                 isRequired: false,
                 instructions: "1. Visit https://apify.com\n2. Sign up or log in\n3. Go to Settings > Integrations\n4. Copy your Personal API token"
+            )
+
+            APIKeyCard(
+                title: "Embeddings API Key",
+                subtitle: "Powers the Recall index — related knowledge, semantic search",
+                placeholder: "sk-...",
+                keyIdentifier: "embeddings",
+                isRequired: false,
+                instructions: "1. Visit https://platform.openai.com (or any OpenAI-compatible embeddings provider)\n2. Create an API key\n3. Paste it here — indexing starts automatically\nOptional: point at another provider by setting recall.embeddings.baseURL/model in defaults"
             )
 
             APIKeyCard(

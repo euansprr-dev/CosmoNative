@@ -26,6 +26,7 @@ struct APIKeys {
         case agentLLMBaseURL = "agent_llm_base_url"
         case telegramBotToken = "telegram_bot_token"
         case whisperAPIKey = "whisper_api_key"
+        case embeddings = "embeddings_api_key"
         case apify = "apify_api_key"
         case supabaseServiceRole = "supabase_service_role_key"
         case supabaseAuthToken = "supabase_auth_token"
@@ -132,6 +133,13 @@ struct APIKeys {
 
     static var apify: String? {
         cachedValue(.apify, envKey: "APIFY_API_KEY")
+    }
+
+    /// Embeddings API key (Recall semantic index). OpenAI wire format —
+    /// OpenAI, Voyage, Mistral, and Together keys all work with the matching
+    /// base URL in Settings.
+    static var embeddings: String? {
+        cachedValue(.embeddings, envKey: "EMBEDDINGS_API_KEY")
     }
 
     // MARK: - Supabase (Keychain-backed)
@@ -248,6 +256,7 @@ struct APIKeys {
     static var hasTelegramBot: Bool { telegramBotToken?.isEmpty == false }
     static var hasWhisper: Bool { whisperAPIKey?.isEmpty == false }
     static var hasApify: Bool { apify?.isEmpty == false }
+    static var hasEmbeddings: Bool { embeddings?.isEmpty == false }
 
     static var hasSupabase: Bool {
         supabaseUrl?.isEmpty == false && supabaseAnonKey?.isEmpty == false
@@ -308,6 +317,7 @@ struct APIKeys {
         case "telegram_bot_token": return .telegramBotToken
         case "whisper_api_key": return .whisperAPIKey
         case "apify": return .apify
+        case "embeddings": return .embeddings
         case "supabase_url": return .supabaseUrl
         case "supabase_anon_key": return .supabaseKey
         case "supabase_service_role_key": return .supabaseServiceRole

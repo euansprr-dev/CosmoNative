@@ -89,11 +89,11 @@ struct CosmoApp: App {
             // queue and dismiss captures another system already consumed.
             InboxIngestService.shared.reconcileOnLaunch()
 
-            // Vector-index reconciliation: atoms whose embedding failed at write
-            // time (daemon down) are invisible to semantic recall until re-indexed.
+            // Recall-index reconciliation: catch atoms that are missing from
+            // the semantic index OR stale (content changed since indexing).
             // Deferred so it never competes with interactive startup.
             try? await Task.sleep(for: .seconds(60))
-            _ = await VectorDatabase.shared.reindexMissing()
+            _ = await RecallIndexer.shared.backfill()
 
             // Version-history maintenance: apply the tiered retention policy
             // (at most once per day; cheap no-op otherwise).

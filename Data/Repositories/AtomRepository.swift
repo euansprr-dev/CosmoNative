@@ -372,6 +372,12 @@ class AtomRepository: ObservableObject {
             print("AtomRepository: NodeGraph sync failed for created atom \(savedAtom.uuid): \(error)")
         }
 
+        // Recall index: new content becomes searchable.
+        let indexSnapshot = savedAtom
+        Task.detached(priority: .utility) {
+            await RecallIndexer.shared.noteAtomChanged(indexSnapshot)
+        }
+
         return savedAtom
     }
 
@@ -531,6 +537,12 @@ class AtomRepository: ObservableObject {
         // _local_version; bumping again would defeat the optimistic lock for
         // every caller that saves the returned atom.
         await changeTracker.trackUpdate(table: Atom.databaseTableName, entity: updatedAtom, skipVersionIncrement: true)
+
+        // Keep the recall index consistent (cheap enqueue; drain is background).
+        let indexSnapshot = updatedAtom
+        Task.detached(priority: .utility) {
+            await RecallIndexer.shared.noteAtomChanged(indexSnapshot)
+        }
 
         // Refresh editing lock if user is actively editing
         refreshEditingLock(uuid: atom.uuid)
@@ -849,6 +861,11 @@ class AtomRepository: ObservableObject {
 
         // Track for sync
         await changeTracker.trackDelete(table: Atom.databaseTableName, uuid: uuid, rowId: nil)
+
+        // Recall index: tombstones cascade to vectors (index cascade law).
+        Task.detached(priority: .utility) {
+            await RecallIndexer.shared.noteAtomDeleted(uuid)
+        }
 
         // Sync to NodeGraph
         do {

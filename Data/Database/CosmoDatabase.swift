@@ -2326,6 +2326,38 @@ class CosmoDatabase: ObservableObject {
             print("✅ atom_revisions table created")
         }
 
+        migrator.registerMigration("create_recall_index") { db in
+            // Recall semantic foundation: chunk vectors (normalized float
+            // blobs, cosine = dot product) + a durable re-embed outbox.
+            // Replaces the never-populated sqlite-vec tables. See AI/Recall/.
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS recall_vectors (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    entity_uuid TEXT NOT NULL,
+                    entity_type TEXT NOT NULL,
+                    chunk_index INTEGER NOT NULL DEFAULT 0,
+                    doc_hash TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    page INTEGER,
+                    text TEXT NOT NULL,
+                    embedding BLOB NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_recall_vectors_entity
+                    ON recall_vectors(entity_uuid);
+
+                CREATE TABLE IF NOT EXISTS recall_outbox (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    entity_uuid TEXT UNIQUE NOT NULL,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    last_error TEXT,
+                    created_at TEXT NOT NULL
+                );
+            """)
+            print("✅ recall index tables created")
+        }
+
         return migrator
     }
 

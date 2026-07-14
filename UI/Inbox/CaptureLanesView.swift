@@ -193,13 +193,19 @@ struct CaptureLanesView: View {
                     needsReviewSection
                 }
 
-                LazyVGrid(columns: laneColumns, alignment: .leading, spacing: 14) {
-                    ForEach(viewModel.destinations) { destination in
-                        CaptureLaneTile(
-                            destination: destination,
-                            onOpen: { viewModel.select(destination) },
-                            onDelete: { Task { await viewModel.deleteLane(destination) } }
-                        )
+                // The one ledger-header voice — the page's sections (Lanes,
+                // Needs review, Telegram commands) speak identically.
+                VStack(alignment: .leading, spacing: DS.space12) {
+                    CosmoSectionHeader(label: "Lanes", detail: "\(viewModel.destinations.count)")
+
+                    LazyVGrid(columns: laneColumns, alignment: .leading, spacing: 14) {
+                        ForEach(viewModel.destinations) { destination in
+                            CaptureLaneTile(
+                                destination: destination,
+                                onOpen: { viewModel.select(destination) },
+                                onDelete: { Task { await viewModel.deleteLane(destination) } }
+                            )
+                        }
                     }
                 }
 
@@ -266,8 +272,7 @@ struct CaptureLanesView: View {
     /// triage queue, and a dismiss.
     private var needsReviewSection: some View {
         VStack(alignment: .leading, spacing: DS.space8) {
-            Text("Needs review")
-                .dsSmallCapsLabel()
+            CosmoSectionHeader(label: "Needs review", detail: "\(viewModel.needsReviewItems.count)")
 
             VStack(alignment: .leading, spacing: DS.space6) {
                 ForEach(viewModel.needsReviewItems) { item in
@@ -286,19 +291,24 @@ struct CaptureLanesView: View {
 
     private var commandRegistrySection: some View {
         VStack(alignment: .leading, spacing: DS.space8) {
-            Text("Telegram commands")
-                .dsSmallCapsLabel()
+            CosmoSectionHeader(label: "Telegram commands", detail: "\(viewModel.destinations.count)")
 
             VStack(alignment: .leading, spacing: DS.space6) {
                 ForEach(viewModel.destinations) { destination in
                     HStack(spacing: DS.space8) {
+                        // The alias as the chip it is everywhere else —
+                        // the raw monospace list read like debug output.
                         Text("\(destination.aliases.first ?? destination.name.lowercased()):")
                             .font(.system(.caption, design: .monospaced).weight(.semibold))
                             .foregroundStyle(DS.accent)
+                            .padding(.horizontal, DS.space6)
+                            .padding(.vertical, 2)
+                            .background(DS.accentSoft, in: .rect(cornerRadius: 6))
                         Text(destination.name)
                             .font(DS.caption)
                             .foregroundStyle(DS.textSecondary)
                             .lineLimit(1)
+                        Spacer(minLength: 0)
                     }
                 }
             }
@@ -362,6 +372,7 @@ struct CaptureLanesView: View {
     @ViewBuilder
     private var detailHeader: some View {
         if let destination = viewModel.selectedDestination {
+            let identity = CollectionEmoji.resolve(name: destination.name, matchKeywords: false)
             HStack(spacing: DS.space12) {
                 Button {
                     withAnimation(ProMotionSprings.snappy) {
@@ -379,15 +390,22 @@ struct CaptureLanesView: View {
                 .keyboardShortcut(.escape, modifiers: [])
                 .accessibilityLabel("Back to all lanes")
 
-                Image(systemName: destination.icon)
-                    .font(DS.headline)
-                    .foregroundStyle(DS.accent)
-                    .frame(width: 34, height: 34)
-                    .background(DS.accentSoft, in: .rect(cornerRadius: 10))
-                    .accessibilityHidden(true)
+                Group {
+                    if let emoji = identity.emoji {
+                        Text(emoji)
+                            .font(DS.headline)
+                    } else {
+                        Image(systemName: destination.icon)
+                            .font(DS.headline)
+                            .foregroundStyle(DS.accent)
+                    }
+                }
+                .frame(width: 34, height: 34)
+                .background(DS.accentSoft, in: .rect(cornerRadius: 10))
+                .accessibilityHidden(true)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(destination.name)
+                    Text(identity.label)
                         .font(DS.title2)
                         .foregroundStyle(DS.text)
                     Text("\(destination.type.displayName) lane · \(destination.itemCount) captures")
@@ -504,18 +522,38 @@ private struct CaptureLaneTile: View {
     @State private var isHovered = false
     @State private var showDeleteConfirm = false
 
+    /// Lane identity, the App Store register: an emoji the user typed into
+    /// the lane name wins (and cleans the label); otherwise the lane's own
+    /// explicitly chosen icon — never a keyword guess over a user's choice.
+    private var identity: (emoji: String?, label: String) {
+        CollectionEmoji.resolve(name: destination.name, matchKeywords: false)
+    }
+
     var body: some View {
         Button(action: onOpen) {
             VStack(alignment: .leading, spacing: DS.space10) {
-                Image(systemName: destination.icon)
-                    .font(DS.title2)
-                    .foregroundStyle(DS.accent)
-                    .frame(width: 40, height: 40)
-                    .background(DS.accentSoft, in: .rect(cornerRadius: 12))
-                    .accessibilityHidden(true)
+                Group {
+                    if let emoji = identity.emoji {
+                        Text(emoji)
+                            .font(DS.title2)
+                    } else {
+                        Image(systemName: destination.icon)
+                            .font(DS.title2)
+                            .foregroundStyle(DS.accent)
+                    }
+                }
+                // An elevated well — the old accentSoft wash vanished against
+                // the card fill and the tiles read disabled.
+                .frame(width: 40, height: 40)
+                .background(DS.surfaceElevated, in: .rect(cornerRadius: 12))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(DS.borderSubtle, lineWidth: 0.5)
+                )
+                .accessibilityHidden(true)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(destination.name)
+                    Text(identity.label)
                         .font(DS.headline)
                         .foregroundStyle(DS.text)
                         .lineLimit(1)
@@ -524,6 +562,7 @@ private struct CaptureLaneTile: View {
                         .font(DS.caption)
                         .foregroundStyle(DS.textMuted)
                         .monospacedDigit()
+                        .contentTransition(.numericText())
                 }
 
                 Text("\(destination.aliases.first ?? destination.name.lowercased()):")
@@ -539,6 +578,7 @@ private struct CaptureLaneTile: View {
         }
         .buttonStyle(.plain)
         .glassCard(isHovered: isHovered, cornerRadius: 14)
+        .scaleEffect(isHovered ? 1.01 : 1)
         .onHover { hovering in
             withAnimation(ProMotionSprings.hover) { isHovered = hovering }
         }
@@ -569,7 +609,9 @@ private struct CaptureLaneTile: View {
     }
 
     private var countLine: String {
-        destination.itemCount == 1 ? "1 capture" : "\(destination.itemCount) captures"
+        // Zero is a state, not a statistic — "0 captures" reads as noise.
+        if destination.itemCount == 0 { return "Empty" }
+        return destination.itemCount == 1 ? "1 capture" : "\(destination.itemCount) captures"
     }
 }
 
@@ -582,17 +624,30 @@ private struct CaptureCommandRegistryRow: View {
 
     @State private var showDeleteConfirm = false
 
+    /// Same identity register as the lane tiles: a typed emoji wins the
+    /// mark slot and cleans the label; never a keyword guess.
+    private var identity: (emoji: String?, label: String) {
+        CollectionEmoji.resolve(name: destination.name, matchKeywords: false)
+    }
+
     var body: some View {
         HStack(spacing: DS.space12) {
-            Image(systemName: destination.icon)
-                .font(DS.callout.weight(.semibold))
-                .foregroundStyle(DS.accent)
-                .frame(width: 28, height: 28)
-                .background(DS.accentSoft, in: .rect(cornerRadius: 7))
-                .accessibilityHidden(true)
+            Group {
+                if let emoji = identity.emoji {
+                    Text(emoji)
+                        .font(DS.callout.weight(.semibold))
+                } else {
+                    Image(systemName: destination.icon)
+                        .font(DS.callout.weight(.semibold))
+                        .foregroundStyle(DS.accent)
+                }
+            }
+            .frame(width: 28, height: 28)
+            .background(DS.accentSoft, in: .rect(cornerRadius: 7))
+            .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: DS.space4) {
-                Text(destination.name)
+                Text(identity.label)
                     .font(DS.headline)
                     .foregroundStyle(DS.text)
                     .lineLimit(1)
@@ -696,7 +751,7 @@ private struct NeedsReviewRow: View {
     private var metaLine: String {
         var parts = ["Telegram", statusLabel]
         if let date = ISO8601.date(from: item.createdAt) {
-            parts.append(date.formatted(.relative(presentation: .named)))
+            parts.append(date.cosmoCompactAge)
         }
         return parts.joined(separator: " · ")
     }
@@ -849,12 +904,10 @@ private struct CaptureLaneQueueRow: View {
     }
 
     private var relativeDate: String {
+        // The one age voice — compact, never "ago".
         guard let date = ISO8601.date(from: item.createdAt) else { return item.createdAt }
-        let interval = Date().timeIntervalSince(date)
-        if interval < 60 { return "now" }
-        if interval < 3600 { return "\(Int(interval / 60))m ago" }
-        if interval < 86400 { return "\(Int(interval / 3600))h ago" }
-        return "\(Int(interval / 86400))d ago"
+        if Date().timeIntervalSince(date) < 60 { return "now" }
+        return date.cosmoCompactAge
     }
 
     private func icon(for kind: MediaAttachmentKind) -> String {

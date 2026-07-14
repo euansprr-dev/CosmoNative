@@ -211,11 +211,10 @@ struct InboxQueueRow: View {
     }
 
     private var relativeTime: String {
+        // The one age voice — "5m" / "2d", never "ago" (a ledger column
+        // repeating "ago" down every row is noise).
         guard let date = ISO8601.date(from: item.createdAt) else { return "" }
-        let interval = Date().timeIntervalSince(date)
-        if interval < 60 { return "now" }
-        if interval < 3600 { return "\(Int(interval / 60))m ago" }
-        if interval < 86400 { return "\(Int(interval / 3600))h ago" }
-        return "\(Int(interval / 86400))d ago"
+        if Date().timeIntervalSince(date) < 60 { return "now" }
+        return date.cosmoCompactAge
     }
 }

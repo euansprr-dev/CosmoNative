@@ -56,7 +56,7 @@ struct FocusBlockContextMenuModifier: ViewModifier {
                             userInfo: ["ownerAtomUUID": ownerAtomUUID]
                         )
                     } label: {
-                        Label("Add from Database...", systemImage: "tray.full.fill")
+                        Label("Add from Database…", systemImage: "tray.full.fill")
                     }
                 }
 

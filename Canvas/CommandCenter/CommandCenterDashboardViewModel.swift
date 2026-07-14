@@ -35,13 +35,13 @@ class PlannerumViewModel: ObservableObject {
     /// Returns false when the completion did NOT persist (missing atom, corrupt metadata,
     /// or write failure) so callers can reverse optimistic UI and withhold habit/XP credit.
     @discardableResult
-    func completeTask(taskId: String) async -> Bool {
+    func completeTask(taskId: String, completedAt: Date = Date()) async -> Bool {
         do {
             var applied = false
             let result = try await AtomRepository.shared.update(uuid: taskId) { atom in
                 guard var metadata = taskMetadataForWrite(atom, context: "PlannerumViewModel.completeTask(\(taskId.prefix(8)))") else { return }
                 metadata.isCompleted = true
-                metadata.completedAt = ISO8601.string(from: Date())
+                metadata.completedAt = ISO8601.string(from: completedAt)
                 guard let merged = atom.mergingTaskMetadata(metadata, context: "PlannerumViewModel.completeTask(\(taskId.prefix(8)))") else { return }
                 atom = merged
                 applied = true
@@ -497,6 +497,19 @@ final class CommandCenterDashboardViewModel {
     var upcomingCalendarScope: UpcomingCalendarScope = .week
     var upcomingAnchorDate: Date = Calendar.current.startOfDay(for: Date())
 
+    /// Which face Upcoming wears: the week schedule or the content calendar.
+    /// Persisted so the planning surface reopens where you left it.
+    var upcomingLens: UpcomingLens = UpcomingLens(
+        rawValue: UserDefaults.standard.string(forKey: CommandCenterDashboardViewModel.upcomingLensDefaultsKey) ?? ""
+    ) ?? .schedule {
+        didSet {
+            guard oldValue != upcomingLens else { return }
+            UserDefaults.standard.set(upcomingLens.rawValue, forKey: Self.upcomingLensDefaultsKey)
+        }
+    }
+
+    private static let upcomingLensDefaultsKey = "commandCenter.upcomingLens"
+
     var upcomingWeekStart: Date {
         CommandCenterCalendarLayout.mondayStartingWeek(containing: upcomingAnchorDate)
     }
@@ -518,6 +531,11 @@ final class CommandCenterDashboardViewModel {
     }
 
     var upcomingRangeText: String {
+        // The content lens is always a month at a glance.
+        if upcomingLens == .content {
+            return CosmoDateFormatters.monthYear.string(from: upcomingAnchorDate)
+        }
+
         let dates = upcomingVisibleDates
         guard let first = dates.first, let last = dates.last else { return "" }
 
@@ -727,7 +745,10 @@ final class CommandCenterDashboardViewModel {
                 await self?.loadWeeklyReport()
                 await self?.loadHabitReport()
             case .queue:
-                break // The queue page loads its own content atoms.
+                // Retired page — old jump targets land on Upcoming's
+                // Content lens (the queue's successor).
+                self?.upcomingLens = .content
+                self?.viewMode = .upcoming
             case .project:
                 if let uuid = self?.selectedProjectUUID {
                     await self?.loadProjectTasks(projectUUID: uuid)
@@ -1308,14 +1329,34 @@ final class CommandCenterDashboardViewModel {
 
     func shiftUpcomingRange(by offset: Int) {
         let calendar = Calendar.current
-        upcomingCalendarScope = .week
 
+        // Content lens pages by month; the schedule pages by week.
+        if upcomingLens == .content {
+            upcomingAnchorDate = calendar.startOfDay(
+                for: calendar.date(byAdding: .month, value: offset, to: upcomingAnchorDate) ?? upcomingAnchorDate
+            )
+            return
+        }
+
+        upcomingCalendarScope = .week
         upcomingAnchorDate = calendar.startOfDay(
             for: calendar.date(byAdding: .day, value: offset * 7, to: upcomingAnchorDate) ?? upcomingAnchorDate
         )
         selectedDate = upcomingAnchorDate
         syncUpcomingWeekOffset()
         Task { await loadUpcomingTasks() }
+    }
+
+    func setUpcomingLens(_ lens: UpcomingLens) {
+        guard upcomingLens != lens else { return }
+        upcomingLens = lens
+        // Re-anchor to today when switching faces — arriving on a stale
+        // month (or week) reads as a broken calendar.
+        upcomingAnchorDate = Calendar.current.startOfDay(for: Date())
+        if lens == .schedule {
+            syncUpcomingWeekOffset()
+            Task { await loadUpcomingTasks() }
+        }
     }
 
     private func syncUpcomingWeekOffset() {
@@ -2025,6 +2066,18 @@ final class CommandCenterDashboardViewModel {
 
     // MARK: - Task Actions
 
+    /// The instant a completion made from the Today surface is stamped with:
+    /// wall-clock now on today's page, else midday of the viewed day — so the
+    /// task's `completedAt` and any habit credit it triggers land on the day
+    /// you're looking at, not on wall-clock today (back-filling a day you
+    /// forgot to tick).
+    private var completionDate: Date {
+        let calendar = Calendar.current
+        guard !calendar.isDateInToday(selectedDate) else { return Date() }
+        let start = calendar.startOfDay(for: selectedDate)
+        return calendar.date(byAdding: .hour, value: 12, to: start) ?? start
+    }
+
     func toggleTaskCompletion(_ task: TaskViewModel) async {
         if task.isOccurrence {
             if task.occurrenceStatus == .completed {
@@ -2050,9 +2103,10 @@ final class CommandCenterDashboardViewModel {
             try await RecurringSeriesEngine.shared.complete(
                 templateUUID: task.uuid,
                 occurrenceDay: occurrenceDay,
+                on: completionDate,
                 trackedMinutes: nil
             )
-            await habitEngine.recordTaskCompletion(taskUUID: task.uuid)
+            await habitEngine.recordTaskCompletion(taskUUID: task.uuid, on: completionDate)
             await refreshTaskCollectionsAfterMutation()
             await loadHabits()
             return true
@@ -2072,7 +2126,7 @@ final class CommandCenterDashboardViewModel {
                 templateUUID: task.uuid,
                 occurrenceDay: occurrenceDay
             )
-            await habitEngine.reverseTaskCompletion(taskUUID: task.uuid)
+            await habitEngine.reverseTaskCompletion(taskUUID: task.uuid, on: completionDate)
             await refreshTaskCollectionsAfterMutation()
             await loadHabits()
             return true
@@ -2086,11 +2140,11 @@ final class CommandCenterDashboardViewModel {
         // Legacy materialized instances (recurrenceParentUUID set) just complete as plain
         // atoms now — occurrences are projected by RecurringSeriesEngine, so spawning a
         // "next instance" atom would re-introduce the mixed-model duplicate mess.
-        let persisted = await plannerum.completeTask(taskId: uuid)
+        let persisted = await plannerum.completeTask(taskId: uuid, completedAt: completionDate)
         guard persisted else { return false }
 
         // Habit credit only after the completion actually persisted.
-        await habitEngine.recordTaskCompletion(taskUUID: uuid)
+        await habitEngine.recordTaskCompletion(taskUUID: uuid, on: completionDate)
         await refreshTaskCollectionsAfterMutation()
         await loadHabits()
         return true
@@ -2108,7 +2162,7 @@ final class CommandCenterDashboardViewModel {
                 applied = true
             }
             guard applied, result != nil else { return false }
-            await habitEngine.reverseTaskCompletion(taskUUID: uuid)
+            await habitEngine.reverseTaskCompletion(taskUUID: uuid, on: completionDate)
             await refreshTaskCollectionsAfterMutation()
             await loadHabits()
             return true

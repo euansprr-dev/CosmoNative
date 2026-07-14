@@ -327,6 +327,9 @@ struct CosmoDocumentEditor: View {
             splitsOnReturn: splitsOnReturn,
             rowBlockID: rowBlockID,
             rowBlockKind: splitsOnReturn ? document.blocks.first?.kind : nil,
+            rowHeadingIsCollapsible: splitsOnReturn
+                ? (document.blocks.first?.heading?.isCollapsible ?? false)
+                : false,
             caretRequest: caretRequest,
             externalContentToken: externalContentToken,
             onPlainTextDidChange: { plainText in

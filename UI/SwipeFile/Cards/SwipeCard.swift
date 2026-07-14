@@ -145,11 +145,14 @@ private struct SwipeCardPaperWell: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            // Fill the page: seven lines left half the well as dead air.
+            // Bounded (not nil) so a transcript-length body never pays a
+            // full typesetting pass — the frame clips the rest anyway.
             Text(text)
                 .font(DS.callout)
                 .foregroundStyle(DS.textSecondary)
                 .lineSpacing(3)
-                .lineLimit(7)
+                .lineLimit(14)
             Spacer(minLength: 0)
         }
         .padding(14)
@@ -281,25 +284,24 @@ private struct SwipeCardFooter: View {
                     .frame(width: 6, height: 6)
                     .accessibilityLabel("Unstudied")
             }
-            if let glyph = model.platformGlyph {
-                Image(systemName: glyph)
-                    .font(DS.caption2)
-                    .foregroundStyle(DS.textMuted)
-                    .accessibilityHidden(true)
-            }
+            SwipePlatformGlyph(source: model.platformKey)
+                .frame(width: 11, height: 11)
+                .foregroundStyle(DS.textMuted)
             if let creator = model.creatorLine {
                 Text(creator)
                     .font(DS.caption)
                     .foregroundStyle(DS.textMuted)
                     .lineLimit(1)
             }
+            // "·" separates TEXT tokens only — after a bare glyph it read as
+            // an orphaned "· 9.2 · 2d".
             if let score = model.scoreLabel {
-                Text("· \(score)")
+                Text(model.creatorLine == nil ? score : "· \(score)")
                     .font(DS.caption.monospacedDigit())
                     .foregroundStyle(model.scoreTint ?? DS.textMuted)
             }
             if let age = model.ageLabel {
-                Text("· \(age)")
+                Text(model.creatorLine == nil && model.scoreLabel == nil ? age : "· \(age)")
                     .font(DS.caption)
                     .foregroundStyle(DS.textMuted)
             }

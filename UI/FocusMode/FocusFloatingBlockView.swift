@@ -117,7 +117,7 @@ struct FocusFloatingBlockView: View {
     private var contentPreview: some View {
         VStack(alignment: .leading, spacing: 6) {
             // Title
-            Text(content.title == "Loading..." ? block.title : content.title)
+            Text(content.title == "Loading…" ? block.title : content.title)
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(DS.text)
                 .lineLimit(2)

@@ -168,6 +168,29 @@ enum ClientPerfAggregator {
         var totalReach: Int
         var avgEngagementRate: Double
         var topPerformingPostIds: [String]
+        // Omitted when no transcript exists yet (nil keys don't merge, so an
+        // earlier transcript set is never clobbered by a numbers-only pass).
+        var topPerformingTranscripts: [String]?
+    }
+
+    /// Per-transcript cap — the dossier feeds agent context, not an archive.
+    static let transcriptCharCap = 4000
+
+    /// What the winning posts actually said: the published transcript
+    /// (attached by the perf import) with the draft body as fallback,
+    /// in top-post order. Pure — unit-tested.
+    static func transcripts(forTop ids: [String], from atoms: [Atom]) -> [String] {
+        let byUuid = Dictionary(uniqueKeysWithValues: atoms.map { ($0.uuid, $0) })
+        return ids.compactMap { uuid -> String? in
+            guard let atom = byUuid[uuid] else { return nil }
+            let lens = atom.metadataValue(as: ContentTranscriptLens.self)
+            let text = lens?.publishedTranscript?.isEmpty == false
+                ? lens!.publishedTranscript!
+                : (atom.body ?? "")
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            return String(trimmed.prefix(transcriptCharCap))
+        }
     }
 
     /// Posts need at least this many combined views before they can rank as
@@ -236,10 +259,12 @@ enum ClientPerfAggregator {
         guard !latest.isEmpty else { return }
 
         let summary = summarize(latest)
+        let topTranscripts = transcripts(forTop: summary.topPerformingPostIds, from: contentAtoms)
         let updated = client.mergingMetadataKeys(Overlay(
             totalReach: summary.totalReach,
             avgEngagementRate: summary.avgEngagementRate,
-            topPerformingPostIds: summary.topPerformingPostIds
+            topPerformingPostIds: summary.topPerformingPostIds,
+            topPerformingTranscripts: topTranscripts.isEmpty ? nil : topTranscripts
         ))
         _ = try? await AtomRepository.shared.update(updated)
     }

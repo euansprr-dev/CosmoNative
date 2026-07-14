@@ -171,6 +171,10 @@ enum ThinkspaceLibraryPreviewKind: Equatable {
     case media(source: String)
     case page(text: String?)
     case connection(preview: String?)
+    /// Non-document objects (portals, the live Cosmo block): an object motif
+    /// well — a blank white "page" for something that isn't a page reads
+    /// broken, not empty.
+    case objectMotif(icon: String, tint: Color)
 }
 
 /// Everything a card needs to draw an item, resolved from the canvas block's
@@ -206,7 +210,14 @@ struct ThinkspaceLibraryCardModel {
     var previewKind: ThinkspaceLibraryPreviewKind {
         if item.entityType == .connection { return .connection(preview: bodyText) }
         if let source = thumbnailSource { return .media(source: source) }
-        return .page(text: bodyText)
+        switch item.entityType {
+        case .portal:
+            return .objectMotif(icon: "rectangle.portrait.on.rectangle.portrait", tint: item.entityType.color)
+        case .cosmoAI, .cosmo:
+            return .objectMotif(icon: "circle.hexagongrid.circle", tint: DS.gilt)
+        default:
+            return .page(text: bodyText)
+        }
     }
 
     /// Card media ratio (width / height) — videos full 16:9, reels tall, posts
@@ -215,7 +226,7 @@ struct ThinkspaceLibraryCardModel {
         switch previewKind {
         case .media: return mediaAspect
         case .page: return 90.0 / 116.0
-        case .connection: return 4.0 / 5.0
+        case .connection, .objectMotif: return 4.0 / 5.0
         }
     }
 
@@ -360,7 +371,6 @@ struct ThinkspaceLibraryModeView: View {
             ThinkspaceLibraryHeader(
                 folder: selectedFolder,
                 thinkspaceName: thinkspaceName,
-                subtitle: subtitleText,
                 searchText: $searchText,
                 sortOrder: $sortOrder,
                 searchFocused: $searchFocused
@@ -477,10 +487,6 @@ struct ThinkspaceLibraryModeView: View {
 
     // MARK: Derived state
 
-    private var itemCount: Int {
-        snapshot.looseItems.count + snapshot.folders.reduce(0) { $0 + $1.items.count }
-    }
-
     private var selectedFolder: ThinkspaceLibraryFolder? {
         selectedFolderID.flatMap { id in snapshot.folders.first { $0.id == id } }
     }
@@ -500,17 +506,6 @@ struct ThinkspaceLibraryModeView: View {
 
     private var trimmedSearch: String {
         searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private var subtitleText: String {
-        if let folder = selectedFolder {
-            return "\(folder.items.count) item\(folder.items.count == 1 ? "" : "s")"
-        }
-        let folderCount = snapshot.folders.count
-        if folderCount > 0 {
-            return "\(folderCount) folder\(folderCount == 1 ? "" : "s") · \(itemCount) item\(itemCount == 1 ? "" : "s")"
-        }
-        return "\(itemCount) item\(itemCount == 1 ? "" : "s")"
     }
 
     private var shouldShowEmptyState: Bool {
@@ -667,7 +662,6 @@ struct ThinkspaceLibraryModeView: View {
 private struct ThinkspaceLibraryHeader: View {
     let folder: ThinkspaceLibraryFolder?
     let thinkspaceName: String
-    let subtitle: String
     @Binding var searchText: String
     @Binding var sortOrder: ThinkspaceLibrarySort
     var searchFocused: FocusState<Bool>.Binding
@@ -698,10 +692,6 @@ private struct ThinkspaceLibraryHeader: View {
                 .font(DS.pageTitle)
                 .foregroundStyle(DS.text)
                 .lineLimit(1)
-            Text(subtitle)
-                .font(DS.subheadline)
-                .foregroundStyle(DS.textMuted)
-                .monospacedDigit()
         }
         .animation(ProMotionSprings.gentle, value: folder?.id)
     }
@@ -775,25 +765,10 @@ private struct ThinkspaceLibrarySectionHeader: View {
     let count: Int
 
     var body: some View {
-        HStack(spacing: 10) {
-            Text(title)
-                .font(DS.subheadline.weight(.semibold))
-                .foregroundStyle(DS.textSecondary)
-            Text("\(count)")
-                .font(DS.caption.weight(.semibold))
-                .monospacedDigit()
-                .foregroundStyle(DS.textMuted)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 2)
-                .background(DS.glassInputFill, in: Capsule())
-                .overlay(Capsule().strokeBorder(DS.glassBorder, lineWidth: 0.5))
-            Rectangle()
-                .fill(DS.glassBorder)
-                .frame(height: 0.5)
-                .frame(maxWidth: .infinity)
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(title), \(count) items")
+        // The one ledger-header voice — same grammar as the Today task list
+        // and the Inbox queue.
+        CosmoSectionHeader(label: title, detail: "\(count)")
+            .accessibilityLabel("\(title), \(count) items")
     }
 }
 
@@ -1366,6 +1341,8 @@ private struct LibraryCardObject: View {
             )
         case .connection(let preview):
             LibraryConnectionPreview(preview: preview)
+        case .objectMotif(let icon, let tint):
+            LibraryObjectMotifWell(icon: icon, tint: tint)
         }
     }
 }
@@ -1437,6 +1414,24 @@ private struct LibraryMediaThumbnail: View {
         } placeholder: {
             LibraryMediaFallback(accent: accent)
         }
+    }
+}
+
+/// The object motif well: a tinted mark centered on a quiet wash — the honest
+/// face of a non-document object (portal, live Cosmo block). Title and kind
+/// live in the caption below, so the well carries only the identity.
+private struct LibraryObjectMotifWell: View {
+    let icon: String
+    let tint: Color
+
+    var body: some View {
+        ZStack {
+            Rectangle().fill(tint.opacity(0.07))
+            Image(systemName: icon)
+                .font(.system(size: 30, weight: .medium))
+                .foregroundStyle(tint.opacity(0.75))
+        }
+        .accessibilityHidden(true)
     }
 }
 

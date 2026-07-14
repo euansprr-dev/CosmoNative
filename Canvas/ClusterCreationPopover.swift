@@ -54,7 +54,7 @@ struct ClusterCreationPopover: View {
             .padding(.top, 10)
 
             // Name field
-            TextField(blockIds.isEmpty ? "Zone name..." : "Cluster name...", text: $clusterName)
+            TextField(blockIds.isEmpty ? "Zone name…" : "Cluster name…", text: $clusterName)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(DS.text)

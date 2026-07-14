@@ -151,7 +151,7 @@ struct ResearchBlockDropdownView: View {
                     ProgressView()
                         .scaleEffect(0.6)
                         .tint(accentColor)
-                    Text("Loading transcript...")
+                    Text("Loading transcript…")
                         .font(.system(size: 10))
                         .foregroundColor(DS.textMuted)
                 }
@@ -192,7 +192,7 @@ struct ResearchBlockDropdownView: View {
                     ProgressView()
                         .scaleEffect(0.6)
                         .tint(accentColor)
-                    Text("Loading annotations...")
+                    Text("Loading annotations…")
                         .font(.system(size: 10))
                         .foregroundColor(DS.textMuted)
                 }

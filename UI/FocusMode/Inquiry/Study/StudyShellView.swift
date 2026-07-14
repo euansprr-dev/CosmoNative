@@ -29,8 +29,7 @@ struct StudyShellView: View {
                     StudyChromeRow(
                         viewModel: viewModel,
                         breakpoint: breakpoint,
-                        isReceded: dockFocused,
-                        onClose: closeWorkspace
+                        isReceded: dockFocused
                     )
                     workspaceSheet(breakpoint)
                         .padding(.horizontal, DS.space10)
@@ -82,11 +81,20 @@ struct StudyShellView: View {
 
     private func arrive() async {
         scanController.configure(viewModel: viewModel)
+        // One-frame rule, with a cap: the cascade flips when the hydrate
+        // lands OR after 400ms — a slow (or hung) load must never hold the
+        // manuscript at opacity 0. The question title is already known, so
+        // arriving before the full hydrate still paints an honest hero
+        // (this was the session's pure-white-void bug).
+        let cap = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled, !hasArrived else { return }
+            hasArrived = true
+        }
         await viewModel.loadDeepDiveAndRoot()
-        // One-frame rule: flip after data lands so the page assembles on
-        // arrival instead of mounting pre-visible.
+        cap.cancel()
         try? await Task.sleep(for: .milliseconds(16))
-        hasArrived = true
+        if !hasArrived { hasArrived = true }
     }
 
     // MARK: - The workspace sheet (one rounded surface, three columns)
@@ -242,9 +250,13 @@ struct StudyShellView: View {
         )
     }
 
-    /// Esc walks back: reader → map → workspace.
+    /// Esc walks back: dock focus → reader → map → workspace. The dock peels
+    /// first — with the field focused, Esc previously fell through and read
+    /// as dead (or worse, closed the whole session mid-thought).
     private func handleEscape() {
-        if viewModel.activeReaderSourceId != nil {
+        if dockFocused {
+            dockFocused = false
+        } else if viewModel.activeReaderSourceId != nil {
             withAnimation(ProMotionSprings.focusTransition) { viewModel.dismissReader() }
         } else if viewModel.isMapOverlayPresented {
             withAnimation(ProMotionSprings.focusTransition) { viewModel.dismissMap() }

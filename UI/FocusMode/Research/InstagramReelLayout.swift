@@ -113,7 +113,7 @@ struct InstagramReelLayout: View {
                         VStack(spacing: 8) {
                             ProgressView()
                                 .tint(.white)
-                            Text("Refreshing video link...")
+                            Text("Refreshing video link…")
                                 .font(.system(size: 11))
                                 .foregroundColor(DS.textSecondary)
                         }
@@ -602,7 +602,7 @@ struct AnnotationBubbleView: View {
                     document: $document,
                     fontSize: 12,
                     compact: true,
-                    placeholder: "Add note...",
+                    placeholder: "Add note…",
                     allowSlashCommands: false,
                     allowMentions: true,
                     allowSelectionMenu: false,

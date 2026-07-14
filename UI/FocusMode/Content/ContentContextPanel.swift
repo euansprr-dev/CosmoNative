@@ -119,7 +119,7 @@ struct ContentContextPanel: View {
             ProgressView()
                 .controlSize(.small)
                 .tint(DS.textMuted)
-            Text("Loading context...")
+            Text("Loading context…")
                 .font(DS.caption2)
                 .foregroundStyle(DS.textMuted)
             Spacer()
@@ -555,7 +555,7 @@ struct ContentContextPanel: View {
             ProgressView()
                 .scaleEffect(0.6)
                 .tint(DS.text)
-            Text("Generating...")
+            Text("Generating…")
                 .font(DS.caption2)
                 .fontWeight(.medium)
         }

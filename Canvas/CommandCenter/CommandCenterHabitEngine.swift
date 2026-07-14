@@ -689,7 +689,11 @@ final class CommandCenterHabitEngine: ObservableObject {
         )
     }
 
-    func recordTaskCompletion(taskUUID: String) async {
+    /// `on:` is the day the credit lands on — wall-clock today by default, but
+    /// the viewed day when a task is completed from a past-day Today page, so
+    /// the habit fills for the day it was actually done (and its reversal
+    /// subtracts from that same day).
+    func recordTaskCompletion(taskUUID: String, on day: Date = Date()) async {
         guard let resolution = await resolveTaskHabit(taskUUID: taskUUID) else { return }
         // Time-based habits derive progress from deep-work blocks — never from
         // completion records (a count record here would be dead weight and
@@ -700,7 +704,7 @@ final class CommandCenterHabitEngine: ObservableObject {
             HabitCompletionRecord(
                 id: UUID().uuidString,
                 habitUUID: resolution.definition.id,
-                date: PlannerumFormatters.iso8601.string(from: Date()),
+                date: PlannerumFormatters.iso8601.string(from: day),
                 source: .task,
                 taskUUID: taskUUID,
                 countDelta: 1,
@@ -709,7 +713,7 @@ final class CommandCenterHabitEngine: ObservableObject {
         )
     }
 
-    func reverseTaskCompletion(taskUUID: String) async {
+    func reverseTaskCompletion(taskUUID: String, on day: Date = Date()) async {
         guard let resolution = await resolveTaskHabit(taskUUID: taskUUID) else { return }
         guard !resolution.definition.isTimeBased else { return }
         let taskMinutes = await totalTrackedMinutes(forTaskUUID: taskUUID)
@@ -717,7 +721,7 @@ final class CommandCenterHabitEngine: ObservableObject {
             HabitCompletionRecord(
                 id: UUID().uuidString,
                 habitUUID: resolution.definition.id,
-                date: PlannerumFormatters.iso8601.string(from: Date()),
+                date: PlannerumFormatters.iso8601.string(from: day),
                 source: .task,
                 taskUUID: taskUUID,
                 countDelta: -1,

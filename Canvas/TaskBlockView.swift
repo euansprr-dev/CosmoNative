@@ -127,7 +127,7 @@ struct TaskBlockView: View {
         VStack(spacing: 12) {
             ProgressView()
                 .scaleEffect(0.8)
-            Text("Loading task...")
+            Text("Loading task…")
                 .font(CosmoTypography.caption)
                 .foregroundStyle(CosmoColors.textTertiary)
         }

@@ -12,11 +12,11 @@ private enum WritingPhase: CaseIterable {
 
     var label: String {
         switch self {
-        case .analyzing: "Analyzing your idea..."
-        case .planning: "Planning structure..."
-        case .writing: "Writing your draft..."
-        case .refining: "Refining and polishing..."
-        case .finishing: "Almost there..."
+        case .analyzing: "Analyzing your idea…"
+        case .planning: "Planning structure…"
+        case .writing: "Writing your draft…"
+        case .refining: "Refining and polishing…"
+        case .finishing: "Almost there…"
         }
     }
 
@@ -99,7 +99,7 @@ private extension AIWritingProgressView {
     }
 
     var elapsedTimeLabel: some View {
-        Text("\(elapsedSeconds) seconds...")
+        Text("\(elapsedSeconds) seconds…")
             .font(DS.caption)
             .monospacedDigit()
             .foregroundStyle(DS.textMuted)

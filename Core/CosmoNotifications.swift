@@ -102,6 +102,10 @@ enum CosmoNotification {
         // Ambient knowledge
         static let pullAmbientToCanvas = Notification.Name("com.cosmo.canvas.pullAmbientToCanvas")
 
+        /// File an atom into a thinkspace without visiting it (⌘K drop-on-result).
+        /// userInfo: "atomUUID" (String), "targetThinkspaceId" (String).
+        static let moveAtomToThinkspace = Notification.Name("com.cosmo.canvas.moveAtomToThinkspace")
+
         // Lasso synthesis
         static let lassoEnclosedBlocks = Notification.Name("com.cosmo.canvas.lassoEnclosedBlocks")
 
@@ -161,6 +165,9 @@ enum CosmoNotification {
         static let navigateToCommandCenter = Notification.Name("com.cosmo.navigation.commandCenter")
         static let exitDrillIn = Notification.Name("com.cosmo.navigation.exitDrillIn")
         static let openSwipeGallery = Notification.Name("com.cosmo.navigation.openSwipeGallery")
+        /// Jump to the Ideas destination. userInfo: ["clientUUID": String] optional —
+        /// lands on that client's board when present.
+        static let openIdeas = Notification.Name("com.cosmo.navigation.openIdeas")
 
         // Dimensions
         static let navigateToDimension = Notification.Name("com.cosmo.navigation.dimension")
@@ -440,6 +447,13 @@ enum CosmoNotification {
 
         /// Add item as floating block to the currently active canvas/focus mode
         static let addItemToCurrentCanvas = Notification.Name("com.cosmo.nodegraph.addItemToCurrentCanvas")
+
+        /// A ⌘K result card was dragged out of the palette and released over the
+        /// canvas. Posted by the window-level drop catcher (which sits above all
+        /// chrome so the drop never gets swallowed by an intervening overlay).
+        /// userInfo: `uuids: [String]`, `x: CGFloat`, `y: CGFloat` — the release
+        /// point in window space, converted to canvas space by the receiver.
+        static let commandKAtomDropOnCanvas = Notification.Name("com.cosmo.nodegraph.commandKAtomDropOnCanvas")
     }
 
     // MARK: - Telegram Notifications

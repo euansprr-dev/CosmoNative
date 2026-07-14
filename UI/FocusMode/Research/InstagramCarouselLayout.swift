@@ -351,7 +351,7 @@ struct CarouselAnnotationView: View {
                     document: $document,
                     fontSize: 13,
                     compact: true,
-                    placeholder: "Add note...",
+                    placeholder: "Add note…",
                     allowSlashCommands: false,
                     allowMentions: true,
                     allowSelectionMenu: false,

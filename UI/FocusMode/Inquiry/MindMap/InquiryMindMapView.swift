@@ -18,6 +18,10 @@ struct InquiryMindMapView: View {
     @State private var offset: CGSize = .zero
     @State private var dragStart: CGSize = .zero
     @State private var scale: CGFloat = 1
+    /// The scale a pinch started from — MagnifyGesture reports the gesture's
+    /// own magnification, so without this anchor every new pinch snapped the
+    /// map back toward 1×.
+    @State private var pinchBaseScale: CGFloat = 1
     @State private var hasAppeared = false
 
     private var layout: MindMapLayout {
@@ -38,7 +42,29 @@ struct InquiryMindMapView: View {
                 .onTapGesture(count: 2) { resetViewport() }
         }
         .clipped()
+        .overlay(alignment: .bottomTrailing) { resetControl }
         .onAppear { hasAppeared = true }
+    }
+
+    /// Quiet reset affordance — double-click already resets, but nothing on
+    /// screen said so; the control also carries the tooltip that teaches it.
+    @ViewBuilder
+    private var resetControl: some View {
+        if scale != 1 || offset != .zero {
+            Button(action: resetViewport) {
+                Image(systemName: "arrow.counterclockwise")
+                    .font(DS.caption.weight(.semibold))
+                    .foregroundStyle(DS.textSecondary)
+                    .frame(width: 30, height: 30)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .glassEffect(.regular.interactive(), in: .circle)
+            .padding(DS.space16)
+            .transition(.opacity)
+            .help("Reset the view (or double-click anywhere)")
+            .accessibilityLabel("Reset map view")
+        }
     }
 
     // MARK: - Content
@@ -98,7 +124,7 @@ struct InquiryMindMapView: View {
                 }
                 context.stroke(
                     path,
-                    with: .color(color.opacity(edge.toActive ? 0.9 : 0.55)),
+                    with: .color(color.opacity(edge.toActive ? 0.9 : 0.65)),
                     style: StrokeStyle(lineWidth: edge.toActive ? 2 : 1.5, lineCap: .round)
                 )
             }
@@ -154,7 +180,10 @@ struct InquiryMindMapView: View {
     private var zoomGesture: some Gesture {
         MagnifyGesture()
             .onChanged { value in
-                scale = min(2.0, max(0.4, value.magnification))
+                scale = min(2.0, max(0.4, pinchBaseScale * value.magnification))
+            }
+            .onEnded { _ in
+                pinchBaseScale = scale
             }
     }
 
@@ -163,13 +192,20 @@ struct InquiryMindMapView: View {
             offset = .zero
             dragStart = .zero
             scale = 1
+            pinchBaseScale = 1
         }
     }
 
     private func initialCenteringOffset(in container: CGSize) -> CGSize {
         guard container.height > 0 else { return .zero }
         let verticalSlack = container.height - layout.size.height * scale
-        return CGSize(width: 0, height: max(0, verticalSlack / 2))
+        // Small trees float centered both ways — a root pinned to the left
+        // edge of a wide viewport read as a layout accident.
+        let horizontalSlack = container.width - layout.size.width * scale
+        return CGSize(
+            width: max(0, horizontalSlack / 2),
+            height: max(0, verticalSlack / 2)
+        )
     }
 
     // MARK: - Helpers

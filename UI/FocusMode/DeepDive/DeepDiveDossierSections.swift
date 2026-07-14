@@ -19,7 +19,9 @@ struct StudySectionHeader: View {
                 .tracking(2)
                 .foregroundStyle(CosmoColors.textSecondary.opacity(0.78))
             Spacer()
-            if let count {
+            // Zero is a state the teaching row narrates — "QUESTIONS 0" is
+            // dashboard noise, so the count only appears once it exists.
+            if let count, count > 0 {
                 Text("\(count)")
                     .font(CosmoTypography.caption)
                     .monospacedDigit()

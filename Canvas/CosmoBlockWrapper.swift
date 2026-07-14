@@ -246,6 +246,7 @@ struct CosmoBlockWrapper<Content: View>: View {
             .onTapGesture {
                 // Single tap to select - post notification to CanvasView, unless
                 // we're inside Connection Focus Mode (which handles selection locally).
+                AppPerformanceInstrumentation.trace("BLOCK single-tap \(block.entityType.rawValue)#\(block.entityId)")
                 guard !selectionNotificationsSuppressed else { return }
                 NotificationCenter.default.post(
                     name: CosmoNotification.Canvas.blockSelected,
@@ -255,6 +256,7 @@ struct CosmoBlockWrapper<Content: View>: View {
             }
             .onTapGesture(count: 2) {
                 // Double-tap to enter focus mode
+                AppPerformanceInstrumentation.trace("BLOCK double-tap \(block.entityType.rawValue)#\(block.entityId)")
                 CosmicHaptics.shared.play(.focusEnter)
                 if let onFocusMode = onFocusMode {
                     onFocusMode()
@@ -1039,7 +1041,7 @@ struct CosmoBlockWrapper_Previews: PreviewProvider {
                         .foregroundColor(DS.textMuted)
 
                     // Placeholder body
-                    Text("Press / for commands...")
+                    Text("Press / for commands…")
                         .font(.system(size: 14))
                         .foregroundColor(DS.textMuted)
 

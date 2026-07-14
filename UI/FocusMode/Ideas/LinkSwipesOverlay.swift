@@ -116,7 +116,7 @@ struct LinkSwipesOverlay: View {
                 .font(.system(size: 13))
                 .foregroundColor(DS.textMuted)
 
-            TextField("Search swipes by hook, topic, creator...", text: $searchText)
+            TextField("Search swipes by hook, topic, creator…", text: $searchText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .foregroundColor(DS.text)
@@ -133,7 +133,7 @@ struct LinkSwipesOverlay: View {
             if isLoading {
                 VStack(spacing: 12) {
                     ProgressView().tint(accentIndigo)
-                    Text("Loading swipe library...")
+                    Text("Loading swipe library…")
                         .font(.system(size: 12))
                         .foregroundColor(DS.textMuted)
                 }

@@ -39,7 +39,7 @@ final class ProfileTranscriptionManager {
         documentId: UUID,
         category: ProfileDocumentCategory
     ) async -> ProfileDocument? {
-        states[documentId] = TranscriptionState(isTranscribing: true, progressText: "Extracting media...")
+        states[documentId] = TranscriptionState(isTranscribing: true, progressText: "Extracting media…")
 
         // Step 1: Extract media via InstagramMediaCache
         var mediaData: InstagramMediaData
@@ -66,7 +66,7 @@ final class ProfileTranscriptionManager {
         }
 
         // Step 3: Transcribe based on content type
-        states[documentId]?.progressText = "Transcribing..."
+        states[documentId]?.progressText = "Transcribing…"
 
         var transcriptionResult: TranscriptionResult
         var isCarousel = false
@@ -114,7 +114,7 @@ final class ProfileTranscriptionManager {
             // Thumbnail-only fallback — warn if this is a reel/video (degraded result)
             let isVideoContent = mediaData.contentType == .reel || mediaData.contentType == .videoPost
             if isVideoContent {
-                states[documentId]?.progressText = "Video extraction failed, OCR on thumbnail..."
+                states[documentId]?.progressText = "Video extraction failed, OCR on thumbnail…"
             }
             let singleItem = CarouselItem(index: 0, mediaType: .image, mediaURL: thumbnailURL)
             transcriptionResult = await InstagramAutoTranscriber.shared.transcribeCarousel(
@@ -262,7 +262,7 @@ final class ProfileTranscriptionManager {
         case .analyzingWithAI(let pct):
             states[documentId]?.progressText = "AI analysis (\(Int(pct * 100))%)"
         case .mergingResults:
-            states[documentId]?.progressText = "Merging results..."
+            states[documentId]?.progressText = "Merging results…"
         case .complete:
             states[documentId]?.progressText = "Complete"
         }

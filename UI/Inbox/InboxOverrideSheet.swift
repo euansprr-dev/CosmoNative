@@ -110,7 +110,7 @@ struct InboxOverrideSheet: View {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 13))
                     .foregroundStyle(DS.textMuted)
-                TextField("Search atoms to merge into...", text: $searchQuery)
+                TextField("Search atoms to merge into…", text: $searchQuery)
                     .textFieldStyle(.plain)
                     .font(.system(size: 13))
                     .foregroundStyle(DS.text)

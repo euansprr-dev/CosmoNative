@@ -57,6 +57,9 @@ struct SwipeFilterRadio: View {
 struct SwipeFilterCheckRow: View {
     let title: String
     var systemImage: String?
+    /// Raw platform key — when set, renders the honest vector mark
+    /// (SwipePlatformGlyph) instead of the SF symbol.
+    var platformKey: String?
     var iconTint: Color = DS.textMuted
     let isOn: Bool
     let action: () -> Void
@@ -67,7 +70,12 @@ struct SwipeFilterCheckRow: View {
         Button(action: action) {
             HStack(spacing: 10) {
                 SwipeFilterCheckbox(isOn: isOn)
-                if let systemImage {
+                if let platformKey {
+                    SwipePlatformGlyph(source: platformKey)
+                        .frame(width: 14, height: 14)
+                        .foregroundStyle(iconTint)
+                        .frame(width: 20)
+                } else if let systemImage {
                     Image(systemName: systemImage)
                         .font(DS.callout.weight(.semibold))
                         .foregroundStyle(iconTint)

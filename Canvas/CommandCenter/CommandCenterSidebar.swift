@@ -7,6 +7,7 @@ import SwiftUI
 struct CommandCenterSidebar: View {
 
     var viewModel: CommandCenterDashboardViewModel
+    @State private var hoveredMode: DashboardViewMode?
 
     var body: some View {
         ScrollView(.vertical) {
@@ -40,6 +41,7 @@ struct CommandCenterSidebar: View {
             viewModel.selectedProjectUUID == nil &&
             viewModel.selectedAreaUUID == nil &&
             !viewModel.showReports
+        let isHovered = hoveredMode == mode
         let count = badgeCount(for: mode)
 
         Button {
@@ -62,9 +64,11 @@ struct CommandCenterSidebar: View {
                     .foregroundStyle(isSelected ? mode.activeTint : DS.commandCenterMutedText)
                     .frame(width: DS.space20)
 
+                // Constant weight — selection must never re-layout the row
+                // (a headline↔callout swap shifts every label's width).
                 Text(mode.label)
-                    .font(isSelected ? DS.headline : DS.callout)
-                    .foregroundStyle(isSelected ? DS.commandCenterTitleText : DS.commandCenterMutedText)
+                    .font(DS.callout.weight(.medium))
+                    .foregroundStyle(isSelected ? DS.commandCenterTitleText : (isHovered ? DS.textSecondary : DS.commandCenterMutedText))
 
                 Spacer()
 
@@ -73,22 +77,35 @@ struct CommandCenterSidebar: View {
                         .font(DS.footnote)
                         .foregroundStyle(isSelected ? mode.activeTint : DS.commandCenterMutedText)
                         .monospacedDigit()
+                        .contentTransition(.numericText())
                 }
             }
             .padding(.horizontal, DS.space10)
             .padding(.vertical, DS.space6)
             .background(
-                isSelected
-                    ? RoundedRectangle(cornerRadius: 6).fill(DS.commandCenterSelectedRowFill)
-                    : nil
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isSelected ? DS.commandCenterSelectedRowFill : (isHovered ? DS.surfaceHover.opacity(0.4) : Color.clear))
             )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) {
+                hoveredMode = hovering ? mode : (hoveredMode == mode ? nil : hoveredMode)
+            }
+        }
+        .help(helpText(for: mode))
         .dropDestination(for: String.self) { uuids, _ in
             handleDrop(uuids: uuids, onto: mode)
             return true
         }
+    }
+
+    private func helpText(for mode: DashboardViewMode) -> String {
+        if let index = DashboardViewMode.smartLists.firstIndex(of: mode) {
+            return "\(mode.label) (⌘\(index + 1))"
+        }
+        return mode.label
     }
 
     private func badgeCount(for mode: DashboardViewMode) -> Int {

@@ -147,7 +147,7 @@ struct ProjectDetailView: View {
                 SmartTaskCaptureRow(
                     viewModel: viewModel,
                     contextProjectUUID: project.uuid,
-                    placeholderText: "Add task to project..."
+                    placeholderText: "Add task to project…"
                 )
                 .padding(.horizontal, 16)
                 .padding(.vertical, 4)
@@ -204,7 +204,7 @@ struct ProjectDetailView: View {
                 viewModel: viewModel,
                 contextProjectUUID: project.uuid,
                 contextHeadingUUID: heading.id,
-                placeholderText: "Add task to \(heading.title)..."
+                placeholderText: "Add task to \(heading.title)…"
             )
             .padding(.horizontal, 16)
             .padding(.vertical, 4)
@@ -275,7 +275,7 @@ struct ProjectDetailView: View {
         VStack(alignment: .leading, spacing: DS.space8) {
             if showAddHeading {
                 HStack(spacing: DS.space8) {
-                    TextField("Heading title...", text: $newHeadingTitle)
+                    TextField("Heading title…", text: $newHeadingTitle)
                         .textFieldStyle(.plain)
                         .font(DS.headline)
                         .foregroundStyle(DS.accent)

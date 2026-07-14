@@ -26,6 +26,9 @@ struct IdeaWorkspaceToolbar: View {
         // Content & Connection workspace toolbars (CosmoChromeIsland). The parent
         // safeAreaInset already provides the row insets.
         CosmoChromeRow(insetsEnabled: false) {
+            if atomChrome == nil, !isPaneContext {
+                NavigationTrailIsland()
+            }
             CosmoChromeIsland { leadingControls }
         } center: {
             EmptyView()
@@ -42,8 +45,6 @@ struct IdeaWorkspaceToolbar: View {
         if let atomChrome {
             AtomWindowChromeLeadingControls(context: atomChrome)
             AtomWindowChromeDivider()
-        } else if !isPaneContext {
-            toolbarButton(icon: "chevron.left", help: "Back (Esc)", action: actions.onClose)
         }
         statusMenu
         clientMenu

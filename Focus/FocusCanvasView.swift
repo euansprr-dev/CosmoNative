@@ -194,9 +194,15 @@ struct FocusCanvasView: View {
             if let atom = loadedAtom {
                 loadedModeView(atom: atom)
                     .transition(.opacity)
+                    .onAppear {
+                        AppPerformanceInstrumentation.trace("FOCUS mode view appeared \(entity.type.rawValue)#\(entity.id)")
+                    }
             } else {
                 loadingFallback
                     .transition(.opacity)
+                    .onAppear {
+                        AppPerformanceInstrumentation.trace("FOCUS loading fallback shown \(entity.type.rawValue)#\(entity.id)")
+                    }
             }
         }
         .animation(ProMotionSprings.gentle, value: loadedAtom == nil)

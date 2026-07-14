@@ -49,24 +49,26 @@ extension View {
 
 // MARK: - Masthead (the editorial page voice)
 
-/// Page title + a serif marginalia count line — the Today-page masthead grammar.
-/// The detail line is the one deliberate ornament per page; counts tick with
-/// `.numericText()` as filters change instead of re-layouting.
+/// A bare page title (the masthead law): counts are never masthead marginalia
+/// — they live in shelf headers and the context pill. `detail` is reserved
+/// for a rare load-bearing editorial line, never data.
 struct SwipeMasthead: View {
     let title: String
-    let detail: String
+    var detail: String? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
                 .font(DS.pageTitle)
                 .foregroundStyle(DS.text)
-            Text(detail)
-                .font(DS.dateSerif)
-                .foregroundStyle(DS.giltMuted)
-                .monospacedDigit()
-                .contentTransition(.numericText())
-                .animation(ProMotionSprings.gentle, value: detail)
+            if let detail {
+                Text(detail)
+                    .font(DS.dateSerif)
+                    .foregroundStyle(DS.giltMuted)
+                    .monospacedDigit()
+                    .contentTransition(.numericText())
+                    .animation(ProMotionSprings.gentle, value: detail)
+            }
         }
     }
 }
@@ -170,30 +172,10 @@ struct SwipeShelfRow<Content: View>: View {
     var onSeeAll: (() -> Void)?
     @ViewBuilder let content: () -> Content
 
-    /// How far the clip boundary extends past the measure column — sized for
-    /// shadows only (radius 10 / y 2 + the 1.01 hover lift), so no readable
-    /// card sliver ever renders into the gutter where the arrows live.
-    private let clipOutset: CGFloat = 14
-    private let verticalOutset: CGFloat = 12
-    /// Arrows sit fully beyond the clip boundary, over clean page background.
-    private var arrowOffset: CGFloat { clipOutset + 4 + arrowWidth }
-    private let arrowWidth: CGFloat = 28
-    /// The hit box runs from the glyph's outer edge all the way back to the
-    /// shelf boundary, so the pointer never crosses dead space that would drop
-    /// the hover and hide the arrow before it can be clicked.
-    private var arrowHitWidth: CGFloat { arrowOffset }
-
-    @State private var scrollPosition = ScrollPosition()
-    @State private var isHovering = false
-    @State private var isHoveringArrow = false
-    @State private var canPageBack = false
-    @State private var canPageForward = false
-    @State private var metrics = SwipeShelfScrollMetrics()
-
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space10) {
             header
-            shelf
+            SwipeShelfScroller(content: content)
         }
     }
 
@@ -217,8 +199,36 @@ struct SwipeShelfRow<Content: View>: View {
             }
         }
     }
+}
 
-    private var shelf: some View {
+/// The shelf's scroller, header-agnostic — the view-aligned horizontal
+/// scroller with the outset clip and the hover-revealed margin chevrons.
+/// SwipeShelfRow wraps it in the small-caps header voice; the Ideas surface
+/// pairs it with the editorial CosmoShelfHeader.
+struct SwipeShelfScroller<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+
+    /// How far the clip boundary extends past the measure column — sized for
+    /// shadows only (radius 10 / y 2 + the 1.01 hover lift), so no readable
+    /// card sliver ever renders into the gutter where the arrows live.
+    private let clipOutset: CGFloat = 14
+    private let verticalOutset: CGFloat = 12
+    /// Arrows sit fully beyond the clip boundary, over clean page background.
+    private var arrowOffset: CGFloat { clipOutset + 4 + arrowWidth }
+    private let arrowWidth: CGFloat = 28
+    /// The hit box runs from the glyph's outer edge all the way back to the
+    /// shelf boundary, so the pointer never crosses dead space that would drop
+    /// the hover and hide the arrow before it can be clicked.
+    private var arrowHitWidth: CGFloat { arrowOffset }
+
+    @State private var scrollPosition = ScrollPosition()
+    @State private var isHovering = false
+    @State private var isHoveringArrow = false
+    @State private var canPageBack = false
+    @State private var canPageForward = false
+    @State private var metrics = SwipeShelfScrollMetrics()
+
+    var body: some View {
         ScrollView(.horizontal) {
             LazyHStack(alignment: .top, spacing: 14) {
                 content()
@@ -396,33 +406,53 @@ struct SwipeHeroCard: View {
             Text(kicker)
                 .font(DS.smallCaps)
                 .foregroundStyle(DS.giltMuted)
+            // A hero hook is content, so it speaks serif — the paired
+            // `heroTitleSerif` voice the iPhone's Up Next hero ships.
             Text(model.hookText)
-                .font(DS.title2.weight(.semibold))
+                .font(DS.heroTitleSerif)
                 .foregroundStyle(DS.text)
                 .lineSpacing(2)
                 .lineLimit(4)
                 .frame(maxWidth: 560, alignment: .leading)
             metaLine
+            if let support = supportingExcerpt {
+                // The body excerpt fills what was dead air between the hook
+                // and the CTA — the card earns its height.
+                Text(support)
+                    .font(DS.subheadline)
+                    .foregroundStyle(DS.textSecondary)
+                    .lineSpacing(3)
+                    .lineLimit(4)
+                    .frame(maxWidth: 560, alignment: .leading)
+            }
             Spacer(minLength: 0)
             ctaRow
         }
         .frame(maxHeight: .infinity, alignment: .topLeading)
     }
 
+    /// The swipe's own text beyond the hook — shown only when it says
+    /// something new (paper cards already show it in the media panel).
+    private var supportingExcerpt: String? {
+        guard !isPaper, let text = model.paperText else { return nil }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != model.hookText else { return nil }
+        return trimmed
+    }
+
     private var metaLine: some View {
         HStack(spacing: 6) {
-            if let glyph = model.platformGlyph {
-                Image(systemName: glyph)
-                    .font(DS.caption2)
-                    .accessibilityHidden(true)
-            }
+            SwipePlatformGlyph(source: model.platformKey)
+                .frame(width: 11, height: 11)
             if let creator = model.creatorLine {
                 Text(creator)
                     .font(DS.caption)
                     .lineLimit(1)
             }
             if let age = model.ageLabel {
-                Text("· \(age)")
+                // The "·" is a separator between TEXT tokens — with no
+                // creator line it read as an orphaned "· 6h" after the glyph.
+                Text(model.creatorLine == nil ? age : "· \(age)")
                     .font(DS.caption)
             }
         }

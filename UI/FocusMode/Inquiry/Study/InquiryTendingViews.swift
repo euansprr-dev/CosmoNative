@@ -25,11 +25,24 @@ struct InquiryTendingRow: View {
                 .frame(width: 18)
                 .padding(.top, 2)
                 .accessibilityHidden(true)
-            Text(proposal.reason)
-                .font(.system(.callout, design: .serif))
-                .foregroundStyle(DS.textSecondary)
-                .lineSpacing(3)
-                .multilineTextAlignment(.leading)
+            // Structured, not quoted: the raw reason repeats both questions
+            // verbatim and three proposals stacked read as an LLM wall. The
+            // titles carry the row; the full sentence lives in the tooltip.
+            VStack(alignment: .leading, spacing: 2) {
+                Text(primaryLine)
+                    .font(.system(.callout, design: .serif))
+                    .foregroundStyle(DS.text)
+                    .lineSpacing(2)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                if let secondaryLine {
+                    Text(secondaryLine)
+                        .font(DS.caption)
+                        .foregroundStyle(DS.textMuted)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                }
+            }
             Spacer(minLength: DS.space8)
             if isWorking {
                 ProgressView()
@@ -46,8 +59,29 @@ struct InquiryTendingRow: View {
         .onHover { hovering in
             withAnimation(ProMotionSprings.hover) { isHovered = hovering }
         }
+        .help(proposal.reason)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Tending suggestion: \(proposal.reason)")
+    }
+
+    private var primaryLine: String {
+        switch proposal.kind {
+        case .merge: return "Fold “\(proposal.questionTitle)”"
+        case .promote: return "Promote “\(proposal.questionTitle)” to the top level"
+        case .graduate: return "Graduate “\(proposal.questionTitle)”"
+        }
+    }
+
+    private var secondaryLine: String? {
+        switch proposal.kind {
+        case .merge:
+            guard let target = proposal.targetTitle else { return "They cover the same ground" }
+            return "into “\(target)” — they cover the same ground"
+        case .promote:
+            return nil
+        case .graduate:
+            return "into its own Deep Dive"
+        }
     }
 
     private var actions: some View {

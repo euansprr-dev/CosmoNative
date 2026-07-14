@@ -228,7 +228,7 @@ struct CreatorListView: View {
             Image(systemName: "magnifyingglass")
                 .font(DS.subheadline)
                 .foregroundStyle(DS.textMuted)
-            TextField("Search creators...", text: $searchText)
+            TextField("Search creators…", text: $searchText)
                 .textFieldStyle(.plain)
                 .font(DS.callout)
                 .foregroundStyle(DS.text)

@@ -43,13 +43,13 @@ struct TemplateFieldRenderer: View {
     private var fieldInput: some View {
         switch field.fieldType {
         case .text:
-            TemplateTextField(value: $value, placeholder: field.placeholder ?? "Type your answer...")
+            TemplateTextField(value: $value, placeholder: field.placeholder ?? "Type your answer…")
         case .url:
-            TemplateTextField(value: $value, placeholder: field.placeholder ?? "https://...")
+            TemplateTextField(value: $value, placeholder: field.placeholder ?? "https://…")
         case .longText:
-            TemplateLongTextField(value: $value, placeholder: field.placeholder ?? "Type your answer...")
+            TemplateLongTextField(value: $value, placeholder: field.placeholder ?? "Type your answer…")
         case .number:
-            TemplateNumberField(value: $value, placeholder: field.placeholder ?? "Enter a number...")
+            TemplateNumberField(value: $value, placeholder: field.placeholder ?? "Enter a number…")
         case .currency:
             TemplateCurrencyField(value: $value, placeholder: field.placeholder ?? "0.00")
         case .date:
@@ -67,7 +67,7 @@ struct TemplateFieldRenderer: View {
         case .progress:
             TemplateProgressField(value: $value)
         case .atomReference:
-            TemplateAtomRefField(value: $value, placeholder: field.placeholder ?? "Enter atom UUID...")
+            TemplateAtomRefField(value: $value, placeholder: field.placeholder ?? "Enter atom UUID…")
         case .computed:
             TemplateComputedField(value: value)
         }
@@ -250,7 +250,7 @@ private struct TemplateSelectField: View {
                 }
             } label: {
                 HStack(spacing: 4) {
-                    Text(value?.stringValue ?? placeholder ?? "Select...")
+                    Text(value?.stringValue ?? placeholder ?? "Select…")
                         .font(.system(size: 13))
                         .foregroundStyle(value != nil ? DS.text : DS.textMuted)
                     Spacer()

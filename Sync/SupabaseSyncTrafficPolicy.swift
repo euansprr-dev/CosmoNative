@@ -1,5 +1,6 @@
 import Foundation
 import Realtime
+import Auth
 
 extension ProcessInfo {
     /// True when running inside an XCTest host. Sync must NEVER touch the real
@@ -46,6 +47,41 @@ enum SupabaseSyncTrafficPolicy {
     /// (which is always false inside a test host).
     static func shouldAttemptPush(isAuthenticated: Bool, allowsNetworkSync: Bool) -> Bool {
         allowsNetworkSync && isAuthenticated
+    }
+}
+
+/// Decides whether a failed session refresh means the session is truly dead.
+///
+/// Destroying a live session is the catastrophic direction: sync dies silently
+/// (every push guard returns early, the queue accumulates, Realtime drops) until
+/// the user manually re-signs in. So only errors where the auth server itself
+/// rejected the session tear it down — anything else (offline wake, DNS, 5xx,
+/// rate limit) keeps the session and retries on the next sync pass.
+enum SupabaseSessionRefreshPolicy {
+    /// Error codes where the server said this session can never work again.
+    private static let terminalCodes: Set<Auth.ErrorCode> = [
+        .sessionNotFound,
+        .sessionExpired,
+        .refreshTokenNotFound,
+        .refreshTokenAlreadyUsed,
+        .invalidCredentials,
+        .userNotFound,
+        .userBanned,
+    ]
+
+    static func isTerminalAuthError(_ error: Error) -> Bool {
+        // Auth.AuthError explicitly: the app declares its own `AuthError` enum
+        // (SupabaseAuthService.swift) which would otherwise win the lookup and
+        // make this cast never match the SDK's error.
+        guard let authError = error as? Auth.AuthError else { return false }
+        switch authError {
+        case .sessionMissing:
+            return true
+        case .api(_, let errorCode, _, _):
+            return terminalCodes.contains(errorCode)
+        default:
+            return false
+        }
     }
 }
 

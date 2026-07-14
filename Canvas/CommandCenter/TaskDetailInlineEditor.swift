@@ -195,7 +195,7 @@ struct TaskDetailInlineEditor: View {
             // Notes
             overlayTextField(
                 text: $editNotes,
-                placeholder: "Notes...",
+                placeholder: "Notes…",
                 textColor: DS.textSecondary,
                 font: DS.subheadline,
                 axis: .vertical

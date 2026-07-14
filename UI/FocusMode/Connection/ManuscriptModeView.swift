@@ -22,9 +22,26 @@ struct ManuscriptModeView: View {
             .sorted { $0.type.sortOrder < $1.type.sortOrder }
     }
 
+    // Dark themes read the manuscript in a dark room; light themes keep vellum.
+    private var paper: Color {
+        DS.usesImmersiveFocusAppearance ? DS.bg : DS.vellum
+    }
+
+    private var ink: Color {
+        DS.usesImmersiveFocusAppearance ? DS.text : DS.inkWash
+    }
+
+    private var inkSecondary: Color {
+        DS.usesImmersiveFocusAppearance ? DS.textMuted : DS.inkFaded
+    }
+
+    private var hairline: Color {
+        DS.usesImmersiveFocusAppearance ? DS.border : DS.sepiaBorder
+    }
+
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            DS.vellum.ignoresSafeArea()
+            paper.ignoresSafeArea()
             scrollBody
             dismissButton
         }
@@ -57,7 +74,7 @@ struct ManuscriptModeView: View {
             Text(title.isEmpty ? "Untitled Framework" : title)
                 .font(DS.displaySerif)
                 .tracking(0.4)
-                .foregroundStyle(DS.inkWash)
+                .foregroundStyle(ink)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
             Text(conceptType.displayName.uppercased())
@@ -100,7 +117,7 @@ struct ManuscriptModeView: View {
                             ConnectionLinkedText(
                                 text: item.resolvedPlainText,
                                 font: .system(size: 16, weight: .regular, design: .serif),
-                                color: DS.inkWash
+                                color: ink
                             )
                             .lineSpacing(4)
                         }
@@ -141,9 +158,9 @@ struct ManuscriptModeView: View {
         Button(action: onDismiss) {
             Image(systemName: "xmark")
                 .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(DS.inkFaded)
+                .foregroundStyle(inkSecondary)
                 .frame(width: 32, height: 32)
-                .background(Circle().stroke(DS.sepiaBorder, lineWidth: 0.5))
+                .background(Circle().stroke(hairline, lineWidth: 0.5))
         }
         .buttonStyle(.plain)
         .padding(24)

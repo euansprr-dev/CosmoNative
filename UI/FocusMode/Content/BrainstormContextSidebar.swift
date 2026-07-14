@@ -147,7 +147,7 @@ struct BrainstormContextSidebar: View {
             ProgressView()
                 .controlSize(.regular)
                 .tint(DS.accent.opacity(0.3))
-            Text("Searching knowledge base...")
+            Text("Searching knowledge base…")
                 .font(DS.timestamp)
                 .foregroundStyle(DS.textMuted)
             Spacer()

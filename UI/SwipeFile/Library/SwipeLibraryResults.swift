@@ -303,8 +303,8 @@ private struct SwipeLibraryCompactRow: View {
                 Rectangle()
                     .fill(DS.glassSectionFill)
                     .overlay {
-                        Image(systemName: model.platformGlyph ?? "doc.text")
-                            .font(DS.caption)
+                        SwipePlatformGlyph(source: model.platformKey)
+                            .frame(width: 14, height: 14)
                             .foregroundStyle(DS.textMuted)
                     }
             }

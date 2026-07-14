@@ -258,22 +258,6 @@ final class CosmoWindowMessageRenderingTests: XCTestCase {
         XCTAssertEqual(activeMention?.range, (text as NSString).range(of: "@Josh before"))
     }
 
-    func testBackspaceDismissesVisibleMentionOverlay() {
-        XCTAssertTrue(
-            MentionComposerKeyHandlingPolicy.shouldDismissMentionOverlay(
-                keyCode: 51,
-                isMentionOverlayVisible: true
-            )
-        )
-
-        XCTAssertFalse(
-            MentionComposerKeyHandlingPolicy.shouldDismissMentionOverlay(
-                keyCode: 51,
-                isMentionOverlayVisible: false
-            )
-        )
-    }
-
     func testInlineMentionDraftPolicyHandlesReferencePrompt() {
         let prompt = """
         I want to write a reel for Josh based on @Walking Beam Shared Living Arbitrage Deal and use @This is why I do Sober Living as a blueprint. Give me every detail of the deal I'll need so I can use your output as reference while writing, then also give me a 1st draft.

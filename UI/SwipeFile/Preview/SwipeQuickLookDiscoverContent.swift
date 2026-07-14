@@ -29,10 +29,9 @@ struct SwipeQuickLookDiscoverContent: View {
     private var header: some View {
         HStack(spacing: 8) {
             HStack(spacing: 6) {
-                Image(systemName: post.platform.iconName)
-                    .font(DS.caption.weight(.semibold))
+                SwipePlatformGlyph(source: post.platform.rawValue)
+                    .frame(width: 13, height: 13)
                     .foregroundStyle(post.platform.swipeBrandColor)
-                    .accessibilityHidden(true)
                 Text(post.platform.displayName)
                     .font(DS.subheadline.weight(.medium))
                     .foregroundStyle(DS.textSecondary)

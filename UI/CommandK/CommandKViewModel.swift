@@ -54,11 +54,11 @@ public enum CommandKTab: String, CaseIterable, Equatable {
 
     var searchPlaceholder: String {
         switch self {
-        case .database: return "Search database..."
-        case .swipeGallery: return "Search swipes..."
-        case .ideas: return "Search ideas..."
-        case .readwise: return "Search library..."
-        case .inquiry: return "Search Deep Dives, questions, lexicon..."
+        case .database: return "Search database…"
+        case .swipeGallery: return "Search swipes…"
+        case .ideas: return "Search ideas…"
+        case .readwise: return "Search library…"
+        case .inquiry: return "Search Deep Dives, questions, lexicon…"
         }
     }
 
@@ -74,15 +74,6 @@ public enum CommandKTab: String, CaseIterable, Equatable {
 
     var headerArtworkMode: CommandKHeaderArtworkMode {
         .contentBackedMasthead
-    }
-
-    var headerPersonality: CommandKHeaderPersonality {
-        switch self {
-        case .database, .inquiry: return .objectIndex
-        case .swipeGallery: return .swipeThumbnails
-        case .ideas: return .ideaSnippets
-        case .readwise: return .libraryCovers
-        }
     }
 
     var expandedBodyStyle: CommandKExpandedBodyStyle {
@@ -102,164 +93,14 @@ enum CommandKHeaderArtworkMode: Equatable {
     case contentBackedMasthead
 }
 
-enum CommandKHeaderPersonality: Equatable {
-    case objectIndex
-    case swipeThumbnails
-    case ideaSnippets
-    case libraryCovers
-}
-
-struct CommandKHeaderPreviewContent: Equatable {
-    let tab: CommandKTab
-    let signal: CommandKHeaderPersonality
-    let items: [CommandKHeaderPreviewItem]
-    let metrics: [CommandKHeaderPreviewMetric]
-}
-
-struct CommandKHeaderPreviewItem: Identifiable, Equatable {
-    let id: String
-    let title: String
-    let subtitle: String?
-    let detail: String?
-    let thumbnailURL: String?
-    let systemImage: String
-}
-
-struct CommandKHeaderPreviewMetric: Identifiable, Equatable {
-    let id: String
-    let label: String
-    let value: String
-}
-
-enum CommandKHeaderPreviewComposer {
-    static func build(
-        recentItems: [RecentDisplayItem],
-        swipeItems: [SwipeGalleryItem],
-        ideaItems: [IdeaGalleryItem],
-        readwiseBooks: [ReadwiseLibraryBook]
-    ) -> [CommandKTab: CommandKHeaderPreviewContent] {
-        [
-            .database: databasePreview(from: recentItems),
-            .swipeGallery: swipePreview(from: swipeItems),
-            .ideas: ideaPreview(from: ideaItems),
-            .readwise: readwisePreview(from: readwiseBooks)
-        ]
-    }
-
-    static func fallback(for tab: CommandKTab) -> CommandKHeaderPreviewContent {
-        CommandKHeaderPreviewContent(
-            tab: tab,
-            signal: tab.headerPersonality,
-            items: [],
-            metrics: []
-        )
-    }
-
-    private static func databasePreview(from items: [RecentDisplayItem]) -> CommandKHeaderPreviewContent {
-        let previewItems = items.prefix(4).map { item in
-            CommandKHeaderPreviewItem(
-                id: item.id,
-                title: item.title,
-                subtitle: item.type.displayName,
-                detail: item.relativeDate,
-                thumbnailURL: item.thumbnailURL,
-                systemImage: item.type.iconName
-            )
-        }
-
-        return CommandKHeaderPreviewContent(
-            tab: .database,
-            signal: .objectIndex,
-            items: previewItems,
-            metrics: [
-                CommandKHeaderPreviewMetric(id: "recent", label: "Recent", value: "\(previewItems.count)")
-            ]
-        )
-    }
-
-    private static func swipePreview(from items: [SwipeGalleryItem]) -> CommandKHeaderPreviewContent {
-        let previewItems = items.prefix(5).map { item in
-            CommandKHeaderPreviewItem(
-                id: item.atomUUID,
-                title: item.title,
-                subtitle: item.author ?? item.creatorName ?? item.platformName,
-                detail: item.hookScore.map { String(format: "%.1f", $0) },
-                thumbnailURL: item.thumbnailUrl,
-                systemImage: item.platformIcon
-            )
-        }
-        let averageScore = average(items.compactMap(\.hookScore)).map { String(format: "%.1f", $0) }
-
-        return CommandKHeaderPreviewContent(
-            tab: .swipeGallery,
-            signal: .swipeThumbnails,
-            items: previewItems,
-            metrics: [
-                CommandKHeaderPreviewMetric(id: "score", label: "Avg score", value: averageScore ?? "-"),
-                CommandKHeaderPreviewMetric(id: "shown", label: "Showing", value: "\(previewItems.count)")
-            ]
-        )
-    }
-
-    private static func ideaPreview(from items: [IdeaGalleryItem]) -> CommandKHeaderPreviewContent {
-        let previewItems = items.prefix(4).map { item in
-            CommandKHeaderPreviewItem(
-                id: item.atomUUID,
-                title: item.title,
-                subtitle: item.clientName ?? item.status.displayName,
-                detail: item.contentFormat?.displayName ?? item.updatedAt,
-                thumbnailURL: nil,
-                systemImage: "text.badge.checkmark"
-            )
-        }
-
-        return CommandKHeaderPreviewContent(
-            tab: .ideas,
-            signal: .ideaSnippets,
-            items: previewItems,
-            metrics: [
-                CommandKHeaderPreviewMetric(id: "clients", label: "Clients", value: "\(Set(items.compactMap(\.clientName)).count)")
-            ]
-        )
-    }
-
-    private static func readwisePreview(from books: [ReadwiseLibraryBook]) -> CommandKHeaderPreviewContent {
-        let previewItems = books.prefix(5).map { book in
-            CommandKHeaderPreviewItem(
-                id: "\(book.id)",
-                title: book.title,
-                subtitle: book.author ?? book.category.displayName,
-                detail: "\(book.numHighlights) highlights",
-                thumbnailURL: book.coverImageUrl,
-                systemImage: book.category.icon
-            )
-        }
-
-        return CommandKHeaderPreviewContent(
-            tab: .readwise,
-            signal: .libraryCovers,
-            items: previewItems,
-            metrics: [
-                CommandKHeaderPreviewMetric(id: "highlights", label: "Highlights", value: "\(books.reduce(0) { $0 + $1.numHighlights })")
-            ]
-        )
-    }
-
-    private static func average(_ values: [Double]) -> Double? {
-        guard !values.isEmpty else { return nil }
-        return values.reduce(0, +) / Double(values.count)
-    }
-}
-
+// The expanded-domain masthead preview system (header personalities,
+// preview composer) was deleted July 2026 with the dead masthead shell —
+// the presentation now carries only the live per-domain counts.
 struct CommandKDomainPresentation: Equatable {
     let counts: [CommandKTab: Int]
-    let previews: [CommandKTab: CommandKHeaderPreviewContent]
 
     static let empty = CommandKDomainPresentation(
-        counts: Dictionary(uniqueKeysWithValues: CommandKTab.allCases.map { ($0, 0) } + [(.inquiry, 0)]),
-        previews: Dictionary(uniqueKeysWithValues: (CommandKTab.allCases + [.inquiry]).map {
-            ($0, CommandKHeaderPreviewComposer.fallback(for: $0))
-        })
+        counts: Dictionary(uniqueKeysWithValues: CommandKTab.allCases.map { ($0, 0) } + [(.inquiry, 0)])
     )
 
     static func build(
@@ -267,27 +108,18 @@ struct CommandKDomainPresentation: Equatable {
         swipeTotalCount: Int,
         ideaTotalCount: Int,
         deepDiveTotalCount: Int,
-        recentItems: [RecentDisplayItem],
         swipeItems: [SwipeGalleryItem],
         ideaItems: [IdeaGalleryItem],
         readwiseBooks: [ReadwiseLibraryBook]
     ) -> CommandKDomainPresentation {
-        let previews = CommandKHeaderPreviewComposer.build(
-            recentItems: recentItems,
-            swipeItems: swipeItems,
-            ideaItems: ideaItems,
-            readwiseBooks: readwiseBooks
-        )
-
-        return CommandKDomainPresentation(
+        CommandKDomainPresentation(
             counts: [
                 .database: databaseTotalCount,
                 .swipeGallery: swipeItems.isEmpty ? swipeTotalCount : swipeItems.count,
                 .ideas: ideaItems.isEmpty ? ideaTotalCount : ideaItems.count,
                 .readwise: readwiseBooks.count,
                 .inquiry: deepDiveTotalCount
-            ],
-            previews: previews
+            ]
         )
     }
 }
@@ -1615,9 +1447,6 @@ public final class CommandKViewModel {
     /// User-visible search feedback that is independent from background search phase.
     public private(set) var searchFeedback: CommandKSearchFeedback = .none
 
-    /// Whether voice input is active
-    public var isVoiceActive: Bool = false
-
     /// Multi-select type filters
     public var selectedTypeFilters: Set<AtomType> = [] {
         didSet { applyFiltersToResults() }
@@ -2701,7 +2530,15 @@ public final class CommandKViewModel {
                         ) {
                             // Rebuild with AI-boosted semantic weights and
                             // refresh the cache entry in place.
-                            let aiScoreMap = Dictionary(uniqueKeysWithValues: reRanked.map { ($0.uuid, $0.blendedScore) })
+                            // Build keyed on uuid from model-derived output —
+                            // never `uniqueKeysWithValues:`, which traps on the
+                            // duplicate keys the re-ranker can still produce if
+                            // two results share a uuid. Keep the first (highest-
+                            // ranked) score on collision.
+                            let aiScoreMap = Dictionary(
+                                reRanked.map { ($0.uuid, $0.blendedScore) },
+                                uniquingKeysWith: { first, _ in first }
+                            )
                             let reRankedResults = mergedResults.map { r in
                                 if let aiScore = aiScoreMap[r.atomUUID] {
                                     return RankedResult(
@@ -3117,6 +2954,71 @@ public final class CommandKViewModel {
         try? await CommandKActionExecutor().execute(.openAsPane(uuid: uuid))
     }
 
+    /// Place the selected result on the nearest canvas (⌥↵) — the quick
+    /// keyboard form of the actions panel's "Add to Canvas". Resolution
+    /// ladder mirrors `openSelectedAsPane()`; non-atom rows (thinkspaces,
+    /// browser pins, readwise, commands) are a deliberate no-op.
+    public func placeSelectedOnCanvas() {
+        guard !isTaskCreationMode else { return }
+
+        if let primaryAction,
+           selectedNodeId == nil || selectedNodeId == primaryAction.id {
+            return
+        }
+
+        if let selectedNodeId,
+           userCommandRows.contains(where: { $0.id == selectedNodeId }) {
+            return
+        }
+
+        if let selectedNodeId,
+           recentItems.contains(where: { $0.id == selectedNodeId }) {
+            placeAtomOnCurrentCanvas(uuid: selectedNodeId)
+            return
+        }
+
+        if case .expandedDomain = cortexMode,
+           let selectedNodeId,
+           let target = expandedDomainOpenTargets[selectedNodeId] {
+            if case .atom(let uuid) = target {
+                placeAtomOnCurrentCanvas(uuid: uuid)
+            }
+            return
+        }
+
+        if let result = selectedUnifiedSearchResultForPaneOpen() {
+            guard result.resultKind != .thinkspace,
+                  result.resultKind != .browserPin,
+                  let uuid = result.atomUUID else { return }
+            placeAtomOnCurrentCanvas(uuid: uuid)
+            return
+        }
+
+        if let uuid = selectedNodeId {
+            placeAtomOnCurrentCanvas(uuid: uuid)
+        }
+    }
+
+    /// Same notification shape as LibraryTab's single-click add: research and
+    /// connection focus modes consume it for their own canvases, MainView
+    /// covers every other surface.
+    private func placeAtomOnCurrentCanvas(uuid: String) {
+        Task { @MainActor in
+            var userInfo: [String: Any] = ["atomUUID": uuid]
+            if let atom = try? await AtomRepository.shared.fetch(uuid: uuid) {
+                userInfo["atomType"] = atom.type.rawValue
+                userInfo["title"] = atom.title ?? "Untitled"
+            }
+            try? await NodeGraphEngine.shared.recordAccess(atomUUID: uuid, type: .view)
+            NotificationCenter.default.post(
+                name: CosmoNotification.NodeGraph.addItemToCurrentCanvas,
+                object: nil,
+                userInfo: userInfo
+            )
+            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+        }
+    }
+
     private func openCommandActionAsPaneIfSupported(_ action: CommandKAction) async -> Bool {
         switch action.kind {
         case .openSwipeGallery:
@@ -3203,6 +3105,8 @@ public final class CommandKViewModel {
         case .thinkspace(let id):
             openThinkspaceAsPane(id: id)
         case .readwiseBook:
+            break
+        case .ideasBoard:
             break
         }
     }
@@ -3316,6 +3220,15 @@ public final class CommandKViewModel {
         case .readwiseBook(let id):
             selectedReadwiseBookId = id
             NotificationCenter.default.post(name: CosmoNotification.NodeGraph.hideCommandK, object: nil)
+        case .ideasBoard(let clientUUID):
+            var userInfo: [AnyHashable: Any] = [:]
+            if let clientUUID { userInfo["clientUUID"] = clientUUID }
+            // MainView lands on the Ideas destination and closes the palette.
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.openIdeas,
+                object: nil,
+                userInfo: userInfo
+            )
         }
     }
 
@@ -3340,7 +3253,7 @@ public final class CommandKViewModel {
         }
 
         isExecutingAction = true
-        actionStatusMessage = "Working..."
+        actionStatusMessage = "Working…"
 
         Task { @MainActor in
             do {
@@ -3522,6 +3435,14 @@ public final class CommandKViewModel {
             guard let body = action.payload.body else { return }
             CosmoInlineAssistantStore.shared.openPane()
             CosmoInlineAssistantStore.shared.submitPrompt(body)
+            finishAction()
+
+        case .calculator:
+            // The Raycast contract: ⏎ puts the answer on the clipboard and
+            // gets out of the way.
+            guard let result = action.payload.resultText, !result.isEmpty else { return }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(result, forType: .string)
             finishAction()
 
         case .askCortex:
@@ -3982,10 +3903,6 @@ public final class CommandKViewModel {
         domainPresentation.counts
     }
 
-    var headerPreviews: [CommandKTab: CommandKHeaderPreviewContent] {
-        domainPresentation.previews
-    }
-
     public var deepDiveTotalCount: Int = 0
 
     private func refreshDomainPresentation() {
@@ -3994,7 +3911,6 @@ public final class CommandKViewModel {
             swipeTotalCount: swipeTotalCount,
             ideaTotalCount: ideaTotalCount,
             deepDiveTotalCount: deepDiveTotalCount,
-            recentItems: recentItems,
             swipeItems: swipeGalleryItems,
             ideaItems: ideaGalleryItems,
             readwiseBooks: ReadwiseBookStore.shared.books
@@ -4727,12 +4643,11 @@ public final class CommandKViewModel {
             }
 
             // Convert to gallery items — exclude activated ideas (they're content pieces now)
-            let activatedStatuses: Set<IdeaStatus> = [.inProduction, .published, .archived]
             var items: [IdeaGalleryItem] = []
             for atom in ideaAtoms {
                 let clientName = atom.ideaClientUUID.flatMap { clientNameCache[$0] }
                 if let galleryItem = atom.toIdeaGalleryItem(clientName: clientName),
-                   !activatedStatuses.contains(galleryItem.status) {
+                   !galleryItem.status.isActivated {
                     items.append(galleryItem)
                 }
             }

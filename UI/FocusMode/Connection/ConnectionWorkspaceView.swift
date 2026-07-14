@@ -17,23 +17,54 @@ struct ConnectionWorkspaceView: View {
     let isRefreshingInsights: Bool
     let reviewProposal: CosmoAssistantProposal?
     let reviewSourceText: String
+    /// Staged inserts grouped by the section they target — rendered as in-place
+    /// ghost rows on the Board and in the Outline (Manuscript still uses the
+    /// full-screen `reviewProposal` diff).
+    var pendingInsertsBySection: [ConnectionSectionType: [ConnectionPendingInsert]] = [:]
     let isPaneContext: Bool
     let actions: ConnectionWorkspaceActions
+
+    private static let sheetCorner: CGFloat = 14
 
     var body: some View {
         GeometryReader { geometry in
             let breakpoint = ConnectionWorkspaceBreakpoint(width: geometry.size.width)
-            columns(breakpoint: breakpoint)
-                .overlay(alignment: .leading) { navigatorOverlay(breakpoint: breakpoint) }
-                .overlay(alignment: .trailing) { inspectorOverlay(breakpoint: breakpoint) }
-                .onChange(of: geometry.size.width, initial: true) { _, width in
-                    let resolved = ConnectionWorkspaceBreakpoint(width: width)
-                    if workspace.breakpoint != resolved {
-                        workspace.breakpoint = resolved
-                    }
+            VStack(spacing: DS.space8) {
+                ConnectionWorkspaceToolbar(
+                    workspace: workspace,
+                    breakpoint: breakpoint,
+                    isPaneContext: isPaneContext,
+                    actions: actions
+                )
+                workspaceSheet(breakpoint: breakpoint)
+                    .padding(.horizontal, DS.space10)
+                    .padding(.bottom, DS.space10)
+            }
+            .onChange(of: geometry.size.width, initial: true) { _, width in
+                let resolved = ConnectionWorkspaceBreakpoint(width: width)
+                if workspace.breakpoint != resolved {
+                    workspace.breakpoint = resolved
                 }
+            }
         }
         .background(DS.bg)
+    }
+
+    // MARK: - The workspace sheet (one rounded surface, three columns)
+
+    /// Study-shell anatomy: the chrome islands live in their own band above,
+    /// and navigator | center | inspector are welded by hairlines inside ONE
+    /// rounded sheet — the sheet is the only rectangle on the screen.
+    private func workspaceSheet(breakpoint: ConnectionWorkspaceBreakpoint) -> some View {
+        columns(breakpoint: breakpoint)
+            .overlay(alignment: .leading) { navigatorOverlay(breakpoint: breakpoint) }
+            .overlay(alignment: .trailing) { inspectorOverlay(breakpoint: breakpoint) }
+            .background(DS.bg)
+            .clipShape(RoundedRectangle(cornerRadius: Self.sheetCorner, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: Self.sheetCorner, style: .continuous)
+                    .stroke(DS.borderSubtle, lineWidth: 1)
+            )
     }
 
     // MARK: - Columns
@@ -102,26 +133,11 @@ struct ConnectionWorkspaceView: View {
     private func centerColumn(breakpoint: ConnectionWorkspaceBreakpoint) -> some View {
         centerContent
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .safeAreaInset(edge: .top, spacing: 0) {
-                // The chrome row owns its own insets (CosmoChromeMetrics).
-                ConnectionWorkspaceToolbar(
-                    workspace: workspace,
-                    breakpoint: breakpoint,
-                    isPaneContext: isPaneContext,
-                    actions: actions
-                )
-                .padding(.bottom, DS.space6)
-            }
     }
 
     @ViewBuilder
     private var centerContent: some View {
-        if let reviewProposal {
-            ConnectionWorkspaceReviewView(
-                proposal: reviewProposal,
-                sourceText: reviewSourceText
-            )
-        } else if let pushed = workspace.pushedSection {
+        if let pushed = workspace.pushedSection {
             ConnectionSectionDetailView(
                 sectionType: pushed,
                 viewModel: viewModel,
@@ -132,20 +148,39 @@ struct ConnectionWorkspaceView: View {
         } else {
             switch workspace.viewMode {
             case .board:
-                ConnectionBoardView(viewModel: viewModel, workspace: workspace, actions: actions)
-            case .outline:
-                ConnectionOutlineView(viewModel: viewModel, workspace: workspace, actions: actions)
-            case .manuscript:
-                ManuscriptModeView(
-                    title: title,
-                    conceptType: viewModel.state.conceptType,
-                    sections: viewModel.state.sections,
-                    onDismiss: {
-                        withAnimation(ProMotionSprings.focusTransition) {
-                            workspace.viewMode = .board
-                        }
-                    }
+                ConnectionBoardView(
+                    viewModel: viewModel,
+                    workspace: workspace,
+                    actions: actions,
+                    pendingInsertsBySection: pendingInsertsBySection
                 )
+            case .outline:
+                ConnectionOutlineView(
+                    viewModel: viewModel,
+                    workspace: workspace,
+                    actions: actions,
+                    pendingInsertsBySection: pendingInsertsBySection
+                )
+            case .manuscript:
+                // Manuscript keeps the full-screen woven diff while a proposal
+                // is pending; Board/Outline stage in place instead.
+                if let reviewProposal {
+                    ConnectionWorkspaceReviewView(
+                        proposal: reviewProposal,
+                        sourceText: reviewSourceText
+                    )
+                } else {
+                    ManuscriptModeView(
+                        title: title,
+                        conceptType: viewModel.state.conceptType,
+                        sections: viewModel.state.sections,
+                        onDismiss: {
+                            withAnimation(ProMotionSprings.focusTransition) {
+                                workspace.viewMode = .board
+                            }
+                        }
+                    )
+                }
             }
         }
     }

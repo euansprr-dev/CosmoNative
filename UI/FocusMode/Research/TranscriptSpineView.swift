@@ -453,7 +453,7 @@ struct AnnotationDetailPopover: View {
         VStack(alignment: .leading, spacing: 6) {
             // Highlighted text excerpt
             if let highlighted = annotation.highlightedText, !highlighted.isEmpty {
-                Text("\"\(highlighted.prefix(80))\(highlighted.count > 80 ? "..." : "")\"")
+                Text("\"\(highlighted.prefix(80))\(highlighted.count > 80 ? "…" : "")\"")
                     .font(.system(size: 11))
                     .foregroundColor(DS.textMuted)
                     .italic()
@@ -481,7 +481,7 @@ struct AnnotationDetailPopover: View {
                     enterEditMode(annotation)
                 }
         } else {
-            Text("Click to add a note...")
+            Text("Click to add a note…")
                 .font(.system(size: 12))
                 .foregroundColor(DS.textMuted)
                 .italic()
@@ -495,7 +495,7 @@ struct AnnotationDetailPopover: View {
     private func editableContent(_ annotation: ResearchAnnotation) -> some View {
         ZStack(alignment: .topLeading) {
             if editContent.isEmpty {
-                Text("Add a note...")
+                Text("Add a note…")
                     .font(.system(size: 12))
                     .foregroundColor(DS.textMuted)
                     .padding(.top, 4)
@@ -506,7 +506,7 @@ struct AnnotationDetailPopover: View {
                 document: $editDocument,
                 fontSize: 12,
                 compact: true,
-                placeholder: "Add a note...",
+                placeholder: "Add a note…",
                 allowSlashCommands: false,
                 allowMentions: true,
                 allowSelectionMenu: false,

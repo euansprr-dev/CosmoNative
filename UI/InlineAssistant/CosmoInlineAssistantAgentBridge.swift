@@ -260,6 +260,53 @@ struct CosmoInlineAssistantAgentBridge {
             }
         }
 
+        // Go-deeper backstop (concept collaborator): the whole point of the
+        // concept partner is to keep pulling the idea further, so every turn —
+        // including one that staged a capture — must end with ONE deepening
+        // question. The prompt says so, but prompts alone let a "let me seed
+        // that" turn end flat; this forces the question when the turn produced
+        // work but no "?". Mirrors the action route's stage-contract nudge.
+        if store.activeSubmissionSkillID == CosmoInlineAssistantSkillID.concept.rawValue,
+           route == .answer,
+           preparedRequest.pipelineSteps.isEmpty,
+           !Task.isCancelled {
+            let lastAnswer = store.paneMessages.last {
+                $0.role == .assistant && $0.proposalID == nil
+            }?.content ?? ""
+            let askedQuestion = lastAnswer.contains("?")
+            let didWork = store.proposals.count > proposalCount
+                || store.paneMessages.filter({ $0.role == .assistant && $0.proposalID == nil }).count > paneAnswerCount
+            if didWork, !askedQuestion {
+                print("[AGENT-PERF] inline concept go-deeper nudge: turn ended without a question")
+                let nudge = await CosmoAgentService.shared.processMessage(
+                    "Continue: you ended the turn without a deepening question. Reply now with a single answer_in_assistant_pane containing exactly ONE short follow-up question that pulls this concept one step further, phrased in the user's own vocabulary. Do not stage any more edits and do not restate what you already said — only the one question. (Skip only if the concept is genuinely complete, in which case say so in one clause.)",
+                    conversationId: preparedRequest.conversationID,
+                    source: .inApp,
+                    tierOverride: preparedRequest.tierOverride,
+                    intentOverride: preparedRequest.intentOverride,
+                    systemPromptOverride: preparedRequest.systemPromptOverride,
+                    volatileContextOverride: preparedRequest.volatileContextOverride,
+                    responseMode: preparedRequest.responseMode,
+                    profileToolBundles: preparedRequest.profileToolBundles,
+                    forcedToolBundles: preparedRequest.forcedToolBundles,
+                    lightweightContext: true,
+                    onToolActivity: { event in
+                        Task { @MainActor in
+                            store.receiveToolActivity(event)
+                        }
+                    },
+                    onPaneAnswerDelta: { delta in
+                        Task { @MainActor in
+                            store.receivePaneAnswerDelta(delta)
+                        }
+                    }
+                )
+                if !nudge.0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    response = nudge.0
+                }
+            }
+        }
+
         CosmoAgentService.shared.noteInlinePrefixWritten()
         let perfTotalMs = Int(Date().timeIntervalSince(perfStart) * 1000)
         print("[AGENT-PERF] inline TOTAL=\(perfTotalMs)ms (prepare=\(perfPrepareMs)ms, agentLoop=\(perfTotalMs - perfPrepareMs)ms)")

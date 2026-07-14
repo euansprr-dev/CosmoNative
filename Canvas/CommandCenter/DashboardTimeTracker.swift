@@ -17,10 +17,15 @@ struct DashboardTimeTracker: View {
     @State private var streak: (current: Int, best: Int) = (0, 0)
     @State private var startHovered = false
 
-    /// Books' arc: just past a half circle, open at the bottom — desktop scale.
-    private static let arcSpan = 0.56
+    /// Books' arc: exactly a half circle — the ends land AT the horizontal
+    /// diameter, never curling back in at the bottom (0.56 read amateur next
+    /// to Books; matched against the iPhone gauge, recipes §15).
+    private static let arcSpan = 0.5
     private static let arcDiameter: CGFloat = 208
     private static let arcStroke: CGFloat = 9
+    /// The visible band: the top half of the circle plus the round caps that
+    /// straddle the horizontal (stroke centers on the path).
+    private static var arcBandHeight: CGFloat { arcDiameter / 2 + arcStroke }
 
     var body: some View {
         HStack(alignment: .center, spacing: DS.space24) {
@@ -69,8 +74,11 @@ struct DashboardTimeTracker: View {
     private var gauge: some View {
         TimelineView(.periodic(from: .now, by: sessionEngine.isTimerRunning ? 1 : 60)) { _ in
             ZStack {
+                // DS.border, not borderSubtle: this gauge sits directly on the
+                // page (the iPhone's sits in a white container) — the subtle
+                // rung disappears against DS.bg.
                 gaugeCircle(trim: Self.arcSpan)
-                    .stroke(DS.borderSubtle, style: StrokeStyle(lineWidth: Self.arcStroke, lineCap: .round))
+                    .stroke(DS.border, style: StrokeStyle(lineWidth: Self.arcStroke, lineCap: .round))
                 gaugeCircle(trim: Self.arcSpan * arcProgress)
                     .stroke(DS.accent, style: StrokeStyle(lineWidth: Self.arcStroke, lineCap: .round))
                     .animation(reduceMotion ? nil : ProMotionSprings.gentle, value: arcProgress)
@@ -78,7 +86,7 @@ struct DashboardTimeTracker: View {
                 centerContent
             }
             .frame(width: Self.arcDiameter, height: Self.arcDiameter)
-            .frame(height: Self.arcDiameter * 0.70, alignment: .top)
+            .frame(height: Self.arcBandHeight, alignment: .top)
         }
     }
 
@@ -92,8 +100,17 @@ struct DashboardTimeTracker: View {
     private var centerContent: some View {
         VStack(spacing: DS.space2) {
             HStack(alignment: .firstTextBaseline, spacing: DS.space4) {
+                // Hidden mirror (the iPhone gauge's optical-balance trick):
+                // the goal-met check gets a phantom twin on the leading side
+                // so the numerals stay optically centered when it appears.
+                if liveGoalMet {
+                    Image(systemName: "checkmark")
+                        .font(DS.caption.weight(.semibold))
+                        .hidden()
+                        .accessibilityHidden(true)
+                }
                 Text(formattedLiveTotal)
-                    .font(.system(size: 36, weight: .medium, design: .serif))
+                    .font(DS.gaugeTitleSerif)
                     .monospacedDigit()
                     .foregroundStyle(DS.text)
                     .contentTransition(.numericText())
@@ -121,14 +138,14 @@ struct DashboardTimeTracker: View {
             .buttonStyle(.plain)
             .help("Open reports")
         }
-        // Optical centering: the band only spans the top ~60% of the circle,
-        // so its perceived center sits ABOVE the geometric one — lift the
-        // block to the band's visual midpoint so the arc crowns the numerals
-        // instead of floating far over them.
+        // Optical center rides low (Books' placement): the text column's
+        // bottom lands at the arc-cap level, where the chord is widest —
+        // lifted off the frame's geometric center, which now sits ON the
+        // half-circle's chord.
         .minimumScaleFactor(0.7)
         .allowsTightening(true)
         .frame(maxWidth: Self.arcDiameter - 68)
-        .offset(y: -Self.arcDiameter * 0.12)
+        .offset(y: -Self.arcDiameter * 0.15)
     }
 
     private var goalLabel: String {
@@ -155,7 +172,9 @@ struct DashboardTimeTracker: View {
 
     private var rightColumn: some View {
         VStack(alignment: .leading, spacing: DS.space10) {
-            Text("Today's Deep Work")
+            // "Deep Work", not "Today's Deep Work" — the page title already
+            // says Today; a section label must never echo it.
+            Text("Deep Work")
                 .font(DS.smallCaps)
                 .foregroundStyle(DS.giltMuted)
 
@@ -224,7 +243,7 @@ struct DashboardTimeTracker: View {
                 : "\(streak.current) \(days) and counting"
         }
         if streak.best > 0 {
-            return "Best streak \(streak.best) days"
+            return "Best streak \(streak.best) day\(streak.best == 1 ? "" : "s")"
         }
         return "Meet your goal to start a streak"
     }

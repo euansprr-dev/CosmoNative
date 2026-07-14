@@ -619,7 +619,7 @@ struct InquiryNotebookPane: View {
             renamingQuestionUUID = node.atomUUID
             renameDraft = viewModel.questionTitle(for: node.atomUUID)
         }
-        Button("Reparent...") {
+        Button("Reparent…") {
             reparentingQuestionUUID = node.atomUUID
         }
         Button("Make Root Question") {

@@ -321,7 +321,7 @@ enum CosmoInlineAssistantActivityLabel {
 
         guard normalized.count > maxStatusLength else { return normalized }
         let end = normalized.index(normalized.startIndex, offsetBy: maxStatusLength - 3)
-        return String(normalized[..<end]).trimmingCharacters(in: .whitespacesAndNewlines) + "..."
+        return String(normalized[..<end]).trimmingCharacters(in: .whitespacesAndNewlines) + "…"
     }
 }
 
@@ -942,10 +942,15 @@ final class CosmoInlineAssistantStore: ObservableObject {
     ) {
         let effectiveRoute = route ?? activeSubmissionRoute
         let shouldOpenPane = effectiveRoute != .action || activeSubmissionShouldOpenPaneForAnswer
-        let finalAnswer = CraftPaneAnswerRepair.repairedAnswer(
+        var finalAnswer = CraftPaneAnswerRepair.repairedAnswer(
             forRawSkillID: activeSubmissionSkillID,
             content: answer
         ) ?? answer
+        // The concept collaborator must never use em dashes (user preference);
+        // the prompt says so, this guarantees it even if the model slips.
+        if activeSubmissionSkillID == CosmoInlineAssistantSkillID.concept.rawValue {
+            finalAnswer = ConnectionSurfaceSerializer.removeEmDashes(finalAnswer)
+        }
 
         if shouldOpenPane {
             isPaneRequested = true
@@ -968,7 +973,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
                 paneMessages[index].activitySteps = takeFinalizedRunSteps()
             }
             streamingPaneMessageID = nil
-            followUpSuggestions = Self.followUps(afterAnswerRoute: effectiveRoute)
+            followUpSuggestions = Self.followUps(afterAnswerRoute: effectiveRoute, skillID: activeSubmissionSkillID)
             persistActiveSession()
             return
         }
@@ -983,7 +988,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
             activitySteps: takeFinalizedRunSteps(),
             runID: currentRunID
         ))
-        followUpSuggestions = Self.followUps(afterAnswerRoute: effectiveRoute)
+        followUpSuggestions = Self.followUps(afterAnswerRoute: effectiveRoute, skillID: activeSubmissionSkillID)
         persistActiveSession()
     }
 
@@ -999,8 +1004,18 @@ final class CosmoInlineAssistantStore: ObservableObject {
         return suggestions
     }
 
-    static func followUps(afterAnswerRoute route: CosmoInlineAssistantRoute?) -> [String] {
-        ["Stage that as an edit", "Go deeper", "Give me an example"]
+    static func followUps(
+        afterAnswerRoute route: CosmoInlineAssistantRoute?,
+        skillID: String? = nil
+    ) -> [String] {
+        if skillID == CosmoInlineAssistantSkillID.concept.rawValue {
+            // The concept partner already asks its own deepening question in
+            // prose and captures as you go — so these continue the dialogue
+            // instead of implying it didn't go deep or offering to author
+            // content for the user.
+            return ["Keep developing this", "That's not quite what I mean", "Move to another angle"]
+        }
+        return ["Stage that as an edit", "Go deeper", "Give me an example"]
     }
 
     /// Whether this message is still receiving streamed deltas — streaming rows

@@ -57,7 +57,7 @@ struct BlockContextMenu: View {
         if block.entityType == .content {
             items.append(MenuItem("compileSpokes", icon: "sparkles.rectangle.stack", label: "Compile Spokes"))
         }
-        items.append(MenuItem("connect", icon: "link", label: "Connect to..."))
+        items.append(MenuItem("connect", icon: "link", label: "Connect to…"))
         if selectedBlockIds.count >= 2 {
             items.append(MenuItem("createCluster", icon: "square.3.layers.3d", label: "Create Cluster"))
         }

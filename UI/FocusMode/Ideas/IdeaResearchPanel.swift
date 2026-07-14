@@ -231,7 +231,7 @@ struct IdeaResearchPanel: View {
         VStack(spacing: 8) {
             ProgressView()
                 .controlSize(.small)
-            Text("Finding stats, studies & evidence...")
+            Text("Finding stats, studies & evidence…")
                 .font(DS.caption2)
                 .foregroundStyle(DS.textMuted)
         }

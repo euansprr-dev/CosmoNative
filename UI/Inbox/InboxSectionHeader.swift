@@ -9,26 +9,14 @@ struct InboxSectionHeader: View {
     let itemCount: Int
 
     var body: some View {
-        HStack(spacing: DS.space8) {
-            Text(title.uppercased())
-                .font(DS.caption.weight(.semibold))
-                .tracking(1.4)
-                .foregroundStyle(DS.textMuted)
-
-            Text("\(itemCount)")
-                .font(DS.caption2.weight(.semibold))
-                .monospacedDigit()
-                .foregroundStyle(DS.textMuted)
-
-            Rectangle()
-                .fill(DS.borderSubtle)
-                .frame(height: 0.5)
-        }
-        .padding(.horizontal, DS.space16)
-        .padding(.top, DS.space16)
-        .padding(.bottom, DS.space6)
-        .background(DS.bg.opacity(0.96))
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(title), \(itemCount) capture\(itemCount == 1 ? "" : "s")")
+        // The one ledger-header voice (CosmoSectionHeader), wrapped with the
+        // pinned-header background so the queue's temporal sections stay
+        // legible while rows scroll beneath.
+        CosmoSectionHeader(label: title, detail: "\(itemCount)")
+            .padding(.horizontal, DS.space16)
+            .padding(.top, DS.space16)
+            .padding(.bottom, DS.space6)
+            .background(DS.bg.opacity(0.96))
+            .accessibilityLabel("\(title), \(itemCount) capture\(itemCount == 1 ? "" : "s")")
     }
 }

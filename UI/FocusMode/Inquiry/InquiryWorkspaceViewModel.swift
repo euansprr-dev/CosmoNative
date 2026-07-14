@@ -2729,7 +2729,7 @@ final class InquiryWorkspaceViewModel {
         let cleaned = selection
             .replacingOccurrences(of: "\n", with: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let prefix = cleaned.count > 84 ? String(cleaned.prefix(84)) + "..." : cleaned
+        let prefix = cleaned.count > 84 ? String(cleaned.prefix(84)) + "…" : cleaned
         if prefix.lowercased().hasPrefix("what") || prefix.hasSuffix("?") {
             return prefix
         }

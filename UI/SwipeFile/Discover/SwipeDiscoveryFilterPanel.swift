@@ -64,7 +64,7 @@ struct SwipeDiscoveryFilterPanel: View {
             ForEach(platforms, id: \.rawValue) { platform in
                 SwipeFilterCheckRow(
                     title: SwipeDiscoveryFilterPresentation.platformLabel(platform),
-                    systemImage: platform.iconName,
+                    platformKey: platform.rawValue,
                     iconTint: platform.swipeBrandColor,
                     isOn: resolvedPlatforms.contains(platform)
                 ) {
@@ -109,10 +109,9 @@ struct SwipeDiscoveryFilterPanel: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 7) {
-                Image(systemName: platform.iconName)
-                    .font(DS.caption.weight(.semibold))
+                SwipePlatformGlyph(source: platform.rawValue)
+                    .frame(width: 12, height: 12)
                     .foregroundStyle(platform.swipeBrandColor)
-                    .accessibilityHidden(true)
                 Text(SwipeDiscoveryFilterPresentation.platformLabel(platform))
                     .font(DS.subheadline.weight(.semibold))
                     .foregroundStyle(DS.textSecondary)

@@ -64,6 +64,10 @@ struct CosmoApp: App {
         // Migrate Supabase credentials from hardcoded to Keychain (one-time)
         APIKeys.seedSupabaseIfNeeded()
 
+        // Instant keychain restore — a signed-in Mac must never flash the
+        // Welcome threshold while the async session check runs.
+        SupabaseAuthService.shared.restoreFromKeychainInstantly()
+
         // Session distiller: turns idle inline-assistant sessions into durable
         // memory (fires on app-resign-active and session switches).
         CosmoSessionDistiller.shared.activate()
@@ -71,6 +75,14 @@ struct CosmoApp: App {
         // Check for existing Supabase Auth session BEFORE starting Telegram bridge.
         // This ensures isSignedIn is set before the bridge decides whether to poll or skip.
         Task {
+            // Adopt an existing pre-auth workspace: a Mac with real local data
+            // must never see the Welcome wall — the gate is for empty Macs.
+            if SupabaseAuthService.shared.workspaceMode == nil,
+               let counts = try? await AtomRepository.shared.countsByType(),
+               counts.values.reduce(0, +) > 0 {
+                SupabaseAuthService.shared.establishLocalWorkspace()
+            }
+
             await SupabaseAuthService.shared.checkExistingSession()
             if SupabaseAuthService.shared.isSignedIn {
                 RealtimeSyncService.shared.startListening()

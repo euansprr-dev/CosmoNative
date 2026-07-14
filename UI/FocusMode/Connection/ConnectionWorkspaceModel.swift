@@ -199,6 +199,23 @@ final class ConnectionWorkspaceModel {
     }
 }
 
+// MARK: - Pending staged insert
+
+/// A staged (not-yet-accepted) concept-collaborator insertion, routed to the
+/// board/outline section it targets. This is what lets the assistant's edits
+/// render as ghost rows *inside* the section card (or inline in Outline) with
+/// their own ✓/✗ — instead of the full-screen linear text diff. Built from a
+/// pending `CosmoAssistantProposalOperation` via
+/// `ConnectionSurfaceSerializer.pendingInsert(for:in:)`.
+struct ConnectionPendingInsert: Identifiable, Equatable {
+    let proposalID: UUID
+    let operationID: UUID
+    let section: ConnectionSectionType
+    let bullets: [String]
+
+    var id: UUID { operationID }
+}
+
 // MARK: - Host data + actions
 
 /// Linked/suggested source data assembled by the host focus-mode view.
@@ -240,4 +257,8 @@ struct ConnectionWorkspaceActions {
     var onDismissInsight: (UUID) -> Void = { _ in }
     var onTitleCommit: () -> Void = {}
     var onClose: () -> Void = {}
+    /// Accept a single staged insert from its section card / outline row.
+    var onAcceptInsert: (ConnectionPendingInsert) -> Void = { _ in }
+    /// Reject a single staged insert from its section card / outline row.
+    var onRejectInsert: (ConnectionPendingInsert) -> Void = { _ in }
 }

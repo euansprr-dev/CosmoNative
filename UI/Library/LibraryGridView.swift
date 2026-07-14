@@ -12,6 +12,9 @@ struct LibraryGridView: View {
     var selectedUUIDs: Set<String> = []
     var onToggleSelection: ((String) -> Void)? = nil
 
+    /// Thinkspace card currently hovered by a ⌘K drag (filing verb).
+    @State private var fileDropTargetUUID: String?
+
     // Responsive columns based on available width
     private let minCardWidth: CGFloat = 248
     private let cardSpacing: CGFloat = CommandKMetrics.cardSpacing
@@ -25,13 +28,7 @@ struct LibraryGridView: View {
             ScrollView {
                 MasonryLayout(columnCount: columnCount, spacing: cardSpacing) {
                     ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                        LibraryCardView(
-                            item: item,
-                            cardWidth: cardWidth,
-                            onDelete: onItemDelete,
-                            isSelected: selectedUUIDs.contains(item.uuid),
-                            onToggleSelection: onToggleSelection.map { closure in { closure(item.uuid) } }
-                        )
+                        interactiveCard(item, cardWidth: cardWidth)
                             .onTapGesture { onItemTap(item) }
                             .onTapGesture(count: 2) { onItemDoubleTap(item) }
                             .transition(.opacity.combined(with: .scale(scale: 0.95)))
@@ -43,6 +40,59 @@ struct LibraryGridView: View {
                 }
                 .padding(CommandKMetrics.contentPadding)
             }
+        }
+    }
+
+    /// Wires the ⌘K retrieve/filing drag verbs onto a card: atoms drag out,
+    /// thinkspaces accept drops. Both are inert outside a ⌘K drag session.
+    @ViewBuilder
+    private func interactiveCard(_ item: LibraryItem, cardWidth: CGFloat) -> some View {
+        let card = LibraryCardView(
+            item: item,
+            cardWidth: cardWidth,
+            onDelete: onItemDelete,
+            isSelected: selectedUUIDs.contains(item.uuid),
+            onToggleSelection: onToggleSelection.map { closure in { closure(item.uuid) } }
+        )
+
+        if item.kind == .atom {
+            card.modifier(
+                CommandKDragOutModifier(
+                    uuid: item.uuid,
+                    title: item.title,
+                    subtitle: item.typeName,
+                    accent: item.color,
+                    symbolName: item.icon,
+                    thumbnailURL: item.thumbnailURL,
+                    selectedUUIDs: { selectedUUIDs }
+                )
+            )
+        } else if item.kind == .thinkspace {
+            card
+                .overlay(
+                    RoundedRectangle(cornerRadius: CommandKMetrics.cardCornerRadius, style: .continuous)
+                        .strokeBorder(DS.accent.opacity(fileDropTargetUUID == item.uuid ? 0.65 : 0), lineWidth: 2)
+                )
+                .dropDestination(for: String.self) { droppedItems, _ in
+                    guard CommandKDragSession.shared.isActive, let dropped = droppedItems.first else { return false }
+                    let uuids = CommandKDragSession.Payload.uuids(fromDropped: dropped)
+                    guard !uuids.isEmpty else { return false }
+                    CommandKDragSession.shared.end()
+                    for uuid in uuids {
+                        NotificationCenter.default.post(
+                            name: CosmoNotification.Canvas.moveAtomToThinkspace,
+                            object: nil,
+                            userInfo: ["atomUUID": uuid, "targetThinkspaceId": item.uuid]
+                        )
+                    }
+                    return true
+                } isTargeted: { targeted in
+                    withAnimation(ProMotionSprings.snappy) {
+                        fileDropTargetUUID = targeted ? item.uuid : nil
+                    }
+                }
+        } else {
+            card
         }
     }
 }

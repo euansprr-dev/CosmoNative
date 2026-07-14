@@ -58,6 +58,11 @@ struct SidebarThinkspaceSection: View {
     @State private var childDocsLoading: Set<String> = []
     @State private var inquirySummaries: [String: ThinkspaceInquirySidebarSummary] = [:]
 
+    // Row-to-row nesting drag (reparent a Thinkspace by dragging it onto another)
+    @State private var reparentDropTargetId: String?
+    @State private var nestDragSourceId: String?
+    @State private var nestDragTranslation: CGSize = .zero
+
     // Keyboard
     @State private var selectedIndex: Int = 0
     @State private var isKeyboardNavigating: Bool = false
@@ -272,10 +277,13 @@ struct SidebarThinkspaceSection: View {
         let isHovered = hoveredThinkspaceId == thinkspace.id
         let isExpanded = expandedThinkspaces.contains(thinkspace.id)
         let isRenaming = renamingThinkspaceId == thinkspace.id
-        let isDropTarget =
+        let isBlockDropTarget =
             crossDragManager.isDragging &&
             crossDragManager.isOverSidebar &&
             crossDragManager.hoveredThinkspaceId == thinkspace.id
+        // A sibling Thinkspace is being dragged onto this row to nest it.
+        let isReparentTarget = reparentDropTargetId == thinkspace.id
+        let isDropTarget = isBlockDropTarget || isReparentTarget
         let springLoadPulse = crossDragManager.pulseForThinkspace(thinkspace.id)
         let isSpringLoading = springLoadPulse > 0
 
@@ -316,7 +324,57 @@ struct SidebarThinkspaceSection: View {
         .animation(hoverAnimation, value: isHovered)
         .animation(hoverAnimation, value: isDropTarget)
         .animation(.linear(duration: 0.08), value: springLoadPulse)
+        // Nest-by-drag: a plain SwiftUI DragGesture rather than AppKit
+        // drag-and-drop. `.onDrop`/`.dropDestination` never received these
+        // sidebar rows (the row chrome/controls swallow the drop), so we
+        // detect the target ourselves by hit-testing the live row frames the
+        // section already publishes into `crossDragManager.thinkspaceRowFrames`.
+        .opacity(nestDragSourceId == thinkspace.id ? 0.5 : 1)
+        .offset(nestDragSourceId == thinkspace.id ? nestDragTranslation : .zero)
+        .zIndex(nestDragSourceId == thinkspace.id ? 10 : 0)
+        .gesture(rowNestDragGesture(for: thinkspace))
     }
+
+    // MARK: - Row Nesting Drag
+
+    /// The row under `point` (global coords) that isn't `sourceId`.
+    private func nestTarget(at point: CGPoint, excluding sourceId: String) -> String? {
+        crossDragManager.thinkspaceRowFrames.first { id, frame in
+            id != sourceId && frame.contains(point)
+        }?.key
+    }
+
+    /// Drag a Thinkspace row onto another to nest it. Reparenting only moves the
+    /// dragged Thinkspace, so anything already nested inside it rides along.
+    private func rowNestDragGesture(for thinkspace: Thinkspace) -> some Gesture {
+        DragGesture(minimumDistance: 8, coordinateSpace: .global)
+            .onChanged { value in
+                nestDragSourceId = thinkspace.id
+                nestDragTranslation = value.translation
+                let target = nestTarget(at: value.location, excluding: thinkspace.id)
+                let valid = target.map { manager.canNest(thinkspace.id, under: $0) } ?? false
+                let resolved = valid ? target : nil
+                if resolved != reparentDropTargetId {
+                    withAnimation(hoverAnimation) { reparentDropTargetId = resolved }
+                }
+            }
+            .onEnded { value in
+                let sourceId = thinkspace.id
+                let target = nestTarget(at: value.location, excluding: sourceId)
+                if let target, manager.canNest(sourceId, under: target) {
+                    Task { @MainActor in
+                        await manager.reparentThinkspace(sourceId, to: target)
+                        withAnimation(actionAnimation) { _ = expandedThinkspaces.insert(target) }
+                    }
+                }
+                withAnimation(hoverAnimation) {
+                    reparentDropTargetId = nil
+                    nestDragSourceId = nil
+                    nestDragTranslation = .zero
+                }
+            }
+    }
+
 
     @ViewBuilder
     private func thinkspaceRowLabel(
@@ -369,35 +427,35 @@ struct SidebarThinkspaceSection: View {
                     level: level
                 )
 
-                Button {
-                    selectThinkspace(thinkspace)
-                } label: {
+                // Plain tap target (not a Button): a Button sits frontmost and
+                // swallows drag-and-drop, blocking the row's `.onDrop` nest
+                // target. `.onTapGesture` keeps selection working while letting
+                // drops through — same pattern as the dashboard task rows.
+                HStack(spacing: 8) {
+                    Text(thinkspace.name)
+                        .font(.system(size: textSize, weight: isActive ? .semibold : .medium))
+                        .foregroundStyle(isActive ? DS.text : DS.textSecondary)
+                        .lineLimit(1)
+
+                    Spacer()
+
                     HStack(spacing: 8) {
-                        Text(thinkspace.name)
-                            .font(.system(size: textSize, weight: isActive ? .semibold : .medium))
-                            .foregroundStyle(isActive ? DS.text : DS.textSecondary)
-                            .lineLimit(1)
-
-                        Spacer()
-
-                        HStack(spacing: 8) {
-                            let nestedCount = manager.childThinkspaces(of: thinkspace.id).count
-                            if nestedCount > 0 && level == 0 {
-                                Label("\(nestedCount)", systemImage: "rectangle.stack")
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .foregroundStyle(DS.textMuted)
-                            }
-
-                            Text("\(thinkspace.blockCount)")
-                                .font(.system(size: 11, weight: .semibold, design: .rounded))
-                                .foregroundStyle(isActive ? color.opacity(0.92) : DS.textMuted)
-                                .frame(minWidth: 22, alignment: .trailing)
+                        let nestedCount = manager.childThinkspaces(of: thinkspace.id).count
+                        if nestedCount > 0 && level == 0 {
+                            Label("\(nestedCount)", systemImage: "rectangle.stack")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(DS.textMuted)
                         }
+
+                        Text("\(thinkspace.blockCount)")
+                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                            .foregroundStyle(isActive ? color.opacity(0.92) : DS.textMuted)
+                            .frame(minWidth: 22, alignment: .trailing)
                     }
-                    .frame(maxWidth: .infinity, minHeight: rowHeight, alignment: .leading)
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity, minHeight: rowHeight, alignment: .leading)
+                .contentShape(Rectangle())
+                .onTapGesture { selectThinkspace(thinkspace) }
             }
             .padding(.leading, rowLeadingPadding)
             .padding(.trailing, 8)
@@ -415,49 +473,48 @@ struct SidebarThinkspaceSection: View {
         isExpandable: Bool,
         level: Int
     ) -> some View {
-        let avatarFill = color.opacity(isActive ? (DS.palette.isDark ? 0.22 : 0.16) : (DS.palette.isDark ? 0.13 : 0.11))
         let avatarForeground = color.opacity(isActive ? 1.0 : 0.86)
         let showsDisclosure = isExpandable && isHovered
         let avatarSize = level > 0 ? CGFloat(22) : CGFloat(24)
-        let avatarRadius = level > 0 ? CGFloat(7) : CGFloat(8)
 
-        Button {
-            guard isExpandable else { return }
-            toggleExpand(thinkspace)
-        } label: {
-            RoundedRectangle(cornerRadius: avatarRadius, style: .continuous)
-                .fill(avatarFill)
-                .frame(width: avatarSize, height: avatarSize)
-                .overlay {
-                    ZStack {
-                        Image(systemName: isExpanded ? "folder.fill" : "folder")
-                            .font(.system(size: level > 0 ? 11 : 12, weight: .semibold))
-                            .foregroundStyle(avatarForeground)
-                            .opacity(showsDisclosure ? 0 : 1)
-                            .scaleEffect(showsDisclosure ? 0.84 : 1)
+        // Plain tap target (not a Button) so it doesn't block the row's drop.
+        Color.clear
+            .frame(width: avatarSize, height: avatarSize)
+            .overlay {
+                ZStack {
+                    // Only read as "open" when it can actually hold children — a
+                    // space left in the expanded set after losing its last child
+                    // should still show a plain folder.
+                    Image(systemName: (isExpanded && isExpandable) ? "folder.fill" : "folder")
+                        .font(.system(size: level > 0 ? 12 : 13, weight: .semibold))
+                        .foregroundStyle(avatarForeground)
+                        .opacity(showsDisclosure ? 0 : 1)
+                        .scaleEffect(showsDisclosure ? 0.84 : 1)
 
-                        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(avatarForeground)
-                            .opacity(showsDisclosure ? 1 : 0)
-                            .scaleEffect(showsDisclosure ? 1 : 0.8)
-                    }
-                    .animation(hoverAnimation, value: showsDisclosure)
-                    .animation(hoverAnimation, value: isExpanded)
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(avatarForeground)
+                        .opacity(showsDisclosure ? 1 : 0)
+                        .scaleEffect(showsDisclosure ? 1 : 0.8)
                 }
-        }
-        .buttonStyle(.plain)
-        .disabled(!isExpandable)
-        .accessibilityLabel(
-            isExpandable
-                ? "\(isExpanded ? "Collapse" : "Expand") \(thinkspace.name)"
-                : thinkspace.name
-        )
-        .help(
-            isExpandable
-                ? (isExpanded ? "Collapse contents" : "Expand contents")
-                : thinkspace.name
-        )
+                .animation(hoverAnimation, value: showsDisclosure)
+                .animation(hoverAnimation, value: isExpanded)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                guard isExpandable else { return }
+                toggleExpand(thinkspace)
+            }
+            .accessibilityLabel(
+                isExpandable
+                    ? "\(isExpanded ? "Collapse" : "Expand") \(thinkspace.name)"
+                    : thinkspace.name
+            )
+            .help(
+                isExpandable
+                    ? (isExpanded ? "Collapse contents" : "Expand contents")
+                    : thinkspace.name
+            )
     }
 
     // MARK: - Rename Row
@@ -466,14 +523,10 @@ struct SidebarThinkspaceSection: View {
         let color = thinkspace.accentColor
 
         return HStack(spacing: 8) {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(color.opacity(0.14))
+            Image(systemName: "folder")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(color)
                 .frame(width: 24, height: 24)
-                .overlay(
-                    Image(systemName: "folder")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(color)
-                )
 
             TextField("Name", text: $renameText)
                 .textFieldStyle(.plain)
@@ -503,13 +556,17 @@ struct SidebarThinkspaceSection: View {
         let isCreatingChild = creatingChildOfThinkspace?.id == thinkspace.id
         let hasChildBranch = isCreatingChild || !childThinkspaces.isEmpty
 
-        HStack(alignment: .top, spacing: 10) {
-            Rectangle()
-                .fill(DS.borderSubtle)
-                .frame(width: 1)
+        // Only draw the branch (connector line + padding) when there's actually
+        // a child to show. Otherwise an expanded-but-empty Thinkspace — e.g.
+        // right after un-nesting its last child — leaves a dangling stub line
+        // and a vertical gap.
+        if hasChildBranch {
+            HStack(alignment: .top, spacing: 10) {
+                Rectangle()
+                    .fill(DS.borderSubtle)
+                    .frame(width: 1)
 
-            VStack(alignment: .leading, spacing: 4) {
-                if hasChildBranch {
+                VStack(alignment: .leading, spacing: 4) {
                     childThinkspaceRows(
                         childThinkspaces,
                         parent: thinkspace,
@@ -517,10 +574,10 @@ struct SidebarThinkspaceSection: View {
                     )
                 }
             }
+            .padding(.leading, level == 0 ? 30 : 48)
+            .padding(.top, 4)
+            .padding(.bottom, 6)
         }
-        .padding(.leading, level == 0 ? 30 : 48)
-        .padding(.top, 4)
-        .padding(.bottom, 6)
     }
 
     @ViewBuilder
@@ -849,6 +906,14 @@ struct SidebarThinkspaceSection: View {
             startCreatingChildThinkspace(parent: thinkspace)
         } label: {
             Label("New Child Thinkspace", systemImage: "rectangle.stack.badge.plus")
+        }
+
+        if thinkspace.parentThinkspaceId != nil {
+            Button {
+                Task { await manager.reparentThinkspace(thinkspace.id, to: nil) }
+            } label: {
+                Label("Move to Top Level", systemImage: "arrow.up.to.line")
+            }
         }
 
         Menu {
@@ -1267,3 +1332,4 @@ private struct ThinkspaceRowChrome: ViewModifier {
         }
     }
 }
+

@@ -1784,7 +1784,11 @@ class AgentToolExecutor {
             let texts = (value as? [String]) ?? (value as? String).map { [$0] } ?? []
             guard let index = sections.firstIndex(where: { $0.type == type }) else { continue }
             for text in texts {
-                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                // Concept content must never contain em dashes (user preference);
+                // create_connection seeds bypass parseItems, so strip here too.
+                let trimmed = ConnectionSurfaceSerializer
+                    .removeEmDashes(text)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmed.isEmpty else { continue }
                 sections[index].addItem(ConnectionItem(content: trimmed))
                 seededCount += 1

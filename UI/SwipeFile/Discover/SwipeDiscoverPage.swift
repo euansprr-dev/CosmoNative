@@ -5,6 +5,9 @@ import SwiftUI
 /// collapses the page to catalog mode — finding beats rhythm.
 struct SwipeDiscoverPage: View {
     @Bindable var model: SwipeDiscoverModel
+    /// Absence teaches the fix: with no creators there is nothing to retry —
+    /// the empty state walks the user to the Creators page instead.
+    var onOpenCreators: (() -> Void)? = nil
 
     @State private var showFilters = false
     @State private var filterAnchor: CGRect = .zero
@@ -85,12 +88,18 @@ struct SwipeDiscoverPage: View {
         if model.isLoading && model.posts.isEmpty {
             SwipeSkeletonGrid(targetColumnWidth: 248)
         } else if model.visiblePosts.isEmpty {
-            SwipeLibraryErrorState(
-                message: model.posts.isEmpty
-                    ? "Add a creator in Creators, or widen the posted window in Filters."
-                    : "No posts match. Clear a topic or widen the filters.",
-                onRetry: { Task { await model.refreshDiscovery() } }
-            )
+            if model.posts.isEmpty, let onOpenCreators {
+                // No creators yet — retrying fetches nothing; hand the user
+                // the actual fix.
+                SwipeDiscoverCreatorsTeachingRow(onOpen: onOpenCreators)
+            } else {
+                SwipeLibraryErrorState(
+                    message: model.posts.isEmpty
+                        ? "Add a creator in Creators, or widen the posted window in Filters."
+                        : "No posts match. Clear a topic or widen the filters.",
+                    onRetry: { Task { await model.refreshDiscovery() } }
+                )
+            }
         } else if isCatalogMode {
             VStack(alignment: .leading, spacing: DS.space16) {
                 SwipeDiscoverTopicRow(model: model)
@@ -222,7 +231,7 @@ struct SwipeDiscoverPage: View {
 
     private var masthead: some View {
         HStack(alignment: .top, spacing: DS.space12) {
-            SwipeMasthead(title: "Discover", detail: subtitle)
+            SwipeMasthead(title: "Discover")
             Spacer(minLength: DS.space16)
             HStack(spacing: 8) {
                 SwipeLibrarySearchField(
@@ -234,13 +243,6 @@ struct SwipeDiscoverPage: View {
                 reloadButton
             }
         }
-    }
-
-    private var subtitle: String {
-        let count = model.visiblePosts.count
-        return count > 0
-            ? "\(count) high-performing posts"
-            : "High-performing posts across platforms"
     }
 
     private var filtersButton: some View {
@@ -297,6 +299,39 @@ struct SwipeDiscoverPage: View {
         } else if model.activePillar != nil {
             withAnimation(ProMotionSprings.snappy) { model.activePillar = nil }
         }
+    }
+}
+
+// MARK: - Creators teaching row
+
+/// The Discover zero-state when no creators exist: one row, one door — the
+/// same grammar as the Home page's outlier teaching row.
+private struct SwipeDiscoverCreatorsTeachingRow: View {
+    let onOpen: () -> Void
+
+    var body: some View {
+        Button(action: onOpen) {
+            HStack(spacing: 8) {
+                Image(systemName: "person.2")
+                    .font(DS.caption.weight(.semibold))
+                    .foregroundStyle(DS.accent)
+                    .accessibilityHidden(true)
+                Text("Add creators to fill Discover with their outlier posts")
+                    .font(DS.subheadline)
+                    .foregroundStyle(DS.textSecondary)
+                Image(systemName: "chevron.right")
+                    .font(DS.caption2.weight(.semibold))
+                    .foregroundStyle(DS.textMuted)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(DS.glassSectionFill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .help("Open Creators")
+        .accessibilityLabel("Add creators to fill Discover with their outlier posts")
     }
 }
 

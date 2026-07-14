@@ -35,16 +35,20 @@ final class FocusNavigationCoordinator {
     /// Open (or doc→doc swap to) an entity. `sourceFrame` is the trigger's
     /// frame in SwiftUI global (window content) coordinates; when omitted the
     /// click location stands in, so every mouse-triggered open blooms from
-    /// where the user clicked without per-site wiring.
-    func open(entity: EntitySelection, sourceFrame: CGRect? = nil) {
+    /// where the user clicked without per-site wiring. `anchorOverride`
+    /// bypasses pointer resolution — trail jumps replay a place rather than
+    /// open from a trigger, so they bloom from center, never from wherever
+    /// the chevron happens to sit.
+    func open(entity: EntitySelection, sourceFrame: CGRect? = nil, anchorOverride: UnitPoint? = nil) {
         openTask?.cancel()
         let request = UUID()
         requestID = request
         // Capture the anchor before the async fetch — the pointer is still
         // on the trigger at this instant.
-        let anchor = Self.anchor(for: sourceFrame)
+        let anchor = anchorOverride ?? Self.anchor(for: sourceFrame)
 
         openTask = Task { @MainActor in
+            AppPerformanceInstrumentation.trace("FOCUS open task started \(entity.type.rawValue)#\(entity.id)")
             var target = entity
             if target.id <= 0 {
                 // Safety net: never enter focus mode with an invalid entity id.
@@ -59,6 +63,7 @@ final class FocusNavigationCoordinator {
             if let atom = try? await AtomRepository.shared.fetch(id: target.id) {
                 preloadedAtoms[target] = atom
             }
+            AppPerformanceInstrumentation.trace("FOCUS atom fetched \(target.type.rawValue)#\(target.id)")
             guard requestID == request, !Task.isCancelled else { return }
 
             present(target, anchor: anchor)
@@ -107,6 +112,7 @@ final class FocusNavigationCoordinator {
 
     private func present(_ entity: EntitySelection, anchor: UnitPoint) {
         guard let appState else { return }
+        AppPerformanceInstrumentation.trace("FOCUS present \(entity.type.rawValue)#\(entity.id)")
         AppPerformanceInstrumentation.event("focus-open")
         entranceAnchor = anchor
         // One assignment covers both fresh opens and doc→doc swaps: the
@@ -114,6 +120,9 @@ final class FocusNavigationCoordinator {
         // insertion inside this single spring.
         withAnimation(transitionAnimation) {
             appState.focusedEntity = entity
+        }
+        DispatchQueue.main.async {
+            AppPerformanceInstrumentation.trace("FOCUS first runloop turn after present \(entity.type.rawValue)#\(entity.id)")
         }
     }
 

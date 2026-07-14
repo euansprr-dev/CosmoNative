@@ -7,9 +7,16 @@ final class CommandCenterPlanningNavigationTests: XCTestCase {
     }
 
     func testPlanningModesMatchSidebarOrder() {
-        XCTAssertEqual(DashboardViewMode.planningLists, [.habits, .reports, .queue])
-        XCTAssertEqual(DashboardViewMode.planningLists.map(\.label), ["Habits", "Reports", "Queue"])
-        XCTAssertEqual(DashboardViewMode.planningLists.map(\.icon), ["repeat", "chart.bar", "paperplane"])
+        // The queue page retired July 2026 — content planning lives in
+        // Upcoming's Content lens; `.queue` survives only as a redirect.
+        XCTAssertEqual(DashboardViewMode.planningLists, [.habits, .reports])
+        XCTAssertEqual(DashboardViewMode.planningLists.map(\.label), ["Habits", "Reports"])
+        XCTAssertEqual(DashboardViewMode.planningLists.map(\.icon), ["repeat", "chart.bar"])
+    }
+
+    func testUpcomingLensVocabulary() {
+        XCTAssertEqual(UpcomingLens.allCases, [.schedule, .content])
+        XCTAssertEqual(UpcomingLens.allCases.map(\.label), ["Schedule", "Content"])
     }
 
     func testPlanningModesAreNotTaskLists() {

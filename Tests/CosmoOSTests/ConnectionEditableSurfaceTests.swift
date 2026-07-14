@@ -212,6 +212,134 @@ struct ConnectionEditableSurfaceTests {
         #expect(viewModel.state.totalItemCount == 0)
     }
 
+    // MARK: - Pending-insert resolution (board/outline staging)
+
+    @Test func pendingInsertResolvesHeaderAnchoredInsertionToSection() {
+        let model = ConnectionSurfaceSerializer.serialize(
+            title: "Trust Loops",
+            conceptType: .mentalModel,
+            sections: makeSections([.claims: ["existing claim"]])
+        )
+        let op = operation(
+            kind: .textInsertion,
+            original: "## Claims",
+            proposed: "- doing one thing at a time makes me feel calm"
+        )
+        let resolved = ConnectionSurfaceSerializer.pendingInsert(for: op, in: model)
+        #expect(resolved?.section == .claims)
+        #expect(resolved?.bullets == ["doing one thing at a time makes me feel calm"])
+    }
+
+    @Test func pendingInsertResolvesBulletAnchorToItsSection() {
+        let model = ConnectionSurfaceSerializer.serialize(
+            title: "T",
+            conceptType: .mentalModel,
+            sections: makeSections([.evidence: ["first proof"]])
+        )
+        let op = operation(
+            kind: .textInsertion,
+            original: "- first proof",
+            proposed: "- follow-on proof"
+        )
+        let resolved = ConnectionSurfaceSerializer.pendingInsert(for: op, in: model)
+        #expect(resolved?.section == .evidence)
+        #expect(resolved?.bullets == ["follow-on proof"])
+    }
+
+    @Test func pendingInsertUsesAnchorIDFallback() {
+        let model = ConnectionSurfaceSerializer.serialize(
+            title: "T",
+            conceptType: .mentalModel,
+            sections: makeSections()
+        )
+        let op = operation(
+            kind: .textInsertion,
+            original: "not in the document",
+            proposed: "- seeded",
+            anchorID: "section:openQuestions"
+        )
+        let resolved = ConnectionSurfaceSerializer.pendingInsert(for: op, in: model)
+        #expect(resolved?.section == .openQuestions)
+        #expect(resolved?.bullets == ["seeded"])
+    }
+
+    @Test func pendingInsertReturnsNilForReplacement() {
+        let model = ConnectionSurfaceSerializer.serialize(
+            title: "T",
+            conceptType: .mentalModel,
+            sections: makeSections([.goal: ["rough goal"]])
+        )
+        let op = operation(
+            kind: .textReplacement,
+            original: "- rough goal",
+            proposed: "- sharpened goal"
+        )
+        #expect(ConnectionSurfaceSerializer.pendingInsert(for: op, in: model) == nil)
+    }
+
+    @Test func pendingInsertReturnsNilWhenAnchorMissing() {
+        let model = ConnectionSurfaceSerializer.serialize(
+            title: "T",
+            conceptType: .mentalModel,
+            sections: makeSections()
+        )
+        let op = operation(
+            kind: .textInsertion,
+            original: "nowhere in the surface",
+            proposed: "- orphan"
+        )
+        #expect(ConnectionSurfaceSerializer.pendingInsert(for: op, in: model) == nil)
+    }
+
+    @Test func pendingInsertReturnsNilForMultiSectionProposedText() {
+        let model = ConnectionSurfaceSerializer.serialize(
+            title: "T",
+            conceptType: .mentalModel,
+            sections: makeSections()
+        )
+        let op = operation(
+            kind: .textInsertion,
+            original: "## Claims",
+            proposed: "- a claim\n## Evidence\n- proof"
+        )
+        // parseItems rejects a foreign section header → no clean single-section insert.
+        #expect(ConnectionSurfaceSerializer.pendingInsert(for: op, in: model) == nil)
+    }
+
+    // MARK: - Concept follow-up chips
+
+    @Test func conceptFollowUpChipsDropTheStageEditPrompt() {
+        let concept = CosmoInlineAssistantStore.followUps(
+            afterAnswerRoute: .answer,
+            skillID: CosmoInlineAssistantSkillID.concept.rawValue
+        )
+        #expect(!concept.contains("Stage that as an edit"))
+
+        let generic = CosmoInlineAssistantStore.followUps(
+            afterAnswerRoute: .answer,
+            skillID: "critique"
+        )
+        #expect(generic.contains("Stage that as an edit"))
+    }
+
+    // MARK: - Em-dash guard
+
+    @Test func removeEmDashesReplacesWithCommasAndLeavesRangesAlone() {
+        #expect(ConnectionSurfaceSerializer.removeEmDashes("calm — and present") == "calm, and present")
+        #expect(ConnectionSurfaceSerializer.removeEmDashes("one thing—at a time") == "one thing, at a time")
+        #expect(ConnectionSurfaceSerializer.removeEmDashes("no dashes here") == "no dashes here")
+        // Tight en-dash numeric ranges must be left intact.
+        #expect(ConnectionSurfaceSerializer.removeEmDashes("3–5 reps") == "3–5 reps")
+    }
+
+    @Test func parseItemsStripsEmDashesFromStagedBullets() {
+        let items = ConnectionSurfaceSerializer.parseItems(
+            from: "- doing one thing at a time isn't a trick — it's calm",
+            targetSection: .claims
+        )
+        #expect(items == ["doing one thing at a time isn't a trick, it's calm"])
+    }
+
     // MARK: - Apply: replacement
 
     @Test func itemReplacementEditsInPlace() async throws {

@@ -238,7 +238,7 @@ final class SwipeDiscoverModel {
 
         isAddingCreator = true
         creatorImportError = nil
-        creatorImportMessage = "Adding \(identity.handle) to the discovery graph..."
+        creatorImportMessage = "Adding \(identity.handle) to the discovery graph…"
         creatorSearchText = ""
 
         Task {
@@ -246,14 +246,14 @@ final class SwipeDiscoverModel {
 
             do {
                 let sourceID = try await remoteStore.addCreator(identity: identity)
-                creatorImportMessage = "Creator added. Loading profile..."
+                creatorImportMessage = "Creator added. Loading profile…"
                 hasLoaded = false
                 await reload()
-                creatorImportMessage = "Creator added. Importing posts from Apify. This can take a few minutes..."
+                creatorImportMessage = "Creator added. Importing posts from Apify. This can take a few minutes…"
 
                 do {
                     let result = try await remoteStore.refreshSource(sourceID: sourceID)
-                    creatorImportMessage = "Import finished. \(result.upserted) posts added from \(result.provider). Reloading creators..."
+                    creatorImportMessage = "Import finished. \(result.upserted) posts added from \(result.provider). Reloading creators…"
                 } catch {
                     creatorImportError = "Creator was added, but the import did not finish: \(error.localizedDescription)"
                 }

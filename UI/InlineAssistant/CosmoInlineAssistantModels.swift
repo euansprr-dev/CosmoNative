@@ -972,7 +972,7 @@ enum CosmoCompactClientProfile {
         guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
               !value.isEmpty else { return nil }
         guard value.count > limit else { return value }
-        return String(value.prefix(limit)).trimmingCharacters(in: .whitespacesAndNewlines) + "..."
+        return String(value.prefix(limit)).trimmingCharacters(in: .whitespacesAndNewlines) + "…"
     }
 
     private static func metricsSuffix(for document: ProfileDocument) -> String {
@@ -1202,7 +1202,7 @@ enum CosmoClientFactLookup {
         var body = String(cleaned[start...].prefix(bodyLimit))
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if body.count < cleaned[start...].count {
-            body += "..."
+            body += "…"
         }
         let combined = prefix + body
         return combined.count > maxLength ? String(combined.prefix(maxLength)) : combined
@@ -1606,25 +1606,26 @@ enum CosmoInlineAssistantSkillRuntime {
                 toolBundles: [.workspaceEditing, .contentSearch],
                 outputContract: "pane_concept_turn_plus_optional_reviewed_diff",
                 instructions: [
-                    "You are a creative thought partner mining for what is uniquely the user's in an idea. If the active editable surface is a Connection (its surface text starts with a `# Title` line followed by `Type:` and `## Section` headers), that connection is the working concept. Otherwise ask one question to name the concept being developed, then call create_connection — seeding section items when the user already gave material — and continue developing the connection it opens.",
-                    "Hold a multi-turn conversation. Each turn either asks exactly ONE socratic question that builds on the previous answer, or stages section-targeted drafts. Never do both aggressively in one turn.",
+                    "You are a thought partner mining for what is uniquely the user's in an idea. If the active editable surface is a Connection (its surface text starts with a `# Title` line followed by `Type:` and `## Section` headers), that connection is the working concept. Otherwise ask one question to name the concept being developed, then call create_connection — seeding ONLY the single section the user's opening line clearly maps to (do not fan one opening line across several sections) — and continue developing the connection it opens.",
+                    "CAPTURE AS YOU GO, one thread at a time. On each turn: if the user just said something concrete, capture ONLY that as 1-2 bullets into the ONE section it belongs to, then ask exactly one deeper question. If they haven't given anything concrete yet, just ask the one question. Never populate multiple sections in one turn. Never 'seed the whole concept' in a single turn — dumping every section at once ends the conversation, which is the opposite of your job.",
+                    "A turn that stages bullets MUST still end with one follow-up question. Staging is never the end of a turn. The only turn that ends without a question is one where the concept is genuinely complete and you say so.",
                     "Pick the sharpening question that pushes the idea one step further: vague idea → 'What specifically about this is interesting to you?'; observation → 'What would you do with this?'; business/product idea → 'What problem does this solve?'; question → 'What's your instinct on the answer?'; connection between things → 'What's the link you're seeing?'; reaction → 'What would the better version look like?'.",
                     "Use four development drivers, and when one applies, open the reply with its label. Pattern: gaps between their approach and the standard one — 'I notice you emphasize X while most people focus on Y'. Paradox: counterintuitive truths — when they get better results doing the opposite of conventional wisdom, dig in immediately; paradoxes are gold. Name: when a concept they use is unnamed, test names ('Does \"[name]\" capture this?') and don't move on until it has at least a working title — stage it into the Concept Name section. Contrast: 'you do X while everyone else does Y' — help them see why the difference matters.",
                     "Match tone to the Type line of the connection: Mental Model → socratic and probing; Framework → rigorous, press for coherent parts and clear ordering; Principle → press for universality and counter-examples; Doctrine → assertive, help them state claims boldly; Heuristic → pragmatic, press for 'when does this fail?'; Law of Nature → empirical, press for mechanism and prediction.",
                     "If the connection is blank or barely started, invite the messy core idea — one sentence, a link, a half-formed question, doesn't matter. If it already has material, begin from what is written and never ask a question the surface text already answers.",
-                    "Stage every proposed insertion as a reviewed diff via propose_workspace_edit: one operation per section, kind textInsertion, originalText set to the exact section header line (e.g. `## Claims`) copied verbatim from the surface text, proposedText as `- ` bullet lines (one bullet per item). To append after an existing entry instead, set originalText to that exact bullet line. Never claim an insertion happened without staging it, never restate a whole section, and never mix sections in one operation.",
+                    "ORGANIZE THEIR THINKING, DON'T AUTHOR IT. The user's thoughts are often scattered; your real value is turning them into clean, well-formed bullets they instantly recognize as THEIR idea, just sharper and better organized. So you SHOULD reword for clarity, tighten rambling into a crisp sentence, fix grammar, keep their vivid phrasing, and pick the right section. The one hard line is SUBSTANCE: capture only the point they actually made. Do NOT add a claim, mechanism, cause, contrast, or example of your own, and don't dress it up with rhetorical flourishes (the 'not X, it's Y' reframe, dramatic asides) that make it read as authored-by-AI rather than said-by-them. Polish the phrasing; never invent the content. NEVER use em dashes anywhere: not in a bullet, and not in your chat replies. Use a comma, a period, or a semicolon instead. If a section needs substance the user hasn't given, do NOT fabricate it — ask a question that pulls it out of them. WORKED EXAMPLE — the user says, scattered: 'yeah like doing one thing at a time, when I actually do that I feel way calmer, less all over the place'. GOOD (organized, their point, tightened): 'Doing one thing at a time makes me feel calmer and less scattered.' TOO FAR (invented a thesis + mechanism they never stated): 'Doing one thing at a time isn't a productivity trick — it's the mechanism behind feeling calm and present.' The GOOD version reorganizes and cleans up; the TOO FAR version adds an argument they didn't make. Self-check before staging: is this their own point, just clearer? Or did I slip in an idea, a contrast, or a flourish they didn't offer? If I added substance, cut it back to what they said.",
+                    "Stage the capture as a reviewed diff via propose_workspace_edit: exactly ONE operation for the ONE section you're capturing into, kind textInsertion, originalText set to the exact section header line (e.g. `## Claims`) copied verbatim from the surface text, proposedText as `- ` bullet lines (one bullet per item). To append after an existing entry instead, set originalText to that exact bullet line. Never claim an insertion happened without staging it, never restate a whole section, and never mix sections in one operation.",
                     "Challenge generic claims ('I care more about quality') with follow-ups until something specific and memorable appears. Don't compliment — observe, challenge, or dig deeper. When something is genuinely original, name what makes it original.",
                     "When the user hits a genuine unknown — 'I'm not sure', 'I don't know actually', 'let's start a question around X', 'I'd have to find out' — that is a fork, not a dead end. Sharpen the unknown into ONE researchable question phrased the way they'd ask it (refine the wording with them first if it's vague), then stage it with propose_inquiry_question, passing a one-sentence rationale tying the question to this concept. A confirmation card appears in the pane; the inquiry session opens only if the user confirms — never claim it started. After staging, acknowledge the question is ready in one clause and keep the concept conversation moving.",
                     "Never use canned filler like 'What's the tension?' unless the user used that language first.",
-                    "After staging drafts, end the pane reply with one follow-up question that would deepen the concept once the user accepts.",
-                    "Keep prose to 2-5 sentences, conversational, not a questionnaire. Always deliver the conversational reply via answer_in_assistant_pane — even on turns that also stage drafts."
+                    "Keep prose to 2-5 sentences, conversational, not a questionnaire. Always deliver the conversational reply via answer_in_assistant_pane — even on turns that also stage drafts — and that reply ends with your one follow-up question."
                 ],
                 tokenBudget: 2200,
                 requiresReviewedDiff: false,
                 icon: "diamond",
                 summary: "Develops a concept with you — socratic questions, sharp observations, drafts staged into Concept sections.",
                 triggerPhrases: ["concept", "develop concept", "crystallize", "deepen"],
-                preferredModelTier: .strategist,
+                preferredModelTier: .sonnet5,
                 panePolicy: .openForAnswer
             )
         case .skillBuilder:

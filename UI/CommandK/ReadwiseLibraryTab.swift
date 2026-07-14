@@ -316,7 +316,7 @@ struct ReadwiseLibraryTab: View {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 12))
                     .foregroundColor(DS.textMuted)
-                TextField("Search highlights...", text: $highlightSearchText)
+                TextField("Search highlights…", text: $highlightSearchText)
                     .textFieldStyle(.plain)
                     .font(.system(size: 13))
                     .foregroundColor(DS.text)
@@ -493,7 +493,7 @@ struct ReadwiseLibraryTab: View {
             ProgressView()
                 .scaleEffect(1.2)
                 .tint(cognac)
-            Text("Loading your library...")
+            Text("Loading your library…")
                 .font(.system(size: 14))
                 .foregroundColor(DS.textSecondary)
         }
@@ -775,7 +775,7 @@ private struct ReadwiseSetupField: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            SecureField("Paste your Readwise API token...", text: $apiToken)
+            SecureField("Paste your Readwise API token…", text: $apiToken)
                 .textFieldStyle(.plain)
                 .font(.system(size: 14))
                 .foregroundColor(DS.text)
@@ -798,7 +798,7 @@ private struct ReadwiseSetupField: View {
                             .scaleEffect(0.5)
                             .tint(.white)
                     }
-                    Text(isValidating ? "Connecting..." : "Connect")
+                    Text(isValidating ? "Connecting…" : "Connect")
                         .font(.system(size: 13, weight: .semibold))
                 }
                 .foregroundStyle(DS.textOnAccent)

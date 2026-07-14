@@ -181,7 +181,7 @@ struct CosmoAIBlockView: View {
                     .foregroundColor(DS.textMuted)
                     .lineLimit(1)
             } else {
-                Text("Thinking...")
+                Text("Thinking…")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundColor(DS.textMuted)
             }
@@ -221,7 +221,7 @@ struct CosmoAIBlockView: View {
         HStack(spacing: 8) {
             ZStack(alignment: .leading) {
                 if inputText.isEmpty {
-                    Text("Ask Cosmo anything...")
+                    Text("Ask Cosmo anything…")
                         .font(.system(size: 12))
                         .foregroundColor(DS.textMuted)
                 }

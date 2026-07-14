@@ -938,6 +938,16 @@ class ThinkspaceManager: ObservableObject {
         }
     }
 
+    /// Whether `thinkspaceId` may be nested under `newParentId` — rejects
+    /// self-nesting and any move that would create a cycle (dropping a parent
+    /// into one of its own descendants). Used by the sidebar to decide whether
+    /// a drop target should light up. `reparentThinkspace` enforces the same
+    /// rules on commit.
+    func canNest(_ thinkspaceId: String, under newParentId: String) -> Bool {
+        guard thinkspaceId != newParentId else { return false }
+        return !isDescendant(newParentId, of: thinkspaceId)
+    }
+
     /// Check if `candidateId` is a descendant of `ancestorId` by walking the parent chain
     private func isDescendant(_ candidateId: String, of ancestorId: String) -> Bool {
         var currentId: String? = candidateId

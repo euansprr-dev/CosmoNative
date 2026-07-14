@@ -43,7 +43,7 @@ struct TaskChecklistEditor: View {
                     .foregroundStyle(DS.textMuted)
                     .frame(width: 16)
 
-                TextField("Add item...", text: $newItemTitle)
+                TextField("Add item…", text: $newItemTitle)
                     .textFieldStyle(.plain)
                     .font(DS.cardMeta)
                     .foregroundStyle(DS.text)

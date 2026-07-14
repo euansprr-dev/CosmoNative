@@ -194,6 +194,7 @@ struct CommandCenterComposerHost: View {
         case let .taskActions(task, _):
             CommandCenterTaskActionComposer(
                 task: task,
+                referenceDate: viewModel.selectedDate,
                 currentHabit: viewModel.resolvedHabit(for: task),
                 availableHabits: viewModel.availableHabitDefinitions,
                 loadRecurrenceRule: { await viewModel.recurrenceRule(for: task) },
@@ -714,6 +715,9 @@ struct CommandCenterScheduleComposer: View {
 
 struct CommandCenterTaskActionComposer: View {
     let task: TaskViewModel
+    /// The day the surrounding surface is viewing — overdue is judged from it
+    /// so a task open on its own due day isn't branded "Overdue" here either.
+    var referenceDate: Date = Date()
     let currentHabit: HabitDefinition?
     let availableHabits: [HabitDefinition]
     let loadRecurrenceRule: () async -> RecurrenceRule?
@@ -798,8 +802,8 @@ struct CommandCenterTaskActionComposer: View {
 
     private var metadataLine: some View {
         HStack(spacing: DS.space10) {
-            if let dueInfo = task.dueInfo {
-                metaGlyph(text: dueInfo, icon: "calendar", color: task.isOverdue ? DS.red : DS.inkFaded)
+            if let dueInfo = task.dueInfo(asOf: referenceDate) {
+                metaGlyph(text: dueInfo, icon: "calendar", color: task.isOverdue(asOf: referenceDate) ? DS.red : DS.inkFaded)
             }
 
             if recurrenceRule != nil || task.isRecurring {

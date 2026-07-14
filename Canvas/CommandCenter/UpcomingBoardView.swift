@@ -828,6 +828,9 @@ private struct UpcomingTimelineCalendarView: View {
 private struct CalendarDayHeaderCell: View {
     let date: Date
 
+    @State private var isHovered = false
+    @State private var showsLedger = false
+
     var body: some View {
         VStack(spacing: DS.space2) {
             // The iPhone week-strip voice: quiet weekday above the numeral.
@@ -846,7 +849,37 @@ private struct CalendarDayHeaderCell: View {
                 }
         }
         .frame(maxWidth: .infinity)
+        .overlay(alignment: .trailing) { ledgerAffordance }
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+        }
+        .popover(isPresented: $showsLedger, arrowEdge: .bottom) {
+            ContentDayLedgerPanel(day: date)
+        }
         .accessibilityElement(children: .combine)
+    }
+
+    /// Past days answer for themselves: hover reveals the ledger — what
+    /// shipped that day, and the one-click path to log its numbers.
+    @ViewBuilder
+    private var ledgerAffordance: some View {
+        if isPast && (isHovered || showsLedger) {
+            Button {
+                showsLedger = true
+            } label: {
+                Image(systemName: "chart.line.uptrend.xyaxis")
+                    .font(DS.caption2).fontWeight(.semibold)
+                    .foregroundStyle(DS.textSecondary)
+                    .frame(width: 20, height: 20)
+                    .background(DS.glassCardFill, in: Circle())
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .padding(.trailing, DS.space4)
+            .help("Log how this day's content performed")
+            .accessibilityLabel("Log content performance for \(date.formatted(.dateTime.month().day()))")
+            .transition(.opacity)
+        }
     }
 
     private var weekdayText: String {
@@ -861,6 +894,10 @@ private struct CalendarDayHeaderCell: View {
 
     private var isToday: Bool {
         Calendar.current.isDateInToday(date)
+    }
+
+    private var isPast: Bool {
+        date < Calendar.current.startOfDay(for: Date())
     }
 }
 

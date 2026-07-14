@@ -95,19 +95,7 @@ struct TemplateFocusModeView: View {
     }
 
     private var backButton: some View {
-        Button(action: onClose) {
-            HStack(spacing: DS.space6) {
-                Image(systemName: "chevron.left")
-                    .font(DS.buttonText)
-                Text("Back")
-                    .font(DS.callout)
-            }
-            .foregroundStyle(DS.textSecondary)
-            .padding(.horizontal, DS.space12)
-            .padding(.vertical, DS.space8)
-            .background(DS.surfaceElevated, in: Capsule())
-        }
-        .buttonStyle(.plain)
+        NavigationTrailIsland()
     }
 
     private var typeBadge: some View {
@@ -153,7 +141,7 @@ struct TemplateFocusModeView: View {
     @ViewBuilder
     private var anchoredTemplateCard: some View {
         if isLoading {
-            ProgressView("Loading...")
+            ProgressView("Loading…")
                 .tint(.white)
         } else if let templateMeta, let instanceData {
             VStack(spacing: 16) {

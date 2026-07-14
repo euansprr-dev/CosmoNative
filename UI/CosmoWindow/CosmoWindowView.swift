@@ -370,14 +370,11 @@ struct CosmoWindowView: View {
                     text: $viewModel.inputText,
                     selection: $viewModel.inputSelectionRange,
                     mentionedAtoms: viewModel.mentionedAtoms,
-                    placeholder: "Ask Cosmo anything...",
+                    placeholder: "Ask Cosmo anything…",
                     isFocused: $isComposerFocused,
                     isMentionOverlayVisible: viewModel.showMentionOverlay,
                     onSubmit: sendCurrentMessage,
-                    onTextChange: { syncMentionSearch() },
-                    onDismissMentionOverlayFromBackspace: {
-                        dismissMentionOverlay(trimMentionQuery: false)
-                    }
+                    onTextChange: { syncMentionSearch() }
                 )
                 .frame(maxWidth: .infinity)
                 .fixedSize(horizontal: false, vertical: true)

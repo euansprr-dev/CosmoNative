@@ -123,7 +123,7 @@ struct CanvasDatabasePicker: View {
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(DS.textMuted)
 
-            TextField("Search...", text: $searchQuery)
+            TextField("Search…", text: $searchQuery)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
                 .foregroundColor(DS.text)

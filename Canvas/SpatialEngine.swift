@@ -538,6 +538,77 @@ class SpatialEngine {
         }
     }
 
+    /// Finds an entity's live thinkspace-canvas block row (document "home")
+    /// regardless of which thinkspace holds it. Used by the ⌘K filing verb to
+    /// decide between moving an existing block and creating a fresh one.
+    static func findThinkspaceBlockRow(entityUuid: String) async throws -> (blockId: String, thinkspaceId: String?)? {
+        try await CosmoDatabase.shared.asyncRead { db in
+            let row = try Row.fetchOne(db,
+                sql: """
+                    SELECT id, thinkspace_id FROM canvas_blocks
+                    WHERE entity_uuid = ? AND document_type = 'home' AND document_id = 0 AND is_deleted = 0
+                    LIMIT 1
+                """,
+                arguments: [entityUuid]
+            )
+            guard let row else { return nil }
+            return (blockId: row["id"], thinkspaceId: row["thinkspace_id"])
+        }
+    }
+
+    /// Files an atom into a thinkspace the user is NOT visiting by inserting
+    /// its canvas_blocks row directly — no live engine exists for the target
+    /// space. Thinkspace canvases live under document ("home", 0). Dedupes on
+    /// (entity_uuid, thinkspace_id) like `saveBlock`'s insert path; an existing
+    /// row is left untouched (filing is idempotent, not a move).
+    static func persistBlockToUnmountedThinkspace(_ block: CanvasBlock, thinkspaceId: String) async throws {
+        try await CosmoDatabase.shared.asyncWrite { db in
+            if !block.entityUuid.isEmpty {
+                let existing = try String.fetchOne(db,
+                    sql: """
+                        SELECT id FROM canvas_blocks
+                        WHERE entity_uuid = ? AND thinkspace_id IS ? AND document_type = 'home' AND document_id = 0 AND is_deleted = 0
+                        LIMIT 1
+                    """,
+                    arguments: [block.entityUuid, thinkspaceId]
+                )
+                if existing != nil { return }
+            }
+
+            let noteContent: String? = (block.entityType == .note || block.entityType == .stickyNote || block.entityType == .content)
+                ? block.metadata["content"]
+                : nil
+            let atomUUID: String? = block.entityType == .note ? block.entityUuid : nil
+            let metadataJSON = Self.encodeBlockMetadataJSON(block.metadata)
+
+            try db.execute(
+                sql: """
+                INSERT OR REPLACE INTO canvas_blocks
+                (id, document_type, document_id, entity_type, entity_id, entity_uuid, atom_uuid, entity_title,
+                 position_x, position_y, width, height, z_index, note_content, metadata, is_pinned, thinkspace_id, is_deleted, created_at, updated_at)
+                VALUES (?, 'home', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """,
+                arguments: [
+                    block.id,
+                    block.entityType.rawValue,
+                    block.entityId,
+                    block.entityUuid,
+                    atomUUID,
+                    block.title,
+                    Int(block.position.x),
+                    Int(block.position.y),
+                    Int(block.size.width),
+                    Int(block.size.height),
+                    block.zIndex,
+                    noteContent,
+                    metadataJSON,
+                    block.isPinned,
+                    thinkspaceId
+                ]
+            )
+        }
+    }
+
     func moveBlockToThinkspace(_ blockId: String, newThinkspaceId: String, position: CGPoint) async {
         // Remove from in-memory array (it belongs to the new thinkspace now)
         withAnimation(.easeOut(duration: 0.15)) {

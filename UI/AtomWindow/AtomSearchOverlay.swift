@@ -44,7 +44,7 @@ struct AtomSearchOverlay: View {
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(DS.textMuted)
 
-            TextField("Search atoms...", text: $viewModel.searchQuery)
+            TextField("Search atoms…", text: $viewModel.searchQuery)
                 .textFieldStyle(.plain)
                 .font(DS.body)
                 .foregroundStyle(DS.text)

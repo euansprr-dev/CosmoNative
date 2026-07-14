@@ -806,18 +806,29 @@ struct CommandKInboxComposerFields: View {
     }
 
     private func laneChip(_ lane: CaptureDestination) -> some View {
-        Button {
+        // The typed prefix must be the lane's real alias — an emoji-named
+        // lane's raw name ("💡 cosmo:") would never match the normalized
+        // routing grammar.
+        let alias = lane.aliases.first ?? CaptureDestination.normalizeAlias(lane.name)
+        let identity = CollectionEmoji.resolve(name: lane.name, matchKeywords: false)
+        return Button {
             let binding = pane.binding(.body, manualEdit: true)
             let current = binding.wrappedValue
-            let prefix = "\(lane.name.lowercased()): "
+            let prefix = "\(alias): "
             guard !current.lowercased().hasPrefix(prefix) else { return }
             binding.wrappedValue = prefix + current
         } label: {
             HStack(spacing: DS.space4) {
-                Image(systemName: lane.icon)
-                    .font(DS.caption2)
-                    .accessibilityHidden(true)
-                Text("\(lane.name.lowercased()):")
+                if let emoji = identity.emoji {
+                    Text(emoji)
+                        .font(DS.caption2)
+                        .accessibilityHidden(true)
+                } else {
+                    Image(systemName: lane.icon)
+                        .font(DS.caption2)
+                        .accessibilityHidden(true)
+                }
+                Text("\(alias):")
                     .font(DS.caption)
             }
             .foregroundStyle(DS.textSecondary)

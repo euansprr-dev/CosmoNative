@@ -687,15 +687,32 @@ private struct ClusterViewSurfaceDropDelegate: DropDelegate {
     let onBoardColumnDrop: ((BoardDropEvent) -> Void)?
     let onClusterViewDrop: ((ClusterTransferEvent) -> Void)?
 
+    /// A cluster surface accepts intra-canvas block transfers (a block dragged
+    /// from one cluster/the canvas into this one). A Command-K "retrieve" drag
+    /// is a different verb: it must place a NEW block on the canvas at the drop
+    /// point, so the cluster surface declines and lets the drop fall through to
+    /// the canvas drop delegate behind it. Its `.text` payload is otherwise
+    /// indistinguishable, and the cluster's drop rect bleeds into the white
+    /// space around its content, so without this guard a Command-K card
+    /// released near a cluster is swallowed (no matching existing block →
+    /// silent no-op) instead of being placed.
+    private var isCommandKRetrieveDrag: Bool {
+        CommandKDragSession.shared.isActive
+    }
+
     func validateDrop(info: DropInfo) -> Bool {
-        enabled && info.hasItemsConforming(to: [.text])
+        NSLog("CMDKDRAG cluster.validateDrop id=\(cluster.id) userCreated=\(cluster.isUserCreated) enabled=\(enabled) cmdkActive=\(isCommandKRetrieveDrag)")
+        guard !isCommandKRetrieveDrag else { return false }
+        return enabled && info.hasItemsConforming(to: [.text])
     }
 
     func dropEntered(info: DropInfo) {
+        guard !isCommandKRetrieveDrag else { return }
         updatePreview(for: info, animated: true)
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
+        guard !isCommandKRetrieveDrag else { return nil }
         updatePreview(for: info, animated: false)
         return DropProposal(operation: .move)
     }
@@ -705,6 +722,11 @@ private struct ClusterViewSurfaceDropDelegate: DropDelegate {
     }
 
     func performDrop(info: DropInfo) -> Bool {
+        // Command-K retrieve drags are the canvas's to place; never consume them.
+        guard !isCommandKRetrieveDrag else {
+            NSLog("CMDKDRAG cluster.performDrop DECLINED (cmdk retrieve) id=\(cluster.id)")
+            return false
+        }
         guard previewTarget(for: info) != nil else {
             clearPreview(animated: true)
             ClusterViewDragSession.sourceClusterId = nil

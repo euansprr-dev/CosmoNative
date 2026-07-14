@@ -312,6 +312,7 @@ struct RichTextEditor: View {
     var splitsOnReturn: Bool = false
     var rowBlockID: UUID? = nil
     var rowBlockKind: RichBlockKind? = nil
+    var rowHeadingIsCollapsible: Bool = false
     var caretRequest: EditorCaretRequest? = nil
     var externalContentToken: Int = 0
     var onPlainTextDidChange: ((String) -> Void)? = nil
@@ -398,6 +399,7 @@ struct RichTextEditor: View {
         splitsOnReturn: Bool = false,
         rowBlockID: UUID? = nil,
         rowBlockKind: RichBlockKind? = nil,
+        rowHeadingIsCollapsible: Bool = false,
         caretRequest: EditorCaretRequest? = nil,
         externalContentToken: Int = 0,
         onPlainTextDidChange: ((String) -> Void)? = nil,
@@ -446,6 +448,7 @@ struct RichTextEditor: View {
         self.splitsOnReturn = splitsOnReturn
         self.rowBlockID = rowBlockID
         self.rowBlockKind = rowBlockKind
+        self.rowHeadingIsCollapsible = rowHeadingIsCollapsible
         self.caretRequest = caretRequest
         self.externalContentToken = externalContentToken
         self.onPlainTextDidChange = onPlainTextDidChange
@@ -550,6 +553,7 @@ struct RichTextEditor: View {
                 dragSelectionController: dragSelectionController,
                 rowBlockID: rowBlockID,
                 rowBlockKind: rowBlockKind,
+                rowHeadingIsCollapsible: rowHeadingIsCollapsible,
                 editorInstanceID: overlayEscapeOwnerID
             )
             // Non-scrolling editors report their live height through
@@ -1163,6 +1167,7 @@ enum SlashCommandType: Equatable {
     case content
     case research
     case heading1, heading2, heading3
+    case toggleHeading1, toggleHeading2, toggleHeading3
     case bulletList, numberedList, checkbox
     case quote, divider
     case callout, toggle, codeBlock, sketch
@@ -1200,6 +1205,9 @@ enum SlashCommandType: Equatable {
         case .heading1: return "heading-1"
         case .heading2: return "heading-2"
         case .heading3: return "heading-3"
+        case .toggleHeading1: return "toggle-heading-1"
+        case .toggleHeading2: return "toggle-heading-2"
+        case .toggleHeading3: return "toggle-heading-3"
         case .bulletList: return "bullet-list"
         case .numberedList: return "numbered-list"
         case .checkbox: return "checkbox"
@@ -1224,6 +1232,9 @@ enum SlashCommandCatalog {
         SlashCommand(type: .checkbox, title: "Checklist", subtitle: "Track tasks with checkboxes", icon: "checklist", shortcut: "[]", section: .basics),
         SlashCommand(type: .quote, title: "Quote", subtitle: "Add a block quote", icon: "text.quote", shortcut: ">", section: .basics),
         SlashCommand(type: .toggle, title: "Toggle", subtitle: "Collapsible section of blocks", icon: "chevron.forward.square", shortcut: nil, searchAliases: ["toggle", "collapse", "disclosure", "fold"], section: .structure),
+        SlashCommand(type: .toggleHeading1, title: "Toggle Heading 1", subtitle: "Large collapsible section heading", icon: "chevron.forward.square", shortcut: nil, searchAliases: ["toggle h1", "th1", "collapsible heading", "fold heading"], section: .structure),
+        SlashCommand(type: .toggleHeading2, title: "Toggle Heading 2", subtitle: "Medium collapsible section heading", icon: "chevron.forward.square", shortcut: nil, searchAliases: ["toggle h2", "th2", "collapsible heading", "fold heading"], section: .structure),
+        SlashCommand(type: .toggleHeading3, title: "Toggle Heading 3", subtitle: "Small collapsible section heading", icon: "chevron.forward.square", shortcut: nil, searchAliases: ["toggle h3", "th3", "collapsible heading", "fold heading"], section: .structure),
         SlashCommand(type: .callout, title: "Callout", subtitle: "Highlight with an icon and tint", icon: "exclamationmark.bubble", shortcut: "!!", searchAliases: ["callout", "info", "note", "highlight", "aside"], section: .structure),
         SlashCommand(type: .codeBlock, title: "Code", subtitle: "Monospaced code block", icon: "curlybraces", shortcut: "```", searchAliases: ["code", "snippet", "mono", "codeblock"], section: .structure),
         SlashCommand(type: .divider, title: "Divider", subtitle: "Visual separation between sections", icon: "minus", shortcut: "---", section: .structure),

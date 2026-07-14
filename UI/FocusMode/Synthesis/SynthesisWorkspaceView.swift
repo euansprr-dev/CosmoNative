@@ -183,7 +183,7 @@ struct SynthesisWorkspaceView: View {
             ProgressView()
                 .progressViewStyle(.circular)
                 .scaleEffect(0.8)
-            Text("Synthesizing insights...")
+            Text("Synthesizing insights…")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(DS.textSecondary)
             Spacer()

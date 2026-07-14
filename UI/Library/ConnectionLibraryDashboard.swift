@@ -155,7 +155,7 @@ struct ConnectionLibraryDashboard: View {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 13))
                     .foregroundColor(DS.textMuted)
-                TextField("Search concepts...", text: $searchText)
+                TextField("Search concepts…", text: $searchText)
                     .textFieldStyle(.plain)
                     .font(.system(size: 13))
                     .foregroundColor(DS.text)

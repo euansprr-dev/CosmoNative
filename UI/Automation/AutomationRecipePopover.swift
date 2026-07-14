@@ -202,7 +202,7 @@ struct AutomationRecipePopover: View {
                 parsedLine(
                     icon: "line.3.horizontal.decrease.circle.fill",
                     color: DS.info,
-                    text: "\(condition.field.displayName) \(condition.op.displayName) \(condition.value.stringValue ?? "...")"
+                    text: "\(condition.field.displayName) \(condition.op.displayName) \(condition.value.stringValue ?? "…")"
                 )
             }
 

@@ -254,7 +254,7 @@ struct ThinkspaceSidebar: View {
                 .progressViewStyle(CircularProgressViewStyle(tint: DS.accent))
                 .scaleEffect(0.8)
 
-            Text("Loading...")
+            Text("Loading…")
                 .font(.system(size: 12))
                 .foregroundStyle(DS.textSecondary)
         }
@@ -1176,7 +1176,7 @@ struct ThinkspaceRow: View {
                         .progressViewStyle(CircularProgressViewStyle(tint: DS.accent))
                         .scaleEffect(0.6)
 
-                    Text("Loading...")
+                    Text("Loading…")
                         .font(.system(size: 10))
                         .foregroundStyle(DS.textMuted)
                 }

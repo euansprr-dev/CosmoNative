@@ -129,7 +129,7 @@ struct FloatingPanelContent: Equatable {
     }
 
     static let placeholder = FloatingPanelContent(
-        title: "Loading...",
+        title: "Loading…",
         preview: nil,
         thumbnailURL: nil,
         metadata: PanelMetadata(author: nil, duration: nil, platform: nil, sourceType: nil),

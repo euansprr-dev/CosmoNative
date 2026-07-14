@@ -102,7 +102,7 @@ struct AutomationListPanel: View {
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(DS.textMuted)
 
-                    TextField("Filter rules...", text: $searchQuery)
+                    TextField("Filter rules…", text: $searchQuery)
                         .textFieldStyle(.plain)
                         .font(.system(size: 12))
                         .foregroundStyle(DS.text)
@@ -186,7 +186,7 @@ struct AutomationListPanel: View {
         VStack(spacing: 8) {
             ProgressView()
                 .scaleEffect(0.8)
-            Text("Loading rules...")
+            Text("Loading rules…")
                 .font(.system(size: 11))
                 .foregroundStyle(DS.textMuted)
         }

@@ -1496,7 +1496,7 @@ final class SwipeStudyModel {
     }
 
     private func pollForBackgroundCompletion() {
-        autoTranscriptionProgress = "Processing in background..."
+        autoTranscriptionProgress = "Processing in background…"
         isAutoTranscribing = true
 
         Task { [weak self] in
@@ -1574,7 +1574,7 @@ final class SwipeStudyModel {
     func autoTranscribe(videoURL: URL, duration: TimeInterval) async {
         let expectedUUID = displayAtom.uuid
         isAutoTranscribing = true
-        autoTranscriptionProgress = "Starting transcription..."
+        autoTranscriptionProgress = "Starting transcription…"
 
         let result = await InstagramAutoTranscriber.shared.transcribe(
             videoURL: videoURL,
@@ -1591,7 +1591,7 @@ final class SwipeStudyModel {
             case .analyzingWithAI(let pct):
                 message = "AI analyzing frames... \(Int(pct * 100))%"
             case .mergingResults:
-                message = "Merging results..."
+                message = "Merging results…"
             case .complete:
                 message = "Complete"
             }
@@ -1618,7 +1618,7 @@ final class SwipeStudyModel {
         let expectedUUID = displayAtom.uuid
         let shortcode = currentInstagramShortcode()
         isAutoTranscribing = true
-        autoTranscriptionProgress = "Starting carousel transcription..."
+        autoTranscriptionProgress = "Starting carousel transcription…"
 
         let result = await InstagramAutoTranscriber.shared.transcribeCarousel(
             items: items,

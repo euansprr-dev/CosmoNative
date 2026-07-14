@@ -10,7 +10,9 @@ import UniformTypeIdentifiers
 
 struct CaptureOverlayView: View {
     @Bindable var viewModel: CaptureOverlayViewModel
-    @FocusState private var isFieldFocused: Bool
+    // Plain Bool, not FocusState: the field is an NSTextView-backed
+    // representable that manages first responder itself.
+    @State private var isFieldFocused = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -96,17 +98,33 @@ struct CaptureOverlayView: View {
 
     // MARK: - Text capture
 
+    /// The input plus its live lane chip — a resolved `Groceries:` prefix
+    /// shows where the capture will land; a prefix-in-progress offers the
+    /// completion (space or click accepts).
     private var captureFieldRow: some View {
+        VStack(alignment: .leading, spacing: DS.space8) {
+            captureInputRow
+            LaneAssistChip(text: $viewModel.captureText, assist: viewModel.laneAssist)
+        }
+        .animation(ProMotionSprings.snappy, value: viewModel.laneAssist.hint?.lane.uuid)
+        .animation(ProMotionSprings.snappy, value: viewModel.laneAssist.suggestion?.lane.uuid)
+    }
+
+    private var captureInputRow: some View {
         HStack(spacing: DS.space10) {
-            TextField("Capture a thought…", text: $viewModel.captureText)
-                .textFieldStyle(.plain)
-                .font(DS.body)
-                .foregroundStyle(DS.text)
-                .focused($isFieldFocused)
-                .frame(minHeight: 28)
-                .onSubmit {
+            LaneHighlightedCaptureField(
+                text: $viewModel.captureText,
+                maxLines: 4,
+                assist: viewModel.laneAssist,
+                isFocused: $isFieldFocused,
+                onSubmit: {
                     Task { await viewModel.submitText() }
                 }
+            )
+            .frame(minHeight: 28)
+            .onChange(of: viewModel.captureText) {
+                viewModel.captureTextChanged()
+            }
 
             if !viewModel.captureText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Button {
@@ -545,6 +563,7 @@ private struct CaptureSessionRow: View {
     }
 
     private var trailingLabel: String {
+        if let destination = entry.destinationLabel { return destination }
         switch entry.state {
         case .receiving: return "receiving…"
         case .captured(let uuid): return uuid == nil ? "" : "→ Inbox"

@@ -145,8 +145,11 @@ struct InquiryMindMapNodeCard: View {
 
     private var background: Color {
         switch node.kind {
-        case .root: return DS.vellum
-        case .coreConcept: return DS.vellum
+        // surfaceElevated, not vellum: vellum on the parchment page differs
+        // by a hair — the root card's right half dissolved into the
+        // background and read as a rendering fade.
+        case .root: return DS.surfaceElevated
+        case .coreConcept: return DS.surfaceElevated
         case .childConcept: return branchColor.opacity(0.08)
         case .question, .subQuestion: return node.isActive ? branchColor.opacity(0.10) : DS.surface
         case .questionGroup: return DS.surface.opacity(0.6)

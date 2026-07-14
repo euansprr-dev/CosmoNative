@@ -643,7 +643,7 @@ struct InquirySourcePane: View {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(DS.accent)
-                TextField("Find sources about nasal breathing, HRV, CO2 tolerance...", text: $sourceSearchDraft)
+                TextField("Find sources about nasal breathing, HRV, CO2 tolerance…", text: $sourceSearchDraft)
                     .textFieldStyle(.plain)
                     .font(CosmoTypography.bodySmall)
                     .onSubmit { searchSourcesFromRadar() }

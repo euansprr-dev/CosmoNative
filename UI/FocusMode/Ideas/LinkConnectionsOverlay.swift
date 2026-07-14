@@ -111,7 +111,7 @@ struct LinkConnectionsOverlay: View {
                 .font(.system(size: 13))
                 .foregroundStyle(DS.textMuted)
 
-            TextField("Search concepts by name, topic...", text: $searchText)
+            TextField("Search concepts by name, topic…", text: $searchText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .foregroundStyle(DS.text)
@@ -128,7 +128,7 @@ struct LinkConnectionsOverlay: View {
             if isLoading {
                 VStack(spacing: 12) {
                     ProgressView().tint(accentColor)
-                    Text("Loading concepts...")
+                    Text("Loading concepts…")
                         .font(.system(size: 12))
                         .foregroundStyle(DS.textMuted)
                 }

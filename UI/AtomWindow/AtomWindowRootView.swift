@@ -266,7 +266,7 @@ struct AtomWindowRootView: View {
         VStack(spacing: DS.space12) {
             ProgressView()
                 .scaleEffect(0.8)
-            Text("Loading...")
+            Text("Loading…")
                 .font(DS.callout)
                 .foregroundStyle(DS.textSecondary)
         }

@@ -75,7 +75,7 @@ struct SwipeCreatorsPage: View {
 
     private var masthead: some View {
         HStack(alignment: .top, spacing: DS.space12) {
-            SwipeMasthead(title: "Creators", detail: "\(model.filteredCreators.count) profiles to study")
+            SwipeMasthead(title: "Creators")
             Spacer(minLength: DS.space16)
             HStack(spacing: 8) {
                 sortMenu
@@ -188,21 +188,26 @@ private struct SwipeCreatorCard: View {
     @State private var isHovered = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            identityRow
-            outlierStrip
-            Text(meta)
-                .font(DS.caption.monospacedDigit())
-                .foregroundStyle(DS.textMuted)
+        // A real Button (was a bare onTapGesture): pressed feedback, a
+        // keyboard path, and honest button semantics.
+        Button(action: onOpen) {
+            VStack(alignment: .leading, spacing: 12) {
+                identityRow
+                outlierStrip
+                Text(meta)
+                    .font(DS.caption.monospacedDigit())
+                    .foregroundStyle(DS.textMuted)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .buttonStyle(.plain)
         .swipeCardSurface(isHovered: isHovered)
-        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .scaleEffect(isHovered ? 1.01 : 1)
         .animation(ProMotionSprings.hover, value: isHovered)
         .onHover { isHovered = $0 }
-        .onTapGesture(perform: onOpen)
+        .help("Open \(creator.name)'s profile")
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(creator.name), \(creator.handle)")
         .accessibilityAddTraits(.isButton)
@@ -222,10 +227,9 @@ private struct SwipeCreatorCard: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 0)
-            Image(systemName: creator.platform.iconName)
-                .font(DS.caption.weight(.medium))
-                .foregroundStyle(DS.textMuted)
-                .accessibilityHidden(true)
+            // A drawn brand mark — camera.fill standing in for Instagram is
+            // the generic-glyph tell.
+            PlatformBrandMark(platform: creator.platform.displayName, size: 13)
         }
     }
 
@@ -292,7 +296,10 @@ private struct SwipeCreatorTopThumb: View {
         .frame(height: 56)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(alignment: .topLeading) {
-            if let multiplier = post.derived.outlierMultiplier, multiplier >= 2 {
+            // The badge rides media only — floating a "3×" over an empty
+            // placeholder tile read as broken chrome.
+            if thumbnailURL != nil,
+               let multiplier = post.derived.outlierMultiplier, multiplier >= 2 {
                 Text("\(Int(multiplier.rounded()))×")
                     .font(DS.caption2.weight(.semibold).monospacedDigit())
                     .foregroundStyle(.white)
@@ -314,7 +321,10 @@ struct SwipeCreatorAvatar: View {
     let size: CGFloat
 
     var body: some View {
-        CachedAsyncImage(url: url, stableKey: url.map { "avatar-\($0.absoluteString.hashValue)" }) { phase in
+        // Key on the URL string itself — Swift's hashValue is seeded per
+        // launch, so the old key missed the cache on every run and avatars
+        // re-downloaded (or fell back to initials) each session.
+        CachedAsyncImage(url: url, stableKey: url.map { "avatar-\($0.absoluteString)" }) { phase in
             switch phase {
             case .success(let image):
                 image.resizable().scaledToFill()

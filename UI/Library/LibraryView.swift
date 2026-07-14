@@ -262,7 +262,7 @@ struct LibraryView: View {
                     .font(.system(size: 14))
                     .foregroundColor(DS.textMuted)
 
-                TextField("Search library...", text: $searchText)
+                TextField("Search library…", text: $searchText)
                     .textFieldStyle(.plain)
                     .font(.system(size: 14))
                     .foregroundColor(DS.text)

@@ -149,7 +149,7 @@ struct TaskLinkedAtomPicker: View {
                     .font(DS.caption2)
                     .foregroundStyle(DS.textMuted)
 
-                TextField("Search atoms, thinkspaces...", text: $searchQuery)
+                TextField("Search atoms, thinkspaces…", text: $searchQuery)
                     .textFieldStyle(.plain)
                     .font(DS.footnote)
                     .foregroundStyle(DS.text)

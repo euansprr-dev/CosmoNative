@@ -165,6 +165,25 @@ public struct TaskViewModel: Identifiable, Equatable, Sendable {
         return due < Calendar.current.startOfDay(for: Date())
     }
 
+    /// Overdue judged from an arbitrary reference day rather than wall-clock
+    /// today. On its own due day a task is NOT overdue; it only reads overdue
+    /// from a later vantage. The Today surface passes its viewed day, so
+    /// navigating back to a task's due day shows it as a normal checkable row
+    /// you can still complete FOR that day — not a missed one.
+    public func isOverdue(asOf referenceDay: Date) -> Bool {
+        guard let due = dueDate, !isCompleted else { return false }
+        return due < Calendar.current.startOfDay(for: referenceDay)
+    }
+
+    /// `dueInfo` with overdue judged from `referenceDay` (see `isOverdue(asOf:)`).
+    public func dueInfo(asOf referenceDay: Date) -> String? {
+        guard let due = dueDate else { return nil }
+        if isOverdue(asOf: referenceDay) { return "Overdue" }
+        if Calendar.current.isDateInToday(due) { return "Due today" }
+        if Calendar.current.isDateInTomorrow(due) { return "Due tomorrow" }
+        return "Due \(due.formatted(.dateTime.month().day()))"
+    }
+
     /// Whether the task is due tomorrow
     public var isDueTomorrow: Bool {
         guard let due = dueDate else { return false }

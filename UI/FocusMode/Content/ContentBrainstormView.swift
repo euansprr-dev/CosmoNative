@@ -135,7 +135,7 @@ struct ContentBrainstormView: View {
                     .font(DS.title3)
                     .foregroundStyle(DS.accent.opacity(0.6))
 
-                TextField("Add a hook...", text: $newHookText)
+                TextField("Add a hook…", text: $newHookText)
                     .textFieldStyle(.plain)
                     .font(DS.body)
                     .foregroundStyle(DS.text)
@@ -268,7 +268,7 @@ struct ContentBrainstormView: View {
                     .font(DS.title3)
                     .foregroundStyle(DS.accent.opacity(0.6))
 
-                TextField("Add outline point...", text: $newOutlineText)
+                TextField("Add outline point…", text: $newOutlineText)
                     .textFieldStyle(.plain)
                     .font(DS.body)
                     .foregroundStyle(DS.text)
@@ -343,7 +343,7 @@ struct ContentBrainstormView: View {
                 ProgressView()
                     .scaleEffect(0.6)
                     .tint(DS.accent)
-                Text("Generating...")
+                Text("Generating…")
                     .font(DS.buttonText)
                     .foregroundStyle(DS.accent)
             }
@@ -636,7 +636,7 @@ private struct ExpandableOutlineItemRow: View {
             HStack(spacing: 4) {
                 Image(systemName: "plus")
                     .font(DS.caption2)
-                Text("Add notes, reasoning, or shooting details...")
+                Text("Add notes, reasoning, or shooting details…")
                     .font(DS.footnote)
             }
             .foregroundStyle(DS.textMuted)

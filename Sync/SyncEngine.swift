@@ -148,6 +148,11 @@ class SyncEngine: ObservableObject {
 
         syncState = .syncing
 
+        // 0. Heal orphaned pending rows BEFORE the push reads the queue, so any
+        // row whose _local_pending shield is up but has no queue row (stranded
+        // in both directions) gets re-enqueued and pushed in this same cycle.
+        await requeueOrphanedPendingRows()
+
         // 1. Push local changes
         await syncPendingChanges()
 
@@ -442,6 +447,52 @@ class SyncEngine: ObservableObject {
             try db.execute(
                 sql: "DELETE FROM sync_queue WHERE status = 'synced' AND synced_at < datetime('now', '-1 day')"
             )
+        }
+    }
+
+    /// Heal rows whose `_local_pending` shield is raised but that have NO pending
+    /// sync_queue row — the divergence that silently freezes a row in BOTH sync
+    /// directions.
+    ///
+    /// Root cause: `_local_pending` (the inbound shield, checked in
+    /// applyRemoteChange) and `sync_queue` (the outbound push driver) are two
+    /// independent stores. Roughly twenty raw-SQL write paths set
+    /// `_local_pending = 1` directly, and the synchronous close-save escort
+    /// persists with the flag but without the async `trackUpdate` that would
+    /// enqueue. Any of them can leave the flag up with no queue row. The pusher
+    /// only reads sync_queue, so the stranded local edit never uploads;
+    /// meanwhile the shield skips EVERY inbound remote change for that row, so
+    /// the other device's edits never apply. The row is frozen until this pass
+    /// re-enqueues it (after which the push lands and the post-push bookkeeping
+    /// drops the shield), or — when the server has already moved past the local
+    /// version — clears the stale shield so the next pull can apply the newer
+    /// remote row. Cheap enough to run every cycle (indexed NOT EXISTS).
+    private func requeueOrphanedPendingRows() async {
+        // Atoms — the user-facing surface (tasks, notes, ideas, content, …).
+        do {
+            let result = try await database.asyncWrite { db in
+                try SyncQueueReconciler.reconcileOrphanedPendingAtoms(db)
+            }
+            if result.requeued > 0 || result.cleared > 0 {
+                print("🩹 Orphaned-pending heal — atoms: re-enqueued \(result.requeued), stale shield cleared \(result.cleared)")
+                PersistenceHealth.note(.syncFailure, context: "SyncEngine.requeueOrphanedPending(atoms)", detail: "re-enqueued \(result.requeued) local-ahead atom(s) with no queue row; cleared \(result.cleared) stale shield(s)")
+            }
+        } catch {
+            PersistenceHealth.note(.writeFailure, context: "SyncEngine.requeueOrphanedPending(atoms)", detail: String(describing: error))
+        }
+
+        // Canvas blocks — same shield, same divergence (raw-SQL block writes in
+        // note/sticky/connection views set _local_pending directly).
+        do {
+            let requeued = try await database.asyncWrite { db in
+                try SyncQueueReconciler.reconcileOrphanedPendingCanvasBlocks(db)
+            }
+            if requeued > 0 {
+                print("🩹 Orphaned-pending heal — canvas_blocks: re-enqueued \(requeued)")
+                PersistenceHealth.note(.syncFailure, context: "SyncEngine.requeueOrphanedPending(canvas_blocks)", detail: "re-enqueued \(requeued) block(s) with _local_pending=1 and no queue row")
+            }
+        } catch {
+            PersistenceHealth.note(.writeFailure, context: "SyncEngine.requeueOrphanedPending(canvas_blocks)", detail: String(describing: error))
         }
     }
 
@@ -955,6 +1006,124 @@ class SyncEngine: ObservableObject {
         syncTimer?.invalidate()
         syncTimer = nil
         realtimeSubscription?.cancel()
+    }
+}
+
+// MARK: - Sync Queue Reconciler
+
+/// Reconciles the `_local_pending` shield against the `sync_queue`. Pure,
+/// synchronous, and DB-injectable so it is unit-testable on an in-memory
+/// database (the shared SyncEngine path just wraps these in `asyncWrite`).
+enum SyncQueueReconciler {
+
+    struct AtomOutcome: Equatable {
+        var requeued: Int
+        var cleared: Int
+    }
+
+    /// Build the sync payload for a stuck atom row directly from its columns —
+    /// the same wire shape `SyncEngine.pushChange` expects (it strips the
+    /// local-only fields and parses the JSON TEXT columns into JSONB). Typed
+    /// GRDB subscripts throughout: SQLite stores integers as Int64, and the
+    /// untyped `as? Int` cast silently fails (the tombstone-resurrection class
+    /// of bug), so bool/int columns MUST use `as Bool?` / `as Int?`.
+    static func atomPayloadJSON(_ row: Row) -> String? {
+        let payload: [String: Any] = [
+            "uuid": row["uuid"] as String? ?? "",
+            "type": row["type"] as String? ?? "",
+            "title": (row["title"] as String?).map { $0 as Any } ?? NSNull(),
+            "body": (row["body"] as String?).map { $0 as Any } ?? NSNull(),
+            "structured": (row["structured"] as String?).map { $0 as Any } ?? NSNull(),
+            "metadata": (row["metadata"] as String?).map { $0 as Any } ?? NSNull(),
+            "links": (row["links"] as String?).map { $0 as Any } ?? NSNull(),
+            "created_at": row["created_at"] as String? ?? "",
+            "updated_at": row["updated_at"] as String? ?? "",
+            "is_deleted": (row["is_deleted"] as Bool?) ?? false,
+            "_local_version": row["_local_version"] as Int? ?? 1,
+            // Read by pushChange to choose update-vs-upsert, then stripped.
+            "_server_version": row["_server_version"] as Int? ?? 0,
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+              let json = String(data: data, encoding: .utf8) else { return nil }
+        return json
+    }
+
+    /// - Re-enqueue atoms whose shield is up AND whose local version is genuinely
+    ///   ahead of the server (`_local_version > _server_version`) but that have no
+    ///   pending queue row — their stranded local edit must still upload.
+    /// - Clear the stale shield on atoms whose local version is NOT ahead
+    ///   (`_local_version <= _server_version`) and that have no queue row: the
+    ///   flag is spurious (the edit already reached the cloud, or the server
+    ///   moved past it), and leaving it up would keep blocking inbound pulls.
+    ///   Re-pushing those would clobber newer remote content, so we never do.
+    @discardableResult
+    static func reconcileOrphanedPendingAtoms(_ db: Database) throws -> AtomOutcome {
+        let orphanClause = """
+            _local_pending = 1
+            AND NOT EXISTS (
+                SELECT 1 FROM sync_queue q
+                WHERE q.uuid = atoms.uuid AND q.table_name = 'atoms' AND q.status = 'pending'
+            )
+            """
+
+        let requeueRows = try Row.fetchAll(db, sql: """
+            SELECT * FROM atoms
+            WHERE \(orphanClause) AND _local_version > _server_version
+            """)
+
+        var requeued = 0
+        for row in requeueRows {
+            guard let uuid = row["uuid"] as String?, !uuid.isEmpty,
+                  let json = atomPayloadJSON(row) else { continue }
+            try db.execute(
+                sql: """
+                INSERT INTO sync_queue (uuid, table_name, row_id, operation, data, local_version, status)
+                VALUES (?, 'atoms', ?, 'UPDATE', ?, ?, 'pending')
+                """,
+                arguments: [uuid, row["id"] as Int64?, json, row["_local_version"] as Int? ?? 1]
+            )
+            requeued += 1
+        }
+
+        try db.execute(sql: """
+            UPDATE atoms SET _local_pending = 0
+            WHERE \(orphanClause) AND _local_version <= _server_version
+            """)
+        let cleared = db.changesCount
+
+        return AtomOutcome(requeued: requeued, cleared: cleared)
+    }
+
+    /// Canvas blocks re-enqueue via the same cloud payload builder the
+    /// CanvasBlockSyncObserver uses (placement-`id`-keyed, INSERT/upsert). The
+    /// shield's cloud key is the placement `id`, mirrored into the queue `uuid`.
+    @discardableResult
+    static func reconcileOrphanedPendingCanvasBlocks(_ db: Database) throws -> Int {
+        let rows = try Row.fetchAll(db, sql: """
+            SELECT * FROM canvas_blocks
+            WHERE _local_pending = 1
+              AND NOT EXISTS (
+                SELECT 1 FROM sync_queue q
+                WHERE q.uuid = canvas_blocks.id AND q.table_name = 'canvas_blocks' AND q.status = 'pending'
+              )
+            """)
+
+        var requeued = 0
+        for row in rows {
+            guard let payload = CanvasBlockRecord.cloudSyncPayload(row: row),
+                  let cloudKey = payload["uuid"] as? String,
+                  let data = try? JSONSerialization.data(withJSONObject: payload),
+                  let json = String(data: data, encoding: .utf8) else { continue }
+            try db.execute(
+                sql: """
+                INSERT INTO sync_queue (uuid, table_name, row_id, operation, data, local_version, status)
+                VALUES (?, 'canvas_blocks', NULL, 'INSERT', ?, ?, 'pending')
+                """,
+                arguments: [cloudKey, json, row["_local_version"] as Int? ?? 1]
+            )
+            requeued += 1
+        }
+        return requeued
     }
 }
 

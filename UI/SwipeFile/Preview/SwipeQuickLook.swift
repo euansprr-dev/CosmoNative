@@ -175,6 +175,9 @@ struct SwipeQuickLookLibraryContent: View {
         // Explicit sizing — the stage gets exactly panel-minus-footer, so no
         // flexible-layout negotiation (or an overgrown AVPlayerView/image) can
         // ever swallow the footer or spill past the panel.
+        // NOTE: no .contextMenu on the stage — macOS contextMenu sizes its
+        // content at IDEAL size (ignoring the proposal), which let image
+        // stages blow past the panel and swallow the footer.
         GeometryReader { geo in
             let stageHeight = max(0, geo.size.height - SwipeQuickLookGeometry.footerHeight)
             VStack(spacing: 0) {
@@ -182,9 +185,6 @@ struct SwipeQuickLookLibraryContent: View {
                     .frame(width: geo.size.width, height: stageHeight)
                     .clipped()
                     .overlay(alignment: .topTrailing) { closeButton }
-                    .contextMenu {
-                        Button("Add to Canvas", systemImage: "square.grid.2x2", action: onAddToCanvas)
-                    }
                 footer
                     .frame(width: geo.size.width)
             }
@@ -230,15 +230,12 @@ struct SwipeQuickLookLibraryContent: View {
     }
 
     /// Creator identity leads — the quick look is the sanctioned identity
-    /// surface, so the platform glyph keeps its brand color here.
+    /// surface, so the platform mark keeps its brand color here.
     private var footer: some View {
         HStack(spacing: 8) {
-            if let glyph = model.platformGlyph {
-                Image(systemName: glyph)
-                    .font(DS.caption.weight(.semibold))
-                    .foregroundStyle(model.platformColor ?? DS.textMuted)
-                    .accessibilityHidden(true)
-            }
+            SwipePlatformGlyph(source: model.platformKey)
+                .frame(width: 13, height: 13)
+                .foregroundStyle(model.platformColor ?? DS.textMuted)
             Text(identityLine)
                 .font(DS.subheadline.weight(.medium))
                 .foregroundStyle(DS.textSecondary)
@@ -250,6 +247,12 @@ struct SwipeQuickLookLibraryContent: View {
             }
 
             Spacer(minLength: DS.space12)
+
+            SwipeQuickLookIconButton(
+                systemImage: "square.grid.2x2",
+                help: "Add to Canvas",
+                action: onAddToCanvas
+            )
 
             Button(action: onStudy) {
                 HStack(spacing: 7) {
@@ -487,10 +490,9 @@ private struct SwipeQuickLookStillStage: View {
                 case .success(let image):
                     image.resizable().scaledToFit()
                 case .empty, .failure:
-                    Image(systemName: model.platformGlyph ?? "photo")
-                        .font(DS.title2)
+                    SwipePlatformGlyph(source: model.platformKey)
+                        .frame(width: 24, height: 24)
                         .foregroundStyle(DS.textMuted)
-                        .accessibilityHidden(true)
                 }
             }
         }

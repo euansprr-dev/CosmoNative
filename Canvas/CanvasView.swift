@@ -421,6 +421,9 @@ struct CanvasView: View {
                 onClusterDrop: { [self] blockUUID, canvasPosition in
                     handleClusterToCanvasDrop(blockUUID: blockUUID, canvasPosition: canvasPosition)
                 },
+                onCommandKAtomDrop: { [self] uuids, canvasPosition in
+                    handleCommandKAtomDrop(uuids: uuids, canvasPosition: canvasPosition)
+                },
                 onImageDrop: { [self] providers, canvasPosition in
                     handleCanvasImageDrop(providers: providers, canvasPosition: canvasPosition)
                 }
@@ -1008,6 +1011,12 @@ struct CanvasView: View {
                 deleteFolder: { clusterEngine.removeUserCluster(id: $0) }
             )
         )
+        // The Library is a PAGE, not the spatial canvas: it must yield to the
+        // floating sidebar like every other destination (the masthead and the
+        // first grid column were rendering underneath it). The drag manager's
+        // sidebar footprint is stamped by MainView and reads 0 when hidden.
+        .padding(.leading, crossDragManager.sidebarTotalWidth)
+        .animation(ProMotionSprings.gentle, value: crossDragManager.sidebarTotalWidth)
         .onAppear {
             refreshLibraryInventory()
         }
@@ -1659,6 +1668,23 @@ struct CanvasView: View {
                 ) { [self] notification in
                     nonisolated(unsafe) let notification = notification
                     handlePlaceBlocks(notification: notification, canvasSize: canvasSize)
+                }
+
+                // A ⌘K result dropped anywhere outside the palette is routed here
+                // by the window-level catcher with its window-space release point;
+                // convert it to canvas space and place exactly as a canvas drop.
+                addCanvasObserver(
+                    forName: CosmoNotification.NodeGraph.commandKAtomDropOnCanvas,
+                    object: nil,
+                    queue: .main,
+                    activeOnly: true
+                ) { [self] notification in
+                    guard thinkspaceMode == .canvas,
+                          let uuids = notification.userInfo?["uuids"] as? [String],
+                          let x = notification.userInfo?["x"] as? CGFloat,
+                          let y = notification.userInfo?["y"] as? CGFloat else { return }
+                    let canvasPosition = screenToCanvasPosition(CGPoint(x: x, y: y))
+                    handleCommandKAtomDrop(uuids: uuids, canvasPosition: canvasPosition)
                 }
 
                 // Listen for move commands
@@ -3262,7 +3288,7 @@ struct CanvasView: View {
 
         guard !indicesToRepair.isEmpty else { return 0 }
 
-        print("🛠️ Repairing \(indicesToRepair.count) legacy canvas blocks with invalid entity IDs...")
+        print("🛠️ Repairing \(indicesToRepair.count) legacy canvas blocks with invalid entity IDs…")
 
         for idx in indicesToRepair {
             var block = spatialEngine.blocks[idx]
@@ -4475,6 +4501,7 @@ struct CanvasView: View {
     }
 
     private func openBlockInFocusMode(_ block: CanvasBlock) {
+        AppPerformanceInstrumentation.trace("CANVAS openBlockInFocusMode \(block.entityType.rawValue)#\(block.entityId)")
         guard [.idea, .content, .research, .connection, .cosmoAI].contains(block.entityType) else {
             return
         }
@@ -5100,7 +5127,7 @@ struct CanvasView: View {
                     entityId: -1,
                     entityUuid: UUID().uuidString,
                     title: "New Idea",
-                    subtitle: "Tap to edit...",
+                    subtitle: "Tap to edit…",
                     metadata: ["created": ISO8601.string(from: Date())]
                 )
                 await spatialEngine.addBlock(fallbackBlock, persist: false)
@@ -5191,7 +5218,7 @@ struct CanvasView: View {
                     entityId: -1,
                     entityUuid: UUID().uuidString,
                     title: prefillTitle ?? "New Research",
-                    subtitle: "Start researching...",
+                    subtitle: "Start researching…",
                     metadata: ["created": ISO8601.string(from: Date())]
                 )
                 await spatialEngine.addBlock(fallbackBlock, persist: false)
@@ -5208,7 +5235,7 @@ struct CanvasView: View {
         Task { @MainActor in
             do {
                 // Create connection in database
-                print("🔗 Creating connection in database...")
+                print("🔗 Creating connection in database…")
                 let savedConnection = try await CosmoDatabase.shared.asyncWrite { db -> Atom in
                     var connection = Atom.new(type: .connection, title: "New Concept")
                     try connection.insert(db)
@@ -5227,7 +5254,7 @@ struct CanvasView: View {
                     entityId: savedConnection.id ?? -1,
                     entityUuid: savedConnection.uuid,
                     title: "New Concept",
-                    subtitle: "Define your mental model...",
+                    subtitle: "Define your mental model…",
                     metadata: ["created": ISO8601.string(from: Date())]
                 )
 
@@ -5248,7 +5275,7 @@ struct CanvasView: View {
                     entityId: -1,
                     entityUuid: UUID().uuidString,
                     title: "New Concept",
-                    subtitle: "Define your mental model...",
+                    subtitle: "Define your mental model…",
                     metadata: ["created": ISO8601.string(from: Date())]
                 )
 
@@ -5323,10 +5350,48 @@ struct CanvasView: View {
         print("⚠️ handleOpenEntityOnCanvas: missing type/id or atomUUID")
     }
 
+    /// Places atoms dragged out of the Command-K palette at the drop point.
+    /// Multi-select drops cascade so nothing lands perfectly stacked.
+    private func handleCommandKAtomDrop(uuids: [String], canvasPosition: CGPoint) {
+        NSLog("CMDKDRAG handleCommandKAtomDrop uuids=\(uuids) canvasPos=\(canvasPosition) thinkspaceMode=\(thinkspaceMode)")
+        CommandKDragSession.shared.end()
+        NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
+
+        Task { @MainActor in
+            for (index, uuid) in uuids.enumerated() {
+                guard let atom = try? await AtomRepository.shared.fetch(uuid: uuid) else {
+                    NSLog("CMDKDRAG handleCommandKAtomDrop: atom NOT FOUND for uuid \(uuid)")
+                    print("⚠️ handleCommandKAtomDrop: atom not found for UUID \(uuid)")
+                    continue
+                }
+                NSLog("CMDKDRAG fetched atom uuid=\(uuid) type=\(atom.type.rawValue) id=\(atom.id ?? -1)")
+                let entityType = EntityType(rawValue: atom.type.rawValue) ?? .research
+                let position = CGPoint(
+                    x: canvasPosition.x + CGFloat(index) * 28,
+                    y: canvasPosition.y + CGFloat(index) * 28
+                )
+                await openOrCreateBlock(
+                    entityType: entityType,
+                    entityId: atom.id ?? 0,
+                    atom: atom,
+                    at: position
+                )
+            }
+        }
+    }
+
     /// Creates or focuses an existing canvas block for the given entity.
     /// When an `atom` is provided, uses `CanvasBlock.fromAtom` for proper metadata and sizing.
+    /// A non-nil `requestedPosition` (canvas space) expresses placement intent —
+    /// drops land there, and an existing block MOVES there instead of the
+    /// default scroll-to-and-focus behavior.
     @MainActor
-    private func openOrCreateBlock(entityType: EntityType, entityId: Int64, atom: Atom? = nil) async {
+    private func openOrCreateBlock(
+        entityType: EntityType,
+        entityId: Int64,
+        atom: Atom? = nil,
+        at requestedPosition: CGPoint? = nil
+    ) async {
         // Check if a block for this entity already exists (match by entityId or by UUID)
         let existingBlock: CanvasBlock? = {
             if let atom = atom {
@@ -5341,6 +5406,16 @@ struct CanvasView: View {
         }()
 
         if let existingBlock = existingBlock {
+            if let requestedPosition {
+                // Placement intent (drag/drop): move the block to the point.
+                NSLog("CMDKDRAG openOrCreateBlock: MOVE existing block id=\(existingBlock.id) from=\(existingBlock.position) to=\(requestedPosition)")
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                    spatialEngine.updateBlockPosition(existingBlock.id, position: requestedPosition)
+                }
+                selectedBlockId = existingBlock.id
+                return
+            }
+
             // Focus and scroll to existing block
             withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
                 canvasOffset = CGSize(
@@ -5368,8 +5443,8 @@ struct CanvasView: View {
             resolvedAtom = try? await AtomRepository.shared.fetch(id: entityId)
         }
 
-        // Calculate center position for new block
-        let position = CGPoint(
+        // New blocks land at the requested point, else viewport center
+        let position = requestedPosition ?? CGPoint(
             x: canvasSize.width / 2 - canvasOffset.width,
             y: canvasSize.height / 2 - canvasOffset.height
         )
@@ -5403,6 +5478,7 @@ struct CanvasView: View {
             }
         }
 
+        NSLog("CMDKDRAG openOrCreateBlock: CREATE new block id=\(block.id) at=\(position) type=\(entityType) canvasOffset=\(canvasOffset) canvasSize=\(canvasSize)")
         await spatialEngine.addBlock(block, persist: true)
         selectedBlockId = block.id
 
@@ -6157,20 +6233,64 @@ private struct CanvasDropDelegate: DropDelegate {
     let isEnabled: () -> Bool
     let screenToCanvas: (CGPoint) -> CGPoint
     let onClusterDrop: (String, CGPoint) -> Void
+    let onCommandKAtomDrop: ([String], CGPoint) -> Void
     let onImageDrop: ([NSItemProvider], CGPoint) -> Void
 
     func validateDrop(info: DropInfo) -> Bool {
+        if CommandKDragSession.shared.isActive {
+            NSLog("CMDKDRAG canvas.validateDrop enabled=\(isEnabled()) cmdkActive=true loc=\(info.location)")
+        }
         guard isEnabled() else { return false }
         if ClusterViewDragSession.sourceClusterId != nil && info.hasItemsConforming(to: [.text]) {
+            return true
+        }
+        if CommandKDragSession.shared.isActive && info.hasItemsConforming(to: [.text]) {
             return true
         }
 
         return info.hasItemsConforming(to: CanvasImageDropController.supportedTypes)
     }
 
+    func dropEntered(info: DropInfo) {
+        if CommandKDragSession.shared.isActive {
+            NSLog("CMDKDRAG canvas.dropEntered loc=\(info.location)")
+        }
+    }
+
+    /// A ⌘K drag hovering back over the palette reads as "changed my mind":
+    /// the palette un-ghosts, and the canvas behind it must stop being a
+    /// drop target — otherwise releasing over the palette still drops behind.
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        if CommandKDragSession.shared.isActive {
+            NSLog("CMDKDRAG dropUpdated active outside=\(CommandKDragSession.shared.isPointerOutsidePalette) loc=\(info.location)")
+        }
+        if CommandKDragSession.shared.isActive && !CommandKDragSession.shared.isPointerOutsidePalette {
+            return DropProposal(operation: .cancel)
+        }
+        return nil
+    }
+
     func performDrop(info: DropInfo) -> Bool {
+        NSLog("CMDKDRAG performDrop enabled=\(isEnabled()) cmdkActive=\(CommandKDragSession.shared.isActive) outside=\(CommandKDragSession.shared.isPointerOutsidePalette)")
         guard isEnabled() else { return false }
         let canvasPosition = screenToCanvas(info.location)
+
+        if CommandKDragSession.shared.isActive {
+            // Mirror of dropUpdated: releasing while over the palette is a
+            // miss, not a drop-behind.
+            guard CommandKDragSession.shared.isPointerOutsidePalette else { return false }
+            for provider in info.itemProviders(for: [.text]) {
+                _ = provider.loadObject(ofClass: NSString.self) { item, _ in
+                    guard let dropped = item as? String else { return }
+                    let uuids = CommandKDragSession.Payload.uuids(fromDropped: dropped)
+                    guard !uuids.isEmpty else { return }
+                    DispatchQueue.main.async {
+                        onCommandKAtomDrop(uuids, canvasPosition)
+                    }
+                }
+            }
+            return true
+        }
 
         if ClusterViewDragSession.sourceClusterId != nil {
             for provider in info.itemProviders(for: [.text]) {

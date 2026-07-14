@@ -569,21 +569,15 @@ final class CommandKSearchPipelineTests: XCTestCase {
     func testCommandKLauncherDomainsUsePolishedPresentationLabels() {
         XCTAssertEqual(CommandKTab.allCases.map(\.title), ["Database", "Swipe File", "Ideas", "Library"])
         XCTAssertEqual(CommandKTab.allCases.map(\.searchPlaceholder), [
-            "Search database...",
-            "Search swipes...",
-            "Search ideas...",
-            "Search library...",
+            "Search database…",
+            "Search swipes…",
+            "Search ideas…",
+            "Search library…",
         ])
     }
 
     func testCommandKExpandedDomainsDeclarePolishedMastheadAndAdaptiveBodyStyle() {
         XCTAssertTrue(CommandKTab.allCases.allSatisfy { $0.headerArtworkMode == .contentBackedMasthead })
-        XCTAssertEqual(CommandKTab.allCases.map(\.headerPersonality), [
-            .objectIndex,
-            .swipeThumbnails,
-            .ideaSnippets,
-            .libraryCovers,
-        ])
         XCTAssertEqual(CommandKTab.swipeGallery.expandedBodyStyle, .adaptive)
     }
 
@@ -592,77 +586,6 @@ final class CommandKSearchPipelineTests: XCTestCase {
             CommandKTab.allCases.map { String(describing: $0.headerArtworkMode) },
             Array(repeating: "contentBackedMasthead", count: CommandKTab.allCases.count)
         )
-        XCTAssertEqual(
-            CommandKTab.allCases.map { String(describing: $0.headerPersonality) },
-            ["objectIndex", "swipeThumbnails", "ideaSnippets", "libraryCovers"]
-        )
-    }
-
-    func testCommandKHeaderPreviewComposerPrefersRealDomainContent() {
-        let recent = RecentDisplayItem(
-            id: "recent-1",
-            title: "Client Launch Notes",
-            type: .note,
-            entityId: 1,
-            relativeDate: "2h",
-            thumbnailURL: nil,
-            preview: "Updated acquisition angle."
-        )
-        let swipe = SwipeGalleryItem(
-            atomUUID: "swipe-1",
-            title: "Ben Kelly SBA Hook",
-            hookText: "Find a $1M business with seller financing",
-            hookScore: 8.7,
-            platform: "instagram",
-            thumbnailUrl: "https://example.com/thumb.jpg",
-            author: "Ben Kelly"
-        )
-        let idea = IdeaGalleryItem(
-            id: "idea-1",
-            atomUUID: "idea-1",
-            entityId: 2,
-            title: "Find a home for rent for XYZ",
-            body: "Zillow arbitrage outline",
-            status: .spark,
-            contentFormat: .carousel,
-            platform: nil,
-            clientName: "Ben A",
-            clientUUID: "client-1",
-            tags: [],
-            insightScore: nil,
-            matchingSwipeCount: nil,
-            suggestedFramework: nil,
-            isPinned: false,
-            contentCount: 0,
-            createdAt: "2026-05-09T00:00:00Z",
-            updatedAt: "2026-05-09T00:00:00Z",
-            context: "Rental arbitrage angle",
-            hooks: ["How to rent without owning"],
-            outline: ["Find market", "Lease rooms"]
-        )
-        let book = ReadwiseLibraryBook(
-            id: 3,
-            title: "Awareness",
-            author: "Anthony De Mello",
-            category: .books,
-            coverImageUrl: "https://example.com/cover.jpg",
-            sourceUrl: nil,
-            numHighlights: 12,
-            highlights: [],
-            bookTags: []
-        )
-
-        let previews = CommandKHeaderPreviewComposer.build(
-            recentItems: [recent],
-            swipeItems: [swipe],
-            ideaItems: [idea],
-            readwiseBooks: [book]
-        )
-
-        XCTAssertEqual(previews[.database]?.items.first?.title, "Client Launch Notes")
-        XCTAssertEqual(previews[.swipeGallery]?.items.first?.thumbnailURL, "https://example.com/thumb.jpg")
-        XCTAssertEqual(previews[.ideas]?.items.first?.subtitle, "Ben A")
-        XCTAssertEqual(previews[.readwise]?.items.first?.thumbnailURL, "https://example.com/cover.jpg")
     }
 
     func testCommandKDomainPresentationUsesLightweightCountsWhenDomainContentIsNotLoaded() {
@@ -671,7 +594,6 @@ final class CommandKSearchPipelineTests: XCTestCase {
             swipeTotalCount: 17,
             ideaTotalCount: 9,
             deepDiveTotalCount: 3,
-            recentItems: [],
             swipeItems: [],
             ideaItems: [],
             readwiseBooks: []
@@ -718,7 +640,6 @@ final class CommandKSearchPipelineTests: XCTestCase {
             swipeTotalCount: 100,
             ideaTotalCount: 100,
             deepDiveTotalCount: 0,
-            recentItems: [],
             swipeItems: [swipe],
             ideaItems: [idea],
             readwiseBooks: []
@@ -1970,6 +1891,8 @@ final class CommandKSearchPipelineTests: XCTestCase {
             ).map(\.selectionID),
             ["swipe-1"]
         )
+        // Ideas is find-and-jump: hits lead, then the board jump row trails
+        // so ⏎ still opens the top hit while the board stays one row away.
         XCTAssertEqual(
             CommandKDomainRailDataSource.items(
                 for: .ideas,
@@ -1979,7 +1902,7 @@ final class CommandKSearchPipelineTests: XCTestCase {
                 ideaItems: [ideaMatch],
                 readwiseBooks: [bookMatch]
             ).map(\.selectionID),
-            ["idea-1"]
+            ["idea-1", "ideas-board-jump-search"]
         )
         XCTAssertEqual(
             CommandKDomainRailDataSource.items(

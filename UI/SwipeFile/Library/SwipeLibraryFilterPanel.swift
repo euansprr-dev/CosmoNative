@@ -56,6 +56,7 @@ struct SwipeLibraryFilterPanel: View {
                 SwipeFilterCheckRow(
                     title: name,
                     systemImage: socialPlatform?.iconName,
+                    platformKey: platform,
                     iconTint: socialPlatform?.swipeBrandColor ?? DS.textMuted,
                     isOn: viewModel.filterState.platforms.contains(name)
                 ) {

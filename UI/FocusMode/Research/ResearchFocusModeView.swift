@@ -460,21 +460,9 @@ struct ResearchFocusModeView: View {
                 .help(isSidebarHidden ? "Show sidebar (⌘\\)" : "Hide sidebar (⌘\\)")
             }
 
-            // Back button (hidden in pane mode — X button handles close)
+            // Universal back/forward (hidden in pane mode — X button handles close)
             if atomChrome == nil, !isPaneContext {
-                Button(action: onClose) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "chevron.left")
-                            .font(DS.buttonText)
-                        Text("Back")
-                            .font(DS.callout)
-                    }
-                    .foregroundStyle(DS.textSecondary)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(DS.glassCardFill, in: Capsule())
-                }
-                .buttonStyle(.plain)
+                NavigationTrailIsland()
             }
 
             // Title
@@ -1493,7 +1481,7 @@ struct ResearchAgentPanelView: View {
                 ProgressView()
                     .scaleEffect(0.6)
                     .tint(agentColor)
-                Text("Searching...")
+                Text("Searching…")
                     .font(DS.caption2)
                     .foregroundStyle(agentColor)
             }
@@ -1532,7 +1520,7 @@ struct ResearchAgentPanelView: View {
             ProgressView()
                 .tint(agentColor)
 
-            Text("Searching sources...")
+            Text("Searching sources…")
                 .font(DS.subheadline)
                 .foregroundStyle(DS.textSecondary)
         }
@@ -1623,7 +1611,7 @@ struct ResearchAgentPanelView: View {
     }
 
     private var pendingContent: some View {
-        Text("Waiting to start...")
+        Text("Waiting to start…")
             .font(DS.subheadline)
             .foregroundStyle(DS.textSecondary)
             .frame(maxWidth: .infinity)

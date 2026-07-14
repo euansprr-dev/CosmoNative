@@ -226,7 +226,7 @@ struct PostCreationPhaseView: View {
                         .font(.system(size: 12))
                         .foregroundStyle(accentColor)
 
-                    TextField("Paste post URL here...", text: $postURL)
+                    TextField("Paste post URL here…", text: $postURL)
                         .textFieldStyle(.plain)
                         .font(.system(size: 12))
                         .foregroundStyle(DS.text)

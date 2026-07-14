@@ -208,9 +208,17 @@ private struct DashboardHabitOrbitCard: View {
                     value: progress
                 )
 
-            Image(systemName: habit.iconName)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(isComplete ? accent : DS.textSecondary)
+            // Habit identity, the App Store register: a typed emoji in the
+            // name wins, then the curated keyword pass; the user's picked SF
+            // icon stays as the explicit-choice fallback.
+            if let emoji = CollectionEmoji.resolve(name: habit.title).emoji {
+                Text(emoji)
+                    .font(.system(size: 14))
+            } else {
+                Image(systemName: habit.iconName)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(isComplete ? accent : DS.textSecondary)
+            }
         }
         .frame(width: 34, height: 34)
         .scaleEffect(justCompleted ? 1.08 : 1.0)

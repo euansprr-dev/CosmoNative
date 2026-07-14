@@ -159,10 +159,34 @@ struct RichCalloutStyle: Codable, Equatable, Hashable, Sendable {
 struct RichHeadingMetadata: Codable, Equatable, Hashable, Sendable {
     var isCollapsed: Bool
     var collapsedBlocks: [RichBlock]
+    /// Whether the heading offers the disclosure affordance at all. Plain
+    /// headings (the default) are purely visual — no chevron, no gutter.
+    /// Collapsible headings are created explicitly ("Toggle Heading" in the
+    /// slash menu), mirroring Notion's heading vs. toggle-heading split.
+    var isCollapsible: Bool
 
-    init(isCollapsed: Bool = false, collapsedBlocks: [RichBlock] = []) {
+    init(isCollapsed: Bool = false, collapsedBlocks: [RichBlock] = [], isCollapsible: Bool = false) {
         self.isCollapsed = isCollapsed
         self.collapsedBlocks = collapsedBlocks
+        self.isCollapsible = isCollapsible
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case isCollapsed
+        case collapsedBlocks
+        case isCollapsible
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        isCollapsed = try container.decodeIfPresent(Bool.self, forKey: .isCollapsed) ?? false
+        collapsedBlocks = try container.decodeIfPresent([RichBlock].self, forKey: .collapsedBlocks) ?? []
+        // Documents written before the plain/toggle split have no key: only
+        // headings actually holding a folded section keep the affordance —
+        // their hidden blocks must stay reachable. Everything else becomes a
+        // plain heading.
+        isCollapsible = try container.decodeIfPresent(Bool.self, forKey: .isCollapsible)
+            ?? (isCollapsed || !collapsedBlocks.isEmpty)
     }
 }
 
@@ -659,6 +683,7 @@ enum RichDocumentAttributeKeys {
     static let headingLevel = NSAttributedString.Key("CosmoHeadingLevel")
     static let headingBlockID = NSAttributedString.Key("CosmoHeadingBlockID")
     static let headingCollapsed = NSAttributedString.Key("CosmoHeadingCollapsed")
+    static let headingCollapsible = NSAttributedString.Key("CosmoHeadingCollapsible")
     static let headingCollapsedChildrenJSON = NSAttributedString.Key("CosmoHeadingCollapsedChildrenJSON")
     static let elementDepth = NSAttributedString.Key("CosmoElementDepth")
     static let elementInstanceID = NSAttributedString.Key("CosmoElementInstanceID")
@@ -985,13 +1010,21 @@ enum RichDocumentSerializer {
             let kind: RichBlockKind = level == 1 ? .heading1 : level == 2 ? .heading2 : .heading3
             let id = uuidAttribute(RichDocumentAttributeKeys.headingBlockID, in: line) ?? UUID()
             let collapsed = boolAttribute(RichDocumentAttributeKeys.headingCollapsed, in: line) ?? false
+            let collapsedBlocks = headingCollapsedBlocksAttribute(from: line)
+            // Strings serialized before the plain/toggle split carry no
+            // collapsible attribute — same fallback as metadata decoding: a
+            // folded section must keep its affordance so the hidden blocks
+            // stay reachable.
+            let collapsible = boolAttribute(RichDocumentAttributeKeys.headingCollapsible, in: line)
+                ?? (collapsed || !collapsedBlocks.isEmpty)
             return RichBlock(
                 id: id,
                 kind: kind,
                 inlines: inlineNodes(from: line),
                 heading: RichHeadingMetadata(
                     isCollapsed: collapsed,
-                    collapsedBlocks: headingCollapsedBlocksAttribute(from: line)
+                    collapsedBlocks: collapsedBlocks,
+                    isCollapsible: collapsible
                 )
             )
         }
@@ -1474,9 +1507,11 @@ enum RichDocumentSerializer {
 
         // Headings: embed level attribute + paragraph spacing for round-trip detection
         if let headingLevel = block.kind.headingLevelInt, !titleMode {
+            let isCollapsible = block.heading?.isCollapsible ?? false
             attributes[RichDocumentAttributeKeys.headingLevel] = headingLevel
             attributes[RichDocumentAttributeKeys.headingBlockID] = block.id.uuidString
             attributes[RichDocumentAttributeKeys.headingCollapsed] = NSNumber(value: block.heading?.isCollapsed ?? false)
+            attributes[RichDocumentAttributeKeys.headingCollapsible] = NSNumber(value: isCollapsible)
             if let collapsedBlocks = block.heading?.collapsedBlocks,
                !collapsedBlocks.isEmpty,
                let data = try? JSONEncoder().encode(collapsedBlocks),
@@ -1486,8 +1521,11 @@ enum RichDocumentSerializer {
             let headingParagraph = NSMutableParagraphStyle()
             headingParagraph.lineSpacing = 4
             headingParagraph.paragraphSpacing = 12
-            headingParagraph.firstLineHeadIndent = 34
-            headingParagraph.headIndent = 34
+            // Only collapsible headings reserve the chevron gutter — plain
+            // headings sit flush with body text.
+            let headingGutter: CGFloat = isCollapsible ? 34 : 0
+            headingParagraph.firstLineHeadIndent = headingGutter
+            headingParagraph.headIndent = headingGutter
             // Proportional top margin — larger headings get more breathing room
             switch headingLevel {
             case 1: headingParagraph.paragraphSpacingBefore = 32

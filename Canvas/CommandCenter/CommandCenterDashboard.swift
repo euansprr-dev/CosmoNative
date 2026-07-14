@@ -118,7 +118,9 @@ struct CommandCenterDashboard: View {
         case .reports:
             ReportsSectionView(viewModel: viewModel)
         case .queue:
-            ContentQueueSectionView(viewModel: viewModel)
+            // Retired — the VM redirects to Upcoming's Content lens on the
+            // next tick; render nothing for the transient frame.
+            Color.clear
         case .today, .upcoming, .anytime, .someday, .logbook, .project, .area:
             existingTaskOrProjectContent
         }
@@ -132,20 +134,29 @@ struct CommandCenterDashboard: View {
         } else if viewModel.viewMode == .upcoming {
             CommandCenterMasthead(viewModel: viewModel)
 
-            UpcomingBoardView(viewModel: viewModel, composer: composer)
-                .frame(maxHeight: .infinity)
+            if viewModel.upcomingLens == .content {
+                ContentCalendarView(viewModel: viewModel)
+                    .frame(maxHeight: .infinity)
+            } else {
+                UpcomingBoardView(viewModel: viewModel, composer: composer)
+                    .frame(maxHeight: .infinity)
+            }
         } else {
             CommandCenterMasthead(viewModel: viewModel)
 
             if viewModel.viewMode == .today {
                 DailyBriefCard()
                     .cascadeIn(hasAppeared, index: 0)
+
+                // The deep-work gauge is Today's hero — Anytime/Someday/
+                // Logbook are ledgers, not the day's cockpit.
+                DashboardTimeTracker(viewModel: viewModel)
+                    .cascadeIn(hasAppeared, index: 0)
+
+                // Divider only where the gauge sits above the list — the
+                // ledger lists already end their masthead with a hairline.
+                gradientDivider
             }
-
-            DashboardTimeTracker(viewModel: viewModel)
-                .cascadeIn(hasAppeared, index: 0)
-
-            gradientDivider
 
             DashboardTaskList(viewModel: viewModel, composer: composer) { task in
                 withAnimation(ProMotionSprings.snappy) {
@@ -160,6 +171,7 @@ struct CommandCenterDashboard: View {
     private var centerContentTransitionID: String {
         [
             viewModel.viewMode.rawValue,
+            viewModel.viewMode == .upcoming ? viewModel.upcomingLens.rawValue : "no-lens",
             viewModel.selectedProjectUUID ?? "no-project",
             viewModel.selectedAreaUUID ?? "no-area",
             viewModel.showReports ? "rail-reports" : "rail-main"
@@ -282,16 +294,28 @@ struct CommandCenterDashboard: View {
 
     // MARK: - Right Column (280px) — Context-Sensitive Inspector
 
+    /// In Upcoming's Content lens the rail stops being the habits/reports
+    /// inspector and becomes the Shelf — the searchable idea/draft library
+    /// you drag onto calendar days.
+    private var showsContentShelf: Bool {
+        viewModel.viewMode == .upcoming && viewModel.upcomingLens == .content
+    }
+
     private var rightColumn: some View {
         CommandCenterGlassRail(cornerRadius: 22) {
             VStack(alignment: .leading, spacing: DS.space16) {
-                rightColumnTabs
-                rightColumnContent
+                if showsContentShelf {
+                    ContentShelfRail(viewModel: viewModel)
+                } else {
+                    rightColumnTabs
+                    rightColumnContent
+                }
                 Spacer(minLength: 0)
             }
         }
         .frame(width: 280)
         .padding(.leading, DS.space20)
+        .animation(ProMotionSprings.gentle, value: showsContentShelf)
         .onChange(of: visibleTaskUUIDs) { _, taskUUIDs in
             clearDeletedTaskState(visibleTaskUUIDs: taskUUIDs)
         }
@@ -300,10 +324,10 @@ struct CommandCenterDashboard: View {
     private var rightColumnTabs: some View {
         HStack(spacing: 0) {
             if selectedTaskForDetail != nil {
-                rightColumnTab("Details", icon: "info.circle", isActive: showingDetailTab == .details)
+                rightColumnTab(.details, label: "Details", icon: "info.circle")
             }
-            rightColumnTab("Habits", icon: "checkmark.circle", isActive: showingDetailTab == .habits)
-            rightColumnTab("Reports", icon: "chart.bar", isActive: showingDetailTab == .reports)
+            rightColumnTab(.habits, label: "Habits", icon: "checkmark.circle")
+            rightColumnTab(.reports, label: "Reports", icon: "chart.bar")
         }
     }
 
@@ -376,21 +400,19 @@ struct CommandCenterDashboard: View {
         }
     }
 
-    private func rightColumnTab(_ title: String, icon: String, isActive: Bool) -> some View {
-        Button {
+    private func rightColumnTab(_ tab: RightColumnTab, label: String, icon: String) -> some View {
+        let isActive = showingDetailTab == tab
+        return Button {
             withAnimation(ProMotionSprings.snappy) {
-                switch title {
-                case "Reports":
+                switch tab {
+                case .reports:
                     viewModel.showReports = true
                     selectedTaskForDetail = nil
-                case "Habits":
+                case .habits:
                     viewModel.showReports = false
                     selectedTaskForDetail = nil
-                case "Details":
+                case .details:
                     viewModel.showReports = false
-                    break
-                default:
-                    break
                 }
             }
         } label: {
@@ -398,8 +420,9 @@ struct CommandCenterDashboard: View {
                 HStack(spacing: DS.space4) {
                     Image(systemName: icon)
                         .font(DS.caption2)
-                    Text(title)
-                        .font(DS.subheadline).fontWeight(isActive ? .semibold : .medium)
+                    // Constant weight — a semibold swap re-layouts the tab row.
+                    Text(label)
+                        .font(DS.subheadline.weight(.medium))
                 }
                 .foregroundStyle(isActive ? DS.accent : DS.commandCenterMutedText)
                 .frame(maxWidth: .infinity)
@@ -413,8 +436,11 @@ struct CommandCenterDashboard: View {
                     .scaleEffect(x: isActive ? 0.48 : 0, anchor: .center)
                     .clipShape(.rect(cornerRadius: 1))
             }
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .help(label)
+        .accessibilityAddTraits(isActive ? [.isSelected] : [])
     }
 
     // MARK: - Gradient Divider

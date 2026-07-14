@@ -11,12 +11,12 @@ struct StudyChromeRow: View {
     @Bindable var viewModel: InquiryWorkspaceViewModel
     let breakpoint: StudyBreakpoint
     let isReceded: Bool
-    let onClose: () -> Void
 
     @State private var isQuestionHovered = false
 
     var body: some View {
         CosmoChromeRow {
+            NavigationTrailIsland()
             CosmoChromeIsland(recede: isReceded) { navigateControls }
         } center: {
             // One center island: the question pill at the desk, the reader
@@ -73,7 +73,6 @@ struct StudyChromeRow: View {
 
     @ViewBuilder
     private var navigateControls: some View {
-        toolbarButton(icon: "chevron.left", help: "Back (Esc)", action: onClose)
         toolbarButton(
             icon: "sidebar.left",
             help: viewModel.isTrailShowing ? "Hide trail (⌘0)" : "Show trail (⌘0)",

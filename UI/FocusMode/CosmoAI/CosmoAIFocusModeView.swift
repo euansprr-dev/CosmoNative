@@ -117,16 +117,22 @@ struct CosmoAIFocusModeView: View {
             }
 
             if atomChrome == nil {
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(DS.textSecondary)
-                        .frame(width: 32, height: 32)
-                        .background(Circle().fill(DS.border))
+                if isPaneContext {
+                    Button(action: onClose) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(DS.textSecondary)
+                            .frame(width: 32, height: 32)
+                            .background(Circle().fill(DS.border))
+                    }
+                    .buttonStyle(.plain)
+                    .opacity(isPeekContext ? 0 : 1)
+                    .allowsHitTesting(!isPeekContext)
+                    .help("Close")
+                    .accessibilityLabel("Close")
+                } else {
+                    NavigationTrailIsland()
                 }
-                .buttonStyle(.plain)
-                .opacity(isPeekContext ? 0 : 1)
-                .allowsHitTesting(!isPeekContext)
             }
 
             if atomChrome == nil {
@@ -356,7 +362,7 @@ struct CosmoAIFocusModeView: View {
                     // Text input
                     ZStack(alignment: .leading) {
                         if inputText.isEmpty {
-                            Text("Search, research, organize...")
+                            Text("Search, research, organize…")
                                 .font(.system(size: 14))
                                 .foregroundColor(DS.textMuted)
                         }

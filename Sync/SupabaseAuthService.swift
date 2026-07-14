@@ -36,6 +36,59 @@ final class SupabaseAuthService: NSObject {
     private(set) var authState: AuthState = .unknown
     private(set) var migrationState: MigrationState = .notStarted
 
+    // MARK: - Workspace mode (the gate contract — paired with iOS)
+    //
+    // The Welcome gate blocks ONLY when this Mac holds no workspace: neither
+    // a signed-in account nor a chosen local-only workspace. Token expiry
+    // keeps `.cloud` (workspace stays visible, re-auth notice shows); an
+    // explicit sign-out keeps local data on Mac, so the workspace remains.
+    enum WorkspaceMode: String {
+        case local
+        case cloud
+    }
+
+    private static let workspaceModeKey = "cosmo.workspace.mode"
+
+    private(set) var workspaceMode: WorkspaceMode? =
+        UserDefaults.standard.string(forKey: workspaceModeKey).flatMap(WorkspaceMode.init)
+
+    private func setWorkspaceMode(_ mode: WorkspaceMode?) {
+        workspaceMode = mode
+        if let mode {
+            UserDefaults.standard.set(mode.rawValue, forKey: Self.workspaceModeKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: Self.workspaceModeKey)
+        }
+    }
+
+    /// "Continue offline — sync later." Every write still queues in
+    /// sync_queue; a later sign-in migrates + uploads the full backlog.
+    func establishLocalWorkspace() {
+        guard workspaceMode == nil else { return }
+        setWorkspaceMode(.local)
+    }
+
+    /// The Welcome threshold shows only over an empty Mac — never as a wall
+    /// in front of real work. Existing pre-auth workspaces are adopted as
+    /// `.local` at launch (CosmoApp.initializeApp) before this can go true.
+    var showsWelcomeGate: Bool {
+        if case .signedOut = authState { return workspaceMode == nil }
+        return false
+    }
+
+    /// Local-first restore: saved keychain credentials flip the UI to
+    /// signed-in IMMEDIATELY — no network wait, no Welcome flash. The async
+    /// checkExistingSession still validates and refreshes right after.
+    func restoreFromKeychainInstantly() {
+        guard case .unknown = authState else { return }
+        guard let savedToken = APIKeys.supabaseAuthToken,
+              let savedUserId = APIKeys.supabaseUserId else { return }
+        SupabaseClient.shared?.setAuthToken(savedToken)
+        SupabaseClient.shared?.setUserId(savedUserId)
+        authState = .signedIn(userId: savedUserId, email: nil)
+        setWorkspaceMode(.cloud)
+    }
+
     enum MigrationState: Equatable {
         case notStarted
         case inProgress(String, Int, Int)
@@ -109,12 +162,14 @@ final class SupabaseAuthService: NSObject {
                 APIKeys.saveSupabaseAuth(token: session.accessToken, userId: uid)
 
                 authState = .signedIn(userId: uid, email: email)
+                setWorkspaceMode(.cloud)
                 print("✅ Supabase session restored for \(email ?? uid)")
                 return
             } catch {
                 SupabaseClient.shared?.setAuthToken(savedToken)
                 SupabaseClient.shared?.setUserId(savedUserId)
                 authState = .signedIn(userId: savedUserId, email: nil)
+                setWorkspaceMode(.cloud)
                 print("⚠️ Supabase session restore failed, using saved token: \(error.localizedDescription)")
                 return
             }
@@ -161,6 +216,9 @@ final class SupabaseAuthService: NSObject {
             SupabaseClient.shared?.setUserId(uid)
 
             authState = .signedIn(userId: uid, email: email)
+            // A local-only workspace signing in becomes a cloud workspace —
+            // migration + the queued backlog upload through the flows below.
+            setWorkspaceMode(.cloud)
             print("✅ Signed in with Apple: \(email ?? uid)")
 
             // Start Realtime sync
@@ -168,6 +226,10 @@ final class SupabaseAuthService: NSObject {
 
             // Trigger initial data migration
             await triggerMigrationIfNeeded()
+
+            // Flush anything queued while signed out — a re-sign-in after a
+            // session loss must drain the backlog now, not in ≤5 minutes.
+            Task { await SyncEngine.shared.forceSync() }
 
         } catch {
             authState = .error(error.localizedDescription)
@@ -208,6 +270,9 @@ final class SupabaseAuthService: NSObject {
         SupabaseClient.shared?.setAuthToken(nil)
         SupabaseClient.shared?.setUserId(nil)
         RealtimeSyncService.shared.stopListening()
+        // Mac sign-out keeps local data, so the workspace continues as
+        // local-only — the Welcome gate never walls off existing work.
+        setWorkspaceMode(.local)
         authState = .signedOut
     }
 
@@ -258,11 +323,31 @@ final class SupabaseAuthService: NSObject {
             SupabaseClient.shared?.setUserId(uid)
             print("🔄 Auth token refreshed")
         } catch {
-            print("⚠️ Token refresh failed: \(error) — clearing stale session")
-            // Session is truly expired — force sign out so user can re-authenticate
+            // Tear the session down ONLY when the auth server itself rejected it.
+            // A transient failure (offline wake, DNS, 5xx) must keep the session:
+            // clearing it here silently killed ALL sync — pushes bailed at the
+            // auth guard with no error recorded, the queue accumulated for hours,
+            // and other devices drifted — until a manual re-sign-in.
+            guard SupabaseSessionRefreshPolicy.isTerminalAuthError(error) else {
+                print("⚠️ Token refresh failed (transient, keeping session): \(error)")
+                PersistenceHealth.note(
+                    .syncFailure,
+                    context: "SupabaseAuth.refreshSession",
+                    detail: "transient refresh failure, will retry next sync pass: \(error.localizedDescription)"
+                )
+                return
+            }
+
+            print("⛔️ Supabase session rejected by server: \(error) — signing out")
+            PersistenceHealth.note(
+                .syncFailure,
+                context: "SupabaseAuth.sessionExpired",
+                detail: "Session expired — sync is paused until you sign in again (Settings → Account). Local changes are safe and queued."
+            )
             APIKeys.clearSupabaseAuth()
             SupabaseClient.shared?.setAuthToken(nil)
             SupabaseClient.shared?.setUserId(nil)
+            RealtimeSyncService.shared.stopListening()
             authState = .signedOut
         }
     }

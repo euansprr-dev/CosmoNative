@@ -10,6 +10,7 @@ struct ConnectionOutlineView: View {
     var viewModel: ConnectionFocusModeViewModel
     var workspace: ConnectionWorkspaceModel
     let actions: ConnectionWorkspaceActions
+    var pendingInsertsBySection: [ConnectionSectionType: [ConnectionPendingInsert]] = [:]
 
     private var visibleSections: [ConnectionSection] {
         workspace.matchingSections(in: viewModel.state.sections)
@@ -43,14 +44,17 @@ struct ConnectionOutlineView: View {
     private func outlineSection(_ section: ConnectionSection) -> some View {
         VStack(alignment: .leading, spacing: DS.space8) {
             sectionHeader(section)
-            if section.items.isEmpty {
+            if section.items.isEmpty && pendingInserts(for: section).isEmpty {
                 Text(section.type.promptQuestion)
                     .font(DS.callout)
                     .italic()
                     .foregroundStyle(DS.textMuted)
                     .padding(.leading, DS.space24)
-            } else {
+            } else if !section.items.isEmpty {
                 itemRows(section)
+            }
+            if !pendingInserts(for: section).isEmpty {
+                pendingRows(section)
             }
             ConnectionQuickAddField(
                 accent: section.type.accentColor,
@@ -85,6 +89,24 @@ struct ConnectionOutlineView: View {
         }
         .buttonStyle(.plain)
         .help("Open \(section.type.displayName)")
+    }
+
+    private func pendingInserts(for section: ConnectionSection) -> [ConnectionPendingInsert] {
+        pendingInsertsBySection[section.type] ?? []
+    }
+
+    private func pendingRows(_ section: ConnectionSection) -> some View {
+        VStack(alignment: .leading, spacing: DS.space6) {
+            ForEach(pendingInserts(for: section)) { insert in
+                ConnectionPendingInsertRow(
+                    insert: insert,
+                    accent: section.type.accentColor,
+                    onAccept: actions.onAcceptInsert,
+                    onReject: actions.onRejectInsert
+                )
+            }
+        }
+        .padding(.leading, DS.space16)
     }
 
     private func itemRows(_ section: ConnectionSection) -> some View {

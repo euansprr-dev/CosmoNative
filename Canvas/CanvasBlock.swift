@@ -386,7 +386,7 @@ struct CanvasBlock: Identifiable, Codable, Equatable {
             entityId: -1,  // Not linked to database entity initially
             entityUuid: UUID().uuidString,
             title: "Cosmo AI",
-            subtitle: query ?? "Ask me anything...",
+            subtitle: query ?? "Ask me anything…",
             metadata: metadata
         )
     }
@@ -452,7 +452,7 @@ struct CanvasBlock: Identifiable, Codable, Equatable {
             entityId: -1,
             entityUuid: UUID().uuidString,
             title: "Brilliant idea for a new feature",
-            subtitle: "This could revolutionize how users interact with the app...",
+            subtitle: "This could revolutionize how users interact with the app…",
             metadata: [
                 "tags": "innovation, product, ux",
                 "updated": ISO8601.string(from: Date())
@@ -469,7 +469,7 @@ struct CanvasBlock: Identifiable, Codable, Equatable {
             entityId: -1,
             entityUuid: UUID().uuidString,
             title: "How to Build Better Habits",
-            subtitle: "A guide to sustainable behavior change...",
+            subtitle: "A guide to sustainable behavior change…",
             metadata: [
                 "status": "draft",
                 "currentStep": "brainstorm",
@@ -505,7 +505,7 @@ struct CanvasBlock: Identifiable, Codable, Equatable {
             entityId: -1,
             entityUuid: UUID().uuidString,
             title: "Design System Principles",
-            subtitle: "Core concepts linking visual hierarchy, spacing, and typography...",
+            subtitle: "Core concepts linking visual hierarchy, spacing, and typography…",
             metadata: [
                 "type": "connection",
                 "updated": ISO8601.string(from: Date())
@@ -532,7 +532,7 @@ struct CanvasBlock: Identifiable, Codable, Equatable {
             entityId: -1,
             entityUuid: UUID().uuidString,
             title: isSwipeFile ? "Viral Marketing Breakdown" : "The Future of AI Interfaces",
-            subtitle: "Key insights and patterns to study...",
+            subtitle: "Key insights and patterns to study…",
             metadata: metadata
         )
     }

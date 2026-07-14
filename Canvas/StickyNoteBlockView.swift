@@ -134,7 +134,7 @@ struct StickyNoteBlockView: View {
             document: $noteBodyDocument,
             fontSize: Self.stickyFontSize,
             compact: true,
-            placeholder: "Type here...",
+            placeholder: "Type here…",
             overrideTextColor: NSColor(red: 0.12, green: 0.10, blue: 0.08, alpha: 1),
             overrideFont: Self.stickyFont,
             allowSlashCommands: false,

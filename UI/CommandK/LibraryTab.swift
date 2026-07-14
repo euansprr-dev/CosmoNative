@@ -424,7 +424,7 @@ struct LibraryTab: View {
                         .font(.system(size: 13))
                         .foregroundColor(DS.textMuted)
 
-                    TextField("Paste URL...", text: $researchURLText)
+                    TextField("Paste URL…", text: $researchURLText)
                         .textFieldStyle(.plain)
                         .font(.system(size: 14))
                         .foregroundColor(DS.text)

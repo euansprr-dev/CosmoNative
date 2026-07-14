@@ -26,6 +26,7 @@ enum CommandKActionKind: String, Equatable {
     case openCosmoWindow
     case askCosmo
     case askCortex
+    case calculator
 }
 
 struct CommandKActionPayload: Equatable {
@@ -43,6 +44,10 @@ struct CommandKActionPayload: Equatable {
     var queryText: String? = nil
     var quicklinkID: String? = nil
     var rawText: String? = nil
+    /// Calculator: the formatted answer (what ⏎ copies) and the normalized
+    /// expression it came from ("5 × 15,000").
+    var resultText: String? = nil
+    var expressionText: String? = nil
 }
 
 struct CommandKAction: Identifiable, Equatable {
@@ -88,6 +93,9 @@ struct CommandKAction: Identifiable, Equatable {
         case .createIdea:
             components = [kind.rawValue, payload.clientName]
         case .createTask, .createNote, .createContent, .createThinkspace, .captureInbox, .askCosmo, .askCortex:
+            components = [kind.rawValue]
+        case .calculator:
+            // One stable id: the card keeps selection while the sum grows.
             components = [kind.rawValue]
         case .navigateCommandCenter, .navigateLastThinkspace, .openSwipeGallery, .openCosmoPane, .openCosmoWindow:
             components = [kind.rawValue]
@@ -177,6 +185,8 @@ struct CommandKAction: Identifiable, Equatable {
             return true
         case .askCosmo, .askCortex:
             return payload.body?.isEmpty == false
+        case .calculator:
+            return payload.resultText?.isEmpty == false
         }
     }
 }
@@ -202,6 +212,7 @@ enum CommandKVisualStyle: String, Equatable {
     case connection
     case image
     case readwise
+    case calculator
 }
 
 struct CommandKVisualIdentity: Equatable {
@@ -216,7 +227,7 @@ struct CommandKVisualIdentity: Equatable {
         case .captureSwipe, .captureSwipeWithIdea:
             return CommandKVisualIdentity(
                 style: .swipeFile,
-                symbolName: "bolt.fill",
+                symbolName: "bolt",
                 title: "Swipe File",
                 subtitle: "Hook capture",
                 badge: "SWIPE"
@@ -240,7 +251,7 @@ struct CommandKVisualIdentity: Equatable {
         case .captureInbox:
             return CommandKVisualIdentity(
                 style: .research,
-                symbolName: "tray.and.arrow.down.fill",
+                symbolName: "tray.and.arrow.down",
                 title: "Inbox",
                 subtitle: "Capture for triage",
                 badge: "INBOX"
@@ -248,7 +259,7 @@ struct CommandKVisualIdentity: Equatable {
         case .createThinkspace, .navigateLastThinkspace, .openThinkspace:
             return CommandKVisualIdentity(
                 style: .thinkspace,
-                symbolName: "rectangle.3.group.fill",
+                symbolName: "rectangle.3.group",
                 title: "Thinkspace",
                 subtitle: "Canvas workspace",
                 badge: "SPACE"
@@ -256,7 +267,7 @@ struct CommandKVisualIdentity: Equatable {
         case .navigateCommandCenter:
             return CommandKVisualIdentity(
                 style: .commandCenter,
-                symbolName: "command.circle.fill",
+                symbolName: "command",
                 title: "Command Center",
                 subtitle: "Planning dashboard",
                 badge: "HOME"
@@ -270,7 +281,7 @@ struct CommandKVisualIdentity: Equatable {
                 badge: "WEB"
             )
         case .openSwipeGallery:
-            return CommandKVisualIdentity(style: .swipeGalleryPage, symbolName: "rectangle.stack.fill", title: "Swipe Gallery", subtitle: "All Swipes", badge: "OPEN")
+            return CommandKVisualIdentity(style: .swipeGalleryPage, symbolName: "rectangle.stack", title: "Swipe Gallery", subtitle: "All Swipes", badge: "OPEN")
         case .openDomain:
             return domain(action.payload.domain, title: action.title, symbolName: action.icon)
         case .openAtom:
@@ -284,7 +295,7 @@ struct CommandKVisualIdentity: Equatable {
         case .savedSearch:
             return CommandKVisualIdentity(
                 style: .search,
-                symbolName: "magnifyingglass.circle.fill",
+                symbolName: "magnifyingglass",
                 title: "Saved Search",
                 subtitle: action.payload.queryText ?? "Search",
                 badge: "FIND"
@@ -292,7 +303,7 @@ struct CommandKVisualIdentity: Equatable {
         case .openApp:
             return CommandKVisualIdentity(
                 style: .app,
-                symbolName: "app.fill",
+                symbolName: "app",
                 title: "App",
                 subtitle: action.payload.title ?? "macOS app",
                 badge: "APP"
@@ -304,6 +315,14 @@ struct CommandKVisualIdentity: Equatable {
                 title: "Cortex",
                 subtitle: "Answer from your knowledge",
                 badge: "RECALL"
+            )
+        case .calculator:
+            return CommandKVisualIdentity(
+                style: .calculator,
+                symbolName: "plus.forwardslash.minus",
+                title: "Calculator",
+                subtitle: action.payload.expressionText ?? "Instant math",
+                badge: "CALC"
             )
         case .openCosmoPane, .openCosmoWindow, .askCosmo:
             return CommandKVisualIdentity(
@@ -346,7 +365,7 @@ struct CommandKVisualIdentity: Equatable {
             if result.source == .swipes {
                 return CommandKVisualIdentity(
                     style: .swipeFile,
-                    symbolName: "bolt.fill",
+                    symbolName: "bolt",
                     title: "Swipe File",
                     subtitle: result.subtitle ?? "Hook capture",
                     badge: "SWIPE"
@@ -368,19 +387,19 @@ struct CommandKVisualIdentity: Equatable {
     static func atom(type: AtomType) -> CommandKVisualIdentity {
         switch type {
         case .idea:
-            return CommandKVisualIdentity(style: .idea, symbolName: "lightbulb.fill", title: "Idea", subtitle: "Spark", badge: "IDEA")
+            return CommandKVisualIdentity(style: .idea, symbolName: "lightbulb", title: "Idea", subtitle: "Spark", badge: "IDEA")
         case .task:
-            return CommandKVisualIdentity(style: .task, symbolName: "checkmark.circle.fill", title: "Task", subtitle: "Next action", badge: "TASK")
+            return CommandKVisualIdentity(style: .task, symbolName: "checkmark.circle", title: "Task", subtitle: "Next action", badge: "TASK")
         case .research:
             return CommandKVisualIdentity(style: .research, symbolName: "doc.text.magnifyingglass", title: "Research", subtitle: "Source", badge: "SRC")
         case .content:
-            return CommandKVisualIdentity(style: .content, symbolName: "paperplane.fill", title: "Content", subtitle: "Writing", badge: "POST")
+            return CommandKVisualIdentity(style: .content, symbolName: "paperplane", title: "Content", subtitle: "Writing", badge: "POST")
         case .connection:
-            return CommandKVisualIdentity(style: .connection, symbolName: "link.circle.fill", title: "Concept", subtitle: "Relationship", badge: "LINK")
+            return CommandKVisualIdentity(style: .connection, symbolName: "point.3.connected.trianglepath.dotted", title: "Concept", subtitle: "Relationship", badge: "LINK")
         case .image:
-            return CommandKVisualIdentity(style: .image, symbolName: "photo.fill", title: "Image", subtitle: "Visual", badge: "IMG")
+            return CommandKVisualIdentity(style: .image, symbolName: "photo", title: "Image", subtitle: "Visual", badge: "IMG")
         case .thinkspace:
-            return CommandKVisualIdentity(style: .thinkspace, symbolName: "rectangle.3.group.fill", title: "Thinkspace", subtitle: "Canvas workspace", badge: "SPACE")
+            return CommandKVisualIdentity(style: .thinkspace, symbolName: "rectangle.3.group", title: "Thinkspace", subtitle: "Canvas workspace", badge: "SPACE")
         default:
             return CommandKVisualIdentity(style: .document, symbolName: type.iconName, title: type.displayName, subtitle: "Object", badge: "OPEN")
         }
@@ -391,11 +410,11 @@ struct CommandKVisualIdentity: Equatable {
         case "swipeGallery":
             return CommandKVisualIdentity(style: .swipeShelf, symbolName: "rectangle.stack", title: "Swipe File", subtitle: "Captures and hooks", badge: "BROWSE")
         case "ideas":
-            return CommandKVisualIdentity(style: .idea, symbolName: "lightbulb.fill", title: "Ideas", subtitle: "Sparks and notes", badge: "IDEA")
+            return CommandKVisualIdentity(style: .idea, symbolName: "lightbulb", title: "Ideas", subtitle: "Sparks and notes", badge: "IDEA")
         case "readwise":
-            return CommandKVisualIdentity(style: .readwise, symbolName: "books.vertical.fill", title: "Library", subtitle: "Books and highlights", badge: "BOOK")
+            return CommandKVisualIdentity(style: .readwise, symbolName: "books.vertical", title: "Library", subtitle: "Books and highlights", badge: "BOOK")
         case "database":
-            return CommandKVisualIdentity(style: .domain, symbolName: "tray.full.fill", title: "Database", subtitle: "All objects", badge: "DB")
+            return CommandKVisualIdentity(style: .domain, symbolName: "tray.full", title: "Database", subtitle: "All objects", badge: "DB")
         default:
             return CommandKVisualIdentity(style: .domain, symbolName: symbolName, title: title, subtitle: "Command-K domain", badge: "OPEN")
         }
@@ -421,12 +440,12 @@ enum CommandKActionExecutionError: LocalizedError {
 
 enum CommandKActionParser {
     private static let creationPrefixes: [(prefix: String, kind: CommandKActionKind, title: String, icon: String)] = [
-        ("!task:", .createTask, "Create task", "checkmark.circle.fill"),
-        ("task:", .createTask, "Create task", "checkmark.circle.fill"),
-        ("!idea:", .createIdea, "Create idea", "lightbulb.fill"),
-        ("idea:", .createIdea, "Create idea", "lightbulb.fill"),
+        ("!task:", .createTask, "Create task", "checkmark.circle"),
+        ("task:", .createTask, "Create task", "checkmark.circle"),
+        ("!idea:", .createIdea, "Create idea", "lightbulb"),
+        ("idea:", .createIdea, "Create idea", "lightbulb"),
         ("research:", .captureResearch, "Capture research", "doc.text.magnifyingglass"),
-        ("content:", .createContent, "Create content", "paperplane.fill"),
+        ("content:", .createContent, "Create content", "paperplane"),
         ("thinkspace:", .createThinkspace, "Create Thinkspace", "rectangle.3.group")
     ]
 
@@ -468,6 +487,12 @@ enum CommandKActionParser {
     static func parse(_ rawQuery: String) -> CommandKAction? {
         let trimmed = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
+
+        // Math wins outright — the detector is strict (digits + operators
+        // only), so nothing wordy ever lands here.
+        if let calculator = parseCalculator(trimmed) {
+            return calculator
+        }
 
         if let cortex = parseAskCortex(trimmed) {
             return cortex
@@ -526,6 +551,24 @@ enum CommandKActionParser {
         }
 
         return nil
+    }
+
+    /// "5 x 15,000" → the Raycast calculator card. The action's title is the
+    /// verb (it labels the ⏎ button in the action bar); the card and detail
+    /// pane draw from the payload's expression/result pair.
+    private static func parseCalculator(_ text: String) -> CommandKAction? {
+        guard let calculation = CommandKCalculator.evaluate(text) else { return nil }
+        return CommandKAction(
+            kind: .calculator,
+            title: "Copy Result",
+            subtitle: "\(calculation.expressionDisplay) = \(calculation.resultDisplay)",
+            icon: "plus.forwardslash.minus",
+            payload: CommandKActionPayload(
+                rawText: text,
+                resultText: calculation.resultDisplay,
+                expressionText: calculation.expressionDisplay
+            )
+        )
     }
 
     private static func parseNavigation(_ text: String) -> CommandKAction? {
@@ -599,7 +642,7 @@ enum CommandKActionParser {
         case "swipe gallery", "swipes", "swipe library":
             domain = ("swipeGallery", "Browse Swipes", "bolt.fill")
         case "ideas":
-            domain = ("ideas", "Open Ideas", "lightbulb.fill")
+            domain = ("ideas", "Open Ideas", "lightbulb")
         case "readwise", "books":
             domain = ("readwise", "Open Readwise", "books.vertical.fill")
         default:
@@ -670,7 +713,7 @@ enum CommandKActionParser {
             kind: .createIdea,
             title: "Create idea for \(trimmedClientName)",
             subtitle: trimmedContent.isEmpty ? "For \(trimmedClientName) · Type the idea after :" : "For \(trimmedClientName) · \(trimmedContent)",
-            icon: "lightbulb.fill",
+            icon: "lightbulb",
             payload: CommandKActionPayload(
                 title: trimmedContent.isEmpty ? nil : trimmedContent,
                 body: trimmedContent.isEmpty ? nil : trimmedContent,
@@ -690,13 +733,13 @@ enum CommandKActionParser {
         let prefillsBody: Bool
 
         static let all: [BareCreationShape] = [
-            BareCreationShape(kind: .createTask, keywords: ["task", "todo"], title: "Create task", icon: "checkmark.circle.fill", prefillsBody: false),
+            BareCreationShape(kind: .createTask, keywords: ["task", "todo"], title: "Create task", icon: "checkmark.circle", prefillsBody: false),
             BareCreationShape(kind: .createNote, keywords: ["note"], title: "Create note", icon: "doc.text", prefillsBody: false),
             // Bare "idea" only — "idea <text>" is the scoped client-capture
             // grammar (parseScopedIdeaCapture claims it first).
-            BareCreationShape(kind: .createIdea, keywords: ["idea"], title: "Create idea", icon: "lightbulb.fill", prefillsBody: false),
+            BareCreationShape(kind: .createIdea, keywords: ["idea"], title: "Create idea", icon: "lightbulb", prefillsBody: false),
             BareCreationShape(kind: .captureInbox, keywords: ["capture", "inbox"], title: "Capture to Inbox", icon: "tray.and.arrow.down.fill", prefillsBody: true),
-            BareCreationShape(kind: .createContent, keywords: ["content"], title: "Create content", icon: "paperplane.fill", prefillsBody: false),
+            BareCreationShape(kind: .createContent, keywords: ["content"], title: "Create content", icon: "paperplane", prefillsBody: false),
             BareCreationShape(kind: .captureSwipe, keywords: ["swipe"], title: "Capture swipe", icon: "bolt.fill", prefillsBody: false),
         ]
     }
@@ -1047,7 +1090,7 @@ private extension TelegramCaptureSubroute {
         case .claim: return "quote.bubble.fill"
         case .practice: return "figure.mind.and.body"
         case .term: return "text.book.closed.fill"
-        case .output: return "paperplane.fill"
+        case .output: return "paperplane"
         case .image: return "photo.fill"
         case .file: return "doc.fill"
         case .note: return "note.text"

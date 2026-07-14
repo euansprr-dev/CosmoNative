@@ -9,6 +9,9 @@ enum CommandKDomainOpenTarget: Equatable {
     case atom(String)
     case thinkspace(String)
     case readwiseBook(Int)
+    /// Jump out of the palette to the Ideas destination (Command-K is the
+    /// fast keyboard PATH to ideas — the browse lives on the surface).
+    case ideasBoard(clientUUID: String?)
 }
 
 enum CommandKDomainRailItem: Identifiable {
@@ -16,6 +19,10 @@ enum CommandKDomainRailItem: Identifiable {
     case swipe(SwipeGalleryItem)
     case idea(IdeaGalleryItem)
     case readwise(ReadwiseLibraryBook)
+    /// The find-and-jump row for the Ideas surface. Distinct ids for the
+    /// browse and search forms so a fresh query re-lands selection on the
+    /// top hit instead of sticking to the jump row.
+    case ideasBoardJump(clientUUID: String?, clientName: String?, isSearch: Bool)
 
     var id: String { selectionID }
 
@@ -25,6 +32,7 @@ enum CommandKDomainRailItem: Identifiable {
         case .swipe(let item): return item.atomUUID
         case .idea(let item): return item.atomUUID
         case .readwise(let book): return "readwise-\(book.id)"
+        case .ideasBoardJump(_, _, let isSearch): return isSearch ? "ideas-board-jump-search" : "ideas-board-jump"
         }
     }
 
@@ -34,6 +42,8 @@ enum CommandKDomainRailItem: Identifiable {
         case .swipe(let item): return item.title
         case .idea(let item): return item.title
         case .readwise(let book): return book.title
+        case .ideasBoardJump(_, let clientName, _):
+            return clientName.map { "Open \($0)'s board" } ?? "Open Ideas board"
         }
     }
 
@@ -50,6 +60,8 @@ enum CommandKDomainRailItem: Identifiable {
             return [item.status.displayName, item.clientName].compactMap { $0 }.joined(separator: " · ")
         case .readwise(let book):
             return [book.author, book.category.displayName].compactMap { $0 }.joined(separator: " · ")
+        case .ideasBoardJump:
+            return "Jump to the Ideas surface ↵"
         }
     }
 
@@ -57,8 +69,13 @@ enum CommandKDomainRailItem: Identifiable {
         switch self {
         case .library(let item): return item.color
         case .swipe: return DS.entitySwipe
-        case .idea: return DS.entityIdea
+        // An idea with a client wears the client's color — identity over
+        // the generic entity tint.
+        case .idea(let item):
+            return item.clientUUID.map { DS.clientColor(for: $0) } ?? DS.entityIdea
         case .readwise: return DS.entityReadwise
+        case .ideasBoardJump(let clientUUID, _, _):
+            return clientUUID.map { DS.clientColor(for: $0) } ?? DS.entityIdea
         }
     }
 
@@ -68,6 +85,18 @@ enum CommandKDomainRailItem: Identifiable {
         case .swipe(let item): return item.thumbnailUrl
         case .idea: return nil
         case .readwise(let book): return book.coverImageUrl
+        case .ideasBoardJump: return nil
+        }
+    }
+
+    /// Host for a favicon mark — URL-backed objects carry their site's own
+    /// identity (the Raycast register); nil falls through to previews/chips.
+    var faviconHost: String? {
+        switch self {
+        case .readwise(let book):
+            return book.sourceUrl.flatMap { URL(string: $0)?.host }
+        default:
+            return nil
         }
     }
 
@@ -81,6 +110,7 @@ enum CommandKDomainRailItem: Identifiable {
                 limit: CommandKPreviewExcerpt.thumbnailLimit
             )
         case .readwise(let book): return book.highlights.first?.text ?? "\(book.numHighlights) saved highlights"
+        case .ideasBoardJump: return nil
         }
     }
 
@@ -108,6 +138,8 @@ enum CommandKDomainRailItem: Identifiable {
                 subtitle: book.category.displayName,
                 badge: "BOOK"
             )
+        case .ideasBoardJump:
+            return CommandKVisualIdentity.atom(type: .idea)
         }
     }
 
@@ -117,6 +149,7 @@ enum CommandKDomainRailItem: Identifiable {
         case .swipe(let item): return item.atomUUID
         case .idea(let item): return item.atomUUID
         case .readwise: return nil
+        case .ideasBoardJump: return nil
         }
     }
 
@@ -126,6 +159,7 @@ enum CommandKDomainRailItem: Identifiable {
         case .swipe: return .research
         case .idea: return .idea
         case .readwise: return nil
+        case .ideasBoardJump: return nil
         }
     }
 
@@ -135,6 +169,7 @@ enum CommandKDomainRailItem: Identifiable {
         case .swipe(let item): return item.entityId
         case .idea(let item): return item.entityId
         case .readwise: return 0
+        case .ideasBoardJump: return 0
         }
     }
 
@@ -158,6 +193,8 @@ enum CommandKDomainRailItem: Identifiable {
             return .atom(item.atomUUID)
         case .readwise(let book):
             return .readwiseBook(book.id)
+        case .ideasBoardJump(let clientUUID, _, _):
+            return .ideasBoard(clientUUID: clientUUID)
         }
     }
 
@@ -167,6 +204,7 @@ enum CommandKDomainRailItem: Identifiable {
         case .swipe(let item): return .swipe(item)
         case .idea(let item): return .idea(item)
         case .readwise(let book): return .readwise(book)
+        case .ideasBoardJump: return .empty
         }
     }
 }
@@ -272,6 +310,11 @@ enum CommandKDomainRailDataSource {
         ideaItems: [IdeaGalleryItem],
         readwiseBooks: [ReadwiseLibraryBook]
     ) -> [CommandKDomainRailItem] {
+        // Ideas is find-and-jump now: top hits plus the board jump row —
+        // the browse lives on the Ideas surface, not in the palette.
+        if tab == .ideas {
+            return ideasItems(query: query, ideaItems: ideaItems)
+        }
         let allItems = unfilteredItems(
             for: tab,
             databaseItems: databaseItems,
@@ -282,6 +325,27 @@ enum CommandKDomainRailDataSource {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return allItems }
         return allItems.filter { matches($0, query: trimmed) }
+    }
+
+    /// Empty query → the jump row leads, so ⏎ goes straight to the board.
+    /// Searching → hits lead (⏎ opens the top hit), the jump row trails and
+    /// names the client's board when the hits infer one.
+    private static func ideasItems(query: String, ideaItems: [IdeaGalleryItem]) -> [CommandKDomainRailItem] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            let rows = CommandKIdeaRailGrouping.orderedItems(from: ideaItems).map(CommandKDomainRailItem.idea)
+            return [.ideasBoardJump(clientUUID: nil, clientName: nil, isSearch: false)] + rows
+        }
+
+        let hits = ideaItems.filter { IdeasTab.matchesSearch($0, query: trimmed) }
+        let rows = CommandKIdeaRailGrouping.orderedItems(from: hits).map(CommandKDomainRailItem.idea)
+        let sections = CommandKIdeaRailGrouping.sections(from: hits)
+        let inferred = sections.count == 1 && sections[0].title != "Unassigned" ? sections[0] : nil
+        return rows + [.ideasBoardJump(
+            clientUUID: inferred?.items.first?.clientUUID,
+            clientName: inferred?.title,
+            isSearch: true
+        )]
     }
 
     private static func unfilteredItems(
@@ -297,7 +361,8 @@ enum CommandKDomainRailDataSource {
         case .swipeGallery:
             return swipeItems.map(CommandKDomainRailItem.swipe)
         case .ideas:
-            return CommandKIdeaRailGrouping.orderedItems(from: ideaItems).map(CommandKDomainRailItem.idea)
+            // Handled by ideasItems(query:ideaItems:) — never reached.
+            return []
         case .readwise:
             return readwiseBooks.map(CommandKDomainRailItem.readwise)
         case .inquiry:
@@ -315,6 +380,8 @@ enum CommandKDomainRailDataSource {
             return IdeasTab.matchesSearch(ideaItem, query: query)
         case .readwise(let book):
             return ReadwiseBookStore.matchesSearch(book, query: query)
+        case .ideasBoardJump:
+            return true
         }
     }
 }
@@ -370,7 +437,7 @@ struct CortexResultRail: View {
         if viewModel.recentItems.isEmpty {
             railHint("Search your mind, or pick a recent thread.")
         } else {
-            CommandKSectionLabel(label: "RECENTS")
+            CommandKSectionLabel(label: "RECENTS", count: viewModel.recentItems.count)
             ForEach(viewModel.recentItems) { item in
                 CortexRailRow(
                     title: item.title,
@@ -389,6 +456,16 @@ struct CortexResultRail: View {
                     onOpen: { viewModel.openRecent(item) }
                 )
                 .id(item.id)
+                // The retrieve verb: any recent can be dragged out of the
+                // palette onto the canvas (the palette ghosts mid-drag).
+                .modifier(CommandKDragOutModifier(
+                    uuid: item.id,
+                    title: item.title,
+                    subtitle: "\(item.type.displayName) · \(item.relativeDate)",
+                    accent: cortexEntityAccent(item.type),
+                    symbolName: CommandKVisualIdentity.atom(type: item.type).symbolName,
+                    thumbnailURL: item.thumbnailURL
+                ))
                 .commandKCardContextMenu(atomUUID: item.id, entityId: item.entityId, atomType: item.type)
             }
         }
@@ -401,13 +478,15 @@ struct CortexResultRail: View {
         let groups = viewModel.unifiedGroupedResults.filter { !$0.results.isEmpty }
         if viewModel.primaryAction == nil && groups.isEmpty {
             if viewModel.searchFeedback.matches(query: viewModel.query) {
-                railHint("No matches yet.")
+                railHint("No matches — try fewer words, or keep typing to create a task.")
             } else {
                 Color.clear.frame(height: 1)
             }
         } else {
-            if let action = viewModel.primaryAction {
-                CommandKSectionLabel(label: "COMMANDS")
+            if let action = viewModel.primaryAction, action.kind == .calculator {
+                calculatorSection(action)
+            } else if let action = viewModel.primaryAction {
+                CommandKSectionLabel(label: "COMMANDS", count: 1 + viewModel.userCommandRows.count)
                 CortexRailRow(
                     title: action.title,
                     subtitle: action.subtitle ?? "Press return to run",
@@ -458,7 +537,7 @@ struct CortexResultRail: View {
             }
 
             ForEach(groups, id: \.source) { group in
-                CommandKSectionLabel(label: group.source.displayName.uppercased())
+                CommandKSectionLabel(label: group.source.displayName.uppercased(), count: group.results.count)
                 ForEach(group.results) { result in
                     CortexRailRow(
                         title: result.title,
@@ -466,6 +545,7 @@ struct CortexResultRail: View {
                         accent: result.accentColor,
                         visualIdentity: CommandKVisualIdentity.result(result),
                         thumbnailURL: nil,
+                        faviconHost: Self.faviconHost(for: result),
                         previewText: result.snippet ?? result.subtitle,
                         isConnection: result.atomType == .connection,
                         isSelected: viewModel.selectedNodeId == result.selectionID,
@@ -473,10 +553,55 @@ struct CortexResultRail: View {
                         onOpen: { select(result); viewModel.openSelected() }
                     )
                     .id(result.selectionID)
+                    .modifier(Self.dragOutModifier(for: result))
                     .commandKSearchResultContextMenu(result: result)
                 }
             }
         }
+    }
+
+    /// The calculator claims its own section: the Raycast split card
+    /// (expression | answer) instead of a command row. When quicklinks also
+    /// match, they keep their COMMANDS header below.
+    @ViewBuilder
+    private func calculatorSection(_ action: CommandKAction) -> some View {
+        CommandKSectionLabel(label: "CALCULATOR")
+        CommandKCalculatorRailCard(
+            expression: action.payload.expressionText ?? action.payload.rawText ?? "",
+            result: action.payload.resultText ?? "",
+            isSelected: viewModel.selectedNodeId == nil || viewModel.selectedNodeId == action.id,
+            onSelect: {
+                viewModel.selectedNodeId = action.id
+                viewModel.selectedResultIndex = 0
+            },
+            onOpen: {
+                viewModel.selectedNodeId = action.id
+                viewModel.selectedResultIndex = 0
+                viewModel.performPrimaryAction()
+            }
+        )
+        .id(action.id)
+        if !viewModel.userCommandRows.isEmpty {
+            CommandKSectionLabel(label: "COMMANDS", count: viewModel.userCommandRows.count)
+        }
+    }
+
+    /// Extracted (not inline) — the row builder sits at the type-checker's
+    /// budget edge.
+    private static func faviconHost(for result: UnifiedSearchResult) -> String? {
+        result.browserURL?.host
+    }
+
+    /// Extracted for the same type-checker-budget reason as faviconHost.
+    private static func dragOutModifier(for result: UnifiedSearchResult) -> CommandKDragOutModifier {
+        CommandKDragOutModifier(
+            uuid: result.atomUUID ?? result.selectionID,
+            title: result.title,
+            subtitle: result.subtitle ?? result.snippet ?? "",
+            accent: result.accentColor,
+            symbolName: CommandKVisualIdentity.result(result).symbolName,
+            faviconHost: faviconHost(for: result)
+        )
     }
 
     private func select(_ result: UnifiedSearchResult) {
@@ -496,7 +621,7 @@ struct CortexResultRail: View {
         } else if tab == .ideas {
             ideaDomainSection(domainItems)
         } else {
-            CommandKSectionLabel(label: tab.title.uppercased())
+            CommandKSectionLabel(label: tab.title.uppercased(), count: domainItems.count)
             ForEach(domainItems) { item in
                 domainRow(item)
             }
@@ -509,14 +634,25 @@ struct CortexResultRail: View {
             if case .idea(let idea) = item { return idea }
             return nil
         }
+        let jump = items.first { if case .ideasBoardJump = $0 { return true } else { return false } }
+        let jumpLeads: Bool = {
+            if case .ideasBoardJump = items.first { return true }
+            return false
+        }()
         let sections = CommandKIdeaRailGrouping.sections(from: ideas)
 
-        CommandKSectionLabel(label: "IDEAS")
+        if jumpLeads, let jump {
+            domainRow(jump)
+        }
+        CommandKSectionLabel(label: "IDEAS", count: ideas.count)
         ForEach(sections) { section in
             ideaProfileHeader(section)
             ForEach(section.items, id: \.atomUUID) { idea in
                 domainRow(.idea(idea))
             }
+        }
+        if !jumpLeads, let jump {
+            domainRow(jump)
         }
     }
 
@@ -526,12 +662,13 @@ struct CortexResultRail: View {
                 .fill(section.color.opacity(0.82))
                 .frame(width: 6, height: 6)
             Text(section.title)
-                .font(.system(size: 11, weight: .semibold))
+                .font(DS.caption.weight(.semibold))
                 .foregroundStyle(DS.textSecondary)
                 .lineLimit(1)
             Spacer(minLength: DS.space8)
             Text(section.countText)
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .font(DS.caption2.weight(.medium))
+                .monospacedDigit()
                 .foregroundStyle(DS.textMuted)
                 .lineLimit(1)
         }
@@ -548,6 +685,7 @@ struct CortexResultRail: View {
             accent: item.accent,
             visualIdentity: item.visualIdentity,
             thumbnailURL: item.thumbnailURL,
+            faviconHost: item.faviconHost,
             previewText: item.previewText,
             isConnection: item.isConnection,
             isSelected: viewModel.selectedNodeId == item.selectionID,
@@ -560,13 +698,22 @@ struct CortexResultRail: View {
         .id(item.selectionID)
 
         if let atomUUID = item.atomUUID, let atomType = item.atomType {
-            row.commandKCardContextMenu(
-                atomUUID: atomUUID,
-                entityId: item.entityId,
-                atomType: atomType,
-                isThinkspace: false,
-                allowsSpatialGoToObject: true
-            )
+            row.modifier(CommandKDragOutModifier(
+                uuid: atomUUID,
+                title: item.title,
+                subtitle: item.subtitle,
+                accent: item.accent,
+                symbolName: item.visualIdentity.symbolName,
+                thumbnailURL: item.thumbnailURL,
+                faviconHost: item.faviconHost
+            ))
+                .commandKCardContextMenu(
+                    atomUUID: atomUUID,
+                    entityId: item.entityId,
+                    atomType: atomType,
+                    isThinkspace: false,
+                    allowsSpatialGoToObject: true
+                )
         } else if item.isThinkspace, let atomType = item.atomType {
             row.commandKCardContextMenu(
                 atomUUID: item.selectionID,
@@ -596,6 +743,7 @@ private struct CortexRailRow: View {
     let accent: Color
     let visualIdentity: CommandKVisualIdentity?
     let thumbnailURL: String?
+    var faviconHost: String? = nil
     let previewText: String?
     let isConnection: Bool
     let isSelected: Bool
@@ -606,13 +754,7 @@ private struct CortexRailRow: View {
 
     var body: some View {
         HStack(spacing: DS.space12) {
-            thumbnail
-                .frame(width: 38, height: 50)
-                .clipShape(.rect(cornerRadius: DS.radiusSmall))
-                .overlay(
-                    RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous)
-                        .strokeBorder(DS.commandChromeSeparator, lineWidth: 0.5)
-                )
+            thumbnailSlot
             VStack(alignment: .leading, spacing: DS.space2) {
                 Text(title)
                     .font(DS.callout)
@@ -642,19 +784,56 @@ private struct CortexRailRow: View {
         .accessibilityHint("Double-tap or press return to open")
     }
 
+    /// The rail is Raycast's icon territory: real media thumbnails and
+    /// favicons are identity and stay; everything else gets the compact
+    /// identity chip. Content excerpts live in the detail pane, not the
+    /// list — 38pt text micro-pages read as noise, and a command's subtitle
+    /// typeset as a fake document was the worst offender.
     @ViewBuilder
-    private var thumbnail: some View {
+    private var thumbnailSlot: some View {
         if let url = thumbnailURL, !url.isEmpty {
-            SpotlightImageContent(urlString: url)
-        } else if let visualIdentity {
-            CommandKIconVisualTile(identity: visualIdentity, accent: accent, scale: .rail)
-        } else if isConnection {
-            SpotlightConnectionPreview(preview: previewText, accentColor: accent)
-        } else if let text = previewText, !text.isEmpty {
-            SpotlightPageContent(text: text, accentColor: accent)
+            framedObject { SpotlightImageContent(urlString: url) }
+        } else if let host = faviconHost {
+            bareMark { CommandKFavicon(host: host) { identityChip } }
+        } else if isSwipeMotif, let visualIdentity {
+            framedObject { CommandKIconVisualTile(identity: visualIdentity, accent: accent, scale: .rail) }
+        } else if visualIdentity != nil {
+            bareMark { identityChip }
         } else {
-            SpotlightFauxPage(accentColor: accent)
+            framedObject { SpotlightFauxPage(accentColor: accent) }
         }
+    }
+
+    private var isSwipeMotif: Bool {
+        switch visualIdentity?.style {
+        case .swipeFile, .swipeShelf, .swipeGalleryPage: return true
+        default: return false
+        }
+    }
+
+    @ViewBuilder
+    private var identityChip: some View {
+        if let visualIdentity {
+            CosmoIdentityChip(systemName: visualIdentity.symbolName, tint: accent)
+        }
+    }
+
+    /// Object previews (media, pages, miniatures) wear the object edge.
+    private func framedObject<V: View>(@ViewBuilder _ content: () -> V) -> some View {
+        content()
+            .frame(width: 38, height: 50)
+            .clipShape(.rect(cornerRadius: DS.radiusSmall))
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous)
+                    .strokeBorder(DS.commandChromeSeparator, lineWidth: 0.5)
+            )
+    }
+
+    /// Bare marks (chip, favicon) float in the slot — a stroked frame around
+    /// a 22pt chip would be another container.
+    private func bareMark<V: View>(@ViewBuilder _ content: () -> V) -> some View {
+        content()
+            .frame(width: 38, height: 50)
     }
 
     private var rowBackground: some View {

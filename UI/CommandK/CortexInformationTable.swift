@@ -14,8 +14,12 @@ struct CortexInformationTable: View {
     let fallbackMeta: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DS.space10) {
+        // A flat hairline ledger on the one body surface (the Raycast / Today
+        // grammar) — never a filled container: the pane's paper ground is the
+        // surface, rows separate by hairlines alone.
+        VStack(alignment: .leading, spacing: 0) {
             CommandKSectionLabel(label: "INFORMATION")
+                .padding(.bottom, DS.space6)
             row("Type", typeLabel)
             if let created {
                 row("Created", created)
@@ -33,15 +37,21 @@ struct CortexInformationTable: View {
     }
 
     private func row(_ label: String, _ value: String) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(label)
-                .font(DS.caption2)
-                .foregroundStyle(DS.inkFaded)
-            Spacer(minLength: DS.space12)
-            Text(value)
-                .font(DS.caption)
-                .foregroundStyle(DS.textSecondary)
-                .lineLimit(1)
+        VStack(spacing: 0) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(label)
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.inkFaded)
+                Spacer(minLength: DS.space12)
+                Text(value)
+                    .font(DS.caption)
+                    .foregroundStyle(DS.textSecondary)
+                    .lineLimit(1)
+            }
+            .padding(.vertical, DS.space8)
+            Rectangle()
+                .fill(DS.borderSubtle)
+                .frame(height: 0.5)
         }
     }
 }

@@ -27,6 +27,49 @@ struct DailyBrief: Codable, Equatable, Sendable {
     var generatedAt: String
 }
 
+// MARK: - Queries
+
+/// The brief's ground-truth SQL, extracted so tests can pin the predicates
+/// to how atoms actually store their metadata (tasks write `"isCompleted":true`,
+/// not a status string — the original query silently counted zero forever).
+enum DailyBriefQueries {
+    /// Knowledge atoms captured in [from, to) — ISO8601 string bounds.
+    static func capturedCount(_ db: Database, from: String, to: String) throws -> Int {
+        let capturedTypes = RecallDocumentBuilder.indexedTypes.map { "'\($0.rawValue)'" }.joined(separator: ",")
+        return try Int.fetchOne(db, sql: """
+            SELECT COUNT(*) FROM atoms
+            WHERE is_deleted = 0 AND type IN (\(capturedTypes))
+              AND created_at >= ? AND created_at < ?
+            """, arguments: [from, to]) ?? 0
+    }
+
+    /// Tasks completed in [from, to).
+    static func completedTaskCount(_ db: Database, from: String, to: String) throws -> Int {
+        try Int.fetchOne(db, sql: """
+            SELECT COUNT(*) FROM atoms
+            WHERE is_deleted = 0 AND type = 'task'
+              AND metadata LIKE '%"isCompleted":true%'
+              AND updated_at >= ? AND updated_at < ?
+            """, arguments: [from, to]) ?? 0
+    }
+
+    /// Content scheduled on the given day. `dayPrefix` is the first 10 chars
+    /// of the ISO timestamp the queue writes (local midnight rendered in UTC),
+    /// so the prefix comparison matches exactly what `setSchedule` stores.
+    static func contentDue(_ db: Database, dayPrefix: String) throws -> [(uuid: String, title: String)] {
+        let rows = try Row.fetchAll(db, sql: """
+            SELECT uuid, title FROM atoms
+            WHERE is_deleted = 0 AND type = 'content'
+              AND metadata LIKE ?
+            LIMIT 5
+            """, arguments: ["%\"scheduledAt\":\"\(dayPrefix)%"])
+        return rows.compactMap { row in
+            guard let uuid: String = row["uuid"] else { return nil }
+            return (uuid, row["title"] ?? "Untitled")
+        }
+    }
+}
+
 // MARK: - Engine
 
 @MainActor
@@ -66,7 +109,10 @@ final class DailyBriefEngine {
         let context = await gatherContext()
 
         // Silence law: nothing worth saying → no brief, no filler.
-        guard context.hasSubstance else { return nil }
+        guard context.hasSubstance else {
+            print("[DailyBrief] silence law: no substance for \(dateKey) — no brief composed")
+            return nil
+        }
 
         let recallLines = context.recallPicks.map { pick in
             DailyBrief.Line(
@@ -118,36 +164,14 @@ final class DailyBriefEngine {
         let yesterdayStart = calendar.date(byAdding: .day, value: -1, to: todayStart)!
 
         // Yesterday's activity + today's commitments in one read.
+        let yesterdayISO = ISO8601.string(from: yesterdayStart)
+        let todayISO = ISO8601.string(from: todayStart)
+        let todayPrefix = String(todayISO.prefix(10))
         let facts: (captured: Int, completed: Int, dueTasks: [String], dueContent: [(String, String)]) =
             (try? await CosmoDatabase.shared.asyncRead { db in
-                let capturedTypes = RecallDocumentBuilder.indexedTypes.map { "'\($0.rawValue)'" }.joined(separator: ",")
-                let captured = try Int.fetchOne(db, sql: """
-                    SELECT COUNT(*) FROM atoms
-                    WHERE is_deleted = 0 AND type IN (\(capturedTypes))
-                      AND created_at >= ? AND created_at < ?
-                    """, arguments: [ISO8601.string(from: yesterdayStart), ISO8601.string(from: todayStart)]) ?? 0
-
-                let completed = try Int.fetchOne(db, sql: """
-                    SELECT COUNT(*) FROM atoms
-                    WHERE is_deleted = 0 AND type = 'task'
-                      AND metadata LIKE '%"status":"completed"%'
-                      AND updated_at >= ? AND updated_at < ?
-                    """, arguments: [ISO8601.string(from: yesterdayStart), ISO8601.string(from: todayStart)]) ?? 0
-
-                // Content scheduled for today (queue field).
-                let todayPrefix = String(ISO8601.string(from: todayStart).prefix(10))
-                let contentRows = try Row.fetchAll(db, sql: """
-                    SELECT uuid, title FROM atoms
-                    WHERE is_deleted = 0 AND type = 'content'
-                      AND metadata LIKE '%"scheduledAt":"\(todayPrefix)%'
-                    LIMIT 5
-                    """)
-                let dueContent = contentRows.compactMap { row -> (String, String)? in
-                    guard let uuid: String = row["uuid"] else { return nil }
-                    let title: String = row["title"] ?? "Untitled"
-                    return (uuid, title)
-                }
-
+                let captured = try DailyBriefQueries.capturedCount(db, from: yesterdayISO, to: todayISO)
+                let completed = try DailyBriefQueries.completedTaskCount(db, from: yesterdayISO, to: todayISO)
+                let dueContent = try DailyBriefQueries.contentDue(db, dayPrefix: todayPrefix)
                 return (captured, completed, [], dueContent)
             }) ?? (0, 0, [], [])
 
@@ -276,47 +300,27 @@ import SwiftUI
 
 struct DailyBriefCard: View {
     @State private var brief: DailyBrief?
-    @State private var isLoading = true
+    @State private var isHovering = false
+    @State private var isRegenerating = false
 
     var body: some View {
-        Group {
+        // A real container, not Group: modifiers on Group apply to its
+        // children, and with `brief == nil` there is no child — the .task
+        // never fired and the brief could never load (the chicken-and-egg
+        // that kept the Daily Return invisible).
+        VStack(alignment: .leading, spacing: 0) {
             if let brief {
                 card(brief)
             }
         }
         .task {
             brief = await DailyBriefEngine.shared.briefForToday()
-            isLoading = false
         }
     }
 
     private func card(_ brief: DailyBrief) -> some View {
         VStack(alignment: .leading, spacing: DS.space8) {
-            HStack(spacing: DS.space6) {
-                Image(systemName: "sunrise")
-                    .font(DS.caption.weight(.medium))
-                    .foregroundStyle(DS.gilt)
-                    .accessibilityHidden(true)
-                Text("TODAY'S BRIEF")
-                    .font(DS.smallCaps)
-                    .tracking(1.4)
-                    .foregroundStyle(DS.textMuted)
-                Spacer()
-                Button {
-                    DailyBriefEngine.shared.dismissForToday()
-                    withAnimation(ProMotionSprings.gentle) { self.brief = nil }
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(DS.textMuted)
-                        .frame(width: 18, height: 18)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help("Dismiss for today")
-                .accessibilityLabel("Dismiss today's brief")
-            }
-
+            cardHeader
             VStack(alignment: .leading, spacing: DS.space6) {
                 ForEach(brief.lines) { line in
                     briefLine(line)
@@ -329,6 +333,64 @@ struct DailyBriefCard: View {
             RoundedRectangle(cornerRadius: 12)
                 .stroke(DS.giltMuted.opacity(0.25), lineWidth: 1)
         )
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) { isHovering = hovering }
+        }
+    }
+
+    private var cardHeader: some View {
+        HStack(spacing: DS.space6) {
+            Image(systemName: "sunrise")
+                .font(DS.caption.weight(.medium))
+                .foregroundStyle(DS.gilt)
+                .accessibilityHidden(true)
+            Text("DAILY RETURN")
+                .font(DS.smallCaps)
+                .tracking(1.4)
+                .foregroundStyle(DS.textMuted)
+            Spacer()
+            if isHovering {
+                Button {
+                    regenerate()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(DS.caption2.weight(.semibold))
+                        .foregroundStyle(DS.textMuted)
+                        .frame(width: 18, height: 18)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(isRegenerating)
+                .opacity(isRegenerating ? 0.4 : 1)
+                .help("Compose again")
+                .accessibilityLabel("Compose the brief again")
+                .transition(.opacity)
+            }
+            Button {
+                DailyBriefEngine.shared.dismissForToday()
+                withAnimation(ProMotionSprings.gentle) { self.brief = nil }
+            } label: {
+                Image(systemName: "xmark")
+                    .font(DS.caption2.weight(.semibold))
+                    .foregroundStyle(DS.textMuted)
+                    .frame(width: 18, height: 18)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Dismiss for today")
+            .accessibilityLabel("Dismiss today's brief")
+        }
+    }
+
+    private func regenerate() {
+        isRegenerating = true
+        Task {
+            let fresh = await DailyBriefEngine.shared.briefForToday(regenerate: true)
+            withAnimation(ProMotionSprings.gentle) {
+                brief = fresh
+                isRegenerating = false
+            }
+        }
     }
 
     @ViewBuilder
@@ -343,7 +405,7 @@ struct DailyBriefCard: View {
             } label: {
                 HStack(alignment: .firstTextBaseline, spacing: DS.space6) {
                     Image(systemName: "arrow.up.right")
-                        .font(.system(size: 8, weight: .semibold))
+                        .font(DS.caption2.weight(.semibold))
                         .foregroundStyle(DS.gilt)
                         .accessibilityHidden(true)
                     Text(line.text)

@@ -299,7 +299,7 @@ class AgentToolRegistry {
             ),
             LLMToolDefinition(
                 name: "create_connection",
-                description: "Create a new Connection atom — the structured workspace for developing a concept (goal, problems, claims, evidence, benefits, examples, beliefs & objections, process, open questions, concept name, references). Use when the user wants to develop, crystallize, or structure a concept and no connection is the active surface. Seed sections with any material the user already gave.",
+                description: "Create a new Connection atom — the structured workspace for developing a concept (goal, problems, claims, evidence, benefits, examples, beliefs & objections, process, open questions, concept name, references). Use when the user wants to develop, crystallize, or structure a concept and no connection is the active surface. Seed ONLY the one section the user's opening line clearly maps to — capturing their point, organized and lightly polished (not invented) — then go deeper with a question; do NOT fan a single opening line across several sections, and do not fabricate content for sections they haven't spoken to yet.",
                 parametersSchema: [
                     "type": "object",
                     "properties": [

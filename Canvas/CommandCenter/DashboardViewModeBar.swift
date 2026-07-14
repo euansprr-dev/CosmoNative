@@ -4,6 +4,28 @@
 
 import SwiftUI
 
+/// The two faces of Upcoming: the week schedule (tasks, time blocks,
+/// external events) and the content calendar (posts on a month grid with
+/// the idea/draft shelf in the rail).
+enum UpcomingLens: String, CaseIterable {
+    case schedule
+    case content
+
+    var label: String {
+        switch self {
+        case .schedule: return "Schedule"
+        case .content: return "Content"
+        }
+    }
+
+    var help: String {
+        switch self {
+        case .schedule: return "Tasks and time blocks, week by week"
+        case .content: return "Posts and ideas on a month calendar"
+        }
+    }
+}
+
 enum DashboardViewMode: String, CaseIterable {
     case today
     case upcoming
@@ -21,9 +43,11 @@ enum DashboardViewMode: String, CaseIterable {
         [.today, .upcoming, .anytime, .someday, .logbook]
     }
 
-    /// Planning modes shown in sidebar navigation
+    /// Planning modes shown in sidebar navigation. The queue page retired
+    /// July 2026 — content planning lives in Upcoming's Content lens, and
+    /// `.queue` survives only as a redirect for old jump targets.
     static var planningLists: [DashboardViewMode] {
-        [.habits, .reports, .queue]
+        [.habits, .reports]
     }
 
     var showsTaskList: Bool {
@@ -53,7 +77,7 @@ enum DashboardViewMode: String, CaseIterable {
         case .logbook: return "Logbook"
         case .habits: return "Habits"
         case .reports: return "Reports"
-        case .queue: return "Queue"
+        case .queue: return "Content Calendar"
         case .project: return "Project"
         case .area: return "Area"
         }
@@ -89,109 +113,6 @@ enum DashboardViewMode: String, CaseIterable {
     }
 }
 
-struct DashboardViewModeBar: View {
-
-    @Binding var selectedMode: DashboardViewMode
-    var todayCount: Int
-    var upcomingCount: Int
-    var anytimeCount: Int
-    var somedayCount: Int
-    var completedCount: Int
-    var completedArrivalToken: Int
-
-    @Namespace private var tabIndicator
-    @State private var pulseCompletedBadge = false
-
-    var body: some View {
-        HStack(spacing: DS.space4) {
-            ForEach(DashboardViewMode.smartLists, id: \.self) { mode in
-                tabButton(mode)
-            }
-            Spacer()
-        }
-        .onChange(of: completedArrivalToken) { _, _ in
-            guard completedCount > 0 else { return }
-            withAnimation(.spring(response: 0.26, dampingFraction: 0.62)) {
-                pulseCompletedBadge = true
-            }
-
-            Task { @MainActor in
-                try? await Task.sleep(for: .milliseconds(420))
-                withAnimation(.easeOut(duration: 0.18)) {
-                    pulseCompletedBadge = false
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func tabButton(_ mode: DashboardViewMode) -> some View {
-        let isSelected = selectedMode == mode
-        let count = badgeCount(for: mode)
-
-        Button {
-            withAnimation(ProMotionSprings.snappy) {
-                selectedMode = mode
-            }
-        } label: {
-            VStack(spacing: DS.space4) {
-                HStack(spacing: DS.space4) {
-                    Image(systemName: mode.icon)
-                        .font(DS.caption2)
-                        .foregroundStyle(isSelected ? mode.activeTint : DS.commandCenterMutedText)
-
-                    Text(mode.label)
-                        .font(isSelected ? DS.headline : DS.callout)
-                        .foregroundStyle(isSelected ? DS.commandCenterTitleText : DS.commandCenterMutedText)
-
-                    if count > 0 {
-                        badge(for: mode, count: count, isSelected: isSelected)
-                    }
-                }
-                .padding(.horizontal, DS.space12)
-                .padding(.vertical, DS.space6)
-
-                // Bottom indicator line — slides between tabs
-                Rectangle()
-                    .fill(isSelected ? mode.activeTint : Color.clear)
-                    .frame(height: 2)
-                    .frame(maxWidth: .infinity)
-                    .scaleEffect(x: isSelected ? 0.8 : 0, anchor: .center)
-                    .clipShape(.rect(cornerRadius: 1))
-                    .matchedGeometryEffect(id: isSelected ? "tabIndicator" : "tab_\(mode.rawValue)", in: tabIndicator)
-            }
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func badge(for mode: DashboardViewMode, count: Int, isSelected: Bool) -> some View {
-        let isCompletedBadge = mode == .logbook
-        let isPulsing = isCompletedBadge && pulseCompletedBadge
-
-        return Text("\(count)")
-            .font(DS.caption2)
-            .contentTransition(.numericText(value: Double(count)))
-            .foregroundStyle(isSelected ? mode.activeTint : DS.commandCenterMutedText)
-            .frame(width: 16, height: 16)
-            .background(
-                Circle()
-                    .fill(DS.gilt.opacity(0.04))
-                    .overlay(
-                        Circle()
-                            .fill(DS.green.opacity(isPulsing ? 0.12 : 0))
-                    )
-            )
-            .scaleEffect(isPulsing ? 1.12 : 1.0)
-    }
-
-    private func badgeCount(for mode: DashboardViewMode) -> Int {
-        switch mode {
-        case .today: return todayCount
-        case .upcoming: return upcomingCount
-        case .anytime: return anytimeCount
-        case .someday: return somedayCount
-        case .logbook: return completedCount
-        case .habits, .reports, .queue, .project, .area: return 0
-        }
-    }
-}
+// DashboardViewModeBar (the Todoist-style tab strip) was deleted July 2026:
+// never instantiated since the Things-style sidebar took over navigation.
+// The DashboardViewMode enum above is the live part of this file.

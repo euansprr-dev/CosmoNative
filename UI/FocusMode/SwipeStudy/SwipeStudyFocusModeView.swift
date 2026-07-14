@@ -333,20 +333,7 @@ private struct SwipeStudyTopBar: View {
             .help(isSidebarHidden ? "Show sidebar (⌘\\)" : "Hide sidebar (⌘\\)")
             .accessibilityLabel("Toggle sidebar")
 
-            Button(action: onClose) {
-                HStack(spacing: DS.space6) {
-                    Image(systemName: "chevron.left")
-                        .font(DS.caption.weight(.semibold))
-                        .accessibilityHidden(true)
-                    Text("Swipe File")
-                        .font(DS.subheadline.weight(.medium))
-                }
-                .foregroundStyle(DS.textSecondary)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Back to the swipe file (Esc)")
-            .accessibilityLabel("Back to swipe file")
+            NavigationTrailIsland()
         }
     }
 

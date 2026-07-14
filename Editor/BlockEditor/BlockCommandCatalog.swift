@@ -3,6 +3,9 @@ import Foundation
 struct BlockCommand: Identifiable, Equatable, Hashable {
     enum Action: Equatable, Hashable {
         case transform(RichBlockKind)
+        /// Heading transform carrying the plain vs. collapsible choice —
+        /// "Heading 1" and "Toggle Heading 1" are distinct menu entries.
+        case transformHeading(RichBlockKind, collapsible: Bool)
         case replaceOrInsert(RichBlockKind)
         case insertElement(DocumentElementDefinition)
         case createElement
@@ -29,6 +32,8 @@ extension BlockCommand.Action {
         switch self {
         case .transform(let kind):
             return "Transform to \(kind.editorDisplayName)"
+        case .transformHeading(let kind, let collapsible):
+            return "Transform to \(collapsible ? "Toggle " : "")\(kind.editorDisplayName)"
         case .replaceOrInsert(let kind):
             return "Insert \(kind.editorDisplayName)"
         case .insertElement:
@@ -59,7 +64,7 @@ enum BlockCommandCatalog {
             subtitle: "Large section heading",
             systemImage: "textformat.size.larger",
             aliases: ["h1", "title"],
-            action: .transform(.heading1)
+            action: .transformHeading(.heading1, collapsible: false)
         ),
         BlockCommand(
             id: "heading-2",
@@ -67,7 +72,7 @@ enum BlockCommandCatalog {
             subtitle: "Medium section heading",
             systemImage: "textformat.size",
             aliases: ["h2", "subtitle"],
-            action: .transform(.heading2)
+            action: .transformHeading(.heading2, collapsible: false)
         ),
         BlockCommand(
             id: "heading-3",
@@ -75,7 +80,7 @@ enum BlockCommandCatalog {
             subtitle: "Small section heading",
             systemImage: "textformat",
             aliases: ["h3"],
-            action: .transform(.heading3)
+            action: .transformHeading(.heading3, collapsible: false)
         ),
         BlockCommand(
             id: "checklist",
@@ -124,6 +129,30 @@ enum BlockCommandCatalog {
             systemImage: "chevron.forward.square",
             aliases: ["collapse", "disclosure", "fold", "expand"],
             action: .transform(.toggle)
+        ),
+        BlockCommand(
+            id: "toggle-heading-1",
+            title: "Toggle Heading 1",
+            subtitle: "Large collapsible section heading",
+            systemImage: "chevron.forward.square",
+            aliases: ["th1", "toggle h1", "collapsible heading", "fold heading"],
+            action: .transformHeading(.heading1, collapsible: true)
+        ),
+        BlockCommand(
+            id: "toggle-heading-2",
+            title: "Toggle Heading 2",
+            subtitle: "Medium collapsible section heading",
+            systemImage: "chevron.forward.square",
+            aliases: ["th2", "toggle h2", "collapsible heading", "fold heading"],
+            action: .transformHeading(.heading2, collapsible: true)
+        ),
+        BlockCommand(
+            id: "toggle-heading-3",
+            title: "Toggle Heading 3",
+            subtitle: "Small collapsible section heading",
+            systemImage: "chevron.forward.square",
+            aliases: ["th3", "toggle h3", "collapsible heading", "fold heading"],
+            action: .transformHeading(.heading3, collapsible: true)
         ),
         BlockCommand(
             id: "code-block",
@@ -203,11 +232,17 @@ enum BlockCommandCatalog {
     static func action(for slashCommandType: SlashCommandType) -> BlockCommand.Action? {
         switch slashCommandType {
         case .heading1:
-            return .transform(.heading1)
+            return .transformHeading(.heading1, collapsible: false)
         case .heading2:
-            return .transform(.heading2)
+            return .transformHeading(.heading2, collapsible: false)
         case .heading3:
-            return .transform(.heading3)
+            return .transformHeading(.heading3, collapsible: false)
+        case .toggleHeading1:
+            return .transformHeading(.heading1, collapsible: true)
+        case .toggleHeading2:
+            return .transformHeading(.heading2, collapsible: true)
+        case .toggleHeading3:
+            return .transformHeading(.heading3, collapsible: true)
         case .quote:
             return .transform(.quote)
         case .bulletList:

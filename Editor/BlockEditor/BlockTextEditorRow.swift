@@ -646,7 +646,7 @@ struct BlockTextEditorRow: View {
         let liveContent = block.kind.strippedRenderPrefix(from: livePlainText)
 
         switch action {
-        case .transform, .replaceOrInsert, .insertElement:
+        case .transform, .transformHeading, .replaceOrInsert, .insertElement:
             do {
                 let result = try BlockOperations.apply(
                     action,

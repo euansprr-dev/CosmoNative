@@ -41,6 +41,12 @@ struct CortexMasterDetailView: View {
                     }
             }
             .frame(maxHeight: .infinity)
+            // ONE ground for the whole body (the Raycast anatomy): results
+            // and previews are content, so they sit on near-opaque paper —
+            // the inner white cards and fills existed only because text on
+            // lensed glass was illegible. Chrome (search pill, panel edge,
+            // action bar) stays glass.
+            .background(DS.bg.opacity(0.96))
 
             CortexActionBar(
                 viewModel: viewModel,

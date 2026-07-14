@@ -103,7 +103,7 @@ struct CosmoCollaboratorPaneView: View {
                     }
 
                     if viewModel.isProcessing {
-                        Text("thinking...")
+                        Text("thinking…")
                             .font(DS.dateSerif)
                             .italic()
                             .foregroundStyle(DS.inkFaded)
@@ -271,10 +271,7 @@ struct CosmoCollaboratorPaneView: View {
                     isFocused: $isComposerFocused,
                     isMentionOverlayVisible: viewModel.showMentionOverlay,
                     onSubmit: sendCurrentMessage,
-                    onTextChange: { syncMentionSearch() },
-                    onDismissMentionOverlayFromBackspace: {
-                        dismissMentionOverlay(trimMentionQuery: false)
-                    }
+                    onTextChange: { syncMentionSearch() }
                 )
                 .frame(maxWidth: .infinity)
                 .fixedSize(horizontal: false, vertical: true)

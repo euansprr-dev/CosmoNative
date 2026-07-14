@@ -120,7 +120,7 @@ struct LiveQueryBlockView: View {
                 VStack(spacing: 6) {
                     ProgressView()
                         .scaleEffect(0.7)
-                    Text("Querying...")
+                    Text("Querying…")
                         .font(.system(size: 10))
                         .foregroundStyle(DS.textMuted)
                 }
@@ -318,7 +318,7 @@ struct LiveQueryConfig: Codable, Sendable {
         }
 
         for condition in conditions {
-            parts.append("\(condition.field.displayName) \(condition.op.displayName) \(condition.value.stringValue ?? "...")")
+            parts.append("\(condition.field.displayName) \(condition.op.displayName) \(condition.value.stringValue ?? "…")")
         }
 
         return parts.joined(separator: " | ")

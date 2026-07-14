@@ -36,11 +36,24 @@ enum CommandKMetrics {
     static let mastheadDatabaseTitleTop: CGFloat = 36
 }
 
+/// The ⌘K preview register. Light themes read as honest paper: white page,
+/// document ink, parchment swipe panels. Dark chrome flips the WHOLE register
+/// to dark surfaces + light ink — document ink typeset on the dark pane was
+/// unreadable, and white micro-pages / parchment panels glowed against the
+/// dark palette. Fill and text tokens must always be swapped as a pair.
 enum CommandKPreviewPaper {
-    static var fill: Color { Color.white }
-    static var text: Color { DS.documentText }
-    static var textSecondary: Color { DS.documentTextSecondary }
-    static var textMuted: Color { DS.documentTextMuted }
+    private static var darkChrome: Bool { DS.usesImmersiveFocusAppearance }
+
+    static var fill: Color { darkChrome ? DS.surfaceCard : Color.white }
+    static var text: Color { darkChrome ? DS.text : DS.documentText }
+    static var textSecondary: Color { darkChrome ? DS.textSecondary : DS.documentTextSecondary }
+    static var textMuted: Color { darkChrome ? DS.textMuted : DS.documentTextMuted }
+
+    /// Swipe-preview chrome: parchment panel with a recessed vellum stage in
+    /// light themes; elevated dark surface over the page background in dark.
+    static var panelFill: Color { darkChrome ? DS.surfaceElevated : DS.vellum }
+    static var stageFill: Color { darkChrome ? DS.bg : DS.vellumDeep }
+    static var hairline: Color { darkChrome ? DS.border : DS.sepiaSubtle }
 }
 
 enum CommandKExpandedLayout {
@@ -95,102 +108,57 @@ struct CommandKIconVisualTile: View {
     var scale: CommandKIconVisualScale = .rail
 
     var body: some View {
-        ZStack {
-            background
-            visualMotif
+        Group {
+            switch identity.style {
+            // The honest miniatures stay — they're object identity already.
+            case .swipeFile:
+                CommandKSwipeReelMotif(accent: accent, scale: scale)
+            case .swipeShelf:
+                CommandKSwipeShelfMotif(accent: accent, scale: scale)
+            case .swipeGalleryPage:
+                CommandKSwipeGalleryPageMotif(accent: accent, scale: scale)
+            // Everything else: the compact identity chip (Raycast's register)
+            // — solid tint, small white glyph. The old pastel wash + big
+            // filled symbol read bulky.
+            default:
+                CosmoIdentityChip(
+                    systemName: identity.symbolName,
+                    tint: accent,
+                    size: scale == .rail ? 26 : 44
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
         .accessibilityLabel(identity.title)
     }
+}
 
-    private var background: some View {
-        RoundedRectangle(cornerRadius: scale == .rail ? 8 : DS.radiusMedium, style: .continuous)
-            .fill(accent.opacity(scale == .rail ? 0.10 : 0.08))
-            .overlay(
-                RoundedRectangle(cornerRadius: scale == .rail ? 8 : DS.radiusMedium, style: .continuous)
-                    .strokeBorder(accent.opacity(0.24), lineWidth: scale.strokeWidth)
-            )
-    }
+// MARK: - Favicon (URL-backed rows carry their site's own mark)
 
-    @ViewBuilder
-    private var visualMotif: some View {
-        switch identity.style {
-        case .browser:
-            browserMotif
-        case .swipeFile:
-            CommandKSwipeReelMotif(accent: accent, scale: scale)
-        case .swipeShelf:
-            CommandKSwipeShelfMotif(accent: accent, scale: scale)
-        case .swipeGalleryPage:
-            CommandKSwipeGalleryPageMotif(accent: accent, scale: scale)
-        case .cosmo:
-            cosmoMotif
-        default:
-            defaultMotif
-        }
-    }
+/// Raycast's trick: a URL-backed row shows the site's favicon, not a type
+/// glyph. DuckDuckGo's icon service over Google s2 (less tracking surface);
+/// any failure falls back to the caller-provided identity mark.
+struct CommandKFavicon<Fallback: View>: View {
+    let host: String
+    var size: CGFloat = 26
+    @ViewBuilder var fallback: () -> Fallback
 
-    private var browserMotif: some View {
-        VStack(spacing: scale == .rail ? 3 : DS.space12) {
-            RoundedRectangle(cornerRadius: scale == .rail ? 2 : 5, style: .continuous)
-                .fill(accent.opacity(0.18))
-                .frame(height: scale == .rail ? 5 : 16)
-                .overlay(alignment: .leading) {
-                    Circle()
-                        .fill(accent.opacity(0.38))
-                        .frame(width: scale == .rail ? 2 : 5, height: scale == .rail ? 2 : 5)
-                        .padding(.leading, scale == .rail ? 4 : 10)
-                }
-
-            Image(systemName: identity.symbolName)
-                .font(.system(size: scale.iconSize, weight: .semibold))
-                .foregroundStyle(accent)
-
-            if scale == .detail {
-                Text(identity.badge)
-                    .font(DS.smallCaps)
-                    .foregroundStyle(accent.opacity(0.78))
+    var body: some View {
+        CachedAsyncImage(
+            url: URL(string: "https://icons.duckduckgo.com/ip3/\(host).ico"),
+            stableKey: "favicon-\(host)"
+        ) { phase in
+            switch phase {
+            case .success(let image):
+                image
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: size, height: size)
+                    .clipShape(RoundedRectangle(cornerRadius: size * 0.24, style: .continuous))
+            case .empty, .failure:
+                fallback()
             }
         }
-        .padding(scale == .rail ? 5 : DS.space20)
-    }
-
-    private var cosmoMotif: some View {
-        ZStack {
-            Circle()
-                .stroke(accent.opacity(0.22), lineWidth: scale == .rail ? 1 : 2)
-                .frame(width: scale == .rail ? 28 : 116, height: scale == .rail ? 28 : 116)
-
-            Circle()
-                .fill(accent.opacity(0.10))
-                .frame(width: scale == .rail ? 22 : 88, height: scale == .rail ? 22 : 88)
-
-            Image(systemName: identity.symbolName)
-                .font(.system(size: scale.iconSize, weight: .semibold))
-                .foregroundStyle(accent)
-
-            if scale == .detail {
-                Image(systemName: "rectangle.split.2x1")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(accent.opacity(0.72))
-                    .offset(x: 50, y: 42)
-            }
-        }
-        .padding(scale == .rail ? 4 : DS.space20)
-    }
-
-    private var defaultMotif: some View {
-        VStack(spacing: scale == .rail ? 0 : DS.space10) {
-            Image(systemName: identity.symbolName)
-                .font(.system(size: scale.iconSize, weight: .semibold))
-                .foregroundStyle(accent)
-
-            if scale == .detail {
-                Text(identity.badge)
-                    .font(DS.smallCaps)
-                    .foregroundStyle(accent.opacity(0.78))
-            }
-        }
-        .padding(scale == .rail ? 4 : DS.space20)
     }
 }
 
@@ -365,8 +333,6 @@ struct CommandKActionVisualPreview: View {
 
     var body: some View {
         ZStack {
-            DS.vellum
-
             VStack(spacing: DS.space16) {
                 CommandKIconVisualTile(identity: identity, accent: accent, scale: .detail)
                     .frame(width: 188, height: 148)
@@ -422,7 +388,7 @@ struct CommandKActionVisualPreview: View {
             return DS.entityImage
         case .readwise:
             return DS.entityReadwise
-        case .document, .commandCenter, .domain, .app, .search:
+        case .document, .commandCenter, .domain, .app, .search, .calculator:
             return DS.accent
         }
     }
@@ -451,18 +417,29 @@ private struct CommandKToolbarChipModifier: ViewModifier {
 
 struct CommandKSectionLabel: View {
     let label: String
+    /// Live count — every section header carries one (the surfaces law);
+    /// ticks with `.numericText()` as results settle.
+    var count: Int? = nil
 
     var body: some View {
-        HStack(spacing: DS.space12) {
+        HStack(spacing: DS.space8) {
             Text(label)
                 .font(DS.smallCaps)
                 .tracking(1.6)
                 .foregroundStyle(DS.commandCenterOrnamentText)
                 .fixedSize()
+            if let count {
+                Text("\(count)")
+                    .font(DS.caption2.weight(.medium))
+                    .monospacedDigit()
+                    .foregroundStyle(DS.textMuted)
+                    .contentTransition(.numericText())
+            }
             Rectangle()
                 .fill(DS.commandChromeSeparatorStrong)
                 .frame(height: 0.5)
                 .frame(maxWidth: .infinity)
+                .padding(.leading, DS.space4)
         }
     }
 }
@@ -647,10 +624,12 @@ extension View {
 
                 Divider()
 
+                // Soft delete (atoms land in Recently Deleted) — the label
+                // says so, Finder-style, instead of a bare "Delete".
                 Button(role: .destructive) {
                     Task { try? await AtomRepository.shared.delete(uuid: uuid) }
                 } label: {
-                    Label("Delete", systemImage: "trash")
+                    Label("Move to Recently Deleted", systemImage: "trash")
                 }
             }
         }
@@ -737,7 +716,7 @@ extension View {
             if let onDelete {
                 Divider()
                 Button(role: .destructive, action: onDelete) {
-                    Label("Delete", systemImage: "trash")
+                    Label("Move to Recently Deleted", systemImage: "trash")
                 }
             }
         }

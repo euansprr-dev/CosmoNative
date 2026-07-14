@@ -27,4 +27,11 @@ enum AppPerformanceInstrumentation {
     static func event(_ name: StaticString) {
         signposter.emitEvent(name)
     }
+
+    /// Temporary timing trace readable via `log stream` (subsystem
+    /// com.cosmo.os, category AppPerformance) — for live debugging without a
+    /// terminal-attached launch.
+    static func trace(_ message: String) {
+        logger.warning("⏱ \(message, privacy: .public)")
+    }
 }

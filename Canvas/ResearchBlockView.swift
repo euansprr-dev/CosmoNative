@@ -339,7 +339,7 @@ struct ResearchBlockView: View {
                         HStack(spacing: 3) {
                             ProgressView()
                                 .controlSize(.mini)
-                            Text("Processing...")
+                            Text("Processing…")
                                 .font(.system(size: 9))
                                 .foregroundStyle(DS.textMuted)
                         }
@@ -359,7 +359,7 @@ struct ResearchBlockView: View {
                         HStack(spacing: 4) {
                             ProgressView()
                                 .controlSize(.mini)
-                            Text("AI is processing...")
+                            Text("AI is processing…")
                                 .font(.system(size: 9))
                                 .foregroundStyle(DS.textMuted)
                         }

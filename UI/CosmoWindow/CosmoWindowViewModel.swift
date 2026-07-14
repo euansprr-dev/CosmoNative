@@ -747,7 +747,7 @@ final class CosmoWindowViewModel: ObservableObject {
             .replacingOccurrences(of: "\n", with: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard collapsed.count > 180 else { return collapsed }
-        return "\(collapsed.prefix(180))..."
+        return "\(collapsed.prefix(180))…"
     }
 
     func revisePendingCanvasPlan() {

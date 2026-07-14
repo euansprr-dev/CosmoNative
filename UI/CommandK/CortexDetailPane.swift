@@ -246,16 +246,18 @@ struct CortexDetailPane: View {
                         viewModel.askCortexFollowUp(text)
                     }
                 )
+                .padding(DS.space24)
             } else if let composer = composerContext {
                 CommandKComposerPane(viewModel: composer.viewModel, action: composer.action)
+                    .padding(DS.space24)
             } else if case .empty = subject {
                 emptyState
+                    .padding(DS.space24)
             } else {
                 loaded
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .padding(DS.space24)
         .task(id: subject.atomUUID) { await loadAtom() }
     }
 
@@ -288,28 +290,34 @@ struct CortexDetailPane: View {
 
     private var loaded: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: DS.space16) {
+            VStack(alignment: .leading, spacing: 0) {
+                // The hero: the object's content, edge to edge on the one
+                // body surface — no inner card, no inner border; a single
+                // hairline closes the region (the Raycast anatomy).
                 CortexPreviewBlock(subject: subject, atom: atom)
                     .frame(maxWidth: .infinity)
                     .frame(height: previewHeight)
-                    .clipShape(.rect(cornerRadius: DS.radiusMedium))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
-                            .strokeBorder(DS.sepiaSubtle, lineWidth: 0.5)
+                    .clipped()
+
+                Rectangle()
+                    .fill(DS.borderSubtle)
+                    .frame(height: 0.5)
+
+                VStack(alignment: .leading, spacing: DS.space16) {
+                    Text(subject.title)
+                        .font(DS.spaceTitleSerif)
+                        .foregroundStyle(DS.text)
+                        .lineLimit(3)
+
+                    CortexInformationTable(
+                        typeLabel: subject.typeLabel,
+                        created: subject.createdText ?? cortexFormatISO(atom?.createdAt),
+                        updated: subject.updatedText ?? cortexFormatISO(atom?.updatedAt),
+                        links: subject.linksCount ?? atom?.linksList.count,
+                        fallbackMeta: subject.metaLine
                     )
-
-                Text(subject.title)
-                    .font(DS.spaceTitleSerif)
-                    .foregroundStyle(DS.text)
-                    .lineLimit(3)
-
-                CortexInformationTable(
-                    typeLabel: subject.typeLabel,
-                    created: subject.createdText ?? cortexFormatISO(atom?.createdAt),
-                    updated: subject.updatedText ?? cortexFormatISO(atom?.updatedAt),
-                    links: subject.linksCount ?? atom?.linksList.count,
-                    fallbackMeta: subject.metaLine
-                )
+                }
+                .padding(DS.space24)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(CortexScrollViewIntrospector { metrics in
@@ -335,11 +343,14 @@ private struct CortexPreviewBlock: View {
     var body: some View {
         if let item = atom?.toSwipeGalleryItem() {
             CortexSwipeDomainPreview(item: item, atom: atom)
+        } else if let atom, atom.type == .task {
+            // A task is an honest object too — due date, notes, checklist on
+            // paper, never a blank page.
+            CortexTaskDomainPreview(atom: atom)
         } else {
             switch subject {
             case .library(let item):
-                CommandKLibraryThumbnail(item: item, cornerRadius: DS.radiusMedium)
-                    .background(CommandKPreviewPaper.fill)
+                CommandKLibraryThumbnail(item: item, cornerRadius: 0)
             case .swipe(let item):
                 CortexSwipeDomainPreview(item: item, atom: atom)
             case .idea(let item):
@@ -347,7 +358,12 @@ private struct CortexPreviewBlock: View {
             case .readwise(let book):
                 CortexReadwiseDomainPreview(book: book)
             case .action(let action):
-                if action.scopedIdeaClientName != nil {
+                if action.kind == .calculator {
+                    CommandKCalculatorPreview(
+                        expression: action.payload.expressionText ?? "",
+                        result: action.payload.resultText ?? ""
+                    )
+                } else if action.scopedIdeaClientName != nil {
                     genericPreview
                 } else {
                     CommandKActionVisualPreview(
@@ -393,17 +409,108 @@ private struct CortexPreviewBlock: View {
         return CommandKPreviewExcerpt.clamp(t, limit: CommandKPreviewExcerpt.readingLimit)
     }
 
+    /// Reading excerpt typeset directly on the body surface — no inner white
+    /// card, no inner scroll chrome (the hero frame clips the tail).
     private func readingCard(_ text: String) -> some View {
-        ScrollView {
-            Text(text)
-                .font(DS.dateSerif)
-                .foregroundStyle(CommandKPreviewPaper.text)
-                .lineSpacing(5)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(DS.space16)
+        Text(text)
+            .font(DS.dateSerif)
+            .foregroundStyle(CommandKPreviewPaper.text)
+            .lineSpacing(5)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .padding(.horizontal, DS.space24)
+            .padding(.vertical, DS.space20)
+    }
+}
+
+/// The task as a page: checkbox + title, due line, notes excerpt, checklist —
+/// the object's real contents at a glance (a faux blank page taught nothing).
+private struct CortexTaskDomainPreview: View {
+    let atom: Atom
+
+    private var meta: TaskMetadata? { atom.taskMetadata }
+    private var isCompleted: Bool { meta?.isCompleted ?? false }
+
+    private var checklist: [ChecklistItem] {
+        guard let json = meta?.checklist, let data = json.data(using: .utf8) else { return [] }
+        return (try? JSONDecoder().decode([ChecklistItem].self, from: data)) ?? []
+    }
+
+    private var dueText: String? {
+        guard let raw = meta?.dueDate, let date = ISO8601.date(from: raw) else { return nil }
+        return cortexFormatDate(date)
+    }
+
+    private var notesExcerpt: String? {
+        let notes = meta?.description ?? atom.body
+        guard let notes, !notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return CommandKPreviewExcerpt.clamp(notes, limit: CommandKPreviewExcerpt.thumbnailLimit)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.space10) {
+            HStack(alignment: .firstTextBaseline, spacing: DS.space8) {
+                Image(systemName: isCompleted ? "checkmark.circle.fill" : "circle")
+                    .font(DS.callout)
+                    .foregroundStyle(isCompleted ? DS.green : CommandKPreviewPaper.textMuted)
+                    .accessibilityHidden(true)
+                Text(atom.title ?? "Untitled task")
+                    .font(DS.headline)
+                    .foregroundStyle(CommandKPreviewPaper.text)
+                    .strikethrough(isCompleted, color: CommandKPreviewPaper.textMuted)
+                    .lineLimit(2)
+            }
+
+            if let dueText {
+                Label(dueText, systemImage: "calendar")
+                    .font(DS.caption)
+                    .foregroundStyle(CommandKPreviewPaper.textSecondary)
+            }
+
+            if let notesExcerpt {
+                Text(notesExcerpt)
+                    .font(DS.caption)
+                    .foregroundStyle(CommandKPreviewPaper.textSecondary)
+                    .lineSpacing(3)
+                    .lineLimit(4)
+            }
+
+            if !checklist.isEmpty {
+                VStack(alignment: .leading, spacing: DS.space6) {
+                    ForEach(checklist.prefix(4)) { item in
+                        HStack(spacing: DS.space6) {
+                            Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
+                                .font(DS.caption2)
+                                .foregroundStyle(item.isCompleted ? DS.green : CommandKPreviewPaper.textMuted)
+                                .accessibilityHidden(true)
+                            Text(item.title)
+                                .font(DS.caption)
+                                .foregroundStyle(CommandKPreviewPaper.textSecondary)
+                                .strikethrough(item.isCompleted, color: CommandKPreviewPaper.textMuted)
+                                .lineLimit(1)
+                        }
+                    }
+                    if checklist.count > 4 {
+                        Text("+\(checklist.count - 4) more")
+                            .font(DS.caption2)
+                            .foregroundStyle(CommandKPreviewPaper.textMuted)
+                            .monospacedDigit()
+                    }
+                }
+                .padding(.top, DS.space2)
+            }
+
+            if dueText == nil && notesExcerpt == nil && checklist.isEmpty {
+                Text("No notes or checklist yet — press ⏎ to open it in the Command Center.")
+                    .font(DS.dateSerif)
+                    .italic()
+                    .foregroundStyle(CommandKPreviewPaper.textMuted)
+            }
+
+            Spacer(minLength: 0)
         }
-        .scrollIndicators(.hidden)
-        .background(CommandKPreviewPaper.fill)
+        .padding(.horizontal, DS.space24)
+        .padding(.vertical, DS.space20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
 
@@ -429,7 +536,7 @@ private struct CortexSwipeDomainPreview: View {
         }
         .padding(DS.space12)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(DS.vellum)
+        .background(CommandKPreviewPaper.panelFill)
         .onChange(of: item.id) { _, _ in selectedMediaIndex = 0 }
     }
 
@@ -460,7 +567,7 @@ private struct CortexSwipeDomainPreview: View {
     private var mediaStage: some View {
         ZStack {
             RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
-                .fill(DS.vellumDeep)
+                .fill(CommandKPreviewPaper.stageFill)
 
             CortexSwipeMediaSurface(media: selectedMedia, fallbackIcon: item.platformIcon)
                 .aspectRatio(selectedMedia.style.aspectRatio, contentMode: .fit)
@@ -471,7 +578,7 @@ private struct CortexSwipeDomainPreview: View {
         .clipShape(.rect(cornerRadius: DS.radiusMedium))
         .overlay(
             RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
-                .strokeBorder(DS.sepiaSubtle, lineWidth: 0.5)
+                .strokeBorder(CommandKPreviewPaper.hairline, lineWidth: 0.5)
         )
     }
 
@@ -490,7 +597,7 @@ private struct CortexSwipeDomainPreview: View {
                             selectedMediaIndex = index
                         } label: {
                             Circle()
-                                .fill(index == selectedMediaIndex ? DS.gilt : DS.sepiaSubtle)
+                                .fill(index == selectedMediaIndex ? DS.gilt : CommandKPreviewPaper.hairline)
                                 .frame(width: 6, height: 6)
                         }
                         .buttonStyle(.plain)
@@ -525,8 +632,8 @@ private struct CortexSwipeDomainPreview: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(DS.textSecondary)
-        .background(DS.vellumDeep.opacity(0.72), in: Capsule())
-        .overlay(Capsule().strokeBorder(DS.sepiaSubtle, lineWidth: 0.5))
+        .background(DS.commandChromeControlFill, in: Capsule())
+        .overlay(Capsule().strokeBorder(DS.commandChromeControlBorder, lineWidth: 0.5))
         .accessibilityLabel(label)
         .help(label)
     }
@@ -880,14 +987,14 @@ private struct CortexIdeaDomainPreview: View {
                     Text(CommandKPreviewExcerpt.clampOptional(item.body, limit: CommandKPreviewExcerpt.readingLimit) ?? "No idea context captured yet.")
                         .font(DS.dateSerif)
                         .italic()
-                        .foregroundStyle(DS.inkFaded)
+                        .foregroundStyle(CommandKPreviewPaper.textMuted)
                 }
             }
-            .padding(DS.space16)
+            .padding(.horizontal, DS.space24)
+            .padding(.vertical, DS.space20)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .scrollIndicators(.hidden)
-        .background(CommandKPreviewPaper.fill)
     }
 
     private var contextText: String? {
@@ -957,14 +1064,14 @@ private struct CortexReadwiseDomainPreview: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(DS.space18)
-        .background(CommandKPreviewPaper.fill)
+        .padding(.horizontal, DS.space24)
+        .padding(.vertical, DS.space20)
     }
 
     private var cover: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(DS.vellumDeep)
+                .fill(CommandKPreviewPaper.stageFill)
             if let coverURL = book.coverImageUrl, let url = URL(string: coverURL) {
                 CachedAsyncImage(url: url, stableKey: "\(book.id)") { phase in
                     switch phase {
@@ -983,7 +1090,7 @@ private struct CortexReadwiseDomainPreview: View {
         .clipShape(.rect(cornerRadius: 6))
         .overlay(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .strokeBorder(DS.sepiaBorder, lineWidth: 0.5)
+                .strokeBorder(CommandKPreviewPaper.hairline, lineWidth: 0.5)
         )
     }
 

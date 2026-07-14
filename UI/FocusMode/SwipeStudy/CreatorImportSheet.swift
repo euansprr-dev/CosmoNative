@@ -507,15 +507,15 @@ struct CreatorImportSheet: View {
     private var progressSection: some View {
         switch engine.importState {
         case .fetchingProfile:
-            progressRow(label: "Fetching profile...", progress: nil, fraction: nil)
+            progressRow(label: "Fetching profile…", progress: nil, fraction: nil)
         case .fetchingPosts(let fetched, let total):
             if fetched > 0 {
-                progressRow(label: "Fetching posts...", progress: Double(fetched) / max(Double(total), 1), fraction: "\(fetched) / \(total) posts")
+                progressRow(label: "Fetching posts…", progress: Double(fetched) / max(Double(total), 1), fraction: "\(fetched) / \(total) posts")
             } else {
-                progressRow(label: "Scraping posts — this may take a few minutes for large accounts...", progress: nil, fraction: nil)
+                progressRow(label: "Scraping posts — this may take a few minutes for large accounts…", progress: nil, fraction: nil)
             }
         case .saving(let saved, let total):
-            progressRow(label: "Saving...", progress: Double(saved) / max(Double(total), 1), fraction: "\(saved) / \(total) posts")
+            progressRow(label: "Saving…", progress: Double(saved) / max(Double(total), 1), fraction: "\(saved) / \(total) posts")
         case .error(let message):
             errorRow(message)
         default:

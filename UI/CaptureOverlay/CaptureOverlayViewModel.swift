@@ -22,6 +22,10 @@ final class CaptureOverlayViewModel {
     /// Bumped by the controller when the panel becomes key — focuses the field.
     var captureFieldFocusTick = 0
 
+    /// Live lane matching for the capture field — the `Groceries:` highlight
+    /// and the ghost-text autocomplete (iPhone capture-field parity).
+    let laneAssist = LaneCaptureAssist()
+
     /// Everything captured (or attempted) this session, newest last.
     var sessionEntries: [SessionEntry] = []
 
@@ -36,6 +40,9 @@ final class CaptureOverlayViewModel {
         var state: State
         /// path|size fingerprint for same-session duplicate coalescing.
         var fingerprint: String?
+        /// Where a lane-routed capture landed ("→ Groceries") — shown in
+        /// place of the default "→ Inbox" trailing label.
+        var destinationLabel: String? = nil
 
         enum State {
             /// A file promise is still streaming in.
@@ -91,15 +98,57 @@ final class CaptureOverlayViewModel {
         dragPreview = nil
         receivingCount = 0
         accessibilityHintNeeded = !HotkeyManager.shared.isRegistered
+        laneAssist.reset()
+        Task { await laneAssist.loadLanes() }
     }
 
     // MARK: - Text capture
+
+    /// Every keystroke runs through the lane assist — it returns the full
+    /// replacement text when a trailing space accepts the live suggestion.
+    func captureTextChanged() {
+        if let completed = laneAssist.textChanged(captureText) {
+            captureText = completed
+        }
+    }
 
     func submitText() async {
         let text = captureText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         captureText = ""
+        laneAssist.reset()
+
+        // A resolved `alias:` prefix routes straight into that lane — the
+        // same choke point as ⌘K and Telegram, never the triage queue.
+        if let match = await LaneCaptureAssist.resolvedMatch(for: text), !match.remainder.isEmpty {
+            await routeToLane(text: text, match: match)
+            return
+        }
         await ingest([.text(text)])
+    }
+
+    private func routeToLane(text: String, match: LaneCaptureAssist.LaneMatch) async {
+        let outcome = await TelegramCaptureRouter.shared.routeTelegramCapture(
+            text: text,
+            chatId: "capture-overlay",
+            messageId: nil,
+            sender: "Capture Anywhere"
+        )
+        switch outcome {
+        case .handled:
+            let body = match.remainder
+            let display = body.count > 40 ? "\u{201C}\(body.prefix(40))…\u{201D}" : "\u{201C}\(body)\u{201D}"
+            sessionEntries.append(SessionEntry(
+                displayName: display,
+                kind: nil,
+                state: .captured(itemUUID: nil),
+                fingerprint: nil,
+                destinationLabel: "→ \(match.lane.name)"
+            ))
+        case .notCaptureCommand:
+            // The router's grammar declined the prefix — never drop the words.
+            await ingest([.text(text)])
+        }
     }
 
     // MARK: - Drop / paste / picker intake

@@ -10,11 +10,16 @@ struct ConnectionSectionCardView: View {
     let section: ConnectionSection
     var isSelected: Bool = false
     var highlightQuery: String = ""
+    /// Staged concept-collaborator inserts for this section, rendered as ghost
+    /// rows with inline ✓/✗ below the real items.
+    var pendingInserts: [ConnectionPendingInsert] = []
 
     var onOpen: () -> Void = {}
     var onSelect: () -> Void = {}
     var onAddItem: (RichDocument, String) -> Void = { _, _ in }
     var onSourceTap: (String) -> Void = { _ in }
+    var onAcceptInsert: (ConnectionPendingInsert) -> Void = { _ in }
+    var onRejectInsert: (ConnectionPendingInsert) -> Void = { _ in }
 
     @State private var isHovered = false
 
@@ -24,10 +29,13 @@ struct ConnectionSectionCardView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space10) {
             header
-            if section.items.isEmpty {
+            if section.items.isEmpty && pendingInserts.isEmpty {
                 emptyPrompt
-            } else {
+            } else if !section.items.isEmpty {
                 previewList
+            }
+            if !pendingInserts.isEmpty {
+                pendingList
             }
             ConnectionQuickAddField(accent: accent, sectionName: section.type.displayName, onSubmit: onAddItem)
         }
@@ -129,6 +137,87 @@ struct ConnectionSectionCardView: View {
                 .padding(.leading, 13)
             }
         }
+    }
+
+    // MARK: - Staged inserts
+
+    private var pendingList: some View {
+        VStack(alignment: .leading, spacing: DS.space6) {
+            ForEach(pendingInserts) { insert in
+                ConnectionPendingInsertRow(
+                    insert: insert,
+                    accent: accent,
+                    onAccept: onAcceptInsert,
+                    onReject: onRejectInsert
+                )
+            }
+        }
+        .transition(.opacity)
+    }
+}
+
+// MARK: - Staged insert row (ghost)
+
+/// A not-yet-accepted concept-collaborator insert shown in place — dashed,
+/// accent-tinted, with the proposed bullet(s) and a ✓/✗ pair. Accepting routes
+/// through the same per-operation apply path as the old full-screen diff.
+struct ConnectionPendingInsertRow: View {
+    let insert: ConnectionPendingInsert
+    let accent: Color
+    var onAccept: (ConnectionPendingInsert) -> Void = { _ in }
+    var onReject: (ConnectionPendingInsert) -> Void = { _ in }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: DS.space8) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(accent)
+                .padding(.top, 3)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: DS.space4) {
+                ForEach(Array(insert.bullets.enumerated()), id: \.offset) { _, bullet in
+                    Text(bullet)
+                        .font(DS.callout)
+                        .foregroundStyle(DS.text)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+
+            HStack(spacing: DS.space4) {
+                decisionButton(system: "checkmark", tint: accent, label: "Accept") { onAccept(insert) }
+                decisionButton(system: "xmark", tint: DS.textMuted, label: "Dismiss") { onReject(insert) }
+            }
+        }
+        .padding(.horizontal, DS.space8)
+        .padding(.vertical, DS.space6)
+        .background(accent.opacity(0.08), in: .rect(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(accent.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Suggested for this section: \(insert.bullets.joined(separator: ", "))")
+    }
+
+    private func decisionButton(
+        system: String,
+        tint: Color,
+        label: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: system)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(tint)
+                .frame(width: 26, height: 26)
+                .background(tint.opacity(0.12), in: Circle())
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help(label)
+        .accessibilityLabel(label)
     }
 }
 

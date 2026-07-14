@@ -555,7 +555,14 @@ private struct CosmoInlineAssistantPaneMessages: View {
     private func messageRow(_ message: CosmoInlineAssistantPaneMessage) -> some View {
         if let proposalID = message.proposalID,
            let proposal = store.proposal(id: proposalID) {
-            CosmoInlineAssistantPaneProposalCard(store: store, proposal: proposal)
+            if proposal.skillID == CosmoInlineAssistantSkillID.concept.rawValue {
+                // The concept collaborator reviews in the board/outline itself,
+                // so the pane shows only a slim receipt instead of the full
+                // note-style diff card.
+                CosmoInlineAssistantPaneConceptReceiptCard(store: store, proposal: proposal)
+            } else {
+                CosmoInlineAssistantPaneProposalCard(store: store, proposal: proposal)
+            }
         } else if let inquiryProposalID = message.inquiryProposalID,
                   let inquiryProposal = store.inquiryProposal(id: inquiryProposalID) {
             CosmoInlineAssistantPaneInquiryCard(store: store, proposal: inquiryProposal)
@@ -1184,6 +1191,81 @@ enum CosmoInlineAssistantSurfaceTint {
         default: return DS.accent
         }
         return CosmoMentionColors.color(for: entity)
+    }
+}
+
+/// Slim pane receipt for concept-collaborator proposals. The real review
+/// happens as ghost rows inside the board/outline sections, so the pane keeps
+/// only a one-line pointer plus a whole-batch shortcut — not the full diff card.
+private struct CosmoInlineAssistantPaneConceptReceiptCard: View {
+    @ObservedObject var store: CosmoInlineAssistantStore
+    let proposal: CosmoAssistantProposal
+
+    private var surfaceTint: Color {
+        CosmoInlineAssistantSurfaceTint.color(forSurfaceID: proposal.surfaceID)
+    }
+
+    private var pendingCount: Int {
+        proposal.operations.filter { $0.status == .pending || $0.status == .conflicted }.count
+    }
+
+    private var resolvedCount: Int {
+        proposal.operations.filter { $0.status == .applied || $0.status == .accepted }.count
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: DS.space10) {
+            Image(systemName: pendingCount > 0 ? "sparkles" : "checkmark.circle.fill")
+                .font(DS.callout.weight(.semibold))
+                .foregroundStyle(surfaceTint)
+                .frame(width: 28, height: 28)
+                .background(surfaceTint.opacity(0.12), in: .rect(cornerRadius: 8))
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(headline)
+                    .font(DS.callout.weight(.medium))
+                    .foregroundStyle(DS.text)
+                    .lineLimit(1)
+                if pendingCount > 0 {
+                    Text("Review each in its section, then ✓ or ✗ there.")
+                        .font(DS.caption)
+                        .foregroundStyle(DS.textMuted)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: DS.space8)
+
+            if pendingCount > 0 {
+                CosmoPanePillButton(label: "Dismiss all", icon: nil, help: "Dismiss every pending capture") {
+                    Task { await store.rejectAll(proposalID: proposal.id) }
+                }
+                CosmoPanePillButton(
+                    label: "Accept all",
+                    icon: "checkmark",
+                    help: "Add every pending capture to the board",
+                    isProminent: true
+                ) {
+                    Task { await store.acceptAll(proposalID: proposal.id) }
+                }
+            }
+        }
+        .padding(DS.space10)
+        .background(DS.surfaceCard, in: .rect(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(DS.borderSubtle, lineWidth: 1)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(headline)
+    }
+
+    private var headline: String {
+        if pendingCount > 0 {
+            return pendingCount == 1 ? "1 capture waiting in your board" : "\(pendingCount) captures waiting in your board"
+        }
+        return resolvedCount > 0 ? "Added to your board" : "Nothing captured"
     }
 }
 

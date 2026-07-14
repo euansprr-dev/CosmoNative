@@ -33,6 +33,9 @@ struct SwipeCardModel: Identifiable, Equatable {
     let hookText: String
     let creatorLine: String?
     let platformGlyph: String?
+    /// Raw platform key ("instagram_reel", "youtube", …) — drives the honest
+    /// vector mark (SwipePlatformGlyph); platformGlyph stays the SF fallback.
+    var platformKey: String? = nil
     let platformColor: Color?
     let outlierLabel: String?
     let durationLabel: String?
@@ -122,6 +125,7 @@ extension SwipeCardModel {
             hookText: hook,
             creatorLine: item.creatorName ?? item.author,
             platformGlyph: platform?.iconName,
+            platformKey: item.platform,
             platformColor: platform?.swipeBrandColor,
             outlierLabel: nil,
             durationLabel: item.duration.map(SwipeFormatting.duration(seconds:)),
@@ -174,6 +178,7 @@ extension SwipeCardModel {
             hookText: text,
             creatorLine: post.author.displayName,
             platformGlyph: post.platform.iconName,
+            platformKey: post.platform.rawValue,
             platformColor: post.platform.swipeBrandColor,
             outlierLabel: multiplier.flatMap { $0 >= 2 ? "\(Int($0.rounded()))×" : nil },
             durationLabel: thumbnail?.duration.map { SwipeFormatting.duration(seconds: Int($0)) },

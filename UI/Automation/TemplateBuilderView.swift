@@ -209,7 +209,7 @@ struct TemplateBuilderView: View {
 
             // Placeholder
             configRow(label: "Placeholder") {
-                TextField("Enter placeholder text...", text: placeholderBinding(index))
+                TextField("Enter placeholder text…", text: placeholderBinding(index))
                     .textFieldStyle(.plain)
                     .font(.system(size: 11))
             }
@@ -270,7 +270,7 @@ struct TemplateBuilderView: View {
 
             // Add new option
             HStack(spacing: 6) {
-                TextField("New option...", text: $newOptionText)
+                TextField("New option…", text: $newOptionText)
                     .textFieldStyle(.plain)
                     .font(.system(size: 11))
                     .padding(.horizontal, 8)

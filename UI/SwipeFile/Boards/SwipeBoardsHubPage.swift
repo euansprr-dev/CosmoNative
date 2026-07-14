@@ -119,12 +119,21 @@ private struct SwipeBoardCard: View {
                     if !focused { commitRename() }
                 }
         } else {
+            // Board identity, the App Store register: a typed emoji wins and
+            // cleans the label; then the curated keyword pass; SF glyph last.
+            let identity = CollectionEmoji.resolve(name: board.name)
             HStack(spacing: 6) {
-                Image(systemName: board.icon)
-                    .font(DS.caption.weight(.semibold))
-                    .foregroundStyle(DS.textMuted)
-                    .accessibilityHidden(true)
-                Text(board.name)
+                if let emoji = identity.emoji {
+                    Text(emoji)
+                        .font(DS.caption)
+                        .accessibilityHidden(true)
+                } else {
+                    Image(systemName: board.icon)
+                        .font(DS.caption.weight(.semibold))
+                        .foregroundStyle(DS.textMuted)
+                        .accessibilityHidden(true)
+                }
+                Text(identity.label)
                     .font(DS.headline)
                     .foregroundStyle(DS.text)
                     .lineLimit(1)

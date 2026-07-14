@@ -4,17 +4,34 @@ enum BlockOperations {
     static func transformBlock(
         in document: RichDocument,
         at path: BlockPath,
-        to kind: RichBlockKind
+        to kind: RichBlockKind,
+        headingCollapsible: Bool? = nil
     ) throws -> BlockOperationResult {
         var document = document
         var block = try block(in: document, at: path)
         let previousKind = block.kind
         block.kind = kind
         block.checked = kind == .checklist ? (block.checked ?? false) : nil
-        if kind.headingLevelInt != nil, block.heading == nil {
-            block.heading = RichHeadingMetadata()
+        // Blocks a heading transform would strand — a folded section losing
+        // its disclosure (or the heading kind itself) must surface its hidden
+        // blocks as siblings, never silently drop them.
+        var restoredHeadingBlocks: [RichBlock] = []
+        if kind.headingLevelInt != nil {
+            var metadata = block.heading ?? RichHeadingMetadata()
+            if let headingCollapsible {
+                if !headingCollapsible, metadata.isCollapsed {
+                    restoredHeadingBlocks = metadata.collapsedBlocks
+                    metadata.isCollapsed = false
+                    metadata.collapsedBlocks = []
+                }
+                metadata.isCollapsible = headingCollapsible
+            }
+            block.heading = metadata
         }
         if kind.headingLevelInt == nil {
+            if block.heading?.isCollapsed == true {
+                restoredHeadingBlocks = block.heading?.collapsedBlocks ?? []
+            }
             block.heading = nil
         }
         block.callout = kind == .callout ? (block.callout ?? .default) : nil
@@ -30,9 +47,10 @@ enum BlockOperations {
             hoistedChildren = []
         }
         try replaceBlock(block, in: &document, at: path)
-        if !hoistedChildren.isEmpty {
+        let surfacedBlocks = restoredHeadingBlocks + hoistedChildren
+        if !surfacedBlocks.isEmpty {
             try mutateChildren(in: &document.blocks, indices: path.indices) { siblings, index in
-                siblings.insert(contentsOf: hoistedChildren, at: min(index + 1, siblings.count))
+                siblings.insert(contentsOf: surfacedBlocks, at: min(index + 1, siblings.count))
             }
         }
         return BlockOperationResult(document: document, focusPath: path)
@@ -575,6 +593,15 @@ enum BlockOperations {
                 livePlainText: livePlainText,
                 triggerAlreadyRemoved: triggerAlreadyRemoved
             )
+        case .transformHeading(let kind, let collapsible):
+            return try applyTransform(
+                kind,
+                in: document,
+                at: path,
+                livePlainText: livePlainText,
+                triggerAlreadyRemoved: triggerAlreadyRemoved,
+                headingCollapsible: collapsible
+            )
         case .replaceOrInsert(let kind):
             return try applyReplaceOrInsert(
                 kind,
@@ -603,7 +630,8 @@ enum BlockOperations {
         in document: RichDocument,
         at path: BlockPath,
         livePlainText: String,
-        triggerAlreadyRemoved: Bool = false
+        triggerAlreadyRemoved: Bool = false,
+        headingCollapsible: Bool? = nil
     ) throws -> BlockOperationResult {
         var block = try block(in: document, at: path)
         guard kind.isTextEditableBlock else {
@@ -614,7 +642,7 @@ enum BlockOperations {
             : cleanedSlashCommandInlines(from: livePlainText, fallback: block.inlines)
         var updated = document
         try replaceBlock(block, in: &updated, at: path)
-        return try transformBlock(in: updated, at: path, to: kind)
+        return try transformBlock(in: updated, at: path, to: kind, headingCollapsible: headingCollapsible)
     }
 
     private static func applyReplaceOrInsert(
@@ -854,19 +882,33 @@ extension BlockOperations {
         guard kind.isTextEditableBlock else { return nil }
         var updated = document
         var changed = false
-        for index in updated.blocks.indices where ids.contains(updated.blocks[index].id) {
-            guard updated.blocks[index].kind.isTextEditableBlock else { continue }
-            updated.blocks[index].kind = kind
-            updated.blocks[index].checked = kind == .checklist ? (updated.blocks[index].checked ?? false) : nil
-            if kind.headingLevelInt != nil, updated.blocks[index].heading == nil {
-                updated.blocks[index].heading = RichHeadingMetadata()
+        var transformedBlocks: [RichBlock] = []
+        for block in updated.blocks {
+            guard ids.contains(block.id), block.kind.isTextEditableBlock else {
+                transformedBlocks.append(block)
+                continue
             }
+            var transformed = block
+            transformed.kind = kind
+            transformed.checked = kind == .checklist ? (transformed.checked ?? false) : nil
+            if kind.headingLevelInt != nil, transformed.heading == nil {
+                transformed.heading = RichHeadingMetadata()
+            }
+            // Losing the heading kind must surface a folded section — the
+            // hidden blocks would otherwise be stranded in dropped metadata.
+            var restoredBlocks: [RichBlock] = []
             if kind.headingLevelInt == nil {
-                updated.blocks[index].heading = nil
+                if transformed.heading?.isCollapsed == true {
+                    restoredBlocks = transformed.heading?.collapsedBlocks ?? []
+                }
+                transformed.heading = nil
             }
+            transformedBlocks.append(transformed)
+            transformedBlocks.append(contentsOf: restoredBlocks)
             changed = true
         }
         guard changed else { return nil }
+        updated.blocks = transformedBlocks
         return BlockOperationResult(document: updated)
     }
 

@@ -299,15 +299,34 @@ struct StudyReadingPanel: View {
                         Text("\(status.count)")
                             .font(DS.caption2)
                             .monospacedDigit()
+                            .contentTransition(.numericText())
                             .foregroundStyle(DS.textMuted)
                     }
                 }
+                // The warn icon must explain itself — a bare orange mark next
+                // to "Semantic Scholar" said nothing about what went wrong.
+                .help(statusHelp(status))
             }
         }
         .padding(.horizontal, DS.space16)
         .padding(.vertical, DS.space8)
         .background(DS.glassSectionFill)
         .animation(ProMotionSprings.gentle, value: viewModel.liveProviderStatuses)
+    }
+
+    private func statusHelp(_ status: InquiryProviderStatus) -> String {
+        switch status.state {
+        case .idle, .loading:
+            return "\(status.provider.displayName) — searching"
+        case .succeeded:
+            return "\(status.provider.displayName) — \(status.count) result\(status.count == 1 ? "" : "s")"
+        case .failed:
+            return "\(status.provider.displayName) didn't respond this run — its lane is skipped, everything else still ranks"
+        case .rateLimited:
+            return "\(status.provider.displayName) rate-limited this run — try Scout again in a minute"
+        case .missingKey:
+            return "\(status.provider.displayName) needs an API key in Settings"
+        }
     }
 
     @ViewBuilder
@@ -511,20 +530,29 @@ private struct StudyCandidatePanelRow: View {
                 viewModel.dismissSourceCandidate(candidate)
             }
         }
-        .help("Import into this session")
+        .help(helpLine)
         .accessibilityLabel("Import candidate: \(candidate.title)")
     }
 
+    /// The ranker's reason belongs in the tooltip: rendered on every row,
+    /// "Mentions breathing, breathwork and fills a review role." ×12 read as
+    /// an LLM wall, not a library.
+    private var helpLine: String {
+        if !candidate.reason.isEmpty && !candidate.reason.hasPrefix("Deep Scout") {
+            return "\(candidate.reason) — click to import"
+        }
+        return "Import into this session"
+    }
+
     private var metaLine: String {
+        // Honest fields only: creator/subtitle, then stats or provider.
         var parts: [String] = []
         if let creator = DeepScoutTasteStore.creatorName(for: candidate) {
             parts.append(creator)
         } else if let subtitle = candidate.subtitle, !subtitle.isEmpty {
             parts.append(subtitle)
         }
-        if !candidate.reason.isEmpty && !candidate.reason.hasPrefix("Deep Scout") {
-            parts.append(candidate.reason)
-        } else if statSignals.isEmpty {
+        if statSignals.isEmpty {
             parts.append(candidate.provider.displayName)
         } else {
             parts.append(contentsOf: statSignals)

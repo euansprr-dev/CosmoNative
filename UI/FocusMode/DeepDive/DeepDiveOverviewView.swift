@@ -70,6 +70,7 @@ struct DeepDiveOverviewView: View {
                 deepDive: atom,
                 questions: viewModel.questions,
                 draft: $rootQuestionDraft,
+                onCancel: { showingRootQuestionComposer = false },
                 onStart: { question in
                     showingRootQuestionComposer = false
                     launchInquiry(mainQuestionTitle: question)
@@ -347,7 +348,7 @@ struct DeepDiveOverviewView: View {
     private var titleBlock: some View {
         VStack(alignment: .leading, spacing: DS.space8) {
             Text(viewModel.atom.title ?? "Untitled Deep Dive")
-                .font(.system(size: 34, weight: .semibold, design: .serif))
+                .font(DS.dossierTitleSerif)
                 .foregroundStyle(CosmoColors.textPrimary)
             Text(metadataRowText)
                 .font(CosmoTypography.caption)
@@ -370,9 +371,8 @@ struct DeepDiveOverviewView: View {
         parts.append(maturity.displayName)
         if let updatedString = viewModel.atom.deepDiveMetadata?.lastInquiryAt ?? Optional(viewModel.atom.updatedAt),
            let date = ISO8601.date(from: updatedString) {
-            let formatter = RelativeDateTimeFormatter()
-            formatter.unitsStyle = .abbreviated
-            parts.append("Updated \(formatter.localizedString(for: date, relativeTo: Date()))")
+            // The one age voice — compact, never "ago".
+            parts.append("Updated \(date.cosmoCompactAge)")
         }
         return parts.joined(separator: " · ")
     }
@@ -382,10 +382,9 @@ struct DeepDiveOverviewView: View {
     private var currentUnderstandingBlock: some View {
         VStack(alignment: .leading, spacing: DS.space10) {
             HStack {
-                StudySectionHeader(
-                    label: "UNDERSTANDING",
-                    count: viewModel.understandingRevisions.count + viewModel.understanding.recentUpdates.count
-                )
+                // One thing in the trailing slot: Edit is the action, so the
+                // revision count yields ("4 Edit" read as one garbled token).
+                StudySectionHeader(label: "UNDERSTANDING")
                 Button {
                     viewModel.isEditingUnderstanding.toggle()
                 } label: {
@@ -523,6 +522,9 @@ struct DeepDiveOverviewView: View {
     private func questionRow(_ q: Atom) -> some View {
         let status = q.questionMetadata?.status ?? .open
         let counts = viewModel.questionCounts(q)
+        // One thing in the trailing slot: the note count. The leading dot
+        // already encodes status ("4 notes open" read as one garbled token);
+        // the tooltip names it for anyone who asks.
         return StudyPaneRow(
             leading: {
                 Circle()
@@ -538,14 +540,12 @@ struct DeepDiveOverviewView: View {
                         .monospacedDigit()
                         .foregroundStyle(CosmoColors.textTertiary)
                 }
-                Text(status.displayName.lowercased())
-                    .font(CosmoTypography.caption)
-                    .foregroundStyle(CosmoColors.textTertiary)
             },
             action: { launchInquiry(mainQuestionTitle: q.title, rootQuestionUUID: q.uuid) }
         )
         .contextMenu { questionContextMenu(q) }
-        .accessibilityLabel("Open inquiry for \(q.title ?? "question")")
+        .help("\(status.displayName) — click to open the inquiry")
+        .accessibilityLabel("Open inquiry for \(q.title ?? "question") — \(status.displayName)")
     }
 
     @ViewBuilder
@@ -743,12 +743,16 @@ struct DeepDiveOverviewView: View {
     private var sessionsTab: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DS.space8) {
-                HStack(spacing: DS.space8) {
-                    StudySectionHeader(label: "SESSIONS", count: visibleSessions.count)
-                    Toggle("Show archived", isOn: $showArchivedSessions)
+                // One thing in the header's trailing slot (the live count) —
+                // the archived toggle rides its own utility line beneath,
+                // and only once there is something to reveal.
+                StudySectionHeader(label: "SESSIONS", count: visibleSessions.count)
+                if archivedSessionCount > 0 || showArchivedSessions {
+                    Toggle("Show archived (\(archivedSessionCount))", isOn: $showArchivedSessions)
                         .font(CosmoTypography.caption)
                         .foregroundStyle(CosmoColors.textSecondary)
                         .toggleStyle(.checkbox)
+                        .help("Include archived sessions in the list")
                 }
                 StudyPane {
                     if visibleSessions.isEmpty {
@@ -773,8 +777,9 @@ struct DeepDiveOverviewView: View {
     private func sessionRow(_ session: Atom) -> some View {
         let meta = session.inquirySessionMetadata
         let status = meta?.status ?? .paused
+        // The one age voice — compact, never "1 month ago".
         let updated = ISO8601.date(from: meta?.lastActiveAt ?? session.updatedAt)
-            .map { RelativeDateTimeFormatter().localizedString(for: $0, relativeTo: Date()) }
+            .map { $0.cosmoCompactAge }
         return StudyPaneRow(
             leading: {
                 Circle()
@@ -894,6 +899,10 @@ struct DeepDiveOverviewView: View {
         viewModel.sessions.filter { session in
             showArchivedSessions || session.inquirySessionMetadata?.status != .archived
         }
+    }
+
+    private var archivedSessionCount: Int {
+        viewModel.sessions.filter { $0.inquirySessionMetadata?.status == .archived }.count
     }
 
     private func sectionLabel(_ text: String) -> some View {
@@ -1031,12 +1040,14 @@ struct DeepDiveOverviewView: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(CosmoColors.textSecondary)
+                .keyboardShortcut(.cancelAction)
                 Button("Save") {
                     Task { await viewModel.renameQuestion(questionUUID, title: questionRenameDraft) }
                     renamingQuestionUUID = nil
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(DS.accent)
+                .keyboardShortcut(.defaultAction)
             }
         }
         .padding(DS.space20)
@@ -1055,6 +1066,10 @@ struct DeepDiveOverviewView: View {
                 .padding(DS.space12)
                 .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
                 .overlay(RoundedRectangle(cornerRadius: DS.radiusSmall).stroke(DS.borderActive, lineWidth: 1))
+                .onSubmit {
+                    Task { await viewModel.renameSession(sessionUUID, title: sessionRenameDraft) }
+                    renamingSessionUUID = nil
+                }
             HStack {
                 Spacer()
                 Button("Cancel") {
@@ -1062,12 +1077,14 @@ struct DeepDiveOverviewView: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(CosmoColors.textSecondary)
+                .keyboardShortcut(.cancelAction)
                 Button("Save") {
                     Task { await viewModel.renameSession(sessionUUID, title: sessionRenameDraft) }
                     renamingSessionUUID = nil
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(DS.accent)
+                .keyboardShortcut(.defaultAction)
             }
         }
         .padding(DS.space20)
@@ -1080,6 +1097,7 @@ private struct RootQuestionComposerSheet: View {
     let deepDive: Atom
     let questions: [Atom]
     @Binding var draft: String
+    let onCancel: () -> Void
     let onStart: (String) -> Void
     let onStartWithoutQuestion: () -> Void
     let onContinueQuestion: (Atom) -> Void
@@ -1150,6 +1168,16 @@ private struct RootQuestionComposerSheet: View {
 
                 Spacer()
 
+                // Esc walks out — a sheet with no cancel affordance traps
+                // the keyboard.
+                Button("Cancel") {
+                    onCancel()
+                }
+                .buttonStyle(.plain)
+                .font(CosmoTypography.label)
+                .foregroundStyle(CosmoColors.textSecondary)
+                .keyboardShortcut(.cancelAction)
+
                 Button("Start Inquiry") {
                     startWithDraft()
                 }
@@ -1159,6 +1187,7 @@ private struct RootQuestionComposerSheet: View {
                 .padding(.vertical, 8)
                 .background(DS.accent, in: Capsule())
                 .foregroundStyle(DS.textOnAccent)
+                .keyboardShortcut(.defaultAction)
             }
         }
         .padding(DS.space24)
@@ -1228,6 +1257,18 @@ enum DeepDiveOverviewTab: CaseIterable {
 private struct CurrentUnderstandingDisplayView: View {
     let understanding: CurrentUnderstanding
 
+    /// The one-sentence model earns its line only when it says something the
+    /// narrative doesn't — synthesis writes them identical for young topics,
+    /// and the page rendered the same paragraph twice (once upright, once
+    /// italic), which read as a bug.
+    private func distinctOneSentenceModel(against narrative: String) -> String? {
+        let sentence = understanding.oneSentenceModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !sentence.isEmpty else { return nil }
+        let normalizedNarrative = narrative.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard sentence != normalizedNarrative, !normalizedNarrative.hasPrefix(sentence) else { return nil }
+        return sentence
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space12) {
             if let narrative = understanding.narrative?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -1236,8 +1277,8 @@ private struct CurrentUnderstandingDisplayView: View {
                     .font(.system(size: 18, weight: .regular, design: .serif))
                     .foregroundStyle(CosmoColors.textPrimary)
                     .lineSpacing(4)
-                if !understanding.oneSentenceModel.isEmpty {
-                    Text(understanding.oneSentenceModel)
+                if let sentence = distinctOneSentenceModel(against: narrative) {
+                    Text(sentence)
                         .font(CosmoTypography.body)
                         .foregroundStyle(CosmoColors.textSecondary)
                         .italic()
@@ -1389,9 +1430,7 @@ private struct UnderstandingHistoryList: View {
 
     private func relativeDate(_ iso: String) -> String {
         guard let date = ISO8601.date(from: iso) else { return iso }
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date, relativeTo: Date())
+        return date.cosmoCompactAge
     }
 }
 

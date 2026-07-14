@@ -157,6 +157,8 @@ struct IdeaBoardBlockView: View {
             let allIdeas = try await AtomRepository.shared.fetchAll(type: .idea)
 
             let clientItems: [IdeaGalleryItem] = allIdeas.compactMap { atom -> IdeaGalleryItem? in
+                // Activated ideas are content pieces now — boards only show unwritten ideas
+                if atom.ideaMetadata?.ideaStatus?.isActivated ?? false { return nil }
                 // Filter to this client
                 if let uuid = clientUUID {
                     let meta = atom.ideaMetadata

@@ -12,6 +12,7 @@ enum SidebarDestination: Equatable, Hashable {
     case inbox
     case discover(section: SwipeDiscoverySectionSelection)
     case swipeFile(section: SwipeLibrarySectionSelection)
+    case ideas
     case thinkspace(id: String)
 }
 
@@ -80,7 +81,7 @@ enum SidebarContext: String, CaseIterable, Equatable, Hashable {
         case .thinkspaces: return "Home"
         case .commandCenter: return "Command"
         case .inbox: return "Inbox"
-        case .swipeFile: return "Swipe File"
+        case .swipeFile: return "Studio"
         case .search: return "Search"
         }
     }
@@ -90,7 +91,7 @@ enum SidebarContext: String, CaseIterable, Equatable, Hashable {
         case .thinkspaces: return "Home"
         case .commandCenter: return "Command"
         case .inbox: return "Inbox"
-        case .swipeFile: return "Swipe"
+        case .swipeFile: return "Studio"
         case .search: return "Search"
         }
     }
@@ -485,7 +486,13 @@ struct UnifiedSidebar: View {
                     currentDestination = .swipeFile(section: .home)
                     onNavigate()
                 } label: {
-                    Label("Open Swipe File", systemImage: "rectangle.stack")
+                    Label("Open Studio", systemImage: "rectangle.stack")
+                }
+                Button {
+                    currentDestination = .ideas
+                    onNavigate()
+                } label: {
+                    Label("Open Ideas", systemImage: "lightbulb")
                 }
             case .search:
                 Button {
@@ -727,6 +734,9 @@ private struct SidebarContextLabel: View {
 private struct SidebarContextRow: View {
     let title: String
     let icon: String
+    /// When set, the emoji IS the identity mark and replaces the SF symbol —
+    /// same law as the iOS capture lanes (CollectionEmoji).
+    var emoji: String?
     var count: Int?
     var subtitle: String?
     var isActive: Bool
@@ -739,10 +749,16 @@ private struct SidebarContextRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 9) {
-                Image(systemName: icon)
-                    .font(.system(size: 13, weight: isActive ? .semibold : .medium))
-                    .foregroundStyle(isActive ? activeTint : tint)
-                    .frame(width: 18)
+                if let emoji {
+                    Text(emoji)
+                        .font(.system(size: 13))
+                        .frame(width: 18)
+                } else {
+                    Image(systemName: icon)
+                        .font(.system(size: 13, weight: isActive ? .semibold : .medium))
+                        .foregroundStyle(isActive ? activeTint : tint)
+                        .frame(width: 18)
+                }
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(title)
@@ -1094,9 +1110,14 @@ private struct SidebarInboxContext: View {
 
     private func laneRow(_ destination: CaptureDestination) -> some View {
         let alias = destination.aliases.first.map { "\($0):" }
+        // Same law as the iOS lanes: an emoji typed into the lane name IS
+        // the icon, and the label sheds it. Never a keyword guess over the
+        // lane's own explicitly chosen mark.
+        let identity = CollectionEmoji.resolve(name: destination.name, matchKeywords: false)
         return SidebarContextRow(
-            title: destination.name,
+            title: identity.label,
             icon: destination.icon,
+            emoji: identity.emoji,
             count: destination.itemCount,
             subtitle: alias,
             isActive: currentDestination == .inbox && inboxRoute == .captureLane(id: destination.uuid),
@@ -1196,6 +1217,7 @@ private struct SidebarSwipeFileContext: View {
         VStack(alignment: .leading, spacing: 10) {
             // One page now — no group label needed for a single row.
             swipeFileRow
+            ideasRow
 
             VStack(alignment: .leading, spacing: 4) {
                 SidebarContextLabel(title: "Discover")
@@ -1260,7 +1282,7 @@ private struct SidebarSwipeFileContext: View {
     /// which both land on the merged page.
     private var swipeFileRow: some View {
         SidebarContextRow(
-            title: "Swipe File",
+            title: "Studio",
             icon: "rectangle.stack",
             subtitle: "Up next, new saves & all",
             isActive: currentDestination == .swipeFile(section: .home)
@@ -1268,6 +1290,22 @@ private struct SidebarSwipeFileContext: View {
             tint: DS.textSecondary
         ) {
             open(.home)
+        }
+    }
+
+    /// Ideas sits beside the Swipe File — the pipeline's two rooms.
+    private var ideasRow: some View {
+        SidebarContextRow(
+            title: "Ideas",
+            icon: "lightbulb",
+            subtitle: "Boards by client",
+            isActive: currentDestination == .ideas,
+            tint: DS.textSecondary
+        ) {
+            withAnimation(ProMotionSprings.snappy) {
+                currentDestination = .ideas
+            }
+            onNavigate()
         }
     }
 
@@ -1434,7 +1472,7 @@ private struct SidebarSearchContext: View {
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(DS.textMuted)
 
-            TextField("Search everything...", text: $query)
+            TextField("Search everything…", text: $query)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(DS.text)

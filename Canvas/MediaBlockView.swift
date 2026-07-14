@@ -723,7 +723,7 @@ struct MediaBlockView: View {
                 HStack(spacing: scaled(3)) {
                     ProgressView()
                         .controlSize(.mini)
-                    Text("Processing...")
+                    Text("Processing…")
                         .font(.system(size: scaled(9)))
                         .foregroundColor(DS.textMuted)
                 }
@@ -747,7 +747,7 @@ struct MediaBlockView: View {
                 HStack(spacing: scaled(4)) {
                     ProgressView()
                         .controlSize(.mini)
-                    Text("AI is processing...")
+                    Text("AI is processing…")
                         .font(.system(size: scaled(9)))
                         .foregroundColor(DS.textMuted)
                 }

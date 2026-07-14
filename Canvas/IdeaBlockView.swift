@@ -78,7 +78,7 @@ struct IdeaBlockView: View {
         VStack(spacing: 12) {
             ProgressView()
                 .scaleEffect(0.8)
-            Text("Loading idea...")
+            Text("Loading idea…")
                 .font(CosmoTypography.caption)
                 .foregroundColor(CosmoColors.textTertiary)
         }

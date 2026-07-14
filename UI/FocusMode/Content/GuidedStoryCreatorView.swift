@@ -131,7 +131,7 @@ struct GuidedStoryCreatorView: View {
 
             ZStack(alignment: .topLeading) {
                 if answers[index].isEmpty {
-                    Text("Write your answer...")
+                    Text("Write your answer…")
                         .font(DS.cardMeta)
                         .foregroundStyle(DS.textMuted)
                         .padding(.horizontal, 12)

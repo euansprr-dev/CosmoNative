@@ -1851,6 +1851,15 @@ enum IdeaStatus: String, Codable, Sendable, CaseIterable {
         case .archived: return 5
         }
     }
+
+    /// Past Begin Writing: the idea lives on as a content source but leaves
+    /// every idea gallery/board. Keep in sync with the iOS IdeaStatus twin.
+    var isActivated: Bool {
+        switch self {
+        case .inProduction, .published, .archived: return true
+        case .spark, .developing, .ready: return false
+        }
+    }
 }
 
 /// Content format for ideas

@@ -19,6 +19,9 @@ struct ConnectionWorkspaceToolbar: View {
         // Chrome islands, not a full-width bar: navigate | modes | tools,
         // grouped by function on the shared chrome baseline.
         CosmoChromeRow {
+            if atomChrome == nil, !isPaneContext {
+                NavigationTrailIsland()
+            }
             CosmoChromeIsland { leadingControls }
         } center: {
             CosmoChromeIsland { viewModeSwitcher }
@@ -40,12 +43,6 @@ struct ConnectionWorkspaceToolbar: View {
         if let atomChrome {
             AtomWindowChromeLeadingControls(context: atomChrome)
             AtomWindowChromeDivider()
-        } else if !isPaneContext {
-            toolbarButton(
-                icon: "chevron.left",
-                help: "Back (Esc)",
-                action: actions.onClose
-            )
         }
         toolbarButton(
             icon: "sidebar.left",

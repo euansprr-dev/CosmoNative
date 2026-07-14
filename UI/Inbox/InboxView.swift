@@ -84,13 +84,6 @@ struct InboxView: View {
                 lanesButton
             }
 
-            if !viewModel.items.isEmpty {
-                Text(mastheadSubtitle)
-                    .font(DS.callout)
-                    .foregroundStyle(DS.textSecondary)
-                    .contentTransition(.numericText())
-            }
-
             Rectangle()
                 .fill(DS.borderSubtle)
                 .frame(height: 0.5)
@@ -102,16 +95,6 @@ struct InboxView: View {
         .padding(.horizontal, DS.space32)
         .padding(.top, DS.navChromeClearance)
         .padding(.bottom, DS.space10)
-    }
-
-    private var mastheadSubtitle: String {
-        let total = viewModel.items.count
-        let suggested = viewModel.suggestedCount
-        var line = "\(total) capture\(total == 1 ? "" : "s")"
-        if suggested > 0 {
-            line += " · \(suggested) with suggested homes"
-        }
-        return line
     }
 
     /// Recently triaged captures — reachable even when the queue is non-empty,

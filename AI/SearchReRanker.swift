@@ -144,10 +144,15 @@ final class SearchReRanker {
             return []
         }
 
-        // Map back to original results
+        // Map back to original results. The model is untrusted output: it can
+        // echo the same index more than once. Keep only the first (highest-
+        // ranked) occurrence so every returned uuid stays unique — downstream
+        // builds a Dictionary keyed on uuid, which traps on duplicate keys.
         var reRanked: [ReRankedItem] = []
+        var seenIndices = Set<Int>()
         for entry in entries {
             guard entry.index >= 0 && entry.index < originalResults.count else { continue }
+            guard seenIndices.insert(entry.index).inserted else { continue }
             let original = originalResults[entry.index]
             reRanked.append(ReRankedItem(
                 uuid: original.uuid,

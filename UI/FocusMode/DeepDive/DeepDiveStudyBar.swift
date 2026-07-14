@@ -26,7 +26,7 @@ struct DeepDiveStudyBar: View {
 
     var body: some View {
         CosmoChromeRow {
-            trailIsland
+            NavigationTrailIsland()
             if showsTitle {
                 titleIsland
             }
@@ -45,26 +45,6 @@ struct DeepDiveStudyBar: View {
     }
 
     // MARK: - Leading islands
-
-    /// The same trail chrome as everywhere else — history comes free.
-    private var trailIsland: some View {
-        NavigationTrailChrome(
-            onBack: {
-                NotificationCenter.default.post(name: CosmoNotification.Navigation.trailStepBack, object: nil)
-            },
-            onForward: {
-                NotificationCenter.default.post(name: CosmoNotification.Navigation.trailStepForward, object: nil)
-            },
-            onJump: { moment in
-                NotificationCenter.default.post(
-                    name: CosmoNotification.Navigation.trailJump,
-                    object: nil,
-                    userInfo: ["momentId": moment.id.uuidString]
-                )
-            }
-        )
-        .frame(height: CosmoChromeMetrics.height)
-    }
 
     private var titleIsland: some View {
         CosmoChromeIsland(recede: recede) {
@@ -134,31 +114,20 @@ struct DeepDiveStudyBar: View {
 
     @ViewBuilder
     private var mapFilter: some View {
-        HStack(spacing: DS.space2) {
-            mapFilterSegment("Everything", isOn: mapShowsQuestions) { mapShowsQuestions = true }
-            mapFilterSegment("Concepts", isOn: !mapShowsQuestions) { mapShowsQuestions = false }
-        }
+        // The one view-mode grammar: the sliding-thumb switcher (the old
+        // text-only toggle was nearly invisible). Bare chrome — it already
+        // sits inside a glass island.
+        CosmoSegmentedSwitcher(
+            options: [true, false],
+            label: { $0 ? "Everything" : "Concepts" },
+            help: { $0 ? "Show concepts and questions" : "Hide questions — pure concept atlas" },
+            chrome: .bare,
+            selection: $mapShowsQuestions
+        )
         .transition(.opacity)
         Divider()
             .frame(height: 18)
             .overlay(DS.borderSubtle)
-    }
-
-    private func mapFilterSegment(_ label: String, isOn: Bool, action: @escaping () -> Void) -> some View {
-        Button {
-            withAnimation(ProMotionSprings.focusTransition) { action() }
-        } label: {
-            Text(label)
-                .font(CosmoTypography.labelSmall)
-                .foregroundStyle(isOn ? CosmoColors.textPrimary : CosmoColors.textTertiary)
-                .padding(.horizontal, DS.space8)
-                .padding(.vertical, DS.space4)
-                .background(isOn ? AnyShapeStyle(DS.surfaceElevated) : AnyShapeStyle(.clear), in: Capsule())
-                .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .help(label == "Concepts" ? "Hide questions — pure concept atlas" : "Show concepts and questions")
-        .accessibilityAddTraits(isOn ? .isSelected : [])
     }
 
     private var startInquiryButton: some View {

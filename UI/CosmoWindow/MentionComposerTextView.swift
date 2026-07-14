@@ -26,7 +26,6 @@ struct MentionComposerTextView: NSViewRepresentable {
     var usesPillMentions: Bool = false
     var onSubmit: () -> Void
     var onTextChange: () -> Void
-    var onDismissMentionOverlayFromBackspace: () -> Void = {}
     /// Return true to consume Tab (e.g. accept a skill suggestion).
     var onTab: () -> Bool = { false }
     /// Computes the intent-token washes ("@idea" scope, armed "/skill") for the
@@ -62,7 +61,6 @@ struct MentionComposerTextView: NSViewRepresentable {
         textView.delegate = context.coordinator
         textView.onSubmit = onSubmit
         textView.isMentionOverlayVisible = isMentionOverlayVisible
-        textView.onDismissMentionOverlayFromBackspace = onDismissMentionOverlayFromBackspace
         textView.onTab = onTab
         textView.string = text
         textView.placeholderString = placeholder
@@ -81,7 +79,6 @@ struct MentionComposerTextView: NSViewRepresentable {
         // Update callbacks
         textView.onSubmit = onSubmit
         textView.isMentionOverlayVisible = isMentionOverlayVisible
-        textView.onDismissMentionOverlayFromBackspace = onDismissMentionOverlayFromBackspace
         textView.onTab = onTab
         context.coordinator.parent = self
 
@@ -529,14 +526,6 @@ enum MentionComposerTextSelectionPolicy {
     }
 }
 
-enum MentionComposerKeyHandlingPolicy {
-    static let backspaceKeyCode: UInt16 = 51
-
-    static func shouldDismissMentionOverlay(keyCode: UInt16, isMentionOverlayVisible: Bool) -> Bool {
-        isMentionOverlayVisible && keyCode == backspaceKeyCode
-    }
-}
-
 private extension String {
     var hasSuffixWhitespace: Bool {
         guard let last else { return false }
@@ -569,7 +558,6 @@ extension Notification.Name {
 /// Custom NSTextView that handles Enter/Escape and shows placeholder text.
 final class ComposerNSTextView: NSTextView {
     var onSubmit: (() -> Void)?
-    var onDismissMentionOverlayFromBackspace: (() -> Void)?
     /// Returns true when Tab was consumed (e.g. accepting a ghost-chip skill
     /// suggestion); false falls through to default text-view behavior.
     var onTab: (() -> Bool)?
@@ -592,12 +580,11 @@ final class ComposerNSTextView: NSTextView {
            onTab?() == true {
             return
         }
-        if MentionComposerKeyHandlingPolicy.shouldDismissMentionOverlay(
-            keyCode: event.keyCode,
-            isMentionOverlayVisible: isMentionOverlayVisible
-        ) {
-            onDismissMentionOverlayFromBackspace?()
-        } else if event.keyCode == 36 { // Return key
+        // Backspace passes through to normal editing even while a mention
+        // overlay is open — the host's text sync narrows the query live and
+        // closes the overlay itself once the "@" is gone. The old
+        // swallow-and-dismiss made the first Delete a dead key.
+        if event.keyCode == 36 { // Return key
             if event.modifierFlags.contains(.shift) {
                 insertNewline(nil)
             } else {

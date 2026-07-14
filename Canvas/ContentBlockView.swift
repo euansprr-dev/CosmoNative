@@ -131,7 +131,7 @@ struct ContentBlockView: View {
     private var contentPreview: some View {
         Group {
             if documentBodyText.isEmpty {
-                Text("Open to start writing...")
+                Text("Open to start writing…")
                     .font(.system(size: 20))
                     .foregroundStyle(DS.documentTextMuted)
                     .italic()

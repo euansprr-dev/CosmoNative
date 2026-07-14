@@ -277,22 +277,22 @@ final class IdeaFocusModeViewModel {
         guard !isAnalyzing else { return }
 
         isAnalyzing = true
-        analysisStage = "Preparing analysis..."
+        analysisStage = "Preparing analysis…"
 
         // Ensure latest edits are saved before analysis
         await save()
 
         do {
             // Refresh the atom from the database to get the latest version
-            analysisStage = "Loading latest data..."
+            analysisStage = "Loading latest data…"
             if let freshAtom = try await AtomRepository.shared.fetch(uuid: idea.uuid) {
                 idea = freshAtom
             }
 
-            analysisStage = "Finding matching swipes..."
+            analysisStage = "Finding matching swipes…"
             let result = await IdeaInsightEngine.shared.fullAnalysis(atom: idea)
 
-            analysisStage = "Processing results..."
+            analysisStage = "Processing results…"
             insight = result
 
             // Persist insight to atom's structured JSON

@@ -341,6 +341,13 @@ enum DS {
     /// Soft accent background for pills, tags, tinted areas
     static var accentSoft: Color { palette.accentSoft }
 
+    /// The one selection wash (peakui law: selection = tint wash + hairline,
+    /// never a solid fill). Paired token — same values in the iOS DS.
+    static var selectionWash: Color { palette.accent.opacity(0.14) }
+
+    /// The hairline that rings a selected surface. Paired with the iOS DS.
+    static var selectionHairline: Color { palette.accent.opacity(0.42) }
+
     // ═══════════════════════════════════════════════════════════════
     // STATUS — Dynamic per theme (adapted for light/dark contrast)
     // ═══════════════════════════════════════════════════════════════
@@ -743,6 +750,26 @@ enum DS {
 
     /// Space title serif — 21pt regular New York, Command-K space plate names
     static let spaceTitleSerif = Font.system(size: 21, weight: .regular, design: .serif)
+
+    /// Block title serif — the document-title voice at card scale (IdeaCard
+    /// hooks). Paired token in the iOS DS; keep in lockstep.
+    static let blockTitleSerif = Font.system(size: 17, weight: .semibold, design: .serif)
+
+    /// Editorial header — the browse-shelf voice (heavy sentence case, the
+    /// App Store register). Paired token in the iOS DS; keep in lockstep.
+    static let editorialHeader = Font.system(size: 20, weight: .bold)
+
+    /// Hero title serif — 27pt semibold New York: the editorial voice at
+    /// collection-hero scale (paired token in the iOS DS; keep in lockstep).
+    static let heroTitleSerif = Font.system(size: 27, weight: .semibold, design: .serif)
+
+    /// Gauge numerals — the deep-work gauge's serif display figures (paired
+    /// name in the iOS DS; sizes are platform-tuned: 19pt phone, 36pt desktop).
+    static let gaugeTitleSerif = Font.system(size: 36, weight: .medium, design: .serif)
+
+    /// Dossier title serif — the Deep Dive topic name (a content hero, so it
+    /// speaks serif). Paired token in the iOS DS.
+    static let dossierTitleSerif = Font.system(size: 34, weight: .semibold, design: .serif)
 
     /// Compact title serif — 15pt semibold New York, condensed manuscript title headers
     static let compactTitleSerif = Font.system(size: 15, weight: .semibold, design: .serif)

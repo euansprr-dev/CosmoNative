@@ -214,12 +214,15 @@ struct DashboardTaskList: View {
 
     // MARK: - Anytime View
 
+    // No section header on the single-section lists: a lone section must
+    // never echo the page's own title ("Anytime"/"ANYTIME" — the duplicate-
+    // word law), and Things shows none here. The masthead and sidebar badge
+    // already carry the context.
     @ViewBuilder
     private var anytimeView: some View {
         if viewModel.anytimeTasks.isEmpty {
             emptyState(message: "No anytime tasks", icon: "tray.full")
         } else {
-            sectionHeader(title: "Anytime", color: DS.textSecondary, trailing: "\(viewModel.anytimeTasks.count)")
             ForEach(viewModel.anytimeTasks) { task in
                 taskRow(task)
             }
@@ -235,7 +238,6 @@ struct DashboardTaskList: View {
         if viewModel.somedayTasks.isEmpty {
             emptyState(message: "No someday tasks — park ideas here for later", icon: "archivebox")
         } else {
-            sectionHeader(title: "Someday", color: DS.textSecondary, trailing: "\(viewModel.somedayTasks.count)")
             ForEach(viewModel.somedayTasks) { task in
                 taskRow(task)
             }
@@ -272,7 +274,7 @@ struct DashboardTaskList: View {
             SmartTaskCaptureRow(
                 viewModel: viewModel,
                 contextProjectUUID: viewModel.selectedProjectUUID,
-                placeholderText: "Add task to project..."
+                placeholderText: "Add task to project…"
             )
         }
     }
@@ -311,7 +313,7 @@ struct DashboardTaskList: View {
                 viewModel: viewModel,
                 contextProjectUUID: viewModel.selectedProjectUUID,
                 contextHeadingUUID: heading.id,
-                placeholderText: "Add task to \(heading.title)..."
+                placeholderText: "Add task to \(heading.title)…"
             )
             .padding(.horizontal, 4)
         }
@@ -582,8 +584,8 @@ struct DashboardTaskList: View {
         // Completed work recedes as a group on Today — remaining tasks own
         // the list. (Logbook keeps full strength; it's a list OF completed.)
         .opacity(task.isCompleted && !isAnimatingCompletion && viewModel.viewMode == .today ? 0.7 : 1)
-        .animation(.easeOut(duration: 0.12), value: isHovered)
-        .animation(.easeOut(duration: 0.12), value: isKeyboardSelected)
+        .animation(ProMotionSprings.hover, value: isHovered)
+        .animation(ProMotionSprings.hover, value: isKeyboardSelected)
         .scaleEffect(completionState?.rowScale ?? 1)
         .opacity(completionState?.rowOpacity ?? 1)
         .offset(y: completionState?.rowOffsetY ?? 0)
@@ -928,8 +930,15 @@ struct DashboardTaskList: View {
 
             Spacer(minLength: DS.space8)
 
-            if let dueInfo = task.dueInfo, !task.isCompleted {
-                dueDateChip(dueInfo, isOverdue: task.isOverdue)
+            // Inside Today, "Due today" is ambient context — every row
+            // repeating it is chrome noise (Things shows nothing). Overdue
+            // keeps its chip; other lists keep due dates. Overdue is judged
+            // from the VIEWED day, so scrolling back to a task's due day drops
+            // the "Overdue" chip — it's a normal item that day.
+            let overdue = task.isOverdue(asOf: viewModel.selectedDate)
+            if let dueInfo = task.dueInfo(asOf: viewModel.selectedDate), !task.isCompleted,
+               viewModel.viewMode != .today || overdue {
+                dueDateChip(dueInfo, isOverdue: overdue)
             } else {
                 Color.clear
                     .frame(width: 76, height: 1)
@@ -969,7 +978,10 @@ struct DashboardTaskList: View {
 
     private func handleRowTap(_ task: TaskViewModel, isAnimatingCompletion: Bool) {
         guard !isAnimatingCompletion else { return }
-        if NSEvent.modifierFlags.contains(.shift) {
+        // ⌘-click is the Mac's toggle-into-selection gesture (shift kept for
+        // muscle memory until range selection lands).
+        let modifiers = NSEvent.modifierFlags
+        if modifiers.contains(.command) || modifiers.contains(.shift) {
             if selectedTaskUUIDs.contains(task.uuid) {
                 selectedTaskUUIDs.remove(task.uuid)
             } else {

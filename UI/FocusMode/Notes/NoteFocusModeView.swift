@@ -706,10 +706,10 @@ struct NoteFocusModeView: View {
         // full-width bar. Same island grammar as the Content workspace toolbar
         // (CosmoChromeRow / CosmoChromeIsland): glass hugs each control group.
         CosmoChromeRow(insetsEnabled: false) {
+            if !isPaneContext {
+                NavigationTrailIsland()
+            }
             CosmoChromeIsland {
-                if !isPaneContext {
-                    backButton
-                }
                 noteTypeBadge
                 if saveState != .idle {
                     noteSaveBadge
@@ -730,24 +730,6 @@ struct NoteFocusModeView: View {
         .onHover { hovering in
             if hovering { wakeChrome() }
         }
-    }
-
-    private var backButton: some View {
-        // No inner capsule — the enclosing CosmoChromeIsland provides the glass.
-        Button(action: onClose) {
-            HStack(spacing: DS.space6) {
-                Image(systemName: "chevron.left")
-                    .font(DS.buttonText)
-                    .accessibilityLabel("Back")
-                Text("Back")
-                    .font(DS.callout)
-            }
-            .foregroundStyle(focusTextSecondary)
-            .frame(minHeight: 32)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help("Back (Esc)")
     }
 
     private var noteTypeBadge: some View {
@@ -1688,7 +1670,7 @@ struct NoteFocusModeView: View {
             }
             .font(DS.caption)
 
-            Text(saveState == .saving ? "Saving..." : "Saved")
+            Text(saveState == .saving ? "Saving…" : "Saved")
                 .font(DS.caption)
         }
         .foregroundStyle(saveState == .saved ? DS.entityNote.opacity(0.85) : focusTextMuted)

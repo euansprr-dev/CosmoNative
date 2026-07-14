@@ -185,6 +185,10 @@ struct ContentFocusModeView: View {
     // Scriptorium V2 state
     @State private var zenMode: Bool = false
     @State private var hasAppeared: Bool = false
+    /// One frame behind `hasAppeared`: ornament subtrees (margin rail) mount
+    /// after the manuscript's first frame so their build cost never sits in
+    /// the entrance commit.
+    @State private var ornamentsMounted: Bool = false
     @State private var isContinuation: Bool = false
     @Namespace private var ledgerNamespace
     @FocusState private var focusedOutlineItemID: UUID?
@@ -423,11 +427,14 @@ struct ContentFocusModeView: View {
         .cosmoSurfaceKeyWindowActivation(surfaceID: "content:\(atom.uuid)")
         .focusImmersiveEntryTransition()
         .onAppear {
+            let tStart = CFAbsoluteTimeGetCurrent()
             AtomRepository.shared.acquireEditingLock(uuid: atom.uuid)
             viewModel.loadState()
+            let tLoadState = CFAbsoluteTimeGetCurrent()
             localDraftContent = viewModel.state.draftContent
             draftDocument = viewModel.state.richDraftDocument ?? RichDocument.migrateLegacy(viewModel.state.draftContent)
             updateDraftHeadingOutline(from: draftDocument)
+            let tDraftDoc = CFAbsoluteTimeGetCurrent()
             titleDocument = RichDocumentPersistence.loadAtomDocument(
                 field: .title,
                 metadata: atom.metadata,
@@ -435,6 +442,10 @@ struct ContentFocusModeView: View {
             )
             editableTitle = RichDocumentPersistence.titlePlainText(from: titleDocument)
             viewModel.startObservingState()
+            let tObserve = CFAbsoluteTimeGetCurrent()
+            AppPerformanceInstrumentation.trace(
+                "CONTENT onAppear sync: loadState=\(Int((tLoadState - tStart) * 1000))ms draftDoc=\(Int((tDraftDoc - tLoadState) * 1000))ms title+observe=\(Int((tObserve - tDraftDoc) * 1000))ms"
+            )
             Task {
                 await viewModel.searchRelatedAtoms()
             }
@@ -456,6 +467,13 @@ struct ContentFocusModeView: View {
             } else {
                 withAnimation(.easeOut(duration: 0.45).delay(0.05)) {
                     hasAppeared = true
+                }
+            }
+            // Ornaments join on the next runloop turn — after the manuscript's
+            // first frame has painted.
+            DispatchQueue.main.async {
+                withAnimation(.easeOut(duration: 0.35)) {
+                    ornamentsMounted = true
                 }
             }
             // Load inherited context (source idea, swipes, framework, client profile)
@@ -689,7 +707,7 @@ struct ContentFocusModeView: View {
         scriptoriumScrollStage
             .overlay(alignment: .top) {
                 scriptoriumHeader
-                    .atelierStaggerIn(delay: continuationStagger(0.05), appeared: hasAppeared)
+                    .atelierStaggerIn(delay: 0, appeared: hasAppeared, duration: 0.25)
             }
     }
 
@@ -717,8 +735,10 @@ struct ContentFocusModeView: View {
                             }
 
                             ScrollView {
+                                // The manuscript is what the user came for —
+                                // it leads the settle, never waits for it.
                                 scriptoriumManuscript(height: geo.size.height, availableWidth: geo.size.width)
-                                    .atelierStaggerIn(delay: continuationStagger(0.36), appeared: hasAppeared)
+                                    .atelierStaggerIn(delay: continuationStagger(0.02), appeared: hasAppeared, duration: 0.25)
                                     .padding(.top, DS.space4)
                                     .padding(.bottom, DS.space20)
                                     .background(ScrollViewIntrospector { scrollView in
@@ -740,17 +760,28 @@ struct ContentFocusModeView: View {
                             .frame(height: max(0, geo.size.height - DS.space4), alignment: .top)
 
                             if showMarginaliaRails {
-                                scriptoriumMarginScroll(width: ContentFocusLayoutPolicy.marginaliaRailWidth,
-                                    height: max(0, geo.size.height - DS.space4)
-                                ) {
-                                    scriptoriumMarginRail
-                                }
-                                    .opacity(sideRailOpacity)
-                                    .onHover { hovering in
-                                        withAnimation(ProMotionSprings.hover) { rightRailHovered = hovering }
-                                        if hovering { wakeChrome() }
+                                // The rail mounts one frame after the manuscript:
+                                // its build (references, swipe cards, metadata
+                                // decodes) was a measured chunk of the open
+                                // freeze, and it's faded out at mount anyway.
+                                // The clear stand-in holds the column so the
+                                // manuscript never shifts when the rail lands.
+                                if ornamentsMounted {
+                                    scriptoriumMarginScroll(width: ContentFocusLayoutPolicy.marginaliaRailWidth,
+                                        height: max(0, geo.size.height - DS.space4)
+                                    ) {
+                                        scriptoriumMarginRail
                                     }
-                                    .atelierStaggerIn(delay: continuationStagger(0.3), appeared: hasAppeared)
+                                        .opacity(sideRailOpacity)
+                                        .onHover { hovering in
+                                            withAnimation(ProMotionSprings.hover) { rightRailHovered = hovering }
+                                            if hovering { wakeChrome() }
+                                        }
+                                        .transition(.opacity)
+                                } else {
+                                    Color.clear
+                                        .frame(width: ContentFocusLayoutPolicy.marginaliaRailWidth)
+                                }
                             }
                         }
                         .frame(maxWidth: ContentFocusLayoutPolicy.scriptoriumBandMaxWidth)
@@ -924,7 +955,7 @@ struct ContentFocusModeView: View {
 
             scriptoriumCTA
                 .padding(.top, DS.space24)
-                .atelierStaggerIn(delay: continuationStagger(0.52), appeared: hasAppeared)
+                .atelierStaggerIn(delay: continuationStagger(0.25), appeared: hasAppeared, duration: 0.35)
         }
         .frame(width: textWidth, alignment: .leading)
         .padding(.trailing, scrollbarGutter)
@@ -993,26 +1024,12 @@ struct ContentFocusModeView: View {
 
     @ViewBuilder
     private var scriptoriumLeadingIsland: some View {
-        if atomChrome != nil || !isPaneContext {
+        if let atomChrome {
             CosmoChromeIsland {
-                if let atomChrome {
-                    AtomWindowChromeLeadingControls(context: atomChrome)
-                } else {
-                    Button(action: onClose) {
-                        HStack(spacing: DS.space6) {
-                            Image(systemName: "chevron.left")
-                                .font(DS.buttonText)
-                            Text("Back")
-                                .font(DS.callout)
-                        }
-                        .foregroundStyle(focusTextSecondary)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Go back")
-                    .help("Back (Esc)")
-                }
+                AtomWindowChromeLeadingControls(context: atomChrome)
             }
+        } else if !isPaneContext {
+            NavigationTrailIsland()
         }
     }
 
@@ -1987,7 +2004,7 @@ struct ContentFocusModeView: View {
             if inlineAssistant.isProcessing {
                 HStack(spacing: 8) {
                     ProgressView().scaleEffect(0.7).tint(DS.accent)
-                    Text("Generating...")
+                    Text("Generating…")
                         .font(DS.footnote)
                         .foregroundStyle(focusTextSecondary)
                 }
@@ -3475,16 +3492,31 @@ class ContentFocusModeViewModel: ObservableObject {
 
     // MARK: - Phase Accessors
 
+    /// Memoized ContentAtomMetadata decode. These accessors are read from
+    /// view bodies — a full JSONDecoder pass per body evaluation was a
+    /// measured chunk of the focus-open freeze (Time Profiler, July 2026).
+    /// The cache keys on the raw metadata string, so any atom refresh that
+    /// actually changes metadata re-decodes.
+    private var cachedMetadataRaw: String?
+    private var cachedContentMetadata: ContentAtomMetadata?
+
+    private func contentMetadata() -> ContentAtomMetadata? {
+        if cachedMetadataRaw == atom.metadata { return cachedContentMetadata }
+        cachedMetadataRaw = atom.metadata
+        cachedContentMetadata = atom.metadataValue(as: ContentAtomMetadata.self)
+        return cachedContentMetadata
+    }
+
     var currentPhase: ContentPhase {
         // Read from atom metadata, default to mapping from ContentStep
-        if let metadata = atom.metadataValue(as: ContentAtomMetadata.self) {
+        if let metadata = contentMetadata() {
             return metadata.phase
         }
         return stepToPhase(state.currentStep)
     }
 
     var phaseEnteredAt: Date? {
-        if let metadata = atom.metadataValue(as: ContentAtomMetadata.self),
+        if let metadata = contentMetadata(),
            let dateStr = metadata.phaseEnteredAt {
             return ISO8601.date(from: dateStr)
         }
@@ -3492,11 +3524,11 @@ class ContentFocusModeViewModel: ObservableObject {
     }
 
     var currentInheritedSwipeUUIDs: [String] {
-        atom.metadataValue(as: ContentAtomMetadata.self)?.inheritedSwipeUUIDs ?? []
+        contentMetadata()?.inheritedSwipeUUIDs ?? []
     }
 
     var currentBlueprintSwipeUUID: String? {
-        atom.metadataValue(as: ContentAtomMetadata.self)?.blueprintSwipeUUID ?? currentInheritedSwipeUUIDs.first
+        contentMetadata()?.blueprintSwipeUUID ?? currentInheritedSwipeUUIDs.first
     }
 
     func saveSwipeAttachments(swipeUUIDs: [String], blueprintUUID: String?) async {
@@ -3852,7 +3884,7 @@ struct ContentSwipeAttachmentEditor: View {
                 .font(DS.callout)
                 .foregroundStyle(DS.focusImmersiveTextMuted)
 
-            TextField("Search swipes by hook, topic, creator...", text: $searchText)
+            TextField("Search swipes by hook, topic, creator…", text: $searchText)
                 .textFieldStyle(.plain)
                 .font(DS.callout)
                 .foregroundStyle(DS.focusImmersiveText)
@@ -3867,7 +3899,7 @@ struct ContentSwipeAttachmentEditor: View {
             if isLoading {
                 VStack(spacing: 12) {
                     ProgressView()
-                    Text("Loading swipe library...")
+                    Text("Loading swipe library…")
                         .font(DS.subheadline)
                         .foregroundStyle(DS.focusImmersiveTextMuted)
                 }

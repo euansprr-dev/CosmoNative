@@ -136,10 +136,24 @@ final class NavigationTrail {
 
 // MARK: - Trail Chrome (chevron capsule)
 
-/// The floating back/forward control in the app shell's top-left.
-/// Ghost-quiet until the trail has history; long-press the back chevron
+/// The universal back/forward control — ONE size app-wide: the capsule sits at
+/// the shared chrome-island height (CosmoChromeMetrics.height) so it never
+/// reads as a runt beside its sibling islands. Long-press the back chevron
 /// for the recent-trail popover (Safari idiom).
+///
+/// Two manners, one anatomy:
+/// - `.floating` (app shell top-left): ghost chrome — 40% until hover, gone
+///   entirely while the trail is empty.
+/// - `.embedded` (focus-mode headers): full strength like its neighbor
+///   controls, always present; Back stays live even with no history because
+///   the trailStepBack handler falls back to closing the focus mode.
 struct NavigationTrailChrome: View {
+    enum Style {
+        case floating
+        case embedded
+    }
+
+    var style: Style = .floating
     let onBack: () -> Void
     let onForward: () -> Void
     let onJump: (NavigationTrail.Moment) -> Void
@@ -155,11 +169,11 @@ struct NavigationTrailChrome: View {
         HStack(spacing: 2) {
             TrailChevronButton(
                 symbol: "chevron.left",
-                enabled: trail.canGoBack,
+                enabled: trail.canGoBack || style == .embedded,
                 help: "Back (⌘[)",
                 label: "Back",
                 action: onBack,
-                onLongPress: { showTrail = true }
+                onLongPress: { if trail.canGoBack { showTrail = true } }
             )
             TrailChevronButton(
                 symbol: "chevron.right",
@@ -170,12 +184,10 @@ struct NavigationTrailChrome: View {
                 onLongPress: nil
             )
         }
-        .padding(2)
+        .padding(5)
         .glassEffect(.regular, in: .capsule)
-        // Ghost chrome: nearly silent until the pointer arrives, so it never
-        // competes with page titles sitting close beneath it.
-        .opacity(hasTrail ? (isChromeHovered || showTrail ? 1 : 0.4) : 0)
-        .allowsHitTesting(hasTrail)
+        .opacity(chromeOpacity)
+        .allowsHitTesting(style == .embedded || hasTrail)
         .onHover { hovering in
             withAnimation(reduceMotion ? nil : ProMotionSprings.hover) {
                 isChromeHovered = hovering
@@ -188,6 +200,41 @@ struct NavigationTrailChrome: View {
                 onJump(moment)
             }
         }
+    }
+
+    private var chromeOpacity: Double {
+        switch style {
+        case .floating:
+            // Ghost chrome: nearly silent until the pointer arrives, so it
+            // never competes with page titles sitting close beneath it.
+            return hasTrail ? (isChromeHovered || showTrail ? 1 : 0.4) : 0
+        case .embedded:
+            return 1
+        }
+    }
+}
+
+/// The trail chrome as a chrome-row island — every focus surface embeds this
+/// exact control, so back/forward/long-press history behave identically to
+/// the app shell. Driven through trail notifications; MainView owns the jumps.
+struct NavigationTrailIsland: View {
+    var body: some View {
+        NavigationTrailChrome(
+            style: .embedded,
+            onBack: {
+                NotificationCenter.default.post(name: CosmoNotification.Navigation.trailStepBack, object: nil)
+            },
+            onForward: {
+                NotificationCenter.default.post(name: CosmoNotification.Navigation.trailStepForward, object: nil)
+            },
+            onJump: { moment in
+                NotificationCenter.default.post(
+                    name: CosmoNotification.Navigation.trailJump,
+                    object: nil,
+                    userInfo: ["momentId": moment.id.uuidString]
+                )
+            }
+        )
     }
 }
 
@@ -210,7 +257,7 @@ private struct TrailChevronButton: View {
         Image(systemName: symbol)
             .font(DS.subheadline.weight(.semibold))
             .foregroundStyle(foreground)
-            .frame(width: 30, height: 24)
+            .frame(width: 34, height: 30)
             .background(Capsule().fill(isHovered && enabled ? DS.glassCardFill : .clear))
             .contentShape(Capsule())
             .scaleEffect(isPressed && enabled ? 0.97 : 1)
@@ -231,6 +278,7 @@ private struct TrailChevronButton: View {
     }
 
     private func handleTap() {
+        AppPerformanceInstrumentation.trace("CHEVRON tap \(symbol) enabled=\(enabled)")
         if didLongPress {
             didLongPress = false
             return

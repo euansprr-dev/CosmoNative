@@ -1,0 +1,282 @@
+// CosmoOS/UI/CaptureOverlay/TokenWashTextView.swift
+// The native highlighted text field — the Mac port of the iPhone's
+// TokenWashTextView: ONE NSTextView (TextKit 2) that colors recognized runs,
+// draws their soft rounded washes itself, and floats a ghost completion tail
+// off the real caret rect, all in the same layout pass as the text. One text
+// engine, zero drift — never a mirror Text over a real field.
+// July 2026 — Capture Anywhere lane highlights
+
+import SwiftUI
+import AppKit
+
+/// A highlighted run: UTF-16 range into the current text plus its ink color.
+/// The wash behind the run is the ink at low opacity.
+struct TextWashSegment: Equatable {
+    let utf16Range: Range<Int>
+    let ink: NSColor
+}
+
+struct TokenWashTextView: NSViewRepresentable {
+    @Binding var text: String
+    var placeholder: String
+    var font: NSFont
+    var ink: NSColor = NSColor(DS.text)
+    var caretTint: NSColor = NSColor(DS.accent)
+    var segments: [TextWashSegment] = []
+    /// Display-only completion tail drawn after the text end ("g" shows
+    /// "roceries:" ahead of the caret). Never part of the real text.
+    var ghostText: String? = nil
+    var ghostColor: NSColor = NSColor(DS.textMuted)
+    /// Cap the field's growth at N lines. nil = grow forever.
+    var maxLines: Int? = nil
+    @Binding var isFocused: Bool
+    var onSubmit: () -> Void = {}
+
+    func makeNSView(context: Context) -> WashTextView {
+        // Explicit TextKit 2 stack — never touch .layoutManager, which downgrades.
+        let view = WashTextView(usingTextLayoutManager: true)
+        view.configureWashField()
+        view.delegate = context.coordinator
+        return view
+    }
+
+    func updateNSView(_ nsView: WashTextView, context: Context) {
+        context.coordinator.parent = self
+
+        nsView.font = font
+        nsView.insertionPointColor = caretTint
+
+        if nsView.string != text {
+            nsView.string = text
+            // External rewrites (suggestion acceptance) land the caret at the end.
+            nsView.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
+        }
+
+        nsView.placeholderLabel.stringValue = placeholder
+        nsView.placeholderLabel.font = font
+        nsView.placeholderLabel.textColor = NSColor(DS.textMuted)
+        nsView.placeholderLabel.isHidden = !text.isEmpty
+
+        nsView.applyInk(ink, font: font, segments: segments)
+        nsView.ghost = ghostText.map { ($0, ghostColor) }
+
+        // Focus sync — deferred so first-responder moves never happen inside
+        // a SwiftUI update pass. The block re-reads the CURRENT desire at
+        // execution time so a stale capture can't fight a dismissal.
+        let coordinator = context.coordinator
+        DispatchQueue.main.async { [weak nsView] in
+            guard let nsView, let window = nsView.window else { return }
+            let wantsFocus = coordinator.parent.isFocused
+            let isFirstResponder = window.firstResponder === nsView
+            if wantsFocus, !isFirstResponder {
+                window.makeFirstResponder(nsView)
+            }
+        }
+
+        nsView.needsLayout = true
+        nsView.needsDisplay = true
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: WashTextView, context: Context) -> CGSize? {
+        let width = proposal.width ?? 400
+        nsView.textContainer?.size = NSSize(width: width, height: .greatestFiniteMagnitude)
+        var height = ceil(nsView.measuredTextHeight())
+        let lineHeight = ceil(font.ascender + abs(font.descender) + font.leading)
+        height = max(height, lineHeight)
+        if let maxLines {
+            height = min(height, ceil(lineHeight * CGFloat(maxLines)) + 1)
+        }
+        return CGSize(width: width, height: height)
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
+
+    @MainActor
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        var parent: TokenWashTextView
+
+        init(parent: TokenWashTextView) {
+            self.parent = parent
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard let view = notification.object as? WashTextView else { return }
+            parent.text = view.string
+            view.placeholderLabel.isHidden = !view.string.isEmpty
+            view.needsLayout = true
+            view.needsDisplay = true
+        }
+
+        func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+                parent.onSubmit()
+                return true
+            }
+            return false
+        }
+
+        func textDidBeginEditing(_ notification: Notification) {
+            if !parent.isFocused { parent.isFocused = true }
+        }
+
+        func textDidEndEditing(_ notification: Notification) {
+            if parent.isFocused { parent.isFocused = false }
+        }
+    }
+}
+
+// MARK: - The NSTextView that paints its own washes
+
+final class WashTextView: NSTextView {
+    /// Same geometry as the iPhone renderer: pad each glyph-run rect a touch,
+    /// merge same-line neighbours so a phrase reads as one wash, round the corners.
+    private static let washInset = CGSize(width: -3.5, height: -1.5)
+    private static let mergeGap: CGFloat = 8
+    private static let washCornerRadius: CGFloat = 6
+
+    let placeholderLabel = NSTextField(labelWithString: "")
+    private let ghostLabel = NSTextField(labelWithString: "")
+
+    private var currentSegments: [TextWashSegment] = []
+
+    var ghost: (text: String, color: NSColor)? {
+        didSet { needsLayout = true }
+    }
+
+    /// One-time field setup — called from makeNSView (no init overrides, so
+    /// the TextKit 2 convenience initializer stays inherited).
+    func configureWashField() {
+        drawsBackground = false
+        isRichText = false
+        allowsUndo = true
+        isVerticallyResizable = true
+        isHorizontallyResizable = false
+        textContainer?.widthTracksTextView = true
+        textContainer?.lineFragmentPadding = 0
+        textContainerInset = .zero
+
+        placeholderLabel.isSelectable = false
+        addSubview(placeholderLabel)
+
+        ghostLabel.isSelectable = false
+        ghostLabel.setAccessibilityHidden(true)
+        addSubview(ghostLabel)
+    }
+
+    /// Recolor the current text: base ink everywhere, segment inks on their
+    /// runs. Font and layout NEVER change — color only — so this can run on
+    /// every update without disturbing typing or undo. Skipped mid-composition.
+    func applyInk(_ ink: NSColor, font: NSFont, segments: [TextWashSegment]) {
+        currentSegments = segments
+        let base: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: ink]
+        typingAttributes = base
+        guard !hasMarkedText(), let storage = textStorage, storage.length > 0 else { return }
+
+        let full = NSRange(location: 0, length: storage.length)
+        storage.beginEditing()
+        storage.setAttributes(base, range: full)
+        for segment in segments {
+            guard segment.utf16Range.lowerBound >= 0, segment.utf16Range.upperBound <= full.length else { continue }
+            storage.addAttribute(
+                .foregroundColor,
+                value: segment.ink,
+                range: NSRange(location: segment.utf16Range.lowerBound, length: segment.utf16Range.count)
+            )
+        }
+        storage.endEditing()
+        needsDisplay = true
+    }
+
+    func measuredTextHeight() -> CGFloat {
+        guard let textLayoutManager else { return 0 }
+        textLayoutManager.ensureLayout(for: textLayoutManager.documentRange)
+        return textLayoutManager.usageBoundsForTextContainer.height
+    }
+
+    override func layout() {
+        super.layout()
+        placeholderLabel.sizeToFit()
+        placeholderLabel.frame.origin = CGPoint(
+            x: textContainerOrigin.x,
+            y: textContainerOrigin.y
+        )
+        layoutGhost()
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        drawWashes()
+        super.draw(dirtyRect)
+    }
+
+    /// Wash rects come from the SAME TextKit 2 layout that draws the glyphs —
+    /// per line fragment, so a token that wraps gets one wash per line, each
+    /// exactly under its own glyphs.
+    private func drawWashes() {
+        guard !currentSegments.isEmpty,
+              let textLayoutManager,
+              let contentManager = textLayoutManager.textContentManager else { return }
+        textLayoutManager.ensureLayout(for: textLayoutManager.documentRange)
+
+        var washes: [(rect: CGRect, color: NSColor)] = []
+        let origin = textContainerOrigin
+
+        for segment in currentSegments {
+            guard segment.utf16Range.lowerBound >= 0,
+                  let start = contentManager.location(contentManager.documentRange.location, offsetBy: segment.utf16Range.lowerBound),
+                  let end = contentManager.location(contentManager.documentRange.location, offsetBy: segment.utf16Range.upperBound),
+                  let textRange = NSTextRange(location: start, end: end) else { continue }
+
+            // A whisper of a wash — the colored ink carries the token.
+            let wash = segment.ink.withAlphaComponent(0.10)
+            textLayoutManager.enumerateTextSegments(in: textRange, type: .highlight, options: []) { _, frame, _, _ in
+                let rect = frame.offsetBy(dx: origin.x, dy: origin.y)
+                    .insetBy(dx: Self.washInset.width, dy: Self.washInset.height)
+                if let last = washes.last, rect.minX - last.rect.maxX < Self.mergeGap,
+                   abs(rect.midY - last.rect.midY) < 1, last.color == wash {
+                    washes[washes.count - 1].rect = last.rect.union(rect)
+                } else {
+                    washes.append((rect, wash))
+                }
+                return true
+            }
+        }
+
+        for wash in washes {
+            wash.color.setFill()
+            NSBezierPath(
+                roundedRect: wash.rect,
+                xRadius: Self.washCornerRadius,
+                yRadius: Self.washCornerRadius
+            ).fill()
+        }
+    }
+
+    /// The ghost completion rides the caret rect at the end of the document,
+    /// so it always sits exactly after the last real glyph.
+    private func layoutGhost() {
+        guard let ghost, !string.isEmpty else {
+            ghostLabel.isHidden = true
+            return
+        }
+        ghostLabel.isHidden = false
+        ghostLabel.stringValue = ghost.text
+        ghostLabel.textColor = ghost.color
+        ghostLabel.font = font
+        ghostLabel.sizeToFit()
+
+        guard let textLayoutManager else { return }
+        textLayoutManager.ensureLayout(for: textLayoutManager.documentRange)
+        let endLocation = textLayoutManager.documentRange.endLocation
+        var caret = CGRect(origin: textContainerOrigin, size: .zero)
+        textLayoutManager.enumerateTextSegments(
+            in: NSTextRange(location: endLocation), type: .standard, options: [.rangeNotRequired]
+        ) { _, frame, _, _ in
+            caret = frame.offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
+            return false
+        }
+        ghostLabel.frame.origin = CGPoint(
+            x: caret.maxX,
+            y: caret.midY - ghostLabel.bounds.height / 2
+        )
+    }
+}

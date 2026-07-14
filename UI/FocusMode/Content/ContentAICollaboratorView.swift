@@ -409,7 +409,7 @@ struct ContentAICollaboratorView: View {
 
     private var inputBar: some View {
         HStack(spacing: 10) {
-            TextField("Ask about your content...", text: $inputText, axis: .vertical)
+            TextField("Ask about your content…", text: $inputText, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .foregroundStyle(DS.text)

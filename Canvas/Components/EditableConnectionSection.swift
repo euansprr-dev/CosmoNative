@@ -157,7 +157,7 @@ struct EditableConnectionSection: View {
                 HStack(spacing: 4) {
                     ProgressView()
                         .scaleEffect(0.5)
-                    Text("Saving...")
+                    Text("Saving…")
                         .font(CosmoTypography.caption)
                         .foregroundColor(CosmoColors.textTertiary)
                 }

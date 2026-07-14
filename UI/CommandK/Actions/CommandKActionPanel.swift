@@ -44,7 +44,7 @@ struct CommandKActionPanel: View {
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(DS.textMuted)
 
-            TextField("Search actions...", text: $searchQuery)
+            TextField("Search actions…", text: $searchQuery)
                 .textFieldStyle(.plain)
                 .font(.system(size: 14, weight: .regular))
                 .foregroundStyle(DS.text)

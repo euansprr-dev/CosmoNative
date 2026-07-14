@@ -64,7 +64,7 @@ enum CosmoInlineAssistantBarEscapePolicy {
 
 enum CosmoInlineAssistantBarProcessingPolicy {
     static func leadingText(isProcessing: Bool) -> String {
-        isProcessing ? "Working..." : ""
+        isProcessing ? "Working…" : ""
     }
 
     static func trailingText(statusText: String?, isProcessing: Bool) -> String? {
@@ -180,8 +180,10 @@ struct CosmoInlineAssistantBar: View {
                 if hovering {
                     isPinnedOpen = false
                     // Hover signals intent — write the prompt-cache prefix now so the
-                    // first real request streams from a warm cache.
+                    // first real request streams from a warm cache, and build the
+                    // @-menu's search index so the first mention query scans warm.
                     CosmoInlineAssistantCacheWarmer.warmIfNeeded()
+                    contextMenuModel.prewarmSearchIndex()
                 } else {
                     isHoverSuppressed = false
                     collapseIfIdle()
@@ -330,9 +332,6 @@ struct CosmoInlineAssistantBar: View {
                     onSubmit: submit,
                     onTextChange: {
                         syncComposerMenus(text: store.composerText)
-                    },
-                    onDismissMentionOverlayFromBackspace: {
-                        dismissInlineMenus(trimActiveQuery: false)
                     },
                     onTab: {
                         guard store.skillSuggestion != nil else { return false }

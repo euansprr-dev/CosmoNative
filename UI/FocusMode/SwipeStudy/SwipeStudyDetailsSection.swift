@@ -233,7 +233,7 @@ struct TaxonomySection: View {
     private var narrativeDropdownLabel: some View {
         let narrative = analysis?.primaryNarrative
         return taxonomyValuePill(
-            title: narrative?.displayName ?? "Select...",
+            title: narrative?.displayName ?? "Select…",
             color: narrative?.color ?? DS.textMuted,
             dotColor: narrative?.color,
             systemImage: narrative?.icon,
@@ -326,7 +326,7 @@ struct TaxonomySection: View {
     private var formatDropdownLabel: some View {
         let format = analysis?.swipeContentFormat
         return taxonomyValuePill(
-            title: format?.displayName ?? "Select...",
+            title: format?.displayName ?? "Select…",
             color: format?.color ?? DS.textMuted,
             dotColor: format?.color,
             systemImage: format?.icon,
@@ -439,7 +439,7 @@ struct TaxonomySection: View {
                 Image(systemName: "magnifyingglass")
                     .font(DS.caption2)
                     .foregroundStyle(DS.textMuted)
-                TextField("Search creators...", text: $creatorSearchText)
+                TextField("Search creators…", text: $creatorSearchText)
                     .textFieldStyle(.plain)
                     .font(DS.footnote)
                     .foregroundStyle(DS.text)

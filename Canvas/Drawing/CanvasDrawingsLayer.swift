@@ -1063,7 +1063,7 @@ struct DrawingTextEditor: View {
         ZStack(alignment: .leading) {
             // Custom placeholder that's always visible on any background
             if text.isEmpty {
-                Text("Type...")
+                Text("Type…")
                     .font(.system(size: fontSize, weight: textWeight.fontWeight))
                     .foregroundColor(DS.textMuted.opacity(0.6))
                     .allowsHitTesting(false)

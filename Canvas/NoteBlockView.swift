@@ -265,7 +265,7 @@ struct NoteBlockView: View {
                     fontSize: bodyFontSize,
                     fontDesign: noteDocumentStyle.fontFamily.design,
                     lineSpacingAdjustment: noteDocumentStyle.lineSpacing.lineSpacingDelta,
-                    placeholder: "Press / for commands...",
+                    placeholder: "Press / for commands…",
                     allowSlashCommands: true,
                     allowMentions: true,
                     allowSelectionMenu: true,
@@ -283,7 +283,7 @@ struct NoteBlockView: View {
         } else {
             ScrollView(.vertical, showsIndicators: false) {
                 if noteBodyDocument.isEmpty {
-                    Text("Press / for commands...")
+                    Text("Press / for commands…")
                         .font(.system(size: bodyFontSize))
                         .foregroundStyle(DS.documentTextMuted)
                         .frame(maxWidth: .infinity, alignment: .topLeading)

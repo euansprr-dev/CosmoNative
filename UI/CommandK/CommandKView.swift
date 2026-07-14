@@ -56,12 +56,32 @@ public struct CommandKView: View {
 
     // MARK: - Body
 
+    /// True while a result card is being dragged OUT of the palette (cursor
+    /// beyond the panel) — the overlay ghosts so the canvas underneath can
+    /// receive the drop. Dragging back over the panel restores it, keeping
+    /// in-palette drop targets (thinkspace filing) live.
+    private var isDragGhosted: Bool {
+        CommandKDragSession.shared.isActive && CommandKDragSession.shared.isPointerOutsidePalette
+    }
+
     public var body: some View {
         GeometryReader { geometry in
             ZStack {
                 backgroundLayer
+                    .opacity(isDragGhosted ? 0 : 1)
                 panelContainer(geometry: geometry)
+                    .opacity(isDragGhosted ? 0.12 : 1)
+                    .onGeometryChange(for: CGRect.self) { proxy in
+                        proxy.frame(in: .global)
+                    } action: { frame in
+                        CommandKDragSession.shared.paletteFrameInWindow = frame
+                    }
             }
+            // The ghosted overlay must not eat the drop or fire tap-to-close;
+            // this session-scoped gate lives INSIDE the ⌘K subtree — the
+            // ancestor gate in MainView (dead-clicks invariant) stays intact.
+            .allowsHitTesting(!isDragGhosted)
+            .animation(ProMotionSprings.snappy, value: isDragGhosted)
             .ignoresSafeArea()
             .onAppear {
                 searchText = viewModel.query
@@ -232,6 +252,7 @@ public struct CommandKView: View {
                 .buttonStyle(.plain)
                 .contentShape(Rectangle())
                 .zIndex(2)
+                .help("Back to all results (Esc)")
                 .accessibilityLabel("Back to Command K menu")
             }
 
@@ -268,9 +289,6 @@ public struct CommandKView: View {
 
             scopeMenu
 
-            // Voice button
-            voiceButton
-
             if !searchText.isEmpty {
                 clearQueryButton
             } else if viewModel.cortexMode == .compact {
@@ -305,7 +323,7 @@ public struct CommandKView: View {
                     .foregroundStyle(DS.textSecondary)
                     .contentTransition(.opacity)
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(DS.caption2.weight(.semibold))
                     .foregroundStyle(DS.textMuted)
             }
             .padding(.horizontal, DS.space10)
@@ -316,6 +334,7 @@ public struct CommandKView: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .animation(ProMotionSprings.snappy, value: scopeLabel)
+        .help("Scope the search (⇥ cycles scopes)")
         .accessibilityLabel("Search scope")
     }
 
@@ -341,22 +360,6 @@ public struct CommandKView: View {
             case .swipe: return .swipeGallery
             case .ideas: return .ideas
             case .library: return .readwise
-            }
-        }
-    }
-
-    // MARK: - Domain Bubbles (inline in search bar)
-
-    private var domainBubblesInline: some View {
-        HStack(spacing: DS.space6) {
-            ForEach(CommandKTab.allCases, id: \.rawValue) { tab in
-                CortexInlineBubble(
-                    tab: tab,
-                    count: viewModel.domainCounts[tab] ?? 0,
-                    namespace: cortexNamespace
-                ) {
-                    openExpandedDomain(tab)
-                }
             }
         }
     }
@@ -391,145 +394,6 @@ public struct CommandKView: View {
         return min(geometry.size.height * 0.62, 560)
     }
 
-    // MARK: - Compact Content
-
-    private var compactContent: some View {
-        VStack(spacing: 0) {
-            if !viewModel.recentItems.isEmpty {
-                recentsSection
-                    .padding(DS.space20)
-            }
-            keyboardHintBar
-                .padding(.horizontal, DS.space20)
-                .padding(.bottom, DS.space12)
-        }
-    }
-
-    private var keyboardHintBar: some View {
-        HStack(spacing: DS.space16) {
-            keyHint(keys: "↑↓", label: "Navigate")
-            keyHint(keys: "↵", label: "Open")
-            keyHint(keys: "⇥", label: "Scope")
-            keyHint(keys: "⎋", label: "Close")
-            Spacer()
-        }
-    }
-
-    private func keyHint(keys: String, label: String) -> some View {
-        HStack(spacing: DS.space4) {
-            Text(keys)
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .foregroundStyle(DS.textMuted)
-                .padding(.horizontal, 5)
-                .padding(.vertical, 2)
-                .background(DS.glassCardFill.opacity(0.5), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .stroke(DS.border.opacity(0.15), lineWidth: 0.5)
-                )
-            Text(label)
-                .font(DS.caption2)
-                .foregroundStyle(DS.textMuted)
-        }
-    }
-
-    private var recentsSection: some View {
-        VStack(alignment: .leading, spacing: DS.space12) {
-            Text("RECENTS")
-                .font(DS.caption)
-                .fontWeight(.medium)
-                .foregroundStyle(DS.textMuted)
-                .tracking(0.5)
-
-            LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 140, maximum: 220), spacing: DS.space12)],
-                spacing: DS.space12
-            ) {
-                ForEach(Array(viewModel.recentItems.enumerated()), id: \.element.id) { index, item in
-                    CortexRecentCard(item: item) {
-                        viewModel.openRecent(item)
-                    } onDelete: {
-                        viewModel.deleteRecent(item)
-                    }
-                    .transition(.opacity.combined(with: .offset(y: 6)))
-                    .animation(CommandKAnimationPolicy.entranceAnimation(index: index), value: viewModel.recentItems.count)
-                }
-            }
-        }
-    }
-
-    // MARK: - Expanded Domain Content
-
-    @ViewBuilder
-    private func expandedDomainContent(_ tab: CommandKTab) -> some View {
-        CortexExpandedDomainShell(
-            tab: tab,
-            count: viewModel.domainCounts[tab] ?? 0,
-            preview: viewModel.headerPreviews[tab] ?? CommandKHeaderPreviewComposer.fallback(for: tab),
-            namespace: cortexNamespace
-        ) {
-            if isExpandedBrowserMounted {
-                expandedBrowser(for: tab)
-                    .transition(.opacity.animation(.easeOut(duration: 0.10)))
-            } else {
-                CortexExpandedDomainTransitionBody(tab: tab)
-                    .transition(.opacity.animation(.easeOut(duration: 0.08)))
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func expandedBrowser(for tab: CommandKTab) -> some View {
-        switch tab {
-        case .database:
-            CortexDatabaseBrowser(viewModel: viewModel)
-        case .swipeGallery:
-            CortexSwipeBrowser(viewModel: viewModel)
-        case .ideas:
-            CortexIdeasBrowser(viewModel: viewModel)
-        case .readwise:
-            CortexReadwiseBrowser(viewModel: viewModel)
-        case .inquiry:
-            CortexInquiryBrowser(viewModel: viewModel)
-        }
-    }
-
-    // MARK: - Expanded Tab Chip
-
-    private func expandedTabChip(_ tab: CommandKTab) -> some View {
-        HStack(spacing: DS.space4) {
-            Image(systemName: tab.icon)
-                .font(DS.caption2)
-            Text(tab.title)
-                .font(DS.caption)
-        }
-        .foregroundStyle(tab.accentColor)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(tab.accentColor.opacity(0.12), in: Capsule())
-    }
-
-    // MARK: - Voice Button
-
-    private var voiceButton: some View {
-        Button {
-            viewModel.isVoiceActive.toggle()
-        } label: {
-            Image(systemName: viewModel.isVoiceActive ? "mic.fill" : "mic")
-                .font(DS.callout)
-                .foregroundStyle(viewModel.isVoiceActive ? DS.accent : DS.textSecondary)
-                .frame(width: 28, height: 28)
-                .glassEffect(
-                    viewModel.isVoiceActive
-                        ? .regular.tint(DS.accent.opacity(0.15)).interactive()
-                        : .regular.interactive(),
-                    in: .circle
-                )
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Voice input")
-    }
-
     private var clearQueryButton: some View {
         Button {
             withAnimation(ProMotionSprings.snappy) {
@@ -542,11 +406,12 @@ public struct CommandKView: View {
                 .frame(width: 28, height: 28)
         }
         .buttonStyle(.plain)
+        .help("Clear the search")
         .accessibilityLabel("Clear search")
     }
 
     private var commandKeyBadge: some View {
-        Text("⌘ K")
+        Text("⌘K")
             .font(.system(size: 14, weight: .medium, design: .rounded))
             .foregroundStyle(DS.textSecondary)
             .padding(.horizontal, DS.space10)
@@ -585,9 +450,10 @@ public struct CommandKView: View {
             return min(CommandKMetrics.compactWidth, availableWidth)
         case .searchResults:
             return min(CommandKMetrics.searchWidth, availableWidth)
-        case .expandedDomain(let tab):
-            let targetWidth: CGFloat = tab == .ideas ? 1120 : CommandKMetrics.expandedWidth
-            return min(targetWidth, availableWidth)
+        case .expandedDomain:
+            // Ideas lost its extra-wide board panel when the browse moved to
+            // the Ideas surface — every domain shares the one expanded width.
+            return min(CommandKMetrics.expandedWidth, availableWidth)
         }
     }
 
@@ -614,7 +480,7 @@ public struct CommandKView: View {
         if case .expandedDomain(let tab) = viewModel.cortexMode {
             return tab.searchPlaceholder
         }
-        return "Search your mind..."
+        return "Search your mind…"
     }
 
     private func entityColor(_ type: AtomType) -> Color {
@@ -631,13 +497,13 @@ public struct CommandKView: View {
 
     private func iconForType(_ type: AtomType) -> String {
         switch type {
-        case .idea: return "lightbulb.fill"
-        case .task: return "checkmark.circle.fill"
-        case .research: return "book.fill"
-        case .content: return "doc.text.fill"
-        case .connection: return "doc.fill"
-        case .project: return "folder.fill"
-        default: return "circle.fill"
+        case .idea: return "lightbulb"
+        case .task: return "checkmark.circle"
+        case .research: return "book"
+        case .content: return "paperplane"
+        case .connection: return "point.3.connected.trianglepath.dotted"
+        case .project: return "folder"
+        default: return "circle"
         }
     }
 
@@ -674,10 +540,17 @@ public struct CommandKView: View {
     }
 
     private func handleCommandReturn(_ press: KeyPress) -> KeyPress.Result {
-        guard press.key == .return, press.modifiers.contains(.command) else { return .ignored }
+        guard press.key == .return else { return .ignored }
         guard !viewModel.isActionPanelPresented else { return .ignored }
-        openSelectedAsPaneFromShortcut()
-        return .handled
+        if press.modifiers.contains(.command) {
+            openSelectedAsPaneFromShortcut()
+            return .handled
+        }
+        if press.modifiers.contains(.option) {
+            viewModel.placeSelectedOnCanvas()
+            return .handled
+        }
+        return .ignored
     }
 
     private func submitSearchField() {
@@ -687,6 +560,8 @@ public struct CommandKView: View {
         let modifiers = NSEvent.modifierFlags.intersection(.deviceIndependentFlagsMask)
         if modifiers.contains(.command) {
             openSelectedAsPaneFromShortcut()
+        } else if modifiers.contains(.option) {
+            viewModel.placeSelectedOnCanvas()
         } else {
             viewModel.openSelected()
         }
@@ -794,721 +669,6 @@ public struct CommandKView: View {
                   hydratedTab == tab else { return }
             viewModel.ensureExpandedDomainDataLoaded(tab)
         }
-    }
-}
-
-// MARK: - Expanded Domain Shell
-
-private struct CortexExpandedDomainTransitionBody: View {
-    let tab: CommandKTab
-
-    var body: some View {
-        ZStack {
-            tab.accentColor.opacity(0.045)
-            VStack(spacing: DS.space10) {
-                RoundedRectangle(cornerRadius: 3, style: .continuous)
-                    .fill(tab.accentColor.opacity(0.20))
-                    .frame(width: 96, height: 6)
-                RoundedRectangle(cornerRadius: 3, style: .continuous)
-                    .fill(DS.textMuted.opacity(0.12))
-                    .frame(width: 156, height: 6)
-            }
-            .opacity(0.55)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .allowsHitTesting(false)
-    }
-}
-
-private struct CortexExpandedDomainShell<Content: View>: View {
-    let tab: CommandKTab
-    let count: Int
-    let preview: CommandKHeaderPreviewContent
-    let namespace: Namespace.ID
-    let content: () -> Content
-
-    init(
-        tab: CommandKTab,
-        count: Int,
-        preview: CommandKHeaderPreviewContent,
-        namespace: Namespace.ID,
-        @ViewBuilder content: @escaping () -> Content
-    ) {
-        self.tab = tab
-        self.count = count
-        self.preview = preview
-        self.namespace = namespace
-        self.content = content
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            header
-            content()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(bodyBackground)
-        }
-        .clipShape(.rect(cornerRadius: CommandKMetrics.overlayCornerRadius))
-        .matchedGeometryEffect(id: "domain-card-\(tab.rawValue)", in: namespace)
-    }
-
-    private var header: some View {
-        ZStack {
-            CommandKHeaderScene(tab: tab, preview: preview)
-            headerLegibilityScrim
-            if tab == .database {
-                databaseHeaderContent
-            } else {
-                headerContent
-            }
-        }
-        .frame(height: headerHeight)
-        .clipped()
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(Color.white.opacity(0.22))
-                .frame(height: 0.5)
-        }
-    }
-
-    private var headerHeight: CGFloat {
-        switch tab {
-        case .ideas: return 164
-        default: return 156
-        }
-    }
-
-    private var headerLegibilityScrim: some View {
-        ZStack {
-            LinearGradient(
-                colors: [
-                    Color.black.opacity(0.10),
-                    Color.black.opacity(0.00),
-                    Color.black.opacity(0.00),
-                ],
-                startPoint: .leading,
-                endPoint: .trailing
-            )
-            LinearGradient(
-                colors: [
-                    Color.black.opacity(0.00),
-                    Color.black.opacity(tab == .ideas ? 0.12 : 0.08),
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        }
-        .allowsHitTesting(false)
-    }
-
-    private var headerContent: some View {
-        HStack(alignment: .top) {
-            titleBlock
-                .padding(.leading, titleLeadingPadding)
-                .padding(.top, titleTopPadding)
-
-            Spacer()
-        }
-        .allowsHitTesting(false)
-    }
-
-    private var databaseHeaderContent: some View {
-        VStack(alignment: .leading, spacing: DS.space16) {
-            titleBlock
-            databaseHeaderChips
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .padding(.leading, CommandKMetrics.mastheadTitleLeadingWide)
-        .padding(.top, CommandKMetrics.mastheadDatabaseTitleTop)
-        .allowsHitTesting(false)
-    }
-
-    private var titleBlock: some View {
-        HStack(alignment: .top, spacing: DS.space12) {
-            if let icon = titleIconName {
-                Image(systemName: icon)
-                    .font(.system(size: 26, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.95))
-                    .frame(width: 30, height: 34)
-                    .accessibilityHidden(true)
-            }
-
-            VStack(alignment: .leading, spacing: DS.space8) {
-                Text(tab.title)
-                    .font(.system(size: 29, weight: .semibold))
-                    .foregroundStyle(.white)
-
-                Text("\(count.formatted(.number)) items")
-                    .font(.system(size: 17, weight: .regular))
-                    .foregroundStyle(.white.opacity(0.84))
-            }
-        }
-        .shadow(color: Color.black.opacity(0.16), radius: 10, x: 0, y: 3)
-    }
-
-    private var titleIconName: String? {
-        switch tab {
-        case .swipeGallery, .readwise: return "folder.fill"
-        default: return nil
-        }
-    }
-
-    private var titleLeadingPadding: CGFloat {
-        switch tab {
-        case .database, .ideas: return CommandKMetrics.mastheadTitleLeadingWide
-        default: return CommandKMetrics.mastheadTitleLeadingTight
-        }
-    }
-
-    private var titleTopPadding: CGFloat {
-        switch tab {
-        case .ideas: return CommandKMetrics.mastheadTitleTopIdeas
-        default: return CommandKMetrics.mastheadTitleTopDefault
-        }
-    }
-
-    private var databaseHeaderChips: some View {
-        HStack(spacing: DS.space8) {
-            shellChip("All Objects", icon: "square.grid.2x2", isActive: true)
-            shellChip("Recent", icon: "clock", isActive: false)
-        }
-    }
-
-    private var bodyBackground: some View {
-        Group {
-            if tab == .swipeGallery && DS.palette.isDark {
-                LinearGradient(
-                    colors: DS.mastheadSwipeBodyDark,
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            } else if tab == .swipeGallery {
-                LinearGradient(
-                    colors: [DS.vellum.opacity(0.96), DS.vellumDeep.opacity(0.82)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            } else {
-                DS.glassCardFill.opacity(0.12)
-            }
-        }
-    }
-
-    private func shellChip(_ title: String, icon: String, isActive: Bool) -> some View {
-        HStack(spacing: DS.space8) {
-            Image(systemName: icon)
-                .font(.system(size: 13, weight: .semibold))
-                .accessibilityHidden(true)
-            Text(title)
-                .font(.system(size: 14, weight: .medium))
-        }
-        .foregroundStyle(isActive ? DS.mastheadChipText : Color.white.opacity(0.9))
-        .padding(.horizontal, 14)
-        .frame(height: 34)
-        .background(
-            Capsule()
-                .fill(isActive ? Color.white.opacity(0.88) : Color.white.opacity(0.16))
-        )
-        .overlay(
-            Capsule()
-                .stroke(Color.white.opacity(isActive ? 0.55 : 0.20), lineWidth: 0.5)
-        )
-    }
-}
-
-private struct CommandKHeaderScene: View {
-    let tab: CommandKTab
-    let preview: CommandKHeaderPreviewContent
-
-    private var palette: CommandKHeaderMastheadPalette {
-        CommandKHeaderMastheadPalette.palette(for: tab)
-    }
-
-    var body: some View {
-        GeometryReader { proxy in
-            ZStack {
-                CommandKHeaderMastheadBackground(palette: palette)
-
-                Rectangle()
-                    .fill(Color.black.opacity(0.16))
-                    .frame(width: proxy.size.width * 0.32)
-                    .frame(maxHeight: .infinity)
-                    .position(x: proxy.size.width * 0.16, y: proxy.size.height / 2)
-
-                CommandKHeaderContentPreview(preview: preview, palette: palette)
-                    .frame(width: min(proxy.size.width * 0.54, 570), height: proxy.size.height * 0.70)
-                    .position(x: proxy.size.width * 0.69, y: proxy.size.height * 0.52)
-            }
-            .clipped()
-        }
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
-    }
-}
-
-private typealias CommandKHeaderMastheadPalette = DS.MastheadScenePalette
-
-extension DS.MastheadScenePalette {
-    static func palette(for tab: CommandKTab) -> DS.MastheadScenePalette {
-        switch tab {
-        case .database, .inquiry: return DS.mastheadDatabaseScene
-        case .swipeGallery: return DS.mastheadSwipeScene
-        case .ideas: return DS.mastheadIdeasScene
-        case .readwise: return DS.mastheadLibraryScene
-        }
-    }
-}
-
-private struct CommandKHeaderMastheadBackground: View {
-    let palette: CommandKHeaderMastheadPalette
-
-    var body: some View {
-        GeometryReader { proxy in
-            ZStack {
-                LinearGradient(
-                    colors: palette.background,
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-
-                RadialGradient(
-                    colors: [palette.accent.opacity(0.20), .clear],
-                    center: .center,
-                    startRadius: 12,
-                    endRadius: proxy.size.width * 0.44
-                )
-                .frame(width: proxy.size.width * 0.70, height: proxy.size.height * 1.65)
-                .position(x: proxy.size.width * 0.69, y: proxy.size.height * 0.36)
-                .blendMode(.screen)
-
-                CommandKHeaderRuledTexture(color: palette.line)
-            }
-        }
-    }
-}
-
-private struct CommandKHeaderRuledTexture: View {
-    let color: Color
-
-    var body: some View {
-        GeometryReader { proxy in
-            ForEach(0..<7, id: \.self) { index in
-                Rectangle()
-                    .fill(color.opacity(index == 0 ? 0.06 : 0.035))
-                    .frame(height: 0.6)
-                    .position(
-                        x: proxy.size.width / 2,
-                        y: proxy.size.height * CGFloat(index + 1) / 8
-                    )
-            }
-        }
-    }
-}
-
-private struct CommandKHeaderContentPreview: View {
-    let preview: CommandKHeaderPreviewContent
-    let palette: CommandKHeaderMastheadPalette
-
-    var body: some View {
-        Group {
-            switch preview.signal {
-            case .objectIndex:
-                CommandKHeaderObjectIndex(preview: preview, palette: palette)
-            case .swipeThumbnails:
-                CommandKHeaderVisualStrip(preview: preview, palette: palette, tileStyle: .swipe)
-            case .ideaSnippets:
-                CommandKHeaderIdeaSnippetStrip(preview: preview, palette: palette)
-            case .libraryCovers:
-                CommandKHeaderVisualStrip(preview: preview, palette: palette, tileStyle: .cover)
-            }
-        }
-    }
-}
-
-private struct CommandKHeaderObjectIndex: View {
-    let preview: CommandKHeaderPreviewContent
-    let palette: CommandKHeaderMastheadPalette
-
-    var body: some View {
-        VStack(spacing: 7) {
-            if preview.items.isEmpty {
-                CommandKHeaderSkeletonRows(palette: palette)
-            } else {
-                ForEach(preview.items.prefix(3)) { item in
-                    CommandKHeaderObjectRow(item: item, palette: palette)
-                }
-            }
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(contentPanel)
-    }
-
-    private var contentPanel: some View {
-        RoundedRectangle(cornerRadius: 18, style: .continuous)
-            .fill(Color.black.opacity(0.10))
-            .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(Color.white.opacity(0.08), lineWidth: 0.6)
-            )
-    }
-}
-
-private struct CommandKHeaderObjectRow: View {
-    let item: CommandKHeaderPreviewItem
-    let palette: CommandKHeaderMastheadPalette
-
-    var body: some View {
-        HStack(spacing: 10) {
-            CommandKHeaderGlyph(systemImage: item.systemImage, palette: palette)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(item.title)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(palette.text.opacity(0.95))
-                    .lineLimit(1)
-
-                Text([item.subtitle, item.detail].compactMap { $0 }.joined(separator: " / "))
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(palette.text.opacity(0.58))
-                    .lineLimit(1)
-            }
-
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 10)
-        .frame(height: 30)
-        .background(Color.white.opacity(0.075), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-    }
-}
-
-private enum CommandKHeaderVisualTileStyle {
-    case swipe
-    case cover
-}
-
-private struct CommandKHeaderVisualStrip: View {
-    let preview: CommandKHeaderPreviewContent
-    let palette: CommandKHeaderMastheadPalette
-    let tileStyle: CommandKHeaderVisualTileStyle
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 10) {
-            if preview.items.isEmpty {
-                ForEach(0..<5, id: \.self) { _ in
-                    CommandKHeaderSkeletonTile(palette: palette, tileStyle: tileStyle)
-                }
-            } else {
-                ForEach(preview.items.prefix(5)) { item in
-                    CommandKHeaderVisualTile(item: item, palette: palette, tileStyle: tileStyle)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .overlay(alignment: .topTrailing) {
-            CommandKHeaderMetricStack(metrics: preview.metrics, palette: palette)
-                .offset(x: 4, y: -6)
-        }
-    }
-}
-
-private struct CommandKHeaderVisualTile: View {
-    let item: CommandKHeaderPreviewItem
-    let palette: CommandKHeaderMastheadPalette
-    let tileStyle: CommandKHeaderVisualTileStyle
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            CommandKHeaderThumbnail(
-                urlString: item.thumbnailURL,
-                systemImage: item.systemImage,
-                palette: palette
-            )
-            .frame(width: tileWidth, height: imageHeight)
-
-            Text(item.title)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(palette.text.opacity(0.84))
-                .lineLimit(2)
-                .frame(width: tileWidth, alignment: .leading)
-        }
-        .frame(width: tileWidth, height: tileHeight, alignment: .top)
-    }
-
-    private var tileWidth: CGFloat {
-        switch tileStyle {
-        case .swipe: return 94
-        case .cover: return 64
-        }
-    }
-
-    private var imageHeight: CGFloat {
-        switch tileStyle {
-        case .swipe: return 58
-        case .cover: return 82
-        }
-    }
-
-    private var tileHeight: CGFloat {
-        switch tileStyle {
-        case .swipe: return 92
-        case .cover: return 116
-        }
-    }
-}
-
-private struct CommandKHeaderThumbnail: View {
-    let urlString: String?
-    let systemImage: String
-    let palette: CommandKHeaderMastheadPalette
-
-    var body: some View {
-        Group {
-            if let urlString, let url = URL(string: urlString) {
-                CachedAsyncImage(url: url, stableKey: urlString) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .scaledToFill()
-                    case .empty, .failure:
-                        thumbnailPlaceholder
-                    }
-                }
-            } else {
-                thumbnailPlaceholder
-            }
-        }
-        .clipShape(.rect(cornerRadius: 9))
-        .overlay(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .stroke(Color.white.opacity(0.18), lineWidth: 0.7)
-        )
-        .shadow(color: Color.black.opacity(0.18), radius: 10, x: 0, y: 5)
-    }
-
-    private var thumbnailPlaceholder: some View {
-        ZStack {
-            LinearGradient(
-                colors: [palette.cardFill.opacity(0.34), Color.white.opacity(0.08)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-
-            Image(systemName: systemImage)
-                .font(.system(size: 17, weight: .medium))
-                .foregroundStyle(palette.text.opacity(0.62))
-        }
-    }
-}
-
-private struct CommandKHeaderIdeaSnippetStrip: View {
-    let preview: CommandKHeaderPreviewContent
-    let palette: CommandKHeaderMastheadPalette
-
-    var body: some View {
-        LazyVGrid(
-            columns: [
-                GridItem(.flexible(), spacing: 8),
-                GridItem(.flexible(), spacing: 8)
-            ],
-            spacing: 8
-        ) {
-            if preview.items.isEmpty {
-                ForEach(0..<4, id: \.self) { _ in
-                    CommandKHeaderSkeletonIdea(palette: palette)
-                }
-            } else {
-                ForEach(preview.items.prefix(4)) { item in
-                    CommandKHeaderIdeaSnippet(item: item, palette: palette)
-                }
-            }
-        }
-        .overlay(alignment: .topTrailing) {
-            CommandKHeaderMetricStack(metrics: preview.metrics, palette: palette)
-                .offset(x: 6, y: -8)
-        }
-    }
-}
-
-private struct CommandKHeaderIdeaSnippet: View {
-    let item: CommandKHeaderPreviewItem
-    let palette: CommandKHeaderMastheadPalette
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(item.subtitle ?? "Idea")
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(palette.accent.opacity(0.82))
-                .lineLimit(1)
-
-            Text(item.title)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(palette.text.opacity(0.95))
-                .lineLimit(2)
-        }
-        .padding(10)
-        .frame(height: 58, alignment: .topLeading)
-        .frame(maxWidth: .infinity)
-        .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color.white.opacity(0.10), lineWidth: 0.6)
-        )
-    }
-}
-
-private struct CommandKHeaderMetricStack: View {
-    let metrics: [CommandKHeaderPreviewMetric]
-    let palette: CommandKHeaderMastheadPalette
-
-    var body: some View {
-        HStack(spacing: 6) {
-            ForEach(metrics.prefix(2)) { metric in
-                Text(metric.value)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(palette.text.opacity(0.86))
-                    .padding(.horizontal, 8)
-                    .frame(height: 24)
-                    .background(Color.black.opacity(0.14), in: Capsule())
-                    .overlay(Capsule().stroke(Color.white.opacity(0.08), lineWidth: 0.5))
-            }
-        }
-    }
-}
-
-private struct CommandKHeaderGlyph: View {
-    let systemImage: String
-    let palette: CommandKHeaderMastheadPalette
-
-    var body: some View {
-        Image(systemName: systemImage)
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(palette.accent.opacity(0.86))
-            .frame(width: 22, height: 22)
-            .background(Color.white.opacity(0.09), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-    }
-}
-
-private struct CommandKHeaderSkeletonRows: View {
-    let palette: CommandKHeaderMastheadPalette
-
-    var body: some View {
-        VStack(spacing: 7) {
-            ForEach(0..<3, id: \.self) { index in
-                HStack(spacing: 10) {
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(Color.white.opacity(0.10))
-                        .frame(width: 22, height: 22)
-
-                    VStack(alignment: .leading, spacing: 5) {
-                        RoundedRectangle(cornerRadius: 2, style: .continuous)
-                            .fill(palette.text.opacity(0.30))
-                            .frame(width: CGFloat(124 - index * 18), height: 4)
-                        RoundedRectangle(cornerRadius: 2, style: .continuous)
-                            .fill(palette.text.opacity(0.18))
-                            .frame(width: CGFloat(82 - index * 8), height: 3)
-                    }
-
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, 10)
-                .frame(height: 30)
-                .background(Color.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            }
-        }
-    }
-}
-
-private struct CommandKHeaderSkeletonTile: View {
-    let palette: CommandKHeaderMastheadPalette
-    let tileStyle: CommandKHeaderVisualTileStyle
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(Color.white.opacity(0.10))
-                .frame(width: tileWidth, height: imageHeight)
-
-            RoundedRectangle(cornerRadius: 2, style: .continuous)
-                .fill(palette.text.opacity(0.22))
-                .frame(width: tileWidth * 0.74, height: 4)
-        }
-    }
-
-    private var tileWidth: CGFloat { tileStyle == .cover ? 64 : 94 }
-    private var imageHeight: CGFloat { tileStyle == .cover ? 82 : 58 }
-}
-
-private struct CommandKHeaderSkeletonIdea: View {
-    let palette: CommandKHeaderMastheadPalette
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            RoundedRectangle(cornerRadius: 2, style: .continuous)
-                .fill(palette.accent.opacity(0.32))
-                .frame(width: 42, height: 4)
-
-            RoundedRectangle(cornerRadius: 2, style: .continuous)
-                .fill(palette.text.opacity(0.24))
-                .frame(width: 126, height: 5)
-            RoundedRectangle(cornerRadius: 2, style: .continuous)
-                .fill(palette.text.opacity(0.16))
-                .frame(width: 96, height: 5)
-        }
-        .padding(10)
-        .frame(height: 58, alignment: .topLeading)
-        .frame(maxWidth: .infinity)
-        .background(Color.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-    }
-}
-
-// MARK: - Inline Bubble (inside search bar)
-
-/// Small circular bubble shown inline in the search bar (compact mode).
-/// Tapping expands to full domain view.
-private struct CortexInlineBubble: View {
-    let tab: CommandKTab
-    let count: Int
-    let namespace: Namespace.ID
-    let action: () -> Void
-
-    @State private var isHovered = false
-
-    var body: some View {
-        Button(action: action) {
-            ZStack {
-                Circle()
-                    .fill(isHovered ? tab.accentColor.opacity(0.18) : tab.accentColor.opacity(0.08))
-
-                Circle()
-                    .stroke(isHovered ? tab.accentColor.opacity(0.35) : DS.border.opacity(0.2), lineWidth: 0.5)
-
-                Image(systemName: tab.icon)
-                    .font(DS.caption)
-                    .foregroundStyle(tab.accentColor)
-            }
-            .frame(width: 32, height: 32)
-            .contentShape(Circle())
-            .matchedGeometryEffect(id: "cortexDomain-\(tab.rawValue)", in: namespace)
-            .overlay(alignment: .top) {
-                // Count badge on hover
-                if isHovered && count > 0 {
-                    Text("\(count)")
-                        .font(DS.caption2)
-                        .foregroundStyle(tab.accentColor)
-                        .padding(.horizontal, DS.space4)
-                        .padding(.vertical, 1)
-                        .background(tab.accentColor.opacity(0.15), in: Capsule())
-                        .offset(y: -14)
-                        .transition(.opacity.combined(with: .offset(y: 4)))
-                }
-            }
-        }
-        .buttonStyle(.borderless)
-        .onHover { isHovered = $0 }
-        .animation(ProMotionSprings.hover, value: isHovered)
-        .accessibilityLabel("\(tab.title), \(count) items")
     }
 }
 

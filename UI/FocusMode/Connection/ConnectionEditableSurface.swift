@@ -180,7 +180,73 @@ enum ConnectionSurfaceSerializer {
         if let finished = current?.trimmingCharacters(in: .whitespacesAndNewlines), !finished.isEmpty {
             items.append(finished)
         }
-        return items
+        // AI-staged bullets must never carry em dashes — the user wants commas /
+        // periods / semicolons instead. This is the choke point for every
+        // propose_workspace_edit insertion (preview AND apply); manual quick-add
+        // typing bypasses parseItems, so the user's own dashes are untouched.
+        return items.map(removeEmDashes)
+    }
+
+    /// Replaces em dashes (and the spaced en dash used as one) with a comma, so
+    /// AI-authored concept text reads in plain punctuation. Leaves tight en
+    /// dashes (numeric ranges like "3–5") alone.
+    static func removeEmDashes(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: " — ", with: ", ")
+            .replacingOccurrences(of: " – ", with: ", ")
+            .replacingOccurrences(of: "—", with: ", ")
+    }
+
+    // MARK: - Pending-insert resolution (read-only twin of apply)
+
+    /// Resolves a staged insertion operation to the section it targets and the
+    /// bullet strings it would add — the read-only twin of
+    /// `ConnectionContextProvider.applyInsertion`, used to render pending
+    /// inserts inside the board/outline section (ghost rows) instead of the
+    /// full-screen text diff. Uses the exact same anchor logic as apply, so the
+    /// preview and the eventual accept can never disagree about the target.
+    /// Returns nil for operations that don't cleanly target one section
+    /// (replacements, format marks, multi-section text, unlocatable anchors).
+    static func pendingInsert(
+        for operation: CosmoAssistantProposalOperation,
+        in model: ConnectionSurfaceModel
+    ) -> (section: ConnectionSectionType, bullets: [String])? {
+        guard operation.kind == .textInsertion,
+              let proposed = operation.proposedText,
+              !proposed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        guard let type = targetSection(for: operation, in: model),
+              let bullets = parseItems(from: proposed, targetSection: type),
+              !bullets.isEmpty else {
+            return nil
+        }
+        return (type, bullets)
+    }
+
+    /// The section an operation anchors to: prefer the verbatim `originalText`
+    /// (matched against the live surface), then the structured
+    /// `anchorID` ("section:<rawValue>"). Mirrors `locateAnchorLine`.
+    static func targetSection(
+        for operation: CosmoAssistantProposalOperation,
+        in model: ConnectionSurfaceModel
+    ) -> ConnectionSectionType? {
+        let anchorText = operation.originalText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !anchorText.isEmpty,
+           let range = CosmoInlineDiffLocator.range(of: anchorText, in: model.text),
+           let line = model.line(at: range.upperBound) {
+            switch line.kind {
+            case .header(let type), .empty(let type),
+                 .item(let type, _), .itemContinuation(let type, _):
+                return type
+            case .title, .meta, .blank:
+                return nil
+            }
+        }
+        if let anchorID = operation.anchorID, anchorID.hasPrefix("section:") {
+            return ConnectionSectionType(rawValue: String(anchorID.dropFirst("section:".count)))
+        }
+        return nil
     }
 }
 

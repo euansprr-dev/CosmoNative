@@ -155,22 +155,10 @@ struct SwipeHomePage: View {
 
     private var masthead: some View {
         HStack(alignment: .top, spacing: DS.space12) {
-            SwipeMasthead(title: "Swipe File", detail: mastheadDetail)
+            SwipeMasthead(title: "Swipe File")
             Spacer(minLength: DS.space16)
             SwipeLibrarySearchField(text: $viewModel.query, isFocused: $searchFocused)
         }
-    }
-
-    private var mastheadDetail: String {
-        var parts = ["\(viewModel.summary.totalCount) saved"]
-        let weekCount = SwipeLibraryDateBucket.lastWeekModels(
-            items: viewModel.visibleItems,
-            models: viewModel.visibleCardModels
-        ).count
-        if weekCount > 0 {
-            parts.append("\(weekCount) new this week")
-        }
-        return parts.joined(separator: " · ")
     }
 
     private var contextPill: some View {
@@ -605,16 +593,29 @@ private struct SwipeHomeBoardTile: View {
 
     @State private var isHovered = false
 
+    /// Board identity, the App Store register: a typed emoji wins (and
+    /// cleans the label); boards have no hand-picked mark, so the curated
+    /// keyword pass runs too. SF glyph only as the last honest fallback.
+    private var identity: (emoji: String?, label: String) {
+        CollectionEmoji.resolve(name: board.name)
+    }
+
     var body: some View {
         Button(action: onOpen) {
             VStack(alignment: .leading, spacing: 8) {
                 SwipeBoardMosaic(coverItems: coverItems, icon: board.icon, height: 116)
                 HStack(spacing: 6) {
-                    Image(systemName: board.icon)
-                        .font(DS.caption.weight(.semibold))
-                        .foregroundStyle(DS.textMuted)
-                        .accessibilityHidden(true)
-                    Text(board.name)
+                    if let emoji = identity.emoji {
+                        Text(emoji)
+                            .font(DS.caption)
+                            .accessibilityHidden(true)
+                    } else {
+                        Image(systemName: board.icon)
+                            .font(DS.caption.weight(.semibold))
+                            .foregroundStyle(DS.textMuted)
+                            .accessibilityHidden(true)
+                    }
+                    Text(identity.label)
                         .font(DS.callout.weight(.semibold))
                         .foregroundStyle(DS.text)
                         .lineLimit(1)
@@ -633,7 +634,7 @@ private struct SwipeHomeBoardTile: View {
         .animation(ProMotionSprings.hover, value: isHovered)
         .onHover { isHovered = $0 }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(board.name), \(count) swipes")
+        .accessibilityLabel("\(identity.label), \(count) swipes")
         .accessibilityAddTraits(.isButton)
     }
 }

@@ -288,11 +288,13 @@ struct AtelierSheetHeader: View {
 
 extension View {
     /// Fade + 8pt rise with a delay. Applied to each manuscript section so the
-    /// page settles from top to bottom on open.
-    func atelierStaggerIn(delay: Double, appeared: Bool) -> some View {
+    /// page settles from top to bottom on open. The content the user came to
+    /// read must lead the settle (near-zero delay, quick duration) — only
+    /// ornaments earn a longer stagger.
+    func atelierStaggerIn(delay: Double, appeared: Bool, duration: Double = 0.55) -> some View {
         self
             .opacity(appeared ? 1 : 0)
             .offset(y: appeared ? 0 : 8)
-            .animation(.easeOut(duration: 0.55).delay(delay), value: appeared)
+            .animation(.easeOut(duration: duration).delay(delay), value: appeared)
     }
 }

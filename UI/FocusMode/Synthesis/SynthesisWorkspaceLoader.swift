@@ -17,7 +17,7 @@ struct SynthesisWorkspaceLoader: View {
             if isLoading {
                 ZStack {
                     DS.bg.ignoresSafeArea()
-                    ProgressView("Loading sources...")
+                    ProgressView("Loading sources…")
                         .foregroundColor(DS.textSecondary)
                 }
             } else {

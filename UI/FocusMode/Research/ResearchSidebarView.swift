@@ -146,7 +146,7 @@ struct ResearchSidebarView: View {
     @ViewBuilder
     private var relatedKnowledgeSection: some View {
         if isLoadingRelated {
-            loadingIndicator("Searching knowledge graph...")
+            loadingIndicator("Searching knowledge graph…")
         } else if relatedItems.isEmpty {
             emptyState(
                 icon: "magnifyingglass",
@@ -262,7 +262,7 @@ struct ResearchSidebarView: View {
         }
 
         if isExtractingInsights {
-            loadingIndicator("Extracting insights...")
+            loadingIndicator("Extracting insights…")
         }
     }
 
@@ -420,7 +420,7 @@ struct ResearchSidebarView: View {
     @ViewBuilder
     private var aiAnalysisSection: some View {
         if isAnalyzing {
-            loadingIndicator("Analyzing research...")
+            loadingIndicator("Analyzing research…")
         } else if let analysis = analysis {
             aiAnalysisContent(analysis)
         } else {

@@ -37,8 +37,9 @@ class CrossThinkspaceDragManager: ObservableObject {
     // Sidebar row frames (window coordinates) — set via preference key
     var thinkspaceRowFrames: [String: CGRect] = [:]
 
-    // Sidebar width for hit testing
-    var sidebarWidth: CGFloat = UnifiedSidebarMetrics.defaultExpandedWidth
+    // Sidebar width for hit testing — published so page-like canvas modes
+    // (the thinkspace Library) can yield to the floating sidebar reactively.
+    @Published var sidebarWidth: CGFloat = UnifiedSidebarMetrics.defaultExpandedWidth
 
     /// Total sidebar footprint including floating margins
     var sidebarTotalWidth: CGFloat {

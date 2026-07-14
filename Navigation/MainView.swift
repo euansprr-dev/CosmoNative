@@ -158,6 +158,8 @@ struct MainView: View {
     @State private var diveCoverFailsafeTask: Task<Void, Never>?
     @State private var spokesPillar: Atom?
     @State private var inboxRoute: SidebarInboxRoute = .global
+    /// A ⌘K jump can land the Ideas surface on a client's board.
+    @State private var ideasBoardRequest: String? = nil
     @State private var commandCenterViewModel = CommandCenterDashboardViewModel()
     @State private var swipeLibraryViewModel = SwipeLibraryViewModel()
     @State private var swipeDiscoverModel = SwipeDiscoverModel()
@@ -255,6 +257,16 @@ struct MainView: View {
             PersistenceGuardRailsOverlay()
                 .zIndex(70)
 
+            // Offline-launch / expired-session reassurance (top-center).
+            OfflineReassuranceOverlay()
+                .zIndex(80)
+
+            // The First Constellation: first-launch threshold — Sign in with
+            // Apple or continue offline. Above everything; shows only when
+            // this Mac holds no workspace at all.
+            WelcomeGateOverlay()
+                .zIndex(200)
+
             if CosmoInlineAssistantBarVisibilityPolicy.shouldShow(
                 isInlinePaneOpen: isInlineAssistantPaneOpen,
                 focusedEntityType: appState.focusedEntity?.type,
@@ -317,6 +329,14 @@ struct MainView: View {
             }
             .allowsHitTesting(showCommandK)
             .zIndex(200)
+
+            // Window-level catcher for the ⌘K "retrieve" drag: sits above every
+            // other layer so a card dragged out of the palette lands on the
+            // canvas no matter what chrome is underneath the release point. It is
+            // inert unless a ⌘K drag is active and the pointer is past the panel
+            // edge (self-gated internally), so it never affects normal input.
+            CommandKCanvasDropCatcher()
+                .zIndex(500)
 
             // Instagram Swipe File Modal (manual entry for Instagram content)
             if swipeFileEngine.showInstagramModal {
@@ -805,7 +825,7 @@ struct MainView: View {
                 switchToThinkspaceForDestination(id: id)
             case .inbox:
                 break
-            case .discover, .swipeFile:
+            case .discover, .swipeFile, .ideas:
                 break
             }
             syncSidebarContext(with: newDest)
@@ -818,7 +838,7 @@ struct MainView: View {
                 vm.updateContextManually(type: .inbox)
             case .thinkspace:
                 vm.updateContextManually(type: .thinkspaceCanvas)
-            case .discover, .swipeFile:
+            case .discover, .swipeFile, .ideas:
                 vm.updateContextManually(type: .commandCenter)
             }
             recordTrailArrival(for: newDest)
@@ -876,8 +896,14 @@ struct MainView: View {
         // Cmd+K single-click: add item to current canvas (Thinkspace fallback)
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.NodeGraph.addItemToCurrentCanvas)) { notification in
             guard let atomUUID = notification.userInfo?["atomUUID"] as? String else { return }
-            // Only handle at MainView level when no focus mode is active (Thinkspace canvas)
-            guard appState.focusedEntity == nil else { return }
+            // Research/Connection focus modes host their own canvases and
+            // consume this notification themselves. Every other focus mode has
+            // no canvas, so fall through to the thinkspace placement below —
+            // the verb must never silently no-op.
+            if let focused = appState.focusedEntity,
+               focused.type == .research || focused.type == .connection {
+                return
+            }
 
             closeCommandK()
 
@@ -891,6 +917,16 @@ struct MainView: View {
                         userInfo: ["type": entityType, "id": atom.id ?? Int64(0)]
                     )
                 }
+            }
+        }
+        // ⌘K filing verb: drop an atom onto a thinkspace result — moves its
+        // block there (or creates one) WITHOUT navigating. The user is filing,
+        // not visiting.
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Canvas.moveAtomToThinkspace)) { notification in
+            guard let atomUUID = notification.userInfo?["atomUUID"] as? String,
+                  let targetThinkspaceId = notification.userInfo?["targetThinkspaceId"] as? String else { return }
+            Task { @MainActor in
+                await fileAtomIntoThinkspace(atomUUID: atomUUID, targetThinkspaceId: targetThinkspaceId)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .switchToThinkspace)) { notification in
@@ -959,6 +995,11 @@ struct MainView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.openSwipeGallery)) { _ in
             currentDestination = .swipeFile(section: .home)
+            closeCommandK()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.openIdeas)) { notification in
+            ideasBoardRequest = notification.userInfo?["clientUUID"] as? String
+            currentDestination = .ideas
             closeCommandK()
         }
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.navigateToThinkspaceById)) { notification in
@@ -1038,9 +1079,9 @@ struct MainView: View {
                 CrossThinkspaceDragPreviewHost(manager: crossDragManager)
                     .zIndex(10000)
 
-                // Study surfaces draw the trail island inside their own chrome
-                // row (DeepDiveStudyBar) so it shares the islands' baseline —
-                // the global copy shows only outside focus modes.
+                // Every focus mode draws the trail island inside its own
+                // chrome row (NavigationTrailIsland) so it shares the islands'
+                // baseline — the global copy shows only outside focus modes.
                 if appState.focusedEntity == nil {
                     NavigationTrailChrome(
                         onBack: { navigateTrailBack() },
@@ -1483,7 +1524,7 @@ struct MainView: View {
             activeSidebarContext = .inbox
         case .thinkspace:
             activeSidebarContext = .thinkspaces
-        case .discover, .swipeFile:
+        case .discover, .swipeFile, .ideas:
             activeSidebarContext = .swipeFile
         }
     }
@@ -1594,6 +1635,7 @@ struct MainView: View {
         case .inbox: return nil
         case .discover: return nil
         case .swipeFile: return nil
+        case .ideas: return nil
         }
     }
 
@@ -1642,7 +1684,9 @@ struct MainView: View {
                     if section == .creators {
                         SwipeCreatorsPage(model: swipeDiscoverModel)
                     } else {
-                        SwipeDiscoverPage(model: swipeDiscoverModel)
+                        SwipeDiscoverPage(model: swipeDiscoverModel) {
+                            currentDestination = .discover(section: .creators)
+                        }
                     }
                 }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1667,6 +1711,12 @@ struct MainView: View {
                         SwipeLibraryPage(viewModel: swipeLibraryViewModel, section: section)
                     }
                 }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(DS.bg)
+                    .offset(x: contentPushOffset)
+                    .transition(.opacity)
+            } else if case .ideas = currentDestination {
+                IdeasHomePage(boardRequest: $ideasBoardRequest)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(DS.bg)
                     .offset(x: contentPushOffset)
@@ -1791,6 +1841,7 @@ struct MainView: View {
         case .inbox: return ("Inbox", "tray")
         case .discover: return ("Discover", "safari")
         case .swipeFile: return ("Swipe File", "bookmark")
+        case .ideas: return ("Ideas", "lightbulb")
         case .thinkspace(let id):
             let name = thinkspaceManager.thinkspaces.first(where: { $0.id == id })?.name
             return (name ?? "Thinkspace", "rectangle.3.group")
@@ -1824,11 +1875,13 @@ struct MainView: View {
 
     private func navigateTrailBack() {
         guard let moment = NavigationTrail.shared.stepBack() else { return }
+        AppPerformanceInstrumentation.trace("TRAIL back → \(moment.title)")
         applyTrailMoment(moment)
     }
 
     private func navigateTrailForward() {
         guard let moment = NavigationTrail.shared.stepForward() else { return }
+        AppPerformanceInstrumentation.trace("TRAIL forward → \(moment.title)")
         applyTrailMoment(moment)
     }
 
@@ -1890,7 +1943,7 @@ struct MainView: View {
                     )
                 }
             case .focusMode(let entity):
-                FocusNavigationCoordinator.shared.open(entity: entity)
+                FocusNavigationCoordinator.shared.open(entity: entity, anchorOverride: .center)
             case .libraryFolder(let thinkspaceId, let folderID):
                 FocusNavigationCoordinator.shared.close()
                 currentDestination = .thinkspace(id: thinkspaceId)
@@ -2058,6 +2111,57 @@ struct MainView: View {
         }
     }
 
+    /// Files an atom into a thinkspace without navigating there (⌘K
+    /// drop-on-result). Moves the atom's existing canvas block when one
+    /// exists anywhere; otherwise inserts a fresh block row directly into
+    /// the target space.
+    @MainActor
+    private func fileAtomIntoThinkspace(atomUUID: String, targetThinkspaceId: String) async {
+        // Land at the target space's last-known viewport center — same recipe
+        // as the sidebar cross-thinkspace drop (never a (0,0) placeholder).
+        let finalPosition: CGPoint
+        if let targetSpace = ThinkspaceManager.shared.thinkspaces.first(where: { $0.id == targetThinkspaceId }) {
+            let viewportSize = NSApp.keyWindow?.contentView?.bounds.size
+                ?? NSApp.mainWindow?.contentView?.bounds.size
+                ?? CGSize(width: 1200, height: 800)
+            finalPosition = CGPoint(
+                x: viewportSize.width / 2 - targetSpace.panOffset.width,
+                y: viewportSize.height / 2 - targetSpace.panOffset.height
+            )
+        } else {
+            finalPosition = CGPoint(x: 200, y: 200)
+        }
+
+        do {
+            if let row = try await SpatialEngine.findThinkspaceBlockRow(entityUuid: atomUUID) {
+                guard row.thinkspaceId != targetThinkspaceId else { return }
+                try await SpatialEngine.persistCrossThinkspaceMove(
+                    blockId: row.blockId,
+                    targetThinkspaceId: targetThinkspaceId,
+                    position: finalPosition
+                )
+                // A mounted source canvas drops the block from memory; a
+                // mounted target reloads.
+                CanvasPendingPlacementQueue.shared.enqueue(
+                    name: CosmoNotification.Canvas.crossThinkspaceDropBlock,
+                    userInfo: [
+                        "blockId": row.blockId,
+                        "entityUuid": atomUUID,
+                        "thinkspaceId": targetThinkspaceId,
+                        "positionX": finalPosition.x,
+                        "positionY": finalPosition.y
+                    ]
+                )
+            } else if let atom = try await AtomRepository.shared.fetch(uuid: atomUUID) {
+                let block = CanvasBlock.fromAtom(atom, position: finalPosition)
+                try await SpatialEngine.persistBlockToUnmountedThinkspace(block, thinkspaceId: targetThinkspaceId)
+            }
+        } catch {
+            PersistenceHealth.note(.writeFailure, context: "commandK.fileAtomIntoThinkspace", detail: "atom \(atomUUID) → \(targetThinkspaceId): \(error)")
+            print("❌ ⌘K filing failed: \(error)")
+        }
+    }
+
     private func applyCommandKPresentation(
         _ event: CommandKPresentationState.Event,
         clearViewModel: Bool = false
@@ -2077,6 +2181,7 @@ struct MainView: View {
             CommandKPalettePresentationState.shared.setOnScreen(true)
         }
 
+        NSLog("CMDKDRAG applyCommandKPresentation event -> showCommandK \(showCommandK) => \(state.isVisible)")
         withAnimation(.spring(response: 0.2)) {
             showCommandK = state.isVisible
             commandKBehindFocusMode = state.isPreservedBehindFocusMode

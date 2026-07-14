@@ -162,4 +162,120 @@ final class RichDocumentHeadingTests: XCTestCase {
         XCTAssertEqual(child.heading?.collapsedBlocks.first?.id, hiddenID)
         XCTAssertEqual(child.heading?.collapsedBlocks.first?.plainInlineText, "Hidden child body")
     }
+
+    // MARK: - Plain vs. toggle headings
+
+    func testHeadingsDefaultToPlainNonCollapsible() {
+        let block = RichBlock(kind: .heading1, inlines: [.text("Launch")])
+        XCTAssertEqual(block.heading?.isCollapsible, false)
+    }
+
+    func testCollapsibleFlagSurvivesSerializerRoundTrip() throws {
+        let document = RichDocument(blocks: [
+            RichBlock(kind: .heading1, inlines: [.text("Plain")]),
+            RichBlock(
+                kind: .heading2,
+                inlines: [.text("Toggle")],
+                heading: RichHeadingMetadata(isCollapsible: true)
+            )
+        ])
+
+        let attributed = RichDocumentSerializer.attributedString(from: document)
+        let roundTripped = RichDocumentSerializer.document(from: attributed)
+
+        XCTAssertEqual(roundTripped.blocks[0].heading?.isCollapsible, false)
+        XCTAssertEqual(roundTripped.blocks[1].heading?.isCollapsible, true)
+    }
+
+    func testLegacyMetadataWithoutCollapsibleKeyStaysCollapsibleOnlyWhenFolded() throws {
+        // Pre-split JSON: no isCollapsible key. Expanded headings become
+        // plain; a folded heading keeps the affordance so its hidden
+        // section stays reachable.
+        let plainJSON = Data(#"{"isCollapsed":false,"collapsedBlocks":[]}"#.utf8)
+        let plain = try JSONDecoder().decode(RichHeadingMetadata.self, from: plainJSON)
+        XCTAssertFalse(plain.isCollapsible)
+
+        let foldedJSON = Data(#"{"isCollapsed":true,"collapsedBlocks":[{"kind":"paragraph","inlines":[]}]}"#.utf8)
+        let folded = try JSONDecoder().decode(RichHeadingMetadata.self, from: foldedJSON)
+        XCTAssertTrue(folded.isCollapsible)
+    }
+
+    func testToggledCollapseMarksHeadingCollapsible() throws {
+        let document = RichDocument(blocks: [
+            RichBlock(kind: .heading1, inlines: [.text("Launch")]),
+            .paragraph("Body")
+        ])
+        let headingID = try XCTUnwrap(document.blocks.first?.id)
+
+        let collapsed = RichDocumentHeadings.toggledCollapse(headingID: headingID, in: document)
+        XCTAssertEqual(collapsed.blocks.first?.heading?.isCollapsible, true)
+    }
+
+    func testTransformToPlainHeadingRestoresFoldedSection() throws {
+        let document = RichDocument(blocks: [
+            RichBlock(
+                kind: .heading1,
+                inlines: [.text("Launch")],
+                heading: RichHeadingMetadata(
+                    isCollapsed: true,
+                    collapsedBlocks: [.paragraph("Hidden body")],
+                    isCollapsible: true
+                )
+            ),
+            RichBlock(kind: .heading1, inlines: [.text("Next")])
+        ])
+
+        let result = try BlockOperations.transformBlock(
+            in: document,
+            at: .root(index: 0),
+            to: .heading1,
+            headingCollapsible: false
+        )
+
+        XCTAssertEqual(result.document.blocks.map(\.kind), [.heading1, .paragraph, .heading1])
+        XCTAssertEqual(result.document.blocks[0].heading?.isCollapsible, false)
+        XCTAssertEqual(result.document.blocks[0].heading?.isCollapsed, false)
+        XCTAssertEqual(result.document.blocks[0].heading?.collapsedBlocks, [])
+        XCTAssertEqual(result.document.blocks[1].plainInlineText, "Hidden body")
+    }
+
+    func testTransformAwayFromHeadingKindRestoresFoldedSection() throws {
+        let document = RichDocument(blocks: [
+            RichBlock(
+                kind: .heading2,
+                inlines: [.text("Launch")],
+                heading: RichHeadingMetadata(
+                    isCollapsed: true,
+                    collapsedBlocks: [.paragraph("Hidden body")],
+                    isCollapsible: true
+                )
+            )
+        ])
+
+        let result = try BlockOperations.transformBlock(
+            in: document,
+            at: .root(index: 0),
+            to: .paragraph
+        )
+
+        XCTAssertEqual(result.document.blocks.map(\.kind), [.paragraph, .paragraph])
+        XCTAssertNil(result.document.blocks[0].heading)
+        XCTAssertEqual(result.document.blocks[1].plainInlineText, "Hidden body")
+    }
+
+    func testTransformToToggleHeadingMarksCollapsible() throws {
+        let document = RichDocument(blocks: [
+            RichBlock(kind: .paragraph, inlines: [.text("Launch")])
+        ])
+
+        let result = try BlockOperations.transformBlock(
+            in: document,
+            at: .root(index: 0),
+            to: .heading1,
+            headingCollapsible: true
+        )
+
+        XCTAssertEqual(result.document.blocks[0].kind, .heading1)
+        XCTAssertEqual(result.document.blocks[0].heading?.isCollapsible, true)
+    }
 }

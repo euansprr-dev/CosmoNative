@@ -47,6 +47,8 @@ enum RichDocumentHeadings {
 
         var heading = blocks[index]
         var metadata = heading.heading ?? RichHeadingMetadata()
+        // Collapsing is the affordance — a heading that folds is collapsible.
+        metadata.isCollapsible = true
 
         if metadata.isCollapsed {
             metadata.isCollapsed = false

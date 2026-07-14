@@ -11,6 +11,7 @@ struct ConnectionBoardView: View {
     var viewModel: ConnectionFocusModeViewModel
     var workspace: ConnectionWorkspaceModel
     let actions: ConnectionWorkspaceActions
+    var pendingInsertsBySection: [ConnectionSectionType: [ConnectionPendingInsert]] = [:]
 
     private var visibleSections: [ConnectionSection] {
         workspace.matchingSections(in: viewModel.state.sections)
@@ -18,9 +19,11 @@ struct ConnectionBoardView: View {
     }
 
     /// Repack the masonry whenever the set of cards or their content volume
-    /// changes — filtering, adding/editing items.
+    /// changes — filtering, adding/editing items, or staged inserts arriving.
     private var layoutFingerprint: [String] {
-        visibleSections.map { "\($0.type.rawValue):\($0.items.count)" }
+        visibleSections.map {
+            "\($0.type.rawValue):\($0.items.count):\(pendingInsertsBySection[$0.type]?.count ?? 0)"
+        }
     }
 
     var body: some View {
@@ -66,12 +69,15 @@ struct ConnectionBoardView: View {
             section: section,
             isSelected: workspace.selection == .section(section.type),
             highlightQuery: workspace.searchQuery,
+            pendingInserts: pendingInsertsBySection[section.type] ?? [],
             onOpen: { workspace.openSection(section.type) },
             onSelect: { workspace.selection = .section(section.type) },
             onAddItem: { document, text in
                 viewModel.addItem(document: document, plainText: text, toSection: section.type)
             },
-            onSourceTap: actions.onSourceTap
+            onSourceTap: actions.onSourceTap,
+            onAcceptInsert: actions.onAcceptInsert,
+            onRejectInsert: actions.onRejectInsert
         )
     }
 

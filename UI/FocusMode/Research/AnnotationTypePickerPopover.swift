@@ -21,7 +21,7 @@ struct AnnotationTypePickerPopover: View {
                 .foregroundStyle(Color.white.opacity(0.5))
 
             // Selected text preview (truncated)
-            Text("\"\(selectedText.prefix(60))\(selectedText.count > 60 ? "..." : "")\"")
+            Text("\"\(selectedText.prefix(60))\(selectedText.count > 60 ? "…" : "")\"")
                 .font(.system(size: 11))
                 .foregroundColor(Color.white.opacity(0.7))
                 .italic()

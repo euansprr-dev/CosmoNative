@@ -24,7 +24,7 @@ struct LiveInsightsPanel: View {
             header
             content
         }
-        .background(DS.vellum)
+        .background(DS.surfaceElevated)
         .overlay(alignment: .bottom) { hairline }
     }
 
@@ -63,7 +63,7 @@ struct LiveInsightsPanel: View {
     }
 
     private var hairline: some View {
-        Rectangle().fill(DS.sepiaSubtle).frame(height: 0.5)
+        Rectangle().fill(DS.borderSubtle).frame(height: 0.5)
     }
 
     // MARK: - Content
@@ -83,10 +83,10 @@ struct LiveInsightsPanel: View {
             Text("The room is quiet.")
                 .font(.system(size: 13, weight: .regular, design: .serif))
                 .italic()
-                .foregroundStyle(DS.inkFaded)
+                .foregroundStyle(DS.textMuted)
             Text("Populate two stations to invite observations.")
                 .font(.system(size: 10, weight: .regular))
-                .foregroundStyle(DS.inkFaded)
+                .foregroundStyle(DS.textMuted)
                 .multilineTextAlignment(.center)
             Spacer(minLength: 16)
         }
@@ -150,7 +150,7 @@ private struct InsightChip: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(DS.vellumDeep.opacity(0.55), in: .rect(cornerRadius: 5))
+        .background(DS.bg.opacity(0.55), in: .rect(cornerRadius: 5))
         .overlay(
             RoundedRectangle(cornerRadius: 5)
                 .stroke(kindColor.opacity(0.25), lineWidth: 0.5)
@@ -182,7 +182,7 @@ private struct InsightChip: View {
         Button(action: onDismiss) {
             Image(systemName: "xmark")
                 .font(.system(size: 8, weight: .semibold))
-                .foregroundStyle(DS.inkFaded)
+                .foregroundStyle(DS.textMuted)
                 .frame(width: 14, height: 14)
         }
         .buttonStyle(.plain)
@@ -192,7 +192,7 @@ private struct InsightChip: View {
     private var messageText: some View {
         Text(insight.message)
             .font(.system(size: 12, weight: .regular, design: .serif))
-            .foregroundStyle(DS.inkWash)
+            .foregroundStyle(DS.text)
             .fixedSize(horizontal: false, vertical: true)
             .lineSpacing(1.5)
     }

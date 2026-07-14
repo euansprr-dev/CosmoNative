@@ -422,7 +422,7 @@ struct ContentDraftView: View {
             ProgressView()
                 .scaleEffect(0.8)
                 .tint(DS.accent)
-            Text("Opus is writing your draft...")
+            Text("Opus is writing your draft…")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(DS.textSecondary)
             Text("Analyzing swipe patterns and building your first draft")
@@ -627,7 +627,7 @@ struct ContentDraftView: View {
                 .font(.system(size: 11))
                 .foregroundStyle(DS.accent.opacity(0.7))
 
-            TextField("Custom instruction...", text: $customPromptText)
+            TextField("Custom instruction…", text: $customPromptText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
                 .foregroundStyle(DS.text)
@@ -718,7 +718,7 @@ struct ContentDraftView: View {
             ProgressView()
                 .scaleEffect(0.7)
                 .tint(DS.accent)
-            Text("Generating...")
+            Text("Generating…")
                 .font(.system(size: 11))
                 .foregroundStyle(DS.textSecondary)
         }
@@ -932,7 +932,7 @@ struct ContentDraftView: View {
                                 .font(.system(size: 10, weight: .medium))
                                 .foregroundStyle(DS.accent)
                         }
-                        Text(saveState == .saving ? "Saving..." : "Saved")
+                        Text(saveState == .saving ? "Saving…" : "Saved")
                             .font(.system(size: 11))
                             .foregroundStyle(DS.textMuted)
                     }

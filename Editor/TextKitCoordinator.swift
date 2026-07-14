@@ -1172,11 +1172,21 @@ final class CosmoTextView: NSTextView {
                     at: trimmedRange.location,
                     effectiveRange: nil
                 )) ?? false
-                decorations.append(HeadingDecoration(
-                    range: trimmedRange,
-                    level: max(1, min(3, level)),
-                    isCollapsed: isCollapsed
-                ))
+                let isCollapsible = boolValue(storage.attribute(
+                    RichDocumentAttributeKeys.headingCollapsible,
+                    at: trimmedRange.location,
+                    effectiveRange: nil
+                )) ?? false
+                // Plain headings draw no disclosure chrome. A collapsed
+                // heading always keeps its chevron regardless of the flag —
+                // the hidden section must stay expandable.
+                if isCollapsible || isCollapsed {
+                    decorations.append(HeadingDecoration(
+                        range: trimmedRange,
+                        level: max(1, min(3, level)),
+                        isCollapsed: isCollapsed
+                    ))
+                }
             }
 
             lineStart = lineRange.location + lineRange.length
@@ -1669,6 +1679,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     /// their typing attributes seeded, since there is no attributed run for
     /// the first character to inherit from.
     var rowBlockKind: RichBlockKind? = nil
+    /// Whether the row's heading is collapsible (block rows only) — seeded
+    /// typing attributes must round-trip the plain vs. toggle-heading choice.
+    var rowHeadingIsCollapsible: Bool = false
     /// Identifies this editor instance for slash-command notifications —
     /// target IDs are shared across surfaces (focus-mode row vs canvas block
     /// of the same note), instance IDs are not.
@@ -1967,12 +1980,15 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineSpacing = 4
         paragraph.paragraphSpacing = 12
-        paragraph.firstLineHeadIndent = 34
-        paragraph.headIndent = 34
+        // Only collapsible headings reserve the chevron gutter.
+        let headingGutter: CGFloat = rowHeadingIsCollapsible ? 34 : 0
+        paragraph.firstLineHeadIndent = headingGutter
+        paragraph.headIndent = headingGutter
         textView.typingAttributes = [
             .font: EditorFontPolicy.font(ofSize: size, weight: weight, design: fontDesign),
             .foregroundColor: resolvedEditorTextColor,
             RichDocumentAttributeKeys.headingLevel: level,
+            RichDocumentAttributeKeys.headingCollapsible: NSNumber(value: rowHeadingIsCollapsible),
             .paragraphStyle: paragraph
         ]
     }
@@ -1986,9 +2002,20 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         guard let storage, storage.length > 0 else { return }
         let fullRange = NSRange(location: 0, length: storage.length)
         var headingParagraphUpdates: [(range: NSRange, style: NSMutableParagraphStyle)] = []
+        let headingFlag: (NSAttributedString.Key, Int) -> Bool = { key, location in
+            let value = storage.attribute(key, at: location, effectiveRange: nil)
+            if let number = value as? NSNumber { return number.boolValue }
+            return (value as? Bool) ?? false
+        }
         if !singleLine, titleConfiguration == nil {
             storage.enumerateAttribute(RichDocumentAttributeKeys.headingLevel, in: fullRange, options: []) { value, range, _ in
                 guard value != nil else { return }
+                // Only collapsible (or still-collapsed) headings own the
+                // chevron gutter — plain headings sit flush with body text
+                // and must not have the indent re-imposed here.
+                let isCollapsible = headingFlag(RichDocumentAttributeKeys.headingCollapsible, range.location)
+                let isCollapsed = headingFlag(RichDocumentAttributeKeys.headingCollapsed, range.location)
+                guard isCollapsible || isCollapsed else { return }
                 let existingStyle = storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle
                 let currentFirstLineIndent = existingStyle?.firstLineHeadIndent ?? 0
                 let currentHeadIndent = existingStyle?.headIndent ?? 0
@@ -3872,11 +3899,17 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 guard let definition = command.elementDefinition else { return }
                 insertElement(definition, at: insertionPoint, in: textView)
             case .heading1:
-                applyHeading(level: 1, textView: textView)
+                applyHeading(level: 1, collapsible: false, textView: textView)
             case .heading2:
-                applyHeading(level: 2, textView: textView)
+                applyHeading(level: 2, collapsible: false, textView: textView)
             case .heading3:
-                applyHeading(level: 3, textView: textView)
+                applyHeading(level: 3, collapsible: false, textView: textView)
+            case .toggleHeading1:
+                applyHeading(level: 1, collapsible: true, textView: textView)
+            case .toggleHeading2:
+                applyHeading(level: 2, collapsible: true, textView: textView)
+            case .toggleHeading3:
+                applyHeading(level: 3, collapsible: true, textView: textView)
             case .quote:
                 toggleBlockPrefix("│ ", kind: .quote, in: textView)
             case .divider:
@@ -3964,11 +3997,11 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             case .strikethrough:
                 toggleAttribute(.strikethroughStyle, onValue: NSUnderlineStyle.single.rawValue, in: textView)
             case .heading1:
-                applyHeading(level: 1, textView: textView)
+                applyHeading(level: 1, collapsible: false, textView: textView)
             case .heading2:
-                applyHeading(level: 2, textView: textView)
+                applyHeading(level: 2, collapsible: false, textView: textView)
             case .heading3:
-                applyHeading(level: 3, textView: textView)
+                applyHeading(level: 3, collapsible: false, textView: textView)
             case .bulletList:
                 toggleBlockPrefix("• ", kind: .bulletList, in: textView)
             case .numberedList:
@@ -4043,7 +4076,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             textView.typingAttributes = attributes
         }
 
-        private func applyHeading(level: Int, textView: NSTextView) {
+        private func applyHeading(level: Int, collapsible: Bool, textView: NSTextView) {
             let font: NSFont
 
             switch level {
@@ -4067,21 +4100,35 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 )
             }
 
-            // Check if line already has this heading level — toggle off
+            // A folded heading about to be restamped or removed must surface
+            // its hidden section first — restamping alone would strand the
+            // stashed blocks in an attribute nothing renders.
+            let foldCheckRange = currentLineRange(in: textView)
+            if let storage = textView.textStorage,
+               foldCheckRange.length > 0,
+               boolAttribute(RichDocumentAttributeKeys.headingCollapsed, at: foldCheckRange.location, in: storage) == true {
+                _ = expandHeadingInPlace(headingRange: foldCheckRange, in: storage)
+            }
+
+            // Check if line already has this exact heading — toggle off.
+            // A variant switch (plain ↔ toggle heading) restamps instead.
             let checkRange = currentLineRange(in: textView)
             if checkRange.length > 0,
-               let currentLevel = textView.textStorage?.attribute(
+               let storage = textView.textStorage,
+               let currentLevel = storage.attribute(
                    RichDocumentAttributeKeys.headingLevel,
                    at: checkRange.location,
                    effectiveRange: nil
                ) as? Int,
-               currentLevel == level {
+               currentLevel == level,
+               (boolAttribute(RichDocumentAttributeKeys.headingCollapsible, at: checkRange.location, in: storage) ?? false) == collapsible {
                 // Remove heading — reset to normal
-                textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingLevel, range: checkRange)
-                textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingBlockID, range: checkRange)
-                textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingCollapsed, range: checkRange)
-                textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingCollapsedChildrenJSON, range: checkRange)
-                textView.textStorage?.addAttributes([
+                storage.removeAttribute(RichDocumentAttributeKeys.headingLevel, range: checkRange)
+                storage.removeAttribute(RichDocumentAttributeKeys.headingBlockID, range: checkRange)
+                storage.removeAttribute(RichDocumentAttributeKeys.headingCollapsed, range: checkRange)
+                storage.removeAttribute(RichDocumentAttributeKeys.headingCollapsible, range: checkRange)
+                storage.removeAttribute(RichDocumentAttributeKeys.headingCollapsedChildrenJSON, range: checkRange)
+                storage.addAttributes([
                     .font: NSFont.systemFont(ofSize: parent.fontSize, weight: parent.baseFontWeight),
                     .foregroundColor: parent.resolvedEditorTextColor,
                     .paragraphStyle: defaultParagraphStyle()
@@ -4098,8 +4145,11 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             let paragraphStyle = NSMutableParagraphStyle()
             paragraphStyle.lineSpacing = 4
             paragraphStyle.paragraphSpacing = 12
-            paragraphStyle.firstLineHeadIndent = 34
-            paragraphStyle.headIndent = 34
+            // Only collapsible headings reserve the chevron gutter — plain
+            // headings sit flush with body text.
+            let headingGutter: CGFloat = collapsible ? 34 : 0
+            paragraphStyle.firstLineHeadIndent = headingGutter
+            paragraphStyle.headIndent = headingGutter
             // Proportional top margin — larger headings get more breathing room above
             switch level {
             case 1: paragraphStyle.paragraphSpacingBefore = 32
@@ -4114,7 +4164,8 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                     .paragraphStyle: paragraphStyle,
                     RichDocumentAttributeKeys.headingLevel: level,
                     RichDocumentAttributeKeys.headingBlockID: headingBlockID,
-                    RichDocumentAttributeKeys.headingCollapsed: NSNumber(value: false)
+                    RichDocumentAttributeKeys.headingCollapsed: NSNumber(value: false),
+                    RichDocumentAttributeKeys.headingCollapsible: NSNumber(value: collapsible)
                 ], range: updatedLineRange)
             }
 
@@ -4124,7 +4175,8 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 .paragraphStyle: paragraphStyle,
                 RichDocumentAttributeKeys.headingLevel: level,
                 RichDocumentAttributeKeys.headingBlockID: headingBlockID,
-                RichDocumentAttributeKeys.headingCollapsed: NSNumber(value: false)
+                RichDocumentAttributeKeys.headingCollapsed: NSNumber(value: false),
+                RichDocumentAttributeKeys.headingCollapsible: NSNumber(value: collapsible)
             ]
             isInHeadingMode = true
 
@@ -4182,6 +4234,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                     textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingLevel, range: updatedLineRange)
                     textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingBlockID, range: updatedLineRange)
                     textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingCollapsed, range: updatedLineRange)
+                    textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingCollapsible, range: updatedLineRange)
                     textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingCollapsedChildrenJSON, range: updatedLineRange)
                     if kind == .checklist, let storage = textView.textStorage {
                         TextKitEditorRepresentable.reclearChecklistGlyphs(in: storage, range: updatedLineRange)
@@ -4224,6 +4277,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingLevel, range: updatedLineRange)
                 textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingBlockID, range: updatedLineRange)
                 textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingCollapsed, range: updatedLineRange)
+                textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingCollapsible, range: updatedLineRange)
                 textView.textStorage?.removeAttribute(RichDocumentAttributeKeys.headingCollapsedChildrenJSON, range: updatedLineRange)
             }
 
@@ -4477,6 +4531,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             attrs.removeValue(forKey: RichDocumentAttributeKeys.headingLevel)
             attrs.removeValue(forKey: RichDocumentAttributeKeys.headingBlockID)
             attrs.removeValue(forKey: RichDocumentAttributeKeys.headingCollapsed)
+            attrs.removeValue(forKey: RichDocumentAttributeKeys.headingCollapsible)
             attrs.removeValue(forKey: RichDocumentAttributeKeys.headingCollapsedChildrenJSON)
             // Preserve existing paragraphStyle (block indentation) if in a list
             if attrs[.paragraphStyle] == nil {

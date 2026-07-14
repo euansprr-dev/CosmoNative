@@ -422,7 +422,7 @@ struct CanvasSelectionInspector: View {
                 Divider().background(DS.borderSubtle)
 
                 VStack(alignment: .leading, spacing: 8) {
-                    TextField("Add reference...", text: $addReferenceQuery)
+                    TextField("Add reference…", text: $addReferenceQuery)
                         .textFieldStyle(.plain)
                         .font(.system(size: 12, weight: .medium))
                         .padding(.horizontal, 10)

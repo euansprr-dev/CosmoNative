@@ -40,7 +40,13 @@ struct ConnectionFocusModeView: View {
     /// Sibling pages of the same deep dive — powers inline mention links.
     @State private var linkTargets: ConnectionLinkTargets = .empty
     /// Pending inline-assistant proposal targeting this connection's sections.
+    /// Kept for the Manuscript view's full-screen diff only — Board and Outline
+    /// route pending inserts into their sections instead (see below).
     @State private var reviewProposal: CosmoAssistantProposal?
+    /// Staged concept-collaborator inserts routed to the section they target, so
+    /// Board cards and Outline rows show them as in-place ghost rows with ✓/✗
+    /// rather than replacing the whole center column with a linear text diff.
+    @State private var pendingInsertsBySection: [ConnectionSectionType: [ConnectionPendingInsert]] = [:]
 
     @Environment(\.isPaneContext) private var isPaneContext
     @Environment(\.isPeekContext) private var isPeekContext
@@ -92,6 +98,7 @@ struct ConnectionFocusModeView: View {
             isRefreshingInsights: isRefreshingInsights,
             reviewProposal: reviewProposal,
             reviewSourceText: reviewSourceText,
+            pendingInsertsBySection: pendingInsertsBySection,
             isPaneContext: isPaneContext,
             actions: workspaceActions
         )
@@ -158,7 +165,9 @@ struct ConnectionFocusModeView: View {
                 viewModel.saveState()
             },
             onTitleCommit: { viewModel.flushTitleSave() },
-            onClose: onClose
+            onClose: onClose,
+            onAcceptInsert: { acceptInsert($0) },
+            onRejectInsert: { rejectInsert($0) }
         )
     }
 
@@ -172,13 +181,48 @@ struct ConnectionFocusModeView: View {
     }
 
     private func syncReviewProposal(from proposals: [CosmoAssistantProposal]) {
-        reviewProposal = proposals.last { proposal in
+        let matching = proposals.filter { proposal in
             proposal.hasReviewableOperations && proposal.matches(
                 surfaceID: "connection:\(atom.uuid)",
                 targetID: ConnectionContextProvider.targetID(for: atom.uuid),
                 activeAtomUUID: atom.uuid
             )
         }
+        // Manuscript keeps the full-screen woven diff (last proposal wins).
+        reviewProposal = matching.last
+        // Board / Outline: route each still-pending operation to the section it
+        // targets, resolved against the LIVE surface text so accepting one and
+        // re-resolving the rest can never disagree with the apply path.
+        let model = ConnectionSurfaceSerializer.serialize(
+            title: viewModel.editableTitle,
+            conceptType: viewModel.state.conceptType,
+            sections: viewModel.state.sections
+        )
+        var grouped: [ConnectionSectionType: [ConnectionPendingInsert]] = [:]
+        for proposal in matching {
+            for operation in proposal.operations
+            where operation.status == .pending || operation.status == .conflicted {
+                guard let resolved = ConnectionSurfaceSerializer.pendingInsert(for: operation, in: model) else { continue }
+                grouped[resolved.section, default: []].append(
+                    ConnectionPendingInsert(
+                        proposalID: proposal.id,
+                        operationID: operation.id,
+                        section: resolved.section,
+                        bullets: resolved.bullets
+                    )
+                )
+            }
+        }
+        pendingInsertsBySection = grouped
+    }
+
+    private func acceptInsert(_ insert: ConnectionPendingInsert) {
+        guard let provider = ownedContextProvider else { return }
+        Task { await CosmoInlineAssistantStore.shared.accept(operationID: insert.operationID, provider: provider) }
+    }
+
+    private func rejectInsert(_ insert: ConnectionPendingInsert) {
+        Task { await CosmoInlineAssistantStore.shared.reject(operationID: insert.operationID) }
     }
 
     // MARK: - Lifecycle

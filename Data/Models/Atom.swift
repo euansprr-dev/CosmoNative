@@ -1639,6 +1639,14 @@ extension Atom {
         return dict
     }
 
+    /// Page/photo originals carried onto this atom when a capture was routed
+    /// here (the `adoptAttachments` contract, written identically on Mac + iOS).
+    /// Every destination surface renders them via `MediaAttachmentRepository`;
+    /// empty for atoms created without capture media.
+    var attachmentUUIDs: [String] {
+        metadataDict?["attachmentUUIDs"] as? [String] ?? []
+    }
+
     var isGeneratedCodexCorpus: Bool {
         let metadataFlags = [
             "isCodexSynthesis",

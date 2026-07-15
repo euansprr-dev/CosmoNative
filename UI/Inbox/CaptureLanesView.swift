@@ -79,6 +79,18 @@ final class CaptureLanesViewModel {
         await loadNeedsReview()
     }
 
+    /// The user corrected a lane capture's text in the ledger. A tracked write
+    /// that syncs to the phone; reload so the row shows the correction.
+    func editCapture(_ item: CapturedItem, to newText: String) async {
+        do {
+            try await capturedRepo.editText(uuid: item.uuid, to: newText)
+            await loadItems()
+        } catch {
+            print("CaptureLanesViewModel.editCapture failed: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "CaptureLanesVM.editCapture", detail: "\(item.uuid): \(error.localizedDescription)")
+        }
+    }
+
     func select(_ destination: CaptureDestination?) {
         selectedDestinationId = destination?.uuid
         Task { await loadItems() }
@@ -443,7 +455,8 @@ struct CaptureLanesView: View {
                         ForEach(section.items) { item in
                             CaptureLaneQueueRow(
                                 item: item,
-                                attachments: viewModel.attachmentsByItemId[item.uuid] ?? []
+                                attachments: viewModel.attachmentsByItemId[item.uuid] ?? [],
+                                onSave: { text in Task { await viewModel.editCapture(item, to: text) } }
                             )
                         }
                     } header: {
@@ -773,22 +786,50 @@ private struct NeedsReviewRow: View {
 private struct CaptureLaneQueueRow: View {
     let item: CapturedItem
     let attachments: [MediaAttachment]
+    let onSave: (String) -> Void
 
     @State private var isHovered = false
     @State private var isExpanded = false
 
+    // MARK: - Inline edit
+    @State private var isEditing = false
+    @State private var draft = ""
+    /// Optimistic echo of a saved edit — the row shows it instantly while the
+    /// lane reload lands.
+    @State private var editedText: String?
+    @FocusState private var editorFocused: Bool
+
     var body: some View {
-        Button {
-            withAnimation(ProMotionSprings.snappy) { isExpanded.toggle() }
-        } label: {
-            rowContent
+        Group {
+            if isEditing {
+                // No expand-toggle wrapper while editing — a Button around the
+                // TextEditor would swallow the clicks meant for the field.
+                rowContent
+            } else {
+                Button {
+                    withAnimation(ProMotionSprings.snappy) { isExpanded.toggle() }
+                } label: {
+                    rowContent
+                }
+                .buttonStyle(.plain)
+            }
         }
-        .buttonStyle(.plain)
         .onHover { hovering in
             withAnimation(ProMotionSprings.hover) { isHovered = hovering }
         }
-        .accessibilityElement(children: .combine)
-        .help(isExpanded ? "Collapse" : "Show the full capture")
+        .onChange(of: item.uuid) {
+            // Row recycled to a different capture — drop edit state.
+            isEditing = false
+            editorFocused = false
+            editedText = nil
+        }
+        .onChange(of: item.cleanText) {
+            // The saved edit (or a sync from the phone) landed on the row —
+            // let the real value take over from the optimistic echo.
+            if !isEditing { editedText = nil }
+        }
+        .accessibilityElement(children: isEditing ? .contain : .combine)
+        .help(isEditing ? "" : (isExpanded ? "Collapse" : "Show the full capture"))
     }
 
     private var rowContent: some View {
@@ -854,31 +895,85 @@ private struct CaptureLaneQueueRow: View {
 
     private var titleColumn: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(itemTitle)
-                .font(DS.body)
-                .foregroundStyle(DS.text)
-                .lineLimit(isExpanded ? nil : 1)
-                .fixedSize(horizontal: false, vertical: isExpanded)
+            if isEditing {
+                TextEditor(text: $draft)
+                    .font(DS.body)
+                    .foregroundStyle(DS.text)
+                    .lineSpacing(2)
+                    .scrollContentBackground(.hidden)
+                    .frame(minHeight: 48, maxHeight: 160)
+                    .focused($editorFocused)
+                    .tint(DS.accent)
+                    .padding(DS.space6)
+                    .background(DS.glassSectionFill, in: .rect(cornerRadius: 8))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(DS.focusRing, lineWidth: 1.5)
+                    )
+                    .accessibilityLabel("Capture text")
+                editControls
+            } else {
+                Text(itemTitle)
+                    .font(DS.body)
+                    .foregroundStyle(DS.text)
+                    .lineLimit(isExpanded ? nil : 1)
+                    .fixedSize(horizontal: false, vertical: isExpanded)
 
-            Text(metaLine)
-                .font(DS.caption)
-                .foregroundStyle(DS.textMuted)
+                Text(metaLine)
+                    .font(DS.caption)
+                    .foregroundStyle(DS.textMuted)
+            }
         }
+    }
+
+    private var editControls: some View {
+        HStack(spacing: DS.space12) {
+            Spacer()
+            Button("Cancel") { cancelEditing() }
+                .font(DS.caption.weight(.medium))
+                .foregroundStyle(DS.textSecondary)
+                .buttonStyle(.plain)
+                .keyboardShortcut(.cancelAction)
+                .help("Discard changes (esc)")
+            Button("Save") { saveEdit() }
+                .font(DS.caption.weight(.semibold))
+                .foregroundStyle(canSave ? DS.accent : DS.textMuted)
+                .buttonStyle(.plain)
+                .disabled(!canSave)
+                .keyboardShortcut(.return, modifiers: .command)
+                .help("Save (⌘↩)")
+        }
+        .padding(.top, DS.space6)
     }
 
     @ViewBuilder
     private var trailingArea: some View {
-        if item.status == .failed {
-            Text("Failed")
-                .font(DS.caption.weight(.medium))
-                .foregroundStyle(DS.red)
-                .padding(.horizontal, DS.space10)
-                .padding(.vertical, DS.space4 + 1)
-                .background(DS.redSoft, in: .capsule)
-        } else if attachments.count > 1 {
-            Text("\(attachments.count) attachments")
-                .font(DS.caption)
-                .foregroundStyle(DS.textMuted)
+        HStack(spacing: DS.space8) {
+            if isHovered && !isEditing {
+                Button { beginEditing() } label: {
+                    Image(systemName: "square.and.pencil")
+                        .font(DS.caption.weight(.semibold))
+                        .foregroundStyle(DS.textSecondary)
+                        .frame(width: 24, height: 24)
+                        .background(DS.glassCardFill, in: .circle)
+                }
+                .buttonStyle(.plain)
+                .help("Edit capture text")
+                .accessibilityLabel("Edit capture text")
+                .transition(.opacity)
+            }
+            if item.status == .failed {
+                Text("Failed")
+                    .font(DS.caption.weight(.medium))
+                    .foregroundStyle(DS.red)
+                    .padding(.horizontal, DS.space10)
+                    .padding(.vertical, DS.space4 + 1)
+                    .background(DS.redSoft, in: .capsule)
+            } else if attachments.count > 1 {
+                Text("\(attachments.count) attachments")
+                    .font(DS.caption)
+                    .foregroundStyle(DS.textMuted)
+            }
         }
     }
 
@@ -892,7 +987,44 @@ private struct CaptureLaneQueueRow: View {
     }
 
     private var itemTitle: String {
-        item.cleanText?.isEmpty == false ? item.cleanText! : item.caption ?? "Media capture"
+        if let editedText { return editedText }
+        return item.cleanText?.isEmpty == false ? item.cleanText! : item.caption ?? "Media capture"
+    }
+
+    // MARK: - Edit
+
+    /// The current text an edit starts from and is compared against.
+    private var currentText: String {
+        if let editedText { return editedText }
+        return item.cleanText?.isEmpty == false ? item.cleanText! : (item.caption ?? "")
+    }
+
+    private var canSave: Bool {
+        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !trimmed.isEmpty && trimmed != currentText
+    }
+
+    private func beginEditing() {
+        draft = currentText
+        withAnimation(ProMotionSprings.snappy) {
+            isExpanded = true
+            isEditing = true
+        }
+        DispatchQueue.main.async { editorFocused = true }
+    }
+
+    private func cancelEditing() {
+        editorFocused = false
+        withAnimation(ProMotionSprings.snappy) { isEditing = false }
+    }
+
+    private func saveEdit() {
+        guard canSave else { return }
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        editorFocused = false
+        editedText = text
+        withAnimation(ProMotionSprings.snappy) { isEditing = false }
+        onSave(text)
     }
 
     private var metaLine: String {

@@ -920,6 +920,14 @@ struct NoteFocusModeView: View {
                     }
                 }
 
+                if !atom.attachmentUUIDs.isEmpty {
+                    capturedMediaRail
+                        .padding(.leading, BlockInteractionPolicy.gutterWidth)
+                        .frame(maxWidth: bodyColumnWidth, alignment: .leading)
+                        .padding(.bottom, DS.space24)
+                        .opacity(headerFocusOpacity)
+                }
+
                 if let review = bodyReviewProposal {
                     CosmoInlineDiffReviewView(
                         store: CosmoInlineAssistantStore.shared,
@@ -1023,6 +1031,24 @@ struct NoteFocusModeView: View {
         .frame(maxWidth: CosmoTypography.optimalReadingWidth * 0.6)
         // Center on the text measure, matching the page's optical centering.
         .padding(.leading, BlockInteractionPolicy.gutterWidth)
+    }
+
+    // MARK: - Captured media (pages the note was routed from)
+
+    /// The originals this note was captured with, re-owned onto it by the
+    /// router — provenance sitting under the title, above the body. Click a
+    /// page to open the original at reading size.
+    private var capturedMediaRail: some View {
+        VStack(alignment: .leading, spacing: DS.space8) {
+            HStack(spacing: DS.space4) {
+                Image(systemName: "paperclip")
+                    .font(DS.caption)
+                Text("Attachments")
+                    .font(DS.caption.weight(.medium))
+            }
+            .foregroundStyle(DS.textSecondary)
+            AttachmentRail(attachmentUUIDs: atom.attachmentUUIDs)
+        }
     }
 
     // MARK: - Outline Rail (left)

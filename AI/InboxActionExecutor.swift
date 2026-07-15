@@ -240,6 +240,79 @@ final class InboxActionExecutor {
         return atom
     }
 
+    /// S — the capture is a link worth studying: file it into the Swipe File.
+    /// Builds a pending swipe atom (classified from the URL) and kicks the
+    /// Railway worker to transcribe + analyze it, exactly like the command-bar
+    /// capture path — the scan fallback tier catches anything the worker
+    /// misses. Dedups against the existing library so filing a known link
+    /// adopts it instead of forking a duplicate; the undo removes only a swipe
+    /// THIS action created.
+    @discardableResult
+    func executeSwipe(item: InboxItem) async throws -> Atom {
+        let url = item.detectedSwipeURL
+            ?? item.rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Same link already swiped? Adopt the existing card — never a duplicate.
+        if let existing = await QuickCaptureProcessor.findExistingLiveSwipe(url: url) {
+            try await inboxRepo.markActioned(uuid: item.uuid)
+            let originalItem = item
+            CosmoUndoManager.shared.register(
+                InlineUndoAction(actionDescription: "File Inbox Swipe") { [weak self] in
+                    // The swipe pre-existed this capture — undo only frees the capture.
+                    try? await self?.inboxRepo.restore(originalItem)
+                } redo: { [weak self] in
+                    try? await self?.inboxRepo.markActioned(uuid: originalItem.uuid)
+                }
+            )
+            return existing
+        }
+
+        let classification = SwipeURLClassifier().classify(url)
+        let sourceType = classification.isUrl ? classification.sourceType : .website
+        var atom = Atom.newSwipeFile(
+            url: url,
+            hook: nil,
+            sourceType: sourceType,
+            contentSource: .clipboard
+        )
+        atom.title = url                    // legible until the worker enriches it
+        atom.processingStatus = "pending"   // the cloud worker (or scan fallback) takes it from here
+        // The capture's prose (anything beyond the bare link) becomes the note.
+        if let note = Self.swipeNote(rawText: item.rawText, url: url) {
+            atom.body = note
+        }
+        atom = atom.mergingMetadataKeys(captureProvenance(for: item))
+        atom = try await atomRepo.create(atom)
+        await adoptAttachments(from: item, into: atom.uuid)
+        await reindex(atom: atom)
+        try await inboxRepo.markActioned(uuid: item.uuid)
+        CloudSwipeAPI.kickProcessing(swipeUUID: atom.uuid)
+
+        let createdAtom = atom
+        let originalItem = item
+        CosmoUndoManager.shared.register(
+            InlineUndoAction(actionDescription: "File Inbox Swipe") { [weak self] in
+                guard let self else { return }
+                try? await self.atomRepo.delete(uuid: createdAtom.uuid)
+                try? await self.inboxRepo.restore(originalItem)
+            } redo: { [weak self] in
+                guard let self else { return }
+                try? await self.restoreAtomSnapshot(createdAtom)
+                await self.reindex(atom: createdAtom)
+                try? await self.inboxRepo.markActioned(uuid: originalItem.uuid)
+            }
+        )
+
+        return atom
+    }
+
+    /// The capture's prose becomes the swipe's note — unless the capture is
+    /// nothing but the link itself, in which case there's no note to carry.
+    private static func swipeNote(rawText: String, url: String) -> String? {
+        let trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed == url.trimmingCharacters(in: .whitespacesAndNewlines) ? nil : trimmed
+    }
+
     // MARK: - Atlas moves (July 2026)
 
     /// The capture is material for an open inquiry question: it lands as an
@@ -324,6 +397,9 @@ final class InboxActionExecutor {
             )
         }
 
+        // The originals follow the thought onto the question branch, matching
+        // executeAdvanceQuestion — no route drops a capture's pages.
+        await adoptAttachments(from: item, into: question.uuid)
         try await inboxRepo.markActioned(uuid: item.uuid)
         if created {
             registerCreationUndo(created: question, item: item, actionDescription: "Spawn Inquiry Question")
@@ -477,6 +553,9 @@ final class InboxActionExecutor {
             originExtractUUID: nil,
             placementOrigin: "inbox-atlas"
         )
+        // The capture's pages follow it into the new deep dive rather than
+        // being orphaned on the resolved inbox item.
+        await adoptAttachments(from: item, into: dive.uuid)
         try await inboxRepo.markActioned(uuid: item.uuid)
         registerCreationUndo(created: dive, item: item, actionDescription: "Germinate Deep Dive")
         return dive

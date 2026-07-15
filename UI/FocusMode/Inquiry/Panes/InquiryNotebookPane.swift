@@ -824,7 +824,10 @@ struct InquiryNotebookPane: View {
 
     private func captureRow(_ capture: SessionCapture) -> some View {
         HStack(alignment: .top, spacing: DS.space8) {
-            Image(systemName: capture.suggestedKind?.iconName ?? "circle")
+            // Neutral capture glyph — the capture-time kind is only a hint now
+            // (organized at crystallization), so we don't assert it as an icon here.
+            // The kind menu below still lets the user set one explicitly.
+            Image(systemName: "circle.dashed")
                 .font(.system(size: 11))
                 .foregroundStyle(DS.accent)
                 .padding(.top, 4)

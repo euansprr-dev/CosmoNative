@@ -154,6 +154,35 @@ struct SwipeURLClassifier {
         return .rawText()
     }
 
+    // MARK: - URL extraction
+
+    /// The first http/https URL anywhere in `text` — the anchor for
+    /// "File as Swipe", which needs a real link even when the user wrapped it
+    /// in prose ("loved this https://…"). Detection is high-precision on
+    /// purpose: only a substring that carries an explicit `http(s)://` scheme
+    /// qualifies, so a bare `example.com` mentioned in a note never masquerades
+    /// as a swipeable link. Returns the exact text the user wrote (never
+    /// NSDataDetector's normalized form, which lowercases the host and can
+    /// append a slash).
+    func firstURL(in text: String) -> String? {
+        guard let detector = try? NSDataDetector(
+            types: NSTextCheckingResult.CheckingType.link.rawValue
+        ) else { return nil }
+        let range = NSRange(text.startIndex..., in: text)
+        var found: String?
+        detector.enumerateMatches(in: text, range: range) { match, _, stop in
+            guard let match, match.resultType == .link,
+                  let matchRange = Range(match.range, in: text) else { return }
+            let substring = String(text[matchRange])
+            let lowered = substring.lowercased()
+            if lowered.hasPrefix("http://") || lowered.hasPrefix("https://") {
+                found = substring
+                stop.pointee = true
+            }
+        }
+        return found
+    }
+
     // MARK: - URL Validation
 
     /// Check if a string looks like a URL

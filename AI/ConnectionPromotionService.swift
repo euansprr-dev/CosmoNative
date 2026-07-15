@@ -300,9 +300,17 @@ final class ConnectionPromotionService {
 
         for section in proposed {
             for item in section.items {
-                if let sourceUUID = item.sourceAtomUUID, seenSourceUUIDs.contains(sourceUUID) { continue }
+                // Dedup on CONTENT, not on source UUID alone: the Concept Composer
+                // splits one capture into several distinct bullets that all share the
+                // origin extract's UUID, so a pure sourceAtomUUID skip would collapse
+                // the split back into one item. Distinct content survives; identical
+                // re-adds still dedup, and cross-crystallization idempotency is handled
+                // upstream by markExtractsPromoted excluding already-promoted extracts.
                 let contentKey = normalizedKey(item.resolvedPlainText)
                 if !contentKey.isEmpty, seenContentKeys.contains(contentKey) { continue }
+                // Only collapse on source UUID when there is no content to distinguish
+                // by (e.g. bare reference-link rows).
+                if contentKey.isEmpty, let sourceUUID = item.sourceAtomUUID, seenSourceUUIDs.contains(sourceUUID) { continue }
 
                 guard let index = merged.firstIndex(where: { $0.type == section.type }) else { continue }
                 merged[index].items.append(item)
@@ -473,7 +481,9 @@ final class ConnectionPromotionService {
         ConnectionItem(
             content: draft.body,
             sourceAtomUUID: draft.originExtractUUID ?? draft.sourceUUID,
-            sourceSnippet: draft.body
+            // The cleaned bullet is what shows; the original verbatim capture is
+            // preserved as the source snippet so nothing the user said is lost.
+            sourceSnippet: draft.rawSnippet ?? draft.body
         )
     }
 

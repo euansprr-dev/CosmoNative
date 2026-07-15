@@ -120,6 +120,15 @@ struct InboxItem: Identifiable, Codable, Equatable, FetchableRecord, Persistable
         metadataDictionary["attachmentUUIDs"] as? [String] ?? []
     }
 
+    /// The first real http(s) link in the capture, if any — the anchor for the
+    /// "File as Swipe" verb. Present ⇒ the capture can become a swipe file;
+    /// nil ⇒ a plain-text capture the swipe pipeline has nothing to fetch for.
+    /// A pasted link and a link buried in prose both qualify (NSDataDetector);
+    /// a bare domain without a scheme deliberately does not.
+    var detectedSwipeURL: String? {
+        SwipeURLClassifier().firstURL(in: rawText)
+    }
+
     // MARK: - Factory
 
     /// True when the item's predicted destination is a task atom.

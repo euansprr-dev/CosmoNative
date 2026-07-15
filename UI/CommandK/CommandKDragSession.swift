@@ -66,7 +66,6 @@ final class CommandKDragSession {
     @ObservationIgnored var paletteFrameInWindow: CGRect = .zero
 
     @ObservationIgnored private var mouseReleasePoll: Timer?
-    @ObservationIgnored private var pollTickCount = 0
 
     private init() {}
 
@@ -76,7 +75,6 @@ final class CommandKDragSession {
         self.payload = payload
         isPointerOutsidePalette = false
         startMouseReleasePoll()
-        NSLog("CMDKDRAG begin uuids=\(uuids) paletteFrame=\(paletteFrameInWindow)")
         return NSItemProvider(object: payload.pasteboardString as NSString)
     }
 
@@ -106,106 +104,48 @@ final class CommandKDragSession {
             return
         }
 
-        // Track whether the drag has left the palette (screen → window →
-        // flipped, the CrossThinkspaceDragManager recipe).
+        // Current pointer in window-content space (top-left origin): screen →
+        // window → flipped, the CrossThinkspaceDragManager recipe.
+        var flipped: CGPoint?
         if let window = NSApp.keyWindow ?? NSApp.mainWindow {
             let windowPoint = window.convertPoint(fromScreen: NSEvent.mouseLocation)
             let contentHeight = window.contentView?.bounds.height ?? window.frame.height
-            let flipped = CGPoint(x: windowPoint.x, y: contentHeight - windowPoint.y)
-            let outside = !paletteFrameInWindow.contains(flipped)
-            pollTickCount += 1
-            if pollTickCount % 5 == 0 || outside != isPointerOutsidePalette {
-                NSLog("CMDKDRAG tick#\(pollTickCount) flipped=\(flipped) frame=\(paletteFrameInWindow) outside=\(outside) wasOutside=\(isPointerOutsidePalette) pressed=\(NSEvent.pressedMouseButtons & 0x1)")
-            }
+            let point = CGPoint(x: windowPoint.x, y: contentHeight - windowPoint.y)
+            flipped = point
+            let outside = !paletteFrameInWindow.contains(point)
             if outside != isPointerOutsidePalette {
                 isPointerOutsidePalette = outside
             }
         }
 
-        if NSEvent.pressedMouseButtons & 0x1 == 0 {
-            mouseReleasePoll?.invalidate()
-            mouseReleasePoll = nil
-            // Give a performDrop that fired on this release a beat to consume
-            // the session before treating it as a miss.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                CommandKDragSession.shared.end()
-            }
+        guard NSEvent.pressedMouseButtons & 0x1 == 0 else { return }
+
+        // Button released — the drag is over. Stop polling.
+        mouseReleasePoll?.invalidate()
+        mouseReleasePoll = nil
+
+        // Released beyond the palette edge → a canvas drop. AppKit never
+        // delivered these through a SwiftUI drop target reliably: a catcher
+        // that isn't hit-testable at drag-start is never enrolled as a live
+        // drop destination, so its performDrop never fired. Instead we route
+        // the release point straight to the active canvas from this poll,
+        // which we KNOW runs for the whole drag (it also drives the ghosting).
+        if isPointerOutsidePalette, let drop = flipped, let payload {
+            NotificationCenter.default.post(
+                name: CosmoNotification.NodeGraph.commandKAtomDropOnCanvas,
+                object: nil,
+                userInfo: ["uuids": payload.uuids, "x": drop.x, "y": drop.y]
+            )
+            end()
+            return
         }
-    }
-}
 
-// MARK: - Window-Level Canvas Drop Catcher
-
-/// A full-window drop target that sits **above every other layer** and claims a
-/// ⌘K retrieve drag the instant it leaves the palette.
-///
-/// The retrieve verb used to rely on the palette ghosting itself out of the way
-/// so the drop could "fall through" to the canvas underneath. That only worked
-/// where the canvas was the topmost view under the cursor — over any chrome that
-/// outranks the canvas (the trail island, a cluster surface, the top strip
-/// above the panel) the drop hit that view instead and was silently dropped.
-///
-/// This catcher removes the guesswork: while a ⌘K drag is active **and** the
-/// pointer is outside the palette panel, it is the topmost hit-testable view
-/// everywhere, so it — and nothing else — receives the drop, then routes the
-/// release point to the active canvas (`commandKAtomDropOnCanvas`). When the
-/// pointer is back over the panel it goes hit-transparent so in-palette drop
-/// targets (thinkspace filing, the Ideas board) keep working, and it is inert
-/// whenever no ⌘K drag is in flight. Observation is scoped to this view so only
-/// it re-evaluates on the 30 Hz pointer poll, never MainView's body.
-struct CommandKCanvasDropCatcher: View {
-    private var session: CommandKDragSession { .shared }
-
-    /// Live only for the retrieve verb, and only beyond the panel's edge.
-    private var isArmed: Bool {
-        session.isActive && session.isPointerOutsidePalette
-    }
-
-    var body: some View {
-        Color.clear
-            .contentShape(Rectangle())
-            .allowsHitTesting(isArmed)
-            .onDrop(of: [.text], delegate: CommandKCanvasDropCatcherDelegate())
-            .ignoresSafeArea()
-    }
-}
-
-private struct CommandKCanvasDropCatcherDelegate: DropDelegate {
-    private var isArmed: Bool {
-        CommandKDragSession.shared.isActive
-            && CommandKDragSession.shared.isPointerOutsidePalette
-    }
-
-    func validateDrop(info: DropInfo) -> Bool {
-        isArmed && info.hasItemsConforming(to: [.text])
-    }
-
-    func dropUpdated(info: DropInfo) -> DropProposal? {
-        // Back over the palette mid-drag reads as "changed my mind": decline so
-        // the release is a miss, not a silent drop-behind onto the canvas.
-        guard isArmed else { return DropProposal(operation: .cancel) }
-        return DropProposal(operation: .copy)
-    }
-
-    func performDrop(info: DropInfo) -> Bool {
-        NSLog("CMDKDRAG catcher.performDrop armed=\(isArmed) loc=\(info.location)")
-        guard isArmed else { return false }
-        let location = info.location
-        for provider in info.itemProviders(for: [.text]) {
-            _ = provider.loadObject(ofClass: NSString.self) { item, _ in
-                guard let dropped = item as? String else { return }
-                let uuids = CommandKDragSession.Payload.uuids(fromDropped: dropped)
-                guard !uuids.isEmpty else { return }
-                DispatchQueue.main.async {
-                    NotificationCenter.default.post(
-                        name: CosmoNotification.NodeGraph.commandKAtomDropOnCanvas,
-                        object: nil,
-                        userInfo: ["uuids": uuids, "x": location.x, "y": location.y]
-                    )
-                }
-            }
+        // Released over the palette (or window lookup failed) → let an
+        // in-palette drop target (thinkspace filing) consume it first, then
+        // clear the session.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            CommandKDragSession.shared.end()
         }
-        return true
     }
 }
 

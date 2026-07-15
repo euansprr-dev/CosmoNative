@@ -197,6 +197,26 @@ class InboxRepository: ObservableObject {
         await track(updated)
     }
 
+    /// The user corrected a capture's text in the inspector. Active-queue
+    /// items only — a triaged/dismissed row's text is never rewritten under
+    /// its own history. Unlike `upgradeRawText` (a pre-classification scan
+    /// transcript swap) this also allows classified rows: fixing a typo must
+    /// not require un-classifying first. The Mac's suggestion is left intact.
+    func editRawText(uuid: String, to newText: String) async throws {
+        let trimmed = newText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let updated = try await database.asyncWrite { db -> InboxItem? in
+            guard var item = try InboxItem.filter(Column("uuid") == uuid).fetchOne(db) else { return nil }
+            guard item.status == .pending || item.status == .classified else { return nil }
+            guard item.rawText != trimmed else { return nil }
+            item.rawText = trimmed
+            Self.prepareTrackedUpdate(&item)
+            try item.update(db)
+            return item
+        }
+        await track(updated)
+    }
+
     // MARK: - Actions
 
     func markActioned(uuid: String) async throws {

@@ -25,6 +25,10 @@ struct StudyYouTubeReaderView: View {
     @State private var loadState: TranscriptLoadState = .loading
     @State private var searchQuery: String = ""
     @State private var seekScript: String?
+    /// The player's live playback position (whole seconds), reported back over
+    /// a WK message handler. Drives the "now-speaking" transcript highlight and
+    /// the page-turning auto-scroll.
+    @State private var currentTime: Double = 0
     @State private var skeletonPulses = false
     @FocusState private var searchFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -82,7 +86,7 @@ struct StudyYouTubeReaderView: View {
     private var playerSection: some View {
         if let videoID {
             readerColumn {
-                StudyYouTubePlayer(videoID: videoID, pendingSeekScript: $seekScript)
+                StudyYouTubePlayer(videoID: videoID, pendingSeekScript: $seekScript, currentTime: $currentTime)
                     .aspectRatio(16 / 9, contentMode: .fit)
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
@@ -109,6 +113,8 @@ struct StudyYouTubeReaderView: View {
                 readerColumn {
                     StudyTranscriptTextView(
                         paragraphs: visibleParagraphs,
+                        currentTime: currentTime,
+                        reduceMotion: reduceMotion,
                         lastSelectedText: $lastSelectedText,
                         selectionTimestamp: $selectionTimestamp,
                         selectionAnchor: selectionAnchor,
@@ -249,10 +255,19 @@ private struct StudyTranscriptNotice: View {
 private struct StudyYouTubePlayer: NSViewRepresentable {
     let videoID: String
     @Binding var pendingSeekScript: String?
+    /// Live playback position in seconds — the player ticks it back so the
+    /// transcript can follow along.
+    @Binding var currentTime: Double
 
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.mediaTypesRequiringUserActionForPlayback = []
+        // A weak proxy keeps the content controller from strongly retaining the
+        // coordinator in a cycle; it forwards each time tick on the main thread.
+        let proxy = TimeScriptProxy()
+        proxy.coordinator = context.coordinator
+        context.coordinator.timeProxy = proxy
+        configuration.userContentController.add(proxy, name: "cosmoTime")
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.setValue(false, forKey: "drawsBackground")
         webView.loadHTMLString(Self.playerHTML(videoID: videoID), baseURL: URL(string: "https://www.youtube-nocookie.com"))
@@ -261,6 +276,7 @@ private struct StudyYouTubePlayer: NSViewRepresentable {
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
+        context.coordinator.currentTimeBinding = $currentTime
         if context.coordinator.loadedVideoID != videoID {
             webView.loadHTMLString(Self.playerHTML(videoID: videoID), baseURL: URL(string: "https://www.youtube-nocookie.com"))
             context.coordinator.loadedVideoID = videoID
@@ -271,10 +287,34 @@ private struct StudyYouTubePlayer: NSViewRepresentable {
         }
     }
 
+    static func dismantleNSView(_ webView: WKWebView, coordinator: Coordinator) {
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "cosmoTime")
+    }
+
     func makeCoordinator() -> Coordinator { Coordinator() }
 
+    @MainActor
     final class Coordinator {
         var loadedVideoID: String?
+        var currentTimeBinding: Binding<Double>?
+        var timeProxy: TimeScriptProxy?
+
+        func report(time seconds: Double) {
+            // The message handler already lands on the main thread; write straight
+            // through, skipping no-op repeats of the same whole second.
+            guard let binding = currentTimeBinding, binding.wrappedValue != seconds else { return }
+            binding.wrappedValue = seconds
+        }
+    }
+
+    /// Weak forwarder for the `cosmoTime` script messages — avoids the retain
+    /// cycle `WKUserContentController → handler → coordinator`.
+    final class TimeScriptProxy: NSObject, WKScriptMessageHandler {
+        weak var coordinator: Coordinator?
+        func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard let seconds = (message.body as? NSNumber)?.doubleValue else { return }
+            MainActor.assumeIsolated { coordinator?.report(time: seconds) }
+        }
     }
 
     /// A bare IFrame-API player: the video, nothing else. `cosmoSeek(s)`
@@ -295,6 +335,20 @@ private struct StudyYouTubePlayer: NSViewRepresentable {
                 playerVars: { 'playsinline': 1, 'rel': 0, 'modestbranding': 1 }
             });
         }
+        // Tick the current second back to Swift — only on change, so the
+        // transcript highlight and page-turn fire at most once per second.
+        var cosmoLastSecond = -1;
+        setInterval(function() {
+            if (player && player.getCurrentTime) {
+                var s = Math.floor(player.getCurrentTime());
+                if (s !== cosmoLastSecond) {
+                    cosmoLastSecond = s;
+                    if (window.webkit && window.webkit.messageHandlers.cosmoTime) {
+                        window.webkit.messageHandlers.cosmoTime.postMessage(s);
+                    }
+                }
+            }
+        }, 400);
         function cosmoSeek(seconds) {
             if (player && player.seekTo) {
                 player.seekTo(seconds, true);
@@ -315,6 +369,10 @@ private struct StudyYouTubePlayer: NSViewRepresentable {
 /// selected text so captures can cite the exact moment.
 private struct StudyTranscriptTextView: NSViewRepresentable {
     let paragraphs: [YouTubeTranscriptParagraph]
+    /// The player's live position — the paragraph whose window contains it is
+    /// the one being spoken, and it wears the lane wash.
+    var currentTime: Double = 0
+    var reduceMotion: Bool = false
     @Binding var lastSelectedText: String
     @Binding var selectionTimestamp: Int?
     var selectionAnchor: Binding<CGRect?>? = nil
@@ -322,7 +380,7 @@ private struct StudyTranscriptTextView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSScrollView()
-        let textView = NSTextView()
+        let textView = TranscriptWashTextView()
         textView.isEditable = false
         textView.isSelectable = true
         textView.isHorizontallyResizable = false
@@ -351,10 +409,11 @@ private struct StudyTranscriptTextView: NSViewRepresentable {
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         context.coordinator.parent = self
-        guard let textView = scroll.documentView as? NSTextView else { return }
+        guard let textView = scroll.documentView as? TranscriptWashTextView else { return }
         if context.coordinator.renderedParagraphIDs != paragraphs.map(\.id) {
             context.coordinator.apply(paragraphs: paragraphs, to: textView)
         }
+        context.coordinator.followPlayback(time: currentTime, textView: textView, scroll: scroll, reduceMotion: reduceMotion)
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
@@ -364,14 +423,24 @@ private struct StudyTranscriptTextView: NSViewRepresentable {
         var renderedParagraphIDs: [Int] = []
         /// (character offset of paragraph start, paragraph start seconds)
         private var timestampIndex: [(location: Int, start: Double)] = []
+        /// Per-paragraph spans for the now-speaking highlight: `full` covers the
+        /// stamp + body (the wash range), `body` is just the sentence text (the
+        /// run we brighten). `start` is the moment the paragraph begins.
+        private var paragraphSpans: [(full: NSRange, body: NSRange, start: Double)] = []
+        private var activeIndex: Int?
+
+        // The transcript's resting register vs. the spoken paragraph.
+        private let restingBody = NSColor(DS.text).withAlphaComponent(0.88)
+        private let spokenBody = NSColor(DS.text)
 
         init(parent: StudyTranscriptTextView) {
             self.parent = parent
         }
 
-        func apply(paragraphs: [YouTubeTranscriptParagraph], to textView: NSTextView) {
+        func apply(paragraphs: [YouTubeTranscriptParagraph], to textView: TranscriptWashTextView) {
             let result = NSMutableAttributedString()
             var index: [(Int, Double)] = []
+            var spans: [(full: NSRange, body: NSRange, start: Double)] = []
 
             let bodyStyle = NSMutableParagraphStyle()
             bodyStyle.lineSpacing = 5
@@ -381,7 +450,8 @@ private struct StudyTranscriptTextView: NSViewRepresentable {
             let stampFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
 
             for paragraph in paragraphs {
-                index.append((result.length, paragraph.start))
+                let paragraphStart = result.length
+                index.append((paragraphStart, paragraph.start))
                 let stamp = NSAttributedString(
                     string: paragraph.timestampLabel + "  ",
                     attributes: [
@@ -391,20 +461,109 @@ private struct StudyTranscriptTextView: NSViewRepresentable {
                     ]
                 )
                 result.append(stamp)
+                let bodyStart = result.length
+                let bodyLength = (paragraph.text as NSString).length
                 let body = NSAttributedString(
                     string: paragraph.text + "\n",
                     attributes: [
                         .font: bodyFont,
-                        .foregroundColor: NSColor(DS.text).withAlphaComponent(0.88),
+                        .foregroundColor: restingBody,
                         .paragraphStyle: bodyStyle
                     ]
                 )
                 result.append(body)
+                // Wash range excludes the trailing newline so it doesn't bleed
+                // into the gap before the next paragraph.
+                spans.append((
+                    full: NSRange(location: paragraphStart, length: bodyStart + bodyLength - paragraphStart),
+                    body: NSRange(location: bodyStart, length: bodyLength),
+                    start: paragraph.start
+                ))
             }
 
             textView.textStorage?.setAttributedString(result)
             timestampIndex = index
+            paragraphSpans = spans
             renderedParagraphIDs = paragraphs.map(\.id)
+            // Fresh text: drop the old highlight so followPlayback re-lands it.
+            activeIndex = nil
+            textView.activeWashRange = nil
+        }
+
+        // MARK: - Follow the spoken paragraph
+
+        /// Move the lane wash to whichever paragraph owns `time`, brighten its
+        /// text, and — only when that paragraph has slipped past the fold —
+        /// turn the page so the next stretch comes into view.
+        func followPlayback(time: Double, textView: TranscriptWashTextView, scroll: NSScrollView, reduceMotion: Bool) {
+            guard !paragraphSpans.isEmpty else { return }
+            // The spoken paragraph is the last one whose start is at or before now.
+            var target = 0
+            for (i, span) in paragraphSpans.enumerated() {
+                if span.start <= time { target = i } else { break }
+            }
+            guard target != activeIndex else { return }
+            let previous = activeIndex
+            activeIndex = target
+
+            if let previous { setBody(previous, color: restingBody, in: textView) }
+            setBody(target, color: spokenBody, in: textView)
+            textView.activeWashRange = paragraphSpans[target].full
+            textView.washInk = NSColor(DS.accent)
+
+            // Don't yank the page on the first landing (initial load / seek back
+            // to the top) — only turn once playback has carried us forward.
+            if previous != nil {
+                pageToActiveIfNeeded(index: target, textView: textView, scroll: scroll, reduceMotion: reduceMotion)
+            }
+        }
+
+        private func setBody(_ index: Int, color: NSColor, in textView: TranscriptWashTextView) {
+            guard index >= 0, index < paragraphSpans.count, let storage = textView.textStorage else { return }
+            let range = paragraphSpans[index].body
+            guard range.location + range.length <= storage.length else { return }
+            storage.addAttribute(.foregroundColor, value: color, range: range)
+        }
+
+        /// Page-turn scroll: if the spoken paragraph is fully in the readable
+        /// band we leave the page still; once it drops below the fold (or the
+        /// user seeked back above it) we glide it up near the top, revealing the
+        /// next part in one smooth move rather than a continuous crawl.
+        private func pageToActiveIfNeeded(index: Int, textView: TranscriptWashTextView, scroll: NSScrollView, reduceMotion: Bool) {
+            // Never fight a live selection — the reader is citing a passage.
+            guard textView.selectedRange().length == 0 else { return }
+            guard let layoutManager = textView.layoutManager, let container = textView.textContainer else { return }
+
+            let glyphRange = layoutManager.glyphRange(forCharacterRange: paragraphSpans[index].full, actualCharacterRange: nil)
+            let origin = textView.textContainerOrigin
+            let rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: container)
+                .offsetBy(dx: origin.x, dy: origin.y)
+
+            let visible = scroll.documentVisibleRect
+            // The floating thinking bar covers the foot, so the readable band
+            // ends above it.
+            let readableBottom = visible.maxY - StudyMetrics.panelBottomInset
+            if rect.maxY <= readableBottom && rect.minY >= visible.minY { return }
+
+            let topPadding: CGFloat = 28
+            let maxOffset = max(0, textView.bounds.height - visible.height)
+            let targetY = min(max(0, rect.minY - topPadding), maxOffset)
+            guard abs(targetY - visible.minY) > 1 else { return }
+
+            let clip = scroll.contentView
+            let destination = NSPoint(x: visible.minX, y: targetY)
+            if reduceMotion {
+                clip.setBoundsOrigin(destination)
+                scroll.reflectScrolledClipView(clip)
+            } else {
+                NSAnimationContext.runAnimationGroup { ctx in
+                    ctx.duration = 0.6
+                    ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                    clip.animator().setBoundsOrigin(destination)
+                } completionHandler: {
+                    scroll.reflectScrolledClipView(clip)
+                }
+            }
         }
 
         func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
@@ -444,6 +603,59 @@ private struct StudyTranscriptTextView: NSViewRepresentable {
                 parent.selectionTimestamp = start.map { Int($0) }
                 parent.selectionAnchor?.wrappedValue = anchor
             }
+        }
+    }
+}
+
+// MARK: - The transcript's own washing text view (now-speaking highlight)
+
+/// A TextKit-1 NSTextView that paints the Capture-Anywhere lane wash behind the
+/// paragraph currently being spoken — the same soft rounded ink-at-0.10 register
+/// as `WashTextView`, translated from a one-line token to a whole passage. The
+/// wash is drawn under the glyphs (before `super.draw`), per line fragment, with
+/// enough vertical bleed that a multi-line paragraph reads as one continuous
+/// rounded band instead of stacked pills.
+final class TranscriptWashTextView: NSTextView {
+    /// Character range (stamp + body) of the spoken paragraph, or nil when
+    /// nothing is playing.
+    var activeWashRange: NSRange? {
+        didSet { if activeWashRange != oldValue { needsDisplay = true } }
+    }
+    var washInk: NSColor = NSColor(DS.accent)
+
+    // Same whisper of a wash as the capture field: expand each line rect a
+    // touch, round it, fill at a tenth. The taller vertical bleed lets adjacent
+    // line rects overlap into one shape.
+    private static let washInset = CGSize(width: -4, height: -3.5)
+    private static let washCornerRadius: CGFloat = 8
+    private static let washAlpha: CGFloat = 0.10
+
+    override func draw(_ dirtyRect: NSRect) {
+        drawActiveWash()
+        super.draw(dirtyRect)
+    }
+
+    private func drawActiveWash() {
+        guard let range = activeWashRange, range.length > 0,
+              let layoutManager, let container = textContainer else { return }
+        let glyphRange = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+        guard glyphRange.length > 0 else { return }
+
+        let origin = textContainerOrigin
+        washInk.withAlphaComponent(Self.washAlpha).setFill()
+        layoutManager.enumerateEnclosingRects(
+            forGlyphRange: glyphRange,
+            withinSelectedGlyphRange: NSRange(location: NSNotFound, length: 0),
+            in: container
+        ) { rect, _ in
+            let washed = rect
+                .offsetBy(dx: origin.x, dy: origin.y)
+                .insetBy(dx: Self.washInset.width, dy: Self.washInset.height)
+            NSBezierPath(
+                roundedRect: washed,
+                xRadius: Self.washCornerRadius,
+                yRadius: Self.washCornerRadius
+            ).fill()
         }
     }
 }

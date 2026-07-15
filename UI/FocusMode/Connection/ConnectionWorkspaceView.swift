@@ -123,6 +123,7 @@ struct ConnectionWorkspaceView: View {
             viewModel: viewModel,
             workspace: workspace,
             sources: sources,
+            attachmentUUIDs: atom.attachmentUUIDs,
             isRefreshingInsights: isRefreshingInsights,
             actions: actions
         )

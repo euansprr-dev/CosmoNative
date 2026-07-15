@@ -12,9 +12,25 @@ struct InboxInspector: View {
     let item: InboxItem
     @Bindable var viewModel: InboxViewModel
 
+    init(item: InboxItem, viewModel: InboxViewModel) {
+        self.item = item
+        _viewModel = Bindable(wrappedValue: viewModel)
+        _displayText = State(initialValue: item.rawText)
+    }
+
     @State private var appeared = false
     @State private var adjustedPosition: CGPoint?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    // MARK: - Inline edit
+    /// The capture's current text — seeded from `item.rawText`, replaced with
+    /// the saved value the moment an edit commits (the repo observation that
+    /// would refresh `item` is debounced, so a local echo keeps it instant).
+    @State private var displayText: String
+    @State private var isEditing = false
+    @State private var draft = ""
+    @State private var isHoveringEssence = false
+    @FocusState private var editorFocused: Bool
 
     var body: some View {
         ScrollView(.vertical, showsIndicators: false) {
@@ -40,6 +56,16 @@ struct InboxInspector: View {
         }
         .onChange(of: item.uuid) {
             adjustedPosition = nil
+            // A different capture took focus — drop any half-typed edit and
+            // reseed from the new item.
+            isEditing = false
+            editorFocused = false
+            displayText = item.rawText
+        }
+        .onChange(of: item.rawText) { _, newValue in
+            // Sync landed (this device's save, or the phone's edit) — adopt it
+            // unless the user is mid-edit on this row.
+            if !isEditing { displayText = newValue }
         }
     }
 
@@ -77,16 +103,115 @@ struct InboxInspector: View {
 
     // MARK: - Essence
 
+    /// The capture text, correctable in place: a hover-revealed pencil (macOS
+    /// manners) blurs the essence into an editor with Save / Cancel — ⌘↵ to
+    /// commit, Esc to abandon.
     private var essenceSection: some View {
-        Text(item.rawText)
-            .font(DS.body)
-            .foregroundStyle(DS.text.opacity(0.85))
-            .lineSpacing(3)
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(DS.space12)
-            .background(DS.glassSectionFill, in: .rect(cornerRadius: 14))
-            .textSelection(.enabled)
+        Group {
+            if isEditing {
+                essenceEditor
+            } else {
+                essenceReader
+            }
+        }
+        .transition(.blurReplace)
+        .padding(DS.space12)
+        .background(DS.glassSectionFill, in: .rect(cornerRadius: 14))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(DS.focusRing, lineWidth: isEditing ? 1.5 : 0)
+        )
+        .animation(ProMotionSprings.gentle, value: isEditing)
+    }
+
+    private var essenceReader: some View {
+        ZStack(alignment: .topTrailing) {
+            Text(displayText)
+                .font(DS.body)
+                .foregroundStyle(DS.text.opacity(0.85))
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+
+            if isHoveringEssence {
+                Button {
+                    beginEditing()
+                } label: {
+                    Image(systemName: "square.and.pencil")
+                        .font(DS.caption.weight(.semibold))
+                        .foregroundStyle(DS.textSecondary)
+                        .frame(width: 24, height: 24)
+                        .background(DS.glassCardFill, in: .circle)
+                }
+                .buttonStyle(.plain)
+                .help("Edit capture text")
+                .accessibilityLabel("Edit capture text")
+                .transition(.opacity)
+            }
+        }
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) { isHoveringEssence = hovering }
+        }
+    }
+
+    private var essenceEditor: some View {
+        VStack(alignment: .leading, spacing: DS.space8) {
+            TextEditor(text: $draft)
+                .font(DS.body)
+                .foregroundStyle(DS.text)
+                .lineSpacing(3)
+                .scrollContentBackground(.hidden)
+                .frame(minHeight: 60, maxHeight: 220)
+                .focused($editorFocused)
+                .tint(DS.accent)
+                .accessibilityLabel("Capture text")
+
+            HStack(spacing: DS.space8) {
+                Spacer()
+                Button("Cancel") { cancelEditing() }
+                    .font(DS.caption.weight(.medium))
+                    .foregroundStyle(DS.textSecondary)
+                    .buttonStyle(.plain)
+                    .keyboardShortcut(.cancelAction)
+                    .help("Discard changes (esc)")
+
+                Button("Save") { saveEdit() }
+                    .font(DS.caption.weight(.semibold))
+                    .foregroundStyle(canSave ? DS.accent : DS.textMuted)
+                    .buttonStyle(.plain)
+                    .disabled(!canSave)
+                    .keyboardShortcut(.return, modifiers: .command)
+                    .help("Save (⌘↩)")
+            }
+        }
+    }
+
+    /// A blank field or an unchanged one has nothing to commit.
+    private var canSave: Bool {
+        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !trimmed.isEmpty && trimmed != displayText
+    }
+
+    private func beginEditing() {
+        draft = displayText
+        withAnimation(ProMotionSprings.gentle) { isEditing = true }
+        DispatchQueue.main.async { editorFocused = true }
+    }
+
+    private func cancelEditing() {
+        editorFocused = false
+        withAnimation(ProMotionSprings.gentle) { isEditing = false }
+    }
+
+    private func saveEdit() {
+        guard canSave else { return }
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        editorFocused = false
+        displayText = text
+        withAnimation(ProMotionSprings.gentle) { isEditing = false }
+        Task { await viewModel.editCaptureText(item, to: text) }
     }
 
     // MARK: - Originals (captured pages)
@@ -244,6 +369,13 @@ struct InboxInspector: View {
                 }
                 secondaryVerb(label: "Idea", icon: "lightbulb", shortcut: "I") {
                     Task { await viewModel.fileAsIdea(item) }
+                }
+                // A link capture can become a swipe — the command bar's own
+                // capture pipeline, offered right where the user is triaging.
+                if item.detectedSwipeURL != nil {
+                    secondaryVerb(label: "Swipe", icon: "rectangle.stack", shortcut: "S") {
+                        Task { await viewModel.fileAsSwipe(item) }
+                    }
                 }
             }
             HStack(spacing: DS.space8) {

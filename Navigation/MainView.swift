@@ -330,14 +330,6 @@ struct MainView: View {
             .allowsHitTesting(showCommandK)
             .zIndex(200)
 
-            // Window-level catcher for the ⌘K "retrieve" drag: sits above every
-            // other layer so a card dragged out of the palette lands on the
-            // canvas no matter what chrome is underneath the release point. It is
-            // inert unless a ⌘K drag is active and the pointer is past the panel
-            // edge (self-gated internally), so it never affects normal input.
-            CommandKCanvasDropCatcher()
-                .zIndex(500)
-
             // Instagram Swipe File Modal (manual entry for Instagram content)
             if swipeFileEngine.showInstagramModal {
                 // Backdrop
@@ -2181,7 +2173,6 @@ struct MainView: View {
             CommandKPalettePresentationState.shared.setOnScreen(true)
         }
 
-        NSLog("CMDKDRAG applyCommandKPresentation event -> showCommandK \(showCommandK) => \(state.isVisible)")
         withAnimation(.spring(response: 0.2)) {
             showCommandK = state.isVisible
             commandKBehindFocusMode = state.isPreservedBehindFocusMode

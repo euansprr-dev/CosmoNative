@@ -373,7 +373,8 @@ struct ThinkspaceLibraryModeView: View {
                 thinkspaceName: thinkspaceName,
                 searchText: $searchText,
                 sortOrder: $sortOrder,
-                searchFocused: $searchFocused
+                searchFocused: $searchFocused,
+                onRenameFolder: actions.renameFolder
             )
             .padding(.horizontal, 48)
             browserScroll
@@ -665,8 +666,15 @@ private struct ThinkspaceLibraryHeader: View {
     @Binding var searchText: String
     @Binding var sortOrder: ThinkspaceLibrarySort
     var searchFocused: FocusState<Bool>.Binding
+    /// Renames the open folder (cluster). Only wired inside a folder — the
+    /// thinkspace name itself isn't editable from here.
+    var onRenameFolder: (UUID, String) -> Void
 
     @State private var sortHovered = false
+    @State private var titleHovered = false
+    @State private var isRenaming = false
+    @State private var draftName = ""
+    @FocusState private var renameFocused: Bool
 
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
@@ -675,6 +683,8 @@ private struct ThinkspaceLibraryHeader: View {
             sortMenu
             searchField
         }
+        // Walking to another folder (or back out) abandons any in-flight rename.
+        .onChange(of: folder?.id) { _, _ in isRenaming = false }
     }
 
     // No breadcrumb: the universal back/forward arrows own folder navigation.
@@ -682,18 +692,85 @@ private struct ThinkspaceLibraryHeader: View {
     // stays present as quiet marginalia above it.
     private var titleBlock: some View {
         VStack(alignment: .leading, spacing: 4) {
-            if folder != nil {
+            if let folder {
                 Text(thinkspaceName)
                     .font(DS.caption.weight(.medium))
                     .foregroundStyle(DS.textMuted)
                     .lineLimit(1)
+                folderTitle(folder)
+            } else {
+                Text(thinkspaceName)
+                    .font(DS.pageTitle)
+                    .foregroundStyle(DS.text)
+                    .lineLimit(1)
             }
-            Text(folder?.title ?? thinkspaceName)
+        }
+        .animation(ProMotionSprings.gentle, value: folder?.id)
+    }
+
+    // The open folder's name is click-to-rename: tap to blur in a field, the
+    // same rename dialect as the folder tiles and the canvas cluster label.
+    @ViewBuilder
+    private func folderTitle(_ folder: ThinkspaceLibraryFolder) -> some View {
+        if isRenaming {
+            renameField(for: folder)
+        } else {
+            Text(folder.title)
                 .font(DS.pageTitle)
                 .foregroundStyle(DS.text)
                 .lineLimit(1)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(titleHovered ? DS.text.opacity(0.055) : .clear)
+                )
+                .padding(.horizontal, -6)
+                .contentShape(Rectangle())
+                .onHover { titleHovered = $0 }
+                .onTapGesture { beginRename(folder) }
+                .animation(ProMotionSprings.hover, value: titleHovered)
+                .help("Rename folder")
+                .accessibilityAddTraits(.isButton)
+                .accessibilityHint("Rename this folder")
         }
-        .animation(ProMotionSprings.gentle, value: folder?.id)
+    }
+
+    private func renameField(for folder: ThinkspaceLibraryFolder) -> some View {
+        TextField("Folder name", text: $draftName)
+            .textFieldStyle(.plain)
+            .font(DS.pageTitle)
+            .foregroundStyle(DS.text)
+            .lineLimit(1)
+            .focused($renameFocused)
+            .onSubmit { commitRename(folder) }
+            .onExitCommand { isRenaming = false }
+            .onChange(of: renameFocused) { _, focused in
+                if !focused && isRenaming { commitRename(folder) }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(DS.focusRing, lineWidth: 1)
+            )
+            .padding(.horizontal, -2)
+            .frame(maxWidth: 460, alignment: .leading)
+    }
+
+    private func beginRename(_ folder: ThinkspaceLibraryFolder) {
+        draftName = folder.title
+        isRenaming = true
+        DispatchQueue.main.async { renameFocused = true }
+    }
+
+    private func commitRename(_ folder: ThinkspaceLibraryFolder) {
+        let trimmed = draftName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty && trimmed != folder.title {
+            onRenameFolder(folder.id, trimmed)
+        }
+        isRenaming = false
     }
 
     private var sortMenu: some View {

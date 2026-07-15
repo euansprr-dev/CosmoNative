@@ -486,6 +486,23 @@ final class InboxViewModel {
         }
     }
 
+    /// S — the capture is a link: file it into the Swipe File (the command-bar
+    /// capture pipeline, run from triage). Surfaced in the UI only on a real link.
+    func fileAsSwipe(_ item: InboxItem) async {
+        processingItemIds.insert(item.uuid)
+        defer { processingItemIds.remove(item.uuid) }
+
+        do {
+            _ = try await executor.executeSwipe(item: item)
+            presentUndoToast(for: item, verb: "Saved as swipe")
+            recordRoutingOutcome(for: item, chosenKind: "swipe", chosenLabel: "Swipe File")
+        } catch {
+            print("⚠️ [InboxVM] File as swipe failed: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "InboxVM.fileAsSwipe", detail: error.localizedDescription)
+            presentErrorToast("Couldn't save that swipe — the capture is still in your inbox.")
+        }
+    }
+
     /// A — the capture is a question: spin it into the most recent Deep Dive's
     /// inquiry queue, closing the capture → inquiry loop.
     func askInDeepDive(_ item: InboxItem) async {
@@ -745,6 +762,21 @@ final class InboxViewModel {
         } catch {
             guard self.overrideSearchRequestID == requestID else { return }
             overrideSearchResults = []
+        }
+    }
+
+    // MARK: - Edit capture text
+
+    /// The user corrected a capture's text in the inspector. A tracked write
+    /// that syncs to the phone like any other; the repo observation refreshes
+    /// `items` (and so the focused inspector) on success.
+    func editCaptureText(_ item: InboxItem, to newText: String) async {
+        do {
+            try await inboxRepo.editRawText(uuid: item.uuid, to: newText)
+        } catch {
+            print("⚠️ [InboxVM] Edit capture text failed: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "InboxVM.editCaptureText", detail: error.localizedDescription)
+            presentErrorToast("Couldn't save your edit — the capture is unchanged.")
         }
     }
 

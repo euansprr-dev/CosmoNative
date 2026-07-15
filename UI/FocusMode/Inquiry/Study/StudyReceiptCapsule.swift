@@ -93,14 +93,27 @@ struct StudyReceiptCapsule: View {
             if destination.isPending {
                 InquiryClassifyingChip()
             } else {
-                InquiryKindBadgeMenu(
-                    viewModel: viewModel,
-                    extractUUID: destination.extractUUID,
-                    kind: destination.kind
-                )
+                // No kind label while writing — the capture-time kind is only a hint
+                // now (the real typing + organizing happens at crystallization), so a
+                // premature "Principle/Practice" chip here just mismatches the result.
+                // Kind is still correctable via the destination menu below.
+                capturedChip
             }
             destinationMenu(destination)
         }
+    }
+
+    /// Neutral "filed" indicator shown in place of the old kind badge.
+    private var capturedChip: some View {
+        HStack(spacing: DS.space4) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(DS.caption2)
+                .foregroundStyle(DS.accent.opacity(0.7))
+            Text("Captured")
+                .font(DS.caption2)
+                .foregroundStyle(DS.textMuted)
+        }
+        .accessibilityLabel("Captured")
     }
 
     private func destinationMenu(_ destination: InquiryRoutingReceiptItem.Destination) -> some View {

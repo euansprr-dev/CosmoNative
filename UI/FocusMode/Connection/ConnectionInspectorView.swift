@@ -10,6 +10,9 @@ struct ConnectionInspectorView: View {
     var viewModel: ConnectionFocusModeViewModel
     var workspace: ConnectionWorkspaceModel
     let sources: ConnectionWorkspaceSources
+    /// Pages/photos the capture carried in when this concept was germinated or
+    /// fed — the evidence, re-owned onto the atom by the router.
+    var attachmentUUIDs: [String] = []
     let isRefreshingInsights: Bool
     let actions: ConnectionWorkspaceActions
 
@@ -41,6 +44,7 @@ struct ConnectionInspectorView: View {
             maturityBlock
             typePicker
             statsBlock
+            if !attachmentUUIDs.isEmpty { capturedBlock }
             LiveInsightsPanel(
                 insights: viewModel.state.liveInsights,
                 isRefreshing: isRefreshingInsights,
@@ -103,6 +107,19 @@ struct ConnectionInspectorView: View {
             ConnectionInspectorStatRow(label: "Items", value: "\(viewModel.state.totalItemCount)")
             ConnectionInspectorStatRow(label: "Sections filled", value: "\(viewModel.state.completedSectionCount) of \(ConnectionSectionType.allCases.count)")
             ConnectionInspectorStatRow(label: "Sources", value: "\(sources.linked.count)")
+        }
+    }
+
+    private var capturedBlock: some View {
+        VStack(alignment: .leading, spacing: DS.space6) {
+            Text("Captured")
+                .font(DS.smallCaps)
+                .tracking(1.4)
+                .foregroundStyle(DS.textMuted)
+            AttachmentRail(
+                attachmentUUIDs: attachmentUUIDs,
+                thumbSize: CGSize(width: 56, height: 74)
+            )
         }
     }
 }

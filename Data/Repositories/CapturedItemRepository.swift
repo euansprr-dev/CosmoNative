@@ -149,6 +149,23 @@ final class CapturedItemRepository: ObservableObject {
         await track(updated)
     }
 
+    /// The user corrected a lane capture's text. Writes `cleanText` — the
+    /// display source every lane row (both platforms) reads first — leaving
+    /// `rawText` as the original capture's provenance.
+    func editText(uuid: String, to newText: String) async throws {
+        let trimmed = newText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let updated = try await database.asyncWrite { db -> CapturedItem? in
+            guard var item = try CapturedItem.filter(Column("uuid") == uuid).fetchOne(db) else { return nil }
+            guard item.cleanText != trimmed else { return nil }
+            item.cleanText = trimmed
+            Self.prepareTrackedUpdate(&item)
+            try item.update(db)
+            return item
+        }
+        await track(updated)
+    }
+
     func attachMedia(capturedItemId: String, mediaIds: [String]) async throws {
         let updated = try await database.asyncWrite { db -> CapturedItem? in
             guard var item = try CapturedItem

@@ -271,6 +271,11 @@ final class InquiryCrystallizationEngine {
             )
         }
 
+        // Smart promotion: clean, split, and content-route each concept's verbatim
+        // captures into organized section bullets (raw text preserved as provenance).
+        // Falls back to the verbatim drafts per-concept on any LLM failure.
+        copy.possibleConnections = await ConceptComposerEngine.shared.organize(copy.possibleConnections)
+
         guard let deepDive,
               let thinkspaceUUID = deepDive.deepDiveMetadata?.primaryThinkspaceUUID
                 ?? deepDive.deepDiveMetadata?.parentThinkspaceUUIDs?.first else {

@@ -441,11 +441,24 @@ extension IdeaFocusModeView {
         VStack(alignment: .leading, spacing: DS.space24) {
             titleHero
             contextEditor
+            if !atom.attachmentUUIDs.isEmpty { capturedSection }
             hooksSection
             outlineSection
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(manuscriptWhitespaceBlurLayer)
+    }
+
+    /// The pages/photos the capture carried in when it was filed as this idea
+    /// — the spark's visual seed. Click a page to open the original.
+    private var capturedSection: some View {
+        VStack(alignment: .leading, spacing: DS.space12) {
+            sectionLabel("Captured")
+            AttachmentRail(
+                attachmentUUIDs: atom.attachmentUUIDs,
+                thumbSize: CGSize(width: 64, height: 84)
+            )
+        }
     }
 
     private var manuscriptWhitespaceBlurLayer: some View {

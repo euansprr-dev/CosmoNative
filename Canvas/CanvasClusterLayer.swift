@@ -701,7 +701,6 @@ private struct ClusterViewSurfaceDropDelegate: DropDelegate {
     }
 
     func validateDrop(info: DropInfo) -> Bool {
-        NSLog("CMDKDRAG cluster.validateDrop id=\(cluster.id) userCreated=\(cluster.isUserCreated) enabled=\(enabled) cmdkActive=\(isCommandKRetrieveDrag)")
         guard !isCommandKRetrieveDrag else { return false }
         return enabled && info.hasItemsConforming(to: [.text])
     }
@@ -723,10 +722,7 @@ private struct ClusterViewSurfaceDropDelegate: DropDelegate {
 
     func performDrop(info: DropInfo) -> Bool {
         // Command-K retrieve drags are the canvas's to place; never consume them.
-        guard !isCommandKRetrieveDrag else {
-            NSLog("CMDKDRAG cluster.performDrop DECLINED (cmdk retrieve) id=\(cluster.id)")
-            return false
-        }
+        guard !isCommandKRetrieveDrag else { return false }
         guard previewTarget(for: info) != nil else {
             clearPreview(animated: true)
             ClusterViewDragSession.sourceClusterId = nil

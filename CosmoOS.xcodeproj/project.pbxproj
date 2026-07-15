@@ -442,6 +442,7 @@
 		85EF229C7AD2DF267C552D1F /* SwipeMasonryEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF320F09D3297E73FCCB706A /* SwipeMasonryEngine.swift */; };
 		8680B337C0C67B3B1CFCC1BD /* BlockSelectionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CBCD70247ACE3CFF0E724D4 /* BlockSelectionCoordinator.swift */; };
 		86A8AF83C388808E8F6A490C /* GraphEdge.swift in Sources */ = {isa = PBXBuildFile; fileRef = D83B38147823FF34E324A214 /* GraphEdge.swift */; };
+		8703B5B9688D6CEDB53697C6 /* ConceptComposerEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE8D6C7183B331CABE21AF5D /* ConceptComposerEngine.swift */; };
 		8705ABF088851D4C83CD2C08 /* SwipeFileEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71A0599709A8879A9131F5F3 /* SwipeFileEngine.swift */; };
 		8765C49BB9A6DCDFECC0FBCB /* FunctionGemmaEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52E650D41B7677E26ECB6AC7 /* FunctionGemmaEngine.swift */; };
 		880B414CD02570C482185ABF /* CommandCenterMasthead.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1943C2AE5DCB2FE181A0073 /* CommandCenterMasthead.swift */; };
@@ -1777,6 +1778,7 @@
 		FDFE4C3CD1479410FF798EE4 /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
 		FE253C329D3A5FE37131C7C9 /* CaptureStatusItemController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureStatusItemController.swift; sourceTree = "<group>"; };
 		FE6F612969A29B448900FF29 /* TaskDetailInlineEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskDetailInlineEditor.swift; sourceTree = "<group>"; };
+		FE8D6C7183B331CABE21AF5D /* ConceptComposerEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ConceptComposerEngine.swift; sourceTree = "<group>"; };
 		FEA6A1B3225501028DD85D63 /* InquirySourcePane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InquirySourcePane.swift; sourceTree = "<group>"; };
 		FF57F0B9DF82A73C5EBBE230 /* AtomRevision.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AtomRevision.swift; sourceTree = "<group>"; };
 		FF63A5DED8AD531C726FBD3C /* ThemePalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemePalette.swift; sourceTree = "<group>"; };
@@ -3047,6 +3049,7 @@
 				E1ADFCBE9940A7707208CDDA /* Recall */,
 				D375813A65EC307A883D3F9A /* DailyBriefEngine.swift */,
 				2C4B9DC74E6B6F287016D721 /* Taste */,
+				FE8D6C7183B331CABE21AF5D /* ConceptComposerEngine.swift */,
 			);
 			path = AI;
 			sourceTree = "<group>";
@@ -4744,6 +4747,7 @@
 				BA86DF29A6771694A2D1AFE1 /* ContentShelfRail.swift in Sources */,
 				0306F40B8875EE4C5D3A1D3F /* ContentPerfImportService.swift in Sources */,
 				F525B9D7FC435F8F5DCC1694 /* CosmoSlimScroll.swift in Sources */,
+				8703B5B9688D6CEDB53697C6 /* ConceptComposerEngine.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

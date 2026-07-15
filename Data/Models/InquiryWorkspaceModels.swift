@@ -2301,19 +2301,40 @@ struct ConnectionSectionItemDraft: Codable, Sendable, Identifiable, Hashable {
     var sourceUUID: String?
     var originExtractUUID: String?
     var kindLabel: String
+    /// The original verbatim capture this draft was organized/split from. When the
+    /// Concept Composer cleans and splits a raw capture, `body` holds the cleaned
+    /// bullet and `rawSnippet` preserves what the user actually captured, so nothing
+    /// is lost — it rides through to `ConnectionItem.sourceSnippet` on promotion.
+    var rawSnippet: String?
 
     init(
         id: String = UUID().uuidString,
         body: String,
         sourceUUID: String? = nil,
         originExtractUUID: String? = nil,
-        kindLabel: String
+        kindLabel: String,
+        rawSnippet: String? = nil
     ) {
         self.id = id
         self.body = body
         self.sourceUUID = sourceUUID
         self.originExtractUUID = originExtractUUID
         self.kindLabel = kindLabel
+        self.rawSnippet = rawSnippet
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, body, sourceUUID, originExtractUUID, kindLabel, rawSnippet
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        body = try c.decodeIfPresent(String.self, forKey: .body) ?? ""
+        sourceUUID = try c.decodeIfPresent(String.self, forKey: .sourceUUID)
+        originExtractUUID = try c.decodeIfPresent(String.self, forKey: .originExtractUUID)
+        kindLabel = try c.decodeIfPresent(String.self, forKey: .kindLabel) ?? ""
+        rawSnippet = try c.decodeIfPresent(String.self, forKey: .rawSnippet)
     }
 }
 

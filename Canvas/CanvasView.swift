@@ -421,9 +421,6 @@ struct CanvasView: View {
                 onClusterDrop: { [self] blockUUID, canvasPosition in
                     handleClusterToCanvasDrop(blockUUID: blockUUID, canvasPosition: canvasPosition)
                 },
-                onCommandKAtomDrop: { [self] uuids, canvasPosition in
-                    handleCommandKAtomDrop(uuids: uuids, canvasPosition: canvasPosition)
-                },
                 onImageDrop: { [self] providers, canvasPosition in
                     handleCanvasImageDrop(providers: providers, canvasPosition: canvasPosition)
                 }
@@ -5353,18 +5350,15 @@ struct CanvasView: View {
     /// Places atoms dragged out of the Command-K palette at the drop point.
     /// Multi-select drops cascade so nothing lands perfectly stacked.
     private func handleCommandKAtomDrop(uuids: [String], canvasPosition: CGPoint) {
-        NSLog("CMDKDRAG handleCommandKAtomDrop uuids=\(uuids) canvasPos=\(canvasPosition) thinkspaceMode=\(thinkspaceMode)")
         CommandKDragSession.shared.end()
         NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
 
         Task { @MainActor in
             for (index, uuid) in uuids.enumerated() {
                 guard let atom = try? await AtomRepository.shared.fetch(uuid: uuid) else {
-                    NSLog("CMDKDRAG handleCommandKAtomDrop: atom NOT FOUND for uuid \(uuid)")
                     print("⚠️ handleCommandKAtomDrop: atom not found for UUID \(uuid)")
                     continue
                 }
-                NSLog("CMDKDRAG fetched atom uuid=\(uuid) type=\(atom.type.rawValue) id=\(atom.id ?? -1)")
                 let entityType = EntityType(rawValue: atom.type.rawValue) ?? .research
                 let position = CGPoint(
                     x: canvasPosition.x + CGFloat(index) * 28,
@@ -5408,7 +5402,6 @@ struct CanvasView: View {
         if let existingBlock = existingBlock {
             if let requestedPosition {
                 // Placement intent (drag/drop): move the block to the point.
-                NSLog("CMDKDRAG openOrCreateBlock: MOVE existing block id=\(existingBlock.id) from=\(existingBlock.position) to=\(requestedPosition)")
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
                     spatialEngine.updateBlockPosition(existingBlock.id, position: requestedPosition)
                 }
@@ -5478,7 +5471,6 @@ struct CanvasView: View {
             }
         }
 
-        NSLog("CMDKDRAG openOrCreateBlock: CREATE new block id=\(block.id) at=\(position) type=\(entityType) canvasOffset=\(canvasOffset) canvasSize=\(canvasSize)")
         await spatialEngine.addBlock(block, persist: true)
         selectedBlockId = block.id
 
@@ -6233,17 +6225,16 @@ private struct CanvasDropDelegate: DropDelegate {
     let isEnabled: () -> Bool
     let screenToCanvas: (CGPoint) -> CGPoint
     let onClusterDrop: (String, CGPoint) -> Void
-    let onCommandKAtomDrop: ([String], CGPoint) -> Void
     let onImageDrop: ([NSItemProvider], CGPoint) -> Void
 
     func validateDrop(info: DropInfo) -> Bool {
-        if CommandKDragSession.shared.isActive {
-            NSLog("CMDKDRAG canvas.validateDrop enabled=\(isEnabled()) cmdkActive=true loc=\(info.location)")
-        }
         guard isEnabled() else { return false }
         if ClusterViewDragSession.sourceClusterId != nil && info.hasItemsConforming(to: [.text]) {
             return true
         }
+        // Accept a ⌘K retrieve drag purely for the drop-cursor affordance —
+        // actual placement is driven by CommandKDragSession's release poll
+        // (the single source of truth), so performDrop only consumes here.
         if CommandKDragSession.shared.isActive && info.hasItemsConforming(to: [.text]) {
             return true
         }
@@ -6251,19 +6242,10 @@ private struct CanvasDropDelegate: DropDelegate {
         return info.hasItemsConforming(to: CanvasImageDropController.supportedTypes)
     }
 
-    func dropEntered(info: DropInfo) {
-        if CommandKDragSession.shared.isActive {
-            NSLog("CMDKDRAG canvas.dropEntered loc=\(info.location)")
-        }
-    }
-
     /// A ⌘K drag hovering back over the palette reads as "changed my mind":
     /// the palette un-ghosts, and the canvas behind it must stop being a
     /// drop target — otherwise releasing over the palette still drops behind.
     func dropUpdated(info: DropInfo) -> DropProposal? {
-        if CommandKDragSession.shared.isActive {
-            NSLog("CMDKDRAG dropUpdated active outside=\(CommandKDragSession.shared.isPointerOutsidePalette) loc=\(info.location)")
-        }
         if CommandKDragSession.shared.isActive && !CommandKDragSession.shared.isPointerOutsidePalette {
             return DropProposal(operation: .cancel)
         }
@@ -6271,25 +6253,14 @@ private struct CanvasDropDelegate: DropDelegate {
     }
 
     func performDrop(info: DropInfo) -> Bool {
-        NSLog("CMDKDRAG performDrop enabled=\(isEnabled()) cmdkActive=\(CommandKDragSession.shared.isActive) outside=\(CommandKDragSession.shared.isPointerOutsidePalette)")
         guard isEnabled() else { return false }
         let canvasPosition = screenToCanvas(info.location)
 
         if CommandKDragSession.shared.isActive {
-            // Mirror of dropUpdated: releasing while over the palette is a
-            // miss, not a drop-behind.
-            guard CommandKDragSession.shared.isPointerOutsidePalette else { return false }
-            for provider in info.itemProviders(for: [.text]) {
-                _ = provider.loadObject(ofClass: NSString.self) { item, _ in
-                    guard let dropped = item as? String else { return }
-                    let uuids = CommandKDragSession.Payload.uuids(fromDropped: dropped)
-                    guard !uuids.isEmpty else { return }
-                    DispatchQueue.main.async {
-                        onCommandKAtomDrop(uuids, canvasPosition)
-                    }
-                }
-            }
-            return true
+            // Placement is owned by the session's release poll; the canvas only
+            // consumes the SwiftUI drop so it doesn't read as a failed drag.
+            // Releasing over the palette is a miss, not a drop-behind.
+            return CommandKDragSession.shared.isPointerOutsidePalette
         }
 
         if ClusterViewDragSession.sourceClusterId != nil {

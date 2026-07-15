@@ -146,8 +146,6 @@ actor ThumbnailCacheService {
             return diskImage
         }
 
-        let fallbackImage = InstagramCarouselImageCache.fallbackImage(forStableKey: key)
-
         // 3. Deduplicated network fetch
         if let existing = inflightTasks[key] { return await existing.value }
 
@@ -192,7 +190,10 @@ actor ThumbnailCacheService {
         inflightTasks.removeValue(forKey: key)
         if let result { return result }
 
-        if let fallbackImage {
+        // Fallback decode only when the fetch actually failed — computing it
+        // up front paid a disk decode on every cache miss, serialized through
+        // this actor.
+        if let fallbackImage = InstagramCarouselImageCache.fallbackImage(forStableKey: key) {
             store(fallbackImage, forKey: key)
             return fallbackImage
         }
@@ -246,7 +247,15 @@ struct CachedAsyncImage<Content: View>: View {
                     return
                 }
 
-                if let fallback = InstagramCarouselImageCache.fallbackImage(forStableKey: key) {
+                // Carousel fallback probe is disk IO + an ImageIO decode —
+                // never on the main actor (this task inherits it). It runs
+                // concurrently with the full lookup and only fills the phase
+                // while that lookup is still in flight.
+                async let fallbackProbe = Task.detached(priority: .userInitiated) {
+                    InstagramCarouselImageCache.fallbackImage(forStableKey: key)
+                }.value
+
+                if let fallback = await fallbackProbe, case .empty = phase {
                     phase = .success(Image(nsImage: fallback))
                 }
 

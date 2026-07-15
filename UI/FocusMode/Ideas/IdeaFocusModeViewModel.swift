@@ -134,8 +134,10 @@ final class IdeaFocusModeViewModel {
     var linkedSwipes: [Atom] = []
     var linkedConnections: [Atom] = []
     var suggestedConnections: [Atom] = []
-    var generatedHooks: [HookSuggestion] = []
-    var isGeneratingHooks: Bool = false
+    /// The library's best performers in the idea's format — the "steal from
+    /// the winners" shelf. Loaded per format change, ranked by real
+    /// performance (views, then engagement), never AI quality guesses.
+    var recommendedSwipes: [Atom] = []
 
     // MARK: - Published State (Codex Integration)
 
@@ -170,7 +172,6 @@ final class IdeaFocusModeViewModel {
 
     @ObservationIgnored private var autoSaveTask: Task<Void, Never>?
     @ObservationIgnored private var autoEnrichTask: Task<Void, Never>?
-    @ObservationIgnored private var hookGenerationTask: Task<Void, Never>?
     @ObservationIgnored private var terminationCancellable: AnyCancellable?
     private let autoSaveDelay: TimeInterval = 1.5
     private let autoEnrichDelay: TimeInterval = 1.5
@@ -196,9 +197,10 @@ final class IdeaFocusModeViewModel {
 
         self.sessionState = IdeaFocusModeState(atomUUID: atom.uuid)
 
-        // Restore insight from atom's structured JSON
-        self.insight = atom.ideaInsight
-        self.blueprint = atom.ideaInsight?.blueprint
+        // Restore insight from atom's structured JSON (decoded once)
+        let restoredInsight = atom.ideaInsight
+        self.insight = restoredInsight
+        self.blueprint = restoredInsight?.blueprint
 
         // Restore session-level selections
         if let hookIdx = sessionState.selectedHookIndex {
@@ -257,6 +259,7 @@ final class IdeaFocusModeViewModel {
 
         // Load linked swipes and connections
         Task { await loadLinkedSwipes() }
+        Task { await loadRecommendedSwipes() }
         Task { await loadLinkedConnections() }
         Task { await loadMentionedAtoms() }
         Task { await loadSuggestedConnections() }
@@ -265,7 +268,6 @@ final class IdeaFocusModeViewModel {
     deinit {
         autoSaveTask?.cancel()
         autoEnrichTask?.cancel()
-        hookGenerationTask?.cancel()
         terminationCancellable?.cancel()
     }
 
@@ -329,6 +331,8 @@ final class IdeaFocusModeViewModel {
 
     /// Debounced lightweight analysis triggered on body text changes.
     /// Runs `IdeaInsightEngine.quickInsight()` after 1.5s of idle typing.
+    /// The background arc-recommendation call was removed with the framework
+    /// surface (July 2026) — no silent LLM calls ride the typing path.
     func autoEnrich() {
         autoEnrichTask?.cancel()
         autoEnrichTask = Task {
@@ -336,35 +340,6 @@ final class IdeaFocusModeViewModel {
             guard !Task.isCancelled else { return }
             let ideaText = "\(editableTitle)\n\(editableBody)"
             let _ = IdeaInsightEngine.shared.quickInsight(ideaText: ideaText)
-
-            // Auto-trigger arc recommendations when context has 20+ words and none exist
-            let wordCount = editableBody.split(separator: " ").count
-            if wordCount >= 20 && arcRecommendations.isEmpty {
-                await generateArcRecommendations()
-            }
-        }
-    }
-
-    /// Generate arc type recommendations from the idea context using Gemini Flash.
-    /// Recommendations are grounded in the idea text and the swipe library —
-    /// the retired Codex element catalog no longer feeds this.
-    func generateArcRecommendations() async {
-        do {
-            let swipes = try await AtomRepository.shared.fetchAll(type: .research)
-            let bpTitles = swipes
-                .filter { $0.isSwipeFileAtom }
-                .prefix(30)
-                .map { ($0.title ?? "", $0.bestPhysicsProfile?.arcQuarks?.shape ?? "") }
-
-            let result = try await ArcRecommendationAgent.shared.recommend(
-                ideaText: editableBody,
-                clientNiche: linkedClient?.title,
-                blueprintTitles: bpTitles
-            )
-            self.arcRecommendations = result.arcRecommendations
-            scheduleAutoSave()
-        } catch {
-            print("Arc recommendation failed: \(error)")
         }
     }
 
@@ -383,42 +358,6 @@ final class IdeaFocusModeViewModel {
         selectedBlueprintUUID = nil
         selectedBlueprint = nil
         scheduleAutoSave()
-    }
-
-    // MARK: - Framework Selection
-
-    /// Select a framework and generate a content blueprint.
-    func selectFramework(_ framework: SwipeFrameworkType) async {
-        sessionState.selectedFramework = framework.rawValue
-        sessionState.save()
-
-        let format = selectedFormat ?? .post
-        let ideaText = "\(editableTitle)\n\(editableBody)"
-        let referenceSwipes = insight?.matchingSwipes ?? []
-        let blueprintResult = await IdeaInsightEngine.shared.generateBlueprint(
-            ideaText: ideaText,
-            framework: framework,
-            format: format,
-            referenceSwipes: referenceSwipes
-        )
-
-        blueprint = blueprintResult
-
-        // Store blueprint in insight
-        if var currentInsight = insight {
-            currentInsight.blueprint = blueprintResult
-            insight = currentInsight
-
-            var updatedAtom = idea.withIdeaInsight(currentInsight)
-            updatedAtom.updatedAt = ISO8601.string(from: Date())
-            updatedAtom.localVersion += 1
-
-            do {
-                idea = try await AtomRepository.shared.update(updatedAtom)
-            } catch {
-                print("IdeaFocusMode: failed to save blueprint: \(error)")
-            }
-        }
     }
 
     // MARK: - Promote to Content
@@ -473,14 +412,17 @@ final class IdeaFocusModeViewModel {
                 }
                 return insight?.frameworkRecommendations?.first?.framework.rawValue
             }()
+            // The user's hooks only — AI-suggested hooks were removed (July
+            // 2026). The working hook (starred in the lab) leads the list
+            // into writing.
             let inheritedHooks: [String] = {
-                if !editableHooks.isEmpty {
-                    return editableHooks  // User's manual hooks take priority
+                guard !editableHooks.isEmpty else { return [] }
+                if let chosen = selectedHookIndex, editableHooks.indices.contains(chosen) {
+                    var hooks = editableHooks
+                    hooks.insert(hooks.remove(at: chosen), at: 0)
+                    return hooks
                 }
-                if !generatedHooks.isEmpty {
-                    return generatedHooks.map(\.hookText)
-                }
-                return insight?.hookSuggestions?.map(\.hookText) ?? []
+                return editableHooks
             }()
             let nowISO = ISO8601.string(from: Date())
 
@@ -752,7 +694,7 @@ final class IdeaFocusModeViewModel {
         do {
             idea = try await AtomRepository.shared.update(updatedAtom)
             await loadLinkedSwipes()
-            scheduleHookGeneration()
+            await loadRecommendedSwipes()
         } catch {
             print("IdeaFocusMode: linkSwipe failed: \(error)")
         }
@@ -769,7 +711,7 @@ final class IdeaFocusModeViewModel {
         do {
             idea = try await AtomRepository.shared.update(updatedAtom)
             await loadLinkedSwipes()
-            scheduleHookGeneration()
+            await loadRecommendedSwipes()
         } catch {
             print("IdeaFocusMode: unlinkSwipe failed: \(error)")
         }
@@ -876,101 +818,63 @@ final class IdeaFocusModeViewModel {
         }
     }
 
-    // MARK: - AI Hook Generation
+    // MARK: - Recommended Swipes
 
-    /// Schedule debounced hook generation (5s delay).
-    func scheduleHookGeneration() {
-        hookGenerationTask?.cancel()
-        hookGenerationTask = Task {
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
-            guard !Task.isCancelled else { return }
-            await generateHooksFromLinkedSwipes()
-        }
-    }
-
-    /// Generate hooks from linked swipes using ResearchService.
-    func generateHooksFromLinkedSwipes() async {
-        guard !linkedSwipes.isEmpty else {
-            generatedHooks = []
+    /// The best performers in the idea's format, drawn from the whole swipe
+    /// library: an idea shaped as a voiceover reel sees the top voiceover
+    /// reels, a carousel sees the top carousels. Exact format matches lead;
+    /// legacy `.reel` classifications back-fill reel-family formats. Ranked
+    /// by real performance — views, then engagement rate — and never by
+    /// hookScore (all swipes are curated; scores are not quality gates).
+    func loadRecommendedSwipes() async {
+        guard let format = selectedFormat else {
+            recommendedSwipes = []
             return
         }
-        guard !isGeneratingHooks else { return }
 
-        isGeneratingHooks = true
-        defer { isGeneratingHooks = false }
-
-        // Build swipe context
-        var swipeContext = ""
-        for swipe in linkedSwipes.prefix(5) {
-            let analysis = swipe.swipeAnalysis
-            let hookText = swipe.researchMetadata?.hook ?? analysis?.hookText ?? ""
-            let hookType = analysis?.hookType?.displayName ?? "unknown"
-            let score = analysis?.hookScore.map { String(format: "%.1f", $0) } ?? "?"
-            let title = swipe.title ?? "Untitled"
-            swipeContext += "- \"\(hookText)\" (type: \(hookType), score: \(score)/10, source: \(title))\n"
+        var excluded = Set(idea.ideaMetadata?.linkedSwipeIds ?? [])
+        if let blueprintUUID = selectedBlueprintUUID {
+            excluded.insert(blueprintUUID)
         }
 
-        // Build client voice context
-        var voiceContext = ""
-        if let client = linkedClient {
-            let clientMeta = client.clientMetadata
-            if let voice = clientMeta?.brandVoice, !voice.isEmpty {
-                voiceContext = "\nClient voice: \(voice)"
-            }
+        guard let research = try? await AtomRepository.shared.fetchAll(type: .research) else {
+            recommendedSwipes = []
+            return
         }
 
-        let prompt = """
-        Generate 3-5 hook suggestions for this idea, inspired by the structural patterns in the linked swipe files.
-
-        Idea title: \(editableTitle)
-        Core idea: \(editableBody)\(voiceContext)
-
-        Linked swipe hooks:
-        \(swipeContext)
-
-        For each hook, provide:
-        - "hookText": The full hook text (1-2 sentences)
-        - "hookType": One of: question, statistic, story, contrarian, authority, vulnerability, curiosity, challenge, comparison, metaphor, prediction, confession, secret, directAddress
-        - "sourceSwipeTitle": Which swipe file inspired this hook pattern
-        - "estimatedScore": Predicted hook score 1-10
-
-        Return ONLY this JSON:
-        {"hooks":[{"hookText":"...","hookType":"...","sourceSwipeTitle":"...","estimatedScore":7.5}]}
-        """
-
-        do {
-            let response = try await ResearchService.shared.analyzeContent(prompt: prompt)
-            let cleaned = response.trimmingCharacters(in: .whitespacesAndNewlines)
-
-            guard let startIdx = cleaned.firstIndex(of: "{"),
-                  let endIdx = cleaned.lastIndex(of: "}") else { return }
-
-            let jsonString = String(cleaned[startIdx...endIdx])
-            guard let data = jsonString.data(using: .utf8) else { return }
-
-            struct HookResponse: Decodable {
-                struct Item: Decodable {
-                    let hookText: String
-                    let hookType: String?
-                    let sourceSwipeTitle: String?
-                    let estimatedScore: Double?
-                }
-                let hooks: [Item]
+        let reelFamily: Set<ContentFormat> = [.reel, .voiceoverReel, .oneSliderReel, .multiSliderReel, .twoStepCTA]
+        let ranked = research.compactMap { atom -> (atom: Atom, tier: Int, views: Int, engagement: Double)? in
+            guard atom.isSwipeFileAtom,
+                  !excluded.contains(atom.uuid),
+                  let analysis = atom.swipeAnalysis,
+                  let swipeFormat = analysis.swipeContentFormat else { return nil }
+            let tier: Int
+            if swipeFormat == format {
+                tier = 0
+            } else if swipeFormat == .reel, reelFamily.contains(format) {
+                tier = 1
+            } else {
+                return nil
             }
-
-            if let parsed = try? JSONDecoder().decode(HookResponse.self, from: data) {
-                generatedHooks = parsed.hooks.map { item in
-                    HookSuggestion(
-                        hookText: item.hookText,
-                        hookType: item.hookType.flatMap { SwipeHookType(rawValue: $0) },
-                        sourceSwipeTitle: item.sourceSwipeTitle,
-                        estimatedScore: item.estimatedScore
-                    )
-                }
-            }
-        } catch {
-            print("IdeaFocusMode: generateHooksFromLinkedSwipes failed: \(error)")
+            return (atom, tier, analysis.viewsCount ?? 0, analysis.engagementRate ?? 0)
         }
+
+        recommendedSwipes = ranked
+            .sorted { lhs, rhs in
+                if lhs.tier != rhs.tier { return lhs.tier < rhs.tier }
+                if lhs.views != rhs.views { return lhs.views > rhs.views }
+                return lhs.engagement > rhs.engagement
+            }
+            .prefix(4)
+            .map(\.atom)
+    }
+
+    /// Format edits route through here so the recommendation shelf follows
+    /// the format the idea is shaped as.
+    func updateFormat(_ format: ContentFormat?) {
+        selectedFormat = format
+        scheduleAutoSave()
+        Task { await loadRecommendedSwipes() }
     }
 
     // MARK: - Client Assignment

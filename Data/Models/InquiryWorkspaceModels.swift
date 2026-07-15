@@ -1168,20 +1168,185 @@ struct OutputAngle: Codable, Sendable, Identifiable {
     }
 }
 
+// MARK: - Concept Seedbed
+
+/// One capture staged under an incubating concept — the raw material a future
+/// development conversation draws on. Mirrors the `ConnectionSectionItemDraft`
+/// payload, persisted on the Deep Dive instead of promoted into a page.
+struct StagedConceptItem: Codable, Sendable, Identifiable, Hashable {
+    var id: String
+    var sourceExtractUUID: String
+    /// The user's verbatim capture. Cleaning/splitting happens at develop-time
+    /// (ConceptComposerEngine), never at accrual — nothing is rewritten while
+    /// it waits in the seedbed.
+    var rawSnippet: String
+    var proposedSection: String?     // ConnectionSectionType.rawValue hint from the extract kind
+    var sourceUUID: String?          // Originating source atom (for title/timestamp display)
+    var sessionUUID: String?
+    var capturedAt: String           // ISO8601
+    /// Set when this item was attached into the developed page (provenance kept,
+    /// item no longer offered by the evidence rail).
+    var consumedAt: String?
+
+    init(
+        id: String = UUID().uuidString,
+        sourceExtractUUID: String,
+        rawSnippet: String,
+        proposedSection: String? = nil,
+        sourceUUID: String? = nil,
+        sessionUUID: String? = nil,
+        capturedAt: String = ISO8601.string(from: Date()),
+        consumedAt: String? = nil
+    ) {
+        self.id = id
+        self.sourceExtractUUID = sourceExtractUUID
+        self.rawSnippet = rawSnippet
+        self.proposedSection = proposedSection
+        self.sourceUUID = sourceUUID
+        self.sessionUUID = sessionUUID
+        self.capturedAt = capturedAt
+        self.consumedAt = consumedAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, sourceExtractUUID, rawSnippet, proposedSection, sourceUUID, sessionUUID, capturedAt, consumedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        sourceExtractUUID = try c.decodeIfPresent(String.self, forKey: .sourceExtractUUID) ?? ""
+        rawSnippet = try c.decodeIfPresent(String.self, forKey: .rawSnippet) ?? ""
+        proposedSection = try c.decodeIfPresent(String.self, forKey: .proposedSection)
+        sourceUUID = try c.decodeIfPresent(String.self, forKey: .sourceUUID)
+        sessionUUID = try c.decodeIfPresent(String.self, forKey: .sessionUUID)
+        capturedAt = try c.decodeIfPresent(String.self, forKey: .capturedAt) ?? ISO8601.string(from: Date())
+        consumedAt = try c.decodeIfPresent(String.self, forKey: .consumedAt)
+    }
+}
+
+/// A concept accruing mass in a Deep Dive before it has earned a page.
+/// Identity is the normalized `conceptKey` (ConceptResolver.conceptKey) — the
+/// same key the live router's capture-time tags and the tidy pass both use.
+struct IncubatingConcept: Codable, Sendable, Identifiable {
+    enum Status: String, Codable, Sendable {
+        case incubating
+        case developed      // Page born through a development conversation
+        case dismissed      // User folded it away; tags for this key stop accruing
+    }
+
+    var conceptKey: String
+    var name: String
+    var aliases: [String]
+    var parentConceptName: String?
+    var relatedConceptNames: [String]
+    var stagedItems: [StagedConceptItem]
+    var status: Status
+    /// Existing page this seedling feeds (tidy-pass match). Developing the
+    /// seedling opens THIS page instead of creating a new one.
+    var mergeTargetConnectionUUID: String?
+    /// The page born from this seedling (set when status becomes .developed).
+    var developedConnectionUUID: String?
+    var pinnedAt: String?            // User-pinned = ripe regardless of mass
+    var createdAt: String
+    var lastTouchedAt: String
+
+    var id: String { conceptKey }
+
+    /// Distinct sessions that contributed material — a core ripeness signal.
+    var sessionsTouched: Int {
+        Set(stagedItems.compactMap(\.sessionUUID)).count
+    }
+
+    /// Items not yet attached into a page.
+    var pendingItems: [StagedConceptItem] {
+        stagedItems.filter { $0.consumedAt == nil }
+    }
+
+    init(
+        conceptKey: String,
+        name: String,
+        aliases: [String] = [],
+        parentConceptName: String? = nil,
+        relatedConceptNames: [String] = [],
+        stagedItems: [StagedConceptItem] = [],
+        status: Status = .incubating,
+        mergeTargetConnectionUUID: String? = nil,
+        developedConnectionUUID: String? = nil,
+        pinnedAt: String? = nil,
+        createdAt: String = ISO8601.string(from: Date()),
+        lastTouchedAt: String = ISO8601.string(from: Date())
+    ) {
+        self.conceptKey = conceptKey
+        self.name = name
+        self.aliases = aliases
+        self.parentConceptName = parentConceptName
+        self.relatedConceptNames = relatedConceptNames
+        self.stagedItems = stagedItems
+        self.status = status
+        self.mergeTargetConnectionUUID = mergeTargetConnectionUUID
+        self.developedConnectionUUID = developedConnectionUUID
+        self.pinnedAt = pinnedAt
+        self.createdAt = createdAt
+        self.lastTouchedAt = lastTouchedAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case conceptKey, name, aliases, parentConceptName, relatedConceptNames,
+             stagedItems, status, mergeTargetConnectionUUID, developedConnectionUUID,
+             pinnedAt, createdAt, lastTouchedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        conceptKey = try c.decodeIfPresent(String.self, forKey: .conceptKey) ?? ""
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+        aliases = try c.decodeIfPresent([String].self, forKey: .aliases) ?? []
+        parentConceptName = try c.decodeIfPresent(String.self, forKey: .parentConceptName)
+        relatedConceptNames = try c.decodeIfPresent([String].self, forKey: .relatedConceptNames) ?? []
+        stagedItems = try c.decodeIfPresent([StagedConceptItem].self, forKey: .stagedItems) ?? []
+        status = try c.decodeIfPresent(Status.self, forKey: .status) ?? .incubating
+        mergeTargetConnectionUUID = try c.decodeIfPresent(String.self, forKey: .mergeTargetConnectionUUID)
+        developedConnectionUUID = try c.decodeIfPresent(String.self, forKey: .developedConnectionUUID)
+        pinnedAt = try c.decodeIfPresent(String.self, forKey: .pinnedAt)
+        createdAt = try c.decodeIfPresent(String.self, forKey: .createdAt) ?? ISO8601.string(from: Date())
+        lastTouchedAt = try c.decodeIfPresent(String.self, forKey: .lastTouchedAt) ?? ISO8601.string(from: Date())
+    }
+}
+
 /// Structured field for `.deepDive` atoms.
 struct DeepDiveStructured: Codable, Sendable {
     var currentUnderstanding: CurrentUnderstanding
     var practiceProtocols: [PracticeProtocol]
     var outputAngles: [OutputAngle]
+    /// Concepts accruing mass before they earn a page (the Seedbed).
+    var conceptSeedbed: [IncubatingConcept]
 
     init(
         currentUnderstanding: CurrentUnderstanding = CurrentUnderstanding(),
         practiceProtocols: [PracticeProtocol] = [],
-        outputAngles: [OutputAngle] = []
+        outputAngles: [OutputAngle] = [],
+        conceptSeedbed: [IncubatingConcept] = []
     ) {
         self.currentUnderstanding = currentUnderstanding
         self.practiceProtocols = practiceProtocols
         self.outputAngles = outputAngles
+        self.conceptSeedbed = conceptSeedbed
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case currentUnderstanding, practiceProtocols, outputAngles, conceptSeedbed
+    }
+
+    // Hand-written decode: old blobs have no `conceptSeedbed` key, and a
+    // synthesized decoder would throw — nil-ing the whole structured field and
+    // silently wiping understanding history on the next save.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        currentUnderstanding = try c.decodeIfPresent(CurrentUnderstanding.self, forKey: .currentUnderstanding) ?? CurrentUnderstanding()
+        practiceProtocols = try c.decodeIfPresent([PracticeProtocol].self, forKey: .practiceProtocols) ?? []
+        outputAngles = try c.decodeIfPresent([OutputAngle].self, forKey: .outputAngles) ?? []
+        conceptSeedbed = try c.decodeIfPresent([IncubatingConcept].self, forKey: .conceptSeedbed) ?? []
     }
 }
 
@@ -2615,6 +2780,10 @@ struct CrystallizationOutput: Codable, Sendable {
     var promotionSuggestions: [PromotionSuggestion]
     var rejected: [RejectedItem]
     var generatedAt: String
+    /// Names of seedlings the tidy pass touched — crystallization no longer
+    /// proposes pages; concepts ripen in the Deep Dive's seedbed instead.
+    /// Optional so pre-seedbed persisted outputs still decode.
+    var seedbedSeedlingNames: [String]?
 
     init(
         summary: String = "",

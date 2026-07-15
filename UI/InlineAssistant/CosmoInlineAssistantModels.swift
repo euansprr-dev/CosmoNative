@@ -25,6 +25,7 @@ enum CosmoInlineAssistantSkillID: String, Codable, CaseIterable, Equatable, Hash
     case concept
     case skillBuilder
     case synthesize
+    case ideaResearch
 }
 
 enum CosmoInlineAssistantSkillContext: String, Codable, CaseIterable, Equatable, Hashable, Sendable {
@@ -1322,6 +1323,13 @@ enum CosmoInlineAssistantSkillRuntime {
             skill = builtInSkill(.contentReview)
         } else if containsAny(lower, ["canvas", "thinkspace", "organize", "reorganize", "arrange", "cluster", "spatial"]) || surfaceKind == .canvas {
             skill = builtInSkill(.canvasOrganize)
+        } else if containsAny(lower, [
+            "find stats", "find data", "supporting evidence", "proof points",
+            "research this idea", "back this up", "stats for this", "evidence for this"
+        ]) {
+            // Evidence-gathering for the active piece routes to the ported
+            // Idea-research skill, not the generic Q&A researcher.
+            skill = builtInSkill(.ideaResearch)
         } else if CosmoInlineAssistantResearchIntent.isWebResearchRequest(lower), isEditLike(lower) {
             skill = isResearchFillLike(lower) ? builtInSkill(.factFill) : builtInSkill(.inlineEdit)
         } else if CosmoInlineAssistantResearchIntent.isWebResearchRequest(lower) {
@@ -1615,6 +1623,7 @@ enum CosmoInlineAssistantSkillRuntime {
                     "If the connection is blank or barely started, invite the messy core idea — one sentence, a link, a half-formed question, doesn't matter. If it already has material, begin from what is written and never ask a question the surface text already answers.",
                     "ORGANIZE THEIR THINKING, DON'T AUTHOR IT. The user's thoughts are often scattered; your real value is turning them into clean, well-formed bullets they instantly recognize as THEIR idea, just sharper and better organized. So you SHOULD reword for clarity, tighten rambling into a crisp sentence, fix grammar, keep their vivid phrasing, and pick the right section. The one hard line is SUBSTANCE: capture only the point they actually made. Do NOT add a claim, mechanism, cause, contrast, or example of your own, and don't dress it up with rhetorical flourishes (the 'not X, it's Y' reframe, dramatic asides) that make it read as authored-by-AI rather than said-by-them. Polish the phrasing; never invent the content. NEVER use em dashes anywhere: not in a bullet, and not in your chat replies. Use a comma, a period, or a semicolon instead. If a section needs substance the user hasn't given, do NOT fabricate it — ask a question that pulls it out of them. WORKED EXAMPLE — the user says, scattered: 'yeah like doing one thing at a time, when I actually do that I feel way calmer, less all over the place'. GOOD (organized, their point, tightened): 'Doing one thing at a time makes me feel calmer and less scattered.' TOO FAR (invented a thesis + mechanism they never stated): 'Doing one thing at a time isn't a productivity trick — it's the mechanism behind feeling calm and present.' The GOOD version reorganizes and cleans up; the TOO FAR version adds an argument they didn't make. Self-check before staging: is this their own point, just clearer? Or did I slip in an idea, a contrast, or a flourish they didn't offer? If I added substance, cut it back to what they said.",
                     "Stage the capture as a reviewed diff via propose_workspace_edit: exactly ONE operation for the ONE section you're capturing into, kind textInsertion, originalText set to the exact section header line (e.g. `## Claims`) copied verbatim from the surface text, proposedText as `- ` bullet lines (one bullet per item). To append after an existing entry instead, set originalText to that exact bullet line. Never claim an insertion happened without staging it, never restate a whole section, and never mix sections in one operation.",
+                    "EVIDENCE IS A PROBE, NEVER A DUMP. The user's research corpus is available via pull_evidence: call it when the concept grew out of research, when the user makes a claim their captures could support or contradict, or when they ask what they have. Use what comes back as conversation instruments in their own words: 'you captured X from the Huberman video — does that support this claim, or complicate it?'. When the user affirms a piece belongs on the page, stage ONE bullet into the Evidence section via propose_workspace_edit, quoting the capture with its source name. Never insert evidence they did not accept, and never bulk-file the whole corpus.",
                     "Challenge generic claims ('I care more about quality') with follow-ups until something specific and memorable appears. Don't compliment — observe, challenge, or dig deeper. When something is genuinely original, name what makes it original.",
                     "When the user hits a genuine unknown — 'I'm not sure', 'I don't know actually', 'let's start a question around X', 'I'd have to find out' — that is a fork, not a dead end. Sharpen the unknown into ONE researchable question phrased the way they'd ask it (refine the wording with them first if it's vague), then stage it with propose_inquiry_question, passing a one-sentence rationale tying the question to this concept. A confirmation card appears in the pane; the inquiry session opens only if the user confirms — never claim it started. After staging, acknowledge the question is ready in one clause and keep the concept conversation moving.",
                     "Never use canned filler like 'What's the tension?' unless the user used that language first.",
@@ -1680,6 +1689,34 @@ enum CosmoInlineAssistantSkillRuntime {
                 triggerPhrases: ["synthesize", "newsletter from", "chapter from", "draft from my research", "pull together"],
                 preferredModelTier: .strategist,
                 panePolicy: .openForResearchBackedAction
+            )
+        case .ideaResearch:
+            // The Idea Focus research panel, ported one-to-one (July 2026):
+            // same proof-type taxonomy, same finding shape — but conversational,
+            // surface-aware, and able to stage findings as reviewed edits.
+            return CosmoInlineAssistantSkill(
+                id: .ideaResearch,
+                name: "Research",
+                description: "Finds real statistics, studies, and evidence that support or inform the active idea or draft, tagged by proof type.",
+                route: .answer,
+                requiredContext: [.activeSurface, .currentFocus, .clientProfile],
+                toolBundles: [.workspaceEditing, .contentSearch, .webResearch],
+                outputContract: "pane_evidence_findings_then_optional_reviewed_insertion",
+                instructions: [
+                    "You are a research assistant for content creators. Read the ACTIVE surface first — for an idea that means its title, angle/body, hooks, and outline; for a draft, the draft text. The user's own material defines the research target; never ask what to research when the surface has content.",
+                    "Find 5-8 relevant statistics, studies, and data points that support or inform the piece, using web_search plus the user's saved research when relevant. Fold in the client's niche as an angle when a client profile is present.",
+                    "Tag each finding with the most appropriate proof type: Statistic (hard numbers, percentages, data), Case Study (real-world example, brand story), Expert Quote (authority figure, researcher), Social Proof (user testimonials, reviews, crowd behavior), Analogy (comparison to a known concept), Contrarian Data (surprising or counter-intuitive stat), Historical Precedent (past event that mirrors the idea), or Scientific Study (peer-reviewed research).",
+                    "Deliver the findings via answer_in_assistant_pane as a compact list: short finding title, a 2-3 sentence summary carrying the key data point, the source name, and the URL when known. Never invent statistics, sources, or URLs — a finding you cannot source does not ship.",
+                    "Prefer contrarian and surprising data when the evidence supports it — those make hooks. Name the single strongest finding for this piece and say why in one line.",
+                    "End by offering to stage any finding into the surface via propose_workspace_edit (a supporting line under the angle, or a stat-led hook); stage only after the user picks one."
+                ],
+                tokenBudget: 2200,
+                requiresReviewedDiff: false,
+                icon: "doc.text.magnifyingglass",
+                summary: "Pulls 5-8 sourced stats, studies, and proof points for the active idea — tagged by proof type, ready to stage.",
+                triggerPhrases: ["find stats", "supporting evidence", "research this idea", "back this up", "find data", "proof points"],
+                preferredModelTier: .strategist,
+                panePolicy: .alwaysOpenWithResult
             )
         }
     }

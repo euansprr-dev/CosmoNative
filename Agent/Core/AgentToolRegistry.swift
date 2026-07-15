@@ -1367,6 +1367,18 @@ class AgentToolRegistry {
                 ]
             ),
             LLMToolDefinition(
+                name: "pull_evidence",
+                description: "Pull the research the user has ALREADY gathered about the concept being developed: staged seedbed captures plus matching extracts from the connection's deep dive, each with its source. Call this while developing a concept to probe with the user's own material ('you captured X from the Huberman video — does it support this claim?'), or when they ask what they have on the topic. Evidence NEVER enters the page silently: cite it in conversation, and only stage it (via propose_workspace_edit, quoting it under Evidence with its source) after the user says yes.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "concept": ["type": "string", "description": "Concept name to gather evidence for. Omit to use the working connection's title."] as [String: Any],
+                        "surfaceID": ["type": "string", "description": "Editable surface id of the working Connection ('connection:<uuid>'), from active context. Omit to use the active surface."] as [String: Any]
+                    ] as [String: Any],
+                    "required": [] as [String]
+                ]
+            ),
+            LLMToolDefinition(
                 name: "append_to_note",
                 description: "Stage a reviewed addition to a note that is NOT the active surface — call this when the user says to add/append/save something 'to my X note' from anywhere in the app. Resolves the note by UUID or by title (fuzzy), and stages the text as a reviewed insertion the user accepts in the diff UI. The note does not need to be open; accepted text persists straight to the note. For edits to the ACTIVE surface, use propose_workspace_edit instead.",
                 parametersSchema: [

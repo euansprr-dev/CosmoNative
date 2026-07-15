@@ -16,6 +16,8 @@ struct TaxonomyManagementView: View {
     @State private var isLoading = false
     @State private var newValueText = ""
     @State private var showAddField = false
+    @State private var renamingRowID: String?
+    @State private var renameText = ""
 
     private let gold = DS.entitySwipe
 
@@ -133,9 +135,13 @@ struct TaxonomyManagementView: View {
 
             // Value name
             VStack(alignment: .leading, spacing: 1) {
-                Text(row.displayName)
-                    .font(DS.callout)
-                    .foregroundStyle(DS.text)
+                if renamingRowID == row.id {
+                    renameField(row)
+                } else {
+                    Text(row.displayName)
+                        .font(DS.callout)
+                        .foregroundStyle(DS.text)
+                }
 
                 if row.isDefault {
                     Text("Default")
@@ -199,6 +205,70 @@ struct TaxonomyManagementView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: DS.radiusSmall))
+        .contextMenu {
+            if selectedDimension == .niche, !row.isDefault {
+                nicheContextMenu(row)
+            }
+        }
+    }
+
+    // MARK: - Niche rename / merge
+
+    @ViewBuilder
+    private func nicheContextMenu(_ row: TaxonomyValueRow) -> some View {
+        Button("Rename…") {
+            renameText = row.displayName
+            renamingRowID = row.id
+        }
+        let targets = dimensionValues.filter { $0.id != row.id && !$0.isDefault }
+        if !targets.isEmpty {
+            Menu("Merge into") {
+                ForEach(targets) { target in
+                    Button(target.displayName) {
+                        mergeNiche(source: row, into: target)
+                    }
+                }
+            }
+        }
+        Divider()
+        Button("Archive", role: .destructive) {
+            archiveValue(row)
+        }
+    }
+
+    private func renameField(_ row: TaxonomyValueRow) -> some View {
+        TextField("Niche name", text: $renameText)
+            .textFieldStyle(.plain)
+            .font(DS.callout)
+            .foregroundStyle(DS.text)
+            .onSubmit { commitRename(row) }
+            .onExitCommand {
+                renamingRowID = nil
+                renameText = ""
+            }
+    }
+
+    /// Rename routes through NicheRegistry so the old value becomes an alias
+    /// and every swipe carrying it is rewritten.
+    private func commitRename(_ row: TaxonomyValueRow) {
+        let name = renameText.trimmingCharacters(in: .whitespaces)
+        renamingRowID = nil
+        renameText = ""
+        guard !name.isEmpty, name != row.displayName, let uuid = row.atomUUID else { return }
+        Task {
+            await NicheRegistry.shared.rename(atomUUID: uuid, to: name)
+            loadValues()
+        }
+    }
+
+    /// Merge folds aliases + usage into the target, tombstones the source,
+    /// and rewrites affected swipes (all inside NicheRegistry.merge).
+    private func mergeNiche(source: TaxonomyValueRow, into target: TaxonomyValueRow) {
+        guard let sourceUUID = source.atomUUID, let targetUUID = target.atomUUID else { return }
+        Task {
+            await NicheRegistry.shared.merge(sourceUUID: sourceUUID, intoUUID: targetUUID)
+            loadValues()
+        }
     }
 
     private var addValueBar: some View {
@@ -319,14 +389,22 @@ struct TaxonomyManagementView: View {
                             isDefault: false,
                             sortOrder: meta.sortOrder,
                             atomUUID: atom.uuid,
-                            usageCount: 0
+                            usageCount: meta.usageCount ?? 0
                         ))
                     }
                 }
             }
 
-            // Sort by sortOrder
-            rows.sort { $0.sortOrder < $1.sortOrder }
+            // Niches order by how much of the library they hold; other
+            // dimensions keep their manual sortOrder.
+            if selectedDimension == .niche {
+                rows.sort {
+                    if $0.usageCount != $1.usageCount { return $0.usageCount > $1.usageCount }
+                    return $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+                }
+            } else {
+                rows.sort { $0.sortOrder < $1.sortOrder }
+            }
 
             dimensionValues = rows
             isLoading = false
@@ -338,11 +416,17 @@ struct TaxonomyManagementView: View {
         guard !value.isEmpty else { return }
 
         Task {
-            let _ = try? await AtomRepository.shared.createTaxonomyValue(
-                dimension: selectedDimension.rawValue,
-                value: value,
-                sortOrder: dimensionValues.count
-            )
+            if selectedDimension == .niche {
+                // Registry-routed: a typed label that matches an existing
+                // niche folds into it instead of creating a twin.
+                _ = await NicheRegistry.shared.seed(value: value, aliases: [], usageCount: 0)
+            } else {
+                _ = try? await AtomRepository.shared.createTaxonomyValue(
+                    dimension: selectedDimension.rawValue,
+                    value: value,
+                    sortOrder: dimensionValues.count
+                )
+            }
             newValueText = ""
             showAddField = false
             loadValues()
@@ -364,7 +448,10 @@ struct TaxonomyManagementView: View {
         Task {
             if var atom = try? await AtomRepository.shared.fetch(uuid: atomUUID) {
                 atom.isDeleted = true
-                try? await AtomRepository.shared.update(atom)
+                _ = try? await AtomRepository.shared.update(atom)
+                if selectedDimension == .niche {
+                    NicheRegistry.shared.invalidate()
+                }
                 loadValues()
             }
         }

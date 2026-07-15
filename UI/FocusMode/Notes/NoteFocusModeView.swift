@@ -274,6 +274,9 @@ struct NoteFocusModeView: View {
 
     // Animation states
     @State private var contentAppeared = false
+    /// Jump-to-sentence landing from ⌘K: the matched block wears a soft
+    /// accent wash while this is set; cleared after the reveal pulse.
+    @State private var landingHighlightBlockID: UUID?
     @State private var titleUnderlineProgress: CGFloat = 0
     @State private var titleEditorHeight: CGFloat = 76
     @State private var scrollViewportHeight: CGFloat = 0
@@ -889,6 +892,13 @@ struct NoteFocusModeView: View {
     }
 
     private var centerScroll: some View {
+        ScrollViewReader { scrollProxy in
+            centerScrollContent
+                .onAppear { attemptSearchLanding(with: scrollProxy) }
+        }
+    }
+
+    private var centerScrollContent: some View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(spacing: 0) {
                 pageIdentityHeader
@@ -962,6 +972,7 @@ struct NoteFocusModeView: View {
                             editorTargetID: EditorCommandTarget.noteBody(atom.uuid),
                             navigationTargetID: bodyNavigationTargetID,
                             focusCoordinator: bodyFocusCoordinator,
+                            landingHighlightBlockID: landingHighlightBlockID,
                             onSelectionChanged: { snapshot in
                                 selectedText = snapshot.text
                                 let trimmed = snapshot.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1002,6 +1013,30 @@ struct NoteFocusModeView: View {
             withoutImplicitAnimation {
                 scrollViewportHeight = newValue.height
                 scrollViewportWidth = newValue.width
+            }
+        }
+    }
+
+    /// Jump-to-sentence: when ⌘K opened this note off a body match, scroll
+    /// the matched block to center and pulse a soft wash on it. A landing
+    /// that can't be located (content edited since indexing) opens normally.
+    private func attemptSearchLanding(with proxy: ScrollViewProxy) {
+        guard let landing = CommandKSearchLandingStore.shared.consume(for: atom.uuid),
+              let blockID = CommandKSearchLandingLocator.blockID(for: landing, in: bodyDocument.blocks)
+        else { return }
+        // Let the focus-mode entrance transition settle before moving the
+        // viewport — scrolling mid-transition reads as a glitch.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+            withAnimation(reduceMotion ? nil : ProMotionSprings.gentle) {
+                proxy.scrollTo(blockID, anchor: .center)
+            }
+            withAnimation(.easeInOut(duration: 0.45)) {
+                landingHighlightBlockID = blockID
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) {
+                withAnimation(.easeOut(duration: 0.8)) {
+                    landingHighlightBlockID = nil
+                }
             }
         }
     }

@@ -44,6 +44,10 @@ struct SwipeCard: View {
         .onHover { isHovered = $0 }
         .onTapGesture(count: 2, perform: actions.onStudy)
         .onTapGesture(perform: actions.onOpen)
+        // A visible card is a click away from Swipe Study — prewarm its media
+        // + decoded analysis so the bench opens with zero loading. Library
+        // ids ARE atom uuids; Discover ids simply miss the lookup (no-op).
+        .onAppear { SwipeStudyPrewarmer.shared.prewarm(uuid: model.id) }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(model.hookText)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
@@ -75,7 +79,13 @@ private struct SwipeCardMedia: View {
         .overlay(alignment: .topLeading) { outlierBadge }
         .overlay(alignment: .bottomTrailing) { durationBadge }
         .overlay(alignment: .topTrailing) {
-            SwipeCardQuickActions(isVisible: isHovered, actions: actions)
+            // Mounted only on hover: the glass container + Menu are the most
+            // expensive views on the card, and a masonry keeps 30–80 cards
+            // live — parked at opacity 0 they still cost every scroll frame.
+            if isHovered {
+                SwipeCardQuickActions(actions: actions)
+                    .transition(.opacity)
+            }
         }
     }
 
@@ -164,7 +174,6 @@ private struct SwipeCardPaperWell: View {
 // MARK: - Quick actions
 
 private struct SwipeCardQuickActions: View {
-    let isVisible: Bool
     let actions: SwipeCardActions
 
     var body: some View {
@@ -179,9 +188,6 @@ private struct SwipeCardQuickActions: View {
             }
         }
         .padding(8)
-        .opacity(isVisible ? 1 : 0)
-        .allowsHitTesting(isVisible)
-        .animation(ProMotionSprings.hover, value: isVisible)
     }
 
     private func boardMenuButton(_ menu: SwipeCardBoardMenu) -> some View {

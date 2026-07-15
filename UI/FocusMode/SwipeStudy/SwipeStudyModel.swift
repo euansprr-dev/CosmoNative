@@ -280,21 +280,24 @@ final class SwipeStudyModel {
 
         // Slide transcript: swipeAnalysis.transcriptSlides is the source of
         // truth (survives analysis rewrites); fallback parses transcriptText.
-        if let savedSlides = sourceAtom.swipeAnalysis?.transcriptSlides,
+        // One decode for the whole load — this runs on the main actor during
+        // the entrance animation.
+        let savedAnalysis = sourceAtom.swipeAnalysis
+        if let savedSlides = savedAnalysis?.transcriptSlides,
            !savedSlides.isEmpty,
            savedSlides.contains(where: { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
             transcriptSlides = savedSlides
-            rawTranscriptSlides = sourceAtom.swipeAnalysis?.rawTranscriptSlides ?? savedSlides
-            transcriptSpeechSegments = sourceAtom.swipeAnalysis?.transcriptSpeechSegments ?? []
-            transcriptionQuality = sourceAtom.swipeAnalysis?.transcriptionQuality
-            transcriptionWarnings = sourceAtom.swipeAnalysis?.transcriptionWarnings ?? []
+            rawTranscriptSlides = savedAnalysis?.rawTranscriptSlides ?? savedSlides
+            transcriptSpeechSegments = savedAnalysis?.transcriptSpeechSegments ?? []
+            transcriptionQuality = savedAnalysis?.transcriptionQuality
+            transcriptionWarnings = savedAnalysis?.transcriptionWarnings ?? []
             instagramTranscript = transcriptText
         } else if !transcriptText.isEmpty {
             loadSlides(from: transcriptText)
             instagramTranscript = transcriptText
         }
 
-        if let savedComments = sourceAtom.swipeAnalysis?.transcriptComments, !savedComments.isEmpty {
+        if let savedComments = savedAnalysis?.transcriptComments, !savedComments.isEmpty {
             transcriptComments = savedComments
         }
 
@@ -304,7 +307,7 @@ final class SwipeStudyModel {
         // Analysis: a fully-analyzed swipe shows its cached analysis instantly —
         // never a surprise model call on open. Anything else runs one insight
         // pass once a transcript exists.
-        let cached = sourceAtom.swipeAnalysis
+        let cached = savedAnalysis
         if let cached, cached.isFullyAnalyzed {
             analysis = cached
             withAnimation(ProMotionSprings.snappy) { hasAppeared = true }
@@ -316,28 +319,49 @@ final class SwipeStudyModel {
         withAnimation(ProMotionSprings.snappy) { hasAppeared = true }
         Task {
             await fetchYouTubeTranscriptIfMissing()
-            let hasText = !slidesTranscriptText.isEmpty || !transcriptText.isEmpty
-            if hasText {
-                await runInsightPass(context: "loadAtom")
+            // Railway-first on the OPEN path too: while the cloud worker owns
+            // this swipe (fresh claim, pending inside the grace window, or a
+            // scheduled retry), the Mac must not fire a duplicate model call —
+            // it waits for the worker's result to sync down instead.
+            if cloudOwnsProcessing(displayAtom) {
+                pollForBackgroundCompletion()
+            } else {
+                let hasText = !slidesTranscriptText.isEmpty || !transcriptText.isEmpty
+                if hasText {
+                    await runInsightPass(context: "loadAtom")
+                }
             }
             markStudiedIfNeeded()
         }
     }
 
+    /// True while the Railway worker still owns this swipe's processing —
+    /// the same gate `SwipeProcessingService.transcribe` applies, applied
+    /// here so the Study view's own auto-transcribe/analyze paths defer too.
+    private func cloudOwnsProcessing(_ atom: Atom) -> Bool {
+        !SwipeProcessingService.macMayProcess(
+            metadataJSON: atom.metadata,
+            updatedAt: ISO8601.date(from: atom.updatedAt)
+        )
+    }
+
     private func markStudiedIfNeeded() {
+        // Capture the target NOW — the persist runs later on a Task, by which
+        // time navigation may have re-pointed displayAtom at another swipe.
+        let targetUUID = displayAtom.uuid
         guard let current = analysis ?? currentAtom?.swipeAnalysis else {
             // No analysis yet — studying still counts.
             var fresh = SwipeAnalysis(analysisVersion: 0, isFullyAnalyzed: false)
             fresh = fresh.markingStudied()
             analysis = fresh
-            Task { await persistAnalysisToCurrentAtom(fresh, context: "markStudied") }
+            Task { await persistAnalysis(fresh, toAtomWithUUID: targetUUID, context: "markStudied") }
             recordStudyTasteSignal(analysis: nil)
             return
         }
         guard current.studiedAt == nil else { return }
         let studied = current.markingStudied()
         analysis = studied
-        Task { await persistAnalysisToCurrentAtom(studied, context: "markStudied") }
+        Task { await persistAnalysis(studied, toAtomWithUUID: targetUUID, context: "markStudied") }
         recordStudyTasteSignal(analysis: studied)
     }
 
@@ -457,6 +481,12 @@ final class SwipeStudyModel {
 
     /// Run the insight engine on the current atom and persist the result with
     /// live editor state + curated fields intact.
+    ///
+    /// LEAKAGE INVARIANT: the result is persisted onto `atomForAnalysis.uuid`
+    /// and NOTHING else. The old code persisted onto `displayAtom`, which
+    /// follows navigation (and falls back to `initialAtom` during the reload
+    /// window) — a stale pass finishing mid-navigation durably wrote one
+    /// swipe's analysis onto a completely different swipe's row.
     func runInsightPass(context: String) async {
         guard !isAnalyzing else { return }
         let atomForAnalysis = displayAtom
@@ -466,7 +496,16 @@ final class SwipeStudyModel {
 
         let result = await SwipeInsightEngine.shared.analyze(atom: atomForAnalysis)
         guard result.isFullyAnalyzed else { return }
-        guard isViewingAtom(uuid: atomForAnalysis.uuid) || currentAtom == nil else { return }
+
+        guard isViewingAtom(uuid: atomForAnalysis.uuid) else {
+            // Navigated away mid-pass: the (expensive) analysis still belongs
+            // to the atom it was computed FOR — persist it there from its
+            // live row, and leave every piece of view state alone.
+            await persistAnalysisToBackgroundAtom(
+                result, uuid: atomForAnalysis.uuid, context: context
+            )
+            return
+        }
 
         // Stamp LIVE editor state (not a pre-await capture) and carry curated
         // fields forward — the model call takes seconds and the user may have
@@ -479,18 +518,21 @@ final class SwipeStudyModel {
         withAnimation(ProMotionSprings.snappy) {
             analysis = enriched
         }
-        await persistAnalysisToCurrentAtom(enriched, context: context)
+        await persistAnalysis(enriched, toAtomWithUUID: atomForAnalysis.uuid, context: context)
         SwipePatternStore.shared.markPendingWeave(atomForAnalysis.uuid)
 
         // Fresh displayTitle → keep the library headline in sync.
-        if var current = currentAtom,
+        if var current = currentAtom, current.uuid == atomForAnalysis.uuid,
            let title = enriched.displayTitle, !title.isEmpty, current.title != title {
             current.title = title
             var rc = current.richContent ?? ResearchRichContent()
             rc.title = title
             current.setRichContent(rc)
             do {
-                currentAtom = try await AtomRepository.shared.update(current)
+                let saved = try await AtomRepository.shared.update(current)
+                if isViewingAtom(uuid: atomForAnalysis.uuid) {
+                    currentAtom = saved
+                }
             } catch {
                 PersistenceHealth.note(
                     .writeFailure,
@@ -504,6 +546,37 @@ final class SwipeStudyModel {
             name: .researchCreated, object: nil,
             userInfo: ["uuid": atomForAnalysis.uuid]
         )
+    }
+
+    /// Persist an insight result for an atom the user has navigated away
+    /// from. Fetches the live row so curated fields, transcript artifacts,
+    /// study state, and the headline all land on the RIGHT atom.
+    private func persistAnalysisToBackgroundAtom(
+        _ result: SwipeAnalysis, uuid: String, context: String
+    ) async {
+        guard let fresh = try? await AtomRepository.shared.fetch(uuid: uuid) else { return }
+        let merged = result.preservingCuratedFields(from: fresh.swipeAnalysis)
+        var updated = fresh.withSwipeAnalysis(merged)
+        if let title = merged.displayTitle, !title.isEmpty, updated.title != title,
+           !AtomRepository.shared.isBeingEdited(uuid) {
+            updated.title = title
+            var rc = updated.richContent ?? ResearchRichContent()
+            rc.title = title
+            updated.setRichContent(rc)
+        }
+        do {
+            _ = try await AtomRepository.shared.update(updated)
+            SwipePatternStore.shared.markPendingWeave(uuid)
+            NotificationCenter.default.post(
+                name: .researchCreated, object: nil, userInfo: ["uuid": uuid]
+            )
+        } catch {
+            PersistenceHealth.note(
+                .writeFailure,
+                context: "SwipeStudy.\(context).background(\(uuid.prefix(8)))",
+                detail: error.localizedDescription
+            )
+        }
     }
 
     /// Explicit user action: save the live transcript onto the atom, then run
@@ -561,17 +634,34 @@ final class SwipeStudyModel {
         return copy
     }
 
-    /// Persist an analysis onto the current atom with error surfacing, keeping
-    /// `currentAtom` pointed at the returned (version-bumped) row.
-    func persistAnalysisToCurrentAtom(_ analysisToSave: SwipeAnalysis, context: String) async {
-        let base = displayAtom
+    /// Persist an analysis onto the atom it belongs to — keyed by uuid
+    /// captured at schedule time, NEVER by whatever `displayAtom` resolves to
+    /// when the async write finally lands (navigation may have moved it, and
+    /// during a reload it falls back to `initialAtom` — a different swipe).
+    func persistAnalysis(_ analysisToSave: SwipeAnalysis, toAtomWithUUID uuid: String, context: String) async {
+        let base: Atom
+        if let current = currentAtom, current.uuid == uuid {
+            base = current
+        } else if let fetched = try? await AtomRepository.shared.fetch(uuid: uuid) {
+            base = fetched
+        } else {
+            PersistenceHealth.note(
+                .writeFailure,
+                context: "SwipeStudy.\(context)(\(uuid.prefix(8)))",
+                detail: "atom not found for analysis persist"
+            )
+            return
+        }
         let updated = base.withSwipeAnalysis(analysisToSave)
         do {
-            currentAtom = try await AtomRepository.shared.update(updated)
+            let saved = try await AtomRepository.shared.update(updated)
+            if isViewingAtom(uuid: uuid) {
+                currentAtom = saved
+            }
         } catch {
             PersistenceHealth.note(
                 .writeFailure,
-                context: "SwipeStudy.\(context)(\(base.uuid.prefix(8)))",
+                context: "SwipeStudy.\(context)(\(uuid.prefix(8)))",
                 detail: error.localizedDescription
             )
         }
@@ -676,6 +766,8 @@ final class SwipeStudyModel {
 
         Task {
             let result = await SwipeInsightEngine.shared.analyze(atom: atom)
+            // A suggestion for swipe A must never surface on swipe B.
+            guard isViewingAtom(uuid: atom.uuid) else { return }
             if result.isFullyAnalyzed {
                 reclassifySuggestion = result
             }
@@ -686,9 +778,10 @@ final class SwipeStudyModel {
     func acceptReclassification() {
         guard let suggestion = reclassifySuggestion,
               let current = analysis else { return }
+        let targetUUID = displayAtom.uuid
         let merged = SwipeClassificationEngine.shared.mergeClassification(suggestion, into: current)
         analysis = merged
-        Task { await persistAnalysisToCurrentAtom(merged, context: "acceptReclassification") }
+        Task { await persistAnalysis(merged, toAtomWithUUID: targetUUID, context: "acceptReclassification") }
         reclassifySuggestion = nil
     }
 
@@ -698,10 +791,11 @@ final class SwipeStudyModel {
 
     func saveTaxonomyOverride() {
         guard var current = analysis else { return }
+        let targetUUID = displayAtom.uuid
         current.classificationSource = .aiOverridden
         current.classifiedAt = Date()
         analysis = current
-        Task { await persistAnalysisToCurrentAtom(current, context: "taxonomyOverride") }
+        Task { await persistAnalysis(current, toAtomWithUUID: targetUUID, context: "taxonomyOverride") }
         // A hand-corrected classification is a strong taxonomy belief.
         let title = displayAtom.title ?? "Untitled swipe"
         let format = current.swipeContentFormat?.rawValue ?? "unclassified"
@@ -1323,7 +1417,7 @@ final class SwipeStudyModel {
 
                 if shouldAutoTranscribe() {
                     await autoTranscribe(videoURL: localURL, duration: videoDuration > 0 ? videoDuration : 60)
-                } else if SwipeProcessingService.shared.isProcessing(uuid: displayAtom.uuid) {
+                } else if SwipeProcessingService.shared.isProcessing(uuid: displayAtom.uuid) || cloudOwnsProcessing(displayAtom) {
                     pollForBackgroundCompletion()
                 }
 
@@ -1377,7 +1471,7 @@ final class SwipeStudyModel {
                     if shouldAutoTranscribe() {
                         guard isViewingAtom(uuid: expectedUUID) else { return }
                         await autoTranscribe(videoURL: playableURL, duration: mediaData.duration ?? 60)
-                    } else if SwipeProcessingService.shared.isProcessing(uuid: displayAtom.uuid) {
+                    } else if SwipeProcessingService.shared.isProcessing(uuid: displayAtom.uuid) || cloudOwnsProcessing(displayAtom) {
                         pollForBackgroundCompletion()
                     }
                 } else if let thumbnailURL = mediaData.thumbnailURL,
@@ -1432,7 +1526,9 @@ final class SwipeStudyModel {
         let hasSavedBody = !(displayAtom.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasTranscriptStatus = displayAtom.richContent?.transcriptStatus == "available"
         let isBackgroundProcessing = SwipeProcessingService.shared.isProcessing(uuid: displayAtom.uuid)
-        return !hasSlideContent && !hasTranscript && !hasSavedBody && !hasTranscriptStatus && !isBackgroundProcessing
+        let cloudOwns = cloudOwnsProcessing(displayAtom)
+        return !hasSlideContent && !hasTranscript && !hasSavedBody && !hasTranscriptStatus
+            && !isBackgroundProcessing && !cloudOwns
     }
 
     /// Decide whether a displayed carousel still needs (re-)transcription.
@@ -1440,18 +1536,20 @@ final class SwipeStudyModel {
     private func handleCarouselTranscription(items: [CarouselItem], expectedUUID: String) async {
         let existingSlideCount = transcriptSlides.filter { !$0.text.isEmpty }.count
         let isBackgroundProcessing = SwipeProcessingService.shared.isProcessing(uuid: displayAtom.uuid)
+        let cloudOwns = cloudOwnsProcessing(displayAtom)
 
         let needsInitialTranscription = shouldAutoTranscribe()
 
         let userEditedTranscript = displayAtom.swipeAnalysis?.transcriptEditedByUser == true
         let hasMoreSlides = items.count > existingSlideCount && existingSlideCount > 0
         let isDegraded = displayAtom.swipeAnalysis?.transcriptionQuality == .degraded
-        let needsReTranscription = (hasMoreSlides || isDegraded) && !isBackgroundProcessing && !userEditedTranscript
+        let needsReTranscription = (hasMoreSlides || isDegraded)
+            && !isBackgroundProcessing && !cloudOwns && !userEditedTranscript
 
         if needsInitialTranscription || needsReTranscription {
             guard isViewingAtom(uuid: expectedUUID) else { return }
             await autoTranscribeCarousel(items: items)
-        } else if isBackgroundProcessing {
+        } else if isBackgroundProcessing || cloudOwns {
             pollForBackgroundCompletion()
         }
     }
@@ -1496,14 +1594,33 @@ final class SwipeStudyModel {
     }
 
     private func pollForBackgroundCompletion() {
+        guard !isAutoTranscribing else { return }
         autoTranscriptionProgress = "Processing in background…"
         isAutoTranscribing = true
 
         Task { [weak self] in
             guard let self else { return }
             let uuid = self.displayAtom.uuid
-            while SwipeProcessingService.shared.isProcessing(uuid: uuid) {
-                try? await Task.sleep(for: .seconds(2))
+            // Wait for BOTH tiers: the Mac's own background pass AND the
+            // Railway worker (whose result arrives via sync). Bounded — a
+            // worker that dies mid-swipe releases ownership via the stale-
+            // claim window, at which point the loop exits and the local
+            // fallback below can step in.
+            let deadline = Date().addingTimeInterval(8 * 60)
+            while Date() < deadline {
+                if SwipeProcessingService.shared.isProcessing(uuid: uuid) {
+                    try? await Task.sleep(for: .seconds(2))
+                    continue
+                }
+                guard let row = try? await AtomRepository.shared.fetch(uuid: uuid) else { break }
+                // Keep the status line honest while the cloud works.
+                if self.isViewingAtom(uuid: uuid),
+                   self.currentAtom?.processingStatus != row.processingStatus {
+                    self.currentAtom = row
+                }
+                guard self.cloudOwnsProcessing(row),
+                      row.processingStatus != "complete" else { break }
+                try? await Task.sleep(for: .seconds(3))
             }
 
             guard self.isViewingAtom(uuid: uuid) else { return }
@@ -1560,6 +1677,18 @@ final class SwipeStudyModel {
             self.isUpgradingCarousel = false
             self.isAutoTranscribing = false
             self.autoTranscriptionProgress = ""
+
+            // Self-heal: a transcript arrived but the analysis didn't (cloud
+            // insight call failed, or the worker went quiet past its grace
+            // window). Once the Mac is allowed to process, run the pass
+            // locally instead of leaving the rail empty.
+            let hasText = !self.slidesTranscriptText.isEmpty || !self.transcriptText.isEmpty
+            if hasText,
+               self.analysis?.isFullyAnalyzed != true,
+               self.isViewingAtom(uuid: uuid),
+               !self.cloudOwnsProcessing(self.displayAtom) {
+                await self.runInsightPass(context: "cloudFallback")
+            }
         }
     }
 

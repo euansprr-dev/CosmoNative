@@ -47,6 +47,19 @@ enum CodexOutlineEditing {
             outline.slides[index].position = index + 1
         }
     }
+
+    /// Move a slide up (-1) or down (+1) one position. Returns false when the
+    /// slide is missing or already at the edge, so callers can skip the
+    /// animation and focus churn.
+    @discardableResult
+    static func moveSlide(_ slideID: UUID, offset: Int, in outline: inout CodexOutlineModel) -> Bool {
+        guard let index = outline.slides.firstIndex(where: { $0.id == slideID }) else { return false }
+        let target = index + offset
+        guard outline.slides.indices.contains(target) else { return false }
+        outline.slides.swapAt(index, target)
+        renumberSlides(in: &outline)
+        return true
+    }
 }
 
 /// Pure splice computation for "Insert into post": places an outline item's

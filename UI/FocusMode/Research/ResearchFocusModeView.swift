@@ -678,9 +678,6 @@ struct ResearchFocusModeView: View {
 
         case .createTemplate:
             break // Templates not supported in focus mode
-
-        case .createPortal:
-            break // Portals live on the thinkspace canvas, not in focus mode
         }
     }
 

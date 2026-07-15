@@ -30,6 +30,8 @@ enum IdeaWorkspaceBreakpoint: Equatable {
 @MainActor
 @Observable
 final class IdeaWorkspaceModel {
+    private static let conversationDefaultsKey = "idea.workbench.conversation"
+
     /// Current width class — kept in sync by the host view so the toolbar
     /// and keyboard shortcuts toggle the right presentation.
     var breakpoint: IdeaWorkspaceBreakpoint = .regular
@@ -40,8 +42,22 @@ final class IdeaWorkspaceModel {
     /// widths it would cover the manuscript.
     var isInspectorOverlayPresented = false
 
+    /// The conversation panel (the bench's left column — the resident
+    /// assistant). Off by default; the choice persists across sessions.
+    var isConversationVisible: Bool
+    /// Compact: conversation as a leading overlay, never persisted.
+    var isConversationOverlayPresented = false
+
+    init() {
+        isConversationVisible = UserDefaults.standard.bool(forKey: Self.conversationDefaultsKey)
+    }
+
     var isInspectorShowing: Bool {
         breakpoint == .regular ? isInspectorVisible : isInspectorOverlayPresented
+    }
+
+    var isConversationShowing: Bool {
+        breakpoint == .regular ? isConversationVisible : isConversationOverlayPresented
     }
 
     func toggleInspector() {
@@ -49,7 +65,21 @@ final class IdeaWorkspaceModel {
         case .regular:
             isInspectorVisible.toggle()
         case .compact:
+            // Compact overlays are exclusive — opening one closes the other
+            // (the Study's compact manner).
             isInspectorOverlayPresented.toggle()
+            if isInspectorOverlayPresented { isConversationOverlayPresented = false }
+        }
+    }
+
+    func toggleConversation() {
+        switch breakpoint {
+        case .regular:
+            isConversationVisible.toggle()
+            UserDefaults.standard.set(isConversationVisible, forKey: Self.conversationDefaultsKey)
+        case .compact:
+            isConversationOverlayPresented.toggle()
+            if isConversationOverlayPresented { isInspectorOverlayPresented = false }
         }
     }
 }
@@ -57,14 +87,12 @@ final class IdeaWorkspaceModel {
 // MARK: - Host actions
 
 /// Host-level actions the toolbar and inspector trigger but don't own
-/// (sheet flags and navigation live in the host view).
+/// (overlay flags and navigation live in the host view). Framework,
+/// blueprint, and research actions were removed with their surfaces
+/// (July 2026) — the rail is swipes now, and research lives in the
+/// inline assistant's /Research skill.
 struct IdeaWorkspaceActions {
     var onShowLinkSwipes: () -> Void = {}
-    var onSuggestFramework: () -> Void = {}
-    var onChangeFramework: () -> Void = {}
-    var onShowBlueprintSheet: () -> Void = {}
-    var onShowBlueprintPicker: () -> Void = {}
-    var onShowResearch: () -> Void = {}
     var onOpenAtomInPane: (String) -> Void = { _ in }
     var onShowProfileEditor: () -> Void = {}
     var onBeginWriting: () -> Void = {}

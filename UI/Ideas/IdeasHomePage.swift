@@ -943,9 +943,13 @@ private struct IdeaCardView: View {
 /// The inspired-by swipe thumb with a fallback chain: the durable Supabase
 /// mirror first, the origin CDN url second. If every candidate fails the
 /// thumb collapses — an empty grey well is worse than no anchor at all.
-private struct IdeaInspirationThumb: View {
+/// Shared with the Idea Focus inspector so a swipe wears the same face
+/// everywhere it appears (identity outranks type).
+struct IdeaInspirationThumb: View {
     let candidates: [String]
     let hairline: Color
+    var width: CGFloat = 44
+    var height: CGFloat = 56
 
     @State private var index = 0
     @State private var exhausted = false
@@ -964,7 +968,7 @@ private struct IdeaInspirationThumb: View {
                         .onAppear { advance() }
                 }
             }
-            .frame(width: 44, height: 56)
+            .frame(width: width, height: height)
             .clipShape(.rect(cornerRadius: 8, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)

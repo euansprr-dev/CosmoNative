@@ -80,7 +80,7 @@ actor ConnectionRoutingEngine {
             guard let kind = extract.extractMetadata?.kind else { continue }
             let body = (extract.body ?? extract.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             guard !body.isEmpty else { continue }
-            if let target = sectionType(for: kind) {
+            if let target = Self.sectionType(for: kind) {
                 sections[target, default: []].append(draft(from: extract, kind: kind))
             } else if kind == .note || kind == .term || kind == .aiInsight {
                 notes.append(draft(from: extract, kind: kind))
@@ -204,7 +204,7 @@ actor ConnectionRoutingEngine {
             guard let kind = extract.extractMetadata?.kind else { continue }
             let body = (extract.body ?? extract.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             guard !body.isEmpty else { continue }
-            guard let target = sectionType(for: kind) else {
+            guard let target = Self.sectionType(for: kind) else {
                 if kind == .note {
                     notes.append(draft(from: extract, kind: kind))
                     materialCount += 1
@@ -222,7 +222,7 @@ actor ConnectionRoutingEngine {
             let kind = capture.suggestedKind ?? CaptureIntentClassifier.classifyHeuristic(text: capture.body).kind
             let body = capture.body.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !body.isEmpty else { continue }
-            if let target = sectionType(for: kind) {
+            if let target = Self.sectionType(for: kind) {
                 sections[target, default: []].append(
                     ConnectionSectionItemDraft(
                         body: body,
@@ -273,7 +273,10 @@ actor ConnectionRoutingEngine {
         )
     }
 
-    private func sectionType(for kind: ExtractKind) -> ConnectionSectionType? {
+    // Static + internal: the Seedbed reducer reuses the same kind→section hint
+    // when staging captures under incubating concepts (instance callers below
+    // resolve statics implicitly).
+    static func sectionType(for kind: ExtractKind) -> ConnectionSectionType? {
         switch kind {
         case .goal:
             return .goal

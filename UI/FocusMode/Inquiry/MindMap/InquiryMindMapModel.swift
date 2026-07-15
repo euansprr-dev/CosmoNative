@@ -12,6 +12,7 @@ struct MindMapNode: Identifiable, Hashable {
         case root
         case coreConcept       // Top-level pillar of the deep dive
         case childConcept      // Nested concept page
+        case seedling          // Incubating concept mass (no page yet)
         case question          // Satellite under its concept (or session-tree branch)
         case subQuestion
         case questionGroup     // "Open questions" bucket / "+N more" overflow
@@ -21,6 +22,7 @@ struct MindMapNode: Identifiable, Hashable {
     var title: String
     var subtitle: String?
     var isActive: Bool = false
+    var isRipe: Bool = false   // Seedlings only: ready for development
     var atomUUID: String?
     var branchNodeId: String?
     var children: [MindMapNode] = []
@@ -51,6 +53,7 @@ enum MindMapBuilder {
     static let nodeCap = 80
     static let questionsPerConcept = 5
     static let conceptLinkCap = 12
+    static let seedlingCap = 12
 
     /// Full-topic map, concept-first: deep dive root → core concepts (pages
     /// with no parent) → child concepts (via ConnectionHierarchyMetadata, with
@@ -62,6 +65,7 @@ enum MindMapBuilder {
         questions: [Atom],
         connections: [Atom],
         extracts: [Atom],
+        seedbed: [IncubatingConcept] = [],
         activeQuestionUUID: String? = nil,
         includeQuestions: Bool = true
     ) -> MindMapGraph {
@@ -178,6 +182,45 @@ enum MindMapBuilder {
             .sorted { subtreeWeight($0.uuid) > subtreeWeight($1.uuid) }
             .compactMap { conceptNode($0, depth: 0) }
 
+        // Seedlings: incubating concept mass orbits its parent concept (merge
+        // target, then parentConceptName match), else the root. Ripe first,
+        // capped so the map stays legible — visible mass, zero canvas clutter.
+        let connectionByKey = Dictionary(
+            connections.compactMap { connection -> (String, String)? in
+                guard let title = connection.title, !title.isEmpty else { return nil }
+                let key = ConceptResolver.conceptKey(title)
+                return key.isEmpty ? nil : (key, connection.uuid)
+            },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let displaySeedlings = seedbed
+            .filter { $0.status == .incubating && !$0.pendingItems.isEmpty }
+            .sorted { lhs, rhs in
+                let lhsRipe = ConceptRipeness.evaluate(lhs).isRipe
+                let rhsRipe = ConceptRipeness.evaluate(rhs).isRipe
+                if lhsRipe != rhsRipe { return lhsRipe }
+                return lhs.pendingItems.count > rhs.pendingItems.count
+            }
+            .prefix(seedlingCap)
+        for seedling in displaySeedlings where budget > 0 {
+            budget -= 1
+            let verdict = ConceptRipeness.evaluate(seedling)
+            let pending = seedling.pendingItems.count
+            let node = MindMapNode(
+                id: "seedling-\(seedling.conceptKey)",
+                kind: .seedling,
+                title: seedling.name,
+                subtitle: verdict.reason.map { "Ripe · \($0)" } ?? "\(pending) capture\(pending == 1 ? "" : "s")",
+                isRipe: verdict.isRipe
+            )
+            let anchorUUID = seedling.mergeTargetConnectionUUID
+                ?? seedling.parentConceptName.flatMap { connectionByKey[ConceptResolver.conceptKey($0)] }
+            if let anchorUUID, appendChild(node, toNodeId: "concept-\(anchorUUID)", in: &branches) {
+                continue
+            }
+            branches.append(node)
+        }
+
         // Leftover questions live in ONE muted bucket — never as top-level peers.
         if !unanchored.isEmpty, budget > 0 {
             budget -= 1
@@ -243,6 +286,22 @@ enum MindMapBuilder {
             title: rootTitle,
             children: branches
         )
+    }
+
+    /// Recursively appends `child` to the node with `toNodeId` inside a value
+    /// tree. Returns false when the target is not present (caller falls back
+    /// to a top-level attach).
+    private static func appendChild(_ child: MindMapNode, toNodeId targetId: String, in nodes: inout [MindMapNode]) -> Bool {
+        for index in nodes.indices {
+            if nodes[index].id == targetId {
+                nodes[index].children.append(child)
+                return true
+            }
+            if appendChild(child, toNodeId: targetId, in: &nodes[index].children) {
+                return true
+            }
+        }
+        return false
     }
 
     // MARK: - Concept hierarchy

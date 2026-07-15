@@ -175,47 +175,35 @@ final class FocusModeAppearanceTests: XCTestCase {
         XCTAssertFalse(ideaFocusSource.contains("FocusCosmoPanel(session: cosmoSession"))
     }
 
-    func testSwipeAnalysisRailLivesBelowStageInsteadOfThirdColumn() throws {
-        // Wide layout = two columns: [stage above rail] beside the manuscript.
-        // The analysis rail never becomes a detached third column.
+    /// July 2026 workbench conversion: Swipe Study runs on the shared
+    /// WorkbenchShell — the analysis rail is the LEADING panel, there is no
+    /// trailing panel, and the three bespoke width tiers are gone (the shell
+    /// owns displace/overlay behavior).
+    func testSwipeStudyRunsOnTheWorkbenchShellWithLeadingAnalysisRail() throws {
         let swipeFocusSource = try source("UI/FocusMode/SwipeStudy/SwipeStudyFocusModeView.swift")
-        let wideRange = try XCTUnwrap(swipeFocusSource.range(of: "HStack(alignment: .top, spacing: DS.space40)"))
-        let wideSource = String(swipeFocusSource[wideRange.lowerBound...])
 
-        let stageRange = try XCTUnwrap(wideSource.range(of: "stage(atom: atom)"))
-        let railRange = try XCTUnwrap(wideSource.range(of: "rail(atom: atom"))
-        let manuscriptRange = try XCTUnwrap(wideSource.range(of: "manuscript(atom: atom)"))
-
-        XCTAssertLessThan(stageRange.lowerBound, railRange.lowerBound)
-        XCTAssertLessThan(railRange.lowerBound, manuscriptRange.lowerBound)
+        XCTAssertTrue(swipeFocusSource.contains("WorkbenchShell("))
+        XCTAssertTrue(swipeFocusSource.contains("SwipeStudyAnalysisPanel("))
+        XCTAssertTrue(swipeFocusSource.contains("isTrailingShowing: false"))
+        XCTAssertTrue(swipeFocusSource.contains(".studyPanelSurface(edge: .leading"))
+        XCTAssertFalse(swipeFocusSource.contains("private func wideLayout"))
+        XCTAssertFalse(swipeFocusSource.contains("private func mediumLayout"))
+        XCTAssertFalse(swipeFocusSource.contains("private func compactLayout"))
     }
 
-    func testSwipeCompactLayoutLeadsWithHeaderThenTranscript() throws {
-        // Narrow pane grammar: small header card → transcript → remaining rail
-        // sections. The transcript owns the width; no full-height poster.
+    /// The center column reads as the object of study: serif hero, then the
+    /// media stage, then the transcript — one order at every width.
+    func testSwipeStudyCenterReadsHeroThenStageThenTranscript() throws {
         let swipeFocusSource = try source("UI/FocusMode/SwipeStudy/SwipeStudyFocusModeView.swift")
-        let compactRange = try XCTUnwrap(swipeFocusSource.range(of: "private func compactLayout"))
-        let compactSource = String(swipeFocusSource[compactRange.lowerBound...])
+        let centerRange = try XCTUnwrap(swipeFocusSource.range(of: "private func centerColumn"))
+        let centerSource = String(swipeFocusSource[centerRange.lowerBound...])
 
-        let headerRange = try XCTUnwrap(compactSource.range(of: "SwipeStudyCompactHeader(model: model, atom: atom)"))
-        let transcriptRange = try XCTUnwrap(compactSource.range(of: "SwipeStudyTranscriptBlock(model: model, atom: atom)"))
-        let railRange = try XCTUnwrap(compactSource.range(of: "SwipeStudyInsightRail("))
+        let heroRange = try XCTUnwrap(centerSource.range(of: "SwipeStudyHeroBlock(model: model, atom: atom)"))
+        let stageRange = try XCTUnwrap(centerSource.range(of: "SwipeStudyStagePane(model: model, atom: atom)"))
+        let transcriptRange = try XCTUnwrap(centerSource.range(of: "SwipeStudyTranscriptBlock(model: model, atom: atom)"))
 
-        XCTAssertLessThan(headerRange.lowerBound, transcriptRange.lowerBound)
-        XCTAssertLessThan(transcriptRange.lowerBound, railRange.lowerBound)
-    }
-
-    func testSwipeMediumPanePairsMediaWithAnalysisHeader() throws {
-        // Normal pane grammar: media beside title + insight/structure, then
-        // the transcript, then patterns + details.
-        let swipeFocusSource = try source("UI/FocusMode/SwipeStudy/SwipeStudyFocusModeView.swift")
-        let mediumRange = try XCTUnwrap(swipeFocusSource.range(of: "private func mediumLayout"))
-        let mediumSource = String(swipeFocusSource[mediumRange.lowerBound..<swipeFocusSource.range(of: "private func compactLayout")!.lowerBound])
-
-        XCTAssertTrue(mediumSource.contains("stage(atom: atom)"))
-        XCTAssertTrue(mediumSource.contains("SwipeStudyHeroBlock(model: model, atom: atom, compact: true)"))
-        XCTAssertTrue(mediumSource.contains("visibleSections: [.insight, .structure]"))
-        XCTAssertTrue(mediumSource.contains("visibleSections: [.patterns, .details]"))
+        XCTAssertLessThan(heroRange.lowerBound, stageRange.lowerBound)
+        XCTAssertLessThan(stageRange.lowerBound, transcriptRange.lowerBound)
     }
 
     func testSwipeStudyHasNoPhysicsOrCodexLayer() throws {

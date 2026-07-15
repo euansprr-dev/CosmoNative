@@ -75,8 +75,22 @@ struct StudyThinkingBar: View {
         .frame(minHeight: 32)
     }
 
+    private var isDeveloping: Bool {
+        viewModel.conceptDesk != nil
+    }
+
+    private var isDebriefing: Bool {
+        viewModel.debrief != nil
+    }
+
+    private var placeholder: String {
+        if isDeveloping { return "Think out loud — Cosmo captures it into the board" }
+        if isDebriefing { return "Answer in your own words" }
+        return "Think out loud, paste a URL, or type / for commands"
+    }
+
     private var field: some View {
-        TextField("Think out loud, paste a URL, or type / for commands", text: $draft, axis: .vertical)
+        TextField(placeholder, text: $draft, axis: .vertical)
             .textFieldStyle(.plain)
             .font(DS.body)
             .foregroundStyle(DS.text)
@@ -108,7 +122,7 @@ struct StudyThinkingBar: View {
     /// Where this thought lands — scope lives inside the instrument.
     private var scopeChip: some View {
         HStack(spacing: DS.space4) {
-            Image(systemName: "arrow.turn.down.right")
+            Image(systemName: isDeveloping ? "leaf" : "arrow.turn.down.right")
                 .font(DS.caption2.weight(.semibold))
                 .accessibilityHidden(true)
             Text(scopeTitle)
@@ -120,13 +134,24 @@ struct StudyThinkingBar: View {
         .padding(.vertical, 4)
         .background(DS.accentSoft, in: Capsule())
         .fixedSize()
-        .help("Captures save to: \(viewModel.activeQuestionTitle)")
-        .accessibilityLabel("Saving to \(viewModel.activeQuestionTitle)")
+        .help(isDeveloping
+              ? "Developing: \(viewModel.conceptDesk?.conceptName ?? "")"
+              : "Captures save to: \(viewModel.activeQuestionTitle)")
+        .accessibilityLabel(isDeveloping
+              ? "Developing \(viewModel.conceptDesk?.conceptName ?? "concept")"
+              : "Saving to \(viewModel.activeQuestionTitle)")
     }
 
     private var scopeTitle: String {
-        let title = viewModel.activeQuestionTitle
-        return title.count > 26 ? "\(title.prefix(24))…" : title
+        let title: String
+        if isDeveloping {
+            title = "Developing → \(viewModel.conceptDesk?.conceptName ?? "Concept")"
+        } else if isDebriefing {
+            title = "Debrief"
+        } else {
+            title = viewModel.activeQuestionTitle
+        }
+        return title.count > 30 ? "\(title.prefix(28))…" : title
     }
 
     private var sendButton: some View {
@@ -157,22 +182,25 @@ struct StudyThinkingBar: View {
 
     /// Small hover-lit chips along the bar's foot; the scope chip anchors the
     /// trailing end. Everything is sized so the row never crowds the surface.
+    /// Develop posture strips the gather chips — the bar is the collaborator.
     private var actionsFooter: some View {
         HStack(spacing: DS.space6) {
-            StudyFooterActionChip(label: "Summarize", shortcut: "⌘⇧1") {
-                Task { await viewModel.runAIPrompt("Summarize the current state of inquiry on \(viewModel.activeQuestionTitle) into 4–5 sentences with hedges.") }
-            }
-            StudyFooterActionChip(label: "Challenge", shortcut: "⌘⇧2") {
-                Task { await viewModel.submitDockText("/challenge") }
-            }
-            StudyFooterActionChip(label: "Branch", shortcut: "⌘⇧3") {
-                Task { await viewModel.runAIPrompt("Propose 3 child branch questions that would advance the inquiry on \(viewModel.activeQuestionTitle).") }
-            }
-            StudyFooterActionChip(label: "Scout", shortcut: "⌘⇧4") {
-                Task { await viewModel.refreshSourceRecommendations(query: nil, mode: .deepScout) }
-            }
-            if onScanUpload != nil || onScanPhone != nil {
-                scanMenu
+            if !isDeveloping && !isDebriefing {
+                StudyFooterActionChip(label: "Summarize", shortcut: "⌘⇧1") {
+                    Task { await viewModel.runAIPrompt("Summarize the current state of inquiry on \(viewModel.activeQuestionTitle) into 4–5 sentences with hedges.") }
+                }
+                StudyFooterActionChip(label: "Challenge", shortcut: "⌘⇧2") {
+                    Task { await viewModel.submitDockText("/challenge") }
+                }
+                StudyFooterActionChip(label: "Branch", shortcut: "⌘⇧3") {
+                    Task { await viewModel.runAIPrompt("Propose 3 child branch questions that would advance the inquiry on \(viewModel.activeQuestionTitle).") }
+                }
+                StudyFooterActionChip(label: "Scout", shortcut: "⌘⇧4") {
+                    Task { await viewModel.refreshSourceRecommendations(query: nil, mode: .deepScout) }
+                }
+                if onScanUpload != nil || onScanPhone != nil {
+                    scanMenu
+                }
             }
             Spacer(minLength: DS.space8)
             scopeChip
@@ -246,11 +274,17 @@ struct StudyThinkingBar: View {
         guard !text.isEmpty else { return }
         draft = ""
         showSuggestions = false
-        Task { await viewModel.submitDockText(text) }
+        if let desk = viewModel.conceptDesk {
+            Task { await desk.submitFromBar(text) }
+        } else if isDebriefing {
+            Task { await viewModel.submitDebriefAnswer(text) }
+        } else {
+            Task { await viewModel.submitDockText(text) }
+        }
     }
 
     private func shouldShowSuggestions(for draft: String) -> Bool {
-        guard draft.hasPrefix("/") else { return false }
+        guard !isDeveloping, !isDebriefing, draft.hasPrefix("/") else { return false }
         return !draft.contains(" ") || draft.trimmingCharacters(in: .whitespaces) == "/"
     }
 

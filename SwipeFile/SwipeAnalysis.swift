@@ -1089,20 +1089,25 @@ extension Atom {
     /// over `.corrupt` — that's how curated analyses get silently erased.
     var decodedSwipeAnalysis: JSONDecodeState<SwipeAnalysis> {
         guard type == .research else { return .absent }
-        guard let structuredStr = structured, !structuredStr.isEmpty,
-              let data = structuredStr.data(using: .utf8) else { return .absent }
+        guard let structuredStr = structured, !structuredStr.isEmpty else { return .absent }
 
-        guard let object = try? JSONSerialization.jsonObject(with: data),
-              let dict = object as? [String: Any] else {
-            return .corrupt(SwipeAnalysisDecodeError.structuredNotAnObject)
-        }
-        guard dict["swipeAnalysis"] != nil else { return .absent }
-        do {
-            let wrapper = try JSONDecoder().decode(SwipeAnalysisWrapper.self, from: data)
-            guard let analysis = wrapper.swipeAnalysis else { return .absent }
-            return .value(analysis)
-        } catch {
-            return .corrupt(error)
+        // Memoized: the structured column for a swipe carries the whole
+        // transcript + analysis, and this accessor is read from view bodies —
+        // the double parse below (probe + Codable) runs once per column value.
+        return DecodedColumnCache.shared.value(uuid: uuid, column: .structured, source: structuredStr) {
+            guard let data = structuredStr.data(using: .utf8) else { return .absent }
+            guard let object = try? JSONSerialization.jsonObject(with: data),
+                  let dict = object as? [String: Any] else {
+                return .corrupt(SwipeAnalysisDecodeError.structuredNotAnObject)
+            }
+            guard dict["swipeAnalysis"] != nil else { return .absent }
+            do {
+                let wrapper = try JSONDecoder().decode(SwipeAnalysisWrapper.self, from: data)
+                guard let analysis = wrapper.swipeAnalysis else { return .absent }
+                return .value(analysis)
+            } catch {
+                return .corrupt(error)
+            }
         }
     }
 
@@ -1204,14 +1209,22 @@ extension Atom {
         let analysis = swipeAnalysis
         let meta = researchMetadata
 
-        // Extract platform from structured rich content
-        var platform: String?
-        var thumbnailUrl: String?
-        var author: String?
-        var duration: Int?
-        var instagramId: String?
+        // Extract platform fields from rich content (memoized decode). The raw
+        // autoMetadata parse below is a fallback for atoms whose richContent
+        // can't decode (e.g. an unrecognized sourceType raw value fails the
+        // whole Codable enum decode) — it re-parses the structured column, so
+        // it must never be the common path.
+        let rich = self.richContent
 
-        if let structuredStr = structured,
+        var platform: String? = rich?.sourceType?.rawValue
+        var thumbnailUrl: String?
+        var author: String? = rich?.author
+        var duration: Int? = rich?.duration
+        var instagramId: String? = rich?.instagramId
+        var instagramType: String? = rich?.instagramType
+
+        if rich == nil,
+           let structuredStr = structured,
            let data = structuredStr.data(using: .utf8),
            let outer = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let autoMetaStr = outer["autoMetadata"] as? String,
@@ -1222,20 +1235,19 @@ extension Atom {
             author = autoMeta["author"] as? String
             duration = autoMeta["duration"] as? Int
             instagramId = autoMeta["instagramId"] as? String
+            instagramType = autoMeta["instagramType"] as? String
+        }
 
-            // Fix carousel detection from instagramType field (more reliable than carouselItems check)
-            if let instagramType = autoMeta["instagramType"] as? String, instagramType == "carousel" {
-                if platform == "instagram" || platform == "instagramPost" || platform == "instagram_post" {
-                    platform = "instagram_carousel"
-                }
-            }
+        // Fix carousel detection from instagramType field (more reliable than carouselItems check)
+        if instagramType == "carousel",
+           platform == "instagram" || platform == "instagramPost" || platform == "instagram_post" {
+            platform = "instagram_carousel"
+        }
 
-            // Fix reel detection from instagramType field
-            if let instagramType = autoMeta["instagramType"] as? String, instagramType == "reel" {
-                if platform == "instagram" || platform == "instagramPost" || platform == "instagram_post" {
-                    platform = "instagram_reel"
-                }
-            }
+        // Fix reel detection from instagramType field
+        if instagramType == "reel",
+           platform == "instagram" || platform == "instagramPost" || platform == "instagram_post" {
+            platform = "instagram_reel"
         }
 
         thumbnailUrl = meta?.thumbnailUrl

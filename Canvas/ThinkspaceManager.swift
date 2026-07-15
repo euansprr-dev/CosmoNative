@@ -519,36 +519,42 @@ class ThinkspaceManager: ObservableObject {
 
     /// Switch to a Thinkspace
     func switchTo(_ thinkspace: Thinkspace) async {
-        var resolvedThinkspace = thinkspace
+        guard !Task.isCancelled else { return }
+        currentThinkspace = thinkspace
+
+        // Save as last opened
+        UserDefaults.standard.set(thinkspace.id, forKey: lastThinkspaceKey)
+
+        // Post notification for CanvasView to load blocks
+        NotificationCenter.default.post(
+            name: CosmoNotification.Canvas.thinkspaceChanged,
+            object: nil,
+            userInfo: ["thinkspaceId": thinkspace.id]
+        )
+
+        print("🔄 Switched to Thinkspace: \(thinkspace.name)")
+
+        // Resolve the Deep Dive profile AFTER publishing the route — it is a
+        // DB round-trip that can even create the profile atom on a first
+        // visit; navigation must never wait on storage. The uuid is patched
+        // in once resolved (nothing reads it synchronously at switch time).
         if thinkspace.id != Self.commandCenterUUID {
             do {
                 let profile = try await InquiryRepository.shared.resolveDeepDiveProfile(
                     forThinkspace: thinkspace.id,
                     title: thinkspace.name
                 )
-                resolvedThinkspace.deepDiveProfileUUID = profile.uuid
+                if currentThinkspace?.id == thinkspace.id,
+                   currentThinkspace?.deepDiveProfileUUID != profile.uuid {
+                    currentThinkspace?.deepDiveProfileUUID = profile.uuid
+                }
             } catch {
                 print("⚠️ Failed to resolve DeepDiveProfile for Thinkspace \(thinkspace.name): \(error)")
             }
         }
 
-        guard !Task.isCancelled else { return }
-        currentThinkspace = resolvedThinkspace
-
-        // Save as last opened
-        UserDefaults.standard.set(resolvedThinkspace.id, forKey: lastThinkspaceKey)
-
-        // Post notification for CanvasView to load blocks
-        NotificationCenter.default.post(
-            name: CosmoNotification.Canvas.thinkspaceChanged,
-            object: nil,
-            userInfo: ["thinkspaceId": resolvedThinkspace.id]
-        )
-
-        print("🔄 Switched to Thinkspace: \(resolvedThinkspace.name)")
-
         // Persist recency after publishing the visible route so navigation does not wait on storage.
-        await updateLastOpened(resolvedThinkspace)
+        await updateLastOpened(thinkspace)
     }
 
     /// Switch to default/global canvas (no Thinkspace)

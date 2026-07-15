@@ -317,9 +317,11 @@ final class SidebarLayoutPolicyTests: XCTestCase {
         XCTAssertTrue(mainView.contains("asPane: shouldOpenAsPane"))
         XCTAssertTrue(mainView.contains("if asPane {"))
         XCTAssertTrue(mainView.contains("paneManager.openPane(.entity(EntitySelection(id: entityId, type: entityType)))"))
-        // Idea v2: blueprint opening moved into the inspector, routed
+        // Idea v3 (July 2026): the blueprint panel was removed with the
+        // framework/research rail; swipe rows keep routing pane-opens
         // through IdeaWorkspaceActions back to the host's openAtomInPane.
-        XCTAssertTrue(ideaInspectorView.contains("onOpenAtomInPane(blueprint.uuid)"))
+        XCTAssertTrue(ideaInspectorView.contains("onOpenAtomInPane(swipe.uuid)"))
+        XCTAssertFalse(ideaInspectorView.contains("onOpenAtomInPane(blueprint.uuid)"))
     }
 
     func testBrowserPaneOpenDismissesCommandK() throws {
@@ -536,7 +538,7 @@ final class SidebarLayoutPolicyTests: XCTestCase {
         let publishGuardRange = try XCTUnwrap(switchTo.range(of: "guard !Task.isCancelled else { return }"))
         let publishRange = try XCTUnwrap(
             switchTo.range(
-                of: "currentThinkspace = resolvedThinkspace",
+                of: "currentThinkspace = thinkspace",
                 range: publishGuardRange.upperBound..<switchTo.endIndex
             )
         )
@@ -557,7 +559,7 @@ final class SidebarLayoutPolicyTests: XCTestCase {
 
         let publishRange = try XCTUnwrap(
             switchTo.range(
-                of: "currentThinkspace = resolvedThinkspace"
+                of: "currentThinkspace = thinkspace"
             )
         )
         let canvasNotificationRange = try XCTUnwrap(
@@ -567,12 +569,21 @@ final class SidebarLayoutPolicyTests: XCTestCase {
         )
         let persistenceRange = try XCTUnwrap(
             switchTo.range(
-                of: "await updateLastOpened(resolvedThinkspace)"
+                of: "await updateLastOpened(thinkspace)"
+            )
+        )
+        // The Deep Dive profile resolution is a DB round-trip (it can even
+        // create the profile atom) — it must trail the published route, never
+        // gate it.
+        let profileResolutionRange = try XCTUnwrap(
+            switchTo.range(
+                of: "resolveDeepDiveProfile"
             )
         )
 
         XCTAssertLessThan(publishRange.lowerBound, persistenceRange.lowerBound)
         XCTAssertLessThan(canvasNotificationRange.lowerBound, persistenceRange.lowerBound)
+        XCTAssertLessThan(canvasNotificationRange.lowerBound, profileResolutionRange.lowerBound)
     }
 
     func testThinkspaceSwitchShowsCachedSnapshotBeforeAuthoritativeLoad() throws {
@@ -643,8 +654,10 @@ final class SidebarLayoutPolicyTests: XCTestCase {
     }
 
     func testSwipeStudyAutoTranscriptionProgressPublishesOnMainActor() throws {
+        // The auto-transcription pipeline moved to SwipeStudyModel in the
+        // July 2026 rebuild; the pins follow the code.
         let swipeStudy = try String(
-            contentsOf: repositoryRoot.appendingPathComponent("UI/FocusMode/SwipeStudy/SwipeStudyFocusModeView.swift"),
+            contentsOf: repositoryRoot.appendingPathComponent("UI/FocusMode/SwipeStudy/SwipeStudyModel.swift"),
             encoding: .utf8
         )
 

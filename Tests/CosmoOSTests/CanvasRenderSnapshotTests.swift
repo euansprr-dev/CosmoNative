@@ -2,34 +2,22 @@ import XCTest
 @testable import CosmoOS
 
 final class CanvasRenderSnapshotTests: XCTestCase {
-    func testConstellationDiveSuppressesOutgoingWindowScreenshotOnce() {
-        XCTAssertFalse(
-            CanvasScreenshotCapturePolicy.shouldCaptureOutgoingThinkspaceOnSwitch(
-                currentThinkspaceId: "ben",
-                newThinkspaceId: "goals",
-                skipNextSwitchCapture: true
+    // NOTE July 2026: the switch-time outgoing screenshot capture (and its
+    // CanvasScreenshotCapturePolicy) was removed — cacheDisplay rasterizes the
+    // whole window on the main thread and made every thinkspace switch hitch.
+    // Constellation/portal previews now capture lazily at presentation time.
+    func testThinkspaceSwitchPathNeverCapturesScreenshots() throws {
+        let canvasView = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Canvas/CanvasView.swift"),
+            encoding: .utf8
+        )
+        let switchHandler = try XCTUnwrap(
+            canvasView.slice(
+                from: ".onChange(of: thinkspaceId)",
+                to: ".onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Automation.createFlow))"
             )
         )
-    }
-
-    func testRegularThinkspaceSwitchCapturesOutgoingWindowScreenshot() {
-        XCTAssertTrue(
-            CanvasScreenshotCapturePolicy.shouldCaptureOutgoingThinkspaceOnSwitch(
-                currentThinkspaceId: "ben",
-                newThinkspaceId: "goals",
-                skipNextSwitchCapture: false
-            )
-        )
-    }
-
-    func testUnchangedThinkspaceDoesNotCaptureOutgoingWindowScreenshot() {
-        XCTAssertFalse(
-            CanvasScreenshotCapturePolicy.shouldCaptureOutgoingThinkspaceOnSwitch(
-                currentThinkspaceId: "ben",
-                newThinkspaceId: "ben",
-                skipNextSwitchCapture: false
-            )
-        )
+        XCTAssertFalse(switchHandler.contains("captureCanvasScreenshot("))
     }
 
     func testCompositorTransformMatchesViewportScreenMapping() {
@@ -570,5 +558,17 @@ final class CanvasRenderSnapshotTests: XCTestCase {
             url = candidate
         }
         return URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    }
+}
+
+private extension String {
+    func slice(from startMarker: String, to endMarker: String) -> String? {
+        guard
+            let startRange = range(of: startMarker),
+            let endRange = range(of: endMarker, range: startRange.upperBound..<endIndex)
+        else {
+            return nil
+        }
+        return String(self[startRange.upperBound..<endRange.lowerBound])
     }
 }

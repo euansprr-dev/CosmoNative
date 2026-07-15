@@ -77,6 +77,13 @@ struct ConnectionFocusModeView: View {
             .onReceive(CosmoInlineAssistantStore.shared.$proposals) { proposals in
                 syncReviewProposal(from: proposals)
             }
+            // A concept was minted or linked from this page (or a sibling):
+            // refresh link targets so the new page's mentions light up now.
+            // Sections stay untouched — the origin's References row was added
+            // through the live VM and may not be in the DB yet.
+            .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Connection.referencesChanged)) { _ in
+                Task { await loadLinkTargets() }
+            }
             .onKeyPress(.escape) { handleEscape() }
             .onKeyPress { handleKeyCommand($0) }
             .sheet(isPresented: $showCommandK) {
@@ -181,39 +188,18 @@ struct ConnectionFocusModeView: View {
     }
 
     private func syncReviewProposal(from proposals: [CosmoAssistantProposal]) {
-        let matching = proposals.filter { proposal in
-            proposal.hasReviewableOperations && proposal.matches(
-                surfaceID: "connection:\(atom.uuid)",
-                targetID: ConnectionContextProvider.targetID(for: atom.uuid),
-                activeAtomUUID: atom.uuid
-            )
-        }
-        // Manuscript keeps the full-screen woven diff (last proposal wins).
-        reviewProposal = matching.last
-        // Board / Outline: route each still-pending operation to the section it
-        // targets, resolved against the LIVE surface text so accepting one and
-        // re-resolving the rest can never disagree with the apply path.
-        let model = ConnectionSurfaceSerializer.serialize(
+        // Manuscript keeps the full-screen woven diff (last proposal wins);
+        // Board / Outline get per-section ghost rows. Shared resolution with
+        // the Study's Concept Desk lives on the serializer.
+        let staged = ConnectionSurfaceSerializer.stagedInserts(
+            from: proposals,
+            atomUUID: atom.uuid,
             title: viewModel.editableTitle,
             conceptType: viewModel.state.conceptType,
             sections: viewModel.state.sections
         )
-        var grouped: [ConnectionSectionType: [ConnectionPendingInsert]] = [:]
-        for proposal in matching {
-            for operation in proposal.operations
-            where operation.status == .pending || operation.status == .conflicted {
-                guard let resolved = ConnectionSurfaceSerializer.pendingInsert(for: operation, in: model) else { continue }
-                grouped[resolved.section, default: []].append(
-                    ConnectionPendingInsert(
-                        proposalID: proposal.id,
-                        operationID: operation.id,
-                        section: resolved.section,
-                        bullets: resolved.bullets
-                    )
-                )
-            }
-        }
-        pendingInsertsBySection = grouped
+        reviewProposal = staged.manuscript
+        pendingInsertsBySection = staged.bySection
     }
 
     private func acceptInsert(_ insert: ConnectionPendingInsert) {
@@ -784,6 +770,14 @@ final class ConnectionFocusModeViewModel {
     func addItem(document: RichDocument, plainText: String, toSection type: ConnectionSectionType) {
         sectionsModifiedInFocusMode = true
         let item = ConnectionItem(content: plainText, document: document, plainText: plainText)
+        state.addItem(item, toSection: type)
+        saveState()
+    }
+
+    /// Evidence-rail attach (Concept Desk): a fully-formed item lands in its
+    /// section with provenance (sourceAtomUUID + sourceSnippet) intact.
+    func attachItem(_ item: ConnectionItem, toSection type: ConnectionSectionType) {
+        sectionsModifiedInFocusMode = true
         state.addItem(item, toSection: type)
         saveState()
     }

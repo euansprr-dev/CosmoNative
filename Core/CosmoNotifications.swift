@@ -64,13 +64,8 @@ enum CosmoNotification {
         static let placeBlocksOnCanvas = Notification.Name("com.cosmo.canvas.placeBlocksOnCanvas")
         static let placeEntityOnCanvas = Notification.Name("com.cosmo.canvas.placeEntityOnCanvas")
         static let moveCanvasBlocks = Notification.Name("com.cosmo.canvas.moveBlocks")
-        static let captureCurrentThinkspaceScreenshot = Notification.Name("com.cosmo.canvas.captureCurrentThinkspaceScreenshot")
-        static let skipNextThinkspaceSwitchScreenshot = Notification.Name("com.cosmo.canvas.skipNextThinkspaceSwitchScreenshot")
-        /// Posted the moment a thinkspace switch starts animating its new
-        /// content in — the dive cover holds the screen until this arrives.
-        static let thinkspaceSwitchDidPresent = Notification.Name("com.cosmo.canvas.thinkspaceSwitchDidPresent")
         /// Ask the canvas to warm the snapshot cache for a thinkspace the
-        /// user is likely to enter next (hovered Constellation card, recent
+        /// user is likely to enter next (hovered sidebar row, recent
         /// spaces). userInfo: ["thinkspaceId": String].
         static let prewarmThinkspace = Notification.Name("com.cosmo.canvas.prewarmThinkspace")
 
@@ -178,9 +173,6 @@ enum CosmoNotification {
         /// Peek an entity in the floating Quick Look-style overlay.
         /// userInfo: ["type": EntityType, "id": Int64, "anchor": NSValue(rect:) optional]
         static let peekEntity = Notification.Name("com.cosmo.nav.peekEntity")
-
-        /// Present the Constellation (all-thinkspaces zoom-out view).
-        static let presentConstellation = Notification.Name("com.cosmo.nav.presentConstellation")
 
         /// Open the Spokes Compiler staging board for a content pillar.
         /// userInfo: ["id": Int64]
@@ -577,6 +569,8 @@ enum CosmoNotification {
         static let sessionCrystallized = Notification.Name("com.cosmo.inquiry.sessionCrystallized")
         /// A Telegram/voice capture was routed to an active inquiry — userInfo: ["sessionUUID": String, "captureId": String]
         static let captureRoutedToSession = Notification.Name("com.cosmo.inquiry.captureRoutedToSession")
+        /// The Deep Dive's concept seedbed changed (accrual/tidy/pin/develop) — userInfo: ["deepDiveUUID": String]
+        static let seedbedChanged = Notification.Name("com.cosmo.inquiry.seedbedChanged")
         /// Background cartographer detected a breakthrough — userInfo: ["sessionUUID": String, "summary": String]
         static let breakthroughDetected = Notification.Name("com.cosmo.inquiry.breakthroughDetected")
         /// Background cartographer detected a candidate term — userInfo: ["sessionUUID": String, "term": String]
@@ -593,6 +587,14 @@ enum CosmoNotification {
         static let focusThinkingDock = Notification.Name("com.cosmo.inquiry.focusThinkingDock")
         /// Refresh Source Radar for the active Inquiry Workspace — no payload
         static let refreshSources = Notification.Name("com.cosmo.inquiry.refreshSources")
+    }
+
+    // MARK: - Connection (concept page) Notifications
+    enum Connection {
+        /// A concept was minted or linked from within another concept — open
+        /// hosts refresh their link targets so mentions light up immediately.
+        /// userInfo: ["originUUID": String, "connectionUUID": String]
+        static let referencesChanged = Notification.Name("com.cosmo.connection.referencesChanged")
     }
 }
 

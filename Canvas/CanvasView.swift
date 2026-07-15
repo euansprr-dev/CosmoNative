@@ -25,19 +25,6 @@ enum CanvasKeyboardShortcutPolicy {
     }
 }
 
-enum CanvasScreenshotCapturePolicy {
-    static func shouldCaptureOutgoingThinkspaceOnSwitch(
-        currentThinkspaceId: String?,
-        newThinkspaceId: String?,
-        skipNextSwitchCapture: Bool
-    ) -> Bool {
-        guard !skipNextSwitchCapture,
-              let currentThinkspaceId,
-              let newThinkspaceId else { return false }
-        return currentThinkspaceId != newThinkspaceId
-    }
-}
-
 enum CanvasImageDropController {
     static let supportedTypes: [UTType] = [
         .fileURL,
@@ -191,17 +178,8 @@ struct CanvasView: View {
     @State private var showPlaceCapture = false
     @State private var placeNameDraft = ""
 
-    // Portals — window blocks into other thinkspaces
-    @State private var showPortalPicker = false
-    @State private var portalDropPosition: CGPoint = .zero
 
-    // Real screenshot capture — anchor into the AppKit layer tree
-    @State private var snapshotAnchorView: NSView?
-    @State private var skipNextThinkspaceSwitchScreenshot = false
 
-    // Zoom-out-into-Constellation gesture tracking
-    @State private var didRequestConstellationFromGesture = false
-    @State private var scrollZoomOutOverflow: CGFloat = 0
 
     // Thinkspaces being prewarmed into the snapshot cache (hover-predicted)
     @State private var prewarmInFlight: Set<String> = []
@@ -465,9 +443,6 @@ struct CanvasView: View {
                 clusterEngine.scheduleRecompute(blocks: spatialEngine.blocks)
                 clusterEngine.updateUserClusterBounds(blocks: spatialEngine.blocks)
                 rebuildMediaContentCache()
-                if let tsId = thinkspaceId {
-                    ThinkspaceThumbnailService.shared.invalidate(tsId)
-                }
                 ThinkspaceCanvasSnapshotCache.shared.store(
                     blocks: spatialEngine.blocks,
                     zoomLevel: canvasScale,
@@ -1339,7 +1314,7 @@ struct CanvasView: View {
     }
 
     /// Warm the snapshot cache for a thinkspace the user is likely to enter
-    /// next (hovered Constellation card, most-recent spaces). Read-only:
+    /// next (hovered sidebar row, most-recent spaces). Read-only:
     /// `fetchBlocksSnapshot` and `clustersSnapshot` touch no engine state, so
     /// this can run any time without disturbing the live canvas. By the time
     /// the user clicks, `applyCachedThinkspaceSnapshot` hits and entry is
@@ -1435,7 +1410,6 @@ struct CanvasView: View {
                 MagnifyGesture()
                     .onChanged { value in
                         viewportState.setGestureMagnification(value.magnification)
-                        handleZoomOutGestureProgress(rawScale: canvasScale * value.magnification)
                     }
                     .onEnded { value in
                         // Commit pinch scale without extra animation. The gesture
@@ -1444,61 +1418,8 @@ struct CanvasView: View {
                         let newScale = canvasScale * value.magnification
                         canvasScale = min(max(newScale, minScale), maxScale)
                         viewportState.setGestureMagnification(1.0)
-                        finishZoomOutGesture(rawScale: newScale)
                     }
             )
-    }
-
-    /// Continuous zoom-out handling, called on every pinch update. Pinching
-    /// past the zoom floor keeps going — into the Constellation: the canvas
-    /// shrinks (rubber-banded by the viewport transform) while the
-    /// Constellation scrubs in on top, its opacity tied 1:1 to pull depth —
-    /// reversible until committed, Mission Control style. A deep pull commits
-    /// mid-gesture; a shallow one lets release decide (`finishZoomOutGesture`).
-    ///
-    /// No screenshot capture happens anywhere in here — thumbnails come from
-    /// idle captures, so every frame of the gesture is pure compositor work.
-    private func handleZoomOutGestureProgress(rawScale: CGFloat) {
-        guard !didRequestConstellationFromGesture else { return }
-        let progress = constellationScrubProgress(rawScale: rawScale)
-        let scrub = ConstellationZoomScrubState.shared
-        guard progress > 0 || scrub.progress > 0 else { return }
-        if progress > 0, !ConstellationPresentationState.shared.isOnScreen {
-            // The scrub overlay is becoming visible — captures unsafe from here.
-            ConstellationPresentationState.shared.setOnScreen(true)
-        }
-        scrub.progress = progress
-        if rawScale < minScale * 0.8 {
-            commitConstellationFromGesture()
-        }
-    }
-
-    /// 0 at the zoom floor, 1 at a 25% raw pull below it.
-    private func constellationScrubProgress(rawScale: CGFloat) -> CGFloat {
-        let depth = (minScale - rawScale) / (minScale * 0.25)
-        return min(max(depth, 0), 1)
-    }
-
-    private func commitConstellationFromGesture() {
-        didRequestConstellationFromGesture = true
-        NotificationCenter.default.post(
-            name: CosmoNotification.Navigation.presentConstellation,
-            object: nil
-        )
-    }
-
-    /// Release decides a shallow pull: past halfway commits, short of it the
-    /// Constellation recedes (the overlay host animates the fade-out).
-    private func finishZoomOutGesture(rawScale: CGFloat) {
-        defer { didRequestConstellationFromGesture = false }
-        guard !didRequestConstellationFromGesture else { return }
-        let progress = constellationScrubProgress(rawScale: rawScale)
-        guard progress > 0 || ConstellationZoomScrubState.shared.progress > 0 else { return }
-        if progress >= 0.5 {
-            commitConstellationFromGesture()
-        } else {
-            ConstellationZoomScrubState.shared.progress = 0
-        }
     }
 
     // Computed property for effective zoom level during gesture
@@ -2247,24 +2168,6 @@ struct CanvasView: View {
 
                             canvasScale = min(max(newScale, minScale), maxScale)
 
-                            // Scrolling out while pinned at the floor keeps
-                            // going — into the Constellation, same as pinching
-                            // past the floor. No capture here either: the
-                            // thumbnail comes from idle captures.
-                            if newScale < minScale, delta < 0,
-                               !ConstellationPresentationState.shared.isOnScreen {
-                                scrollZoomOutOverflow += -delta
-                                if scrollZoomOutOverflow > 24 {
-                                    scrollZoomOutOverflow = 0
-                                    NotificationCenter.default.post(
-                                        name: CosmoNotification.Navigation.presentConstellation,
-                                        object: nil
-                                    )
-                                }
-                            } else {
-                                scrollZoomOutOverflow = 0
-                            }
-
                             // Consume the event when zooming
                             return nil
                         }
@@ -2351,7 +2254,6 @@ struct CanvasView: View {
             .onDisappear {
                 viewportState.resetLiveGesture()
                 rememberCurrentSessionViewport()
-                captureCanvasScreenshot()
                 // Clean up event monitors
                 if let monitor = scrollWheelMonitor {
                     NSEvent.removeMonitor(monitor)
@@ -2409,7 +2311,6 @@ struct CanvasView: View {
                 let currentThinkspaceId = spatialEngine.currentThinkspaceId
                 rememberCurrentSessionViewport(for: currentThinkspaceId)
                 guard newId != spatialEngine.currentThinkspaceId else {
-                    skipNextThinkspaceSwitchScreenshot = false
                     // Rapid revert (A→B→A before B applied): the loaded data is
                     // already correct but the exit animation left content hidden.
                     if canvasContentOpacity < 1 {
@@ -2420,35 +2321,17 @@ struct CanvasView: View {
                     return
                 }
 
-                // 0. Capture the real pixels of the outgoing thinkspace while
-                //    they're still on screen — this is what the Constellation
-                //    and portals show as its preview.
-                let shouldCaptureOutgoing = CanvasScreenshotCapturePolicy.shouldCaptureOutgoingThinkspaceOnSwitch(
-                    currentThinkspaceId: currentThinkspaceId,
-                    newThinkspaceId: newId,
-                    skipNextSwitchCapture: skipNextThinkspaceSwitchScreenshot
-                )
-                skipNextThinkspaceSwitchScreenshot = false
-                if shouldCaptureOutgoing {
-                    captureCanvasScreenshot(for: currentThinkspaceId)
-                }
+                // NOTE: no screenshot capture on the switch path — cacheDisplay
+                // rasterized the whole window on the main thread and was the
+                // single most expensive moment of a switch. The Constellation
+                // and thinkspace portals it fed were removed July 2026.
 
                 // 1. Animate old content OUT (blocks still visible, receding into
-                //    background). When the Constellation or its dive cover is
-                //    holding the screen, the old content is invisible — exit
-                //    choreography would only delay entry, so cut straight to
-                //    the swap.
-                let coveredSwitch = ConstellationPresentationState.shared.isOnScreen
-                if coveredSwitch {
+                //    background).
+                withAnimation(reduceMotion ? .easeOut(duration: 0.1) : ProMotionSprings.worldExit) {
                     canvasContentOpacity = 0
                     canvasContentScale = 0.97
                     canvasContentBlur = 6
-                } else {
-                    withAnimation(reduceMotion ? .easeOut(duration: 0.1) : ProMotionSprings.worldExit) {
-                        canvasContentOpacity = 0
-                        canvasContentScale = 0.97
-                        canvasContentBlur = 6
-                    }
                 }
 
                 // 2. Overlap the authoritative fetch (DB + atom JSON decode, all
@@ -2458,9 +2341,7 @@ struct CanvasView: View {
                     async let prefetchedBlocks = spatialEngine.fetchBlocksSnapshot(
                         for: "home", documentId: 0, thinkspaceId: newId
                     )
-                    if !coveredSwitch {
-                        try? await Task.sleep(for: .milliseconds(reduceMotion ? 100 : 180))
-                    }
+                    try? await Task.sleep(for: .milliseconds(reduceMotion ? 100 : 180))
                     guard !Task.isCancelled else { return }
 
                     let cachedThinkspaceSnapshotApplied = applyCachedThinkspaceSnapshot(for: newId)
@@ -2470,12 +2351,6 @@ struct CanvasView: View {
                         CosmoUndoManager.shared.clearHistory()
                         CosmoWindowViewModel.shared.refreshContext()
                         refreshLibraryInventoryForThinkspaceSwitch()
-                        // New content is about to fade in — the dive cover
-                        // (if one is holding the screen) can dissolve into it.
-                        NotificationCenter.default.post(
-                            name: CosmoNotification.Canvas.thinkspaceSwitchDidPresent,
-                            object: nil
-                        )
                         await animateThinkspaceContentIn()
                     } else {
                         prepareEmptyThinkspaceSwitchState(for: newId)
@@ -2516,20 +2391,8 @@ struct CanvasView: View {
 
                     if !cachedThinkspaceSnapshotApplied {
                         // 3. Animate new content IN (emerging from background)
-                        NotificationCenter.default.post(
-                            name: CosmoNotification.Canvas.thinkspaceSwitchDidPresent,
-                            object: nil
-                        )
                         await animateThinkspaceContentIn()
                     }
-
-                    // Idle freshness capture: once the new space has fully
-                    // presented and settled, snapshot it — so a later zoom-out
-                    // never has to rasterize anything mid-gesture. The capture
-                    // guards drop this silently if an overlay is still up.
-                    try? await Task.sleep(for: .milliseconds(700))
-                    guard !Task.isCancelled else { return }
-                    captureCanvasScreenshot()
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Automation.createFlow)) { notification in
@@ -2538,15 +2401,9 @@ struct CanvasView: View {
                     flowVerbPickerClusterId = clusterId
                 }
             }
-            .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Canvas.captureCurrentThinkspaceScreenshot)) { _ in
-                captureCanvasScreenshot()
-            }
             .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Canvas.prewarmThinkspace)) { notification in
                 guard let targetId = notification.userInfo?["thinkspaceId"] as? String else { return }
                 prewarmThinkspaceSnapshot(targetId)
-            }
-            .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Canvas.skipNextThinkspaceSwitchScreenshot)) { _ in
-                skipNextThinkspaceSwitchScreenshot = true
             }
             .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.jumpToPlace)) { notification in
                 guard let placeUUID = notification.userInfo?["placeUUID"] as? String,
@@ -2647,13 +2504,6 @@ struct CanvasView: View {
                     clusterCreationOverlay
                 }
             }
-            // Invisible anchor for real-pixel screenshot capture
-            .background {
-                CanvasSnapshotProxy { view in
-                    snapshotAnchorView = view
-                }
-                .allowsHitTesting(false)
-            }
             // Minimap navigator overlay
             .overlay {
                 if showMinimap {
@@ -2727,38 +2577,7 @@ struct CanvasView: View {
                     .zIndex(310)
                 }
             }
-            // Portal target picker
-            .overlay {
-                if showPortalPicker {
-                    PortalTargetPicker(
-                        excludeThinkspaceId: thinkspaceId,
-                        onPick: { target in
-                            withAnimation(ProMotionSprings.snappy) {
-                                showPortalPicker = false
-                            }
-                            createPortalBlock(to: target)
-                        },
-                        onDismiss: {
-                            withAnimation(ProMotionSprings.snappy) {
-                                showPortalPicker = false
-                            }
-                        }
-                    )
-                    .transition(.opacity)
-                    .zIndex(300)
-                }
-            }
         }
-    }
-
-    /// Create a portal block at the pending drop position.
-    private func createPortalBlock(to target: Thinkspace) {
-        let block = CanvasBlock.portalBlock(
-            position: portalDropPosition,
-            targetThinkspaceId: target.id,
-            targetName: target.name
-        )
-        Task { await spatialEngine.addBlock(block, persist: true) }
     }
 
     // MARK: - Synthesis Workspace
@@ -3136,58 +2955,6 @@ struct CanvasView: View {
         }
     }
 
-    /// Capture the canvas's real rendered pixels (blocks, zones, lines — the
-    /// actual thing) by snapshotting the window's layer tree cropped to the
-    /// canvas rect. Only the cacheDisplay render runs on the main thread;
-    /// encoding and the disk write happen off-main in the thumbnail service.
-    ///
-    /// The capture composites everything in the window above the canvas, so
-    /// it must never fire while a covering overlay (Constellation, focus mode)
-    /// is on screen — that would store the overlay's pixels as the
-    /// thinkspace's thumbnail. A stale thumbnail beats a corrupted one.
-    private func captureCanvasScreenshot(for thinkspaceIdOverride: String? = nil) {
-        guard isActive,
-              canvasIsActive,
-              appState.focusedEntity == nil,
-              !ConstellationPresentationState.shared.isOnScreen,
-              !CommandKPalettePresentationState.shared.isOnScreen,
-              !PaneDeckPresentationState.shared.isOnScreen,
-              let targetId = thinkspaceIdOverride ?? thinkspaceId,
-              let anchor = snapshotAnchorView,
-              let window = anchor.window,
-              let contentView = window.contentView else { return }
-
-        let rect = anchor.convert(anchor.bounds, to: contentView)
-        guard rect.width > 100, rect.height > 100 else { return }
-        // Render at 1x (points = pixels): thumbnails don't need Retina
-        // density, and halving the backing scale cuts rasterization cost ~4×
-        // — cheap enough to run at idle moments without a visible hitch.
-        // (CanvasScreenshotScaledCaptureTests pins the scale-not-crop
-        // semantics of cacheDisplay into a smaller rep.)
-        let rep: NSBitmapImageRep
-        if let lowRes = NSBitmapImageRep(
-            bitmapDataPlanes: nil,
-            pixelsWide: Int(rect.width),
-            pixelsHigh: Int(rect.height),
-            bitsPerSample: 8,
-            samplesPerPixel: 4,
-            hasAlpha: true,
-            isPlanar: false,
-            colorSpaceName: .calibratedRGB,
-            bytesPerRow: 0,
-            bitsPerPixel: 0
-        ) {
-            lowRes.size = rect.size
-            rep = lowRes
-        } else if let fullRes = contentView.bitmapImageRepForCachingDisplay(in: rect) {
-            rep = fullRes
-        } else {
-            return
-        }
-        contentView.cacheDisplay(in: rect, to: rep)
-        ThinkspaceThumbnailService.shared.storeScreenshot(rep, for: targetId)
-    }
-
     /// Dismiss the topmost canvas overlay for an Escape press.
     /// Wired into CanvasEscapeCoordinator so MainView's global key monitor
     /// gives these overlays priority over pane-closing / thinkspace-exit.
@@ -3202,10 +2969,6 @@ struct CanvasView: View {
         }
         if selectedFlowId != nil {
             withAnimation(ProMotionSprings.snappy) { selectedFlowId = nil }
-            return true
-        }
-        if showPortalPicker {
-            withAnimation(ProMotionSprings.snappy) { showPortalPicker = false }
             return true
         }
         return false
@@ -3869,12 +3632,6 @@ struct CanvasView: View {
             return
         case .deepDive:
             createDeepDiveBlock(at: position, prefillTitle: prefillTitle)
-            return
-        case .portal:
-            portalDropPosition = position
-            withAnimation(ProMotionSprings.menuAppear) {
-                showPortalPicker = true
-            }
             return
         case .note:
             createAtomBackedNoteBlock(at: position, prefillTitle: prefillTitle, prefillBody: prefillContent)
@@ -6122,8 +5879,6 @@ struct CanvasBlockStaticView: View, Equatable {
             TemplateBlockView(block: block)
         case .deepDive:
             DeepDivePortalBlockView(block: block)
-        case .portal:
-            PortalBlockView(block: block)
         default:
             FloatingBlockView(block: block)
         }

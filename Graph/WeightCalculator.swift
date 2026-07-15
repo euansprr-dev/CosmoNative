@@ -357,10 +357,14 @@ public enum LexicalTier: Int, Comparable, Sendable {
     case titlePrefix = 1
     /// Query phrase appears in the title, or every query token does.
     case titleMatch = 2
+    /// The query appears in the body as a contiguous phrase (or in close
+    /// proximity via FTS5 NEAR) — the "I remember writing this sentence"
+    /// tier: stronger than the same words scattered across paragraphs.
+    case phraseInBody = 3
     /// Lexical evidence only in body/metadata (e.g. strict BM25 hit).
-    case keywordInBody = 3
+    case keywordInBody = 4
     /// No keyword evidence — vector similarity only.
-    case semanticOnly = 4
+    case semanticOnly = 5
 
     public static func < (lhs: LexicalTier, rhs: LexicalTier) -> Bool {
         lhs.rawValue < rhs.rawValue
@@ -376,6 +380,11 @@ public struct RankedResult: Identifiable, Sendable {
     public let atomType: AtomType
     public let title: String
     public let snippet: String?
+    /// Context window around the matched text (body/chunk evidence), verbatim
+    /// from the source document. Nil when the match is title-only or the
+    /// engine couldn't extract a window. Highlighting is re-derived from the
+    /// query at render time, so this stays a plain string end-to-end.
+    public let matchedExcerpt: String?
 
     // Weight components
     public let semanticWeight: Double
@@ -399,6 +408,7 @@ public struct RankedResult: Identifiable, Sendable {
         atomType: AtomType,
         title: String,
         snippet: String? = nil,
+        matchedExcerpt: String? = nil,
         semanticWeight: Double = 0.0,
         structuralWeight: Double = 0.0,
         recencyWeight: Double = 1.0,
@@ -412,6 +422,7 @@ public struct RankedResult: Identifiable, Sendable {
         self.atomType = atomType
         self.title = title
         self.snippet = snippet
+        self.matchedExcerpt = matchedExcerpt
         self.semanticWeight = semanticWeight
         self.structuralWeight = structuralWeight
         self.recencyWeight = recencyWeight

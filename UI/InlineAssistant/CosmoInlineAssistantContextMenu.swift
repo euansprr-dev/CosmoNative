@@ -152,11 +152,12 @@ final class CosmoInlineContextMenuModel {
     private(set) var scope: CosmoInlineContextScope?
     private(set) var isBrowsing = true
 
-    /// Fired on the main actor after every applied rebuild. The menu view
-    /// bumps an @State revision from this instead of relying on @Observable
-    /// invalidation: in this overlay hierarchy the async applies were NOT
-    /// repainting the view (Enter committed fresh results while the visible
-    /// list stayed frozen one query behind). @State writes always repaint.
+    /// Fired on the main actor after every applied rebuild and highlight
+    /// move. The menu view bumps an @State revision from this instead of
+    /// relying on @Observable invalidation: in this overlay hierarchy the
+    /// async applies were NOT repainting the view (Enter committed fresh
+    /// results while the visible list stayed frozen one query behind).
+    /// @State writes always repaint.
     var onApply: (() -> Void)?
 
     private var searchTask: Task<Void, Never>?
@@ -182,13 +183,19 @@ final class CosmoInlineContextMenuModel {
     }
 
     func moveHighlight(_ delta: Int) {
-        highlightedIndex = CosmoAssistantMenuHighlightPolicy.moved(
+        let moved = CosmoAssistantMenuHighlightPolicy.moved(
             highlightedIndex, by: delta, count: flattened.count
         )
+        guard moved != highlightedIndex else { return }
+        highlightedIndex = moved
+        onApply?()
     }
 
     func setHighlight(_ index: Int) {
-        highlightedIndex = CosmoAssistantMenuHighlightPolicy.clamped(index, count: flattened.count)
+        let clamped = CosmoAssistantMenuHighlightPolicy.clamped(index, count: flattened.count)
+        guard clamped != highlightedIndex else { return }
+        highlightedIndex = clamped
+        onApply?()
     }
 
     func update(query rawQuery: String, selectedAtoms: [Atom]) {
@@ -241,6 +248,7 @@ final class CosmoInlineContextMenuModel {
     func teardown() {
         searchTask?.cancel()
         searchTask = nil
+        onApply = nil
         // INVARIANT: never cancel or discard the snapshot here. Teardown runs
         // on every menu dismiss; discarding meant every reopen paid a
         // multi-second rebuild and typing raced a half-built index (the
@@ -299,6 +307,7 @@ final class CosmoInlineContextMenuModel {
         self.sections = sections
         flattened = flat
         highlightedIndex = CosmoAssistantMenuHighlightPolicy.clamped(highlightedIndex, count: flat.count)
+        onApply?()
     }
 
     // MARK: Data
@@ -443,12 +452,17 @@ struct CosmoInlineAssistantContextMenu: View {
     let onCommit: (CosmoInlineContextMenuModel.Entry) -> Void
     let onClear: () -> Void
 
+    /// Bumped by the model's onApply after every async rebuild. A @State write
+    /// always marks this view dirty, so applied results repaint even though
+    /// @Observable invalidation doesn't fire in this overlay hierarchy.
+    @State private var appliedRevision = 0
+
     private let menuWidth: CGFloat = 340
     private let listMaxHeight: CGFloat = 296
 
     var body: some View {
         let _ = CosmoInlineContextMenuDebug.log(
-            "menu RENDER browsing=\(model.isBrowsing) rows=\(model.flattened.count) firstRow=\"\(model.flattened.first?.atom.title ?? "-")\""
+            "menu RENDER rev=\(appliedRevision) browsing=\(model.isBrowsing) rows=\(model.flattened.count) firstRow=\"\(model.flattened.first?.atom.title ?? "-")\""
         )
         VStack(spacing: 0) {
             header
@@ -460,6 +474,7 @@ struct CosmoInlineAssistantContextMenu: View {
         .cosmoMenuChrome(cornerRadius: 14)
         .onAppear {
             CosmoInlineContextMenuDebug.log("menu onAppear searchText=\"\(searchText)\"")
+            model.onApply = { appliedRevision &+= 1 }
             model.setHighlight(0)
             model.update(query: searchText, selectedAtoms: selectedAtoms)
         }

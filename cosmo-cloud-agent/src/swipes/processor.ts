@@ -30,6 +30,7 @@ import {
   AnalyzeContext, buildAnalysisJSON, classify, engagementFields,
   normalizeCreatorHandle, resolveCreator,
 } from './analyze';
+import { canonicalNicheList, resolveNiche } from './niche';
 import {
   appleSeconds, ExtractedMedia, inWorkerScope, SpeechSegmentJSON, SwipeExtractionError, TranscriptSlideJSON,
 } from './types';
@@ -523,8 +524,12 @@ async function persistAndAnalyze(
     Object.assign(existingAnalysis, engagementFields(media.engagement, media.publishedAtISO, media.shortcode));
   }
 
-  // Classification LLM call.
+  // Insight LLM call (the Mac's v4 pass, ported 1:1).
   const analysisText = combined || media?.caption || '';
+  const hookText = firstText
+    ? firstText.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 500)
+    : analysisText.slice(0, 500);
+  const analyzableSlideCount = result.slides.filter(s => s.text.trim()).length;
   const ctx: AnalyzeContext = {
     title: title ?? 'Untitled',
     url,
@@ -541,28 +546,57 @@ async function persistAndAnalyze(
     transcriptionQuality: result.quality,
     transcriptionWarnings: result.warnings,
     text: analysisText,
+    canonicalNiches: await canonicalNicheList(),
+    engagement: media?.engagement,
   };
 
-  const classification = await classify(ctx);
+  // One inline retry — a transient LLM failure shouldn't cost a full
+  // re-extraction pass (each retry pass burns an Apify run).
+  let classification = analysisText.trim() ? await classify(ctx) : null;
+  if (!classification && analysisText.trim()) {
+    console.warn(`⚠️ insight pass failed for ${uuid.slice(0, 8)} — retrying once`);
+    await new Promise(resolve => setTimeout(resolve, 3_000));
+    classification = await classify(ctx);
+  }
   if (classification) {
+    // Canonicalize the niche — the model saw the registry list; the
+    // deterministic matcher (exact → alias → fuzzy → create) is the net.
+    if (classification.niche) {
+      classification.niche = await resolveNiche(classification.niche);
+    }
     const { handle, name } = normalizeCreatorHandle(
       classification.creatorHandle, classification.creatorName, ctx.author
     );
     const creatorUUID = await resolveCreator(handle, name, atom, ctx.platform || 'instagram');
-    const analysisJSON = buildAnalysisJSON(classification, creatorUUID);
-    // Classification overrides; transcript/engagement keys set above survive.
+    const analysisJSON = buildAnalysisJSON(classification, creatorUUID, {
+      hookText,
+      slideCount: analyzableSlideCount,
+      hasVideo: Boolean(media?.videoUrl),
+    });
+    // Insight fields override; transcript/engagement keys set above survive.
     Object.assign(existingAnalysis, analysisJSON);
-    // Instagram video can never be a static "post" (Mac platform-validation rule).
-    if (media?.videoUrl && (existingAnalysis.swipeContentFormat === 'post' || !existingAnalysis.swipeContentFormat)) {
-      existingAnalysis.swipeContentFormat = 'multiSliderReel';
+
+    // Library headline: the sanitized short displayTitle wins over the raw
+    // 120-char hook prefix (same rule as the Mac's runInsightPass).
+    const displayTitle = analysisJSON.displayTitle as string | undefined;
+    if (displayTitle && (!result.editedByUser || !atom.title || PLACEHOLDER_TITLES.has(atom.title))) {
+      title = displayTitle;
+      richContent.title = displayTitle;
     }
   }
 
-  // A video reel that ends with NO transcript at all is not "complete" — it
-  // is a transient pile-up (Whisper down + all video tiers failing). Mark it
-  // partial with backoff so it self-heals instead of silently staying empty.
+  // Two ways this pass can end incomplete — both are "partial", never a
+  // silent "complete" that strands the swipe half-processed forever:
+  //   • a video reel with NO transcript at all (Whisper down + all video
+  //     tiers failing) — transient pile-up
+  //   • a transcript exists but the insight/classification call failed —
+  //     without this, the swipe synced down "complete" with an empty
+  //     analysis and the Mac had to re-run the pass locally on open
   const isVideoReel = Boolean(media?.videoUrl);
-  const isPartial = !result.editedByUser && !slideText && !speechText && isVideoReel;
+  const missingTranscript = !result.editedByUser && !slideText && !speechText && isVideoReel;
+  const missingAnalysis = Boolean(analysisText.trim()) && !classification
+    && existingAnalysis.isFullyAnalyzed !== true;
+  const isPartial = missingTranscript || missingAnalysis;
   metadataUpdates.processingStatus = isPartial ? 'partial' : 'complete';
   metadataUpdates.processingWorker = 'cloud';
   if (isPartial) {

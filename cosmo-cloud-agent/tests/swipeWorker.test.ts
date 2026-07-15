@@ -57,57 +57,78 @@ assert.deepEqual(sidecar.slides[1], {
 });
 assert.equal(sidecar.slides[0].isVideo, false);
 
-// ── Analysis JSON contract: keys must match SwipeAnalysis CodingKeys ────────
+// ── Analysis JSON contract (v4 insight): keys must match SwipeAnalysis ──────
 
 const classification = parseResponse(`\`\`\`json
 {
+  "displayTitle": "He bought a laundromat with the SBA's money",
+  "keyInsight": "Newsjacking works because the reader already carries the tension",
+  "hookType": "statistic",
+  "hookScore": 8.5,
+  "hookScoreReason": "Newsjack",
+  "hookMechanism": "Curiosity",
   "primaryNarrative": "storytelling",
+  "secondaryNarrative": null,
   "contentType": "voiceoverReel",
   "niche": "SMB Acquisition",
   "creatorHandle": "@buyer",
+  "creatorName": "The Buyer",
   "classificationConfidence": 0.9,
   "frameworkType": "pas",
-  "sections": [{"label": "Hook", "purpose": "Opens the gap", "sizePercent": 0.1, "emotion": "curiosity"}],
-  "emotionalArc": [{"position": 0, "emotion": "curiosity", "intensity": 0.8}],
-  "persuasionTechniques": [{"type": "authority", "intensity": 0.7, "example": "SBA rules"}],
-  "hookScore": 8.5,
-  "hookScoreReason": "Newsjack",
-  "keyInsight": "Newsjacking works",
-  "hookMechanism": "Curiosity",
+  "sections": [{"label": "Hook", "purpose": "Opens the gap", "slideStart": 1, "slideEnd": 1, "sizePercent": 0.1}],
   "structuralRecipe": "1. Hook",
   "voiceMarkers": ["direct"],
-  "sentimentQuartiles": [0.1, 0.2, 0.3, 0.4],
-  "intensityQuartiles": [0.5, 0.5, 0.5, 0.5]
+  "signatureCard": "HOOK: newsjack a rule change. BEATS: Hook → SolutionReveal. MOVES: authority. SUBJECT: SBA acquisition. NUMBERS: dollar-anchored. VOICE: direct."
 }
 \`\`\``);
 assert.ok(classification, 'fenced JSON must parse');
 
-const analysis = buildAnalysisJSON(classification!, 'CREATOR-UUID');
-// Exact SwipeAnalysis CodingKeys (Swift; duplicated Mac<->iOS):
+const analysis = buildAnalysisJSON(classification!, 'CREATOR-UUID', {
+  hookText: 'Trump just changed the SBA rules and nobody noticed',
+  slideCount: 3,
+  hasVideo: true,
+});
+// Exact SwipeAnalysis CodingKeys (Swift; duplicated Mac<->iOS) — v4 contract:
 for (const key of [
-  'hookScore', 'frameworkType', 'sections', 'dominantEmotion', 'emotionalArc',
-  'persuasionTechniques', 'persuasionStack', 'keyInsight', 'fingerprint',
-  'hookScoreReason', 'analysisVersion', 'analyzedAt', 'isFullyAnalyzed',
+  'displayTitle', 'keyInsight', 'signatureCard',
+  'hookText', 'hookWordCount', 'hookType', 'hookScore', 'hookScoreReason', 'hookMechanism',
+  'frameworkType', 'sections', 'structuralRecipe', 'voiceMarkers',
+  'analysisVersion', 'analyzedAt', 'isFullyAnalyzed',
   'primaryNarrative', 'swipeContentFormat', 'niche', 'creatorUUID',
   'classifiedAt', 'classificationSource', 'classificationConfidence',
-  'hookMechanism', 'structuralRecipe', 'voiceMarkers',
 ]) {
   assert.ok(key in analysis, `missing SwipeAnalysis key: ${key}`);
 }
+assert.equal(analysis.analysisVersion, 4);
 assert.equal(analysis.swipeContentFormat, 'voiceoverReel'); // contentType → swipeContentFormat
 assert.equal(analysis.classificationSource, 'ai');
-assert.equal(analysis.dominantEmotion, 'curiosity');
+assert.equal(analysis.hookType, 'statistic');
+assert.equal(analysis.hookWordCount, 9);
 // classifiedAt is a NUMBER in Apple reference-date seconds (plain JSONDecoder).
 assert.equal(typeof analysis.classifiedAt, 'number');
 assert.ok((analysis.classifiedAt as number) < Date.now() / 1000, 'classifiedAt must be apple-epoch, not unix');
-// fingerprint techniqueWeights: 12 values in PersuasionType order, authority = index 3.
-const fingerprint = analysis.fingerprint as { techniqueWeights: number[] };
-assert.equal(fingerprint.techniqueWeights.length, 12);
-assert.equal(fingerprint.techniqueWeights[3], 0.7);
-// sections carry startIndex/endIndex ints (Swift SwipeSection contract).
+// sections carry startIndex/endIndex ints + clamped 1-based slide anchors.
 const section = (analysis.sections as Array<Record<string, unknown>>)[0];
 assert.equal(section.startIndex, 0);
 assert.equal(section.endIndex, 1);
+assert.equal(section.slideStart, 1);
+assert.equal(section.slideEnd, 1);
+
+// Format sanity: video can never be a static "post".
+const postOnVideo = buildAnalysisJSON(
+  parseResponse('{"contentType": "post"}')!,
+  null,
+  { hookText: 'hook', slideCount: 0, hasVideo: true }
+);
+assert.equal(postOnVideo.swipeContentFormat, 'multiSliderReel');
+
+// displayTitle guardrail: short hooks pass through verbatim; long model
+// titles are trimmed to a 90-char word boundary with wrapping quotes gone.
+import { sanitizedDisplayTitle } from '../src/swipes/analyze';
+assert.equal(sanitizedDisplayTitle('"Model rewrite"', 'Short hook stays'), 'Short hook stays');
+const longHook = 'x'.repeat(80);
+assert.equal(sanitizedDisplayTitle('"A quoted model title"', longHook), 'A quoted model title');
+assert.ok(sanitizedDisplayTitle('word '.repeat(30), longHook)!.length <= 90);
 
 // ── Engagement fields ───────────────────────────────────────────────────────
 

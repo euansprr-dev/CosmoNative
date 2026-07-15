@@ -1,8 +1,12 @@
 // CosmoOS/UI/FocusMode/SwipeStudy/SwipeStudyFocusModeView.swift
-// Swipe Study — the reading room for one saved swipe. Rebuilt July 2026 on
-// the Swipe File page grammar: one serif hero (the title), sans chrome, a
-// media stage, the transcript manuscript, and a single analysis rail fed by
-// the insight pass. State + persistence live in SwipeStudyModel.
+// Swipe Study — the bench for one saved swipe (July 2026, the workbench
+// conversion). A navigation band up top (navigate · the swipe pill · session
+// + actions, with Use in Idea as the screen's ONE tinted glass element), and
+// beneath it the worksheet: the analysis rail as the LEADING column, the
+// object of study — serif hero, media stage, transcript — owning the center.
+// Same WorkbenchShell mechanics as the Study and the Idea bench; the page
+// still sits on SwipePageBackground so the hero zoom from the library lands
+// on the same paper. State + persistence live in SwipeStudyModel.
 
 import SwiftUI
 import AVKit
@@ -13,44 +17,53 @@ struct SwipeStudyFocusModeView: View {
 
     @State private var model: SwipeStudyModel
     @State private var scrollMetrics = CortexScrollMetrics()
+    /// The analysis rail as a true column (regular widths) — the choice
+    /// persists; studying is the room's point, so it defaults on.
+    @State private var isRailVisible: Bool
+    /// Compact/narrow widths: the rail slides OVER the center, never persisted.
+    @State private var isRailOverlayPresented = false
+    /// Width class, kept in sync by the host geometry (the bench breakpoints).
+    @State private var breakpoint: StudyBreakpoint = .regular
+    @State private var isCreatingIdea = false
 
-    @AppStorage("sidebarCollapsed") private var isSidebarHidden: Bool = false
     @Environment(\.isPaneContext) private var isPaneContext
     @Environment(\.isPeekContext) private var isPeekContext
     @Environment(\.isPaneActive) private var isPaneActive
     @Environment(\.atomWindowChromeContext) private var atomChrome
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    private static let railDefaultsKey = "swipe.workbench.rail"
+
     init(atom: Atom, onClose: @escaping () -> Void) {
         self.atom = atom
         self.onClose = onClose
         _model = State(initialValue: SwipeStudyModel(atom: atom, onClose: onClose))
+        _isRailVisible = State(
+            initialValue: UserDefaults.standard.object(forKey: Self.railDefaultsKey) as? Bool ?? true
+        )
     }
 
     var body: some View {
-        ZStack {
-            SwipePageBackground()
+        GeometryReader { geo in
+            ZStack {
+                SwipePageBackground()
 
-            if let displayAtom = model.currentAtom {
-                VStack(spacing: 0) {
-                    SwipeStudyTopBar(
-                        model: model,
-                        atom: displayAtom,
-                        isSidebarHidden: $isSidebarHidden,
-                        isPaneContext: isPaneContext,
-                        isPeekContext: isPeekContext,
-                        atomChrome: atomChrome,
-                        onClose: onClose
-                    )
-                    workspace(atom: displayAtom)
+                if let displayAtom = model.currentAtom {
+                    bench(atom: displayAtom)
+                        .opacity(model.hasAppeared ? 1 : 0)
+                        .scaleEffect(model.hasAppeared ? 1 : 0.985)
+                        .sheet(isPresented: $model.showEditTranscript) {
+                            SwipeStudyEditTranscriptSheet(model: model)
+                        }
+                } else {
+                    loadingState
                 }
-                .opacity(model.hasAppeared ? 1 : 0)
-                .scaleEffect(model.hasAppeared ? 1 : 0.985)
-                .sheet(isPresented: $model.showEditTranscript) {
-                    SwipeStudyEditTranscriptSheet(model: model)
+            }
+            .onChange(of: geo.size.width, initial: true) { _, width in
+                let resolved = StudyBreakpoint(width: width)
+                if breakpoint != resolved {
+                    breakpoint = resolved
                 }
-            } else {
-                loadingState
             }
         }
         .onAppear {
@@ -67,10 +80,7 @@ struct SwipeStudyFocusModeView: View {
                 model.publishContextProvider()
             }
         }
-        .onKeyPress(.escape) {
-            onClose()
-            return .handled
-        }
+        .onKeyPress(.escape) { handleEscape() }
         .focusImmersiveEntryTransition()
         .background(keyboardLayer)
         .overlay {
@@ -92,141 +102,151 @@ struct SwipeStudyFocusModeView: View {
         }
     }
 
-    // MARK: - Workspace
+    // MARK: - The bench (chrome band + one rounded worksheet)
 
-    private func workspace(atom: Atom) -> some View {
-        GeometryReader { geo in
-            ScrollViewReader { proxy in
-                ScrollView {
-                    layout(atom: atom, size: geo.size, proxy: proxy)
-                        .background(
-                            CortexScrollViewIntrospector { metrics in
-                                if metrics != scrollMetrics {
-                                    scrollMetrics = metrics
-                                }
-                            }
-                        )
-                }
-                .scrollIndicators(.hidden)
-                .overlay(alignment: .trailing) {
-                    CortexThinScrollbar(metrics: scrollMetrics)
-                        .padding(.trailing, DS.space4)
-                        .padding(.vertical, DS.space16)
-                }
+    private func bench(atom: Atom) -> some View {
+        ScrollViewReader { proxy in
+            VStack(spacing: DS.space8) {
+                SwipeStudyChromeRow(
+                    model: model,
+                    atom: atom,
+                    breakpoint: breakpoint,
+                    isRailShowing: isRailShowing,
+                    isPaneContext: isPaneContext,
+                    isPeekContext: isPeekContext,
+                    atomChrome: atomChrome,
+                    isCreatingIdea: isCreatingIdea,
+                    onToggleRail: toggleRail,
+                    onUseInIdea: { useInIdea(atom: atom) },
+                    onClose: onClose
+                )
+                workbenchSheet(atom: atom, proxy: proxy)
+                    .padding(.horizontal, DS.space10)
+                    .padding(.bottom, DS.space10)
             }
         }
     }
 
-    /// Three width tiers, one grammar. Wide keeps the full reading room;
-    /// medium (a normal pane) pairs the media with the title + analysis so the
-    /// transcript stops dominating the fold; compact (a narrow pane) leads
-    /// with a small header card and gives the width to the transcript.
-    @ViewBuilder
-    private func layout(atom: Atom, size: CGSize, proxy: ScrollViewProxy) -> some View {
-        if size.width >= 980 {
-            wideLayout(atom: atom, size: size, proxy: proxy)
-        } else if size.width >= 620 {
-            mediumLayout(atom: atom, size: size, proxy: proxy)
-        } else {
-            compactLayout(atom: atom, proxy: proxy)
+    /// The worksheet: analysis | the swipe itself. One leading panel — the
+    /// shell's trailing column stays empty on this bench.
+    private func workbenchSheet(atom: Atom, proxy: ScrollViewProxy) -> some View {
+        WorkbenchShell(
+            panelsDisplace: breakpoint.panelsDisplace,
+            isLeadingShowing: isRailShowing,
+            isTrailingShowing: false,
+            showsScrim: breakpoint == .narrow,
+            onScrimTap: {
+                withAnimation(ProMotionSprings.focusTransition) { isRailOverlayPresented = false }
+            }
+        ) {
+            SwipeStudyAnalysisPanel(
+                model: model,
+                atom: atom,
+                isOverlay: !breakpoint.panelsDisplace
+            ) { section in
+                handleBeatTap(section, atom: atom, proxy: proxy)
+            }
+        } center: {
+            centerColumn(atom: atom)
+        } trailing: {
+            EmptyView()
         }
     }
 
-    private func wideLayout(atom: Atom, size: CGSize, proxy: ScrollViewProxy) -> some View {
-        HStack(alignment: .top, spacing: DS.space40) {
+    // MARK: - Center (the object of study)
+
+    /// Hero title, media stage, transcript — one reading measure, assembled
+    /// top to bottom on arrival.
+    private func centerColumn(atom: Atom) -> some View {
+        ScrollView {
             VStack(alignment: .leading, spacing: DS.space24) {
-                stage(atom: atom)
-                rail(atom: atom, proxy: proxy)
+                SwipeStudyHeroBlock(model: model, atom: atom)
+                    .studyStagger(0, appeared: model.hasAppeared, reduceMotion: reduceMotion)
+                SwipeStudyStagePane(model: model, atom: atom)
+                    .studyStagger(1, appeared: model.hasAppeared, reduceMotion: reduceMotion)
+                SwipeStudyTranscriptBlock(model: model, atom: atom)
+                    .studyStagger(2, appeared: model.hasAppeared, reduceMotion: reduceMotion)
             }
-            .frame(width: min(460, max(360, size.width * 0.3)), alignment: .top)
-            .studyStagger(0, appeared: model.hasAppeared, reduceMotion: reduceMotion)
-
-            manuscript(atom: atom)
-                .frame(maxWidth: 680, alignment: .topLeading)
-                .studyStagger(1, appeared: model.hasAppeared, reduceMotion: reduceMotion)
-        }
-        .frame(maxWidth: 1280, alignment: .top)
-        .padding(.horizontal, DS.space32)
-        .padding(.top, DS.space24)
-        .padding(.bottom, DS.space48)
-        .frame(maxWidth: .infinity, alignment: .top)
-    }
-
-    /// Normal pane width: media beside title + insight + structure — an
-    /// editorial header — then the transcript at full width, then the rest.
-    private func mediumLayout(atom: Atom, size: CGSize, proxy: ScrollViewProxy) -> some View {
-        VStack(alignment: .leading, spacing: DS.space32) {
-            HStack(alignment: .top, spacing: DS.space24) {
-                stage(atom: atom)
-                    .frame(width: min(300, size.width * 0.42), alignment: .top)
-
-                VStack(alignment: .leading, spacing: DS.space20) {
-                    SwipeStudyHeroBlock(model: model, atom: atom, compact: true)
-                    SwipeStudyInsightRail(
-                        model: model,
-                        atom: atom,
-                        visibleSections: [.insight, .structure]
-                    ) { section in
-                        handleBeatTap(section, atom: atom, proxy: proxy)
+            .padding(.horizontal, DS.space24)
+            .padding(.top, DS.space24)
+            .padding(.bottom, DS.space48)
+            .frame(maxWidth: 680, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .background(
+                CortexScrollViewIntrospector { metrics in
+                    if metrics != scrollMetrics {
+                        scrollMetrics = metrics
                     }
                 }
-            }
-            .studyStagger(0, appeared: model.hasAppeared, reduceMotion: reduceMotion)
-
-            SwipeStudyTranscriptBlock(model: model, atom: atom)
-                .studyStagger(1, appeared: model.hasAppeared, reduceMotion: reduceMotion)
-
-            SwipeStudyInsightRail(
-                model: model,
-                atom: atom,
-                visibleSections: [.patterns, .details]
-            ) { section in
-                handleBeatTap(section, atom: atom, proxy: proxy)
-            }
-            .studyStagger(2, appeared: model.hasAppeared, reduceMotion: reduceMotion)
+            )
         }
-        .padding(.horizontal, DS.space24)
-        .padding(.top, DS.space16)
-        .padding(.bottom, DS.space40)
-    }
-
-    /// Narrow pane: a small header card (thumb + title + insight), then the
-    /// transcript owns the width.
-    private func compactLayout(atom: Atom, proxy: ScrollViewProxy) -> some View {
-        VStack(alignment: .leading, spacing: DS.space24) {
-            SwipeStudyCompactHeader(model: model, atom: atom)
-                .studyStagger(0, appeared: model.hasAppeared, reduceMotion: reduceMotion)
-
-            SwipeStudyTranscriptBlock(model: model, atom: atom)
-                .studyStagger(1, appeared: model.hasAppeared, reduceMotion: reduceMotion)
-
-            SwipeStudyInsightRail(
-                model: model,
-                atom: atom,
-                visibleSections: [.structure, .patterns, .details]
-            ) { section in
-                handleBeatTap(section, atom: atom, proxy: proxy)
-            }
-            .studyStagger(2, appeared: model.hasAppeared, reduceMotion: reduceMotion)
-        }
-        .padding(.horizontal, DS.space16)
-        .padding(.top, DS.space12)
-        .padding(.bottom, DS.space40)
-    }
-
-    private func stage(atom: Atom) -> some View {
-        SwipeStudyStagePane(model: model, atom: atom)
-    }
-
-    private func manuscript(atom: Atom) -> some View {
-        SwipeStudyManuscript(model: model, atom: atom)
-    }
-
-    private func rail(atom: Atom, proxy: ScrollViewProxy) -> some View {
-        SwipeStudyInsightRail(model: model, atom: atom) { section in
-            handleBeatTap(section, atom: atom, proxy: proxy)
+        .scrollIndicators(.hidden)
+        .scrollEdgeEffectStyle(.soft, for: .all)
+        .overlay(alignment: .trailing) {
+            CortexThinScrollbar(metrics: scrollMetrics)
+                .padding(.trailing, DS.space4)
+                .padding(.vertical, DS.space16)
         }
     }
+
+    // MARK: - Rail state
+
+    private var isRailShowing: Bool {
+        breakpoint.panelsDisplace ? isRailVisible : isRailOverlayPresented
+    }
+
+    private func toggleRail() {
+        withAnimation(ProMotionSprings.focusTransition) {
+            if breakpoint.panelsDisplace {
+                isRailVisible.toggle()
+                UserDefaults.standard.set(isRailVisible, forKey: Self.railDefaultsKey)
+            } else {
+                isRailOverlayPresented.toggle()
+            }
+        }
+    }
+
+    // MARK: - Use in Idea (the bench's primary action)
+
+    /// Start an idea from this swipe: the swipe rides along as linked
+    /// inspiration, and the idea inherits the swipe's classified format and
+    /// platform — so the Idea bench's recommended shelf wakes up matched.
+    private func useInIdea(atom: Atom) {
+        guard !isCreatingIdea else { return }
+        isCreatingIdea = true
+        Task {
+            var ideaAtom = Atom.new(type: .idea, title: "Untitled Idea", body: nil, metadata: nil)
+            ideaAtom = ideaAtom.withUpdatedIdeaMetadata { meta in
+                meta.linkedSwipeIds = [atom.uuid]
+                if let format = model.analysis?.swipeContentFormat {
+                    meta.contentFormat = format
+                }
+                if let platform = ideaPlatform(for: atom) {
+                    meta.platform = platform
+                }
+            }
+            guard let created = try? await AtomRepository.shared.create(ideaAtom),
+                  let id = created.id else {
+                isCreatingIdea = false
+                return
+            }
+            NotificationCenter.default.post(
+                name: .enterFocusMode,
+                object: nil,
+                userInfo: ["type": EntityType.idea, "id": id]
+            )
+            isCreatingIdea = false
+        }
+    }
+
+    private func ideaPlatform(for atom: Atom) -> IdeaPlatform? {
+        guard let source = model.detectSourceType(for: atom)?.rawValue.lowercased() else { return nil }
+        if source.hasPrefix("instagram") { return .instagram }
+        if source.hasPrefix("youtube") { return .youtube }
+        return nil
+    }
+
+    // MARK: - Beat anchors
 
     /// A structure beat is an anchor: slides scroll, videos seek.
     private func handleBeatTap(_ section: SwipeSection, atom: Atom, proxy: ScrollViewProxy) {
@@ -267,6 +287,30 @@ struct SwipeStudyFocusModeView: View {
         }
     }
 
+    // MARK: - Keyboard
+
+    /// Esc peels the overlay rail first (compact widths), then closes.
+    private func handleEscape() -> KeyPress.Result {
+        if !breakpoint.panelsDisplace, isRailOverlayPresented {
+            withAnimation(ProMotionSprings.focusTransition) { isRailOverlayPresented = false }
+            return .handled
+        }
+        onClose()
+        return .handled
+    }
+
+    private var keyboardLayer: some View {
+        Group {
+            Button("") { toggleRail() }.keyboardShortcut("0", modifiers: .command)
+            Button("") { model.goPrevious() }.keyboardShortcut("[", modifiers: .command)
+            Button("") { model.goNext() }.keyboardShortcut("]", modifiers: .command)
+            Button("") { model.copyTranscript() }.keyboardShortcut("c", modifiers: [.command, .shift])
+        }
+        .opacity(0)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
     // MARK: - Loading
 
     private var loadingState: some View {
@@ -277,128 +321,127 @@ struct SwipeStudyFocusModeView: View {
                 .foregroundStyle(DS.textMuted)
         }
     }
-
-    // MARK: - Keyboard
-
-    private var keyboardLayer: some View {
-        Group {
-            Button("") { model.goPrevious() }.keyboardShortcut("[", modifiers: .command)
-            Button("") { model.goNext() }.keyboardShortcut("]", modifiers: .command)
-            Button("") { model.copyTranscript() }.keyboardShortcut("c", modifiers: [.command, .shift])
-        }
-        .opacity(0)
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
-    }
 }
 
-// MARK: - Top bar
+// MARK: - Chrome band (navigate · the swipe pill · session + actions)
 
-private struct SwipeStudyTopBar: View {
+private struct SwipeStudyChromeRow: View {
     @Bindable var model: SwipeStudyModel
     let atom: Atom
-    @Binding var isSidebarHidden: Bool
+    let breakpoint: StudyBreakpoint
+    let isRailShowing: Bool
     let isPaneContext: Bool
     let isPeekContext: Bool
     let atomChrome: AtomWindowChromePayload?
+    let isCreatingIdea: Bool
+    let onToggleRail: () -> Void
+    let onUseInIdea: () -> Void
     let onClose: () -> Void
 
     var body: some View {
-        HStack(spacing: DS.space12) {
-            leading
-            Spacer()
-            center
-            Spacer()
-            trailing
+        CosmoChromeRow {
+            if atomChrome == nil, !isPaneContext {
+                NavigationTrailIsland()
+            }
+            CosmoChromeIsland { leadingControls }
+        } center: {
+            CosmoChromeIsland { swipePill }
+        } trailing: {
+            sessionIsland
+            CosmoChromeIsland { trailingControls }
+            useInIdeaIsland
         }
-        .padding(.horizontal, DS.space20)
-        .frame(height: 56)
     }
 
+    // MARK: Navigate island
+
     @ViewBuilder
-    private var leading: some View {
+    private var leadingControls: some View {
         if let atomChrome {
             AtomWindowChromeLeadingControls(context: atomChrome)
-        } else if !isPaneContext {
-            Button {
-                withAnimation(ProMotionSprings.sidebar) { isSidebarHidden.toggle() }
-            } label: {
-                Image(systemName: "sidebar.left")
-                    .font(DS.navTitle)
-                    .foregroundStyle(DS.textMuted)
-                    .frame(width: 30, height: 30)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help(isSidebarHidden ? "Show sidebar (⌘\\)" : "Hide sidebar (⌘\\)")
-            .accessibilityLabel("Toggle sidebar")
-
-            NavigationTrailIsland()
+            AtomWindowChromeDivider()
         }
+        StudyToolbarButton(
+            icon: "sidebar.left",
+            help: isRailShowing ? "Hide analysis (⌘0)" : "Show analysis (⌘0)",
+            isActive: isRailShowing,
+            action: onToggleRail
+        )
     }
 
-    @ViewBuilder
-    private var center: some View {
+    // MARK: The swipe pill (orientation — the center island)
+
+    /// The swipe's own mark, its hook, and where you are in the study queue.
+    /// The serif hero in the manuscript stays the hero; this is the bench's
+    /// inline title.
+    private var swipePill: some View {
         HStack(spacing: DS.space6) {
-            Text(model.analysis?.studiedAt != nil ? "Studied" : "Studying")
-                .foregroundStyle(DS.textMuted)
+            SwipePlatformGlyph(source: model.detectSourceType(for: atom)?.rawValue)
+                .frame(width: 11, height: 11)
+                .foregroundStyle(DS.textSecondary)
+            Text(model.heroTitle)
+                .font(DS.buttonText.weight(.semibold))
+                .foregroundStyle(DS.text)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: breakpoint == .narrow ? 180 : 320)
+            if model.analysis?.studiedAt != nil {
+                Image(systemName: "checkmark.seal.fill")
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.accent.opacity(0.7))
+                    .help("Studied")
+                    .accessibilityLabel("Studied")
+            }
             if let position = SwipeStudySession.shared.positionLabel {
-                Text("·").foregroundStyle(DS.textMuted)
-                Text(position)
+                Text("·")
                     .foregroundStyle(DS.textMuted)
-                    .monospacedDigit()
+                    .accessibilityHidden(true)
+                Text(position)
+                    .font(DS.caption.monospacedDigit())
+                    .foregroundStyle(DS.textMuted)
                     .contentTransition(.numericText())
             }
         }
-        .font(DS.caption)
+        .padding(.horizontal, DS.space4)
+        .help(model.sourceDescriptor(for: atom))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Swipe: \(model.heroTitle)")
         .animation(ProMotionSprings.gentle, value: SwipeStudySession.shared.positionLabel)
     }
 
-    @ViewBuilder
-    private var trailing: some View {
-        let session = SwipeStudySession.shared
+    // MARK: Session island (the study queue)
 
+    @ViewBuilder
+    private var sessionIsland: some View {
+        let session = SwipeStudySession.shared
         if session.hasPrevious || session.hasNext {
-            HStack(spacing: 2) {
-                navButton("chevron.left", enabled: session.hasPrevious, help: "Previous swipe (⌘[)") {
+            CosmoChromeIsland {
+                StudyToolbarButton(icon: "chevron.left", help: "Previous swipe (⌘[)") {
                     model.goPrevious()
                 }
-                navButton("chevron.right", enabled: session.hasNext, help: "Next swipe (⌘])") {
+                .disabled(!session.hasPrevious)
+                .opacity(session.hasPrevious ? 1 : 0.35)
+
+                StudyToolbarButton(icon: "chevron.right", help: "Next swipe (⌘])") {
                     model.goNext()
                 }
+                .disabled(!session.hasNext)
+                .opacity(session.hasNext ? 1 : 0.35)
             }
-        }
-
-        overflowMenu
-
-        if let atomChrome {
-            AtomWindowChromeTrailingControls(context: atomChrome)
-        } else if isPaneContext, !isPeekContext {
-            Button(action: onClose) {
-                Image(systemName: "xmark")
-                    .font(DS.caption.weight(.semibold))
-                    .foregroundStyle(DS.textMuted)
-                    .frame(width: 30, height: 30)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Close pane")
-            .accessibilityLabel("Close pane")
         }
     }
 
-    private func navButton(_ systemName: String, enabled: Bool, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(DS.caption.weight(.semibold))
-                .foregroundStyle(enabled ? DS.textSecondary : DS.textMuted.opacity(0.4))
-                .frame(width: 28, height: 28)
-                .contentShape(Rectangle())
+    // MARK: Tools island
+
+    @ViewBuilder
+    private var trailingControls: some View {
+        overflowMenu
+        if let atomChrome {
+            AtomWindowChromeDivider()
+            AtomWindowChromeTrailingControls(context: atomChrome)
+        } else if isPaneContext, !isPeekContext {
+            StudyToolbarButton(icon: "xmark", help: "Close (Esc)", action: onClose)
         }
-        .buttonStyle(.plain)
-        .disabled(!enabled)
-        .help(help)
-        .accessibilityLabel(help)
     }
 
     private var overflowMenu: some View {
@@ -437,16 +480,99 @@ private struct SwipeStudyTopBar: View {
             }
         } label: {
             Image(systemName: "ellipsis")
-                .font(DS.navTitle)
+                .font(DS.buttonText)
                 .foregroundStyle(DS.textSecondary)
-                .frame(width: 30, height: 30)
-                .contentShape(Rectangle())
+                .frame(width: 28, height: 28)
+                .contentShape(Circle())
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
-        .frame(width: 30)
+        .frame(width: 28)
         .help("More actions")
         .accessibilityLabel("More actions")
+    }
+
+    // MARK: Use in Idea (the one tinted glass element)
+
+    /// The bench's primary action wears the screen's only glass tint —
+    /// Crystallize's role in the Study, Begin Writing's in the Idea bench.
+    private var useInIdeaIsland: some View {
+        Button(action: onUseInIdea) {
+            HStack(spacing: DS.space4) {
+                if isCreatingIdea {
+                    ProgressView()
+                        .scaleEffect(0.45)
+                        .frame(width: 12, height: 12)
+                } else {
+                    Image(systemName: "lightbulb")
+                        .font(DS.caption.weight(.semibold))
+                        .accessibilityHidden(true)
+                }
+                if breakpoint != .narrow || isCreatingIdea {
+                    Text(isCreatingIdea ? "Starting…" : "Use in Idea")
+                        .font(DS.buttonText.weight(.semibold))
+                }
+            }
+            .foregroundStyle(DS.accent)
+            .padding(.horizontal, DS.space12)
+            .frame(height: CosmoChromeMetrics.height)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .glassEffect(.regular.tint(DS.accentSoft).interactive(), in: .capsule)
+        .disabled(isCreatingIdea)
+        .keyboardShortcut(.return, modifiers: [.command])
+        .help("Start an idea from this swipe — links it and carries the format (⌘⏎)")
+        .accessibilityLabel("Use in idea")
+    }
+}
+
+// MARK: - Analysis panel (the leading column)
+
+/// The insight rail as a bench panel: INSIGHT → STRUCTURE → PATTERNS →
+/// DETAILS on the study panel surface, scrolling independently of the
+/// manuscript. Beat taps anchor into the center column.
+private struct SwipeStudyAnalysisPanel: View {
+    @Bindable var model: SwipeStudyModel
+    let atom: Atom
+    var isOverlay: Bool = false
+    let onBeatTap: (SwipeSection) -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            ScrollView {
+                SwipeStudyInsightRail(model: model, atom: atom, onBeatTap: onBeatTap)
+                    .padding(.horizontal, DS.space16)
+                    .padding(.bottom, DS.space16)
+            }
+            .scrollIndicators(.never)
+            .scrollEdgeEffectStyle(.soft, for: .all)
+        }
+        .frame(width: StudyMetrics.panelWidth)
+        .studyPanelSurface(edge: .leading, isOverlay: isOverlay)
+    }
+
+    private var header: some View {
+        HStack(spacing: DS.space6) {
+            Text("ANALYSIS")
+                .dsSmallCapsLabel()
+            Spacer()
+            if model.isAnalyzing {
+                ProgressView()
+                    .controlSize(.small)
+                    .scaleEffect(0.6)
+            } else if let beats = model.analysis?.sections?.count, beats > 0 {
+                Text("\(beats)")
+                    .font(DS.caption)
+                    .monospacedDigit()
+                    .contentTransition(.numericText())
+                    .foregroundStyle(DS.textMuted)
+            }
+        }
+        .padding(.horizontal, DS.space16)
+        .padding(.top, DS.space12)
+        .padding(.bottom, DS.space10)
     }
 }
 

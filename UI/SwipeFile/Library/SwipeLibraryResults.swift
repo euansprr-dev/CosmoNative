@@ -286,6 +286,7 @@ private struct SwipeLibraryCompactRow: View {
         .frame(height: 60)
         .swipeCardSurface(isHovered: isHovered, isSelected: isSelected, cornerRadius: 12)
         .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .onAppear { SwipeStudyPrewarmer.shared.prewarm(uuid: model.id) }
         .onHover { isHovered = $0 }
         .onTapGesture(count: 2, perform: onStudy)
         .onTapGesture(perform: onOpen)

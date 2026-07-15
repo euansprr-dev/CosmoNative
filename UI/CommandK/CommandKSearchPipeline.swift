@@ -1116,6 +1116,66 @@ struct CommandKSearchRequestID: Equatable, Sendable {
     private let rawValue = UUID()
 }
 
+/// One-edit typo tolerance (Damerau-Levenshtein distance ≤ 1: substitution,
+/// insertion, deletion, or adjacent transposition) with an early-exit
+/// single-pass check — no distance matrix, safe to run over the instant
+/// index's titles.
+enum CommandKTypoTolerance {
+    static func isWithinOneEdit(_ a: Substring, _ b: Substring) -> Bool {
+        if a == b { return true }
+        let lengthDelta = a.count - b.count
+        guard abs(lengthDelta) <= 1 else { return false }
+
+        let aChars = Array(a)
+        let bChars = Array(b)
+
+        if lengthDelta == 0 {
+            // Same length: one substitution, or one adjacent transposition.
+            for index in aChars.indices where aChars[index] != bChars[index] {
+                if index + 1 < aChars.count,
+                   aChars[index] == bChars[index + 1],
+                   aChars[index + 1] == bChars[index] {
+                    // Transposition — everything after the swapped pair must
+                    // match exactly.
+                    return Array(aChars[(index + 2)...]) == Array(bChars[(index + 2)...])
+                }
+                // Substitution — everything after it must match exactly.
+                return Array(aChars[(index + 1)...]) == Array(bChars[(index + 1)...])
+            }
+            return true
+        }
+
+        // Length differs by one: one insertion/deletion.
+        let (longer, shorter) = aChars.count > bChars.count ? (aChars, bChars) : (bChars, aChars)
+        var longIndex = 0
+        var shortIndex = 0
+        var skipped = false
+        while longIndex < longer.count && shortIndex < shorter.count {
+            if longer[longIndex] == shorter[shortIndex] {
+                longIndex += 1
+                shortIndex += 1
+            } else if skipped {
+                return false
+            } else {
+                skipped = true
+                longIndex += 1
+            }
+        }
+        return true
+    }
+
+    /// Query-token-vs-title-token match: exact-length tolerance, or the same
+    /// tolerance against the title token's prefix so mid-typing typos
+    /// ("retreiv" while writing "retrieval") still connect.
+    static func fuzzyMatches(_ queryToken: Substring, titleToken: Substring) -> Bool {
+        if isWithinOneEdit(queryToken, titleToken) { return true }
+        if titleToken.count > queryToken.count {
+            return isWithinOneEdit(queryToken, titleToken.prefix(queryToken.count))
+        }
+        return false
+    }
+}
+
 struct CommandKSearchIndex: Sendable {
     struct Entry: Identifiable, Equatable, Sendable {
         let id: String
@@ -1184,11 +1244,20 @@ struct CommandKSearchIndex: Sendable {
         let normalizedQuery = CommandKSearchMatcher.normalizeQuery(query)
         guard !normalizedQuery.isEmpty else { return [] }
 
+        // Explicitly-quoted segments are hard requirements: an entry that
+        // doesn't contain every quoted phrase verbatim is not a match, no
+        // matter how many loose tokens it carries.
+        let requiredPhrases = CommandKSearchMatcher.quotedPhrases(in: query)
+
         var matches: [RankedResult] = []
         matches.reserveCapacity(min(limit * 2, entries.count))
 
         for entry in entries {
             if shouldCancel() { return [] }
+            if !requiredPhrases.isEmpty,
+               !requiredPhrases.allSatisfy({ entry.searchableText.contains($0) }) {
+                continue
+            }
             let (tier, structural) = CommandKSearchMatcher.lexicalMatch(
                 normalizedQuery: normalizedQuery,
                 normalizedTitle: entry.normalizedTitle,
@@ -1201,6 +1270,11 @@ struct CommandKSearchIndex: Sendable {
                 atomType: entry.atomType,
                 title: entry.title,
                 snippet: entry.snippet?.prefix(160).description,
+                // Extraction walks the raw body only for the few body-tier
+                // matches, never the whole 10k-entry scan.
+                matchedExcerpt: tier >= .phraseInBody
+                    ? CommandKMatchExcerpt.excerpt(from: entry.snippet, query: query)
+                    : nil,
                 semanticWeight: 0.0,
                 structuralWeight: structural,
                 recencyWeight: entry.recencyWeight,
@@ -1210,7 +1284,56 @@ struct CommandKSearchIndex: Sendable {
             ))
         }
 
+        // Typo net: when strict matching leaves the list nearly empty and
+        // the query is name-shaped (1–3 tokens of 4+ chars, no quoted
+        // phrases), retry titles with one-edit tolerance so "retreival"
+        // still finds "Retrieval notes". Ranked below every real title
+        // match by quality; never runs when strict results are plentiful.
+        if matches.count < 3, requiredPhrases.isEmpty {
+            appendFuzzyTitleMatches(
+                to: &matches,
+                normalizedQuery: normalizedQuery,
+                shouldCancel: shouldCancel
+            )
+        }
+
         return matches.sorted().prefix(limit).map { $0 }
+    }
+
+    private func appendFuzzyTitleMatches(
+        to matches: inout [RankedResult],
+        normalizedQuery: String,
+        shouldCancel: () -> Bool
+    ) {
+        let queryTokens = normalizedQuery.split(separator: " ")
+        guard (1...3).contains(queryTokens.count),
+              queryTokens.allSatisfy({ $0.count >= 4 }) else { return }
+
+        let matchedIDs = Set(matches.map(\.atomUUID))
+        for entry in entries {
+            if shouldCancel() { return }
+            guard !matchedIDs.contains(entry.atomUUID) else { continue }
+            let titleTokens = entry.normalizedTitle.split(separator: " ")
+            guard !titleTokens.isEmpty else { continue }
+            let everyTokenFuzzyMatches = queryTokens.allSatisfy { queryToken in
+                titleTokens.contains { CommandKTypoTolerance.fuzzyMatches(queryToken, titleToken: $0) }
+            }
+            guard everyTokenFuzzyMatches else { continue }
+
+            matches.append(RankedResult(
+                atomUUID: entry.atomUUID,
+                atomType: entry.atomType,
+                title: entry.title,
+                snippet: entry.snippet?.prefix(160).description,
+                semanticWeight: 0.0,
+                // Below every exact title match (0.64+) within the tier.
+                structuralWeight: 0.5,
+                recencyWeight: entry.recencyWeight,
+                usageWeight: 0.5,
+                lexicalTier: .titleMatch,
+                updatedAt: entry.updatedAt
+            ))
+        }
     }
 }
 

@@ -385,13 +385,23 @@ extension Atom {
         set { updateResearchMetadata { $0.swipeBoardIDs = newValue } }
     }
 
-    // Rich content from structured data
+    // Rich content from structured data. Memoized on the structured column:
+    // the nested autoMetadata payload (transcript, carousel data, …) is large
+    // and this accessor is read from view bodies as if it were a stored field.
     var richContent: ResearchRichContent? {
-        structuredData(as: ResearchStructured.self).flatMap { structured in
-            guard let autoMetadata = structured.autoMetadata,
-                  let data = autoMetadata.data(using: .utf8) else { return nil }
-            return try? JSONDecoder().decode(ResearchRichContent.self, from: data)
+        guard let structuredStr = structured, !structuredStr.isEmpty else { return nil }
+        let state: JSONDecodeState<ResearchRichContent> = DecodedColumnCache.shared.value(
+            uuid: uuid, column: .structured, source: structuredStr
+        ) {
+            guard let outer = structuredData(as: ResearchStructured.self),
+                  let autoMetadata = outer.autoMetadata,
+                  let data = autoMetadata.data(using: .utf8),
+                  let decoded = try? JSONDecoder().decode(ResearchRichContent.self, from: data) else {
+                return .absent
+            }
+            return .value(decoded)
         }
+        return state.value
     }
 
     var sourceType: ResearchRichContent.SourceType? {

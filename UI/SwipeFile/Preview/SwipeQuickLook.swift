@@ -92,6 +92,8 @@ struct SwipeQuickLook<Content: View>: View {
             // back to a centered fade rather than flying to a wrong point.
             let collapsed = sourceFrame.flatMap { $0.intersects(bounds) ? $0 : nil } ?? fallback
             let frame = expanded ? target : collapsed
+            let scaleX = frame.width / max(target.width, 1)
+            let scaleY = frame.height / max(target.height, 1)
 
             ZStack(alignment: .topLeading) {
                 Color.black.opacity(expanded ? 0.30 : 0)
@@ -108,8 +110,24 @@ struct SwipeQuickLook<Content: View>: View {
                             .allowsHitTesting(false)
                     }
                 }
-                .frame(width: frame.width, height: frame.height)
-                .cosmoGlassPanel(role: .floatingAssistant, cornerRadius: expanded ? 24 : 14)
+                // INVARIANT: the panel's LAYOUT size never animates — it is
+                // always laid out at the settled target, and the card→panel
+                // flight is transforms only (scale + position). Springing the
+                // frame itself re-laid-out the AppKit-backed glass layer ~60×/s
+                // through transient (and overshooting) sizes, and that layer
+                // latches a transient size until its next invalidation — which
+                // is what left previews clipped at rest: media cropped at the
+                // top, the footer's Open Study button spilling past the panel.
+                // (Pure-SwiftUI layout of this content is proven correct; the
+                // desync lived entirely in the glass layer. July 2026.)
+                .frame(width: target.width, height: target.height)
+                .cosmoGlassPanel(
+                    role: .floatingAssistant,
+                    // Collapsed radius is compensated for the down-scale so the
+                    // shrunk panel still lands on the card with its 14pt corners.
+                    cornerRadius: expanded ? 24 : 14 / max(scaleX, 0.05)
+                )
+                .scaleEffect(x: scaleX, y: scaleY)
                 .position(x: frame.midX, y: frame.midY)
             }
         }

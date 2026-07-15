@@ -14,6 +14,10 @@ struct StudyReceiptStack: View {
 
     var body: some View {
         VStack(alignment: .center, spacing: DS.space6) {
+            if let nudge = viewModel.ripeningNudge {
+                StudyRipeningCapsule(viewModel: viewModel, nudge: nudge)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
             ForEach(viewModel.ephemeralAIReplies) { reply in
                 StudyAIReplyCapsule(viewModel: viewModel, reply: reply)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
@@ -25,6 +29,70 @@ struct StudyReceiptStack: View {
         }
         .animation(ProMotionSprings.gentle, value: viewModel.routingReceipts)
         .animation(ProMotionSprings.gentle, value: viewModel.ephemeralAIReplies)
+        .animation(ProMotionSprings.gentle, value: viewModel.ripeningNudge)
+    }
+}
+
+// MARK: - Ripening nudge
+
+/// A seedling crossed the ripeness line mid-session: one quiet invitation in
+/// the receipt voice. Tap develops now; ✕ lets it wait (the seedling strip
+/// and overview keep showing it — nothing is lost by ignoring this).
+@MainActor
+struct StudyRipeningCapsule: View {
+    @Bindable var viewModel: InquiryWorkspaceViewModel
+    let nudge: InquiryWorkspaceViewModel.RipeningNudge
+
+    var body: some View {
+        HStack(spacing: DS.space8) {
+            Image(systemName: "leaf")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(DS.accent)
+                .accessibilityHidden(true)
+            Text("\(nudge.name) is ripening")
+                .font(DS.caption.weight(.semibold))
+                .foregroundStyle(DS.text)
+            Text(nudge.reason)
+                .font(DS.caption2)
+                .foregroundStyle(DS.textMuted)
+            Spacer(minLength: DS.space12)
+            Button {
+                Task { await viewModel.developFromNudge() }
+            } label: {
+                Text("Develop now")
+                    .font(DS.caption.weight(.semibold))
+                    .foregroundStyle(DS.accent)
+                    .padding(.horizontal, DS.space8)
+                    .padding(.vertical, 3)
+                    .background(DS.accentSoft, in: Capsule())
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .help("Pivot to the Concept Desk")
+            .accessibilityLabel("Develop \(nudge.name) now")
+            Button {
+                viewModel.dismissRipeningNudge()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(DS.caption2.weight(.semibold))
+                    .foregroundStyle(DS.textMuted)
+                    .frame(width: 18, height: 18)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Not now — it keeps ripening")
+            .accessibilityLabel("Dismiss ripening nudge")
+        }
+        .padding(.horizontal, DS.space12)
+        .padding(.vertical, DS.space8)
+        .frame(maxWidth: 560, alignment: .leading)
+        .background(DS.surfaceCard.opacity(0.98), in: .rect(cornerRadius: 18))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(DS.accent.opacity(0.28), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.14), radius: 20, y: 10)
+        .accessibilityElement(children: .combine)
     }
 }
 

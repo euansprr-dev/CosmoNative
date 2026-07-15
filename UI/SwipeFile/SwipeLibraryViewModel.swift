@@ -67,19 +67,24 @@ final class SwipeLibraryViewModel {
 
         do {
             let atoms = try await AtomRepository.shared.search(query: "", types: [.research])
-            var items: [SwipeGalleryItem] = []
-
-            for atom in atoms where atom.isSwipeFileAtom {
-                if let item = atom.toSwipeGalleryItem() {
-                    items.append(item)
+            // Atom→item mapping decodes several JSON columns per swipe — far
+            // too heavy for the main actor at library size. Atom and
+            // SwipeGalleryItem are Sendable; the map runs detached and only
+            // the finished array hops back.
+            let items = await Task.detached(priority: .userInitiated) {
+                var items: [SwipeGalleryItem] = []
+                for atom in atoms where atom.isSwipeFileAtom {
+                    if let item = atom.toSwipeGalleryItem() {
+                        items.append(item)
+                    }
                 }
-            }
-
-            SwipeLibraryFiltering.sortItems(&items, by: .recent)
+                SwipeLibraryFiltering.sortItems(&items, by: .recent)
+                return items
+            }.value
 
             allItems = items
             hasLoaded = true
-            refreshAvailableFacets()
+            await refreshAvailableFacets()
             recompute()
         } catch {
             errorMessage = "Could not load Swipe File: \(error.localizedDescription)"
@@ -231,11 +236,32 @@ final class SwipeLibraryViewModel {
         }
     }
 
-    private func refreshAvailableFacets() {
+    private func refreshAvailableFacets() async {
         availableCreators = SwipeLibraryFiltering.availableCreators(from: allItems)
-        availableNiches = SwipeLibraryFiltering.availableNiches(from: allItems)
+        availableNiches = await Self.nicheFacetOptions(from: allItems)
         availablePlatforms = Array(Set(allItems.compactMap(\.platform))).sorted { lhs, rhs in
             platformName(lhs) < platformName(rhs)
+        }
+    }
+
+    /// Niche facet options: the exact strings present in the library (the
+    /// filter matches exact values), ordered by canonical registry usage so
+    /// the user's core verticals lead the menu. Strings the registry doesn't
+    /// know yet (pre-backfill stragglers) trail alphabetically.
+    static func nicheFacetOptions(from items: [SwipeGalleryItem]) async -> [String] {
+        let present = Set(items.compactMap(\.niche).filter { !$0.isEmpty })
+        guard !present.isEmpty else { return [] }
+
+        let niches = await NicheRegistry.shared.currentNiches()
+        let usageByKey = Dictionary(
+            niches.map { (NicheMatcher.normalizeKey($0.value), $0.usageCount) },
+            uniquingKeysWith: { max($0, $1) }
+        )
+        return present.sorted { lhs, rhs in
+            let lhsUsage = usageByKey[NicheMatcher.normalizeKey(lhs)] ?? -1
+            let rhsUsage = usageByKey[NicheMatcher.normalizeKey(rhs)] ?? -1
+            if lhsUsage != rhsUsage { return lhsUsage > rhsUsage }
+            return lhs.localizedCaseInsensitiveCompare(rhs) == .orderedAscending
         }
     }
 

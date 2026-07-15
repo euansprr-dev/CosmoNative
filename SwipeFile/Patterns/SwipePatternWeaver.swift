@@ -38,6 +38,12 @@ enum SwipePatternWeaver {
             await runMigrationPass()
         }
 
+        // Cloud-analyzed swipes: the Railway worker completes the insight
+        // pass server-side, so nothing on the Mac calls markPendingWeave for
+        // them. Sweep once per launch for fully-analyzed swipes the pattern
+        // library has never seen and enqueue them.
+        await enqueueUnwovenAnalyzedSwipes()
+
         let pending = store.pendingWeave
         let daysSinceWeave = store.lastWeaveAt.map { Date().timeIntervalSince($0) / 86_400 } ?? .infinity
         let due = pending.count >= minPendingForWeave
@@ -92,6 +98,35 @@ enum SwipePatternWeaver {
         if index >= candidates.count {
             store.migrationComplete = true
             store.save()
+        }
+    }
+
+    /// Enqueue analyzed swipes the pattern library has never seen (neither
+    /// woven, nor pending, nor swept during migration) — primarily swipes the
+    /// cloud worker analyzed while the Mac was closed. Cheap no-op when clean.
+    private static func enqueueUnwovenAnalyzedSwipes() async {
+        let store = SwipePatternStore.shared
+        let known = Set(store.patterns.flatMap { $0.members.map(\.swipeUUID) })
+            .union(store.pendingWeave)
+            .union(store.migrationSeen)
+
+        let atoms = (try? await CosmoDatabase.shared.asyncRead { db in
+            try Atom
+                .filter(Column("type") == AtomType.research.rawValue)
+                .filter(Column("is_deleted") == false)
+                .fetchAll(db)
+        }) ?? []
+
+        var enqueued = 0
+        for atom in atoms where atom.isSwipeFileAtom
+            && !known.contains(atom.uuid)
+            && atom.swipeAnalysis?.isFullyAnalyzed == true
+            && signatureCard(for: atom) != nil {
+            store.markPendingWeave(atom.uuid)
+            enqueued += 1
+        }
+        if enqueued > 0 {
+            print("SwipePatternWeaver: enqueued \(enqueued) cloud-analyzed swipe(s) for weaving")
         }
     }
 

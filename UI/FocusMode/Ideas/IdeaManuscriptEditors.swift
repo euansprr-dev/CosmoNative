@@ -182,7 +182,10 @@ final class IdeaContextTextView: NSTextView {
 
     func applyManuscriptStyle() {
         let font = Self.manuscriptFont
-        let color = NSColor(DS.text)
+        // The manuscript sits on the focus paper, so its ink is the focus
+        // pair — DS.text flips light in dark palettes and would vanish
+        // against the paper-doctrine sheet.
+        let color = NSColor(DS.usesImmersiveFocusAppearance ? DS.focusImmersiveText : DS.documentText)
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.lineSpacing = 7
 
@@ -261,6 +264,8 @@ struct HookLineEditor: NSViewRepresentable {
     let placeholderColor: NSColor
     let onReturn: () -> Void
     let onDeleteEmpty: () -> Bool
+    /// ⌥↑ / ⌥↓ — move this line within its list (keyboard reorder).
+    var onMoveLine: ((OutlineSlideNavigationDirection) -> Void)? = nil
 
     func makeNSView(context: Context) -> HookLineTextView {
         let textView = HookLineTextView()
@@ -284,6 +289,7 @@ struct HookLineEditor: NSViewRepresentable {
         textView.placeholder = placeholder
         textView.onReturn = onReturn
         textView.onDeleteEmpty = onDeleteEmpty
+        textView.onMoveLine = onMoveLine
         return textView
     }
 
@@ -291,6 +297,7 @@ struct HookLineEditor: NSViewRepresentable {
         context.coordinator.parent = self
         textView.onReturn = onReturn
         textView.onDeleteEmpty = onDeleteEmpty
+        textView.onMoveLine = onMoveLine
         textView.placeholder = placeholder
         textView.placeholderColor = placeholderColor
 
@@ -353,6 +360,7 @@ final class HookLineTextView: NSTextView {
     var placeholderColor: NSColor = .secondaryLabelColor
     var onReturn: (() -> Void)?
     var onDeleteEmpty: (() -> Bool)?
+    var onMoveLine: ((OutlineSlideNavigationDirection) -> Void)?
     private var shouldFocusWhenAttached = false
 
     override var intrinsicContentSize: NSSize {
@@ -395,6 +403,16 @@ final class HookLineTextView: NSTextView {
         let isShiftReturn = event.keyCode == 36 && flags == .shift
         if isShiftReturn {
             insertText("\n", replacementRange: selectedRange())
+            return
+        }
+
+        // ⌥↑ / ⌥↓ — reorder the line within its list.
+        if flags == .option, event.keyCode == 126 {
+            onMoveLine?(.previous)
+            return
+        }
+        if flags == .option, event.keyCode == 125 {
+            onMoveLine?(.next)
             return
         }
 
@@ -463,6 +481,8 @@ struct OutlineSlideNoteEditor: NSViewRepresentable {
     let onReturn: () -> Void
     let onMoveFocus: (OutlineSlideNavigationDirection) -> Void
     let onDeleteEmpty: () -> Bool
+    /// ⌥↑ / ⌥↓ — move this slide within the outline (keyboard reorder).
+    var onMoveLine: ((OutlineSlideNavigationDirection) -> Void)? = nil
 
     func makeNSView(context: Context) -> OutlineSlideNoteTextView {
         let textView = OutlineSlideNoteTextView()
@@ -481,11 +501,13 @@ struct OutlineSlideNoteEditor: NSViewRepresentable {
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
         textView.font = NSFont.systemFont(ofSize: 14)
-        textView.textColor = NSColor(DS.text)
+        // Focus-paired ink — the outline sits on the focus paper.
+        textView.textColor = NSColor(DS.usesImmersiveFocusAppearance ? DS.focusImmersiveText : DS.documentText)
         textView.placeholder = placeholder
         textView.onReturn = onReturn
         textView.onMoveFocus = onMoveFocus
         textView.onDeleteEmpty = onDeleteEmpty
+        textView.onMoveLine = onMoveLine
         return textView
     }
 
@@ -496,6 +518,7 @@ struct OutlineSlideNoteEditor: NSViewRepresentable {
         textView.onReturn = onReturn
         textView.onMoveFocus = onMoveFocus
         textView.onDeleteEmpty = onDeleteEmpty
+        textView.onMoveLine = onMoveLine
         textView.placeholder = placeholder
 
         if textView.string != text {
@@ -589,6 +612,7 @@ final class OutlineSlideNoteTextView: NSTextView {
     var onReturn: (() -> Void)?
     var onMoveFocus: ((OutlineSlideNavigationDirection) -> Void)?
     var onDeleteEmpty: (() -> Bool)?
+    var onMoveLine: ((OutlineSlideNavigationDirection) -> Void)?
     private var shouldFocusWhenAttached = false
     private var focusAttemptCount = 0
     private let maxFocusAttemptCount = 5
@@ -663,6 +687,16 @@ final class OutlineSlideNoteTextView: NSTextView {
             return
         }
 
+        // ⌥↑ / ⌥↓ — reorder the slide within the outline.
+        if flags == .option, event.keyCode == 126 {
+            onMoveLine?(.previous)
+            return
+        }
+        if flags == .option, event.keyCode == 125 {
+            onMoveLine?(.next)
+            return
+        }
+
         super.keyDown(with: event)
     }
 
@@ -701,7 +735,7 @@ final class OutlineSlideNoteTextView: NSTextView {
         guard string.isEmpty else { return }
         let attributes: [NSAttributedString.Key: Any] = [
             .font: font ?? NSFont.systemFont(ofSize: 14),
-            .foregroundColor: NSColor.secondaryLabelColor
+            .foregroundColor: NSColor(DS.usesImmersiveFocusAppearance ? DS.focusImmersiveTextMuted : DS.documentTextMuted)
         ]
         placeholder.draw(at: NSPoint(x: 0, y: 1), withAttributes: attributes)
     }

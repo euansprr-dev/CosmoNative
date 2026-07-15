@@ -16,6 +16,53 @@ final class InquiryWorkspaceViewModel {
     private(set) var questions: [Atom] = []
     private(set) var extracts: [Atom] = []
     private(set) var lexicon: [Atom] = []
+    /// The Deep Dive's concept seedbed, mirrored for the Study's SEEDLINGS
+    /// strip. Refreshed on hydrate and after every seedbed write.
+    private(set) var conceptSeedbed: [IncubatingConcept] = []
+    /// Non-nil = develop posture: the Study's columns pivot to the Concept
+    /// Desk and the thinking bar feeds the collaborator conversation.
+    private(set) var conceptDesk: StudyConceptDeskController?
+    /// One quiet invitation when a seedling crosses the ripeness line mid-
+    /// session. Never a modal; stays until acted on or dismissed.
+    private(set) var ripeningNudge: RipeningNudge?
+    /// Throttle: each seedling nudges at most once per session.
+    private var nudgedSeedlingKeys: Set<String> = []
+
+    struct RipeningNudge: Identifiable, Equatable {
+        var id: String { conceptKey }
+        let conceptKey: String
+        let name: String
+        let reason: String
+    }
+
+    /// The session's exhale: teach-back interview state, then a review of what
+    /// the session produced (understanding diff, ripest seedling, chips).
+    struct StudyDebriefState: Equatable {
+        enum Phase: Equatable { case interviewing, reviewing, applying }
+        struct Message: Identifiable, Equatable {
+            let id = UUID()
+            let role: Role
+            let text: String
+            enum Role: Equatable { case cosmo, user }
+        }
+        var phase: Phase = .interviewing
+        var messages: [Message] = []
+        var isThinking = false
+        var userTurns = 0
+        /// From the teach-back wrap — the user's articulated understanding.
+        var understandingUpdate: String?
+        var acceptUnderstanding = true
+        var acceptedLexiconIds: Set<String> = []
+        var acceptedQuestionIds: Set<String> = []
+    }
+
+    /// Non-nil = debrief posture (the center shows the interview; the bar
+    /// feeds it). Mutually exclusive with the Concept Desk.
+    var debrief: StudyDebriefState?
+    /// The quiet synthesis riding the debrief: narrative, lexicon + question
+    /// candidates, and the seedbed tidy pass (runs inside crystallize).
+    private(set) var debriefSynthesis: CrystallizationOutput?
+    private var debriefSynthesisTask: Task<Void, Never>?
     /// Concept pages already promoted for this deep dive — captures anywhere in
     /// the topic link back to these instead of spawning near-duplicates.
     private(set) var deepDiveConnections: [Atom] = []
@@ -101,6 +148,7 @@ final class InquiryWorkspaceViewModel {
         if let ddUUID = metadata.parentDeepDiveUUID,
            let dd = try? await AtomRepository.shared.fetch(uuid: ddUUID) {
             deepDive = dd
+            conceptSeedbed = dd.deepDiveStructured?.conceptSeedbed ?? []
             await reloadDeepDiveScopedAtoms()
         }
         if let rqUUID = metadata.mainQuestionUUID,
@@ -1930,6 +1978,10 @@ final class InquiryWorkspaceViewModel {
     private var classificationQueue: [PendingClassification] = []
     private var classificationFlushTask: Task<Void, Never>?
     private var classificationRunTask: Task<Void, Never>?
+    /// Concept-tagged captures from the in-flight classification batch, pushed
+    /// into the Deep Dive's seedbed once per batch (one atom write, not one
+    /// per capture).
+    private var pendingSeedbedEntries: [ConceptSeedbedReducer.AccrualEntry] = []
 
     func cancelLiveRefinements() {
         classificationFlushTask?.cancel()
@@ -1994,9 +2046,310 @@ final class InquiryWorkspaceViewModel {
                     lockedKind: item.lockedKind
                 )
             }
+            await self?.flushSeedbedAccrual()
             self?.classificationRunTask = nil
             self?.runClassificationBatch()   // Drain captures queued while in flight.
         }
+    }
+
+    /// Once per classification batch: push this batch's concept tags into the
+    /// Deep Dive's seedbed. Existing concept pages become merge targets by
+    /// title key, so material for a developed page accrues as "new since last
+    /// visit" instead of spawning a rival seedling.
+    private func flushSeedbedAccrual() async {
+        let entries = pendingSeedbedEntries
+        pendingSeedbedEntries.removeAll()
+        guard let deepDive, !entries.isEmpty else { return }
+        let pagesByKey = Dictionary(
+            deepDiveConnections.compactMap { connection -> (String, String)? in
+                guard let title = connection.title, !title.isEmpty else { return nil }
+                let key = ConceptResolver.conceptKey(title)
+                return key.isEmpty ? nil : (key, connection.uuid)
+            },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let newlyRipe = await ConceptSeedbedService.shared.accrue(
+            deepDiveUUID: deepDive.uuid,
+            entries: entries,
+            existingPageUUIDsByKey: pagesByKey
+        )
+        await reloadSeedbed()
+        // One quiet invitation per seedling per session, never while already
+        // developing — some of the best development happens while the source
+        // is still hot, but the room is never interrupted.
+        guard conceptDesk == nil,
+              let ripe = newlyRipe.first(where: { !nudgedSeedlingKeys.contains($0.conceptKey) })
+        else { return }
+        nudgedSeedlingKeys.insert(ripe.conceptKey)
+        ripeningNudge = RipeningNudge(
+            conceptKey: ripe.conceptKey,
+            name: ripe.name,
+            reason: ConceptRipeness.evaluate(ripe).reason ?? "\(ripe.pendingItems.count) captures"
+        )
+    }
+
+    func dismissRipeningNudge() {
+        ripeningNudge = nil
+    }
+
+    /// Nudge accepted: pivot straight to the Desk.
+    func developFromNudge() async {
+        guard let nudge = ripeningNudge,
+              let seedling = conceptSeedbed.first(where: { $0.conceptKey == nudge.conceptKey })
+        else {
+            ripeningNudge = nil
+            return
+        }
+        ripeningNudge = nil
+        await openConceptDesk(for: seedling)
+    }
+
+    /// Re-mirrors the Deep Dive's seedbed after any write (accrual, tidy, pin,
+    /// dismiss) so the SEEDLINGS strip ticks live while the user captures.
+    func reloadSeedbed() async {
+        guard let uuid = deepDive?.uuid,
+              let fresh = try? await AtomRepository.shared.fetch(uuid: uuid) else { return }
+        conceptSeedbed = fresh.deepDiveStructured?.conceptSeedbed ?? []
+    }
+
+    /// Seedlings worth showing: incubating mass and developed pages with
+    /// unswept material, newest activity first. Dismissed stay hidden.
+    var visibleSeedlings: [IncubatingConcept] {
+        conceptSeedbed
+            .filter { seedling in
+                switch seedling.status {
+                case .incubating: return !seedling.stagedItems.isEmpty
+                case .developed: return !seedling.pendingItems.isEmpty
+                case .dismissed: return false
+                }
+            }
+            .sorted { $0.lastTouchedAt > $1.lastTouchedAt }
+    }
+
+    // MARK: - Debrief (Close & Debrief)
+
+    /// Opens the teach-back interview and kicks the quiet synthesis (which
+    /// also runs the seedbed tidy). Nothing durable is written until apply.
+    func startDebrief() {
+        guard debrief == nil, conceptDesk == nil else { return }
+        var state = StudyDebriefState()
+        state.messages = [.init(role: .cosmo, text: InquiryDebriefEngine.openingQuestion)]
+        debrief = state
+        runDebriefSynthesis()
+    }
+
+    /// Esc mid-interview: nothing applied, nothing lost — captures already
+    /// incubated as they were routed, and the tidy pass is harmless.
+    func cancelDebrief() {
+        debriefSynthesisTask?.cancel()
+        debriefSynthesisTask = nil
+        debriefSynthesis = nil
+        debrief = nil
+    }
+
+    func submitDebriefAnswer(_ text: String) async {
+        guard var state = debrief, state.phase == .interviewing, !state.isThinking else { return }
+        state.messages.append(.init(role: .user, text: text))
+        state.userTurns += 1
+        state.isThinking = true
+        debrief = state
+        let history = state.messages.map { (role: $0.role == .user ? "user" : "cosmo", text: $0.text) }
+        let turn = await InquiryDebriefEngine.shared.nextTurn(
+            history: history,
+            context: debriefContext(),
+            forceWrap: state.userTurns >= InquiryDebriefEngine.maxUserTurns
+        )
+        guard var current = debrief else { return }
+        current.isThinking = false
+        current.messages.append(.init(role: .cosmo, text: turn.say))
+        if turn.wrap {
+            current.understandingUpdate = turn.updatedUnderstanding
+            current.acceptUnderstanding = turn.updatedUnderstanding != nil
+            current.phase = .reviewing
+        }
+        debrief = current
+    }
+
+    /// The ripest incubating seedling — the debrief's Movement 3 offer.
+    var debriefRipeSeedling: IncubatingConcept? {
+        visibleSeedlings.first { $0.status == .incubating && ConceptRipeness.evaluate($0).isRipe }
+    }
+
+    /// Commits the debrief: understanding diff (from the teach-back, never the
+    /// machine), accepted lexicon/question chips, session marked crystallized.
+    func applyDebrief() async {
+        guard var opening = debrief, opening.phase == .reviewing else { return }
+        opening.phase = .applying
+        debrief = opening
+
+        // The quiet synthesis may still be in flight — its lexicon/question
+        // candidates belong to this apply, so wait for it.
+        await debriefSynthesisTask?.value
+        guard var state = debrief, state.phase == .applying else { return }
+        if state.acceptedLexiconIds.isEmpty, state.acceptedQuestionIds.isEmpty,
+           let synthesis = debriefSynthesis {
+            // Synthesis landed only after review opened: chips were never
+            // shown, so everything rides as pre-accepted.
+            state.acceptedLexiconIds = Set(synthesis.lexiconCandidates.map(\.id))
+            state.acceptedQuestionIds = Set(synthesis.newQuestions.map(\.id))
+            debrief = state
+        }
+
+        var output = debriefSynthesis ?? CrystallizationOutput()
+        for index in output.lexiconCandidates.indices {
+            output.lexiconCandidates[index].accepted = state.acceptedLexiconIds.contains(output.lexiconCandidates[index].id)
+        }
+        for index in output.newQuestions.indices {
+            output.newQuestions[index].accepted = state.acceptedQuestionIds.contains(output.newQuestions[index].id)
+        }
+        if state.acceptUnderstanding, let update = state.understandingUpdate {
+            let before = deepDive?.deepDiveStructured?.currentUnderstanding.oneSentenceModel ?? ""
+            output.modelUpdates = [CrystallizationOutput.ModelUpdateProposal(
+                kind: .section,
+                before: before,
+                after: update,
+                rationale: "Teach-back debrief",
+                accepted: true
+            )]
+        } else {
+            output.modelUpdates = []
+        }
+        if output.summary.isEmpty {
+            output.summary = state.understandingUpdate ?? ""
+        }
+
+        _ = try? await InquiryCrystallizationEngine.shared.applyAcceptedOutput(output, toSession: session, deepDive: deepDive)
+        _ = try? await InquiryRepository.shared.completeCrystallization(session, output: output, summary: output.summary)
+        NotificationCenter.default.post(
+            name: CosmoNotification.Inquiry.sessionCrystallized,
+            object: nil,
+            userInfo: ["sessionUUID": session.uuid]
+        )
+        await refreshGardener(force: true)
+        await reloadSeedbed()
+        debrief = nil
+        debriefSynthesis = nil
+        showToast("Session crystallized", detail: "Understanding updated in your words; concepts keep ripening in the seedbed.")
+    }
+
+    /// Accepting the seedling offer: commit the debrief, then pivot straight
+    /// into the Concept Desk.
+    func developFromDebrief(_ seedling: IncubatingConcept) async {
+        await applyDebrief()
+        await openConceptDesk(for: seedling)
+    }
+
+    /// Quick close: everything simply incubates. The synthesis (narrative +
+    /// tidy) runs, the session is marked crystallized, no review, no chips.
+    func quickCloseSession() async {
+        guard debrief == nil else { return }
+        let sessionExtracts = await debriefSessionExtracts()
+        guard let output = try? await InquiryCrystallizationEngine.shared.crystallize(
+            session: session,
+            deepDive: deepDive,
+            allExtracts: sessionExtracts
+        ) else { return }
+        _ = try? await InquiryRepository.shared.completeCrystallization(session, output: output, summary: output.summary)
+        NotificationCenter.default.post(
+            name: CosmoNotification.Inquiry.sessionCrystallized,
+            object: nil,
+            userInfo: ["sessionUUID": session.uuid]
+        )
+        await reloadSeedbed()
+        showToast("Session closed quietly", detail: "Captures incubate in the seedbed; debrief any time.")
+    }
+
+    private func runDebriefSynthesis() {
+        debriefSynthesisTask = Task { [weak self] in
+            guard let self else { return }
+            let sessionExtracts = await self.debriefSessionExtracts()
+            guard let output = try? await InquiryCrystallizationEngine.shared.crystallize(
+                session: self.session,
+                deepDive: self.deepDive,
+                allExtracts: sessionExtracts
+            ), !Task.isCancelled else { return }
+            var copy = output
+            for index in copy.outputCandidates.indices { copy.outputCandidates[index].accepted = true }
+            copy.modelUpdates = []   // Understanding comes from the teach-back, never the machine.
+            self.debriefSynthesis = copy
+            if var state = self.debrief {
+                state.acceptedLexiconIds = Set(copy.lexiconCandidates.map(\.id))
+                state.acceptedQuestionIds = Set(copy.newQuestions.map(\.id))
+                self.debrief = state
+            }
+            await self.reloadSeedbed()   // The tidy pass ran inside crystallize.
+        }
+    }
+
+    private func debriefSessionExtracts() async -> [Atom] {
+        let all = (try? await InquiryRepository.shared.fetchExtracts(forDeepDive: deepDive?.uuid ?? "")) ?? []
+        return all.filter {
+            $0.extractMetadata?.parentSessionUUID == session.uuid
+                && $0.extractMetadata?.status != .promoted
+        }
+    }
+
+    private func debriefContext() -> InquiryDebriefEngine.Context {
+        let sessionCaptures = extracts
+            .filter { $0.extractMetadata?.parentSessionUUID == session.uuid }
+            .suffix(20)
+            .compactMap { $0.body ?? $0.title }
+        return InquiryDebriefEngine.Context(
+            questionTitle: activeQuestionTitle,
+            topicTitle: deepDive?.title,
+            topicUnderstanding: deepDive?.deepDiveStructured?.currentUnderstanding.oneSentenceModel,
+            sessionCaptures: Array(sessionCaptures)
+        )
+    }
+
+    // MARK: - Concept Desk (develop posture)
+
+    /// Pivot the room to develop this seedling: the page is born (or the
+    /// existing merge target opens), and the Desk takes over the columns.
+    func openConceptDesk(for seedling: IncubatingConcept) async {
+        guard conceptDesk == nil, let deepDive else { return }
+        let willCreate = seedling.developedConnectionUUID == nil
+            && seedling.mergeTargetConnectionUUID == nil
+        guard let connectionUUID = await ConceptSeedbedService.shared.developSeedling(
+            deepDiveUUID: deepDive.uuid,
+            conceptKey: seedling.conceptKey
+        ), let atom = try? await AtomRepository.shared.fetch(uuid: connectionUUID) else { return }
+        let desk = StudyConceptDeskController(
+            atom: atom,
+            deepDive: deepDive,
+            seedling: seedling,
+            createdFreshPage: willCreate
+        )
+        desk.begin(corpusExtracts: extracts)
+        conceptDesk = desk
+        await reloadSeedbed()
+    }
+
+    /// Esc / Done: save, settle the page's fate (place or discard), and
+    /// restore gather posture.
+    func closeConceptDesk() async {
+        guard let desk = conceptDesk else { return }
+        conceptDesk = nil
+        await desk.finish()
+        await reloadSeedbed()
+        await reloadDeepDiveScopedAtoms()
+    }
+
+    func togglePinSeedling(_ seedling: IncubatingConcept) async {
+        guard let uuid = deepDive?.uuid else { return }
+        let pin: String? = seedling.pinnedAt == nil ? ISO8601.string(from: Date()) : nil
+        await ConceptSeedbedService.shared.updateSeedling(deepDiveUUID: uuid, conceptKey: seedling.conceptKey) {
+            $0.pinnedAt = pin
+        }
+        await reloadSeedbed()
+    }
+
+    func dismissSeedling(_ seedling: IncubatingConcept) async {
+        guard let uuid = deepDive?.uuid else { return }
+        await ConceptSeedbedService.shared.updateSeedling(deepDiveUUID: uuid, conceptKey: seedling.conceptKey) {
+            $0.status = .dismissed
+        }
+        await reloadSeedbed()
     }
 
     /// Session vocabulary for the vision transcription pass — domain terms
@@ -2100,6 +2453,16 @@ final class InquiryWorkspaceViewModel {
             questionUUID: metadata.parentQuestionUUID,
             conceptNames: plan.original.conceptNames
         ))
+        if !plan.original.conceptNames.isEmpty {
+            pendingSeedbedEntries.append(ConceptSeedbedReducer.AccrualEntry(
+                conceptNames: plan.original.conceptNames,
+                extractUUID: extractUUID,
+                rawSnippet: extract.body ?? originalText,
+                extractKind: metadata.kind,
+                sourceUUID: metadata.sourceUUID,
+                sessionUUID: session.uuid
+            ))
+        }
 
         // 2. Materialize split-off units as their own extracts.
         for unit in plan.additions {
@@ -2138,6 +2501,16 @@ final class InquiryWorkspaceViewModel {
                 questionUUID: unitQuestionUUID,
                 conceptNames: unit.conceptNames
             ))
+            if !unit.conceptNames.isEmpty {
+                pendingSeedbedEntries.append(ConceptSeedbedReducer.AccrualEntry(
+                    conceptNames: unit.conceptNames,
+                    extractUUID: created.uuid,
+                    rawSnippet: unit.text,
+                    extractKind: unit.kind,
+                    sourceUUID: metadata.sourceUUID,
+                    sessionUUID: session.uuid
+                ))
+            }
         }
 
         // 3. Persist the decision + surface a receipt when something changed.

@@ -150,58 +150,6 @@ final class CanvasViewportTransformTests: XCTestCase {
     }
 }
 
-/// The canvas screenshot capture renders into a rep with FEWER pixels than
-/// the captured rect (1x instead of Retina 2x) to keep idle captures cheap.
-/// This pins the AppKit behavior that capture relies on: `cacheDisplay(in:to:)`
-/// SCALES the rect's content to fill a smaller rep — it must never crop.
-@MainActor
-final class CanvasScreenshotScaledCaptureTests: XCTestCase {
-    /// Red everywhere, blue in the top-right quadrant (view coords, y-up).
-    private final class QuadrantView: NSView {
-        override func draw(_ dirtyRect: NSRect) {
-            NSColor.red.setFill()
-            bounds.fill()
-            NSColor.blue.setFill()
-            NSRect(
-                x: bounds.midX, y: bounds.midY,
-                width: bounds.width / 2, height: bounds.height / 2
-            ).fill()
-        }
-    }
-
-    func testCacheDisplayIntoSmallerRepScalesContentRatherThanCropping() throws {
-        let view = QuadrantView(frame: NSRect(x: 0, y: 0, width: 200, height: 200))
-        let rep = try XCTUnwrap(NSBitmapImageRep(
-            bitmapDataPlanes: nil,
-            pixelsWide: 100,
-            pixelsHigh: 100,
-            bitsPerSample: 8,
-            samplesPerPixel: 4,
-            hasAlpha: true,
-            isPlanar: false,
-            colorSpaceName: .calibratedRGB,
-            bytesPerRow: 0,
-            bitsPerPixel: 0
-        ))
-        rep.size = view.bounds.size
-
-        view.cacheDisplay(in: view.bounds, to: rep)
-
-        // Rep rows count from the top; the view's blue quadrant (x ≥ 100,
-        // y ≥ 100 in y-up view space) lands top-right in the rep. If
-        // cacheDisplay cropped instead of scaling, only the bottom-left
-        // quarter of the view (all red) would have been rendered and the
-        // sample at (75, 25) would be red.
-        let topRight = try XCTUnwrap(rep.colorAt(x: 75, y: 25)?.usingColorSpace(.sRGB))
-        let bottomLeft = try XCTUnwrap(rep.colorAt(x: 25, y: 75)?.usingColorSpace(.sRGB))
-
-        XCTAssertGreaterThan(topRight.blueComponent, 0.6, "expected scaled blue quadrant at top-right")
-        XCTAssertLessThan(topRight.redComponent, 0.4)
-        XCTAssertGreaterThan(bottomLeft.redComponent, 0.6, "expected scaled red fill at bottom-left")
-        XCTAssertLessThan(bottomLeft.blueComponent, 0.4)
-    }
-}
-
 final class ActiveCanvasDragStateTests: XCTestCase {
     func testTranslationOnlyAppliesToActiveIdentifier() {
         var dragState = ActiveCanvasDragState<String>()

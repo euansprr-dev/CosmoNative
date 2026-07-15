@@ -9,7 +9,8 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "test:capture-lanes": "tsx tests/captureLane.test.ts",
-    "test:swipe-worker": "SUPABASE_SERVICE_ROLE_KEY=test-dummy COSMO_USER_ID=test-user tsx tests/swipeWorker.test.ts"
+    "test:swipe-worker": "SUPABASE_SERVICE_ROLE_KEY=test-dummy COSMO_USER_ID=test-user tsx tests/swipeWorker.test.ts",
+    "test:niche-matcher": "SUPABASE_SERVICE_ROLE_KEY=test-dummy COSMO_USER_ID=test-user tsx tests/nicheMatcher.test.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",

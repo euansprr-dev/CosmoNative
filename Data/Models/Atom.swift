@@ -1515,19 +1515,99 @@ extension Atom {
         }
     }
 
+    // MARK: - Decoded Column Cache
+
+    /// Process-wide memoization for JSON column decodes. The typed accessors
+    /// (`ideaMetadata`, `swipeAnalysis`, `richContent`, …) read like cheap
+    /// properties but re-parsed their whole JSON column on every access — view
+    /// bodies and list builders paid milliseconds of main-thread JSON work per
+    /// read. Entries are keyed by (uuid, column, target type) and validated
+    /// against the exact column string, so a stale Atom copy can never be
+    /// served another copy's decode: any string mismatch re-decodes.
+    final class DecodedColumnCache: @unchecked Sendable {
+        static let shared = DecodedColumnCache()
+
+        enum Column: UInt8 { case metadata, structured }
+
+        private struct Key: Hashable {
+            let uuid: String
+            let column: Column
+            let type: ObjectIdentifier
+        }
+
+        private struct Entry {
+            let source: String
+            /// Decoded value; nil records a stable `.absent` result (e.g. a
+            /// research atom whose structured column has no swipeAnalysis key)
+            /// so absence doesn't re-probe the JSON on every read.
+            let value: Any?
+        }
+
+        private var entries: [Key: Entry] = [:]
+        private let lock = NSLock()
+        /// Hard cap; on overflow the cache resets wholesale (cheaper than LRU
+        /// bookkeeping on every hit, and a rare full re-decode is harmless).
+        private let limit = 2048
+
+        private init() {}
+
+        /// Returns the cached decode for (uuid, column, T) when the stored
+        /// source string matches `source` exactly; otherwise runs `decode`,
+        /// caches the value/absent result, and returns the fresh state.
+        /// `.corrupt` is never cached — corrupt columns stay on the slow path
+        /// so PersistenceHealth keeps noting them.
+        func value<T>(
+            uuid: String,
+            column: Column,
+            source: String,
+            decode: () -> JSONDecodeState<T>
+        ) -> JSONDecodeState<T> {
+            guard !uuid.isEmpty else { return decode() }
+            let key = Key(uuid: uuid, column: column, type: ObjectIdentifier(T.self))
+
+            lock.lock()
+            let cached = entries[key]
+            lock.unlock()
+            if let cached, cached.source == source {
+                if let typed = cached.value as? T { return .value(typed) }
+                if cached.value == nil { return .absent }
+            }
+
+            let state = decode()
+            switch state {
+            case .value(let decoded):
+                store(Entry(source: source, value: decoded), for: key)
+            case .absent:
+                store(Entry(source: source, value: nil), for: key)
+            case .corrupt:
+                break
+            }
+            return state
+        }
+
+        private func store(_ entry: Entry, for key: Key) {
+            lock.lock()
+            if entries.count >= limit { entries.removeAll(keepingCapacity: true) }
+            entries[key] = entry
+            lock.unlock()
+        }
+    }
+
     // MARK: - Structured Data
 
     /// Decode structured data with explicit corrupt-vs-absent state.
     /// Mutating writers should refuse to overwrite when `.corrupt`.
     func decodedStructured<T: Decodable>(as type: T.Type) -> JSONDecodeState<T> {
-        guard let structured = structured, !structured.isEmpty,
-              let data = structured.data(using: .utf8) else {
+        guard let structured = structured, !structured.isEmpty else {
             return .absent
         }
-        do {
-            return .value(try JSONDecoder().decode(type, from: data))
-        } catch {
-            return .corrupt(error)
+        return DecodedColumnCache.shared.value(uuid: uuid, column: .structured, source: structured) {
+            guard let data = structured.data(using: .utf8) else { return .absent }
+            do {
+                return .value(try JSONDecoder().decode(type, from: data))
+            } catch {
+                return .corrupt(error)
+            }
         }
     }
 
@@ -1577,14 +1657,16 @@ extension Atom {
     /// Decode metadata with explicit corrupt-vs-absent state.
     /// Mutating writers should refuse to overwrite when `.corrupt`.
     func decodedMetadata<T: Decodable>(as type: T.Type) -> JSONDecodeState<T> {
-        guard let metadata = metadata, !metadata.isEmpty,
-              let data = metadata.data(using: .utf8) else {
+        guard let metadata = metadata, !metadata.isEmpty else {
             return .absent
         }
-        do {
-            return .value(try JSONDecoder().decode(type, from: data))
-        } catch {
-            return .corrupt(error)
+        return DecodedColumnCache.shared.value(uuid: uuid, column: .metadata, source: metadata) {
+            guard let data = metadata.data(using: .utf8) else { return .absent }
+            do {
+                return .value(try JSONDecoder().decode(type, from: data))
+            } catch {
+                return .corrupt(error)
+            }
         }
     }
 
@@ -2240,6 +2322,8 @@ struct TaxonomyValueMetadata: Codable, Sendable {
     var usageCount: Int?              // How many swipes use this value
     var color: String?                // Optional display color hex
     var icon: String?                 // Optional SF Symbol name
+    var aliases: [String]?            // Raw labels normalized into this value
+                                      // (mirrors CanonicalBeat.originalVariants)
 }
 
 // MARK: - Common Metadata Types

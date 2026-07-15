@@ -33,6 +33,9 @@ struct TaxonomySection: View {
     @State private var creatorSearchRequestID = UUID()
     @State private var showCreatorSearch = false
     @State private var linkedCreatorName: String?
+    @State private var nicheOptions: [String] = []
+    @State private var showNicheInput = false
+    @State private var nicheInputText = ""
 
     private let gold = DS.entitySwipe
 
@@ -336,17 +339,121 @@ struct TaxonomySection: View {
 
     private var nicheRow: some View {
         taxonomyDropdownRow(label: "Niche", icon: nil, iconColor: .clear) {
-            taxonomyValuePill(
-                title: {
-                    if let niche = analysis?.niche, !niche.isEmpty { return niche }
-                    return "No niche"
-                }(),
-                color: analysis?.niche?.isEmpty == false ? gold.opacity(0.85) : DS.textMuted,
-                dotColor: nil,
-                systemImage: nil,
-                showsChevron: false
-            )
+            if showNicheInput {
+                nicheInputField
+            } else {
+                nicheMenu
+            }
         }
+        .task { await loadNicheOptions() }
+    }
+
+    private var nicheMenu: some View {
+        Menu {
+            Button("None") {
+                analysis?.niche = nil
+                onSaveTaxonomyChange()
+            }
+            if !nicheOptions.isEmpty {
+                Divider()
+                ForEach(nicheOptions, id: \.self) { option in
+                    Button {
+                        analysis?.niche = option
+                        onSaveTaxonomyChange()
+                    } label: {
+                        nichePickerLabel(option)
+                    }
+                }
+            }
+            Divider()
+            Button("New niche…") {
+                nicheInputText = ""
+                showNicheInput = true
+            }
+        } label: {
+            nicheDropdownLabel
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+    }
+
+    @ViewBuilder
+    private func nichePickerLabel(_ option: String) -> some View {
+        HStack {
+            Text(option)
+            if analysis?.niche == option {
+                Spacer()
+                Image(systemName: "checkmark")
+            }
+        }
+    }
+
+    private var nicheDropdownLabel: some View {
+        taxonomyValuePill(
+            title: {
+                if let niche = analysis?.niche, !niche.isEmpty { return niche }
+                return "No niche"
+            }(),
+            color: analysis?.niche?.isEmpty == false ? gold.opacity(0.85) : DS.textMuted,
+            dotColor: nil,
+            systemImage: nil,
+            showsChevron: true
+        )
+    }
+
+    /// Free entry routes through NicheRegistry.resolve — a typed label that
+    /// matches an existing niche folds into it instead of creating a twin.
+    private var nicheInputField: some View {
+        HStack(spacing: 6) {
+            TextField("Niche name", text: $nicheInputText)
+                .textFieldStyle(.plain)
+                .font(DS.caption)
+                .foregroundStyle(DS.text)
+                .frame(minWidth: 120)
+                .onSubmit { commitNicheInput() }
+
+            Button {
+                commitNicheInput()
+            } label: {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(DS.caption)
+                    .foregroundStyle(gold)
+                    .accessibilityLabel("Save niche")
+            }
+            .buttonStyle(.plain)
+            .disabled(nicheInputText.trimmingCharacters(in: .whitespaces).isEmpty)
+
+            Button {
+                showNicheInput = false
+                nicheInputText = ""
+            } label: {
+                Image(systemName: "xmark.circle")
+                    .font(DS.caption)
+                    .foregroundStyle(DS.textMuted)
+                    .accessibilityLabel("Cancel niche entry")
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func commitNicheInput() {
+        let text = nicheInputText.trimmingCharacters(in: .whitespaces)
+        guard !text.isEmpty else { return }
+        showNicheInput = false
+        nicheInputText = ""
+        Task {
+            let canonical = await NicheRegistry.shared.resolve(text)
+            analysis?.niche = canonical
+            onSaveTaxonomyChange()
+            await loadNicheOptions()
+        }
+    }
+
+    private func loadNicheOptions() async {
+        let niches = await NicheRegistry.shared.currentNiches()
+        nicheOptions = niches
+            .sorted { $0.usageCount > $1.usageCount }
+            .map(\.value)
     }
 
     private var creatorRow: some View {

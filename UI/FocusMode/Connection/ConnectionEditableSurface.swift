@@ -248,6 +248,47 @@ enum ConnectionSurfaceSerializer {
         }
         return nil
     }
+
+    /// Shared by every host that renders a connection's staged edits (the
+    /// Connection focus mode and the Study's Concept Desk): filters the store's
+    /// proposals to this connection, resolves still-pending operations into
+    /// per-section ghost rows against the LIVE serialized surface — so
+    /// accepting one and re-resolving the rest can never disagree with the
+    /// apply path — and returns the last matching proposal for the
+    /// Manuscript's full-screen diff.
+    @MainActor
+    static func stagedInserts(
+        from proposals: [CosmoAssistantProposal],
+        atomUUID: String,
+        title: String,
+        conceptType: ConceptFrameworkType,
+        sections: [ConnectionSection]
+    ) -> (manuscript: CosmoAssistantProposal?, bySection: [ConnectionSectionType: [ConnectionPendingInsert]]) {
+        let matching = proposals.filter { proposal in
+            proposal.hasReviewableOperations && proposal.matches(
+                surfaceID: "connection:\(atomUUID)",
+                targetID: ConnectionContextProvider.targetID(for: atomUUID),
+                activeAtomUUID: atomUUID
+            )
+        }
+        let model = serialize(title: title, conceptType: conceptType, sections: sections)
+        var grouped: [ConnectionSectionType: [ConnectionPendingInsert]] = [:]
+        for proposal in matching {
+            for operation in proposal.operations
+            where operation.status == .pending || operation.status == .conflicted {
+                guard let resolved = pendingInsert(for: operation, in: model) else { continue }
+                grouped[resolved.section, default: []].append(
+                    ConnectionPendingInsert(
+                        proposalID: proposal.id,
+                        operationID: operation.id,
+                        section: resolved.section,
+                        bullets: resolved.bullets
+                    )
+                )
+            }
+        }
+        return (matching.last, grouped)
+    }
 }
 
 // MARK: - Cosmo Context Provider + Editable Surface
@@ -274,6 +315,21 @@ final class ConnectionContextProvider: CosmoContextProvider, CosmoEditableSurfac
 
     static func targetID(for atomUUID: String) -> String {
         "connection:\(atomUUID):sections"
+    }
+
+    /// Concept minting: the working page's References row goes through the
+    /// LIVE editing session — the mint service never writes the open origin
+    /// atom (its editing lock is held here). Deduped by link target.
+    func addReferenceRow(uuid: String, title: String) {
+        guard let viewModel, uuid != atom.uuid else { return }
+        let alreadyLinked = viewModel.state.sections.contains { section in
+            section.items.contains { $0.linkedConnectionUUID == uuid }
+        }
+        guard !alreadyLinked else { return }
+        viewModel.attachItem(
+            ConnectionItem(content: title, linkedConnectionUUID: uuid),
+            toSection: .references
+        )
     }
 
     var contextSummary: String {

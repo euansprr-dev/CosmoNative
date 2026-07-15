@@ -248,33 +248,24 @@ final class InquiryCrystallizationEngine {
     ) async -> CrystallizationOutput {
         var copy = output
         let sourceRefs = session.inquirySessionStructured?.sourceRefs ?? []
-        let branchNodes = session.inquirySessionStructured
-            .map { Array($0.researchTree.nodes.values) } ?? []
 
-        // Concept-first: the context carries durable concept assignments (persisted
-        // capture-time tags, LLM for the untagged remainder), so propose one
-        // Connection per concept with explicit merge targets. Falls back to
-        // per-branch proposals when nothing resolved.
-        if context.assignments.isEmpty {
-            copy.possibleConnections = await ConnectionRoutingEngine().proposals(
-                forSession: session,
-                branches: branchNodes,
-                extracts: extracts,
-                sources: sourceRefs
-            )
-        } else {
-            copy.possibleConnections = await ConnectionRoutingEngine().proposals(
-                forSession: session,
+        // Concept-first, seedbed edition: the resolver's whole-session
+        // assignments TIDY the Deep Dive's seedbed (canonical names, aliases,
+        // near-duplicate folds, existing-page merge targets). Crystallization
+        // no longer proposes Connection pages — a concept earns its page only
+        // through a development conversation (the Concept Desk), so the
+        // synthesis-channel `possibleConnections` are cleared rather than
+        // materialized. ConceptComposerEngine now runs at develop-time.
+        if let deepDive, !context.assignments.isEmpty {
+            await ConceptSeedbedService.shared.applyTidy(
+                deepDiveUUID: deepDive.uuid,
                 assignments: context.assignments,
                 extracts: extracts,
-                sources: sourceRefs
+                sessionUUID: session.uuid
             )
+            copy.seedbedSeedlingNames = context.assignments.map(\.conceptName)
         }
-
-        // Smart promotion: clean, split, and content-route each concept's verbatim
-        // captures into organized section bullets (raw text preserved as provenance).
-        // Falls back to the verbatim drafts per-concept on any LLM failure.
-        copy.possibleConnections = await ConceptComposerEngine.shared.organize(copy.possibleConnections)
+        copy.possibleConnections = []
 
         guard let deepDive,
               let thinkspaceUUID = deepDive.deepDiveMetadata?.primaryThinkspaceUUID

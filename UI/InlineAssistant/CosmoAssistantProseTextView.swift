@@ -10,6 +10,10 @@ import AppKit
 struct CosmoAssistantProseTextView: NSViewRepresentable {
     let segments: [CosmoAssistantProseSegment]
 
+    /// Select→mint: hosts that install `conceptMintPillHost()` receive this
+    /// view's text selections (nil on collapse). Inert everywhere else.
+    @Environment(\.conceptMintReporter) private var mintReporter
+
     /// Reading measure shared with the streaming `Text` fallback so the
     /// finalize swap doesn't reflow.
     static let readingMeasure: CGFloat = 620
@@ -155,6 +159,31 @@ struct CosmoAssistantProseTextView: NSViewRepresentable {
 
         func shouldUpdate(segments: [CosmoAssistantProseSegment]) -> Bool {
             segments != lastSegments
+        }
+
+        /// Reports name-shaped highlights to the mint pill host (conversation
+        /// selections carry no context snippet — organize-don't-author).
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard let reporter = parent.mintReporter,
+                  let textView = notification.object as? NSTextView else { return }
+            let range = textView.selectedRange()
+            let nsString = textView.string as NSString
+            guard range.length > 0, range.location + range.length <= nsString.length else {
+                Task { @MainActor in reporter(nil) }
+                return
+            }
+            let selected = nsString.substring(with: range)
+            let anchor = SelectionAnchorSpace.globalRect(
+                fromScreen: textView.firstRect(forCharacterRange: range, actualRange: nil),
+                for: textView
+            )
+            Task { @MainActor in
+                guard let anchor else {
+                    reporter(nil)
+                    return
+                }
+                reporter(ConceptMintSelectionReport(text: selected, anchor: anchor))
+            }
         }
 
         func record(segments: [CosmoAssistantProseSegment]) {

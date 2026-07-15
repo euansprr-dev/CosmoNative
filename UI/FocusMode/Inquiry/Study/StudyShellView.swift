@@ -63,11 +63,6 @@ struct StudyShellView: View {
             scanController.teardown()
             Task { await viewModel.pauseAndPersist() }
         }
-        .sheet(isPresented: crystallizeBinding) {
-            InquiryCrystallizeSheet(viewModel: viewModel) {
-                viewModel.setPhase(.explore)
-            }
-        }
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Inquiry.focusThinkingDock)) { _ in
             viewModel.focusDock()
         }
@@ -75,8 +70,14 @@ struct StudyShellView: View {
             Task { await viewModel.refreshSourceRecommendations() }
         }
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Inquiry.crystallizeActive)) { _ in
-            viewModel.setPhase(.crystallize)
+            viewModel.startDebrief()
         }
+        // Desk ghost rows: staged concept-skill edits resolve to their board
+        // sections whenever the assistant's proposals change.
+        .onReceive(CosmoInlineAssistantStore.shared.$proposals) { proposals in
+            viewModel.conceptDesk?.syncStagedInserts(from: proposals)
+        }
+        .animation(ProMotionSprings.focusTransition, value: viewModel.conceptDesk == nil)
     }
 
     private func arrive() async {
@@ -99,64 +100,68 @@ struct StudyShellView: View {
 
     // MARK: - The workspace sheet (one rounded surface, three columns)
 
+    /// The sheet mechanics — columns that displace at regular width, overlay
+    /// below it, the narrow scrim, the one rounded clip — live in the shared
+    /// `WorkbenchShell` (extracted from this view, July 2026). Every bench
+    /// (Study, Idea) runs the same implementation; this view only supplies
+    /// the panels and the develop-posture pivot.
     private func workspaceSheet(_ breakpoint: StudyBreakpoint) -> some View {
-        ZStack {
-            columns(breakpoint)
-            if breakpoint == .narrow, viewModel.isTrailShowing || viewModel.isReadingShowing {
-                panelScrim
-            }
-            if !breakpoint.panelsDisplace {
-                overlayPanels(breakpoint)
-            }
-        }
-        .background(DS.bg)
-        .clipShape(RoundedRectangle(cornerRadius: Self.sheetCorner, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: Self.sheetCorner, style: .continuous)
-                .stroke(DS.borderSubtle, lineWidth: 1)
-        )
-    }
-
-    /// At regular width the panels are true columns of the sheet — welded by
-    /// their hairlines, clipped by the sheet's one rounded edge.
-    private func columns(_ breakpoint: StudyBreakpoint) -> some View {
-        HStack(spacing: 0) {
-            if breakpoint.panelsDisplace, viewModel.isTrailShowing {
-                StudyTrailPanel(viewModel: viewModel)
-                    .transition(.move(edge: .leading).combined(with: .opacity))
-            }
+        WorkbenchShell(
+            panelsDisplace: breakpoint.panelsDisplace,
+            isLeadingShowing: viewModel.isTrailShowing,
+            isTrailingShowing: viewModel.isReadingShowing,
+            showsScrim: breakpoint == .narrow,
+            onScrimTap: dismissOverlayPanels,
+            cornerRadius: Self.sheetCorner
+        ) {
+            leadingPanel(isOverlay: !breakpoint.panelsDisplace)
+        } center: {
             centerColumn
-                .frame(maxWidth: .infinity)
-            if breakpoint.panelsDisplace, viewModel.isReadingShowing {
-                StudyReadingPanel(viewModel: viewModel)
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
-            }
+        } trailing: {
+            trailingPanel(isOverlay: !breakpoint.panelsDisplace)
         }
-        .animation(ProMotionSprings.focusTransition, value: viewModel.isTrailShowing)
-        .animation(ProMotionSprings.focusTransition, value: viewModel.isReadingShowing)
     }
 
-    /// Below regular width the panels slide OVER the center inside the sheet.
-    private func overlayPanels(_ breakpoint: StudyBreakpoint) -> some View {
-        HStack(spacing: 0) {
-            if viewModel.isTrailShowing {
-                StudyTrailPanel(viewModel: viewModel, isOverlay: true)
-                    .transition(.move(edge: .leading).combined(with: .opacity))
-            }
-            Spacer(minLength: 0)
-            if viewModel.isReadingShowing {
-                StudyReadingPanel(viewModel: viewModel, isOverlay: true)
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
-            }
+    /// Develop posture pivots the columns: conversation | board | evidence.
+    @ViewBuilder
+    private func leadingPanel(isOverlay: Bool) -> some View {
+        if viewModel.conceptDesk != nil {
+            StudyConversationPanel(store: CosmoInlineAssistantStore.shared, isOverlay: isOverlay)
+        } else {
+            StudyTrailPanel(viewModel: viewModel, isOverlay: isOverlay)
         }
-        .animation(ProMotionSprings.focusTransition, value: viewModel.isTrailShowing)
-        .animation(ProMotionSprings.focusTransition, value: viewModel.isReadingShowing)
+    }
+
+    @ViewBuilder
+    private func trailingPanel(isOverlay: Bool) -> some View {
+        if let desk = viewModel.conceptDesk {
+            StudyEvidenceRail(desk: desk, isOverlay: isOverlay)
+        } else {
+            StudyReadingPanel(viewModel: viewModel, isOverlay: isOverlay)
+        }
+    }
+
+    private func dismissOverlayPanels() {
+        withAnimation(ProMotionSprings.focusTransition) {
+            viewModel.isTrailShowing = false
+            viewModel.isReadingShowing = false
+        }
     }
 
     @ViewBuilder
     private var centerColumn: some View {
-        if let tabId = viewModel.activeReaderSourceId,
-           let tab = viewModel.structured.sourceTabs.first(where: { $0.id == tabId }) {
+        if let desk = viewModel.conceptDesk {
+            // Develop posture: the board takes the page's place. The reader
+            // and page wait underneath — Esc restores them untouched.
+            StudyConceptDeskCenter(desk: desk) {
+                Task { await viewModel.closeConceptDesk() }
+            }
+            .transition(.opacity)
+        } else if let debrief = viewModel.debrief {
+            StudyDebriefView(viewModel: viewModel, state: debrief)
+                .transition(.opacity)
+        } else if let tabId = viewModel.activeReaderSourceId,
+                  let tab = viewModel.structured.sourceTabs.first(where: { $0.id == tabId }) {
             // Flush inside the sheet — the panels' hairlines are the only
             // separation; the sheet's corners do the framing.
             InquiryReaderView(viewModel: viewModel, tab: tab)
@@ -166,19 +171,6 @@ struct StudyShellView: View {
                 .filmGrain(opacity: 0.02)
                 .transition(.opacity)
         }
-    }
-
-    /// Narrow overlays get a whisper of scrim; tap dismisses.
-    private var panelScrim: some View {
-        Color.black.opacity(0.10)
-            .transition(.opacity)
-            .onTapGesture {
-                withAnimation(ProMotionSprings.focusTransition) {
-                    viewModel.isTrailShowing = false
-                    viewModel.isReadingShowing = false
-                }
-            }
-            .accessibilityLabel("Dismiss panels")
     }
 
     private var bottomInstruments: some View {
@@ -239,23 +231,18 @@ struct StudyShellView: View {
         .animation(ProMotionSprings.gentle, value: viewModel.toast)
     }
 
-    // MARK: - Bindings & exits
+    // MARK: - Exits
 
-    private var crystallizeBinding: Binding<Bool> {
-        Binding(
-            get: { viewModel.phase == .crystallize },
-            set: { isPresented in
-                if !isPresented { viewModel.setPhase(.explore) }
-            }
-        )
-    }
-
-    /// Esc walks back: dock focus → reader → map → workspace. The dock peels
-    /// first — with the field focused, Esc previously fell through and read
-    /// as dead (or worse, closed the whole session mid-thought).
+    /// Esc walks back: dock focus → desk → debrief → reader → map → workspace.
+    /// The dock peels first — with the field focused, Esc previously fell
+    /// through and read as dead (or worse, closed the whole session mid-thought).
     private func handleEscape() {
         if dockFocused {
             dockFocused = false
+        } else if viewModel.conceptDesk != nil {
+            Task { await viewModel.closeConceptDesk() }
+        } else if viewModel.debrief != nil {
+            viewModel.cancelDebrief()
         } else if viewModel.activeReaderSourceId != nil {
             withAnimation(ProMotionSprings.focusTransition) { viewModel.dismissReader() }
         } else if viewModel.isMapOverlayPresented {

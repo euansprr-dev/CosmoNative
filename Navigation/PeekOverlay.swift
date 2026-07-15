@@ -177,7 +177,7 @@ private struct PeekPanelContent: View {
         .padding(.vertical, 10)
         .task(id: target) {
             guard let entity = target.entitySelection else { return }
-            title = await PaneSpineInfo.title(for: .entity(entity))
+            title = await PaneInfo.title(for: .entity(entity))
         }
     }
 

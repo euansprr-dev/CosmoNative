@@ -81,7 +81,7 @@ enum CortexDetailSubject {
     var previewText: String? {
         switch self {
         case .recent(let i): return i.preview
-        case .result(let r): return r.snippet ?? r.subtitle
+        case .result(let r): return r.matchedExcerpt ?? r.snippet ?? r.subtitle
         case .library(let item): return item.preview
         case .swipe(let item): return item.hookText
         case .idea(let item):
@@ -106,6 +106,13 @@ enum CortexDetailSubject {
         }
     }
 
+    /// Verbatim window around the matched body text, when this subject came
+    /// from a search hit with body evidence.
+    var matchedExcerpt: String? {
+        if case .result(let r) = self { return r.matchedExcerpt }
+        return nil
+    }
+
     var selectionIdentity: String {
         switch self {
         case .empty: return "empty"
@@ -126,6 +133,7 @@ enum CortexDetailSubject {
             typeLabel,
             metaLine ?? "",
             previewText ?? "",
+            matchedExcerpt ?? "",
             atomUUID ?? ""
         ].joined(separator: "\u{1F}")
     }
@@ -294,7 +302,7 @@ struct CortexDetailPane: View {
                 // The hero: the object's content, edge to edge on the one
                 // body surface — no inner card, no inner border; a single
                 // hairline closes the region (the Raycast anatomy).
-                CortexPreviewBlock(subject: subject, atom: atom)
+                CortexPreviewBlock(subject: subject, atom: atom, matchQuery: viewModel?.query)
                     .frame(maxWidth: .infinity)
                     .frame(height: previewHeight)
                     .clipped()
@@ -339,6 +347,9 @@ struct CortexDetailPane: View {
 private struct CortexPreviewBlock: View {
     let subject: CortexDetailSubject
     let atom: Atom?
+    /// The live search query — reading excerpts center on and highlight the
+    /// matched passage instead of showing the document head.
+    var matchQuery: String? = nil
 
     var body: some View {
         if let item = atom?.toSwipeGalleryItem() {
@@ -402,6 +413,18 @@ private struct CortexPreviewBlock: View {
     }
 
     private var readingText: String? {
+        // A body match deep in the document beats the document head: center
+        // the reading window on the matched passage (Spotlight shows you the
+        // page; we show you the sentence).
+        if let query = matchQuery, !query.isEmpty,
+           let body = atom?.body,
+           let window = CommandKMatchExcerpt.readingWindow(
+               anchoredBy: subject.matchedExcerpt,
+               query: query,
+               in: body
+           ) {
+            return CommandKPreviewExcerpt.clamp(window, limit: CommandKPreviewExcerpt.readingLimit)
+        }
         let t = atom?.body ?? subject.previewText
         guard let t, !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         // Excerpt only: typesetting a full transcript-sized body in one Text
@@ -411,14 +434,30 @@ private struct CortexPreviewBlock: View {
 
     /// Reading excerpt typeset directly on the body surface — no inner white
     /// card, no inner scroll chrome (the hero frame clips the tail).
+    /// Query matches wear a soft highlighter wash, never louder than that.
     private func readingCard(_ text: String) -> some View {
-        Text(text)
-            .font(DS.dateSerif)
-            .foregroundStyle(CommandKPreviewPaper.text)
+        Text(attributedReadingText(text))
             .lineSpacing(5)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .padding(.horizontal, DS.space24)
             .padding(.vertical, DS.space20)
+    }
+
+    private func attributedReadingText(_ text: String) -> AttributedString {
+        guard let query = matchQuery, !query.isEmpty else {
+            var plain = AttributedString(text)
+            plain.font = DS.dateSerif
+            plain.foregroundColor = CommandKPreviewPaper.text
+            return plain
+        }
+        return CommandKMatchHighlighter.attributed(
+            text,
+            query: query,
+            baseColor: CommandKPreviewPaper.text,
+            emphasisColor: CommandKPreviewPaper.text,
+            font: DS.dateSerif,
+            emphasisBackground: subject.accentColor.opacity(0.16)
+        )
     }
 }
 

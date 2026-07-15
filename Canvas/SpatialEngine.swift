@@ -137,6 +137,11 @@ class SpatialEngine {
                     .filter(Column("document_type") == documentType)
                     .filter(Column("document_id") == documentId)
                     .filter(Column("is_deleted") == false)
+                    // Thinkspace portals were removed July 2026 — rows persist
+                    // in the DB (feature could return) but must never render;
+                    // without this filter they'd fall into the default block
+                    // chrome as inert cards.
+                    .filter(Column("entity_type") != "portal")
 
                 // Filter by ThinkSpace if provided
                 if let thinkspaceId = tsId {

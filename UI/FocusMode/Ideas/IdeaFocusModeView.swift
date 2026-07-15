@@ -1,11 +1,12 @@
 // CosmoOS/UI/FocusMode/Ideas/IdeaFocusModeView.swift
-// Idea Focus Mode v2 — Greenhouse clean.
-// June 2026 rewrite: floating glass toolbar (status, client, Begin Writing,
-// inspector toggle), centered manuscript column (the only serifs are the
-// idea's own title and body), and a structured right inspector for swipes /
-// framework / blueprint / research. Replaces the Atelier marginalia gutter.
-// Editors live in IdeaManuscriptEditors.swift; intelligence panels in
-// IdeaInspectorView.swift; chrome state in IdeaWorkspaceModel.swift.
+// Idea Focus Mode v3 — the development bench.
+// July 2026 overhaul: the page is one warm sheet (the Notes/Content focus
+// paper doctrine + vignette), the head carries a live ripening control and an
+// editable identity line, hooks are a lab (working-hook star, AI ghost
+// suggestions, ⌥↑/⌥↓ reorder), the outline wears its framework beats, and the
+// chrome recedes while writing. Editors live in IdeaManuscriptEditors.swift;
+// intelligence panels in IdeaInspectorView.swift; chrome state in
+// IdeaWorkspaceModel.swift.
 
 import SwiftUI
 import AppKit
@@ -31,23 +32,36 @@ struct IdeaFocusModeView: View {
     @State private var ownedContextProvider: IdeaContextProvider?
     @State private var isPromoting: Bool = false
     @State private var showProfileEditor: Bool = false
-    @State private var showBlueprintPicker: Bool = false
-    @State private var isLoadingArcRecs: Bool = false
-    @State private var showBlueprintSheet: Bool = false
-    @State private var showResearchSheet: Bool = false
-    @State private var showFrameworkSheet: Bool = false
     @State private var atelierScrollMetrics = CortexScrollMetrics()
     @State private var bodyReviewProposal: CosmoAssistantProposal?
+    /// First-load arrival — the page assembles once, then never again.
+    @State private var hasArrived = false
+    /// Chrome recede: true while keystrokes are landing; the islands quiet
+    /// to a whisper until typing pauses (~1.4s) — they wake on hover.
+    @State private var isActivelyTyping = false
+    @State private var typingActivityTask: Task<Void, Never>?
+    @State private var hoveredHookIndex: Int?
+    @State private var hoveredSlideID: UUID?
     @FocusState private var isTitleFocused: Bool
     @FocusState private var isContextFocused: Bool
     @FocusState private var focusedHookEditor: HookEditorFocus?
     @FocusState private var focusedOutlineSlideID: UUID?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// The idea's own accent — used sparingly for the focus rule.
     private let ideaAccent = DS.entityIdea
 
     @Environment(\.isPaneContext) private var isPaneContext
     @Environment(\.isPaneContextOwner) private var isPaneContextOwner
+
+    // MARK: - Focus surface tokens (the Notes/Content paper doctrine)
+
+    private var focusBackground: Color { DS.usesImmersiveFocusAppearance ? DS.focusImmersiveBackground : DS.documentBackground }
+    private var focusSurface: Color { DS.usesImmersiveFocusAppearance ? DS.focusImmersiveSurface : DS.documentSurface }
+    private var focusText: Color { DS.usesImmersiveFocusAppearance ? DS.focusImmersiveText : DS.documentText }
+    private var focusTextSecondary: Color { DS.usesImmersiveFocusAppearance ? DS.focusImmersiveTextSecondary : DS.documentTextSecondary }
+    private var focusTextMuted: Color { DS.usesImmersiveFocusAppearance ? DS.focusImmersiveTextMuted : DS.documentTextMuted }
+    private var focusBorder: Color { DS.usesImmersiveFocusAppearance ? DS.focusImmersiveBorder : DS.documentBorder }
 
     // MARK: - Initialization
 
@@ -60,11 +74,24 @@ struct IdeaFocusModeView: View {
     // MARK: - Body
 
     var body: some View {
-        ZStack {
-            workspaceLayout
-            overlayPresentations
+        GeometryReader { geometry in
+            ZStack {
+                DS.bg.ignoresSafeArea()
+                VStack(spacing: DS.space8) {
+                    chromeRow
+                    workbenchSheet
+                        .padding(.horizontal, DS.space10)
+                        .padding(.bottom, DS.space10)
+                }
+                overlayPresentations
+            }
+            .onChange(of: geometry.size.width, initial: true) { _, width in
+                let resolved = IdeaWorkspaceBreakpoint(width: width)
+                if workspace.breakpoint != resolved {
+                    workspace.breakpoint = resolved
+                }
+            }
         }
-        .background(DS.bg.ignoresSafeArea())
         .background {
             FocusModeEditorBlurClickMonitor {
                 clearManuscriptEditingFocus()
@@ -84,47 +111,57 @@ struct IdeaFocusModeView: View {
         }
         .onDisappear {
             AtomRepository.shared.releaseEditingLock(uuid: atom.uuid)
+            typingActivityTask?.cancel()
             viewModel.saveOnClose()
         }
         .onKeyPress(.escape) { handleEscape() }
         .onKeyPress { handleKeyCommand($0) }
         .overlay { profileEditorOverlay }
-        .sheet(isPresented: $showBlueprintSheet) { atelierBlueprintSheet }
-        .sheet(isPresented: $showResearchSheet) { atelierResearchSheet }
-        .sheet(isPresented: $showFrameworkSheet) { atelierFrameworkSheet }
-        .onChange(of: viewModel.researchResults) { _, _ in viewModel.scheduleAutoSave() }
-        .onChange(of: viewModel.arcRecommendations) { _, _ in viewModel.scheduleAutoSave() }
-        .onChange(of: viewModel.chatHistory) { _, _ in viewModel.scheduleAutoSave() }
     }
 
-    // MARK: - Layout
+    // MARK: - The bench (chrome band + one rounded worksheet)
 
-    private var workspaceLayout: some View {
-        GeometryReader { geometry in
-            HStack(spacing: 0) {
-                centerColumn
-                if workspace.breakpoint == .regular, workspace.isInspectorVisible {
-                    Divider().overlay(DS.borderSubtle)
-                    inspector
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
-                }
-            }
-            .animation(ProMotionSprings.focusTransition, value: workspace.isInspectorVisible)
-            .overlay(alignment: .trailing) { inspectorOverlay }
-            .onChange(of: geometry.size.width, initial: true) { _, width in
-                let resolved = IdeaWorkspaceBreakpoint(width: width)
-                if workspace.breakpoint != resolved {
-                    workspace.breakpoint = resolved
-                }
-            }
+    private var chromeRow: some View {
+        IdeaWorkspaceToolbar(
+            viewModel: viewModel,
+            workspace: workspace,
+            isPaneContext: isPaneContext,
+            isPromoting: isPromoting,
+            isReceded: isActivelyTyping,
+            actions: workspaceActions
+        )
+    }
+
+    /// The worksheet: conversation | manuscript | swipe wall, welded into one
+    /// rounded sheet (the bench anatomy shared with the Study).
+    private var workbenchSheet: some View {
+        WorkbenchShell(
+            panelsDisplace: workspace.breakpoint == .regular,
+            isLeadingShowing: workspace.isConversationShowing,
+            isTrailingShowing: workspace.isInspectorShowing
+        ) {
+            IdeaConversationPanel(
+                store: CosmoInlineAssistantStore.shared,
+                isOverlay: workspace.breakpoint == .compact
+            )
+        } center: {
+            centerColumn
+        } trailing: {
+            IdeaInspectorView(
+                viewModel: viewModel,
+                actions: workspaceActions,
+                isOverlay: workspace.breakpoint == .compact
+            )
         }
     }
 
+    /// The manuscript's paper column — the focus surface inside the sheet;
+    /// during promotion a warm bloom rises behind it (the one earned delight).
     private var centerColumn: some View {
         ScrollView {
             manuscriptColumn
                 .padding(.horizontal, DS.space24)
-                .padding(.top, DS.space16)
+                .padding(.top, DS.space24)
                 .padding(.bottom, DS.space48)
                 .frame(maxWidth: 680, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .center)
@@ -139,53 +176,20 @@ struct IdeaFocusModeView: View {
         .scrollIndicators(.hidden)
         .cortexThinScrollbar(metrics: atelierScrollMetrics)
         .scrollEdgeEffectStyle(.soft, for: .all)
-        .safeAreaInset(edge: .top, spacing: 0) {
-            IdeaWorkspaceToolbar(
-                viewModel: viewModel,
-                workspace: workspace,
-                isPaneContext: isPaneContext,
-                isPromoting: isPromoting,
-                actions: workspaceActions
-            )
-            .padding(.horizontal, DS.space16)
-            .padding(.top, DS.space10)
-            .padding(.bottom, DS.space6)
-        }
-    }
-
-    private var inspector: some View {
-        IdeaInspectorView(
-            viewModel: viewModel,
-            isLoadingArcRecommendations: isLoadingArcRecs,
-            actions: workspaceActions
-        )
-    }
-
-    /// Compact widths: the inspector covers the manuscript, so it's opt-in.
-    @ViewBuilder
-    private var inspectorOverlay: some View {
-        if workspace.breakpoint == .compact, workspace.isInspectorOverlayPresented {
-            inspector
-                .overlay(alignment: .leading) {
-                    Divider().overlay(DS.borderSubtle)
+        .background {
+            ZStack {
+                focusBackground
+                if isPromoting {
+                    PromotionBloom(tint: ideaAccent)
                 }
-                .shadow(color: .black.opacity(0.18), radius: 18, x: -6)
-                .transition(.move(edge: .trailing).combined(with: .opacity))
-                .zIndex(2)
+            }
         }
+        .filmGrain(opacity: 0.02)
     }
 
     private var workspaceActions: IdeaWorkspaceActions {
         IdeaWorkspaceActions(
             onShowLinkSwipes: { viewModel.showLinkSwipesOverlay = true },
-            onSuggestFramework: {
-                refreshArcRecommendations()
-                showFrameworkSheet = true
-            },
-            onChangeFramework: { showFrameworkSheet = true },
-            onShowBlueprintSheet: { showBlueprintSheet = true },
-            onShowBlueprintPicker: { showBlueprintPicker = true },
-            onShowResearch: { showResearchSheet = true },
             onOpenAtomInPane: { openAtomInPane($0) },
             onShowProfileEditor: { showProfileEditor = true },
             onBeginWriting: beginWriting,
@@ -198,6 +202,13 @@ struct IdeaFocusModeView: View {
     private func handleAppear() {
         AtomRepository.shared.acquireEditingLock(uuid: atom.uuid)
         registerContextProvider()
+        guard !hasArrived else { return }
+        // One frame after mount so the cascade actually animates (views
+        // mounted already-visible never animate their entrance).
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(16))
+            hasArrived = true
+        }
     }
 
     private func registerContextProvider() {
@@ -205,6 +216,20 @@ struct IdeaFocusModeView: View {
         let provider = IdeaContextProvider(atom: atom, viewModel: viewModel)
         ownedContextProvider = provider
         CosmoWindowViewModel.shared.updateContext(provider: provider)
+    }
+
+    // MARK: - Chrome recede
+
+    /// Marks the user as actively writing; the chrome islands recede until
+    /// typing pauses (~1.4s) — the bench manner (they wake on hover).
+    private func registerTypingActivity() {
+        isActivelyTyping = true
+        typingActivityTask?.cancel()
+        typingActivityTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_400_000_000)
+            guard !Task.isCancelled else { return }
+            isActivelyTyping = false
+        }
     }
 
     // MARK: - Keyboard
@@ -215,16 +240,18 @@ struct IdeaFocusModeView: View {
             viewModel.mentionSearchText = ""
             return .handled
         }
-        if showBlueprintPicker {
-            showBlueprintPicker = false
-            return .handled
-        }
         if viewModel.showLinkSwipesOverlay {
             viewModel.showLinkSwipesOverlay = false
             return .handled
         }
         if viewModel.showLinkConnectionsOverlay {
             viewModel.showLinkConnectionsOverlay = false
+            return .handled
+        }
+        if workspace.isConversationOverlayPresented {
+            withAnimation(ProMotionSprings.focusTransition) {
+                workspace.isConversationOverlayPresented = false
+            }
             return .handled
         }
         if workspace.isInspectorOverlayPresented {
@@ -238,13 +265,30 @@ struct IdeaFocusModeView: View {
     }
 
     private func handleKeyCommand(_ keyPress: KeyPress) -> KeyPress.Result {
-        guard keyPress.modifiers.contains(.command),
-              keyPress.modifiers.contains(.option),
-              keyPress.key == KeyEquivalent("i") else { return .ignored }
-        withAnimation(ProMotionSprings.focusTransition) {
-            workspace.toggleInspector()
+        guard keyPress.modifiers.contains(.command) else { return .ignored }
+        if keyPress.modifiers.contains(.option), keyPress.key == KeyEquivalent("i") {
+            withAnimation(ProMotionSprings.focusTransition) {
+                workspace.toggleInspector()
+            }
+            return .handled
         }
-        return .handled
+        if keyPress.key == KeyEquivalent("0"), !keyPress.modifiers.contains(.shift), !keyPress.modifiers.contains(.option) {
+            withAnimation(ProMotionSprings.focusTransition) {
+                workspace.toggleConversation()
+            }
+            return .handled
+        }
+        if keyPress.modifiers.contains(.shift) {
+            if keyPress.key == KeyEquivalent("h") {
+                focusedHookEditor = .draft
+                return .handled
+            }
+            if keyPress.key == KeyEquivalent("l") {
+                viewModel.showLinkSwipesOverlay = true
+                return .handled
+            }
+        }
+        return .ignored
     }
 
     // MARK: - Actions
@@ -253,7 +297,7 @@ struct IdeaFocusModeView: View {
         let isBodyEmpty = viewModel.editableBody
             .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         guard !isPromoting, !isBodyEmpty else { return }
-        isPromoting = true
+        withAnimation(ProMotionSprings.gentle) { isPromoting = true }
         Task {
             await viewModel.promoteToContent()
             isPromoting = false
@@ -266,117 +310,6 @@ struct IdeaFocusModeView: View {
             object: nil,
             userInfo: ["atomUUID": uuid, "asPane": true]
         )
-    }
-
-    private func refreshArcRecommendations() {
-        isLoadingArcRecs = true
-        viewModel.arcRecommendations = []
-        viewModel.scheduleAutoSave()
-        Task {
-            await viewModel.generateArcRecommendations()
-            isLoadingArcRecs = false
-        }
-    }
-
-    // MARK: - Marginalia sheets
-
-    @ViewBuilder
-    private var atelierBlueprintSheet: some View {
-        VStack(spacing: 0) {
-            AtelierSheetHeader(title: "BLUEPRINT") { showBlueprintSheet = false }
-            if let blueprint = viewModel.selectedBlueprint {
-                BlueprintDisplayView(blueprintAtom: blueprint)
-                    .padding(DS.space24)
-            } else {
-                Text("No blueprint selected")
-                    .font(DS.callout)
-                    .foregroundStyle(DS.textMuted)
-                    .padding(DS.space48)
-            }
-        }
-        .frame(width: 720, height: 640)
-        .background(DS.bg)
-    }
-
-    @ViewBuilder
-    private var atelierResearchSheet: some View {
-        VStack(spacing: 0) {
-            AtelierSheetHeader(title: "RESEARCH") { showResearchSheet = false }
-            IdeaResearchPanel(
-                results: Bindable(viewModel).researchResults,
-                ideaText: viewModel.editableBody,
-                clientNiche: viewModel.linkedClient?.title
-            )
-            .padding(DS.space24)
-        }
-        .frame(width: 720, height: 640)
-        .background(DS.bg)
-    }
-
-    @ViewBuilder
-    private var atelierFrameworkSheet: some View {
-        VStack(spacing: 0) {
-            AtelierSheetHeader(title: "FRAMEWORK") { showFrameworkSheet = false }
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: DS.space16) {
-                    if isLoadingArcRecs {
-                        HStack(spacing: DS.space8) {
-                            ProgressView().controlSize(.small)
-                            Text("Reading the idea…")
-                                .font(DS.callout)
-                                .foregroundStyle(DS.textMuted)
-                        }
-                    } else if viewModel.arcRecommendations.isEmpty {
-                        Text("Add more context to get framework suggestions.")
-                            .font(DS.callout)
-                            .foregroundStyle(DS.textMuted)
-                    } else {
-                        ForEach(viewModel.arcRecommendations) { rec in
-                            atelierFrameworkRow(rec)
-                        }
-                    }
-                }
-                .padding(DS.space24)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
-        .frame(width: 560, height: 540)
-        .background(DS.bg)
-    }
-
-    private func atelierFrameworkRow(_ rec: ArcRecommendation) -> some View {
-        let isSelected = viewModel.selectedArcType == rec.arcName
-        return Button {
-            viewModel.selectedArcType = rec.arcName
-            viewModel.scheduleAutoSave()
-        } label: {
-            VStack(alignment: .leading, spacing: DS.space6) {
-                HStack(spacing: DS.space8) {
-                    Text(rec.arcName)
-                        .font(DS.headline)
-                        .foregroundStyle(DS.text)
-                    Text("\(Int(rec.confidence * 100))%")
-                        .font(DS.caption.monospacedDigit())
-                        .foregroundStyle(DS.textMuted)
-                    Spacer()
-                    if isSelected {
-                        Image(systemName: "checkmark")
-                            .font(DS.caption.weight(.semibold))
-                            .foregroundStyle(DS.accent)
-                            .accessibilityHidden(true)
-                    }
-                }
-                Text(rec.explanation)
-                    .font(DS.callout)
-                    .foregroundStyle(DS.textSecondary)
-                    .lineLimit(3)
-                Divider().overlay(DS.borderSubtle)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     // MARK: - Overlay Presentations
@@ -396,16 +329,6 @@ struct IdeaFocusModeView: View {
             LinkConnectionsOverlay(
                 viewModel: viewModel,
                 isPresented: Bindable(viewModel).showLinkConnectionsOverlay
-            )
-            .transition(.opacity)
-            .zIndex(100)
-        }
-
-        if showBlueprintPicker {
-            LinkSwipesOverlay(
-                viewModel: viewModel,
-                isPresented: $showBlueprintPicker,
-                blueprintMode: true
             )
             .transition(.opacity)
             .zIndex(100)
@@ -435,25 +358,35 @@ struct IdeaFocusModeView: View {
 // MARK: - Manuscript Column
 
 extension IdeaFocusModeView {
-    /// The centered manuscript — title hero, context editor, hooks, outline.
-    /// Content is the hero: no card chrome, hairline dividers carry structure.
+    /// The centered manuscript — head, angle, hooks, outline. Content is the
+    /// hero: no card chrome, hairline dividers carry structure. Sections rise
+    /// in once on arrival (the cascade), top to bottom.
     private var manuscriptColumn: some View {
         VStack(alignment: .leading, spacing: DS.space24) {
             titleHero
+                .atelierStaggerIn(delay: 0.0, appeared: hasArrived, duration: 0.4)
             contextEditor
-            if !atom.attachmentUUIDs.isEmpty { capturedSection }
+                .atelierStaggerIn(delay: 0.05, appeared: hasArrived, duration: 0.4)
+            if !atom.attachmentUUIDs.isEmpty {
+                capturedSection
+                    .atelierStaggerIn(delay: 0.08, appeared: hasArrived, duration: 0.4)
+            }
             hooksSection
+                .atelierStaggerIn(delay: 0.1, appeared: hasArrived, duration: 0.4)
             outlineSection
+                .atelierStaggerIn(delay: 0.14, appeared: hasArrived, duration: 0.4)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(manuscriptWhitespaceBlurLayer)
+        .opacity(isPromoting ? 0.85 : 1)
+        .animation(ProMotionSprings.gentle, value: isPromoting)
     }
 
     /// The pages/photos the capture carried in when it was filed as this idea
     /// — the spark's visual seed. Click a page to open the original.
     private var capturedSection: some View {
         VStack(alignment: .leading, spacing: DS.space12) {
-            sectionLabel("Captured")
+            sectionLabel("CAPTURED", count: atom.attachmentUUIDs.count)
             AttachmentRail(
                 attachmentUUIDs: atom.attachmentUUIDs,
                 thumbSize: CGSize(width: 64, height: 84)
@@ -478,51 +411,252 @@ extension IdeaFocusModeView {
         FocusModeEditorBlur.clearFirstResponder()
     }
 
-    private func sectionLabel(_ title: String) -> some View {
+    /// The one section-header voice on this page: small caps, a live count
+    /// that ticks (never re-layouts), and a hair-rule carrying the width.
+    private func sectionLabel(_ title: String, count: Int? = nil) -> some View {
         HStack(spacing: DS.space12) {
-            Text(title)
-                .font(DS.smallCaps)
-                .tracking(1.4)
-                .foregroundStyle(DS.textMuted)
-                .fixedSize()
-            Divider().overlay(DS.borderSubtle)
+            HStack(spacing: DS.space6) {
+                Text(title)
+                    .font(DS.smallCaps)
+                    .tracking(1.4)
+                    .foregroundStyle(focusTextMuted)
+                    .fixedSize()
+                if let count, count > 0 {
+                    Text("\(count)")
+                        .font(DS.caption2.monospacedDigit())
+                        .foregroundStyle(focusTextMuted.opacity(0.75))
+                        .contentTransition(.numericText())
+                        .animation(ProMotionSprings.gentle, value: count)
+                }
+            }
+            Divider().overlay(focusBorder.opacity(0.6))
         }
         .frame(height: 12)
     }
 
-    // MARK: Title hero
+    // MARK: Title hero — the head
 
     private var titleHero: some View {
         VStack(alignment: .leading, spacing: DS.space8) {
-            Text("IDEA · \(viewModel.selectedStatus.rawValue.uppercased())")
-                .font(DS.smallCaps)
-                .tracking(1.4)
-                .foregroundStyle(DS.textMuted)
+            ripeningControl
 
             TextField("Untitled idea", text: Bindable(viewModel).editableTitle, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(DS.displaySerif)
-                .foregroundStyle(DS.text)
+                .foregroundStyle(focusText)
                 .tracking(-0.5)
                 .lineLimit(1...3)
                 .focused($isTitleFocused)
                 .onChange(of: viewModel.editableTitle) { _, _ in
+                    registerTypingActivity()
                     viewModel.scheduleAutoSave()
                 }
                 .accessibilityLabel("Idea title")
 
-            HStack(spacing: DS.space6) {
-                Text(formattedCreatedDate)
-                Text("·").accessibilityHidden(true)
-                Text(viewModel.selectedFormat?.rawValue.capitalized ?? "Unformatted")
-                if let client = viewModel.linkedClient {
-                    Text("·").accessibilityHidden(true)
-                    Text(client.title ?? "Client")
+            identityRow
+        }
+    }
+
+    /// The kicker is alive: five development ticks fill as the idea ripens
+    /// (the IdeaCard's ticks, grown up), and the whole cluster is the status
+    /// control — no dead "IDEA · SPARK" caption, no separate toolbar menu.
+    private var ripeningControl: some View {
+        Menu {
+            ForEach(IdeaStatus.allCases, id: \.self) { status in
+                Button {
+                    Task { await viewModel.updateStatus(status) }
+                } label: {
+                    Label(status.displayName, systemImage: status.iconName)
                 }
             }
-            .font(DS.caption)
-            .foregroundStyle(DS.textMuted)
+        } label: {
+            HStack(spacing: DS.space8) {
+                HStack(spacing: 3) {
+                    ForEach(0..<5, id: \.self) { index in
+                        RoundedRectangle(cornerRadius: 1)
+                            .fill(tickFill(index))
+                            .frame(width: 12, height: 3)
+                    }
+                }
+                .accessibilityHidden(true)
+                Text(viewModel.selectedStatus.displayName.uppercased())
+                    .font(DS.smallCaps)
+                    .tracking(1.4)
+                    .foregroundStyle(isArchived ? focusTextMuted : ideaAccent.opacity(0.9))
+            }
+            .contentShape(Rectangle())
         }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .animation(ProMotionSprings.snappy, value: viewModel.selectedStatus)
+        .help("Idea stage: \(viewModel.selectedStatus.displayName) — click to change")
+        .accessibilityLabel("Idea stage: \(viewModel.selectedStatus.displayName)")
+    }
+
+    private var isArchived: Bool { viewModel.selectedStatus == .archived }
+
+    private func tickFill(_ index: Int) -> Color {
+        guard !isArchived else { return focusTextMuted.opacity(0.22) }
+        return index <= min(viewModel.selectedStatus.sortOrder, 4)
+            ? ideaAccent
+            : focusTextMuted.opacity(0.22)
+    }
+
+    /// ONE quiet identity line, and it's the editing surface: date · format ·
+    /// platform · client, each a borderless menu (the IdeaCard meta grammar).
+    private var identityRow: some View {
+        HStack(spacing: DS.space6) {
+            Text(formattedCreatedDate)
+                .foregroundStyle(focusTextMuted)
+            metaDot
+            formatMenu
+            metaDot
+            platformMenu
+            metaDot
+            clientMenu
+        }
+        .font(DS.caption)
+    }
+
+    private var metaDot: some View {
+        Text("·")
+            .foregroundStyle(focusTextMuted.opacity(0.6))
+            .accessibilityHidden(true)
+    }
+
+    private var formatMenu: some View {
+        Menu {
+            ForEach(formatMenuChoices, id: \.self) { format in
+                Button {
+                    viewModel.updateFormat(format)
+                } label: {
+                    Text("\(CollectionEmoji.formatMark(format))  \(format.displayName)")
+                }
+            }
+            if viewModel.selectedFormat != nil {
+                Divider()
+                Button("Remove Format") {
+                    viewModel.updateFormat(nil)
+                }
+            }
+        } label: {
+            HStack(spacing: DS.space4) {
+                if let format = viewModel.selectedFormat {
+                    Text(CollectionEmoji.formatMark(format))
+                        .font(DS.caption)
+                        .accessibilityHidden(true)
+                    Text(format.displayName)
+                        .foregroundStyle(focusTextMuted)
+                } else {
+                    Text("Add format")
+                        .foregroundStyle(focusTextMuted.opacity(0.7))
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Content format")
+        .accessibilityLabel("Content format: \(viewModel.selectedFormat?.displayName ?? "none")")
+    }
+
+    /// Platform first narrows the format menu to what that platform carries.
+    private var formatMenuChoices: [ContentFormat] {
+        if let platform = viewModel.selectedPlatform {
+            return platform.supportedFormats
+        }
+        return ContentFormat.allCases
+    }
+
+    private var platformMenu: some View {
+        Menu {
+            ForEach(IdeaPlatform.allCases, id: \.self) { platform in
+                Button(platform.displayName) {
+                    viewModel.selectedPlatform = platform
+                    viewModel.scheduleAutoSave()
+                }
+            }
+            if viewModel.selectedPlatform != nil {
+                Divider()
+                Button("Remove Platform") {
+                    viewModel.selectedPlatform = nil
+                    viewModel.scheduleAutoSave()
+                }
+            }
+        } label: {
+            HStack(spacing: DS.space4) {
+                if let platform = viewModel.selectedPlatform {
+                    SwipePlatformGlyph(source: platformGlyphFamily(platform))
+                        .frame(width: 9, height: 9)
+                        .accessibilityHidden(true)
+                    Text(platform.displayName)
+                        .foregroundStyle(focusTextMuted)
+                } else {
+                    Text("Add platform")
+                        .foregroundStyle(focusTextMuted.opacity(0.7))
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Publishing platform")
+        .accessibilityLabel("Platform: \(viewModel.selectedPlatform?.displayName ?? "none")")
+    }
+
+    /// "x" is stored bare; the glyph family answers to x_post.
+    private func platformGlyphFamily(_ platform: IdeaPlatform) -> String {
+        platform.rawValue == "x" ? "x_post" : platform.rawValue
+    }
+
+    private var clientMenu: some View {
+        Menu {
+            ForEach(viewModel.clientProfiles, id: \.uuid) { client in
+                Button(client.title ?? "Client") {
+                    Task { await viewModel.assignClient(client) }
+                }
+            }
+            if viewModel.clientProfiles.isEmpty {
+                Text("No client profiles")
+            }
+            Divider()
+            Button {
+                showProfileEditor = true
+            } label: {
+                Label("Create New Profile", systemImage: "plus.circle")
+            }
+            if viewModel.linkedClient != nil {
+                Divider()
+                Button(role: .destructive) {
+                    Task { await viewModel.assignClient(nil) }
+                } label: {
+                    Label("Remove Client", systemImage: "xmark.circle")
+                }
+            }
+        } label: {
+            HStack(spacing: DS.space4) {
+                if let client = viewModel.linkedClient {
+                    Circle()
+                        .fill(DS.clientColor(for: client.uuid))
+                        .frame(width: 6, height: 6)
+                        .accessibilityHidden(true)
+                    Text(client.title ?? "Client")
+                        .foregroundStyle(focusTextMuted)
+                } else {
+                    Text("Add client")
+                        .foregroundStyle(focusTextMuted.opacity(0.7))
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Client profile")
+        .accessibilityLabel("Client: \(viewModel.linkedClient?.title ?? "none")")
     }
 
     private var formattedCreatedDate: String {
@@ -546,7 +680,7 @@ extension IdeaFocusModeView {
                     proposal: review,
                     sourceText: viewModel.editableBody,
                     bodyFont: .system(size: 17, weight: .regular, design: .serif),
-                    textColor: DS.text
+                    textColor: focusText
                 )
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             } else {
@@ -562,7 +696,7 @@ extension IdeaFocusModeView {
                     Text("What's the angle?")
                         .font(.system(size: 17, weight: .regular, design: .serif))
                         .italic()
-                        .foregroundStyle(DS.textMuted)
+                        .foregroundStyle(focusTextMuted)
                         .padding(.top, 8)
                         .padding(.leading, 6)
                         .allowsHitTesting(false)
@@ -572,6 +706,7 @@ extension IdeaFocusModeView {
                     text: Bindable(viewModel).editableBody,
                     isFocused: $isContextFocused
                 ) { newValue in
+                    registerTypingActivity()
                     viewModel.scheduleAutoSave()
                     viewModel.autoEnrich()
                     handleMentionTrigger(newValue)
@@ -678,12 +813,12 @@ extension IdeaFocusModeView {
     }
 }
 
-// MARK: - Hooks Section
+// MARK: - Hooks Section (the lab)
 
 extension IdeaFocusModeView {
     private var hooksSection: some View {
         VStack(alignment: .leading, spacing: DS.space12) {
-            sectionLabel("HOOKS")
+            sectionLabel("HOOKS", count: viewModel.editableHooks.count)
 
             VStack(alignment: .leading, spacing: DS.space10) {
                 ForEach(Array(viewModel.editableHooks.enumerated()), id: \.offset) { index, hook in
@@ -696,12 +831,15 @@ extension IdeaFocusModeView {
     }
 
     private func hookRow(_ hook: String, at index: Int) -> some View {
-        HStack(alignment: .top, spacing: DS.space12) {
+        let isChosen = viewModel.selectedHookIndex == index
+        let isHovered = hoveredHookIndex == index
+        return HStack(alignment: .top, spacing: DS.space12) {
             Text(romanNumeral(for: index + 1) + ".")
-                .font(DS.caption.monospacedDigit())
-                .foregroundStyle(DS.textMuted)
+                .font(DS.caption.monospacedDigit().weight(isChosen ? .semibold : .regular))
+                .foregroundStyle(isChosen ? ideaAccent : focusTextMuted)
                 .frame(width: 28, alignment: .leading)
                 .padding(.top, 3)
+                .accessibilityHidden(true)
 
             HookLineEditor(
                 text: hookBinding(at: index),
@@ -709,59 +847,92 @@ extension IdeaFocusModeView {
                 focusedEditor: $focusedHookEditor,
                 placeholder: "hook",
                 font: hookEditorFont(),
-                textColor: NSColor(DS.text),
-                placeholderColor: NSColor(DS.textMuted.opacity(0.55)),
+                textColor: NSColor(focusText),
+                placeholderColor: NSColor(focusTextMuted.opacity(0.55)),
                 onReturn: finishHookEditing,
                 onDeleteEmpty: {
                     guard viewModel.editableHooks.indices.contains(index) else { return false }
-                    withAnimation(ProMotionSprings.snappy) {
-                        focusedHookEditor = nil
-                        viewModel.editableHooks.remove(at: index)
-                        viewModel.scheduleAutoSave()
-                    }
+                    removeHook(at: index)
                     return true
-                }
+                },
+                onMoveLine: { direction in moveHook(at: index, direction) }
             )
             .frame(maxWidth: .infinity, alignment: .leading)
             .fixedSize(horizontal: false, vertical: true)
 
             Spacer(minLength: DS.space8)
 
-            Button {
-                withAnimation(ProMotionSprings.snappy) {
-                    focusedHookEditor = nil
-                    viewModel.editableHooks.remove(at: index)
-                    viewModel.scheduleAutoSave()
+            HStack(spacing: DS.space2) {
+                hookStarButton(at: index, isChosen: isChosen, isHovered: isHovered)
+
+                Button {
+                    removeHook(at: index)
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(DS.caption2.weight(.medium))
+                        .foregroundStyle(focusTextMuted.opacity(0.5))
+                        .frame(width: 18, height: 18)
+                        .contentShape(Rectangle())
                 }
-            } label: {
-                Image(systemName: "xmark")
-                    .font(DS.caption2.weight(.medium))
-                    .foregroundStyle(DS.textMuted.opacity(0.5))
-                    .frame(width: 18, height: 18)
-                    .contentShape(Rectangle())
+                .buttonStyle(.plain)
+                .marginaliaHoverReveal(isHovered)
+                .help("Remove hook")
+                .accessibilityLabel("Remove hook")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Remove hook")
             .padding(.top, 2)
         }
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) {
+                if hovering {
+                    hoveredHookIndex = index
+                } else if hoveredHookIndex == index {
+                    hoveredHookIndex = nil
+                }
+            }
+        }
+        .accessibilityAddTraits(isChosen ? .isSelected : [])
     }
+
+    /// The verdict affordance: exactly one hook can be "on" — the working
+    /// hook, carried forward as the piece's title at promotion.
+    private func hookStarButton(at index: Int, isChosen: Bool, isHovered: Bool) -> some View {
+        Button {
+            withAnimation(ProMotionSprings.snappy) {
+                viewModel.selectedHookIndex = isChosen ? nil : index
+                viewModel.scheduleAutoSave()
+            }
+        } label: {
+            Image(systemName: isChosen ? "star.fill" : "star")
+                .font(DS.caption2.weight(.medium))
+                .foregroundStyle(isChosen ? ideaAccent : focusTextMuted.opacity(0.6))
+                .frame(width: 18, height: 18)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .marginaliaHoverReveal(isChosen || isHovered)
+        .help(isChosen ? "The working hook — leads the piece into writing" : "Mark as the working hook")
+        .accessibilityLabel(isChosen ? "Working hook" : "Mark as working hook")
+    }
+
+    // MARK: Hook mutations
 
     private var addHookRow: some View {
         HStack(alignment: .top, spacing: DS.space12) {
             Text("+")
                 .font(DS.caption.monospacedDigit())
-                .foregroundStyle(DS.textMuted)
+                .foregroundStyle(focusTextMuted)
                 .frame(width: 28, alignment: .leading)
                 .padding(.top, 3)
+                .accessibilityHidden(true)
 
             HookLineEditor(
                 text: $newHookText,
                 editorID: .draft,
                 focusedEditor: $focusedHookEditor,
-                placeholder: "Add a hook to test the angle",
+                placeholder: "Add a hook to test the angle (⌘⇧H)",
                 font: hookEditorFont(italic: true),
-                textColor: NSColor(DS.textSecondary),
-                placeholderColor: NSColor(DS.textMuted.opacity(0.65)),
+                textColor: NSColor(focusTextSecondary),
+                placeholderColor: NSColor(focusTextMuted.opacity(0.65)),
                 onReturn: addHook,
                 onDeleteEmpty: { false }
             )
@@ -770,6 +941,7 @@ extension IdeaFocusModeView {
             .accessibilityLabel("New hook text")
         }
         .padding(.top, DS.space4)
+        .onChange(of: newHookText) { _, _ in registerTypingActivity() }
     }
 
     private func hookBinding(at index: Int) -> Binding<String> {
@@ -781,9 +953,48 @@ extension IdeaFocusModeView {
             set: { newValue in
                 guard viewModel.editableHooks.indices.contains(index) else { return }
                 viewModel.editableHooks[index] = newValue
+                registerTypingActivity()
                 viewModel.scheduleAutoSave()
             }
         )
+    }
+
+    private func removeHook(at index: Int) {
+        guard viewModel.editableHooks.indices.contains(index) else { return }
+        withAnimation(ProMotionSprings.snappy) {
+            focusedHookEditor = nil
+            viewModel.editableHooks.remove(at: index)
+            // The star rides its hook: clear it if its hook left, shift it if
+            // an earlier row left.
+            if let chosen = viewModel.selectedHookIndex {
+                if chosen == index {
+                    viewModel.selectedHookIndex = nil
+                } else if chosen > index {
+                    viewModel.selectedHookIndex = chosen - 1
+                }
+            }
+            viewModel.scheduleAutoSave()
+        }
+    }
+
+    /// ⌥↑ / ⌥↓ while a hook is focused — the numerals renumber with a spring
+    /// and the working-hook star rides its line.
+    private func moveHook(at index: Int, _ direction: OutlineSlideNavigationDirection) {
+        let target = direction == .previous ? index - 1 : index + 1
+        guard viewModel.editableHooks.indices.contains(index),
+              viewModel.editableHooks.indices.contains(target) else { return }
+        withAnimation(ProMotionSprings.snappy) {
+            viewModel.editableHooks.swapAt(index, target)
+            if let chosen = viewModel.selectedHookIndex {
+                if chosen == index {
+                    viewModel.selectedHookIndex = target
+                } else if chosen == target {
+                    viewModel.selectedHookIndex = index
+                }
+            }
+            viewModel.scheduleAutoSave()
+        }
+        focusedHookEditor = .existing(target)
     }
 
     private func hookEditorFont(italic: Bool = false) -> NSFont {
@@ -849,12 +1060,12 @@ extension IdeaFocusModeView {
 
     private var outlineHeader: some View {
         HStack(spacing: DS.space12) {
-            sectionLabel("OUTLINE")
+            sectionLabel("OUTLINE", count: viewModel.codexOutline?.slides.count)
 
             Button { addNewSlide() } label: {
                 Label("Slide", systemImage: "plus")
                     .font(DS.caption)
-                    .foregroundStyle(DS.textSecondary)
+                    .foregroundStyle(focusTextSecondary)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -874,35 +1085,62 @@ extension IdeaFocusModeView {
     }
 
     private func outlineSlideRow(_ slide: CodexOutlineSlide) -> some View {
-        HStack(alignment: .top, spacing: DS.space16) {
+        let isHovered = hoveredSlideID == slide.id
+        return HStack(alignment: .top, spacing: DS.space16) {
             Text(romanNumeral(for: slide.position))
                 .font(DS.caption.weight(.bold).monospacedDigit())
-                .foregroundStyle(DS.textMuted)
+                .foregroundStyle(focusTextMuted)
                 .frame(width: 36, height: IdeaOutlineLayoutMetrics.minimumEditorHeight, alignment: .topLeading)
+                .contentTransition(.numericText())
+                .accessibilityHidden(true)
 
-            OutlineSlideNoteEditor(
-                text: slideNoteBinding(for: slide.id),
-                slideID: slide.id,
-                focusedSlideID: $focusedOutlineSlideID,
-                placeholder: "what should this slide do?",
-                onReturn: { insertSlideAfterFocusedSlide(slide.id) },
-                onMoveFocus: { direction in
-                    focusAdjacentOutlineSlide(from: slide.id, direction: direction)
-                },
-                onDeleteEmpty: { handleDeleteOnSlide(slide.id) == .handled }
-            )
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: DS.space2) {
+                // The framework's beat, when the outline knows it — the slide
+                // teaches what it should do before a word is written.
+                if let beat = slide.speechAct, !beat.isEmpty {
+                    Text(beat.uppercased())
+                        .font(DS.smallCaps)
+                        .tracking(1.2)
+                        .foregroundStyle(DS.giltMuted)
+                        .help("This slide's beat in the framework")
+                }
+
+                OutlineSlideNoteEditor(
+                    text: slideNoteBinding(for: slide.id),
+                    slideID: slide.id,
+                    focusedSlideID: $focusedOutlineSlideID,
+                    placeholder: "what should this slide do?",
+                    onReturn: { insertSlideAfterFocusedSlide(slide.id) },
+                    onMoveFocus: { direction in
+                        focusAdjacentOutlineSlide(from: slide.id, direction: direction)
+                    },
+                    onDeleteEmpty: { handleDeleteOnSlide(slide.id) == .handled },
+                    onMoveLine: { direction in moveSlide(slide.id, direction) }
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+            }
 
             Button { removeSlide(slide.id) } label: {
                 Image(systemName: "xmark")
                     .font(DS.caption2.weight(.medium))
-                    .foregroundStyle(DS.textMuted.opacity(0.4))
+                    .foregroundStyle(focusTextMuted.opacity(0.4))
                     .frame(width: 18, height: 18)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .marginaliaHoverReveal(isHovered)
+            .help("Remove slide")
             .accessibilityLabel("Remove slide \(slide.position)")
+        }
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) {
+                if hovering {
+                    hoveredSlideID = slide.id
+                } else if hoveredSlideID == slide.id {
+                    hoveredSlideID = nil
+                }
+            }
         }
     }
 
@@ -912,6 +1150,7 @@ extension IdeaFocusModeView {
                 viewModel.codexOutline?.slides.first(where: { $0.id == slideId })?.note ?? ""
             },
             set: { newValue in
+                registerTypingActivity()
                 viewModel.updateOutlineSlideNote(slideId: slideId, note: newValue)
             }
         )
@@ -922,14 +1161,29 @@ extension IdeaFocusModeView {
     private func addNewSlide() {
         guard var outline = viewModel.codexOutline else { return }
         _ = CodexOutlineEditing.insertSlide(after: outline.slides.last?.id ?? UUID(), in: &outline)
-        viewModel.replaceCodexOutline(outline)
+        withAnimation(ProMotionSprings.snappy) {
+            viewModel.replaceCodexOutline(outline)
+        }
     }
 
     private func removeSlide(_ id: UUID) {
         guard var outline = viewModel.codexOutline else { return }
         outline.slides.removeAll { $0.id == id }
         CodexOutlineEditing.renumberSlides(in: &outline)
-        viewModel.replaceCodexOutline(outline)
+        withAnimation(ProMotionSprings.snappy) {
+            viewModel.replaceCodexOutline(outline)
+        }
+    }
+
+    /// ⌥↑ / ⌥↓ while a slide is focused — reorder without leaving the keys.
+    private func moveSlide(_ slideID: UUID, _ direction: OutlineSlideNavigationDirection) {
+        guard var outline = viewModel.codexOutline else { return }
+        let offset = direction == .previous ? -1 : 1
+        guard CodexOutlineEditing.moveSlide(slideID, offset: offset, in: &outline) else { return }
+        withAnimation(ProMotionSprings.snappy) {
+            viewModel.replaceCodexOutline(outline)
+        }
+        focusOutlineSlide(slideID)
     }
 
     private func insertSlideAfterFocusedSlide(_ slideID: UUID) {
@@ -972,6 +1226,34 @@ extension IdeaFocusModeView {
 
         guard slides.indices.contains(targetIndex) else { return }
         focusOutlineSlide(slides[targetIndex].id)
+    }
+}
+
+// MARK: - Promotion bloom (the one earned delight)
+
+/// A warm radial bloom that rises behind the manuscript while Begin Writing
+/// carries the idea into Content focus — the room warming up for the handoff.
+/// Reduce Motion keeps the crossfade and drops the swell.
+private struct PromotionBloom: View {
+    let tint: Color
+
+    @State private var appeared = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        RadialGradient(
+            colors: [tint.opacity(0.12), Color.clear],
+            center: .center,
+            startRadius: 80,
+            endRadius: 640
+        )
+        .scaleEffect(appeared || reduceMotion ? 1 : 0.86)
+        .opacity(appeared ? 1 : 0)
+        .onAppear {
+            withAnimation(ProMotionSprings.gentle) { appeared = true }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 
@@ -1077,13 +1359,9 @@ class IdeaContextProvider: CosmoContextProvider, CosmoEditableSurfaceProvider {
             if !vm.editableBody.isEmpty {
                 viewData["bodyPreview"] = String(vm.editableBody.prefix(500))
             }
-            if let insight = vm.insight {
-                if let hooks = insight.hookSuggestions, !hooks.isEmpty {
-                    viewData["hookCount"] = "\(hooks.count)"
-                }
-                if let swipes = insight.matchingSwipes, !swipes.isEmpty {
-                    viewData["matchedSwipes"] = "\(swipes.count)"
-                }
+            if let insight = vm.insight,
+               let swipes = insight.matchingSwipes, !swipes.isEmpty {
+                viewData["matchedSwipes"] = "\(swipes.count)"
             }
         }
 

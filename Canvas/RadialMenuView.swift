@@ -36,7 +36,6 @@ struct RadialMenuView: View {
         RadialAction(icon: "point.3.connected.trianglepath.dotted", label: "Concept", color: DS.entityConnection, type: .createConnection),
         RadialAction(icon: "circle.hexagongrid.circle.fill", label: "Deep Dive", color: CosmoMentionColors.color(for: .deepDive), type: .createDeepDive),
         RadialAction(icon: "rectangle.3.group.fill", label: "Template", color: DS.accent, type: .createTemplate),
-        RadialAction(icon: "arrow.up.forward.app", label: "Portal", color: DS.accent, type: .createPortal),
     ]
 
     private var actions: [RadialAction] {
@@ -273,7 +272,6 @@ enum RadialActionType {
     case researchAgent      // Opens Research Agent panel (Perplexity AI)
     case fromDatabase       // Opens database picker overlay
     case createTemplate     // Opens template gallery to spawn a template block
-    case createPortal       // Opens the portal target picker (window into another thinkspace)
 }
 
 // MARK: - Preview

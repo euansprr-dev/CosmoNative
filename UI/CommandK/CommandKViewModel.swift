@@ -396,11 +396,26 @@ enum SwipeViewMode: String, CaseIterable {
 enum CommandKSearchMatcher {
     static func normalize(_ text: String) -> String {
         text
+            // Double quotes are query grammar ("exact phrase"), not content —
+            // strip them on BOTH sides so a quoted query still phrase-matches
+            // text that happens to contain quotation marks.
+            .replacingOccurrences(of: "\"", with: " ")
+            .replacingOccurrences(of: "\u{201C}", with: " ")
+            .replacingOccurrences(of: "\u{201D}", with: " ")
             .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
             .lowercased()
             .components(separatedBy: .whitespacesAndNewlines)
             .filter { !$0.isEmpty }
             .joined(separator: " ")
+    }
+
+    /// Normalized contents of explicitly-quoted segments in a raw query.
+    /// A quoted segment is a hard requirement: sources that can't satisfy
+    /// every phrase must not match at all.
+    static func quotedPhrases(in rawQuery: String) -> [String] {
+        HybridSearchEngine.parseQueryGrammar(rawQuery).quotedPhrases
+            .map { normalize($0) }
+            .filter { !$0.isEmpty }
     }
 
     static func normalizeQuery(_ query: String) -> String {
@@ -465,6 +480,11 @@ enum CommandKSearchMatcher {
         if !queryTokens.isEmpty, queryTokens.allSatisfy({ normalizedTitle.contains($0) }) {
             return (.titleMatch, 0.64)
         }
+        // A multi-word query appearing verbatim in the body is "that exact
+        // sentence" evidence — stronger than the same words scattered.
+        if queryTokens.count > 1, normalizedFullText.contains(normalizedQuery) {
+            return (.phraseInBody, 0.55)
+        }
         return (.keywordInBody, 0.42)
     }
 
@@ -498,6 +518,7 @@ enum CommandKHybridResultMapper {
             atomType: atomType,
             title: result.title,
             snippet: result.preview,
+            matchedExcerpt: result.matchedExcerpt,
             semanticWeight: result.vectorSimilarity,
             structuralWeight: result.bm25Score / 25.0,  // Normalize
             recencyWeight: result.updatedAt.map(WeightCalculator.recencyWeight(fromISO8601:)) ?? 0.5,
@@ -508,6 +529,11 @@ enum CommandKHybridResultMapper {
         )
     }
 
+    /// Query-token coverage above which a broad any-term partial still
+    /// counts as keyword evidence: misremembering one word of an eight-word
+    /// sentence shouldn't demote the hit to the semantic layer.
+    static let partialCoverageFloor = 0.7
+
     static func lexicalTier(
         for result: HybridSearchEngine.SearchResult,
         normalizedQuery: String
@@ -515,16 +541,28 @@ enum CommandKHybridResultMapper {
         // Pure-vector results (bm25Score == 0) can carry a chunk field name as
         // their title — no keyword evidence, so never award title tiers.
         guard result.bm25Score > 0 else { return .semanticOnly }
-        let (tier, _) = CommandKSearchMatcher.lexicalMatch(
+        let (matcherTier, _) = CommandKSearchMatcher.lexicalMatch(
             normalizedQuery: normalizedQuery,
             normalizedTitle: CommandKSearchMatcher.normalize(result.title),
-            normalizedFullText: CommandKSearchMatcher.searchableText(from: [result.title, result.preview])
+            normalizedFullText: CommandKSearchMatcher.searchableText(
+                from: [result.title, result.preview, result.matchedExcerpt]
+            )
         )
-        if tier != .semanticOnly { return tier }
-        // BM25 matched the body beyond the 200-char preview. Only the strict
-        // all-terms pass counts as keyword evidence — broad any-term partials
-        // rank with the semantic layer.
-        return result.matchedAllTerms ? .keywordInBody : .semanticOnly
+        // Retrieval-ladder evidence for matches beyond the preview window:
+        // FTS5 saw the whole document, the matcher only saw excerpts.
+        let ladderTier: LexicalTier
+        if result.matchedPhrase {
+            ladderTier = .phraseInBody
+        } else if result.matchedAllTerms {
+            ladderTier = .keywordInBody
+        } else if result.termCoverage >= partialCoverageFloor {
+            // High-coverage partial (e.g. 7 of 8 terms): keyword evidence,
+            // not semantic confetti.
+            ladderTier = .keywordInBody
+        } else {
+            ladderTier = .semanticOnly
+        }
+        return min(matcherTier, ladderTier)
     }
 }
 
@@ -585,6 +623,11 @@ struct UnifiedSearchResult: Identifiable {
     let title: String
     let subtitle: String?
     let snippet: String?
+    /// Verbatim context window around the matched body text. Drives the
+    /// excerpt line on body-evidence rows and the match-centered preview;
+    /// rebuild sites (enrichment, context boosts) must copy it, same law as
+    /// `lexicalTier`.
+    let matchedExcerpt: String?
     let icon: String
     let accentColor: Color
     let relevance: Double
@@ -607,6 +650,7 @@ struct UnifiedSearchResult: Identifiable {
         title: String,
         subtitle: String?,
         snippet: String?,
+        matchedExcerpt: String? = nil,
         icon: String,
         accentColor: Color,
         relevance: Double,
@@ -627,6 +671,7 @@ struct UnifiedSearchResult: Identifiable {
         self.title = title
         self.subtitle = subtitle
         self.snippet = snippet
+        self.matchedExcerpt = matchedExcerpt
         self.icon = icon
         self.accentColor = accentColor
         self.relevance = relevance
@@ -740,7 +785,12 @@ enum CommandKUnifiedSearchComposer {
                         (result.lexicalTier, result.relevance),
                         ideaRelevance(for: ideaItem, normalizedQuery: normalizedQuery)
                     )
-                    allResults.append(ideaResult(for: ideaItem, relevance: rank.relevance, lexicalTier: rank.tier))
+                    allResults.append(ideaResult(
+                        for: ideaItem,
+                        relevance: rank.relevance,
+                        lexicalTier: rank.tier,
+                        matchedExcerpt: result.matchedExcerpt
+                    ))
                 } else {
                     // Gallery not loaded yet — surface the engine match directly
                     // instead of dropping an exact hit.
@@ -771,7 +821,14 @@ enum CommandKUnifiedSearchComposer {
         for item in ideaGalleryItems where !includedAtomUUIDs.contains(item.atomUUID) {
             guard IdeasTab.matchesSearch(item, query: query) else { continue }
             let (tier, relevance) = ideaRelevance(for: item, normalizedQuery: normalizedQuery)
-            allResults.append(ideaResult(for: item, relevance: relevance, lexicalTier: tier))
+            allResults.append(ideaResult(
+                for: item,
+                relevance: relevance,
+                lexicalTier: tier,
+                matchedExcerpt: tier >= .phraseInBody
+                    ? CommandKMatchExcerpt.excerpt(from: item.body, query: query)
+                    : nil
+            ))
             includedAtomUUIDs.insert(item.atomUUID)
             addedIdeas += 1
             if addedIdeas >= ideaLimit { break }
@@ -1018,6 +1075,7 @@ enum CommandKUnifiedSearchComposer {
             title: result.title,
             subtitle: result.atomType.displayName,
             snippet: result.snippet,
+            matchedExcerpt: result.matchedExcerpt,
             icon: result.atomType.iconName,
             accentColor: accentColor(for: result.atomType),
             relevance: result.relevance,
@@ -1062,7 +1120,8 @@ enum CommandKUnifiedSearchComposer {
     private static func ideaResult(
         for item: IdeaGalleryItem,
         relevance: Double,
-        lexicalTier: LexicalTier
+        lexicalTier: LexicalTier,
+        matchedExcerpt: String? = nil
     ) -> UnifiedSearchResult {
         UnifiedSearchResult(
             id: "idea-\(item.atomUUID)",
@@ -1071,6 +1130,7 @@ enum CommandKUnifiedSearchComposer {
             title: item.title,
             subtitle: [item.status.displayName, item.contentFormat?.displayName].compactMap { $0 }.joined(separator: " · "),
             snippet: item.body?.prefix(120).description,
+            matchedExcerpt: matchedExcerpt,
             icon: "lightbulb.fill",
             accentColor: DS.entityIdea,
             relevance: relevance,
@@ -1095,6 +1155,7 @@ enum CommandKUnifiedSearchComposer {
             title: result.title,
             subtitle: AtomType.idea.displayName,
             snippet: result.snippet?.prefix(120).description,
+            matchedExcerpt: result.matchedExcerpt,
             icon: "lightbulb.fill",
             accentColor: DS.entityIdea,
             relevance: result.relevance,
@@ -2506,7 +2567,7 @@ public final class CommandKViewModel {
                     // not be demoted.
                     let queryForReRank = queryForSearch
                     let reRankInputs = mergedResults
-                        .filter { $0.lexicalTier >= .keywordInBody }
+                        .filter { $0.lexicalTier >= .phraseInBody }
                         .prefix(25)
                         .map { r in
                             ReRankInput(
@@ -2546,6 +2607,7 @@ public final class CommandKViewModel {
                                         atomType: r.atomType,
                                         title: r.title,
                                         snippet: r.snippet,
+                                        matchedExcerpt: r.matchedExcerpt,
                                         semanticWeight: aiScore,
                                         structuralWeight: r.structuralWeight,
                                         recencyWeight: r.recencyWeight,
@@ -2648,6 +2710,9 @@ public final class CommandKViewModel {
                     atomType: atom.type,
                     title: title,
                     snippet: atom.body?.prefix(100).description,
+                    matchedExcerpt: tier >= .phraseInBody
+                        ? CommandKMatchExcerpt.excerpt(from: atom.body, query: query)
+                        : nil,
                     semanticWeight: 0.0,
                     structuralWeight: max(quality, 0.42),
                     recencyWeight: WeightCalculator.recencyWeight(fromISO8601: atom.updatedAt),
@@ -3159,6 +3224,12 @@ public final class CommandKViewModel {
             try? await NodeGraphEngine.shared.recordAccess(atomUUID: uuid, type: .view)
         }
 
+        // Body-evidence hits land ON the matched passage.
+        if let ranked = unfilteredResults.first(where: { $0.atomUUID == uuid }),
+           let excerpt = ranked.matchedExcerpt, !excerpt.isEmpty {
+            CommandKSearchLandingStore.shared.stage(atomUUID: uuid, excerpt: excerpt, query: query)
+        }
+
         // Post notification to open
         NotificationCenter.default.post(
             name: CosmoNotification.NodeGraph.openAtomFromCommandK,
@@ -3186,6 +3257,15 @@ public final class CommandKViewModel {
         } else if let atomUUID = result.atomUUID {
             Task {
                 try? await NodeGraphEngine.shared.recordAccess(atomUUID: atomUUID, type: .view)
+            }
+            // Body-evidence hits land ON the matched passage: stage the
+            // jump-to-sentence request for the destination surface.
+            if let excerpt = result.matchedExcerpt, !excerpt.isEmpty {
+                CommandKSearchLandingStore.shared.stage(
+                    atomUUID: atomUUID,
+                    excerpt: excerpt,
+                    query: query
+                )
             }
             NotificationCenter.default.post(
                 name: CosmoNotification.NodeGraph.openAtomFromCommandK,
@@ -4184,15 +4264,18 @@ public final class CommandKViewModel {
             // Fetch all research atoms
             let researchAtoms = try await AtomRepository.shared.search(query: "", types: [.research])
 
-            // Filter to swipe files and convert
-            var items: [SwipeGalleryItem] = []
-            for atom in researchAtoms {
-                if atom.isSwipeFileAtom, let galleryItem = atom.toSwipeGalleryItem() {
-                    items.append(galleryItem)
+            // Filter to swipe files and convert — several JSON decodes per
+            // atom, so the map runs off the main actor (Atom is Sendable).
+            let items = await Task.detached(priority: .userInitiated) {
+                var items: [SwipeGalleryItem] = []
+                for atom in researchAtoms {
+                    if atom.isSwipeFileAtom, let galleryItem = atom.toSwipeGalleryItem() {
+                        items.append(galleryItem)
+                    }
                 }
-            }
-
-            Self.sortSwipeGalleryItems(&items, by: .recent)
+                Self.sortSwipeGalleryItems(&items, by: .recent)
+                return items
+            }.value
 
             swipeGalleryItems = items
             swipeTotalCount = items.count
@@ -5223,6 +5306,7 @@ public final class CommandKViewModel {
             title: result.title,
             subtitle: result.subtitle ?? item.typeName,
             snippet: result.snippet ?? item.preview,
+            matchedExcerpt: result.matchedExcerpt,
             icon: result.icon,
             accentColor: item.color,
             relevance: result.relevance,

@@ -87,6 +87,11 @@ struct BlockListView: View {
     /// `false` so they don't overwrite that full-document order with a subset.
     var providesNavigationOrder: Bool = true
     var autoFocusFirstTextRegion: Bool = false
+    /// Jump-to-sentence landing: the block that holds a search match wears a
+    /// soft accent wash while set (the host scrolls to it and clears this
+    /// after the pulse). Rows also carry `.id(block.id)` scroll anchors so a
+    /// host ScrollViewReader can bring any block into view.
+    var landingHighlightBlockID: UUID? = nil
     var onSelectionChanged: ((EditorSelectionSnapshot) -> Void)? = nil
     var onContentHeightChange: ((CGFloat) -> Void)? = nil
     var onExitFinalEmptyTextRegion: (() -> Bool)? = nil
@@ -117,6 +122,8 @@ struct BlockListView: View {
                         baseGap: blockGap
                     ))
                     .opacity(rowOpacity(for: block))
+                    .overlay { landingWash(for: block.id) }
+                    .id(block.id)
             }
         }
         .animation(
@@ -447,6 +454,20 @@ struct BlockListView: View {
             return 1
         }
         return 0.4
+    }
+
+    /// Soft accent wash on the block a search landing points at — a reveal,
+    /// not a selection: non-interactive, and it fades with the host clearing
+    /// `landingHighlightBlockID` after the pulse.
+    @ViewBuilder
+    private func landingWash(for blockID: UUID) -> some View {
+        if landingHighlightBlockID == blockID {
+            RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous)
+                .fill(DS.accent.opacity(0.10))
+                .padding(.horizontal, -DS.space6)
+                .allowsHitTesting(false)
+                .transition(.opacity)
+        }
     }
 
     private var resolvedFocusCoordinator: BlockFocusCoordinator {

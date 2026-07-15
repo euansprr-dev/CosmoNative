@@ -19,6 +19,7 @@ struct InquiryMindMapNodeCard: View {
         case .root: return CGSize(width: 230, height: 72)
         case .coreConcept: return CGSize(width: 220, height: 64)
         case .childConcept: return CGSize(width: 180, height: 52)
+        case .seedling: return CGSize(width: 168, height: 46)
         case .question: return CGSize(width: 232, height: 40)
         case .subQuestion: return CGSize(width: 208, height: 36)
         case .questionGroup: return CGSize(width: 170, height: 44)
@@ -112,6 +113,11 @@ struct InquiryMindMapNodeCard: View {
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(CosmoColors.textTertiary)
                 .accessibilityHidden(true)
+        case .seedling:
+            Image(systemName: "leaf")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(node.isRipe ? branchColor : CosmoColors.textTertiary)
+                .accessibilityHidden(true)
         case .root, .childConcept:
             EmptyView()
         }
@@ -121,7 +127,7 @@ struct InquiryMindMapNodeCard: View {
         switch node.kind {
         case .root: return .system(.title3, design: .serif).weight(.semibold)
         case .coreConcept: return .system(.body, design: .serif).weight(.semibold)
-        case .childConcept: return .system(.callout, design: .serif)
+        case .childConcept, .seedling: return .system(.callout, design: .serif)
         case .question, .subQuestion: return CosmoTypography.labelSmall
         case .questionGroup: return CosmoTypography.label
         }
@@ -130,6 +136,7 @@ struct InquiryMindMapNodeCard: View {
     private var titleColor: Color {
         switch node.kind {
         case .question, .subQuestion, .questionGroup: return CosmoColors.textSecondary
+        case .seedling: return node.isRipe ? CosmoColors.textPrimary : CosmoColors.textSecondary
         default: return CosmoColors.textPrimary
         }
     }
@@ -151,6 +158,7 @@ struct InquiryMindMapNodeCard: View {
         case .root: return DS.surfaceElevated
         case .coreConcept: return DS.surfaceElevated
         case .childConcept: return branchColor.opacity(0.08)
+        case .seedling: return node.isRipe ? branchColor.opacity(0.10) : DS.surface.opacity(0.6)
         case .question, .subQuestion: return node.isActive ? branchColor.opacity(0.10) : DS.surface
         case .questionGroup: return DS.surface.opacity(0.6)
         }
@@ -160,6 +168,12 @@ struct InquiryMindMapNodeCard: View {
     private var borderOverlay: some View {
         if node.kind == .questionGroup {
             shape.strokeBorder(DS.borderSubtle, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+        } else if node.kind == .seedling {
+            // Dashed = not yet a page; the ripe accent says "ready to develop".
+            shape.strokeBorder(
+                node.isRipe ? branchColor.opacity(0.55) : DS.borderSubtle,
+                style: StrokeStyle(lineWidth: 1, dash: [4, 3])
+            )
         } else {
             shape.stroke(borderColor, lineWidth: node.isActive ? 1.5 : 0.5)
         }
@@ -171,14 +185,14 @@ struct InquiryMindMapNodeCard: View {
         case .root: return DS.sepiaBorder
         case .coreConcept: return branchColor.opacity(0.45)
         case .childConcept: return branchColor.opacity(0.3)
-        case .question, .subQuestion: return DS.borderSubtle
+        case .seedling, .question, .subQuestion: return DS.borderSubtle
         case .questionGroup: return DS.borderSubtle
         }
     }
 
     private var shadowOpacity: Double {
         switch node.kind {
-        case .question, .subQuestion, .questionGroup: return isHovered ? 0.06 : 0.02
+        case .question, .subQuestion, .questionGroup, .seedling: return isHovered ? 0.06 : 0.02
         default: return isHovered ? 0.10 : 0.05
         }
     }
@@ -187,6 +201,7 @@ struct InquiryMindMapNodeCard: View {
         switch node.kind {
         case .root: return "Topic: \(node.title)"
         case .coreConcept, .childConcept: return "Open concept page \(node.title)"
+        case .seedling: return "Seedling \(node.title)\(node.isRipe ? ", ripe for development" : "")"
         case .question, .subQuestion: return "Open question \(node.title)"
         case .questionGroup: return "\(node.title)"
         }

@@ -430,7 +430,9 @@ final class CosmoInlineSkillResolver {
     }
 }
 
-private struct CosmoInlineAssistantPaneMessages: View {
+// Internal (not private): the Study's Concept Desk hosts this transcript in
+// its conversation column — same store, same session, different room.
+struct CosmoInlineAssistantPaneMessages: View {
     @ObservedObject var store: CosmoInlineAssistantStore
     @State private var skillResolver = CosmoInlineSkillResolver()
 
@@ -464,6 +466,10 @@ private struct CosmoInlineAssistantPaneMessages: View {
                 }
             }
         }
+        // Select→mint: highlighting a concept-shaped phrase in the transcript
+        // offers "New concept" / "Add link" when the session is bound to a
+        // connection (focus mode, pane, or the Study's Concept Desk).
+        .conceptMintPillHost()
     }
 
     @ViewBuilder

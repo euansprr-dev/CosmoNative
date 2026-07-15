@@ -27,6 +27,7 @@ struct DeepDiveOverviewView: View {
     @State private var mastheadVisible = true
     @State private var scrollHomeTick = 0
     @State private var questionsExpanded = false
+    @State private var seedlingsExpanded = false
     @State private var inboxExpanded = false
 
     init(atom: Atom, onClose: @escaping () -> Void) {
@@ -223,6 +224,10 @@ struct DeepDiveOverviewView: View {
                 .studyCascade(hasAppeared, index: 2)
             questionsSection
                 .studyCascade(hasAppeared, index: 3)
+            if !overviewSeedlings.isEmpty {
+                seedlingsSection
+                    .studyCascade(hasAppeared, index: 4)
+            }
             if !viewModel.gardenerProposals.isEmpty {
                 StudyTendingSection(
                     proposals: viewModel.gardenerProposals,
@@ -683,10 +688,123 @@ struct DeepDiveOverviewView: View {
         )
     }
 
+    // MARK: - Seedlings (concepts ripening toward a page)
+
+    /// Incubating mass plus developed pages with unswept material — the
+    /// "what should I develop next?" answer. Ripe first.
+    private var overviewSeedlings: [IncubatingConcept] {
+        (viewModel.atom.deepDiveStructured?.conceptSeedbed ?? [])
+            .filter { seedling in
+                switch seedling.status {
+                case .incubating: return !seedling.stagedItems.isEmpty
+                case .developed: return !seedling.pendingItems.isEmpty
+                case .dismissed: return false
+                }
+            }
+            .sorted { lhs, rhs in
+                let lhsRipe = ConceptRipeness.evaluate(lhs).isRipe
+                let rhsRipe = ConceptRipeness.evaluate(rhs).isRipe
+                if lhsRipe != rhsRipe { return lhsRipe }
+                return lhs.pendingItems.count > rhs.pendingItems.count
+            }
+    }
+
+    private var seedlingsSection: some View {
+        let seedlings = overviewSeedlings
+        let visible = seedlingsExpanded ? seedlings : Array(seedlings.prefix(5))
+        return StudySection(label: "SEEDLINGS", count: seedlings.count) {
+            ForEach(Array(visible.enumerated()), id: \.element.conceptKey) { index, seedling in
+                if index > 0 { StudyPaneDivider() }
+                seedlingRow(seedling)
+            }
+            if seedlings.count > 5 {
+                StudyPaneDivider()
+                StudyOverflowRow(hiddenCount: seedlings.count - 5, isExpanded: $seedlingsExpanded)
+            }
+        }
+    }
+
+    private func seedlingRow(_ seedling: IncubatingConcept) -> some View {
+        let verdict = ConceptRipeness.evaluate(seedling)
+        let isDeveloped = seedling.status == .developed
+        return StudyPaneRow(
+            leading: {
+                Image(systemName: isDeveloped ? "book.closed" : "leaf")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(verdict.isRipe ? DS.accent : CosmoColors.textTertiary)
+                    .accessibilityHidden(true)
+            },
+            title: seedling.name,
+            trailing: {
+                Text(seedlingDetail(seedling, verdict: verdict))
+                    .font(CosmoTypography.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(verdict.isRipe ? DS.accent : CosmoColors.textTertiary)
+            },
+            action: { developSeedling(seedling) }
+        )
+        .contextMenu { seedlingContextMenu(seedling) }
+        .help(isDeveloped ? "Open the page — new material is waiting" : "Develop this concept into a page")
+        .accessibilityLabel("Develop \(seedling.name), \(seedlingDetail(seedling, verdict: verdict))")
+    }
+
+    private func seedlingDetail(_ seedling: IncubatingConcept, verdict: ConceptRipeness.Verdict) -> String {
+        if seedling.status == .developed {
+            return "\(seedling.pendingItems.count) new"
+        }
+        if let reason = verdict.reason { return "Ripe · \(reason)" }
+        return "\(seedling.pendingItems.count) captures"
+    }
+
+    @ViewBuilder
+    private func seedlingContextMenu(_ seedling: IncubatingConcept) -> some View {
+        Button(seedling.status == .developed ? "Open page" : "Develop into a page") {
+            developSeedling(seedling)
+        }
+        if seedling.status == .incubating {
+            Button(seedling.pinnedAt == nil ? "Pin (always ripe)" : "Unpin") {
+                Task {
+                    await ConceptSeedbedService.shared.updateSeedling(
+                        deepDiveUUID: viewModel.atom.uuid,
+                        conceptKey: seedling.conceptKey
+                    ) { $0.pinnedAt = $0.pinnedAt == nil ? ISO8601.string(from: Date()) : nil }
+                    await viewModel.load()
+                }
+            }
+            Button("Dismiss seedling", role: .destructive) {
+                Task {
+                    await ConceptSeedbedService.shared.updateSeedling(
+                        deepDiveUUID: viewModel.atom.uuid,
+                        conceptKey: seedling.conceptKey
+                    ) { $0.status = .dismissed }
+                    await viewModel.load()
+                }
+            }
+        }
+    }
+
+    /// Develop = the page opens and the conversation fills it. The page is
+    /// born empty (or is the existing merge target) — bulk filing never
+    /// happens here; staged material surfaces on the evidence rail.
+    private func developSeedling(_ seedling: IncubatingConcept) {
+        Task {
+            guard let connectionUUID = await ConceptSeedbedService.shared.developSeedling(
+                deepDiveUUID: viewModel.atom.uuid,
+                conceptKey: seedling.conceptKey
+            ) else { return }
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.openBlockInFocusMode,
+                object: nil,
+                userInfo: ["atomUUID": connectionUUID]
+            )
+            await viewModel.load()
+        }
+    }
+
     private var conceptsSection: some View {
         StudySection(label: "CONCEPTS", count: viewModel.connections.count) {
             if viewModel.connections.isEmpty {
-                StudyTeachingRow(text: "Crystallize a session to grow concepts.")
+                StudyTeachingRow(text: "Research grows seedlings; develop a ripe one to earn its page.")
             } else {
                 ForEach(Array(viewModel.connections.prefix(8).enumerated()), id: \.element.uuid) { index, connection in
                     if index > 0 { StudyPaneDivider() }
@@ -809,6 +927,7 @@ struct DeepDiveOverviewView: View {
             questions: viewModel.questions,
             connections: viewModel.connections,
             extracts: viewModel.extracts,
+            seedbed: viewModel.atom.deepDiveStructured?.conceptSeedbed ?? [],
             includeQuestions: mapShowsQuestions
         )
         if graph.root.children.isEmpty {
@@ -853,10 +972,10 @@ struct DeepDiveOverviewView: View {
                 .font(.system(size: 36))
                 .foregroundStyle(DS.accent.opacity(0.5))
                 .accessibilityHidden(true)
-            Text("The map grows as knowledge crystallizes")
+            Text("The map grows as you research")
                 .font(CosmoTypography.titleSmall)
                 .foregroundStyle(CosmoColors.textPrimary)
-            Text("Crystallized concepts become branches; questions hang beneath the concept they explore.")
+            Text("Concept-tagged captures sprout seedlings; developed concepts become branches with their questions beneath them.")
                 .font(CosmoTypography.body)
                 .foregroundStyle(CosmoColors.textSecondary)
                 .multilineTextAlignment(.center)
@@ -875,6 +994,10 @@ struct DeepDiveOverviewView: View {
             guard let uuid = node.atomUUID,
                   let connection = viewModel.connections.first(where: { $0.uuid == uuid }) else { return }
             openConceptPage(connection)
+        case .seedling:
+            // Seedlings develop from the overview's SEEDLINGS section; the map
+            // node is presence, not a door (the Concept Desk arrives next).
+            selectedTab = .overview
         case .root, .questionGroup:
             break
         }

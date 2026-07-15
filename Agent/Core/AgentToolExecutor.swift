@@ -193,6 +193,7 @@ class AgentToolExecutor {
         case "propose_workspace_edit": return try await proposeWorkspaceEdit(arguments)
         case "answer_in_assistant_pane": return try await answerInAssistantPane(arguments)
         case "propose_inquiry_question": return try await proposeInquiryQuestion(arguments)
+        case "pull_evidence": return try await pullEvidence(arguments)
         case "append_to_note": return try await appendToNote(arguments)
         case "create_inline_skill": return try await createInlineSkill(arguments)
         // Recall + Navigation
@@ -2144,6 +2145,78 @@ class AgentToolExecutor {
             "proposalId": proposal.id.uuidString,
             "placement": proposal.placementLabel,
             "message": "Inquiry question staged for user confirmation. The session opens ONLY after the user confirms in the pane — do not claim it has started. Briefly acknowledge the staged question and continue the concept conversation."
+        ] as [String: Any])
+    }
+
+    /// The evidence-aware collaborator: everything the dive already gathered
+    /// about the working concept — the seedbed's staged captures plus tag/key-
+    /// matched extracts — with source titles as provenance. Read-only; the
+    /// model cites from it and stages only what the user accepts.
+    private func pullEvidence(_ args: [String: Any]) async throws -> String {
+        let rawSurfaceID = trimmedString(args["surfaceID"])
+            ?? CosmoEditableSurfaceRegistry.shared.activeSurface?.editableSnapshot().surfaceID
+        guard let connection = await resolveConnection(fromSurfaceID: rawSurfaceID) else {
+            return jsonError("pull_evidence needs a Connection surface — the active surface is not a connection.")
+        }
+        let conceptName = trimmedString(args["concept"]) ?? connection.title ?? ""
+        let conceptKey = ConceptResolver.conceptKey(conceptName)
+        guard let deepDive = await CosmoInlineInquiryQuestionResolver.resolveDeepDive(for: connection) else {
+            return jsonEncode([
+                "success": true,
+                "evidence": [] as [Any],
+                "message": "No deep dive is linked to this concept — nothing has been gathered yet."
+            ] as [String: Any])
+        }
+
+        let sources = (try? await InquiryRepository.shared.fetchSources(forDeepDive: deepDive)) ?? []
+        let sourceTitles = Dictionary(
+            sources.compactMap { source in source.title.map { (source.uuid, $0) } },
+            uniquingKeysWith: { first, _ in first }
+        )
+
+        var rows: [[String: Any]] = []
+        var seenExtracts = Set<String>()
+        func addRow(text: String, extractUUID: String, sourceUUID: String?, kind: String) {
+            guard rows.count < 20, !seenExtracts.contains(extractUUID) else { return }
+            seenExtracts.insert(extractUUID)
+            var row: [String: Any] = ["text": String(text.prefix(400)), "kind": kind]
+            if let sourceUUID, let title = sourceTitles[sourceUUID] { row["source"] = title }
+            rows.append(row)
+        }
+
+        let seedling = deepDive.deepDiveStructured?.conceptSeedbed.first { candidate in
+            candidate.conceptKey == conceptKey
+                || candidate.developedConnectionUUID == connection.uuid
+                || candidate.mergeTargetConnectionUUID == connection.uuid
+        }
+        for item in seedling?.pendingItems ?? [] {
+            addRow(
+                text: item.rawSnippet,
+                extractUUID: item.sourceExtractUUID,
+                sourceUUID: item.sourceUUID,
+                kind: item.proposedSection ?? "capture"
+            )
+        }
+        let extracts = (try? await InquiryRepository.shared.fetchExtracts(forDeepDive: deepDive.uuid)) ?? []
+        for extract in extracts {
+            guard let metadata = extract.extractMetadata else { continue }
+            let body = (extract.body ?? extract.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !body.isEmpty else { continue }
+            let tagKeys = (metadata.conceptNames ?? []).map(ConceptResolver.conceptKey)
+            let matches = tagKeys.contains(conceptKey)
+                || (conceptKey.count >= 4 && body.lowercased().contains(conceptKey))
+            guard matches else { continue }
+            addRow(text: body, extractUUID: extract.uuid, sourceUUID: metadata.sourceUUID, kind: metadata.kind.rawValue)
+        }
+
+        return jsonEncode([
+            "success": true,
+            "concept": conceptName,
+            "deepDive": deepDive.title ?? "Untitled",
+            "evidence": rows,
+            "message": rows.isEmpty
+                ? "Nothing gathered about this concept yet."
+                : "Cite this material conversationally; stage a bullet into the page only after the user accepts it."
         ] as [String: Any])
     }
 

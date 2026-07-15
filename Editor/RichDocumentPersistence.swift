@@ -45,10 +45,13 @@ enum RichDocumentPersistence {
         preferFallbackPlainTextWhenRicher: Bool = false
     ) -> RichDocument {
         let metadataDocument: RichDocument?
-        if let encoded = metadata[key],
-           let data = encoded.data(using: .utf8),
-           let decoded = try? JSONDecoder().decode(RichDocument.self, from: data) {
-            metadataDocument = decoded
+        if let encoded = metadata[key] {
+            // Memoized: block documents re-decode at every mount otherwise
+            // (a thinkspace switch mounts every visible note in one frame).
+            metadataDocument = RichDocumentDecodeCache.shared.document(source: encoded, metadataKey: key) {
+                guard let data = encoded.data(using: .utf8) else { return nil }
+                return try? JSONDecoder().decode(RichDocument.self, from: data)
+            }
         } else {
             metadataDocument = nil
         }

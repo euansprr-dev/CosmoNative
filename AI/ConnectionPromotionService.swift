@@ -173,6 +173,225 @@ final class ConnectionPromotionService {
         return result
     }
 
+    /// Page birth from the Concept Desk: place a freshly developed concept page
+    /// on the deep dive's canvas. Reuses the crystallization placement path —
+    /// existing blocks are never duplicated, and CanvasView reloads only on the
+    /// targeted refreshThinkspacePlacements notification.
+    func placeDevelopedConnection(_ connection: Atom, deepDive: Atom?) async {
+        guard let thinkspaceUUID = await resolveThinkspaceUUID(for: deepDive) else { return }
+        let placed = (try? await placeConnectionIfNeeded(
+            connection,
+            thinkspaceUUID: thinkspaceUUID,
+            index: 0,
+            sessionUUID: "concept-desk"
+        )) ?? false
+        guard placed else { return }
+        NotificationCenter.default.post(
+            name: CosmoNotification.Canvas.refreshThinkspacePlacements,
+            object: nil,
+            userInfo: ["thinkspaceId": thinkspaceUUID]
+        )
+        NotificationCenter.default.post(name: CosmoNotification.Canvas.blocksChanged, object: nil)
+    }
+
+    // MARK: - Concept minting (select → mint → hyperlink)
+
+    struct ConceptMintResult: Sendable {
+        let connectionUUID: String
+        let created: Bool
+    }
+
+    /// Mints a concept page from a selection made while developing `origin`
+    /// ("Closed Loops put you in a state of flow" → mint "Flow"):
+    /// - a sibling page with the same key already exists → returned as a link
+    ///   target (`created: false`), nothing is written;
+    /// - an incubating seedling exists → absorbed via `developSeedling` (its
+    ///   staged material waits on the new page's evidence rail);
+    /// - else a fresh page is born a WIRED STUB, never a bare title: a
+    ///   References row back to the origin, the dive backlink that powers
+    ///   inline mention links, a map cross-link, and (item-text selections
+    ///   only) the originating sentence as its first claim with provenance.
+    /// The ORIGIN's own References row is NOT written here — the origin is
+    /// open and holds the editing lock; hosts add it through the live session
+    /// (`ConnectionContextProvider.addReferenceRow`).
+    func mintConcept(
+        named name: String,
+        fromOrigin origin: Atom,
+        contextSnippet: String? = nil,
+        originSection: ConnectionSectionType? = nil
+    ) async -> ConceptMintResult? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let key = ConceptResolver.conceptKey(trimmed)
+        guard !trimmed.isEmpty, !key.isEmpty,
+              key != ConceptResolver.conceptKey(origin.title ?? "") else { return nil }
+
+        let deepDive = await CosmoInlineInquiryQuestionResolver.resolveDeepDive(for: origin)
+
+        // 1. Same-key sibling → link, don't mint (settles pill races too).
+        if let deepDive,
+           let siblings = try? await InquiryRepository.shared.fetchConnections(forDeepDive: deepDive),
+           let existing = siblings.first(where: { ConceptResolver.conceptKey($0.title ?? "") == key }) {
+            postReferencesChanged(originUUID: origin.uuid, connectionUUID: existing.uuid)
+            return ConceptMintResult(connectionUUID: existing.uuid, created: false)
+        }
+
+        // 2. Obtain the page: absorb the seedling when one is waiting.
+        var page: Atom?
+        if let deepDive,
+           deepDive.deepDiveStructured?.conceptSeedbed
+               .contains(where: { $0.conceptKey == key && $0.status != .dismissed }) == true,
+           let absorbed = await ConceptSeedbedService.shared.developSeedling(
+               deepDiveUUID: deepDive.uuid,
+               conceptKey: key
+           ) {
+            page = try? await atoms.fetch(uuid: absorbed)
+        }
+        if page == nil {
+            var links: [AtomLink] = []
+            if let deepDive {
+                links.append(AtomLink(
+                    type: AtomLinkType.deepDiveConnection.rawValue,
+                    uuid: deepDive.uuid,
+                    entityType: AtomType.deepDive.rawValue
+                ))
+            }
+            let fresh = Atom.new(type: .connection, title: trimmed, body: nil, metadata: nil)
+                .addingLinks(links)
+            page = try? await atoms.create(fresh)
+            if let deepDive, let created = page {
+                _ = try? await ensureDeepDiveLinks(deepDive, connectionUUIDs: [created.uuid])
+            }
+        }
+        guard var minted = page else { return nil }
+
+        // 3. Wire the page (just born — nothing holds its editing lock).
+        var sections = ConnectionFocusModeState.backfillingMissingSections(
+            minted.structured.flatMap { ConnectionStructuredData.fromJSON($0)?.sections } ?? []
+        )
+        let originTitle = origin.title ?? "Untitled Concept"
+        if let refIdx = sections.firstIndex(where: { $0.type == .references }),
+           !sections[refIdx].items.contains(where: { $0.linkedConnectionUUID == origin.uuid }) {
+            sections[refIdx].items.append(Self.linkItem(to: ConnectionLinkRef(uuid: origin.uuid, title: originTitle)))
+        }
+        if let snippet = contextSnippet?.trimmingCharacters(in: .whitespacesAndNewlines), !snippet.isEmpty,
+           let claimIdx = sections.firstIndex(where: { $0.type == .claims }) {
+            sections[claimIdx].items.append(ConnectionItem(
+                content: snippet,
+                sourceAtomUUID: origin.uuid,
+                sourceSnippet: "From \(originTitle)\(originSection.map { " · \($0.displayName)" } ?? "")"
+            ))
+        }
+        minted = minted.mergingStructuredKeys(ConnectionStructuredData(sections: sections))
+        minted.body = flattenedBody(sections: sections, notes: [])
+        minted = minted.withLinks(mergeLinks(minted.linksList, [
+            AtomLink(type: AtomLinkType.connection.rawValue, uuid: origin.uuid, entityType: AtomType.connection.rawValue)
+        ]))
+        guard let saved = try? await atoms.update(minted) else { return nil }
+        var state = ConnectionFocusModeState.load(atomUUID: saved.uuid) ?? ConnectionFocusModeState(atomUUID: saved.uuid)
+        state.sections = sections
+        state.lastModified = Date()
+        state.save()
+
+        // 4. Canvas: beside the origin, cascading — the family stays together.
+        await placeMintedConnection(saved, besideBlockOf: origin.uuid, deepDive: deepDive)
+
+        postReferencesChanged(originUUID: origin.uuid, connectionUUID: saved.uuid)
+        NotificationCenter.default.post(name: CosmoNotification.NodeGraph.graphNodeUpdated, object: nil)
+        return ConceptMintResult(connectionUUID: saved.uuid, created: true)
+    }
+
+    private func postReferencesChanged(originUUID: String, connectionUUID: String) {
+        NotificationCenter.default.post(
+            name: CosmoNotification.Connection.referencesChanged,
+            object: nil,
+            userInfo: ["originUUID": originUUID, "connectionUUID": connectionUUID]
+        )
+    }
+
+    /// Minted pages land beside their origin's block — right of it, cascading
+    /// down as more concepts are minted from the same parent. Falls back to
+    /// the content-edge anchor when the origin has no block.
+    private func placeMintedConnection(_ connection: Atom, besideBlockOf originUUID: String, deepDive: Atom?) async {
+        var thinkspaceUUID = await resolveThinkspaceUUID(for: deepDive)
+        if thinkspaceUUID == nil {
+            thinkspaceUUID = try? await anyBlockThinkspace(atomUUID: originUUID)
+        }
+        guard let thinkspaceUUID else { return }
+        guard (try? await existingCanvasBlockId(atomUUID: connection.uuid, thinkspaceUUID: thinkspaceUUID)) == nil else { return }
+
+        if let frame = try? await blockFrame(atomUUID: originUUID, thinkspaceUUID: thinkspaceUUID) {
+            let cascade = (try? await mintCascadeCount(originFrame: frame, thinkspaceUUID: thinkspaceUUID)) ?? 0
+            let point = Self.mintPlacementPoint(originFrame: frame, cascadeIndex: cascade)
+            try? await insertBlock(for: connection, at: point, thinkspaceUUID: thinkspaceUUID, sessionUUID: "concept-mint")
+        } else {
+            _ = try? await placeConnectionIfNeeded(connection, thinkspaceUUID: thinkspaceUUID, index: 0, sessionUUID: "concept-mint")
+        }
+        NotificationCenter.default.post(
+            name: CosmoNotification.Canvas.refreshThinkspacePlacements,
+            object: nil,
+            userInfo: ["thinkspaceId": thinkspaceUUID]
+        )
+        NotificationCenter.default.post(name: CosmoNotification.Canvas.blocksChanged, object: nil)
+    }
+
+    /// Pure placement math (unit-tested): right of the origin, one row down
+    /// per already-minted sibling in the strip.
+    nonisolated static func mintPlacementPoint(originFrame: CGRect, cascadeIndex: Int) -> CGPoint {
+        CGPoint(x: originFrame.maxX + 120, y: originFrame.minY + CGFloat(cascadeIndex) * 64)
+    }
+
+    private func blockFrame(atomUUID: String, thinkspaceUUID: String) async throws -> CGRect? {
+        try await database.asyncRead { db in
+            try Row.fetchOne(
+                db,
+                sql: """
+                    SELECT position_x, position_y, width, height FROM canvas_blocks
+                    WHERE entity_uuid = ? AND thinkspace_id = ? AND document_type = 'home' AND document_id = 0 AND is_deleted = 0
+                    LIMIT 1
+                """,
+                arguments: [atomUUID, thinkspaceUUID]
+            ).map { row in
+                let x: Double = row["position_x"] ?? 0
+                let y: Double = row["position_y"] ?? 0
+                let width: Double = row["width"] ?? 320
+                let height: Double = row["height"] ?? 220
+                return CGRect(x: x, y: y, width: width, height: height)
+            }
+        }
+    }
+
+    /// How many blocks already occupy the mint strip right of the origin —
+    /// the next minted sibling stacks one row below them.
+    private func mintCascadeCount(originFrame: CGRect, thinkspaceUUID: String) async throws -> Int {
+        let stripMinX = originFrame.maxX + 60
+        let stripMaxX = originFrame.maxX + 180
+        return try await database.asyncRead { db in
+            try Int.fetchOne(
+                db,
+                sql: """
+                    SELECT COUNT(*) FROM canvas_blocks
+                    WHERE thinkspace_id = ? AND document_type = 'home' AND document_id = 0 AND is_deleted = 0
+                      AND position_x BETWEEN ? AND ?
+                """,
+                arguments: [thinkspaceUUID, stripMinX, stripMaxX]
+            ) ?? 0
+        }
+    }
+
+    private func anyBlockThinkspace(atomUUID: String) async throws -> String? {
+        try await database.asyncRead { db in
+            try String.fetchOne(
+                db,
+                sql: """
+                    SELECT thinkspace_id FROM canvas_blocks
+                    WHERE entity_uuid = ? AND document_type = 'home' AND document_id = 0 AND is_deleted = 0
+                    LIMIT 1
+                """,
+                arguments: [atomUUID]
+            )
+        }
+    }
+
     private func markExtractsPromoted(_ extractUUIDs: [String], into connectionUUID: String) async {
         for uuid in extractUUIDs {
             guard var extract = try? await atoms.fetch(uuid: uuid),
@@ -588,17 +807,25 @@ final class ConnectionPromotionService {
         if try await existingCanvasBlockId(atomUUID: connection.uuid, thinkspaceUUID: thinkspaceUUID) != nil {
             return false
         }
-
-        let blockId = UUID().uuidString
         // Land next to the user's existing content, not at canvas origin where
         // it would be invisible at their current viewport.
         let anchor = try await contentAnchor(thinkspaceUUID: thinkspaceUUID)
-        let x = anchor.x + CGFloat(index * 340)
-        let y = anchor.y + CGFloat((index % 2) * 120)
-        var block = CanvasBlock.fromAtom(connection, position: CGPoint(x: x, y: y))
+        let position = CGPoint(
+            x: anchor.x + CGFloat(index * 340),
+            y: anchor.y + CGFloat((index % 2) * 120)
+        )
+        try await insertBlock(for: connection, at: position, thinkspaceUUID: thinkspaceUUID, sessionUUID: sessionUUID)
+        return true
+    }
+
+    /// The one block writer both placement paths share (duplicate-block law:
+    /// callers guard with `existingCanvasBlockId` first).
+    private func insertBlock(for connection: Atom, at position: CGPoint, thinkspaceUUID: String, sessionUUID: String) async throws {
+        let blockId = UUID().uuidString
+        var block = CanvasBlock.fromAtom(connection, position: position)
         block = CanvasBlock(
             id: blockId,
-            position: CGPoint(x: x, y: y),
+            position: position,
             size: CGSize(width: 320, height: 220),
             isPinned: block.isPinned,
             zIndex: 0,
@@ -617,7 +844,6 @@ final class ConnectionPromotionService {
             try record.save(db)
         }
         try await appendBlockToThinkspaceMetadata(blockId: blockId, thinkspaceUUID: thinkspaceUUID)
-        return true
     }
 
     /// A placement origin just right of the thinkspace's existing content,

@@ -99,19 +99,10 @@ class PaneManager: ObservableObject {
     // MARK: - Published State
 
     /// Ordered list of open panes (right column deck, in opening order)
-    @Published var panes: [PaneContent] = [] {
-        didSet {
-            // From the first pane until the deck's slide-out completes (its
-            // onDisappear in SplitPaneContainer), canvas screenshot capture is
-            // suppressed — the deck would otherwise be composited into a
-            // thinkspace's stored thumbnail.
-            if !panes.isEmpty {
-                PaneDeckPresentationState.shared.setOnScreen(true)
-            }
-        }
-    }
+    @Published var panes: [PaneContent] = []
 
-    /// The pane expanded to full reading width. Every other pane collapses to a spine.
+    /// The pane expanded to full reading width. Every other pane collapses
+    /// into the tab rail.
     @Published var focusedPaneId: String? = nil
 
     /// Optional second pane kept expanded beside the focused one (60/40 split).
@@ -132,7 +123,7 @@ class PaneManager: ObservableObject {
 
     // MARK: - Constants
 
-    /// Maximum number of simultaneous panes in the deck (spines are cheap)
+    /// Maximum number of simultaneous panes in the deck (tabs are cheap)
     let maxPanes: Int = 6
 
     /// Minimum/maximum main split ratio
@@ -203,24 +194,11 @@ class PaneManager: ObservableObject {
 
     // MARK: - Pane Lifecycle
 
-    /// Snapshot every expanded pane the pending focus/pin change is about to
-    /// collapse — synchronously, BEFORE the state mutation, while its pixels
-    /// are still laid out on screen. The spine shows these pixels as its
-    /// page edge.
-    private func capturePageEdges(nextFocused: String?, nextPinned: String?) {
-        let expandedNext = Set([nextFocused, nextPinned].compactMap { $0 })
-        for id in Set([focusedPaneId, pinnedPaneId].compactMap { $0 }) where !expandedNext.contains(id) {
-            PaneSpineSnapshotStore.shared.capture(paneId: id)
-        }
-    }
-
     /// Open a new pane. Silently ignores if content is already open or max reached.
     func openPane(_ content: PaneContent) {
         // Check duplicates
         guard !panes.contains(where: { $0.id == content.id }) else { return }
         guard panes.count < maxPanes else { return }
-
-        capturePageEdges(nextFocused: content.id, nextPinned: pinnedPaneId)
 
         let isFirst = panes.isEmpty
         panes.append(content)
@@ -246,14 +224,14 @@ class PaneManager: ObservableObject {
         let closedPane = panes[index]
         let closedId = closedPane.id
         panes.remove(at: index)
-        PaneSpineSnapshotStore.shared.discard(paneId: closedId)
 
         if pinnedPaneId == closedId {
             pinnedPaneId = nil
         }
         if focusedPaneId == closedId {
-            // Focus falls back to the most recently opened remaining pane
-            focusedPaneId = panes.last?.id
+            // Focus moves to the tab-rail neighbor (the closed tab's slot,
+            // clamped) — the Safari close behavior.
+            focusedPaneId = panes.isEmpty ? nil : panes[min(index, panes.count - 1)].id
         }
 
         if closedId == "collaborator" {
@@ -311,10 +289,17 @@ class PaneManager: ObservableObject {
         }
     }
 
+    /// Close every pane except the kept one (the tab rail's "Close Other Panes").
+    func closeOtherPanes(keeping id: String) {
+        guard panes.contains(where: { $0.id == id }) else { return }
+        for pane in panes where pane.id != id {
+            closePane(pane)
+        }
+    }
+
     /// Close all panes and reset state.
     func closeAllPanes() {
         panes.removeAll()
-        PaneSpineSnapshotStore.shared.discardAll()
         focusedPaneId = nil
         pinnedPaneId = nil
         withAnimation(ProMotionSprings.snappy) {
@@ -326,10 +311,9 @@ class PaneManager: ObservableObject {
 
     // MARK: - Focus & Pin (deck model)
 
-    /// Expand a pane to reading width; everything else collapses to spines.
+    /// Expand a pane to reading width; everything else collapses into the tab rail.
     func focusPane(_ id: String) {
         guard panes.contains(where: { $0.id == id }) else { return }
-        capturePageEdges(nextFocused: id, nextPinned: pinnedPaneId)
         focusedPaneId = id
         activatePane(id)
     }
@@ -359,9 +343,19 @@ class PaneManager: ObservableObject {
     func togglePin(_ id: String? = nil) {
         guard let target = id ?? focusedPaneId,
               panes.contains(where: { $0.id == target }) else { return }
-        let nextPinned = (pinnedPaneId == target) ? nil : target
-        capturePageEdges(nextFocused: focusedPaneId, nextPinned: nextPinned)
-        pinnedPaneId = nextPinned
+        pinnedPaneId = (pinnedPaneId == target) ? nil : target
+    }
+
+    /// Move a pane to a new deck position (tab drag-reorder / context menu).
+    /// Focus, pin, and active state ride the pane id, not the position; the
+    /// ⌘⌃-digit shortcuts follow deck order, so reordering retargets them —
+    /// the Safari contract.
+    func movePane(_ id: String, toIndex newIndex: Int) {
+        guard let index = panes.firstIndex(where: { $0.id == id }),
+              panes.indices.contains(newIndex),
+              index != newIndex else { return }
+        let pane = panes.remove(at: index)
+        panes.insert(pane, at: newIndex)
     }
 
     // MARK: - Active Pane Management
@@ -384,7 +378,6 @@ class PaneManager: ObservableObject {
 
     func openOrActivateCollaborator(target: CollaborationTarget, presetId: String?) {
         let collaborator = PaneContent.collaborator(target: target, presetId: presetId)
-        capturePageEdges(nextFocused: collaborator.id, nextPinned: pinnedPaneId)
 
         if let existingIndex = panes.firstIndex(where: { $0.id == collaborator.id }) {
             panes[existingIndex] = collaborator
@@ -415,7 +408,6 @@ class PaneManager: ObservableObject {
 
     func openOrActivateCosmoWindow() {
         let cosmoWindow = PaneContent.cosmoWindow
-        capturePageEdges(nextFocused: cosmoWindow.id, nextPinned: pinnedPaneId)
 
         if panes.contains(where: { $0.id == cosmoWindow.id }) {
             activePaneId = cosmoWindow.id
@@ -438,7 +430,6 @@ class PaneManager: ObservableObject {
 
     func openOrActivateInlineAssistant() {
         let assistant = PaneContent.inlineAssistant
-        capturePageEdges(nextFocused: assistant.id, nextPinned: pinnedPaneId)
 
         if panes.contains(where: { $0.id == assistant.id }) {
             activePaneId = assistant.id

@@ -284,7 +284,112 @@ struct AtelierSheetHeader: View {
     }
 }
 
+// MARK: - Workbench shell (the bench anatomy)
+
+/// The app has two window species. **Rooms** (Notes, Content) are immersive
+/// paper — chrome recedes, nothing between you and the text. **Benches**
+/// (Study, Concept Desk, Idea) are places you work on a thing with
+/// instruments around it: a navigation band up top, and beneath it the whole
+/// working area clipped into ONE rounded sheet whose columns are welded by
+/// hairlines. This is the bench's sheet — the mechanics extracted from the
+/// Study shell (July 2026) so every bench displaces, overlays, and clips
+/// identically. Panels self-size and carry their own `studyPanelSurface`;
+/// the caller owns breakpoint policy and passes `panelsDisplace`.
+struct WorkbenchShell<Leading: View, Center: View, Trailing: View>: View {
+    /// True at regular widths: panels sit beside the center as true columns.
+    /// False below: panels slide OVER the center, inside the sheet.
+    var panelsDisplace: Bool
+    var isLeadingShowing: Bool
+    var isTrailingShowing: Bool
+    /// Narrowest widths: a whisper of scrim behind overlay panels; tap
+    /// dismisses (the Study's `.narrow` manner).
+    var showsScrim: Bool = false
+    var onScrimTap: () -> Void = {}
+    var cornerRadius: CGFloat = 14
+    @ViewBuilder var leading: () -> Leading
+    @ViewBuilder var center: () -> Center
+    @ViewBuilder var trailing: () -> Trailing
+
+    var body: some View {
+        ZStack {
+            columns
+            if showsScrim, !panelsDisplace, isLeadingShowing || isTrailingShowing {
+                scrim
+            }
+            if !panelsDisplace {
+                overlayPanels
+            }
+        }
+        .background(DS.bg)
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .stroke(DS.borderSubtle, lineWidth: 1)
+        )
+    }
+
+    /// At regular width the panels are true columns of the sheet — welded by
+    /// their hairlines, clipped by the sheet's one rounded edge.
+    private var columns: some View {
+        HStack(spacing: 0) {
+            if panelsDisplace, isLeadingShowing {
+                leading()
+                    .transition(.move(edge: .leading).combined(with: .opacity))
+            }
+            center()
+                .frame(maxWidth: .infinity)
+            if panelsDisplace, isTrailingShowing {
+                trailing()
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
+        }
+        .animation(ProMotionSprings.focusTransition, value: isLeadingShowing)
+        .animation(ProMotionSprings.focusTransition, value: isTrailingShowing)
+    }
+
+    /// Below regular width the panels slide OVER the center inside the sheet.
+    private var overlayPanels: some View {
+        HStack(spacing: 0) {
+            if isLeadingShowing {
+                leading()
+                    .transition(.move(edge: .leading).combined(with: .opacity))
+            }
+            Spacer(minLength: 0)
+            if isTrailingShowing {
+                trailing()
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
+        }
+        .animation(ProMotionSprings.focusTransition, value: isLeadingShowing)
+        .animation(ProMotionSprings.focusTransition, value: isTrailingShowing)
+    }
+
+    private var scrim: some View {
+        Color.black.opacity(0.10)
+            .transition(.opacity)
+            .onTapGesture(perform: onScrimTap)
+            .accessibilityLabel("Dismiss panels")
+    }
+}
+
 // MARK: - Stagger-in modifier
+
+/// Reduce Motion keeps the fade and drops the rise (the surface-system rule);
+/// a ViewModifier so the environment is readable.
+private struct AtelierStaggerIn: ViewModifier {
+    let delay: Double
+    let appeared: Bool
+    let duration: Double
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(appeared ? 1 : 0)
+            .offset(y: appeared || reduceMotion ? 0 : 8)
+            .animation(.easeOut(duration: duration).delay(delay), value: appeared)
+    }
+}
 
 extension View {
     /// Fade + 8pt rise with a delay. Applied to each manuscript section so the
@@ -292,9 +397,6 @@ extension View {
     /// read must lead the settle (near-zero delay, quick duration) — only
     /// ornaments earn a longer stagger.
     func atelierStaggerIn(delay: Double, appeared: Bool, duration: Double = 0.55) -> some View {
-        self
-            .opacity(appeared ? 1 : 0)
-            .offset(y: appeared ? 0 : 8)
-            .animation(.easeOut(duration: duration).delay(delay), value: appeared)
+        modifier(AtelierStaggerIn(delay: delay, appeared: appeared, duration: duration))
     }
 }

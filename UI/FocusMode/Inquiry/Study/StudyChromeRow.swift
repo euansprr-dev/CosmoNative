@@ -171,11 +171,14 @@ struct StudyChromeRow: View {
     }
 
     /// The one tinted glass element on the screen — the primary action.
-    /// Hover lifts it a whisper; the interactive glass answers the press.
+    /// Tap = the Debrief (teach-back, then review); the menu holds the quiet
+    /// close for low-energy sessions (everything simply incubates).
     private var crystallizeIsland: some View {
-        StudyCrystallizeIsland(showsLabel: breakpoint != .narrow) {
-            viewModel.setPhase(.crystallize)
-        }
+        StudyCrystallizeIsland(
+            showsLabel: breakpoint != .narrow,
+            action: { viewModel.startDebrief() },
+            onQuickClose: { Task { await viewModel.quickCloseSession() } }
+        )
     }
 
     // MARK: - Button factory (the Connection toolbar anatomy + hover life)
@@ -267,17 +270,20 @@ struct StudyChromeTextButton: View {
 private struct StudyCrystallizeIsland: View {
     let showsLabel: Bool
     let action: () -> Void
+    let onQuickClose: () -> Void
 
     @State private var isHovered = false
 
     var body: some View {
-        Button(action: action) {
+        Menu {
+            Button("Close quietly") { onQuickClose() }
+        } label: {
             HStack(spacing: DS.space4) {
                 Image(systemName: "sparkles")
                     .font(DS.caption.weight(.semibold))
                     .accessibilityHidden(true)
                 if showsLabel {
-                    Text("Crystallize")
+                    Text("Debrief")
                         .font(DS.buttonText.weight(.semibold))
                 }
             }
@@ -285,15 +291,19 @@ private struct StudyCrystallizeIsland: View {
             .padding(.horizontal, DS.space12)
             .frame(height: CosmoChromeMetrics.height)
             .contentShape(Capsule())
+        } primaryAction: {
+            action()
         }
+        .menuStyle(.button)
         .buttonStyle(.plain)
+        .menuIndicator(.hidden)
         .glassEffect(.regular.tint(DS.accentSoft).interactive(), in: .capsule)
         .scaleEffect(isHovered ? 1.02 : 1)
         .onHover { hovering in
             withAnimation(ProMotionSprings.hover) { isHovered = hovering }
         }
         .keyboardShortcut(.return, modifiers: [.command])
-        .help("Turn this session's branches into Concepts (⌘⏎)")
-        .accessibilityLabel("Crystallize inquiry session")
+        .help("Close the session with a teach-back debrief (⌘⏎) — hold for quiet close")
+        .accessibilityLabel("Debrief inquiry session")
     }
 }

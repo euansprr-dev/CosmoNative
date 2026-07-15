@@ -68,7 +68,10 @@ final class PaneManagerBrowserPaneTests: XCTestCase {
         XCTAssertFalse(source.contains(".animation(ProMotionSprings.snappy, value: paneManager.mainSplitRatio)"))
     }
 
-    func testCollapsedPaneContentMovesAwayFromSpineHitZone() {
+    func testCollapsedPaneContentMovesAwayFromItsSlot() {
+        // Collapsed panes stay mounted (state survives tab switches) but their
+        // NSView-backed editors can paint through opacity/clipping — the body
+        // must be offset fully clear of the visible slot.
         XCTAssertEqual(
             PaneSlotPresentationPolicy.contentOffset(isExpanded: true, expandedWidth: 520),
             0
@@ -79,54 +82,100 @@ final class PaneManagerBrowserPaneTests: XCTestCase {
         )
     }
 
-    func testCollapsedPaneHoverDwellAllowsCaptionGlanceBeforeCommit() {
-        // Page-edge spines float a title caption on hover: dwell must be long
-        // enough to read the caption and retreat (a glance), short enough
-        // that a deliberate rest still commits quickly.
-        XCTAssertEqual(PaneSlotPresentationPolicy.hoverDwellMilliseconds, 300)
+    func testInterSlotSpacingOnlySeparatesTwoExpandedPanes() {
+        // Collapsed slots are zero-width: a gap next to one would read as a
+        // phantom seam where a hidden pane sits. Only the focused|pinned
+        // boundary carries the 6pt seam.
+        XCTAssertEqual(
+            PaneSlotPresentationPolicy.interSlotSpacing(leftIsExpanded: true, rightIsExpanded: true),
+            PaneSlotPresentationPolicy.expandedSlotSpacing
+        )
+        XCTAssertEqual(PaneSlotPresentationPolicy.interSlotSpacing(leftIsExpanded: false, rightIsExpanded: true), 0)
+        XCTAssertEqual(PaneSlotPresentationPolicy.interSlotSpacing(leftIsExpanded: true, rightIsExpanded: false), 0)
+        XCTAssertEqual(PaneSlotPresentationPolicy.interSlotSpacing(leftIsExpanded: false, rightIsExpanded: false), 0)
     }
 
-    func testLeftCollapsedSpineTouchesFollowingExpandedPane() throws {
+    func testPaneTabRailFollowsWorkspaceToolbarGrammar() throws {
         let source = try String(
             contentsOf: repositoryRoot.appendingPathComponent("Navigation/SplitPaneContainer.swift"),
             encoding: .utf8
         )
 
         XCTAssertTrue(
-            source.contains("static func interSlotSpacing(leftIsExpanded: Bool, rightIsExpanded: Bool) -> CGFloat"),
-            "Pane slot spacing must be directional so a left-side collapsed spine can touch the following expanded pane."
+            source.contains(".cosmoGlassPanel(role: .floatingAssistant"),
+            "The tab rail is floating chrome and must use the sanctioned glass panel, not ad-hoc materials."
         )
         XCTAssertTrue(
-            source.contains("if !leftIsExpanded && rightIsExpanded { return 0 }"),
-            "Only the collapsed-left / expanded-right edge should close its visual gap."
+            source.contains("matchedGeometryEffect(id: \"pane-tab-selection\""),
+            "The focused tab's fill must slide between rail positions instead of swapping."
         )
         XCTAssertTrue(
-            source.contains("HStack(spacing: 0)"),
-            "The deck must render explicit per-edge spacers instead of one fixed HStack spacing."
+            source.contains("paneManager.panes.count > 1"),
+            "The tab rail only appears once a second pane exists — a single pane needs no tab."
         )
         XCTAssertTrue(
-            source.contains("layout.spacingAfter[pane.id]"),
-            "The rendered deck must use the layout's directional spacing for each pane edge."
+            source.contains(".help(\"\\(displayTitle) (⌘⌃\\(position))\")"),
+            "Every tab must carry a tooltip with its focus shortcut (macOS manners)."
+        )
+        XCTAssertTrue(
+            source.contains("DragGesture(minimumDistance: 4)"),
+            "Tab reorder needs a minimum drag distance so plain clicks still focus."
+        )
+        XCTAssertTrue(
+            source.contains("guard draggedPaneId == nil else { return }"),
+            "A completed drag's mouse-up must never read as a focus click."
+        )
+        XCTAssertTrue(
+            source.contains("Button(\"Move Pane Left\")"),
+            "Reorder must stay keyboard/menu-reachable, not drag-only."
         )
     }
 
-    func testCollapsedPaneSlotAnchorsVisibleFrameToSpineWidth() throws {
+    func testMovePaneReordersDeckAndIgnoresInvalidTargets() {
+        let manager = PaneManager()
+        manager.openPane(.commandCenter)
+        manager.openPane(.swipeGallery)
+        manager.openPane(.cosmoWindow)
+
+        manager.movePane(PaneContent.commandCenter.id, toIndex: 2)
+        XCTAssertEqual(
+            manager.panes.map(\.id),
+            [PaneContent.swipeGallery.id, PaneContent.cosmoWindow.id, PaneContent.commandCenter.id]
+        )
+
+        manager.movePane(PaneContent.cosmoWindow.id, toIndex: 0)
+        XCTAssertEqual(
+            manager.panes.map(\.id),
+            [PaneContent.cosmoWindow.id, PaneContent.swipeGallery.id, PaneContent.commandCenter.id]
+        )
+
+        // Out-of-range targets and unknown panes are no-ops.
+        let frozen = manager.panes.map(\.id)
+        manager.movePane(PaneContent.cosmoWindow.id, toIndex: 3)
+        manager.movePane(PaneContent.cosmoWindow.id, toIndex: -1)
+        manager.movePane("missing", toIndex: 0)
+        XCTAssertEqual(manager.panes.map(\.id), frozen)
+
+        // Focus rides the pane id, never the slot.
+        XCTAssertEqual(manager.focusedPaneId, PaneContent.cosmoWindow.id)
+    }
+
+    func testCollapsedPaneSlotAnchorsVisibleFrameBeforeClipping() throws {
         let source = try String(
             contentsOf: repositoryRoot.appendingPathComponent("Navigation/SplitPaneContainer.swift"),
             encoding: .utf8
         )
         let callStart = try XCTUnwrap(source.range(of: "PaneSlotView(")?.lowerBound)
-        let callEnd = try XCTUnwrap(source[callStart...].range(of: "onFocus:")?.lowerBound)
+        let callEnd = try XCTUnwrap(source[callStart...].range(of: "onClose:")?.lowerBound)
         let slotCall = String(source[callStart..<callEnd])
 
         XCTAssertTrue(
             slotCall.contains("slotWidth: slotWidth"),
-            "PaneSlotView must receive the deck slot width so collapsed slots paint from the 44pt spine bounds."
+            "PaneSlotView must receive the deck slot width so collapsed slots paint from zero-width bounds."
         )
 
         let viewStart = try XCTUnwrap(source.range(of: "private struct PaneSlotView")?.lowerBound)
-        let badgeStart = try XCTUnwrap(source.range(of: "private var pinnedBadge")?.lowerBound)
-        let slotView = String(source[viewStart..<badgeStart])
+        let slotView = String(source[viewStart...])
 
         XCTAssertTrue(slotView.contains("let slotWidth: CGFloat"))
         XCTAssertTrue(
@@ -137,6 +186,35 @@ final class PaneManagerBrowserPaneTests: XCTestCase {
             try XCTUnwrap(slotView.range(of: ".frame(width: slotWidth, alignment: .leading)")?.lowerBound),
             try XCTUnwrap(slotView.range(of: ".clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))")?.lowerBound)
         )
+    }
+
+    func testClosingFocusedPaneFocusesTabRailNeighbor() {
+        let manager = PaneManager()
+        manager.openPane(.commandCenter)
+        manager.openPane(.swipeGallery)
+        manager.openPane(.cosmoWindow)
+        manager.focusPane(PaneContent.swipeGallery.id)
+
+        manager.closePane(.swipeGallery)
+
+        // The tab to the right of the closed one inherits focus (Safari behavior).
+        XCTAssertEqual(manager.focusedPaneId, PaneContent.cosmoWindow.id)
+
+        manager.closePane(.cosmoWindow)
+        XCTAssertEqual(manager.focusedPaneId, PaneContent.commandCenter.id)
+    }
+
+    func testCloseOtherPanesKeepsOnlyTheKeptPane() {
+        let manager = PaneManager()
+        manager.openPane(.commandCenter)
+        manager.openPane(.swipeGallery)
+        manager.openPane(.cosmoWindow)
+
+        manager.closeOtherPanes(keeping: PaneContent.swipeGallery.id)
+
+        XCTAssertEqual(manager.panes.map(\.id), [PaneContent.swipeGallery.id])
+        XCTAssertEqual(manager.focusedPaneId, PaneContent.swipeGallery.id)
+        XCTAssertNil(manager.pinnedPaneId)
     }
 
     func testPaneContentChromeFillsAssignedSlotBeforePaintingBackground() throws {

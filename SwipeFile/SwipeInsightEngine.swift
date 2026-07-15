@@ -58,8 +58,8 @@ final class SwipeInsightEngine {
 
     /// Stamped into `SwipeAnalysis.analysisVersion`. Bump when the prompt or
     /// output schema changes materially. (Legacy: heuristic pass = 1, unified
-    /// classification = 2.)
-    static let insightVersion = 3
+    /// classification = 2, pre-canonical-niche insight = 3.)
+    static let insightVersion = 4
 
     /// UUIDs currently being analyzed — supports concurrent batch processing.
     private(set) var analyzingUUIDs: Set<String> = []
@@ -85,11 +85,13 @@ final class SwipeInsightEngine {
         }
 
         let hookText = slides.first?.text ?? String(fallbackText.prefix(500))
+        let canonicalNiches = await NicheRegistry.shared.canonicalListForPrompt()
         let prompt = Self.buildPrompt(
             atom: atom,
             slides: slides,
             fallbackText: fallbackText,
-            canonicalBeats: BeatPatternService.shared.canonicalLabelsForPrompt
+            canonicalBeats: BeatPatternService.shared.canonicalLabelsForPrompt,
+            canonicalNiches: canonicalNiches
         )
 
         do {
@@ -117,6 +119,12 @@ final class SwipeInsightEngine {
                 creatorUUID: creatorUUID,
                 atom: atom
             )
+
+            // Canonicalize the niche — the model was shown the registry, the
+            // deterministic matcher is the net (exact → alias → fuzzy → create).
+            if let rawNiche = analysis.niche, !rawNiche.isEmpty {
+                analysis.niche = await NicheRegistry.shared.resolve(rawNiche)
+            }
 
             // Beat normalization → the structural fingerprint that Stage A
             // pattern matching keys on.
@@ -359,7 +367,8 @@ final class SwipeInsightEngine {
         atom: Atom,
         slides: [TranscriptSlide],
         fallbackText: String,
-        canonicalBeats: String
+        canonicalBeats: String,
+        canonicalNiches: String = ""
     ) -> String {
         let richContent = atom.richContent
         let platform = atom.researchMetadata?.contentSource ?? "unknown"
@@ -485,7 +494,7 @@ final class SwipeInsightEngine {
         - post: a single static image (no video). NEVER use "post" for anything with video or duration > 0.
         Transcription-modality guidance: voiceoverOnly ⇒ strongly prefer voiceoverReel. voiceoverPlusText ⇒ prefer voiceoverReel or oneSliderReel unless distinct visual cards are evident. On-screen text that mirrors speech = captions, not slides.
 
-        niche — a short vertical label ("Real Estate Wholesaling", "Fitness", "SaaS Marketing").
+        \(NicheRegistry.promptInstruction(canonicalList: canonicalNiches))
 
         creatorHandle / creatorName — the creator's @username and display name. The Creator/Author field above may be a numeric ID — never use a numeric ID. Look for the real @username in the transcript or caption; if none exists, return null for creatorHandle.
 

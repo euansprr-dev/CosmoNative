@@ -636,17 +636,57 @@ enum RichDocumentMetadataKeys {
     static let contentDraftDocument = "richDraftDocument"
 }
 
+/// Process-wide memoization for RichDocument decodes. Reading a document out
+/// of atom metadata costs a full JSON parse of the metadata column, a
+/// re-serialization of the embedded object, and a Codable decode — and it runs
+/// on the main thread at every block/editor mount (a thinkspace switch mounts
+/// every visible note in one frame). Results are keyed by the exact source
+/// string + metadata key, so any content change re-decodes.
+final class RichDocumentDecodeCache: @unchecked Sendable {
+    static let shared = RichDocumentDecodeCache()
+
+    private struct Key: Hashable {
+        let source: String
+        let metadataKey: String
+    }
+
+    /// nil documents are cached too — "this metadata has no document under
+    /// this key" is a stable fact of the source string.
+    private var entries: [Key: RichDocument?] = [:]
+    private let lock = NSLock()
+    private let limit = 512
+
+    private init() {}
+
+    func document(source: String, metadataKey: String, decode: () -> RichDocument?) -> RichDocument? {
+        let key = Key(source: source, metadataKey: metadataKey)
+        lock.lock()
+        let cached = entries[key]
+        lock.unlock()
+        if let cached { return cached }
+
+        let decoded = decode()
+        lock.lock()
+        if entries.count >= limit { entries.removeAll(keepingCapacity: true) }
+        entries[key] = decoded
+        lock.unlock()
+        return decoded
+    }
+}
+
 enum RichDocumentMetadataStorage {
     static func readDocument(from metadata: String?, key: String) -> RichDocument? {
-        guard let metadata,
-              let data = metadata.data(using: .utf8),
-              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let value = dict[key],
-              JSONSerialization.isValidJSONObject(value),
-              let docData = try? JSONSerialization.data(withJSONObject: value) else {
-            return nil
+        guard let metadata else { return nil }
+        return RichDocumentDecodeCache.shared.document(source: metadata, metadataKey: key) {
+            guard let data = metadata.data(using: .utf8),
+                  let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let value = dict[key],
+                  JSONSerialization.isValidJSONObject(value),
+                  let docData = try? JSONSerialization.data(withJSONObject: value) else {
+                return nil
+            }
+            return try? JSONDecoder().decode(RichDocument.self, from: docData)
         }
-        return try? JSONDecoder().decode(RichDocument.self, from: docData)
     }
 
     static func writeDocument(_ document: RichDocument?, into metadata: String?, key: String) -> String? {

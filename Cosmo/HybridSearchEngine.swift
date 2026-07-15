@@ -7,6 +7,42 @@ import Foundation
 import Accelerate
 import GRDB
 
+/// Small LRU for query embeddings: embeddings are deterministic per string,
+/// and search-as-you-type re-embeds the same queries constantly (backspacing,
+/// re-running a recent search). One cloud round-trip per distinct query.
+actor QueryEmbeddingCache {
+    static let shared = QueryEmbeddingCache()
+
+    private let capacity = 128
+    private var vectors: [String: [Float]] = [:]
+    private var order: [String] = []
+
+    private func key(for query: String) -> String {
+        query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    func vector(for query: String) -> [Float]? {
+        let key = key(for: query)
+        guard let vector = vectors[key] else { return nil }
+        // Refresh recency.
+        order.removeAll { $0 == key }
+        order.append(key)
+        return vector
+    }
+
+    func store(_ vector: [Float], for query: String) {
+        let key = key(for: query)
+        guard !key.isEmpty, !vector.isEmpty else { return }
+        if vectors[key] == nil, vectors.count >= capacity, let oldest = order.first {
+            vectors.removeValue(forKey: oldest)
+            order.removeFirst()
+        }
+        order.removeAll { $0 == key }
+        order.append(key)
+        vectors[key] = vector
+    }
+}
+
 /// Hybrid search engine combining BM25 keyword search with vector similarity
 /// Achieves both speed (BM25 pre-filter) and semantic understanding (vector re-ranking)
 @MainActor
@@ -68,6 +104,19 @@ final class HybridSearchEngine: ObservableObject {
         /// False for the broad any-term fallback and pure-vector results, so
         /// downstream ranking can tell real keyword evidence from partials.
         var matchedAllTerms: Bool = false
+        /// Context window around the matched body text: FTS5 snippet() for
+        /// keyword hits, the matching chunk's text for pure-vector hits.
+        /// Nil when no body-context is available (e.g. title-only match).
+        var matchedExcerpt: String? = nil
+        /// True when the query terms appear as a contiguous phrase (or in
+        /// close NEAR proximity) — the strongest body evidence there is.
+        var matchedPhrase: Bool = false
+        /// Fraction of query tokens present in this document — the engine
+        /// sets 1.0 for phrase/NEAR/all-terms passes and the measured
+        /// fraction for the broad fallback. Defaults to 0 (the conservative
+        /// "no coverage claim") so hand-built results never upgrade
+        /// themselves to keyword evidence.
+        var termCoverage: Double = 0
 
         enum MatchReason: String, Sendable {
             case keywordMatch = "Keyword match"
@@ -88,6 +137,11 @@ final class HybridSearchEngine: ObservableObject {
         let content: String
         let bm25Score: Double
         let updatedAt: String?
+        /// FTS5 snippet() over the body column — a ~24-token window around
+        /// the matched terms, verbatim from the indexed text. Nil when the
+        /// body carries no match (snippet then returns the body head, which
+        /// the mapper must not present as match evidence).
+        let bodySnippet: String?
     }
 
     // MARK: - Hybrid Search
@@ -115,7 +169,8 @@ final class HybridSearchEngine: ObservableObject {
         print("🔍 Hybrid search: \"\(query)\" (weight: \(Int(weight * 100))% vector)")
 
         // Stage 1: BM25 pre-filter for fast candidate retrieval
-        let (bm25Candidates, matchedAllTerms) = try await bm25Search(
+        // (retrieval ladder: phrase → NEAR → all-terms → any-term)
+        let bm25Matches = try await bm25Search(
             query: query,
             limit: maxBM25Candidates,
             entityTypes: entityTypes,
@@ -123,9 +178,9 @@ final class HybridSearchEngine: ObservableObject {
         )
         try Task.checkCancellation()
 
-        print("  📋 BM25 candidates: \(bm25Candidates.count)")
+        print("  📋 BM25 candidates: \(bm25Matches.count)")
 
-        guard !bm25Candidates.isEmpty else {
+        guard !bm25Matches.isEmpty else {
             // No keyword matches - fall back to pure vector search
             return try await pureVectorSearch(
                 query: query,
@@ -135,47 +190,34 @@ final class HybridSearchEngine: ObservableObject {
             )
         }
 
+        // Short navigational queries (1–2 bare tokens) with keyword
+        // candidates in hand don't need the vector blend: lexical tiers
+        // dominate their ordering, and skipping the embed saves a cloud
+        // round-trip per keystroke. Sentence-shaped and quoted queries keep
+        // the full hybrid path.
+        let grammar = Self.parseQueryGrammar(query)
+        if grammar.quotedPhrases.isEmpty && grammar.tokens.count <= 2 {
+            return try bm25OnlyResults(from: bm25Matches, limit: limit, excludedUUIDs: excludedUUIDs)
+        }
+
         // Stage 2: Generate query embedding for vector similarity (Recall
-        // cloud client — the daemon embedding path was a dormant stub).
+        // cloud client — the daemon embedding path was a dormant stub;
+        // repeat queries resolve from the in-process cache).
         let queryVector: [Float]
         do {
-            guard let vector = try await CloudEmbeddingClient().embed([query]).first else {
-                throw RecallEmbeddingError.notConfigured
-            }
+            queryVector = try await Self.embedQuery(query)
             try Task.checkCancellation()
-            queryVector = vector
         } catch is CancellationError {
             throw CancellationError()
         } catch {
             print("  ⚠️ Embedding failed, using BM25 only: \(error.localizedDescription)")
-            var fallbackResults: [SearchResult] = []
-            for candidate in bm25Candidates.prefix(limit) {
-                try Task.checkCancellation()
-                if excludedUUIDs.contains(candidate.uuid) {
-                    continue
-                }
-                guard let entityType = Self.mapAtomTypeToEntityType(candidate.entityType) else { continue }
-                fallbackResults.append(SearchResult(
-                    entityType: entityType,
-                    entityId: candidate.entityId,
-                    entityUUID: candidate.uuid,
-                    title: candidate.title,
-                    preview: String(candidate.content.prefix(200)),
-                    bm25Score: candidate.bm25Score,
-                    vectorSimilarity: 0,
-                    combinedScore: candidate.bm25Score,
-                    matchReason: .keywordMatch,
-                    updatedAt: candidate.updatedAt,
-                    matchedAllTerms: matchedAllTerms
-                ))
-            }
-            return fallbackResults
+            return try bm25OnlyResults(from: bm25Matches, limit: limit, excludedUUIDs: excludedUUIDs)
         }
 
         // Stage 3: Compute vector similarity and combine scores.
         // One batched read for every candidate's chunks, with decode + cosine
         // running on the database queue — never the main actor.
-        let candidateUUIDs = bm25Candidates.map(\.uuid).filter { !excludedUUIDs.contains($0) && !$0.isEmpty }
+        let candidateUUIDs = bm25Matches.map(\.candidate.uuid).filter { !excludedUUIDs.contains($0) && !$0.isEmpty }
         let similarityByUUID = try await batchVectorSimilarity(
             entityUUIDs: candidateUUIDs,
             queryVector: queryVector
@@ -184,7 +226,8 @@ final class HybridSearchEngine: ObservableObject {
 
         var scoredResults: [SearchResult] = []
 
-        for candidate in bm25Candidates {
+        for match in bm25Matches {
+            let candidate = match.candidate
             if excludedUUIDs.contains(candidate.uuid) {
                 continue
             }
@@ -217,7 +260,10 @@ final class HybridSearchEngine: ObservableObject {
                 combinedScore: combinedScore,
                 matchReason: matchReason,
                 updatedAt: candidate.updatedAt,
-                matchedAllTerms: matchedAllTerms
+                matchedAllTerms: match.kind != .anyTerm,
+                matchedExcerpt: candidate.bodySnippet,
+                matchedPhrase: match.kind == .phrase || match.kind == .near,
+                termCoverage: match.termCoverage
             )
 
             // Every candidate already matched the query by keyword — keep it
@@ -242,6 +288,53 @@ final class HybridSearchEngine: ObservableObject {
             guard let entityUUID = result.entityUUID else { return true }
             return !excludedUUIDs.contains(entityUUID)
         }
+    }
+
+    /// Cache-aware query embedding: one cloud round-trip per distinct query.
+    private nonisolated static func embedQuery(_ query: String) async throws -> [Float] {
+        if let cached = await QueryEmbeddingCache.shared.vector(for: query) {
+            return cached
+        }
+        guard let vector = try await CloudEmbeddingClient().embed([query]).first else {
+            throw RecallEmbeddingError.notConfigured
+        }
+        await QueryEmbeddingCache.shared.store(vector, for: query)
+        return vector
+    }
+
+    /// Keyword-only results, ranked by BM25: the path for navigational
+    /// queries that skip the vector blend and for embedding failures.
+    private func bm25OnlyResults(
+        from matches: [BM25Match],
+        limit: Int,
+        excludedUUIDs: Set<String>
+    ) throws -> [SearchResult] {
+        var results: [SearchResult] = []
+        for match in matches.prefix(limit) {
+            try Task.checkCancellation()
+            let candidate = match.candidate
+            if excludedUUIDs.contains(candidate.uuid) {
+                continue
+            }
+            guard let entityType = Self.mapAtomTypeToEntityType(candidate.entityType) else { continue }
+            results.append(SearchResult(
+                entityType: entityType,
+                entityId: candidate.entityId,
+                entityUUID: candidate.uuid,
+                title: candidate.title,
+                preview: String(candidate.content.prefix(200)),
+                bm25Score: candidate.bm25Score,
+                vectorSimilarity: 0,
+                combinedScore: candidate.bm25Score,
+                matchReason: .keywordMatch,
+                updatedAt: candidate.updatedAt,
+                matchedAllTerms: match.kind != .anyTerm,
+                matchedExcerpt: candidate.bodySnippet,
+                matchedPhrase: match.kind == .phrase || match.kind == .near,
+                termCoverage: match.termCoverage
+            ))
+        }
+        return results
     }
 
     // MARK: - Context-Aware Search
@@ -297,37 +390,108 @@ final class HybridSearchEngine: ObservableObject {
 
     // MARK: - BM25 Search (FTS5)
 
-    /// Fast keyword search using SQLite FTS5 with BM25 ranking
+    /// How a keyword candidate matched, strongest evidence first. Drives the
+    /// lexical tier downstream; the order here IS the ranking ladder.
+    private enum BM25MatchKind {
+        /// Contiguous phrase match (quoted query, or all tokens adjacent).
+        case phrase
+        /// All tokens within NEAR proximity of each other.
+        case near
+        /// All tokens present, anywhere in the document.
+        case allTerms
+        /// Some tokens present (broad fallback) — coverage tells how many.
+        case anyTerm
+    }
+
+    private struct BM25Match {
+        let candidate: BM25Candidate
+        let kind: BM25MatchKind
+        /// Fraction of query tokens found in this document (1.0 for every
+        /// kind except `.anyTerm`).
+        let termCoverage: Double
+    }
+
+    /// Retrieval ladder, Spotlight-then-some semantics:
+    ///   1. phrase   — the query as a contiguous phrase ("that exact sentence")
+    ///   2. NEAR     — every token within 10 tokens of the others
+    ///   3. all-terms — every token, anywhere (skipped for quoted queries:
+    ///      quotes are a promise of exactness, not a suggestion)
+    ///   4. any-term — broad fallback, scored by term coverage
+    /// A document keeps the strongest kind that produced it; later passes
+    /// only add documents earlier passes missed.
     private func bm25Search(
         query: String,
         limit: Int,
         entityTypes: [EntityType]?,
         excludedEntityUUIDs: Set<String>
-    ) async throws -> (candidates: [BM25Candidate], matchedAllTerms: Bool) {
+    ) async throws -> [BM25Match] {
         try Task.checkCancellation()
-        // Spotlight semantics: require every term first, then broaden to
-        // any-term matching only when the strict query finds nothing.
-        let strictQuery = Self.prepareFTS5Query(query)
-        let candidates = try await runBM25Query(
-            ftsQuery: strictQuery,
-            limit: limit,
-            entityTypes: entityTypes,
-            excludedEntityUUIDs: excludedEntityUUIDs
-        )
-        if !candidates.isEmpty {
-            return (candidates, true)
+        let grammar = Self.parseQueryGrammar(query)
+
+        var matches: [BM25Match] = []
+        var seenUUIDs: Set<String> = []
+
+        func runPass(_ ftsQuery: String?, kind: BM25MatchKind) async throws {
+            guard let ftsQuery, !ftsQuery.isEmpty, matches.count < limit else { return }
+            try Task.checkCancellation()
+            let candidates = try await runBM25Query(
+                ftsQuery: ftsQuery,
+                limit: limit,
+                entityTypes: entityTypes,
+                excludedEntityUUIDs: excludedEntityUUIDs
+            )
+            for candidate in candidates where seenUUIDs.insert(candidate.uuid).inserted {
+                let coverage = kind == .anyTerm
+                    ? Self.termCoverage(tokens: grammar.tokens, in: candidate.title + " " + candidate.content)
+                    : 1.0
+                matches.append(BM25Match(candidate: candidate, kind: kind, termCoverage: coverage))
+            }
         }
 
-        let broadQuery = Self.prepareFTS5Query(query, matchAnyTerm: true)
-        guard broadQuery != strictQuery else { return (candidates, false) }
-        try Task.checkCancellation()
-        let broadCandidates = try await runBM25Query(
-            ftsQuery: broadQuery,
-            limit: limit,
-            entityTypes: entityTypes,
-            excludedEntityUUIDs: excludedEntityUUIDs
-        )
-        return (broadCandidates, false)
+        try await runPass(Self.prepareFTS5PhraseQuery(query), kind: .phrase)
+        try await runPass(Self.prepareFTS5NearQuery(query), kind: .near)
+        if grammar.quotedPhrases.isEmpty {
+            try await runPass(Self.prepareFTS5Query(query), kind: .allTerms)
+        }
+        // Broad fallback only for unquoted queries — a quoted query that
+        // finds nothing means "not in your database", not "here's confetti".
+        if matches.isEmpty && grammar.quotedPhrases.isEmpty {
+            let broadQuery = Self.prepareFTS5Query(query, matchAnyTerm: true)
+            if broadQuery != Self.prepareFTS5Query(query) {
+                try await runPass(broadQuery, kind: .anyTerm)
+            }
+        }
+        return matches
+    }
+
+    /// Fraction of query tokens present in the haystack (case- and
+    /// diacritic-insensitive). Cheap: runs only for broad-fallback
+    /// candidates, never the whole index.
+    nonisolated static func termCoverage(tokens: [String], in haystack: String) -> Double {
+        guard !tokens.isEmpty else { return 0 }
+        let folded = haystack.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        let matched = tokens.filter { token in
+            folded.range(
+                of: token.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            ) != nil
+        }
+        return Double(matched.count) / Double(tokens.count)
+    }
+
+    /// Private-use markers wrapped around matched terms by snippet(), used
+    /// only to detect whether the body column actually carried the match
+    /// (snippet returns the column head when it didn't). Stripped before the
+    /// excerpt leaves the engine — highlighting is re-derived at render time.
+    private nonisolated static let snippetMarkerStart = "\u{E000}"
+    private nonisolated static let snippetMarkerEnd = "\u{E001}"
+
+    /// Strips snippet() markers; returns nil when no marker is present —
+    /// i.e. the body column had no match and the snippet is just its head.
+    private nonisolated static func bodySnippet(fromMarked marked: String?) -> String? {
+        guard let marked, marked.contains(snippetMarkerStart) else { return nil }
+        return marked
+            .replacingOccurrences(of: snippetMarkerStart, with: "")
+            .replacingOccurrences(of: snippetMarkerEnd, with: "")
     }
 
     private func runBM25Query(
@@ -340,9 +504,11 @@ final class HybridSearchEngine: ObservableObject {
         let candidates = try await database.asyncRead { db in
             // Query atoms_fts (unified atom index) instead of legacy semantic_fts
             // BM25 weights: uuid=0, type=0, title=10, body=5, metadata=1
+            // snippet() column index 3 = body (uuid, type, title, body, metadata)
             var sql = """
                 SELECT atoms.uuid, atoms.type, atoms.title, atoms.body, atoms.updated_at,
-                       bm25(atoms_fts, 0, 0, 10, 5, 1) AS score
+                       bm25(atoms_fts, 0, 0, 10, 5, 1) AS score,
+                       snippet(atoms_fts, 3, '\(Self.snippetMarkerStart)', '\(Self.snippetMarkerEnd)', '…', 24) AS body_snippet
                 FROM atoms_fts
                 JOIN atoms ON atoms.uuid = atoms_fts.uuid
                 WHERE atoms_fts MATCH ?
@@ -391,7 +557,8 @@ final class HybridSearchEngine: ObservableObject {
                     title: row["title"] as? String ?? "",
                     content: row["body"] as? String ?? "",
                     bm25Score: -(row["score"] as? Double ?? 0),  // BM25 returns negative scores
-                    updatedAt: row["updated_at"] as? String
+                    updatedAt: row["updated_at"] as? String,
+                    bodySnippet: Self.bodySnippet(fromMarked: row["body_snippet"] as? String)
                 )
             }
         }
@@ -404,7 +571,7 @@ final class HybridSearchEngine: ObservableObject {
     /// Terms are required (AND) by default; `matchAnyTerm` broadens to OR.
     nonisolated static func prepareFTS5Query(_ query: String, matchAnyTerm: Bool = false) -> String {
         let words = query.components(separatedBy: .whitespacesAndNewlines)
-            .filter { !$0.isEmpty }
+            .filter { !$0.isEmpty && $0 != "\"" }
             .map { word in
                 // Escape double quotes
                 let escaped = word.replacingOccurrences(of: "\"", with: "\"\"")
@@ -412,6 +579,63 @@ final class HybridSearchEngine: ObservableObject {
             }
 
         return words.joined(separator: matchAnyTerm ? " OR " : " ")
+    }
+
+    /// Splits a raw query into loose tokens and explicitly-quoted phrases.
+    /// Curly quotes (macOS smart quotes) count the same as straight ones.
+    nonisolated static func parseQueryGrammar(_ query: String) -> (tokens: [String], quotedPhrases: [String]) {
+        let normalized = query
+            .replacingOccurrences(of: "\u{201C}", with: "\"")
+            .replacingOccurrences(of: "\u{201D}", with: "\"")
+        var tokens: [String] = []
+        var quotedPhrases: [String] = []
+
+        // Alternating split: even segments are outside quotes, odd inside.
+        // An unbalanced trailing quote treats the tail as an open phrase.
+        let segments = normalized.components(separatedBy: "\"")
+        for (index, segment) in segments.enumerated() {
+            let trimmed = segment.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            if index.isMultiple(of: 2) {
+                tokens.append(contentsOf: trimmed.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty })
+            } else {
+                quotedPhrases.append(trimmed)
+            }
+        }
+        return (tokens, quotedPhrases)
+    }
+
+    /// FTS5 phrase query. Quoted queries demand their phrases verbatim
+    /// (AND-ed with any loose tokens as prefixes); unquoted multi-token
+    /// queries try all tokens as one prefix-phrase — `"a b c"*` matches
+    /// while the last word is still being typed. Nil when the query has no
+    /// phrase to try (single bare token).
+    nonisolated static func prepareFTS5PhraseQuery(_ query: String) -> String? {
+        let grammar = parseQueryGrammar(query)
+
+        func escapedPhrase(_ phrase: String) -> String {
+            "\"" + phrase.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+        }
+
+        if !grammar.quotedPhrases.isEmpty {
+            var parts = grammar.quotedPhrases.map { escapedPhrase($0) }
+            parts.append(contentsOf: grammar.tokens.map { escapedPhrase($0) + "*" })
+            return parts.joined(separator: " ")
+        }
+        guard grammar.tokens.count >= 2 else { return nil }
+        return escapedPhrase(grammar.tokens.joined(separator: " ")) + "*"
+    }
+
+    /// FTS5 NEAR query: every token within `distance` tokens of the others —
+    /// catches "I remember roughly this sentence" recall where word order or
+    /// one word in the middle is misremembered. Unquoted queries only.
+    nonisolated static func prepareFTS5NearQuery(_ query: String, distance: Int = 10) -> String? {
+        let grammar = parseQueryGrammar(query)
+        guard grammar.quotedPhrases.isEmpty, (2...6).contains(grammar.tokens.count) else { return nil }
+        let terms = grammar.tokens
+            .map { "\"" + $0.replacingOccurrences(of: "\"", with: "\"\"") + "\"*" }
+            .joined(separator: " ")
+        return "NEAR(\(terms), \(distance))"
     }
 
     // MARK: - Pure Vector Search
@@ -424,7 +648,7 @@ final class HybridSearchEngine: ObservableObject {
         excludedEntityUUIDs: Set<String>
     ) async throws -> [SearchResult] {
         try Task.checkCancellation()
-        guard let queryVector = try? await CloudEmbeddingClient().embed([query]).first else {
+        guard let queryVector = try? await Self.embedQuery(query) else {
             return []
         }
         try Task.checkCancellation()
@@ -497,7 +721,10 @@ final class HybridSearchEngine: ObservableObject {
                 bm25Score: 0,
                 vectorSimilarity: Double(hit.similarity),
                 combinedScore: Double(hit.similarity),
-                matchReason: .semanticSimilarity
+                matchReason: .semanticSimilarity,
+                // The matching chunk IS the semantic evidence — surface it as
+                // the passage the way keyword hits surface their snippet.
+                matchedExcerpt: String(hit.text.prefix(240))
             ))
         }
         return enrichedResults
@@ -558,7 +785,10 @@ final class HybridSearchEngine: ObservableObject {
                 combinedScore: result.combinedScore + boost,
                 matchReason: .contextRelevant,
                 updatedAt: result.updatedAt,
-                matchedAllTerms: result.matchedAllTerms
+                matchedAllTerms: result.matchedAllTerms,
+                matchedExcerpt: result.matchedExcerpt,
+                matchedPhrase: result.matchedPhrase,
+                termCoverage: result.termCoverage
             )
         }
     }

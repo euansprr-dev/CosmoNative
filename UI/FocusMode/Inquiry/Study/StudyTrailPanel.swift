@@ -14,7 +14,7 @@ struct StudyTrailPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            if items.isEmpty {
+            if items.isEmpty && viewModel.visibleSeedlings.isEmpty {
                 teachingState
             } else {
                 feed
@@ -47,6 +47,7 @@ struct StudyTrailPanel: View {
     private var feed: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
+                seedlingsSection
                 ForEach(groups) { group in
                     StudyTrailGroupHeader(group: group, isActive: group.questionUUID == viewModel.activeQuestionUUID)
                     ForEach(Array(group.items.enumerated()), id: \.element.feedId) { index, item in
@@ -69,6 +70,32 @@ struct StudyTrailPanel: View {
         Divider()
             .overlay(DS.glassBorder)
             .padding(.leading, 40)
+    }
+
+    // MARK: - Seedlings (concept mass accruing live)
+
+    @ViewBuilder
+    private var seedlingsSection: some View {
+        let seedlings = viewModel.visibleSeedlings
+        if !seedlings.isEmpty {
+            HStack(spacing: DS.space6) {
+                Text("SEEDLINGS")
+                    .dsSmallCapsLabel()
+                Spacer()
+                Text("\(seedlings.count)")
+                    .font(DS.caption)
+                    .monospacedDigit()
+                    .contentTransition(.numericText())
+                    .foregroundStyle(DS.textMuted)
+            }
+            .padding(.horizontal, DS.space16)
+            .padding(.top, DS.space10)
+            .padding(.bottom, DS.space6)
+            ForEach(Array(seedlings.enumerated()), id: \.element.conceptKey) { index, seedling in
+                if index > 0 { rowSeparator }
+                StudySeedlingRow(viewModel: viewModel, seedling: seedling)
+            }
+        }
     }
 
     private var teachingState: some View {
@@ -120,6 +147,86 @@ struct StudyTrailPanel: View {
             }
         }
         return hasher.finalize()
+    }
+}
+
+// MARK: - Seedling row (a line, never a card)
+
+@MainActor
+private struct StudySeedlingRow: View {
+    @Bindable var viewModel: InquiryWorkspaceViewModel
+    let seedling: IncubatingConcept
+
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: DS.space8) {
+            Image(systemName: glyphName)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(verdict.isRipe ? DS.accent : DS.textMuted)
+                .frame(width: 24, alignment: .center)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(seedling.name)
+                    .font(DS.callout)
+                    .foregroundStyle(DS.text)
+                    .lineLimit(1)
+                Text(detailLine)
+                    .font(DS.caption2)
+                    .foregroundStyle(verdict.isRipe ? DS.accent : DS.textMuted)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, DS.space16)
+        .padding(.vertical, DS.space8)
+        .contentShape(Rectangle())
+        .background(isHovered ? DS.surfaceHover.opacity(0.6) : .clear)
+        .onHover { isHovered = $0 }
+        .onTapGesture {
+            Task { await viewModel.openConceptDesk(for: seedling) }
+        }
+        .contextMenu { menu }
+        .help(seedling.status == .developed
+              ? "Open the page at the Desk — new material is waiting"
+              : "Develop this concept at the Desk")
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Develop \(seedling.name), \(detailLine)")
+        .accessibilityAddTraits(.isButton)
+    }
+
+    private var verdict: ConceptRipeness.Verdict {
+        ConceptRipeness.evaluate(seedling)
+    }
+
+    private var glyphName: String {
+        if seedling.status == .developed { return "book.closed" }
+        return seedling.pinnedAt != nil ? "pin.fill" : "leaf"
+    }
+
+    private var detailLine: String {
+        if seedling.status == .developed {
+            let count = seedling.pendingItems.count
+            return "\(count) new since last visit"
+        }
+        if let reason = verdict.reason { return "Ripe · \(reason)" }
+        let count = seedling.pendingItems.count
+        return "\(count) capture\(count == 1 ? "" : "s")"
+    }
+
+    @ViewBuilder
+    private var menu: some View {
+        Button(seedling.status == .developed ? "Open at the Desk" : "Develop at the Desk") {
+            Task { await viewModel.openConceptDesk(for: seedling) }
+        }
+        if seedling.status == .incubating {
+            Button(seedling.pinnedAt == nil ? "Pin (always ripe)" : "Unpin") {
+                Task { await viewModel.togglePinSeedling(seedling) }
+            }
+            Button("Dismiss seedling", role: .destructive) {
+                Task { await viewModel.dismissSeedling(seedling) }
+            }
+        }
     }
 }
 

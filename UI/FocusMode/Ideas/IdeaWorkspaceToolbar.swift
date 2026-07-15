@@ -1,9 +1,10 @@
 // CosmoOS/UI/FocusMode/Ideas/IdeaWorkspaceToolbar.swift
-// June 2026 — Idea Focus Mode v2 (Greenhouse clean).
-// Floating chrome islands: back, idea status, client picker, the Begin Writing
-// hero action, and the inspector toggle. Same island grammar as the Content &
-// Connection workspace toolbars (CosmoChromeRow / CosmoChromeIsland) — glass
-// hugs each control group, never a full-width bar.
+// July 2026 — the Idea bench's navigation band (the Study chrome anatomy).
+// Three glass islands on the shared app baseline: navigate · the idea pill ·
+// tools — plus Begin Writing as the screen's ONE tinted glass element (tint
+// marks the primary action, exactly Crystallize's role in the Study).
+// Status and client live in the manuscript head; the pill is orientation.
+// Islands recede while the user is writing and wake on hover.
 
 import SwiftUI
 
@@ -12,6 +13,8 @@ struct IdeaWorkspaceToolbar: View {
     var workspace: IdeaWorkspaceModel
     let isPaneContext: Bool
     let isPromoting: Bool
+    /// True while keystrokes are landing — islands quiet to a whisper.
+    var isReceded: Bool = false
     let actions: IdeaWorkspaceActions
 
     @Environment(\.atomWindowChromeContext) private var atomChrome
@@ -20,25 +23,28 @@ struct IdeaWorkspaceToolbar: View {
         viewModel.editableBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// Quiet writing vitals for the idea pill — computed from the manuscript.
+    private var wordCount: Int {
+        viewModel.editableBody.split(whereSeparator: \.isWhitespace).count
+    }
+
     var body: some View {
-        // Chrome islands, not a full-width bar: nav | primary action | tools,
-        // grouped by function on the shared chrome baseline. Same grammar as the
-        // Content & Connection workspace toolbars (CosmoChromeIsland). The parent
-        // safeAreaInset already provides the row insets.
-        CosmoChromeRow(insetsEnabled: false) {
+        // The band owns its insets — it sits above the worksheet, not inside
+        // a scroll inset (the Study chrome anatomy).
+        CosmoChromeRow {
             if atomChrome == nil, !isPaneContext {
                 NavigationTrailIsland()
             }
-            CosmoChromeIsland { leadingControls }
+            CosmoChromeIsland(recede: isReceded) { leadingControls }
         } center: {
-            EmptyView()
+            CosmoChromeIsland(recede: isReceded) { ideaPill }
         } trailing: {
-            beginWritingButton
-            CosmoChromeIsland { trailingControls }
+            CosmoChromeIsland(recede: isReceded) { trailingControls }
+            beginWritingIsland
         }
     }
 
-    // MARK: - Leading
+    // MARK: - Navigate island
 
     @ViewBuilder
     private var leadingControls: some View {
@@ -46,153 +52,88 @@ struct IdeaWorkspaceToolbar: View {
             AtomWindowChromeLeadingControls(context: atomChrome)
             AtomWindowChromeDivider()
         }
-        statusMenu
-        clientMenu
-    }
-
-    private var statusMenu: some View {
-        Menu {
-            ForEach(IdeaStatus.allCases, id: \.self) { status in
-                Button {
-                    Task { await viewModel.updateStatus(status) }
-                } label: {
-                    Label(status.displayName, systemImage: status.iconName)
-                }
+        toolbarButton(
+            icon: "sidebar.left",
+            help: workspace.isConversationShowing ? "Hide conversation (⌘0)" : "Show conversation (⌘0)",
+            isActive: workspace.isConversationShowing
+        ) {
+            withAnimation(ProMotionSprings.focusTransition) {
+                workspace.toggleConversation()
             }
-        } label: {
-            HStack(spacing: DS.space4) {
-                Image(systemName: viewModel.selectedStatus.iconName)
-                    .font(DS.caption2.weight(.medium))
-                    .accessibilityHidden(true)
-                Text(viewModel.selectedStatus.displayName)
-                    .font(DS.buttonText)
-            }
-            .foregroundStyle(DS.textSecondary)
-            .padding(.horizontal, DS.space8)
-            .padding(.vertical, DS.space4)
-            .contentShape(Capsule())
         }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .help("Idea status")
-        .accessibilityLabel("Idea status: \(viewModel.selectedStatus.displayName)")
     }
 
-    private var clientMenu: some View {
-        Menu {
-            ForEach(viewModel.clientProfiles, id: \.uuid) { client in
-                Button(client.title ?? "Client") {
-                    Task { await viewModel.assignClient(client) }
-                }
-            }
-            if viewModel.clientProfiles.isEmpty {
-                Text("No client profiles")
-            }
-            Divider()
-            Button {
-                actions.onShowProfileEditor()
-            } label: {
-                Label("Create New Profile", systemImage: "plus.circle")
-            }
-            if viewModel.linkedClient != nil {
-                Divider()
-                Button(role: .destructive) {
-                    Task { await viewModel.assignClient(nil) }
-                } label: {
-                    Label("Remove Client", systemImage: "xmark.circle")
-                }
-            }
-        } label: {
-            clientMenuLabel
-        }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .help("Client profile")
-        .accessibilityLabel("Client profile")
-    }
+    // MARK: - The idea pill (orientation — the center island)
 
-    private var clientMenuLabel: some View {
+    /// Identity + vitals as tinted text: the idea's mark, its name, and a
+    /// live word count. The serif head in the manuscript stays the hero;
+    /// this is the bench's inline title.
+    private var ideaPill: some View {
         HStack(spacing: DS.space6) {
-            if let client = viewModel.linkedClient {
-                Circle()
-                    .fill(DS.clientColor(for: client.uuid))
-                    .frame(width: 6, height: 6)
-                    .accessibilityHidden(true)
-                Text(client.title ?? "Client")
-                    .font(DS.buttonText)
-                    .foregroundStyle(DS.textSecondary)
-            } else {
-                Image(systemName: "person.crop.circle")
-                    .font(DS.caption2.weight(.medium))
+            Image(systemName: "lightbulb.fill")
+                .font(DS.caption2)
+                .foregroundStyle(DS.entityIdea)
+                .accessibilityHidden(true)
+            Text(pillTitle)
+                .font(DS.buttonText.weight(.semibold))
+                .foregroundStyle(DS.text)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: isCompact ? 200 : 320)
+            if wordCount > 0, !isCompact {
+                Text("·")
                     .foregroundStyle(DS.textMuted)
                     .accessibilityHidden(true)
-                Text("No client")
-                    .font(DS.buttonText)
+                Text("\(wordCount) \(wordCount == 1 ? "word" : "words")")
+                    .font(DS.caption.monospacedDigit())
                     .foregroundStyle(DS.textMuted)
+                    .contentTransition(.numericText())
             }
         }
-        .padding(.horizontal, DS.space8)
-        .padding(.vertical, DS.space4)
-        .contentShape(Capsule())
+        .padding(.horizontal, DS.space4)
+        .help("Idea · \(viewModel.selectedStatus.displayName)")
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Idea: \(pillTitle), \(wordCount) words")
     }
 
-    // MARK: - Trailing
+    /// Pane and Atom-window widths — labels yield to the columns.
+    private var isCompact: Bool { workspace.breakpoint == .compact }
 
-    /// The tools island: inspector toggle plus the window/pane close affordance.
+    private var pillTitle: String {
+        let title = viewModel.editableTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        return title.isEmpty ? "Untitled idea" : title
+    }
+
+    // MARK: - Tools island
+
     @ViewBuilder
     private var trailingControls: some View {
-        inspectorToggle
-        if let atomChrome {
-            AtomWindowChromeDivider()
-            AtomWindowChromeTrailingControls(context: atomChrome)
-        } else if isPaneContext {
-            closeButton
-        }
-    }
-
-    /// The single accent affordance on this screen.
-    private var beginWritingButton: some View {
-        Button(action: actions.onBeginWriting) {
-            HStack(spacing: DS.space6) {
-                if isPromoting {
-                    ProgressView()
-                        .scaleEffect(0.45)
-                        .frame(width: 12, height: 12)
-                } else {
-                    Image(systemName: "square.and.pencil")
-                        .font(DS.caption2.weight(.semibold))
-                        .accessibilityHidden(true)
-                }
-                Text(isPromoting ? "Writing…" : "Begin Writing")
-                    .font(DS.buttonText.weight(.semibold))
-            }
-            .foregroundStyle(DS.textOnAccent)
-            .padding(.horizontal, DS.space12)
-            .padding(.vertical, DS.space6)
-            .background(DS.accent.opacity(isBodyEmpty || isPromoting ? 0.45 : 1), in: Capsule())
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .disabled(isPromoting || isBodyEmpty)
-        .keyboardShortcut(.return, modifiers: [.command])
-        .help("Begin writing — promotes this idea to content (⌘↩)")
-        .accessibilityLabel("Begin writing")
-    }
-
-    private var inspectorToggle: some View {
         toolbarButton(
             icon: "sidebar.right",
-            help: workspace.isInspectorShowing ? "Hide inspector (⌘⌥I)" : "Show inspector (⌘⌥I)",
+            help: workspace.isInspectorShowing ? "Hide swipes (⌘⌥I)" : "Show swipes (⌘⌥I)",
             isActive: workspace.isInspectorShowing
         ) {
             withAnimation(ProMotionSprings.focusTransition) {
                 workspace.toggleInspector()
             }
         }
+        if let atomChrome {
+            AtomWindowChromeDivider()
+            AtomWindowChromeTrailingControls(context: atomChrome)
+        } else if isPaneContext {
+            toolbarButton(icon: "xmark", help: "Close (Esc)", action: actions.onClose)
+        }
     }
 
-    private var closeButton: some View {
-        toolbarButton(icon: "xmark", help: "Close (Esc)", action: actions.onClose)
+    // MARK: - Begin Writing (the one tinted glass element)
+
+    private var beginWritingIsland: some View {
+        IdeaBeginWritingIsland(
+            showsLabel: !isCompact,
+            isPromoting: isPromoting,
+            isDisabled: isBodyEmpty,
+            action: actions.onBeginWriting
+        )
     }
 
     // MARK: - Button factory
@@ -203,15 +144,56 @@ struct IdeaWorkspaceToolbar: View {
         isActive: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
+        StudyToolbarButton(icon: icon, help: help, isActive: isActive, action: action)
+    }
+}
+
+// MARK: - The tinted primary island
+
+/// Begin Writing wears the screen's only glass tint — the Study's
+/// Crystallize anatomy: accent ink on soft-accent interactive glass,
+/// island height, ⌘⏎.
+@MainActor
+private struct IdeaBeginWritingIsland: View {
+    var showsLabel: Bool = true
+    let isPromoting: Bool
+    let isDisabled: Bool
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
         Button(action: action) {
-            Image(systemName: icon)
-                .font(DS.buttonText)
-                .foregroundStyle(isActive ? DS.text : DS.textSecondary)
-                .frame(width: 28, height: 28)
-                .contentShape(Circle())
+            HStack(spacing: DS.space4) {
+                if isPromoting {
+                    ProgressView()
+                        .scaleEffect(0.45)
+                        .frame(width: 12, height: 12)
+                } else {
+                    Image(systemName: "square.and.pencil")
+                        .font(DS.caption.weight(.semibold))
+                        .accessibilityHidden(true)
+                }
+                if showsLabel || isPromoting {
+                    Text(isPromoting ? "Writing…" : "Begin Writing")
+                        .font(DS.buttonText.weight(.semibold))
+                }
+            }
+            .foregroundStyle(DS.accent)
+            .padding(.horizontal, DS.space12)
+            .frame(height: CosmoChromeMetrics.height)
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .help(help)
-        .accessibilityLabel(help)
+        .glassEffect(.regular.tint(DS.accentSoft).interactive(), in: .capsule)
+        .opacity(isDisabled && !isPromoting ? 0.45 : 1)
+        .scaleEffect(isHovered && !isDisabled ? 1.02 : 1)
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+        }
+        .disabled(isPromoting || isDisabled)
+        .keyboardShortcut(.return, modifiers: [.command])
+        .help("Begin writing — promotes this idea to content (⌘⏎)")
+        .accessibilityLabel("Begin writing")
     }
 }

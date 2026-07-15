@@ -40,7 +40,8 @@ final class SwipeClassificationEngine: ObservableObject {
         }
 
         // Build the unified prompt
-        let prompt = buildUnifiedPrompt(atom: atom, text: text)
+        let canonicalNiches = await NicheRegistry.shared.canonicalListForPrompt()
+        let prompt = buildUnifiedPrompt(atom: atom, text: text, canonicalNiches: canonicalNiches)
 
         do {
             let response: String
@@ -87,6 +88,11 @@ final class SwipeClassificationEngine: ObservableObject {
 
                 // Build the enriched analysis
                 var analysis = buildAnalysis(from: parsed, creatorUUID: creatorUUID)
+
+                // Canonicalize the niche through the shared registry.
+                if let rawNiche = analysis.niche, !rawNiche.isEmpty {
+                    analysis.niche = await NicheRegistry.shared.resolve(rawNiche)
+                }
 
                 // Platform-based format validation: video content from Instagram cannot be "post"
                 if analysis.swipeContentFormat == .post || analysis.swipeContentFormat == nil {
@@ -174,7 +180,7 @@ final class SwipeClassificationEngine: ObservableObject {
 
     // MARK: - Prompt Building
 
-    private func buildUnifiedPrompt(atom: Atom, text: String) -> String {
+    private func buildUnifiedPrompt(atom: Atom, text: String, canonicalNiches: String = "") -> String {
         // Truncate text to ~4000 words
         let words = text.split(separator: " ")
         let truncated = words.prefix(4000).joined(separator: " ")
@@ -256,7 +262,7 @@ final class SwipeClassificationEngine: ObservableObject {
         - If inferred transcription modality is voiceoverPlusText, prefer voiceoverReel or oneSliderReel unless there is clear evidence of distinct visual cards.
         - If speech segments exist but on-screen text largely mirrors the speech, treat that as captions/subtitles, not multi-slider structure.
         - Music lyrics, chant-like repetition, or sparse repeated speech should NOT by themselves force voiceoverReel.
-        Niche: A short label for the content vertical (e.g., "Real Estate Wholesaling", "Fitness", "SaaS Marketing")
+        \(NicheRegistry.promptInstruction(canonicalList: canonicalNiches))
         Creator: Extract the creator's @username handle and display name. IMPORTANT: The Creator/Author field above may contain a numeric ID (e.g. "63181063998") — do NOT use this. Instead, look for the actual @username in the transcript text, captions, or any visible mentions. If no real username is found, return null for creatorHandle.
 
         ## Structural Analysis

@@ -1,30 +1,86 @@
 // cosmo-cloud-agent/src/swipes/analyze.ts
-// Unified taxonomy classification + deep structural analysis — a 1:1 port of
-// the Mac's SwipeClassificationEngine (buildUnifiedPrompt / parseResponse /
-// buildAnalysis). The prompt text is VERBATIM; taxonomy value lists are the
+// The single per-swipe insight pass — a 1:1 port of the Mac's
+// SwipeInsightEngine (insightVersion 4, Sonnet 5). The prompt text is
+// VERBATIM from SwipeInsightEngine.buildPrompt; taxonomy value lists are the
 // Swift enums' CaseIterable order. Output field names match SwipeAnalysis
 // CodingKeys exactly (see types.ts header for the date/UUID encoding rules).
+//
+// Replaces the old v2 unified-classification port: the v4 pass produces the
+// displayTitle, keyInsight, hook analysis, slide-anchored structure, taxonomy,
+// and the signature card that feeds the cross-swipe PatternWeaver — the SAME
+// analysis the Mac produces, so a swipe processed in the cloud opens on the
+// Mac fully loaded with nothing left to compute.
 
 import { config } from '../config';
 import { fetchAllByType, createAtom, updateAtom, Atom } from '../db/queries';
 import { appleSeconds, EngagementSnapshot, SpeechSegmentJSON, TranscriptSlideJSON } from './types';
+import { nichePromptInstruction } from './niche';
 
-const CLASSIFICATION_MODEL = 'google/gemini-3-flash-preview';
-const SCHEMA_VERSION = 1; // SwipeClassificationEngine.currentSchemaVersion
+// Mirrors SwipeInsightEngine.analysisTier (.sonnet5) — every swipe is curated;
+// one premium call per capture is the budget.
+const INSIGHT_MODEL = 'anthropic/claude-sonnet-5';
+// Mirrors SwipeInsightEngine.insightVersion.
+export const INSIGHT_VERSION = 4;
 
 // Swift CaseIterable orders — do not reorder.
 const NARRATIVE_VALUES = ['studentSuccess', 'noValue', 'lessonsLearned', 'authorityHacking', 'businessBreakdown', 'storytelling', 'fearMongering'];
 const FORMAT_VALUES = ['voiceoverReel', 'oneSliderReel', 'multiSliderReel', 'twoStepCTA', 'carousel', 'tweet', 'thread', 'longForm', 'youtube', 'newsletter', 'post', 'reel'];
 const FRAMEWORK_VALUES = ['aida', 'pas', 'bab', 'escalationArc', 'storyLoop', 'listicle', 'tutorial', 'caseStudy', 'interview', 'beforeAfter', 'mythBusting', 'dayInLife'];
-const EMOTION_VALUES = ['curiosity', 'urgency', 'aspiration', 'fear', 'desire', 'awe', 'frustration', 'relief', 'belonging', 'exclusivity'];
-const PERSUASION_VALUES = ['socialProof', 'curiosityGap', 'contrastEffect', 'authority', 'scarcity', 'urgency', 'reciprocity', 'storytelling', 'lossAversion', 'exclusivity', 'anchoring', 'framing'];
+const HOOK_TYPE_VALUES = ['curiosityGap', 'boldClaim', 'question', 'story', 'statistic', 'controversy', 'contrast', 'howTo', 'list', 'challenge', 'hiddenGem', 'contrarian', 'personal', 'transformation'];
+
+// SwipeFrameworkType.description, verbatim.
+const FRAMEWORK_DESCRIPTIONS: Record<string, string> = {
+  aida: 'Attention → Interest → Desire → Action',
+  pas: 'Problem → Agitate → Solve',
+  bab: 'Before → After → Bridge',
+  escalationArc: 'Progressive intensity build to climax',
+  storyLoop: 'Setup → Conflict → Resolution',
+  listicle: 'Numbered items with a unifying theme',
+  tutorial: 'Step-by-step instructional format',
+  caseStudy: 'Deep dive into a specific example',
+  interview: 'Q&A or conversational format',
+  beforeAfter: 'Contrasting two states of transformation',
+  mythBusting: 'Debunking common misconceptions',
+  dayInLife: 'Following a chronological personal narrative',
+};
+
+// SwipeInsightEngine.hookTypeDefinitions, verbatim.
+const HOOK_TYPE_DEFINITIONS: Array<[string, string]> = [
+  ['curiosityGap', 'opens a specific unanswered question the viewer must resolve ("Nobody talks about why...")'],
+  ['boldClaim', 'a declarative, falsifiable assertion stated as fact ("Housing didn\'t get expensive by accident.")'],
+  ['question', 'a direct question aimed at the viewer'],
+  ['story', 'drops the viewer mid-narrative ("I lost the deal at 11pm on a Tuesday...")'],
+  ['statistic', 'leads with a specific number or data point as the attention device'],
+  ['controversy', 'takes a side on a divisive topic to provoke reaction'],
+  ['contrast', 'juxtaposes two states or options ("Rich people do X. Everyone else does Y.")'],
+  ['howTo', 'promises a method ("How to..." / "The exact system for...")'],
+  ['list', 'promises enumerated items ("5 websites that...")'],
+  ['challenge', 'dares the viewer or sets a test ("Try this for 30 days")'],
+  ['hiddenGem', 'reveals something obscure or insider ("The clause nobody reads...")'],
+  ['contrarian', 'inverts accepted advice ("Stop saving money.")'],
+  ['personal', 'leads with the creator\'s own status or vulnerability ("I made $40K last month and I\'m terrified.")'],
+  ['transformation', 'before→after change as the opener ("From evicted to 12 doors in 3 years")'],
+];
+
+// BeatPatternService.defaultVocabulary labels — the canonical beat vocabulary
+// the Mac prompt teaches. The Mac also appends learned beats; the worker uses
+// the stable core (labels outside it come back as "Uncategorized: X" and the
+// Mac's normalizer handles them).
+const CANONICAL_BEATS = [
+  'BoldClaim', 'CuriosityGap', 'PersonalFailure', 'DiscoveryMoment', 'StepByStepProof',
+  'SocialProofNumbers', 'BeliefReframe', 'AspirationalOutcome', 'UrgencyCTA', 'ValueStack',
+  'EnemyCallout', 'ObjectionCrusher', 'StorySetup', 'EmotionalHook', 'TransitionBridge',
+  'ListicleItem', 'AuthorityEstablishment', 'PainAmplification', 'SolutionReveal',
+  'ComparisonContrast', 'AudienceCallout', 'FutureWarning', 'MetaphorAnalogy',
+  'TestimonialQuote', 'IdentityShift', 'ScarcityTrigger', 'CommunitySignal',
+].join(', ');
 
 export interface AnalyzeContext {
   title: string;
   url: string;
   platform: string;
   author: string;
-  oembedTitle: string;
+  oembedTitle: string;      // caption / oEmbed title
   sourceType: string;       // e.g. instagram_reel
   instagramType: string;    // e.g. reel / carousel
   hasVideo: boolean;
@@ -35,128 +91,189 @@ export interface AnalyzeContext {
   transcriptionQuality?: string;
   transcriptionWarnings?: string[];
   text: string;             // the transcript/caption text to analyze
+  canonicalNiches?: string; // usage-ordered registry values for the prompt
+  engagement?: EngagementSnapshot;
 }
 
-// ── Prompt (VERBATIM port of buildUnifiedPrompt) ────────────────────────────
+// ── Prompt (VERBATIM port of SwipeInsightEngine.buildPrompt) ────────────────
 
-export function buildUnifiedPrompt(ctx: AnalyzeContext): string {
-  const truncated = ctx.text.split(/ /).slice(0, 4000).join(' ');
+export function buildInsightPrompt(ctx: AnalyzeContext): string {
+  // Media signals
+  const mediaLines: string[] = [];
+  if (ctx.sourceType) mediaLines.push(`Source type: ${ctx.sourceType}`);
+  if (ctx.instagramType) mediaLines.push(`Instagram type: ${ctx.instagramType}`);
+  if (ctx.durationSeconds > 0) mediaLines.push(`Video duration: ${ctx.durationSeconds} seconds`);
+  if (ctx.slideCount > 0) mediaLines.push(`Carousel image count: ${ctx.slideCount}`);
+  if (ctx.hasVideo) mediaLines.push('Has video: yes');
+  mediaLines.push(...transcriptionModalityLines(ctx));
 
-  let mediaContext = '';
-  if (ctx.sourceType) mediaContext += `Source Type: ${ctx.sourceType}\n`;
-  if (ctx.instagramType) mediaContext += `Instagram Type: ${ctx.instagramType}\n`;
-  if (ctx.durationSeconds > 0) mediaContext += `Duration: ${ctx.durationSeconds} seconds\n`;
-  if (ctx.slideCount > 0) mediaContext += `Carousel/Slide Count: ${ctx.slideCount}\n`;
-  if (ctx.hasVideo) mediaContext += 'Has Video: yes\n';
-  mediaContext += transcriptionContext(ctx);
+  // Engagement signals
+  const engagementLines: string[] = [];
+  if (ctx.engagement?.viewsCount != null) engagementLines.push(`Views: ${ctx.engagement.viewsCount}`);
+  if (ctx.engagement?.likesCount != null) engagementLines.push(`Likes: ${ctx.engagement.likesCount}`);
+  if (ctx.engagement?.commentsCount != null) engagementLines.push(`Comments: ${ctx.engagement.commentsCount}`);
 
-  return `You are a content intelligence analyst. Analyze this content and return a single JSON object that covers BOTH taxonomy classification AND structural analysis.
+  // The transcript, slide-indexed so structure anchors are verifiable.
+  const slides = ctx.transcriptSlides.filter(s => s.text.trim().length > 0);
+  let transcriptBlock: string;
+  if (slides.length > 0) {
+    transcriptBlock = slides
+      .map((slide, index) => {
+        const provenance = slide.source === 'speechAudio' ? ' (spoken)' : '';
+        return `[Slide ${index + 1}${provenance}] ${slide.text}`;
+      })
+      .join('\n\n');
+  } else {
+    const words = ctx.text.split(/ /);
+    transcriptBlock = '[Slide 1] ' + words.slice(0, 4000).join(' ');
+  }
+  const slideCount = Math.max(slides.length, 1);
 
-Title: ${ctx.title || 'Untitled'}
-URL: ${ctx.url}
-Platform: ${ctx.platform}
-Creator/Author: ${ctx.author}
-oEmbed Title: ${ctx.oembedTitle}
-${mediaContext}
-Transcript (first 4000 words): ${truncated}
+  const frameworkList = FRAMEWORK_VALUES
+    .map(v => `${v}: ${FRAMEWORK_DESCRIPTIONS[v]}`)
+    .join('\n');
+  const hookTypeList = HOOK_TYPE_DEFINITIONS
+    .map(([name, def]) => `- ${name}: ${def}`)
+    .join('\n');
 
-## Taxonomy Classification
-Classify the content across these dimensions:
+  return `You are a senior direct-response content analyst inside a swipe-file study tool. A creator saved this piece of short-form content because it worked; your job is to explain WHY it worked precisely enough that they could replicate the mechanics on a different topic tomorrow. Every field you return is displayed in a study interface or fed to a pattern-mining engine, so be specific, mechanical, and grounded in the actual text — never generic.
 
-Narrative Styles (pick primary and optional secondary): ${NARRATIVE_VALUES.join(', ')}
+## THE CONTENT
+
+Platform: ${ctx.platform || 'unknown'}
+Creator/Author (may be a numeric ID — see creator rules): ${ctx.author}
+Caption/oEmbed title: ${ctx.oembedTitle}
+${mediaLines.join('\n')}
+${engagementLines.length === 0 ? '' : engagementLines.join('\n')}
+
+Transcript (${slideCount} slide${slideCount === 1 ? '' : 's'}, 1-indexed — slide 1 is the hook the viewer sees first):
+
+${transcriptBlock}
+
+## WHAT TO PRODUCE
+
+### displayTitle
+A short library headline for this swipe, ≤60 characters.
+- If slide 1 is already ≤60 characters, return it VERBATIM.
+- Otherwise compress slide 1 into one headline that keeps the creator's voice and the single most specific claim. Keep concrete numbers ("$75K", "90 days") — specificity is the value. No quotation marks, no emoji, no trailing period, no editorializing ("Amazing thread about...").
+- Example: slide 1 = "Housing didn't get expensive by accident. For decades, home prices ran way ahead of incomes, and now everyone wants to act surprised that young families can't buy" → displayTitle = "Housing didn't get expensive by accident".
+
+### keyInsight
+2–3 sentences explaining the MECHANISM that makes this content work — not a summary of what it says. The test: a reader should be able to apply the insight to a completely different niche. Name the specific move (e.g. "validates the audience's struggle with third-party data before offering the reframe, so the solve lands as relief instead of a lecture"), not the category ("uses social proof").
+
+### Hook analysis (judge slide 1 / the first 3 seconds ONLY)
+hookType — exactly one of:
+${hookTypeList}
+
+hookScore — 0 to 10, one decimal, anchored rubric:
+- 9–10: stops the scroll cold — a specific, unresolved tension aimed at a defined audience (a number, a named enemy, a forbidden claim). Rare.
+- 7–8.9: strong — specific and curiosity-driving, but the tension is familiar or the audience broad.
+- 5–6.9: clear topic, generic angle — tells you WHAT it's about but gives no reason to need the answer now.
+- 3–4.9: slow or self-focused opening; the viewer must be patient to find the value.
+- 0–2.9: no hook — greeting, context-first ramble, or pure vibes.
+hookScoreReason — one sentence citing the exact words that earn (or lose) the score.
+hookMechanism — one sentence on the psychological lever (what unresolved question or identity-threat/validation it plants, and in whom).
+
+### Structure (sections)
+Segment the ENTIRE transcript into 3–8 beats, in order, covering every slide with no gaps or overlaps.
+- label: use ONLY these canonical beat labels: ${CANONICAL_BEATS}. If nothing fits, use "Uncategorized: YourLabel".
+- purpose: what this beat DOES to the reader (creates the gap / supplies proof / removes the objection), not what it says.
+- slideStart / slideEnd: 1-based inclusive slide numbers this beat spans. Beats must be verifiable against the numbered transcript above.
+- sizePercent: fraction of total content length, all sections summing to ~1.0.
+
+frameworkType — one of the following if (and only if) the beat sequence genuinely matches; otherwise null:
+${frameworkList}
+
+structuralRecipe — a numbered, step-by-step writing recipe someone could follow to recreate this structure on a new topic. Each step: beat + approximate length + density (sparse/moderate/dense). Ground it in what THIS content actually did.
+
+voiceMarkers — 3–5 short phrases capturing the prose voice (e.g. "second-person accusation", "data-point-per-sentence", "no hedging").
+
+### Taxonomy
+primaryNarrative and optional secondaryNarrative — from: ${NARRATIVE_VALUES.join(', ')}
 - studentSuccess: A STUDENT or CLIENT success story — someone ELSE achieved a specific result (revenue, transformation, milestone). Must feature a real person's outcome, NOT generic tips. Example: "My student went from $0 to $10K/month in 90 days."
-- storytelling: The creator recapping a STORY — their own journey, a client's story told narratively, or a behind-the-scenes experience. The content is structured as a narrative arc, not tips or analysis.
-- lessonsLearned: A LISTICLE or numbered list of lessons, mistakes, or takeaways. The format is "X things I learned" or "X mistakes to avoid." Must be structured as a list, not a single topic deep-dive.
-- authorityHacking: The HOOK or opening references a famous person, public figure, brand, or celebrity to borrow credibility. Example: "How Warren Buffett buys real estate" or "The strategy Hormozi uses to..."
-- businessBreakdown: Analyzing, explaining, or breaking down a BUSINESS MODEL, market, strategy, tool, or system. Includes resource lists, platform comparisons, market analysis, how-to explanations of business mechanics. Example: "5 websites to find homes under $75K" = businessBreakdown (analyzing tools/market), NOT lessonsLearned.
-- fearMongering: The hook leverages a CURRENT EVENT, alarming trend, or scary scenario to grab attention. Creates urgency through fear or concern. Example: "The housing market is about to crash" or "This new law will destroy your business."
+- storytelling: The creator recapping a STORY — their own journey, a client's story told narratively, or a behind-the-scenes experience. Structured as a narrative arc, not tips or analysis.
+- lessonsLearned: A LISTICLE or numbered list of lessons, mistakes, or takeaways ("X things I learned", "X mistakes to avoid"). Must be structured as a list, not a single-topic deep-dive.
+- authorityHacking: The HOOK references a famous person, public figure, brand, or celebrity to borrow credibility ("How Warren Buffett buys real estate").
+- businessBreakdown: Analyzing or breaking down a BUSINESS MODEL, market, strategy, tool, or system — including resource lists, platform comparisons, market analysis, how-to explanations of business mechanics. "5 websites to find homes under $75K" = businessBreakdown (analyzing tools/market), NOT lessonsLearned.
+- fearMongering: The hook leverages a CURRENT EVENT, alarming trend, or scary scenario for urgency ("The housing market is about to crash").
 - noValue: Pure entertainment, engagement-bait, or meme content with no educational, aspirational, or strategic value.
-Content Formats: ${FORMAT_VALUES.join(', ')}
-- voiceoverReel: A single continuous video with voiceover narration (talking head, B-roll with VO)
-- oneSliderReel: A reel with ONE static or slow-motion background image/clip and text overlay
-- multiSliderReel: A reel with MULTIPLE distinct visual slides/cards shown in sequence (timed text cards, image transitions). Use this ONLY when the video clearly contains unique visual cards carrying the content. Do NOT infer multiSliderReel from subtitle fragments, burned captions, or talking-head captions that mirror speech.
-- carousel: Static multi-image swipeable post (NO video, NO audio)
-- post: A single static image post (NO video). Only use this for truly static single-image content.
-- reel: Generic short-form video (use a more specific reel type if possible)
-IMPORTANT: If the content has VIDEO (duration > 0 seconds) and is from Instagram, it is a REEL format (voiceoverReel, oneSliderReel, or multiSliderReel), NEVER "post". "post" is ONLY for static images with no video.
-IMPORTANT TRANSCRIPTION GUIDANCE:
-- If inferred transcription modality is voiceoverOnly, strongly prefer voiceoverReel.
-- If inferred transcription modality is voiceoverPlusText, prefer voiceoverReel or oneSliderReel unless there is clear evidence of distinct visual cards.
-- If speech segments exist but on-screen text largely mirrors the speech, treat that as captions/subtitles, not multi-slider structure.
-- Music lyrics, chant-like repetition, or sparse repeated speech should NOT by themselves force voiceoverReel.
-Niche: A short label for the content vertical (e.g., "Real Estate Wholesaling", "Fitness", "SaaS Marketing")
-Creator: Extract the creator's @username handle and display name. IMPORTANT: The Creator/Author field above may contain a numeric ID (e.g. "63181063998") — do NOT use this. Instead, look for the actual @username in the transcript text, captions, or any visible mentions. If no real username is found, return null for creatorHandle.
 
-## Structural Analysis
-Also provide deep structural analysis:
+contentType — from: ${FORMAT_VALUES.join(', ')}
+- voiceoverReel: continuous video with voiceover narration (talking head or B-roll with VO).
+- oneSliderReel: a reel with ONE static or slow-motion background and text overlay.
+- multiSliderReel: a reel with MULTIPLE distinct visual cards in sequence. Use ONLY with clear evidence of distinct cards carrying the content — do NOT infer it from subtitle fragments or burned captions that mirror speech.
+- carousel: static multi-image swipeable post (no video, no audio).
+- post: a single static image (no video). NEVER use "post" for anything with video or duration > 0.
+Transcription-modality guidance: voiceoverOnly ⇒ strongly prefer voiceoverReel. voiceoverPlusText ⇒ prefer voiceoverReel or oneSliderReel unless distinct visual cards are evident. On-screen text that mirrors speech = captions, not slides.
 
-Frameworks: ${FRAMEWORK_VALUES.join(', ')}
-Valid emotions: curiosity, urgency, aspiration, fear, desire, awe, frustration, relief, belonging, exclusivity
-Valid persuasion types: socialProof, curiosityGap, contrastEffect, authority, scarcity, urgency, reciprocity, storytelling, lossAversion, exclusivity, anchoring, framing
+${nichePromptInstruction(ctx.canonicalNiches ?? '')}
 
-Return ONLY valid JSON with no markdown formatting:
+creatorHandle / creatorName — the creator's @username and display name. The Creator/Author field above may be a numeric ID — never use a numeric ID. Look for the real @username in the transcript or caption; if none exists, return null for creatorHandle.
+
+classificationConfidence — 0.0–1.0.
+
+### signatureCard
+A compact pattern fingerprint (≤80 words) that a pattern-mining engine will compare across many swipes WITHOUT seeing transcripts. Exact format:
+"HOOK: <mechanism, 5–8 words>. BEATS: <label → label → label>. MOVES: <2–4 persuasion moves actually used>. SUBJECT: <topic, 3–5 words>. NUMBERS: <how quantification is used, or 'none'>. VOICE: <2–3 markers>."
+Describe the observable moves of THIS content — not textbook framework names.
+
+## OUTPUT
+
+Return ONLY valid JSON, no markdown fences, exactly this shape (null for unknowable fields):
 {
-  "primaryNarrative": "storytelling",
+  "displayTitle": "...",
+  "keyInsight": "...",
+  "hookType": "boldClaim",
+  "hookScore": 8.5,
+  "hookScoreReason": "...",
+  "hookMechanism": "...",
+  "primaryNarrative": "businessBreakdown",
   "secondaryNarrative": null,
-  "contentType": "voiceoverReel",
-  "niche": "Real Estate Wholesaling",
+  "contentType": "carousel",
+  "niche": "...",
   "creatorHandle": "@username",
   "creatorName": "Display Name",
-  "classificationConfidence": 0.85,
-  "frameworkType": "aida",
+  "classificationConfidence": 0.9,
+  "frameworkType": "pas",
   "sections": [
-    {"label": "Hook", "purpose": "Creates curiosity gap about...", "sizePercent": 0.12, "emotion": "curiosity"},
-    {"label": "Problem", "purpose": "Establishes the pain point...", "sizePercent": 0.25, "emotion": "frustration"}
+    {"label": "Hook", "purpose": "...", "slideStart": 1, "slideEnd": 1, "sizePercent": 0.12},
+    {"label": "PainAmplification", "purpose": "...", "slideStart": 2, "slideEnd": 4, "sizePercent": 0.4}
   ],
-  "emotionalArc": [
-    {"position": 0.0, "emotion": "curiosity", "intensity": 0.8},
-    {"position": 0.15, "emotion": "frustration", "intensity": 0.6}
-  ],
-  "persuasionTechniques": [
-    {"type": "socialProof", "intensity": 0.7, "example": "Quote from transcript"}
-  ],
-  "hookScore": 8.5,
-  "hookScoreReason": "Strong curiosity gap with specific number...",
-  "keyInsight": "One sentence structural insight about what makes this content work",
-  "hookMechanism": "WHY this hook works — explain the psychological mechanism in 1 sentence",
-  "structuralRecipe": "Step-by-step writing recipe. Format: numbered list, each step = beat label + word count + density (sparse/moderate/dense)",
-  "voiceMarkers": ["conversational", "data-driven", "short sentences"],
-  "sentimentQuartiles": [0.1, -0.3, 0.2, 0.6],
-  "intensityQuartiles": [0.7, 0.5, 0.6, 0.9]
+  "structuralRecipe": "1. ...\\n2. ...",
+  "voiceMarkers": ["...", "..."],
+  "signatureCard": "HOOK: ... BEATS: ... MOVES: ... SUBJECT: ... NUMBERS: ... VOICE: ..."
+}`;
 }
 
-Provide at least 6 emotional arc data points. Provide at least 3 sections.
-For classificationConfidence, use 0.0-1.0 where 1.0 = very confident.
-If you cannot determine a field, use null.`;
-}
-
-// Port of transcriptionContext(from:) — counts + inferred modality.
-function transcriptionContext(ctx: AnalyzeContext): string {
+// Port of SwipeInsightEngine.transcriptionModalityLines.
+function transcriptionModalityLines(ctx: AnalyzeContext): string[] {
   const lines: string[] = [];
-  const slides = ctx.transcriptSlides.filter(s => s.text.trim().length > 0);
+  const nonEmpty = ctx.transcriptSlides.filter(s => s.text.trim().length > 0);
   const hasSpeech = ctx.speechSegments.length > 0;
 
-  let modality: string | null = null;
-  if (slides.length > 0 || hasSpeech) {
-    if (!hasSpeech) modality = 'textOnly';
-    else if (slides.length === 0) modality = 'voiceoverOnly';
-    else modality = 'voiceoverPlusText';
+  if (nonEmpty.length > 0 || hasSpeech) {
+    const hasVisual = nonEmpty.some(s => (s.source ?? 'manual') !== 'speechAudio');
+    const modality = !hasSpeech ? 'textOnly' : (hasVisual ? 'voiceoverPlusText' : 'voiceoverOnly');
+    lines.push(`Inferred transcription modality: ${modality}`);
   }
-  if (modality) lines.push(`Inferred Transcription Modality: ${modality}`);
-  if (ctx.transcriptSlides.length > 0) {
-    const visual = ctx.transcriptSlides.filter(s => (s.source ?? 'manual') !== 'speechAudio');
-    lines.push(`Transcript Slide Count: ${ctx.transcriptSlides.length}`);
-    lines.push(`Visual Slide Count: ${visual.length}`);
+  if (hasSpeech) lines.push(`Speech segment count: ${ctx.speechSegments.length}`);
+  if (ctx.transcriptionQuality) lines.push(`Transcription quality: ${ctx.transcriptionQuality}`);
+  if (ctx.transcriptionWarnings?.length) {
+    lines.push(`Transcription warnings: ${ctx.transcriptionWarnings.join(' | ')}`);
   }
-  if (hasSpeech) lines.push(`Speech Segment Count: ${ctx.speechSegments.length}`);
-  if (ctx.transcriptionQuality) lines.push(`Transcription Quality: ${ctx.transcriptionQuality}`);
-  if (ctx.transcriptionWarnings?.length) lines.push(`Transcription Warnings: ${ctx.transcriptionWarnings.join(' | ')}`);
-  return lines.length ? lines.join('\n') + '\n' : '';
+  return lines;
 }
 
 // ── LLM call + parse ────────────────────────────────────────────────────────
 
-interface ClassificationResponse {
+// Mirrors SwipeInsightResponse.
+export interface InsightResponse {
+  displayTitle?: string | null;
+  keyInsight?: string | null;
+  hookType?: string | null;
+  hookScore?: number | null;
+  hookScoreReason?: string | null;
+  hookMechanism?: string | null;
   primaryNarrative?: string | null;
   secondaryNarrative?: string | null;
   contentType?: string | null;
@@ -165,20 +282,13 @@ interface ClassificationResponse {
   creatorName?: string | null;
   classificationConfidence?: number | null;
   frameworkType?: string | null;
-  sections?: Array<{ label?: string; purpose?: string; sizePercent?: number; emotion?: string }> | null;
-  emotionalArc?: Array<{ position?: number; emotion?: string; intensity?: number }> | null;
-  persuasionTechniques?: Array<{ type?: string; intensity?: number; example?: string }> | null;
-  hookScore?: number | null;
-  hookScoreReason?: string | null;
-  keyInsight?: string | null;
-  hookMechanism?: string | null;
+  sections?: Array<{ label?: string; purpose?: string; slideStart?: number; slideEnd?: number; sizePercent?: number }> | null;
   structuralRecipe?: string | null;
   voiceMarkers?: string[] | null;
-  sentimentQuartiles?: number[] | null;
-  intensityQuartiles?: number[] | null;
+  signatureCard?: string | null;
 }
 
-export async function classify(ctx: AnalyzeContext): Promise<ClassificationResponse | null> {
+export async function classify(ctx: AnalyzeContext): Promise<InsightResponse | null> {
   if (!config.openRouterApiKey || !ctx.text.trim()) return null;
 
   const response = await fetch(`${config.openRouterBaseUrl}/chat/completions`, {
@@ -189,15 +299,14 @@ export async function classify(ctx: AnalyzeContext): Promise<ClassificationRespo
       'X-Title': 'CosmoOS',
     },
     body: JSON.stringify({
-      model: CLASSIFICATION_MODEL,
-      messages: [{ role: 'user', content: buildUnifiedPrompt(ctx) }],
-      temperature: 0.2,
+      model: INSIGHT_MODEL,
+      messages: [{ role: 'user', content: buildInsightPrompt(ctx) }],
       max_tokens: 4000,
     }),
-    signal: AbortSignal.timeout(120_000),
+    signal: AbortSignal.timeout(180_000),
   });
   if (!response.ok) {
-    console.warn(`⚠️ classification call failed: ${response.status}`);
+    console.warn(`⚠️ insight call failed: ${response.status}`);
     return null;
   }
   const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
@@ -205,7 +314,7 @@ export async function classify(ctx: AnalyzeContext): Promise<ClassificationRespo
   return parseResponse(content);
 }
 
-export function parseResponse(response: string): ClassificationResponse | null {
+export function parseResponse(response: string): InsightResponse | null {
   let jsonStr = response.trim();
   if (jsonStr.startsWith('```')) {
     const firstNewline = jsonStr.indexOf('\n');
@@ -214,107 +323,130 @@ export function parseResponse(response: string): ClassificationResponse | null {
     jsonStr = jsonStr.trim();
   }
   try {
-    return JSON.parse(jsonStr) as ClassificationResponse;
+    return JSON.parse(jsonStr) as InsightResponse;
   } catch {
     return null;
   }
 }
 
-// ── buildAnalysis port — produces SwipeAnalysis-shaped JSON ────────────────
+// ── Display title guardrail (port of sanitizedDisplayTitle) ────────────────
+
+export function sanitizedDisplayTitle(raw: string | null | undefined, hook: string | null | undefined): string | null {
+  const cleanedHook = hook
+    ?.replace(/\n/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (cleanedHook && cleanedHook.length > 0 && cleanedHook.length <= 60) {
+    return cleanedHook;
+  }
+
+  let title = raw?.trim() ?? '';
+  if (!title) return null;
+  const quotePairs: Array<[string, string]> = [['"', '"'], ['“', '”'], ["'", "'"]];
+  let stripped = true;
+  while (title.length >= 2 && stripped) {
+    stripped = false;
+    for (const [open, close] of quotePairs) {
+      if (title.startsWith(open) && title.endsWith(close)) {
+        title = title.slice(1, -1).trim();
+        stripped = true;
+        break;
+      }
+    }
+  }
+  title = title.replace(/\n/g, ' ').replace(/\s+/g, ' ');
+  if (!title) return null;
+  if (title.length > 90) {
+    const cut = title.slice(0, 90);
+    title = cut.includes(' ')
+      ? cut.split(' ').slice(0, -1).join(' ')
+      : cut;
+  }
+  return title || null;
+}
+
+// ── buildAnalysis port — produces SwipeAnalysis-shaped JSON (v4) ────────────
+
+export interface BuildAnalysisInputs {
+  hookText: string;   // first non-empty slide / fallback prefix — verbatim
+  slideCount: number; // analyzable slide count (anchors are clamped to it)
+  hasVideo: boolean;  // format sanity: video can never be a static "post"
+}
 
 export function buildAnalysisJSON(
-  response: ClassificationResponse,
-  creatorUUID: string | null
+  response: InsightResponse,
+  creatorUUID: string | null,
+  inputs: BuildAnalysisInputs
 ): Record<string, unknown> {
   const primaryNarrative = enumOrNull(response.primaryNarrative, NARRATIVE_VALUES);
   const secondaryNarrative = enumOrNull(response.secondaryNarrative, NARRATIVE_VALUES);
-  const contentFormat = enumOrNull(response.contentType, FORMAT_VALUES);
+  let contentFormat = enumOrNull(response.contentType, FORMAT_VALUES);
   const frameworkType = enumOrNull(response.frameworkType, FRAMEWORK_VALUES);
+  const hookType = enumOrNull(response.hookType, HOOK_TYPE_VALUES);
 
   const sections = (response.sections ?? [])
     .map((s, index) => {
       const label = (s.label ?? '').trim();
       const effectiveLabel = label || (s.purpose ?? '').slice(0, 30).trim();
       if (!effectiveLabel) return null;
+      // Clamp slide anchors to the actual slide range; drop nonsense.
+      let slideStart = typeof s.slideStart === 'number' ? s.slideStart : null;
+      let slideEnd = typeof s.slideEnd === 'number' ? s.slideEnd : null;
+      if (inputs.slideCount > 0) {
+        if (slideStart != null) slideStart = Math.min(Math.max(slideStart, 1), inputs.slideCount);
+        if (slideEnd != null) slideEnd = Math.min(Math.max(slideEnd, slideStart ?? 1), inputs.slideCount);
+      } else {
+        slideStart = null;
+        slideEnd = null;
+      }
       const section: Record<string, unknown> = {
         label: effectiveLabel,
         startIndex: index,
         endIndex: index + 1,
         purpose: s.purpose ?? '',
       };
-      const emotion = enumOrNull(s.emotion, EMOTION_VALUES);
-      if (emotion) section.emotion = emotion;
       if (typeof s.sizePercent === 'number') section.sizePercent = s.sizePercent;
+      if (slideStart != null) section.slideStart = slideStart;
+      if (slideEnd != null) section.slideEnd = slideEnd;
       return section;
     })
     .filter((s): s is Record<string, unknown> => s !== null);
 
-  const emotionalArc = (response.emotionalArc ?? [])
-    .filter(p => enumOrNull(p.emotion, EMOTION_VALUES) !== null)
-    .map(p => ({
-      position: clamp01(p.position ?? 0),
-      intensity: clamp01(p.intensity ?? 0),
-      emotion: p.emotion as string,
-    }));
-
-  let dominantEmotion: string | null = null;
-  if (emotionalArc.length > 0) {
-    const intensity: Record<string, number> = {};
-    for (const point of emotionalArc) {
-      intensity[point.emotion] = (intensity[point.emotion] ?? 0) + point.intensity;
-    }
-    dominantEmotion = Object.entries(intensity).sort((a, b) => b[1] - a[1])[0][0];
+  // Format sanity: Instagram video can never be a static "post".
+  if ((contentFormat === 'post' || contentFormat === null) && inputs.hasVideo) {
+    contentFormat = 'multiSliderReel';
   }
 
-  const persuasionTechniques = (response.persuasionTechniques ?? [])
-    .filter(t => enumOrNull(t.type, PERSUASION_VALUES) !== null)
-    .map(t => ({
-      type: t.type as string,
-      intensity: clamp01(t.intensity ?? 0),
-      ...(t.example ? { example: t.example } : {}),
-    }));
-
-  const persuasionStack: Record<string, number> = {};
-  for (const t of persuasionTechniques) persuasionStack[t.type] = t.intensity;
-
-  const techniqueMap: Record<string, number> = { ...persuasionStack };
-  const fingerprint = {
-    sentimentArc: normalizeQuartiles(response.sentimentQuartiles),
-    intensityArc: normalizeQuartiles(response.intensityQuartiles),
-    techniqueWeights: PERSUASION_VALUES.map(v => techniqueMap[v] ?? 0),
-    sectionCount: sections.length,
-    hookType: null,
-    frameworkType,
-  };
-
   const analysis: Record<string, unknown> = {
-    analysisVersion: SCHEMA_VERSION + 1,
+    analysisVersion: INSIGHT_VERSION,
     analyzedAt: new Date().toISOString(),
     isFullyAnalyzed: true,
     classificationSource: 'ai',
     classifiedAt: appleSeconds(new Date()),
   };
-  if (response.hookScore != null && response.hookScore > 0) analysis.hookScore = response.hookScore;
+  if (inputs.hookText) {
+    analysis.hookText = inputs.hookText;
+    analysis.hookWordCount = inputs.hookText.split(/ /).filter(Boolean).length;
+  }
+  if (hookType) analysis.hookType = hookType;
+  if (response.hookScore != null) analysis.hookScore = Math.min(Math.max(response.hookScore, 0), 10);
+  if (response.hookScoreReason) analysis.hookScoreReason = response.hookScoreReason;
+  if (response.hookMechanism) analysis.hookMechanism = response.hookMechanism;
   if (frameworkType) analysis.frameworkType = frameworkType;
   if (sections.length) analysis.sections = sections;
-  if (dominantEmotion) analysis.dominantEmotion = dominantEmotion;
-  if (emotionalArc.length) analysis.emotionalArc = emotionalArc;
-  if (persuasionTechniques.length) {
-    analysis.persuasionTechniques = persuasionTechniques;
-    analysis.persuasionStack = persuasionStack;
-  }
   if (response.keyInsight) analysis.keyInsight = response.keyInsight;
-  analysis.fingerprint = fingerprint;
-  if (response.hookScoreReason) analysis.hookScoreReason = response.hookScoreReason;
+  if (response.structuralRecipe) analysis.structuralRecipe = response.structuralRecipe;
+  if (response.voiceMarkers?.length) analysis.voiceMarkers = response.voiceMarkers;
   if (primaryNarrative) analysis.primaryNarrative = primaryNarrative;
   if (secondaryNarrative) analysis.secondaryNarrative = secondaryNarrative;
   if (contentFormat) analysis.swipeContentFormat = contentFormat;
   if (response.niche) analysis.niche = response.niche;
   if (creatorUUID) analysis.creatorUUID = creatorUUID;
   if (response.classificationConfidence != null) analysis.classificationConfidence = response.classificationConfidence;
-  if (response.hookMechanism) analysis.hookMechanism = response.hookMechanism;
-  if (response.structuralRecipe) analysis.structuralRecipe = response.structuralRecipe;
-  if (response.voiceMarkers?.length) analysis.voiceMarkers = response.voiceMarkers;
+  const displayTitle = sanitizedDisplayTitle(response.displayTitle, inputs.hookText);
+  if (displayTitle) analysis.displayTitle = displayTitle;
+  const signatureCard = response.signatureCard?.trim();
+  if (signatureCard) analysis.signatureCard = signatureCard;
   return analysis;
 }
 
@@ -382,15 +514,6 @@ export async function resolveCreator(
 
 function enumOrNull(value: string | null | undefined, allowed: string[]): string | null {
   return value != null && allowed.includes(value) ? value : null;
-}
-
-function clamp01(value: number): number {
-  return Math.min(Math.max(value, 0), 1);
-}
-
-function normalizeQuartiles(values: number[] | null | undefined): number[] {
-  if (Array.isArray(values) && values.length === 4 && values.every(v => typeof v === 'number')) return values;
-  return [0, 0, 0, 0];
 }
 
 export interface EngagementFields {

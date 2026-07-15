@@ -547,6 +547,7 @@ struct CortexResultRail: View {
                         thumbnailURL: nil,
                         faviconHost: Self.faviconHost(for: result),
                         previewText: result.snippet ?? result.subtitle,
+                        matchedExcerptLine: excerptLine(for: result),
                         isConnection: result.atomType == .connection,
                         isSelected: viewModel.selectedNodeId == result.selectionID,
                         onSelect: { select(result) },
@@ -590,6 +591,21 @@ struct CortexResultRail: View {
     /// budget edge.
     private static func faviconHost(for result: UnifiedSearchResult) -> String? {
         result.browserURL?.host
+    }
+
+    /// Body-evidence rows show the matched sentence with the query tokens
+    /// emphasized; title-tier rows keep their clean type subtitle so name
+    /// searches stay quiet.
+    private func excerptLine(for result: UnifiedSearchResult) -> AttributedString? {
+        guard result.lexicalTier >= .phraseInBody,
+              let excerpt = result.matchedExcerpt, !excerpt.isEmpty else { return nil }
+        return CommandKMatchHighlighter.attributed(
+            excerpt,
+            query: viewModel.query,
+            baseColor: DS.inkFaded,
+            emphasisColor: DS.text,
+            font: DS.caption2
+        )
     }
 
     /// Extracted for the same type-checker-budget reason as faviconHost.
@@ -745,6 +761,10 @@ private struct CortexRailRow: View {
     let thumbnailURL: String?
     var faviconHost: String? = nil
     let previewText: String?
+    /// Matched-context excerpt with query tokens pre-emphasized. When
+    /// present it replaces the subtitle line: a body match should show the
+    /// sentence it matched, not the type name (the Omnisearch anatomy).
+    var matchedExcerptLine: AttributedString? = nil
     let isConnection: Bool
     let isSelected: Bool
     let onSelect: () -> Void
@@ -760,7 +780,10 @@ private struct CortexRailRow: View {
                     .font(DS.callout)
                     .foregroundStyle(DS.text)
                     .lineLimit(1)
-                if !subtitle.isEmpty {
+                if let matchedExcerptLine {
+                    Text(matchedExcerptLine)
+                        .lineLimit(1)
+                } else if !subtitle.isEmpty {
                     Text(subtitle)
                         .font(DS.caption2)
                         .foregroundStyle(DS.inkFaded)

@@ -2977,6 +2977,645 @@ final class CommandKSearchPipelineTests: XCTestCase {
         )
     }
 
+    // MARK: - Matched-context excerpts (Phase 1)
+
+    func testMatchExcerptCentersOnDeepBodyMatch() {
+        let filler = String(repeating: "Opening filler paragraph about greenhouse mornings. ", count: 20)
+        let sentence = "The compounding advantage comes from writing every single day."
+        let body = filler + sentence + " Trailing thoughts continue here."
+
+        let excerpt = CommandKMatchExcerpt.excerpt(from: body, query: "compounding advantage")
+
+        XCTAssertNotNil(excerpt)
+        XCTAssertTrue(excerpt!.contains("compounding advantage"))
+        XCTAssertTrue(excerpt!.hasPrefix("…"), "a mid-document window must mark its cut leading edge")
+        XCTAssertLessThanOrEqual(excerpt!.count, CommandKMatchExcerpt.maxLength + 2)
+    }
+
+    func testMatchExcerptPrefersPhraseOverEarlierLoneToken() {
+        let body = "Advantage is mentioned early on. "
+            + String(repeating: "Unrelated middle text. ", count: 30)
+            + "But the compounding advantage appears here as a phrase."
+
+        let excerpt = CommandKMatchExcerpt.excerpt(from: body, query: "compounding advantage")
+
+        XCTAssertTrue(
+            excerpt?.contains("compounding advantage") == true,
+            "the full phrase anchors the window, not the first lone token"
+        )
+    }
+
+    func testMatchExcerptNilWhenNothingMatches() {
+        XCTAssertNil(CommandKMatchExcerpt.excerpt(from: "Completely unrelated text", query: "zxqvmissing"))
+        XCTAssertNil(CommandKMatchExcerpt.excerpt(from: nil, query: "anything"))
+        XCTAssertNil(CommandKMatchExcerpt.excerpt(from: "Some body", query: "   "))
+    }
+
+    func testMatchExcerptCollapsesNewlinesToOneLine() {
+        let body = "First line of the note\nsecond line with the target sentence inside\nthird line"
+        let excerpt = CommandKMatchExcerpt.excerpt(from: body, query: "target sentence")
+
+        XCTAssertNotNil(excerpt)
+        XCTAssertFalse(excerpt!.contains("\n"), "row excerpts must read as a single line")
+    }
+
+    func testHighlighterMatchesPhraseFirstThenTokensAndMergesOverlaps() {
+        let phraseRanges = CommandKMatchHighlighter.matchRanges(
+            of: "quick brown",
+            in: "The quick brown fox and another quick brown pair"
+        )
+        XCTAssertEqual(phraseRanges.count, 2, "whole-phrase occurrences win over per-token confetti")
+
+        let tokenRanges = CommandKMatchHighlighter.matchRanges(
+            of: "search searching",
+            in: "searching for search"
+        )
+        // "searching" contains "search" — overlapping token hits must merge.
+        XCTAssertEqual(tokenRanges.count, 2)
+    }
+
+    func testHighlighterIsCaseAndDiacriticInsensitive() {
+        let ranges = CommandKMatchHighlighter.matchRanges(of: "cafe", in: "The Café was open")
+        XCTAssertEqual(ranges.count, 1)
+    }
+
+    func testReadingWindowCentersDeepMatchAndSkipsHeadMatches() {
+        let filler = String(repeating: "Filler sentence for the reading window test. ", count: 40)
+        let body = filler + "Here lives the matched passage about compounding advantage." + filler
+
+        let window = CommandKMatchExcerpt.readingWindow(
+            anchoredBy: "…the matched passage about compounding advantage…",
+            query: "compounding advantage",
+            in: body
+        )
+        XCTAssertNotNil(window)
+        XCTAssertTrue(window!.contains("compounding advantage"))
+        XCTAssertTrue(window!.hasPrefix("…"))
+
+        // A match near the head needs no window — the head already shows it.
+        XCTAssertNil(CommandKMatchExcerpt.readingWindow(
+            anchoredBy: nil,
+            query: "filler sentence",
+            in: body
+        ))
+    }
+
+    @MainActor
+    func testInstantIndexBodyMatchCarriesExcerptAndTitleMatchDoesNot() {
+        let deepBody = String(repeating: "Padding paragraph before the payload. ", count: 10)
+            + "The exact sentence I remember writing lives here."
+        var index = CommandKSearchIndex()
+        index.replace([
+            CommandKSearchIndex.Entry(
+                id: "body-hit",
+                atomUUID: "body-hit",
+                atomType: .note,
+                title: "Weekly reflections",
+                snippet: deepBody,
+                updatedAt: "2026-07-01T00:00:00Z"
+            ),
+            CommandKSearchIndex.Entry(
+                id: "title-hit",
+                atomUUID: "title-hit",
+                atomType: .note,
+                title: "Exact sentence collection",
+                snippet: "Body without the query phrase at all",
+                updatedAt: "2026-07-01T00:00:00Z"
+            )
+        ])
+
+        let results = index.search("exact sentence", limit: 10)
+        let bodyHit = results.first { $0.atomUUID == "body-hit" }
+        let titleHit = results.first { $0.atomUUID == "title-hit" }
+
+        XCTAssertEqual(
+            bodyHit?.lexicalTier, .phraseInBody,
+            "a contiguous phrase in the body is stronger evidence than scattered keywords"
+        )
+        XCTAssertTrue(
+            bodyHit?.matchedExcerpt?.contains("exact sentence I remember writing") == true,
+            "body matches must carry the matched sentence, not the body head"
+        )
+        XCTAssertNil(titleHit?.matchedExcerpt, "title matches keep their clean subtitle")
+    }
+
+    func testHybridMapperPropagatesMatchedExcerpt() {
+        let result = HybridSearchEngine.SearchResult(
+            entityType: .note,
+            entityId: 1,
+            entityUUID: "uuid-excerpt",
+            title: "Weekly notes",
+            preview: "preview head",
+            bm25Score: 6,
+            vectorSimilarity: 0.2,
+            combinedScore: 0.4,
+            matchReason: .keywordMatch,
+            updatedAt: "2026-07-01T00:00:00Z",
+            matchedAllTerms: true,
+            matchedExcerpt: "…the matched sentence in context…"
+        )
+        let ranked = CommandKHybridResultMapper.rankedResult(
+            from: result,
+            atomType: .note,
+            normalizedQuery: CommandKSearchMatcher.normalizeQuery("matched sentence")
+        )
+        XCTAssertEqual(ranked.matchedExcerpt, "…the matched sentence in context…")
+    }
+
+    func testHybridSearchReturnsBodySnippetForDeepSentenceMatch() async throws {
+        let marker = "zxqvsnippetdeepmatch"
+        let filler = String(repeating: "Ordinary journal filler with no special terms. ", count: 30)
+        let atom = Atom.new(
+            type: .note,
+            title: "Long note with a buried sentence",
+            body: filler + "The buried sentence mentions \(marker) exactly once here. " + filler
+        )
+        let saved = try await AtomRepository.shared.create(atom)
+        createdUUIDs.append(saved.uuid)
+
+        let results = try await HybridSearchEngine.shared.search(query: marker, limit: 10)
+        let hit = results.first { $0.entityUUID == saved.uuid }
+
+        XCTAssertNotNil(hit, "the buried sentence must be findable by keyword")
+        XCTAssertTrue(
+            hit?.matchedExcerpt?.contains(marker) == true,
+            "keyword hits must carry an FTS5 snippet centered on the match"
+        )
+        XCTAssertFalse(
+            hit?.matchedExcerpt?.contains("\u{E000}") == true,
+            "snippet markers must be stripped before the excerpt leaves the engine"
+        )
+    }
+
+    func testHybridSearchTitleOnlyMatchHasNoBodyExcerpt() async throws {
+        let marker = "zxqvtitleonlymatch"
+        let atom = Atom.new(
+            type: .note,
+            title: "Note titled \(marker)",
+            body: "Body text that never mentions the special term."
+        )
+        let saved = try await AtomRepository.shared.create(atom)
+        createdUUIDs.append(saved.uuid)
+
+        let results = try await HybridSearchEngine.shared.search(query: marker, limit: 10)
+        let hit = results.first { $0.entityUUID == saved.uuid }
+
+        XCTAssertNotNil(hit)
+        XCTAssertNil(
+            hit?.matchedExcerpt,
+            "a title-only match must not present the body head as match evidence"
+        )
+    }
+
+    // MARK: - Phrase + proximity retrieval ladder (Phase 2)
+
+    func testPhraseInBodyRanksAboveScatteredKeywords() {
+        let scattered = RankedResult(
+            atomUUID: "scattered",
+            atomType: .note,
+            title: "Weekly notes",
+            semanticWeight: 0.9,
+            structuralWeight: 0.9,
+            recencyWeight: 1.0,
+            usageWeight: 0.5,
+            lexicalTier: .keywordInBody,
+            updatedAt: "2026-07-01T00:00:00Z"
+        )
+        let phrase = RankedResult(
+            atomUUID: "phrase",
+            atomType: .note,
+            title: "Old journal",
+            semanticWeight: 0.1,
+            structuralWeight: 0.2,
+            recencyWeight: 0.1,
+            usageWeight: 0.5,
+            lexicalTier: .phraseInBody,
+            updatedAt: "2026-01-01T00:00:00Z"
+        )
+        XCTAssertEqual(
+            [scattered, phrase].sorted().map(\.atomUUID), ["phrase", "scattered"],
+            "the exact sentence beats the same words scattered, regardless of blended score"
+        )
+    }
+
+    func testLexicalMatchAwardsPhraseInBodyTier() {
+        let (tier, quality) = CommandKSearchMatcher.lexicalMatch(
+            normalizedQuery: CommandKSearchMatcher.normalizeQuery("compounding advantage"),
+            normalizedTitle: CommandKSearchMatcher.normalize("Weekly reflections"),
+            normalizedFullText: CommandKSearchMatcher.normalize(
+                "Weekly reflections The compounding advantage comes from writing daily"
+            )
+        )
+        XCTAssertEqual(tier, .phraseInBody)
+        XCTAssertEqual(quality, 0.55, accuracy: 0.001)
+
+        // Scattered tokens stay keyword-in-body.
+        let (scatteredTier, _) = CommandKSearchMatcher.lexicalMatch(
+            normalizedQuery: CommandKSearchMatcher.normalizeQuery("compounding advantage"),
+            normalizedTitle: CommandKSearchMatcher.normalize("Weekly reflections"),
+            normalizedFullText: CommandKSearchMatcher.normalize(
+                "Weekly reflections The advantage of routines and compounding interest"
+            )
+        )
+        XCTAssertEqual(scatteredTier, .keywordInBody)
+
+        // Single-token queries never award the phrase tier.
+        let (singleTier, _) = CommandKSearchMatcher.lexicalMatch(
+            normalizedQuery: "compounding",
+            normalizedTitle: "weekly reflections",
+            normalizedFullText: "weekly reflections compounding gains"
+        )
+        XCTAssertEqual(singleTier, .keywordInBody)
+    }
+
+    func testQueryGrammarParsesQuotedPhrasesAndSmartQuotes() {
+        let straight = HybridSearchEngine.parseQueryGrammar("\"deep work ritual\" morning")
+        XCTAssertEqual(straight.quotedPhrases, ["deep work ritual"])
+        XCTAssertEqual(straight.tokens, ["morning"])
+
+        let curly = HybridSearchEngine.parseQueryGrammar("\u{201C}deep work ritual\u{201D} morning")
+        XCTAssertEqual(curly.quotedPhrases, ["deep work ritual"])
+
+        let unquoted = HybridSearchEngine.parseQueryGrammar("deep work ritual")
+        XCTAssertTrue(unquoted.quotedPhrases.isEmpty)
+        XCTAssertEqual(unquoted.tokens, ["deep", "work", "ritual"])
+
+        // Unbalanced trailing quote: the open tail is treated as a phrase.
+        let unbalanced = HybridSearchEngine.parseQueryGrammar("morning \"deep work")
+        XCTAssertEqual(unbalanced.quotedPhrases, ["deep work"])
+        XCTAssertEqual(unbalanced.tokens, ["morning"])
+    }
+
+    func testFTS5PhraseAndNearQueryPreparation() {
+        XCTAssertEqual(
+            HybridSearchEngine.prepareFTS5PhraseQuery("compounding advantage daily"),
+            "\"compounding advantage daily\"*"
+        )
+        XCTAssertNil(
+            HybridSearchEngine.prepareFTS5PhraseQuery("compounding"),
+            "single bare tokens have no phrase to try"
+        )
+        XCTAssertEqual(
+            HybridSearchEngine.prepareFTS5PhraseQuery("\"deep work\" morning"),
+            "\"deep work\" \"morning\"*"
+        )
+        XCTAssertEqual(
+            HybridSearchEngine.prepareFTS5NearQuery("compounding advantage daily"),
+            "NEAR(\"compounding\"* \"advantage\"* \"daily\"*, 10)"
+        )
+        XCTAssertNil(
+            HybridSearchEngine.prepareFTS5NearQuery("\"deep work\" morning"),
+            "quoted queries demand exactness — no NEAR loosening"
+        )
+        XCTAssertNil(HybridSearchEngine.prepareFTS5NearQuery("single"))
+    }
+
+    func testTermCoverageCountsMatchedTokens() {
+        let coverage = HybridSearchEngine.termCoverage(
+            tokens: ["compounding", "advantage", "writing", "zxqvmissing"],
+            in: "The compounding advantage of writing daily"
+        )
+        XCTAssertEqual(coverage, 0.75, accuracy: 0.001)
+    }
+
+    func testHybridMapperLadderTiers() {
+        func searchResult(
+            matchedAllTerms: Bool,
+            matchedPhrase: Bool,
+            termCoverage: Double
+        ) -> HybridSearchEngine.SearchResult {
+            HybridSearchEngine.SearchResult(
+                entityType: .note,
+                entityId: 1,
+                entityUUID: "uuid",
+                title: "Weekly notes",
+                preview: "",
+                bm25Score: 6,
+                vectorSimilarity: 0.4,
+                combinedScore: 0.4,
+                matchReason: .keywordMatch,
+                updatedAt: "2026-07-01T00:00:00Z",
+                matchedAllTerms: matchedAllTerms,
+                matchedPhrase: matchedPhrase,
+                termCoverage: termCoverage
+            )
+        }
+        let query = CommandKSearchMatcher.normalizeQuery("greenhouse ritual advantage")
+
+        XCTAssertEqual(
+            CommandKHybridResultMapper.lexicalTier(
+                for: searchResult(matchedAllTerms: true, matchedPhrase: true, termCoverage: 1.0),
+                normalizedQuery: query
+            ),
+            .phraseInBody
+        )
+        XCTAssertEqual(
+            CommandKHybridResultMapper.lexicalTier(
+                for: searchResult(matchedAllTerms: true, matchedPhrase: false, termCoverage: 1.0),
+                normalizedQuery: query
+            ),
+            .keywordInBody
+        )
+        // High-coverage partial: 7-of-8-style near-misses keep keyword rank.
+        XCTAssertEqual(
+            CommandKHybridResultMapper.lexicalTier(
+                for: searchResult(matchedAllTerms: false, matchedPhrase: false, termCoverage: 0.75),
+                normalizedQuery: query
+            ),
+            .keywordInBody
+        )
+        // Low-coverage scraps rank with the semantic layer.
+        XCTAssertEqual(
+            CommandKHybridResultMapper.lexicalTier(
+                for: searchResult(matchedAllTerms: false, matchedPhrase: false, termCoverage: 0.34),
+                normalizedQuery: query
+            ),
+            .semanticOnly
+        )
+    }
+
+    @MainActor
+    func testInstantIndexQuotedQueryRequiresPhrase() {
+        var index = CommandKSearchIndex()
+        index.replace([
+            CommandKSearchIndex.Entry(
+                id: "phrase-doc",
+                atomUUID: "phrase-doc",
+                atomType: .note,
+                title: "Journal",
+                snippet: "The deep work ritual starts at dawn",
+                updatedAt: "2026-07-01T00:00:00Z"
+            ),
+            CommandKSearchIndex.Entry(
+                id: "scattered-doc",
+                atomUUID: "scattered-doc",
+                atomType: .note,
+                title: "Notes",
+                snippet: "Deep thoughts about how work and ritual interact",
+                updatedAt: "2026-07-01T00:00:00Z"
+            )
+        ])
+
+        let unquoted = index.search("deep work ritual", limit: 10)
+        XCTAssertEqual(Set(unquoted.map(\.atomUUID)), ["phrase-doc", "scattered-doc"])
+        XCTAssertEqual(
+            unquoted.first?.atomUUID, "phrase-doc",
+            "the contiguous phrase outranks the scattered tokens"
+        )
+
+        let quoted = index.search("\"deep work ritual\"", limit: 10)
+        XCTAssertEqual(
+            quoted.map(\.atomUUID), ["phrase-doc"],
+            "quotes are a hard phrase requirement"
+        )
+    }
+
+    func testHybridSearchPhraseBeatsScatteredTokensEndToEnd() async throws {
+        let marker = "zxqvphraseladder"
+        let phraseAtom = Atom.new(
+            type: .note,
+            title: "Buried phrase note",
+            body: "Filler opening. The \(marker) sentence lives right here as one phrase. Filler closing."
+        )
+        let scatteredAtom = Atom.new(
+            type: .note,
+            title: "Scattered tokens note",
+            body: "The \(marker) word appears first. Many words later, a sentence. Even later, lives and here and phrase."
+        )
+        let savedPhrase = try await AtomRepository.shared.create(phraseAtom)
+        createdUUIDs.append(savedPhrase.uuid)
+        let savedScattered = try await AtomRepository.shared.create(scatteredAtom)
+        createdUUIDs.append(savedScattered.uuid)
+
+        let results = try await HybridSearchEngine.shared.search(
+            query: "\(marker) sentence lives right here",
+            limit: 10
+        )
+        let phraseHit = results.first { $0.entityUUID == savedPhrase.uuid }
+        let scatteredHit = results.first { $0.entityUUID == savedScattered.uuid }
+
+        XCTAssertNotNil(phraseHit, "the phrase document must be retrieved")
+        XCTAssertEqual(phraseHit?.matchedPhrase, true, "the ladder must mark the contiguous match as a phrase hit")
+        if let scatteredHit {
+            XCTAssertEqual(
+                scatteredHit.matchedPhrase, false,
+                "scattered tokens must not claim phrase evidence"
+            )
+        }
+    }
+
+    func testHybridSearchQuotedQueryReturnsOnlyPhraseMatches() async throws {
+        let marker = "zxqvquotedstrict"
+        let phraseAtom = Atom.new(
+            type: .note,
+            title: "Quoted phrase target",
+            body: "Somewhere in here the \(marker) ritual begins exactly so."
+        )
+        let scatteredAtom = Atom.new(
+            type: .note,
+            title: "Quoted phrase decoy",
+            body: "The ritual word is here. Much later the \(marker) word, but never together."
+        )
+        let savedPhrase = try await AtomRepository.shared.create(phraseAtom)
+        createdUUIDs.append(savedPhrase.uuid)
+        let savedScattered = try await AtomRepository.shared.create(scatteredAtom)
+        createdUUIDs.append(savedScattered.uuid)
+
+        let results = try await HybridSearchEngine.shared.search(
+            query: "\"\(marker) ritual\"",
+            limit: 10
+        )
+
+        XCTAssertTrue(
+            results.contains { $0.entityUUID == savedPhrase.uuid },
+            "the exact phrase must be found"
+        )
+        XCTAssertFalse(
+            results.contains { $0.entityUUID == savedScattered.uuid },
+            "a quoted query must never return scattered-token matches"
+        )
+    }
+
+    func testHybridSearchHighCoveragePartialSurvivesMissingToken() async throws {
+        let marker = "zxqvcoverageladder"
+        let atom = Atom.new(
+            type: .note,
+            title: "Coverage note",
+            body: "The \(marker) advantage comes from writing every day without fail."
+        )
+        let saved = try await AtomRepository.shared.create(atom)
+        createdUUIDs.append(saved.uuid)
+
+        // One token ("nonexistentterm") is misremembered — strict AND fails,
+        // but 4 of 5 tokens match: the coverage ladder must keep the hit.
+        let results = try await HybridSearchEngine.shared.search(
+            query: "\(marker) advantage writing day nonexistentterm",
+            limit: 10
+        )
+        let hit = results.first { $0.entityUUID == saved.uuid }
+
+        XCTAssertNotNil(hit, "a 4-of-5-token match must survive one misremembered word")
+        XCTAssertEqual(hit?.matchedAllTerms, false)
+        XCTAssertEqual(hit?.termCoverage ?? 0, 0.8, accuracy: 0.01)
+    }
+
+    // MARK: - Jump-to-sentence landing (Phase 3)
+
+    @MainActor
+    func testLandingStoreIsOneShotAndKeyedByAtom() {
+        let store = CommandKSearchLandingStore()
+        store.stage(atomUUID: "atom-a", excerpt: "…the passage…", query: "the passage")
+
+        XCTAssertNil(store.consume(for: "atom-b"), "another atom must not steal the landing")
+        let landing = store.consume(for: "atom-a")
+        XCTAssertEqual(landing?.excerpt, "…the passage…")
+        XCTAssertNil(store.consume(for: "atom-a"), "landings are one-shot")
+
+        store.stage(atomUUID: "", excerpt: nil, query: "query")
+        XCTAssertNil(store.consume(for: ""), "empty identifiers never stage")
+        store.stage(atomUUID: "atom-c", excerpt: nil, query: "   ")
+        XCTAssertNil(store.consume(for: "atom-c"), "empty queries never stage")
+    }
+
+    @MainActor
+    func testLandingLocatorFindsPhraseBlockThenExcerptOverlapThenToken() {
+        let blocks = [
+            RichBlock(kind: .paragraph, inlines: [.text("Opening thoughts about mornings.")]),
+            RichBlock(kind: .paragraph, inlines: [.text("The compounding advantage comes from writing every day.")]),
+            RichBlock(kind: .paragraph, inlines: [.text("Closing notes mention advantage once more.")])
+        ]
+
+        // 1. Whole query as a phrase inside one block.
+        let phraseLanding = CommandKSearchLanding(
+            atomUUID: "a", excerpt: nil, query: "compounding advantage", stagedAt: Date()
+        )
+        XCTAssertEqual(
+            CommandKSearchLandingLocator.blockID(for: phraseLanding, in: blocks),
+            blocks[1].id
+        )
+
+        // 2. No phrase hit — excerpt token overlap picks the right block.
+        let overlapLanding = CommandKSearchLanding(
+            atomUUID: "a",
+            excerpt: "…advantage comes from writing every day…",
+            query: "advantage writing zxqvmissing",
+            stagedAt: Date()
+        )
+        XCTAssertEqual(
+            CommandKSearchLandingLocator.blockID(for: overlapLanding, in: blocks),
+            blocks[1].id
+        )
+
+        // 3. Nothing matches at all → nil (open normally).
+        let missLanding = CommandKSearchLanding(
+            atomUUID: "a", excerpt: nil, query: "zxqvnothing", stagedAt: Date()
+        )
+        XCTAssertNil(CommandKSearchLandingLocator.blockID(for: missLanding, in: blocks))
+    }
+
+    @MainActor
+    func testLandingLocatorResolvesNestedMatchToTopLevelAnchor() {
+        var toggle = RichBlock(kind: .toggle, inlines: [.text("Folded section")])
+        toggle.children = [
+            RichBlock(kind: .paragraph, inlines: [.text("The buried sentence hides in a toggle child.")])
+        ]
+        let blocks = [
+            RichBlock(kind: .paragraph, inlines: [.text("Intro paragraph.")]),
+            toggle
+        ]
+
+        let landing = CommandKSearchLanding(
+            atomUUID: "a", excerpt: nil, query: "buried sentence hides", stagedAt: Date()
+        )
+        XCTAssertEqual(
+            CommandKSearchLandingLocator.blockID(for: landing, in: blocks),
+            toggle.id,
+            "nested matches reveal their top-level row — children have no scroll anchor"
+        )
+    }
+
+    // MARK: - Typo tolerance + embedding cache (Phase 4)
+
+    func testTypoToleranceOneEditVariants() {
+        XCTAssertTrue(CommandKTypoTolerance.isWithinOneEdit("retrieval"[...], "retrieval"[...]))
+        XCTAssertTrue(CommandKTypoTolerance.isWithinOneEdit("retreival"[...], "retrieval"[...]), "transposition")
+        XCTAssertTrue(CommandKTypoTolerance.isWithinOneEdit("retrival"[...], "retrieval"[...]), "deletion")
+        XCTAssertTrue(CommandKTypoTolerance.isWithinOneEdit("retrieval"[...], "retrieva"[...]), "insertion")
+        XCTAssertTrue(CommandKTypoTolerance.isWithinOneEdit("retrieval"[...], "retrieval"[...].dropLast() + "x"), "substitution")
+        XCTAssertFalse(CommandKTypoTolerance.isWithinOneEdit("retreivla"[...], "retrieval"[...]), "two transpositions is two edits")
+        XCTAssertFalse(CommandKTypoTolerance.isWithinOneEdit("cat"[...], "dog"[...]))
+        XCTAssertFalse(CommandKTypoTolerance.isWithinOneEdit("short"[...], "muchlonger"[...]))
+    }
+
+    func testTypoTolerancePrefixMatchWhileTyping() {
+        XCTAssertTrue(
+            CommandKTypoTolerance.fuzzyMatches("retreiv"[...], titleToken: "retrieval"[...]),
+            "a typo inside a partially-typed word must still connect via the title-token prefix"
+        )
+        XCTAssertFalse(
+            CommandKTypoTolerance.fuzzyMatches("zzzzzz"[...], titleToken: "retrieval"[...])
+        )
+    }
+
+    @MainActor
+    func testInstantIndexFuzzyTitleRescueRanksBelowExactMatches() {
+        var index = CommandKSearchIndex()
+        index.replace([
+            CommandKSearchIndex.Entry(
+                id: "target",
+                atomUUID: "target",
+                atomType: .note,
+                title: "Retrieval notes",
+                snippet: "Body text",
+                updatedAt: "2026-07-01T00:00:00Z"
+            )
+        ])
+
+        // Typo'd query: no strict match anywhere, fuzzy title rescue fires.
+        let fuzzy = index.search("retreival", limit: 10)
+        XCTAssertEqual(fuzzy.map(\.atomUUID), ["target"])
+        XCTAssertEqual(fuzzy.first?.lexicalTier, .titleMatch)
+
+        // Exact query: strict path answers, quality above the fuzzy floor.
+        let exact = index.search("retrieval", limit: 10)
+        XCTAssertEqual(exact.first?.atomUUID, "target")
+        XCTAssertGreaterThan(exact.first?.structuralWeight ?? 0, 0.5)
+
+        // Short tokens never fuzz — "cat" must not summon "car".
+        var shortIndex = CommandKSearchIndex()
+        shortIndex.replace([
+            CommandKSearchIndex.Entry(
+                id: "car",
+                atomUUID: "car",
+                atomType: .note,
+                title: "Car",
+                snippet: nil,
+                updatedAt: "2026-07-01T00:00:00Z"
+            )
+        ])
+        XCTAssertTrue(shortIndex.search("cat", limit: 10).isEmpty)
+    }
+
+    func testQueryEmbeddingCacheStoresAndEvicts() async {
+        let cache = QueryEmbeddingCache()
+        await cache.store([0.1, 0.2], for: "  Compounding Advantage ")
+
+        // Keyed by trimmed, lowercased query.
+        let hit = await cache.vector(for: "compounding advantage")
+        XCTAssertEqual(hit, [0.1, 0.2])
+
+        let miss = await cache.vector(for: "something else")
+        XCTAssertNil(miss)
+
+        // Empty vectors and blank queries never cache.
+        await cache.store([], for: "empty vector")
+        let emptyVector = await cache.vector(for: "empty vector")
+        XCTAssertNil(emptyVector)
+        await cache.store([0.5], for: "   ")
+        let blank = await cache.vector(for: "   ")
+        XCTAssertNil(blank)
+    }
+
     private func recentlyUpdated(_ atom: Atom, updatedAt: String) -> Atom {
         var atom = atom
         atom.updatedAt = updatedAt

@@ -151,11 +151,6 @@ struct MainView: View {
     // Navigation destination (Command Center is home)
     @State private var currentDestination: SidebarDestination = .commandCenter
     @State private var showWorkbenchComposer = false
-    @State private var showConstellation = false
-    /// Full-window thumbnail of a dive target, held over the canvas while it
-    /// swaps thinkspaces so the outgoing space never peeks through.
-    @State private var constellationDiveCover: NSImage?
-    @State private var diveCoverFailsafeTask: Task<Void, Never>?
     @State private var spokesPillar: Atom?
     @State private var inboxRoute: SidebarInboxRoute = .global
     /// A ⌘K jump can land the Ideas surface on a client's board.
@@ -308,22 +303,6 @@ struct MainView: View {
                         searchFocusRequest: commandKSearchFocusRequest,
                         viewModel: commandKViewModel
                     )
-                        .background {
-                            // Mirrors the palette's visible lifetime: this tracker
-                            // is removed with the same fade as the opacity drop,
-                            // so its onDisappear marks the true end of the
-                            // fade-out. Guarded:
-                            // if a re-present interrupted the fade, a stale
-                            // instance's disappearance must not clear it.
-                            if showCommandK {
-                                Color.clear
-                                    .onDisappear {
-                                        if !showCommandK {
-                                            CommandKPalettePresentationState.shared.setOnScreen(false)
-                                        }
-                                    }
-                            }
-                        }
                         .transition(.opacity)
                 }
             }
@@ -652,12 +631,6 @@ struct MainView: View {
                   let uuid = UUID(uuidString: momentId),
                   let moment = NavigationTrail.shared.backStack.first(where: { $0.id == uuid }) else { return }
             jumpTrail(to: moment)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.presentConstellation)) { _ in
-            presentConstellation()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Canvas.thinkspaceSwitchDidPresent)) { _ in
-            dismissDiveCover()
         }
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.compileSpokes)) { notification in
             guard let entityId = notification.userInfo?["id"] as? Int64 else { return }
@@ -1084,55 +1057,6 @@ struct MainView: View {
                     .padding(.leading, isSidebarVisible ? sidebarLayout.reservedWidth + 8 : 44)
                     .zIndex(201)
                     .transition(.opacity)
-                }
-
-                // The Constellation — zoom out into all thinkspaces.
-                // The host mounts it during the pinch scrub (before commit)
-                // and is the only view re-evaluated by the gesture's 120Hz
-                // progress writes.
-                ConstellationOverlayHost(
-                    thinkspaces: thinkspaceManager.thinkspaces,
-                    originThinkspaceId: {
-                        if case .thinkspace(let id) = currentDestination { return id }
-                        return nil
-                    }(),
-                    isCommitted: showConstellation,
-                    onSelect: { thinkspaceId in
-                        selectConstellationThinkspace(thinkspaceId)
-                    },
-                    onDismiss: {
-                        dismissConstellation()
-                    },
-                    onFullyDismissed: {
-                        handleConstellationFullyDismissed()
-                    }
-                )
-                .zIndex(265)
-
-                // Dive cover — holds the target thinkspace's thumbnail over
-                // the canvas while it swaps thinkspaces underneath, so the
-                // outgoing space never peeks through. Sits BELOW the
-                // Constellation (264 < 265): the dive's zoom expansion plays
-                // on top and the fading grid reveals this identical image —
-                // or, when the prewarmed switch already presented, the live
-                // canvas itself. Dismissed by thinkspaceSwitchDidPresent
-                // (or the failsafe).
-                if let cover = constellationDiveCover {
-                    Image(nsImage: cover)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .frame(width: geo.size.width, height: geo.size.height)
-                        .clipped()
-                        .ignoresSafeArea()
-                        .allowsHitTesting(false)
-                        .transition(.opacity)
-                        .zIndex(264)
-                        .accessibilityHidden(true)
-                        .onDisappear {
-                            if !showConstellation {
-                                ConstellationPresentationState.shared.setOnScreen(false)
-                            }
-                        }
                 }
 
                 // Spokes Compiler — pillar → platform package staging board
@@ -2011,88 +1935,6 @@ struct MainView: View {
         return false
     }
 
-    private func presentConstellation() {
-        guard !showConstellation else { return }
-        // Stale-while-revalidate: presentation never rasterizes synchronously
-        // when any screenshot exists — idle captures keep them fresh. Only a
-        // never-captured space warrants a cold capture (Cmd+Shift+Space on a
-        // first run; the scrub path arrives with the overlay already partly
-        // visible, where captures are suppressed and cards fall back to the
-        // vector map).
-        if let id = activeCanvasThinkspaceId,
-           !ThinkspaceThumbnailService.shared.hasAnyScreenshot(for: id) {
-            NotificationCenter.default.post(
-                name: CosmoNotification.Canvas.captureCurrentThinkspaceScreenshot,
-                object: nil
-            )
-        }
-        // From here until the overlay fully leaves the screen, canvas
-        // screenshot capture is suppressed — a capture would composite the
-        // Constellation grid into a thinkspace thumbnail.
-        ConstellationPresentationState.shared.setOnScreen(true)
-        withAnimation(ProMotionSprings.modal) {
-            showConstellation = true
-        }
-        // The scrub handed off to the committed presentation; the opacity in
-        // the overlay host is pinned at 1 from here on.
-        ConstellationZoomScrubState.shared.progress = 0
-    }
-
-    private func dismissConstellation() {
-        withAnimation(ProMotionSprings.modal) {
-            showConstellation = false
-        }
-    }
-
-    /// The overlay host reports the Constellation has fully left the screen.
-    /// Captures become safe again unless a dive cover is still holding the
-    /// window (its own onDisappear clears the flag in that case).
-    private func handleConstellationFullyDismissed() {
-        guard !showConstellation, constellationDiveCover == nil else { return }
-        ConstellationPresentationState.shared.setOnScreen(false)
-    }
-
-    private func selectConstellationThinkspace(_ thinkspaceId: String) {
-        if case .thinkspace(let currentId) = currentDestination,
-           currentId == thinkspaceId {
-            dismissConstellation()
-            return
-        }
-        NotificationCenter.default.post(
-            name: CosmoNotification.Canvas.skipNextThinkspaceSwitchScreenshot,
-            object: nil
-        )
-        // Hold a cover of the target over the whole window: the Constellation
-        // unmounts and the canvas swaps thinkspaces UNDER it, and it only
-        // dissolves once the destination reports it has presented (or the
-        // failsafe fires — the cover must never strand the screen). Without
-        // this, the outgoing space's canvas peeks through for a few frames.
-        if let cover = ThinkspaceThumbnailService.shared.cachedThumbnail(for: thinkspaceId) {
-            constellationDiveCover = cover
-            scheduleDiveCoverFailsafe()
-        }
-        dismissConstellation()
-        currentDestination = .thinkspace(id: thinkspaceId)
-    }
-
-    private func dismissDiveCover() {
-        diveCoverFailsafeTask?.cancel()
-        diveCoverFailsafeTask = nil
-        guard constellationDiveCover != nil else { return }
-        withAnimation(.easeOut(duration: 0.25)) {
-            constellationDiveCover = nil
-        }
-    }
-
-    private func scheduleDiveCoverFailsafe() {
-        diveCoverFailsafeTask?.cancel()
-        diveCoverFailsafeTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(1500))
-            guard !Task.isCancelled else { return }
-            dismissDiveCover()
-        }
-    }
-
     /// Navigate to the last-used thinkspace (or the first available)
     private func navigateToLastThinkspace() {
         if let id = lastThinkspaceId {
@@ -2165,14 +2007,6 @@ struct MainView: View {
         )
         state.apply(event)
 
-        // From here until the palette's fade-out finishes (the visibility
-        // tracker's onDisappear at the mount site), canvas screenshot capture
-        // is suppressed — a Command-K thinkspace jump would composite the
-        // fading palette into the outgoing thinkspace's thumbnail.
-        if state.isVisible {
-            CommandKPalettePresentationState.shared.setOnScreen(true)
-        }
-
         withAnimation(.spring(response: 0.2)) {
             showCommandK = state.isVisible
             commandKBehindFocusMode = state.isPreservedBehindFocusMode
@@ -2231,14 +2065,6 @@ struct MainView: View {
                 if PeekController.shared.isPresented {
                     withAnimation(ProMotionSprings.snappy) {
                         PeekController.shared.dismiss()
-                    }
-                    return nil
-                }
-
-                // 0b. The Constellation
-                if showConstellation {
-                    withAnimation(ProMotionSprings.modal) {
-                        showConstellation = false
                     }
                     return nil
                 }
@@ -2368,20 +2194,6 @@ struct MainView: View {
                     navigateTrailForward()
                     return nil
                 }
-            }
-
-            // Cmd+Shift+Space — toggle the Constellation
-            if event.type == .keyDown,
-               event.keyCode == 49,  // Space
-               event.modifierFlags.contains(.command),
-               event.modifierFlags.contains(.shift),
-               !isKeyboardInputReserved() {
-                if showConstellation {
-                    dismissConstellation()
-                } else {
-                    presentConstellation()
-                }
-                return nil
             }
 
             // Space closes an open Peek (Quick Look parity)
@@ -2686,7 +2498,7 @@ struct MainView: View {
             }
 
             // Don't show menus when overlays are active or not on a thinkspace
-            guard isThinkspaceActive, !showCommandK, !showConstellation,
+            guard isThinkspaceActive, !showCommandK,
                   appState.focusedEntity == nil else {
                 return event
             }
@@ -2754,8 +2566,6 @@ struct MainView: View {
         case .createTemplate:
             templateGalleryPosition = radialMenuPosition
             showTemplateGallery = true
-        case .createPortal:
-            createNewEntity(type: .portal, at: radialMenuPosition)
         }
     }
 

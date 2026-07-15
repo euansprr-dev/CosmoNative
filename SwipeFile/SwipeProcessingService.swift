@@ -1152,6 +1152,10 @@ enum SwipeMediaMirrorCoordinator {
             // Once per launch: rewrite legacy hook-length titles into short
             // display headlines (self-guards, cheap no-op when clean).
             await SwipeTitleBackfill.runBackfillPassIfNeeded()
+            // Once per launch: consolidate pre-canonical free-text niches into
+            // the NicheRegistry vocabulary (data-derived gate — cheap no-op
+            // once the library is canonical).
+            await SwipeNicheBackfill.runBackfillPassIfNeeded()
             // Once per launch: weave pending swipes into the pattern library
             // (batched — runs only when enough swipes accumulated or weekly).
             await SwipePatternWeaver.runIfNeeded()

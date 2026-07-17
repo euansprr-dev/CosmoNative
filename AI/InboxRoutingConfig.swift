@@ -38,6 +38,15 @@ struct InboxRoutingConfig: Sendable {
     /// Worked examples from the correction ledger included per routing call.
     let atlasCorrectionExamples: Int = 8
 
+    // MARK: - The Seedbed — auto-grow
+
+    /// A `feedSeedling` primary at or above this confidence applies itself:
+    /// the thought accrues to its seedling and the capture leaves the queue
+    /// with a receipt ("Grew …") and full undo. ONLY feeding auto-applies —
+    /// growing mass is low-stakes and reversible. Starting (naming) a new
+    /// seedling always waits for a human tap: naming is a human act.
+    let seedlingAutoGrowMinConfidence: Double = 0.85
+
     // MARK: - Search
 
     let searchLimit: Int = 12

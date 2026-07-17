@@ -45,21 +45,42 @@ struct CosmoChromeIsland<Content: View>: View {
 struct CosmoChromeRow<Leading: View, Center: View, Trailing: View>: View {
     /// Set false when a parent container already provides the chrome insets.
     var insetsEnabled: Bool = true
+    /// True = the center island is truly centered via ZStack (full-screen
+    /// workspaces). False = the center flows between the side clusters —
+    /// at pane widths absolute centering can overlap the clusters, and flow
+    /// layout makes overlap structurally impossible. Constant per mount,
+    /// never toggled on animated state.
+    var centersAbsolutely: Bool = true
     @ViewBuilder let leading: Leading
     @ViewBuilder let center: Center
     @ViewBuilder let trailing: Trailing
 
     var body: some View {
-        ZStack {
+        rowLayout
+            .padding(.horizontal, insetsEnabled ? CosmoChromeMetrics.sideInset : 0)
+            .padding(.top, insetsEnabled ? CosmoChromeMetrics.topInset : 0)
+            .frame(maxWidth: .infinity, alignment: .top)
+    }
+
+    @ViewBuilder
+    private var rowLayout: some View {
+        if centersAbsolutely {
+            ZStack {
+                HStack(spacing: CosmoChromeMetrics.islandSpacing) {
+                    leading
+                    Spacer(minLength: CosmoChromeMetrics.islandSpacing)
+                    trailing
+                }
+                center
+            }
+        } else {
             HStack(spacing: CosmoChromeMetrics.islandSpacing) {
                 leading
                 Spacer(minLength: CosmoChromeMetrics.islandSpacing)
+                center
+                Spacer(minLength: CosmoChromeMetrics.islandSpacing)
                 trailing
             }
-            center
         }
-        .padding(.horizontal, insetsEnabled ? CosmoChromeMetrics.sideInset : 0)
-        .padding(.top, insetsEnabled ? CosmoChromeMetrics.topInset : 0)
-        .frame(maxWidth: .infinity, alignment: .top)
     }
 }

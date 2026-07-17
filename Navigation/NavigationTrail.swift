@@ -217,8 +217,24 @@ struct NavigationTrailChrome: View {
 /// The trail chrome as a chrome-row island — every focus surface embeds this
 /// exact control, so back/forward/long-press history behave identically to
 /// the app shell. Driven through trail notifications; MainView owns the jumps.
+///
+/// The sidebar toggle rides to its left so the unified sidebar can open from
+/// ANY view — focus modes included. Surfaces that already carry the app
+/// shell's floating toggle (thinkspace library) opt out via
+/// `showsSidebarToggle: false` so the control never appears twice.
 struct NavigationTrailIsland: View {
+    var showsSidebarToggle: Bool = true
+
     var body: some View {
+        HStack(spacing: CosmoChromeMetrics.islandSpacing) {
+            if showsSidebarToggle {
+                SidebarToggleIsland()
+            }
+            trailChrome
+        }
+    }
+
+    private var trailChrome: some View {
         NavigationTrailChrome(
             style: .embedded,
             onBack: {
@@ -235,6 +251,53 @@ struct NavigationTrailIsland: View {
                 )
             }
         )
+    }
+}
+
+// MARK: - Sidebar Toggle Island
+
+/// The unified sidebar's toggle as a chrome-row island — same capsule anatomy
+/// as the trail chevrons, ONE look app-wide. Posts to MainView, which owns
+/// the sidebar state: outside focus modes it toggles the persistent sidebar;
+/// inside a focus mode it reveals the sidebar as an overlay.
+///
+/// Two manners, one anatomy (the trail chrome's own pattern):
+/// - `.embedded` (focus-mode chrome rows): full strength like its neighbors.
+/// - `.floating` (app shell over canvas/library/dashboard): ghost chrome —
+///   40% until hover, so daily chrome stays quiet over the content.
+struct SidebarToggleIsland: View {
+    enum Style {
+        case floating
+        case embedded
+    }
+
+    var style: Style = .embedded
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isHovered = false
+
+    var body: some View {
+        TrailChevronButton(
+            symbol: "sidebar.left",
+            enabled: true,
+            help: "Toggle sidebar (⌘\\)",
+            label: "Toggle sidebar",
+            action: {
+                NotificationCenter.default.post(
+                    name: CosmoNotification.Navigation.toggleSidebar,
+                    object: nil
+                )
+            },
+            onLongPress: nil
+        )
+        .padding(5)
+        .glassEffect(.regular, in: .capsule)
+        .opacity(style == .embedded || isHovered ? 1 : 0.4)
+        .onHover { hovering in
+            withAnimation(reduceMotion ? nil : ProMotionSprings.hover) {
+                isHovered = hovering
+            }
+        }
     }
 }
 

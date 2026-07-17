@@ -276,6 +276,8 @@ enum CosmoInlineProposalValidator {
             )
         }
 
+        issues.append(contentsOf: structuralIssues(operations: repaired, sourceText: sourceText))
+
         var afterOutline: String?
         if issues.isEmpty {
             let plan = CosmoInlineEditTransaction.compile(operations: repaired, sourceText: sourceText)
@@ -285,6 +287,10 @@ enum CosmoInlineProposalValidator {
             ) {
                 issues.append(numberingIssue)
             }
+            issues.append(contentsOf: stepNumberingIssues(
+                original: sourceText,
+                simulated: plan.simulatedFinalText
+            ))
             afterOutline = CosmoInlineAssistantInstructionPrompt.documentOutline(for: plan.simulatedFinalText)
         }
 
@@ -369,9 +375,137 @@ enum CosmoInlineProposalValidator {
         let lower = summary.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let narrationPrefixes = [
             "i have ", "i've ", "i applied", "i updated", "i staged",
-            "i will ", "i'll ", "i am ", "i'm ", "as requested"
+            "i will ", "i'll ", "i am ", "i'm ", "as requested",
+            "i just ", "done — i ", "done, i ", "sure — ", "sure, ",
+            "okay — ", "okay, ", "here is ", "here's what i"
         ]
         return narrationPrefixes.contains { lower.hasPrefix($0) }
+    }
+
+    // MARK: Structural rules (moves + duplication)
+
+    /// State-based guards on what the operations DO to the document, decided
+    /// from line-level diffs — never from prompt keywords:
+    ///
+    /// 1. DUPLICATION — an operation adds a substantial line that already exists
+    ///    near the edit and no operation removes that occurrence. Accepting
+    ///    would put the same sentence in the document twice. Always blocking.
+    /// 2. UNDECLARED MOVE — an added line matches a line some operation removes
+    ///    elsewhere: content is being relocated. Legitimate only when the user
+    ///    asked for it, which the model declares with `explicitMove: true`.
+    ///    Without the flag, blocking — a model must never reorder the user's
+    ///    lines as a side effect of an unrelated edit.
+    static func structuralIssues(
+        operations: [CosmoAssistantProposalOperation],
+        sourceText: String
+    ) -> [String] {
+        // Per-operation line deltas from the same LCS the splitter/hunks use.
+        struct Delta {
+            let operationIndex: Int
+            let explicitMove: Bool
+            let locatedLineRange: ClosedRange<Int>?
+            var removedKeys: Set<String> = []
+            var addedLines: [String] = []
+        }
+
+        let sourceLines = sourceText.components(separatedBy: "\n")
+        let sourceKeys = sourceLines.map(CosmoInlineLineDiff.contentKey)
+
+        func lineNumber(of index: String.Index) -> Int {
+            sourceText[..<index].reduce(into: 0) { count, character in
+                if character == "\n" { count += 1 }
+            }
+        }
+
+        var deltas: [Delta] = []
+        for (index, operation) in operations.enumerated() {
+            let isTextEdit = operation.kind == .textReplacement
+                || operation.kind == .structuredFieldReplacement
+                || operation.kind == .textInsertion
+            guard isTextEdit else { continue }
+
+            let originalLines = (operation.originalText ?? "")
+                .components(separatedBy: "\n")
+                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            let proposedLines = (operation.proposedText ?? "")
+                .components(separatedBy: "\n")
+                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+            var locatedLineRange: ClosedRange<Int>?
+            if let original = operation.originalText,
+               !original.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               let range = CosmoInlineDiffLocator.range(of: original, in: sourceText) {
+                let start = lineNumber(of: range.lowerBound)
+                let end = range.upperBound > range.lowerBound
+                    ? lineNumber(of: sourceText.index(before: range.upperBound))
+                    : start
+                locatedLineRange = start...max(start, end)
+            }
+
+            var delta = Delta(
+                operationIndex: index,
+                explicitMove: operation.explicitMove == true,
+                locatedLineRange: locatedLineRange
+            )
+
+            if operation.kind == .textInsertion {
+                // Everything in an insertion is added; the anchor is untouched.
+                delta.addedLines = proposedLines.filter(CosmoInlineLineDiff.isSubstantialContentLine)
+            } else {
+                for element in CosmoInlineLineDiff.elements(original: originalLines, proposed: proposedLines) {
+                    switch element {
+                    case .removed(let line) where CosmoInlineLineDiff.isSubstantialContentLine(line):
+                        delta.removedKeys.insert(CosmoInlineLineDiff.contentKey(line))
+                    case .added(let line) where CosmoInlineLineDiff.isSubstantialContentLine(line):
+                        delta.addedLines.append(line)
+                    default:
+                        break
+                    }
+                }
+            }
+            deltas.append(delta)
+        }
+
+        let allRemovedKeys = deltas.reduce(into: Set<String>()) { $0.formUnion($1.removedKeys) }
+        let coveredLineRanges = deltas.compactMap(\.locatedLineRange)
+
+        var issues: [String] = []
+        for delta in deltas {
+            for added in delta.addedLines {
+                let key = CosmoInlineLineDiff.contentKey(added)
+                let preview = String(added.prefix(80))
+
+                if allRemovedKeys.contains(key) {
+                    guard !delta.explicitMove else { continue }
+                    issues.append(
+                        "Operation \(delta.operationIndex + 1) MOVES the line \"\(preview)\" to a new position (it is removed in one place and re-added in another). If the user explicitly asked to move or reorder this content, resubmit with explicitMove: true on that operation. Otherwise leave the line where it is and change only what the request requires."
+                    )
+                    continue
+                }
+
+                // Uncovered occurrence of the same content near the edit →
+                // accepting would duplicate the sentence.
+                let nearbyDuplicate = sourceKeys.enumerated().contains { sourceIndex, sourceKey in
+                    guard sourceKey == key else { return false }
+                    let covered = coveredLineRanges.contains { $0.contains(sourceIndex) }
+                    guard !covered else { return false }
+                    // No located anchor (pure append) → no locality evidence;
+                    // deliberate far repetition stays allowed.
+                    guard let opRange = delta.locatedLineRange else { return false }
+                    let distance = min(
+                        abs(sourceIndex - opRange.lowerBound),
+                        abs(sourceIndex - opRange.upperBound)
+                    )
+                    return distance <= 8
+                }
+                if nearbyDuplicate {
+                    issues.append(
+                        "Operation \(delta.operationIndex + 1) adds the line \"\(preview)\" but that line ALREADY EXISTS right next to this edit — accepting would duplicate it. Do not re-add existing lines. If you meant to move it, the replacement must also cover its current position (and carry explicitMove: true)."
+                    )
+                }
+            }
+        }
+        return issues
     }
 
     // MARK: Numbering simulation
@@ -426,12 +560,253 @@ enum CosmoInlineProposalValidator {
         return numbers
     }
 
+    /// The numbered-step analog of `slideNumberingIssue`: step lists inside each
+    /// slide (and in the preamble) must not DEGRADE — no new duplicate numbers,
+    /// and a list that was sequential must stay sequential. Pre-existing
+    /// imperfections never veto an unrelated edit, mirroring the slide rule.
+    static func stepNumberingIssues(original: String, simulated: String) -> [String] {
+        let before = stepNumbersBySlide(in: original)
+        let after = stepNumbersBySlide(in: simulated)
+
+        var issues: [String] = []
+        for (slide, afterNumbers) in after.sorted(by: { $0.key < $1.key }) {
+            guard afterNumbers.count >= 2 else { continue }
+            let beforeNumbers = before[slide] ?? []
+            let scope = slide == 0 ? "the document" : "slide \(slide)"
+
+            let beforeCounts = Dictionary(grouping: beforeNumbers, by: { $0 }).mapValues(\.count)
+            let newDuplicates = Dictionary(grouping: afterNumbers, by: { $0 })
+                .filter { number, occurrences in
+                    occurrences.count > 1 && occurrences.count > (beforeCounts[number] ?? 0)
+                }
+                .keys
+                .sorted()
+            if !newDuplicates.isEmpty {
+                issues.append(
+                    "Applying these operations would corrupt the numbered steps in \(scope): duplicate step numbers (\(newDuplicates.map(String.init).joined(separator: ", "))). Renumber so every step keeps a unique, sequential integer — for series shifts use ONE renumberSequence operation with seriesKind numberedSteps."
+                )
+                continue
+            }
+
+            if isSequential(beforeNumbers), !isSequential(afterNumbers) {
+                issues.append(
+                    "Applying these operations would break the step numbering in \(scope): the list was sequential and no longer is (resulting order: \(afterNumbers.map(String.init).joined(separator: ", "))). Use ONE renumberSequence operation with seriesKind numberedSteps instead of hand-editing step numbers."
+                )
+            }
+        }
+        return issues
+    }
+
+    /// Step-numbered lines grouped by the slide that owns them (0 = before any
+    /// SLIDE header), in document order.
+    private static func stepNumbersBySlide(in text: String) -> [Int: [Int]] {
+        var result: [Int: [Int]] = [:]
+        var currentSlide = 0
+        text.enumerateLines { line, _ in
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if let match = trimmed.range(of: #"^SLIDE\s+(\d+)\b"#, options: [.regularExpression, .caseInsensitive]) {
+                let digits = trimmed[match].drop { !$0.isNumber }.prefix { $0.isNumber }
+                currentSlide = Int(digits) ?? currentSlide
+                return
+            }
+            if let match = trimmed.range(of: #"^(?:Step\s+)?(\d+)[\.\):]\s"#, options: [.regularExpression, .caseInsensitive]) {
+                let digits = trimmed[match].drop { !$0.isNumber }.prefix { $0.isNumber }
+                if let value = Int(digits) {
+                    result[currentSlide, default: []].append(value)
+                }
+            }
+        }
+        return result
+    }
+
     private static func isSequential(_ numbers: [Int]) -> Bool {
         guard let first = numbers.first else { return true }
         for (offset, value) in numbers.enumerated() where value != first + offset {
             return false
         }
         return true
+    }
+}
+
+// MARK: - Minimal-edit splitting
+
+/// Shrinks a fused block replacement down to the lines that actually change.
+///
+/// The over-rewrite failure mode: a "fill in the number" ask comes back as ONE
+/// textReplacement whose originalText is an entire slide body and whose
+/// proposedText rewrites all of it. Every downstream layer then over-states —
+/// the review strikes through untouched lines, the scope guard's word test
+/// can't see reordering, and an accidental duplication hides inside the block.
+///
+/// This splitter line-diffs originalText against proposedText and rewrites the
+/// operation into one operation per changed region, dropping unchanged lines
+/// entirely. Split anchors are expanded with the op's own preceding lines until
+/// they locate uniquely in the live document; if any region cannot be made
+/// unambiguous the ORIGINAL fused operation is kept (locatable beats minimal).
+/// Deterministic and state-based: model behavior is normalized, never trusted.
+enum CosmoInlineMinimalEditSplitter {
+    private static let maxRegionOperations = 12
+    private static let maxAnchorContextLines = 4
+
+    static func split(
+        operations: [CosmoAssistantProposalOperation],
+        sourceText: String
+    ) -> [CosmoAssistantProposalOperation] {
+        operations.flatMap { split(operation: $0, sourceText: sourceText) }
+    }
+
+    static func split(
+        operation: CosmoAssistantProposalOperation,
+        sourceText: String
+    ) -> [CosmoAssistantProposalOperation] {
+        guard operation.kind == .textReplacement,
+              let originalText = operation.originalText,
+              let proposedText = operation.proposedText else {
+            return [operation]
+        }
+
+        let originalLines = lines(of: originalText)
+        let proposedLines = lines(of: proposedText)
+        // Single-line replacements are already minimal.
+        guard originalLines.count >= 2 else { return [operation] }
+        // Splitting only makes sense when the fused block itself locates —
+        // otherwise the validator flags it as-is.
+        guard CosmoInlineDiffLocator.range(of: originalText, in: sourceText) != nil else {
+            return [operation]
+        }
+
+        let elements = CosmoInlineLineDiff.elements(original: originalLines, proposed: proposedLines)
+        let commonCount = elements.filter {
+            if case .common = $0 { return true } else { return false }
+        }.count
+        // Nothing shared between the sides — the model genuinely rewrote the
+        // block; there is no smaller edit to extract.
+        guard commonCount > 0 else { return [operation] }
+
+        let regions = changedRegions(from: elements)
+        guard !regions.isEmpty, regions.count <= maxRegionOperations else {
+            return regions.isEmpty ? [] : [operation]
+        }
+
+        var splitOperations: [CosmoAssistantProposalOperation] = []
+        for region in regions {
+            guard let regionOperation = self.operation(
+                for: region,
+                template: operation,
+                sourceText: sourceText
+            ) else {
+                // Any un-anchorable region invalidates the whole split — the
+                // fused original at least locates as one block.
+                return [operation]
+            }
+            splitOperations.append(regionOperation)
+        }
+        return splitOperations
+    }
+
+    // MARK: Regions
+
+    struct ChangedRegion {
+        var removed: [String] = []
+        var added: [String] = []
+        /// Common lines directly above the region, nearest last — anchor context.
+        var precedingCommon: [String] = []
+        /// The first common line below the region, when one exists.
+        var followingCommon: String?
+    }
+
+    private static func changedRegions(from elements: [CosmoInlineLineDiff.Element]) -> [ChangedRegion] {
+        var regions: [ChangedRegion] = []
+        var commonSoFar: [String] = []
+        var current: ChangedRegion?
+
+        func closeCurrent(followedBy common: String?) {
+            guard var region = current else { return }
+            region.followingCommon = common
+            regions.append(region)
+            current = nil
+        }
+
+        for element in elements {
+            switch element {
+            case .common(let line):
+                closeCurrent(followedBy: line)
+                commonSoFar.append(line)
+            case .removed(let line):
+                if current == nil { current = ChangedRegion(precedingCommon: commonSoFar) }
+                current?.removed.append(line)
+            case .added(let line):
+                if current == nil { current = ChangedRegion(precedingCommon: commonSoFar) }
+                current?.added.append(line)
+            }
+        }
+        closeCurrent(followedBy: nil)
+        return regions
+    }
+
+    // MARK: Region → operation
+
+    private static func operation(
+        for region: ChangedRegion,
+        template: CosmoAssistantProposalOperation,
+        sourceText: String
+    ) -> CosmoAssistantProposalOperation? {
+        var candidateOriginal: String
+        var candidateProposed: String
+
+        if !region.removed.isEmpty {
+            // Replacement (or deletion when nothing is added).
+            candidateOriginal = region.removed.joined(separator: "\n")
+            candidateProposed = region.added.joined(separator: "\n")
+        } else if let anchor = region.precedingCommon.last {
+            // Pure insertion mid-block: replace the preceding line with
+            // itself + the new lines, so one located edit carries it.
+            candidateOriginal = anchor
+            candidateProposed = anchor + "\n" + region.added.joined(separator: "\n")
+        } else if let following = region.followingCommon {
+            // Insertion at the very top of the block: replace the first
+            // common line with the new lines + itself.
+            candidateOriginal = following
+            candidateProposed = region.added.joined(separator: "\n") + "\n" + following
+        } else {
+            return nil
+        }
+
+        // Expand upward through the op's own preceding lines until the anchor
+        // is unique in the live document — a split must never relocate an edit
+        // to a different first-match than the fused block occupied.
+        var contextLines = region.precedingCommon
+        if region.removed.isEmpty, !region.added.isEmpty, region.precedingCommon.last != nil {
+            contextLines = Array(contextLines.dropLast())
+        }
+        var expansions = 0
+        while !CosmoInlineDiffLocator.isUnique(candidateOriginal, in: sourceText) {
+            guard expansions < maxAnchorContextLines, let context = contextLines.popLast() else {
+                return nil
+            }
+            candidateOriginal = context + "\n" + candidateOriginal
+            candidateProposed = context + "\n" + candidateProposed
+            expansions += 1
+        }
+
+        return CosmoAssistantProposalOperation(
+            kind: .textReplacement,
+            targetID: template.targetID,
+            anchorID: template.anchorID,
+            originalText: candidateOriginal,
+            proposedText: candidateProposed,
+            sourceHash: template.sourceHash,
+            rationale: template.rationale,
+            explicitMove: template.explicitMove
+        )
+    }
+
+    private static func lines(of text: String) -> [String] {
+        text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .components(separatedBy: "\n")
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
 }
 

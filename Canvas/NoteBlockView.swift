@@ -40,7 +40,7 @@ struct NoteBlockView: View {
     @State private var lastLocalSaveEchoBodyDocument: RichDocument?
 
     // GRDB observation
-    @State private var observationCancellable: AnyCancellable?
+    @State private var atomSubscription: CanvasAtomSubscription?
 
     // Orange accent for notes
     private let accentColor = CosmoColors.blockNote
@@ -83,21 +83,36 @@ struct NoteBlockView: View {
         )
     }
 
+    // MARK: - Thought card (compact rendering)
+
+    /// A 30-word thought never wears a letter-page costume. Inbox placements
+    /// land short notes as compact blocks; any note that is both compact and
+    /// short renders as a thought card — body only, caption metadata, no 40pt
+    /// serif title, no word-count footer. Writing past the cap in focus mode
+    /// graduates it back to the page shape live.
+    static let thoughtWordCap = 60
+    private static let thoughtWidthCap: CGFloat = 320
+
+    private var rendersAsThoughtCard: Bool {
+        block.size.width <= Self.thoughtWidthCap
+            && noteWordCount <= Self.thoughtWordCap
+    }
+
     var body: some View {
-        CosmoBlockWrapper(
-            block: block,
-            accentColor: accentColor,
-            icon: "note.text",
-            title: displayTitle,
-            surfaceStyle: .crisp,
-            surfaceTint: noteDocumentStyle.paperTone.pageColor(darkMode: DS.palette.isDark),
-            fixedLayoutSize: CanvasBlock.documentLayoutSize,
-            preservesAspectRatio: true,
-            suppressGiltCorner: true,
-            suppressAccentChip: true,
-            onFocusMode: openFocusMode
-        ) {
-            noteContent
+        Group {
+            if rendersAsThoughtCard {
+                NoteThoughtCard(
+                    block: block,
+                    text: noteText,
+                    // Default paper tone renders nil — the card falls back to
+                    // the elevated surface (the quiet warm card ground).
+                    paper: noteDocumentStyle.paperTone.pageColor(darkMode: DS.palette.isDark)
+                        ?? DS.surfaceElevated,
+                    onOpen: openFocusMode
+                )
+            } else {
+                documentBody
+            }
         }
         .onAppear {
             trackedEntityId = block.entityId
@@ -111,15 +126,14 @@ struct NoteBlockView: View {
             }
         }
         .onDisappear {
-            print("[BLOCK-NOTE] onDisappear — uuid=\(trackedEntityUuid) titleLen=\(noteTitleText.count) bodyLen=\(noteText.count) bodyPreview=\"\(String(noteText.prefix(60)))\"")
             autoSaveTask?.cancel()
-            observationCancellable?.cancel()
+            CanvasAtomObservationHub.shared.unsubscribe(atomSubscription)
+            atomSubscription = nil
             // Defer sync save by one frame so CosmoDocumentEditor's flushPendingSync()
             // can propagate the latest text via onDocumentChange first.
             // Without this, the 50ms attributedText debounce can cause us to save stale content.
             DispatchQueue.main.async {
                 saveClosed = true
-                print("[BLOCK-NOTE] onDisappear(deferred) — saving uuid=\(trackedEntityUuid) bodyLen=\(noteText.count) bodyPreview=\"\(String(noteText.prefix(60)))\"")
                 saveNoteSync()
                 DirtyEditorRegistry.shared.unregister(id: "noteblock-\(block.id)")
             }
@@ -181,20 +195,42 @@ struct NoteBlockView: View {
                   let entityUuid = notification.userInfo?["entityUuid"] as? String else { return }
             trackedEntityId = entityId
             trackedEntityUuid = entityUuid
-            // Restart GRDB observation with the new UUID
-            observationCancellable?.cancel()
+            // Restart hub observation with the new UUID
             startObservingAtom()
         }
         // Authoritative blocks landed after a thinkspace switch — the mounted view
         // may still hold text from a stale snapshot cache. Re-run the load when
-        // there's nothing local to lose.
-        .onReceive(NotificationCenter.default.publisher(for: .canvasBlocksDidResync)) { _ in
+        // there's nothing local to lose. Targeted: a payload of changed block
+        // ids scopes the reload to actually-affected views.
+        .onReceive(NotificationCenter.default.publisher(for: .canvasBlocksDidResync)) { notification in
+            if let changedIds = notification.userInfo?["blockIds"] as? [String],
+               !changedIds.contains(block.id) {
+                return
+            }
             guard !isEditingBody, !isEditingTitle, !hasLocalEdits else { return }
             isSyncingFromDB = true
             loadNote()
             DispatchQueue.main.async {
                 isSyncingFromDB = false
             }
+        }
+    }
+
+    private var documentBody: some View {
+        CosmoBlockWrapper(
+            block: block,
+            accentColor: accentColor,
+            icon: "note.text",
+            title: displayTitle,
+            surfaceStyle: .crisp,
+            surfaceTint: noteDocumentStyle.paperTone.pageColor(darkMode: DS.palette.isDark),
+            fixedLayoutSize: CanvasBlock.documentLayoutSize,
+            preservesAspectRatio: true,
+            suppressGiltCorner: true,
+            suppressAccentChip: true,
+            onFocusMode: openFocusMode
+        ) {
+            noteContent
         }
     }
 
@@ -419,147 +455,159 @@ struct NoteBlockView: View {
             noteWordCount = Self.wordCount(in: noteText)
         }
 
-        // If linked to an atom, load freshest data from database
+        // If linked to an atom, load freshest data — the thinkspace switch
+        // batch-fetched every entity atom into the warm store, so mounts hit
+        // it synchronously. The repository round-trip survives only as a
+        // fallback for blocks that arrive outside a snapshot fetch.
         if trackedEntityId > 0 || !trackedEntityUuid.isEmpty {
-            Task {
-                do {
-                    let atom: Atom?
-                    if trackedEntityId > 0,
-                       let atomByID = try await AtomRepository.shared.fetch(id: trackedEntityId) {
-                        atom = atomByID
-                    } else if !trackedEntityUuid.isEmpty {
-                        atom = try await AtomRepository.shared.fetch(uuid: trackedEntityUuid)
-                    } else {
-                        atom = nil
-                    }
+            if let warm = warmStoreAtom() {
+                applyLoadedAtom(warm)
+            } else {
+                Task {
+                    do {
+                        let atom: Atom?
+                        if trackedEntityId > 0,
+                           let atomByID = try await AtomRepository.shared.fetch(id: trackedEntityId) {
+                            atom = atomByID
+                        } else if !trackedEntityUuid.isEmpty {
+                            atom = try await AtomRepository.shared.fetch(uuid: trackedEntityUuid)
+                        } else {
+                            atom = nil
+                        }
 
-                    if let atom {
-                        await MainActor.run {
-                            // Entity linkage is always safe to refresh.
-                            trackedEntityId = atom.id ?? trackedEntityId
-                            trackedEntityUuid = atom.uuid
-                            // Style refresh never clobbers text — safe mid-edit.
-                            noteDocumentStyle = NoteDocumentStyle.load(fromMetadata: atom.metadata)
-                            // Don't clobber text the user typed (or is typing) while
-                            // the fetch was in flight — mirror the GRDB observation.
-                            guard !isEditingBody, !isEditingTitle, !hasLocalEdits else { return }
-                            isSyncingFromDB = true
-                            noteTitleDocument = RichDocumentPersistence.loadAtomDocument(
-                                field: .title,
-                                metadata: atom.metadata,
-                                fallbackPlainText: atom.title
-                            )
-                            noteBodyDocument = RichDocumentPersistence.loadAtomDocument(
-                                field: .body,
-                                metadata: atom.metadata,
-                                fallbackPlainText: atom.body
-                            )
-                            noteTitleText = RichDocumentPersistence.titlePlainText(from: noteTitleDocument)
-                            noteText = noteBodyDocument.plainText
-                            noteWordCount = Self.wordCount(in: noteText)
-                            DispatchQueue.main.async {
-                                isSyncingFromDB = false
+                        if let atom {
+                            await MainActor.run {
+                                applyLoadedAtom(atom)
                             }
                         }
+                    } catch {
+                        PersistenceHealth.note(.writeFailure, context: "noteBlock.loadAtom", detail: "uuid=\(trackedEntityUuid): \(error)")
+                        print("NoteBlock: Failed to load atom: \(error)")
                     }
-                } catch {
-                    PersistenceHealth.note(.writeFailure, context: "noteBlock.loadAtom", detail: "uuid=\(trackedEntityUuid): \(error)")
-                    print("NoteBlock: Failed to load atom: \(error)")
                 }
             }
+        }
+    }
+
+    private func warmStoreAtom() -> Atom? {
+        if trackedEntityId > 0, let atom = CanvasAtomWarmStore.shared.atom(id: trackedEntityId) {
+            return atom
+        }
+        if !trackedEntityUuid.isEmpty {
+            return CanvasAtomWarmStore.shared.atom(uuid: trackedEntityUuid)
+        }
+        return nil
+    }
+
+    /// Apply a freshly-loaded entity atom to view state. Shared by the warm
+    /// store hit (synchronous, at mount) and the repository fallback.
+    private func applyLoadedAtom(_ atom: Atom) {
+        // Entity linkage is always safe to refresh.
+        trackedEntityId = atom.id ?? trackedEntityId
+        trackedEntityUuid = atom.uuid
+        // Style refresh never clobbers text — safe mid-edit.
+        noteDocumentStyle = NoteDocumentStyle.load(fromMetadata: atom.metadata)
+        // Don't clobber text the user typed (or is typing) while
+        // the load was in flight — mirror the hub observation.
+        guard !isEditingBody, !isEditingTitle, !hasLocalEdits else { return }
+        isSyncingFromDB = true
+        noteTitleDocument = RichDocumentPersistence.loadAtomDocument(
+            field: .title,
+            metadata: atom.metadata,
+            fallbackPlainText: atom.title
+        )
+        noteBodyDocument = RichDocumentPersistence.loadAtomDocument(
+            field: .body,
+            metadata: atom.metadata,
+            fallbackPlainText: atom.body
+        )
+        noteTitleText = RichDocumentPersistence.titlePlainText(from: noteTitleDocument)
+        noteText = noteBodyDocument.plainText
+        noteWordCount = Self.wordCount(in: noteText)
+        DispatchQueue.main.async {
+            isSyncingFromDB = false
         }
     }
 
     // MARK: - GRDB Observation
 
     private func startObservingAtom() {
+        // Re-subscribe cleanly when the entity linkage changes.
+        CanvasAtomObservationHub.shared.unsubscribe(atomSubscription)
+        atomSubscription = nil
+
         let uuid = trackedEntityUuid
         // Only observe if we have a real UUID (not empty)
         guard !uuid.isEmpty else { return }
 
-        let observation = ValueObservation.tracking { db in
-            try Atom
-                .filter(Column("uuid") == uuid)
-                .fetchOne(db)
+        // One hub observation covers every mounted block. The hub dedupes on
+        // version fields, so this callback only fires for genuinely new data
+        // (the old per-block observation compared full metadata strings —
+        // hundreds of KB for rich notes — on every atoms write, per block).
+        atomSubscription = CanvasAtomObservationHub.shared.subscribe(uuid: uuid) { atom in
+            applyObservedAtom(atom)
         }
-        observationCancellable = observation.publisher(in: CosmoDatabase.shared.dbQueue)
-            .receive(on: DispatchQueue.main)
-            .removeDuplicates(by: { prev, next in
-                guard let prev, let next else { return prev == nil && next == nil }
-                return prev.title == next.title
-                    && prev.body == next.body
-                    && prev.metadata == next.metadata
-            })
-            .sink(
-                receiveCompletion: { _ in },
-                receiveValue: { fetchedAtom in
-                    guard let atom = fetchedAtom else { return }
-                    // Style changes (made in focus mode) apply immediately —
-                    // they never touch the text, so no stale-write guard needed.
-                    noteDocumentStyle = NoteDocumentStyle.load(fromMetadata: atom.metadata)
-                    let newTitleDocument = RichDocumentPersistence.loadAtomDocument(
-                        field: .title,
-                        metadata: atom.metadata,
-                        fallbackPlainText: atom.title
-                    )
-                    let newBodyDocument = RichDocumentPersistence.loadAtomDocument(
-                        field: .body,
-                        metadata: atom.metadata,
-                        fallbackPlainText: atom.body
-                    )
-                    let newTitle = RichDocumentPersistence.titlePlainText(from: newTitleDocument)
-                    let newBody = newBodyDocument.plainText
-                    DispatchQueue.main.async {
-                        print("[BLOCK-NOTE] 🔔 GRDB observation fired — uuid=\(uuid) isEditingTitle=\(isEditingTitle) isEditingBody=\(isEditingBody) hasLocalEdits=\(hasLocalEdits) dbBodyLen=\(newBody.count) localBodyLen=\(noteText.count) dbBodyPreview=\"\(String(newBody.prefix(60)))\" localBodyPreview=\"\(String(noteText.prefix(60)))\"")
-                        var didApplyDatabaseState = false
-                        var didApplyObservedBody = false
+    }
 
-                        if !isEditingTitle,
-                           newTitle != noteTitleText || newTitleDocument != noteTitleDocument {
-                            print("[BLOCK-NOTE] 🔔 observation APPLYING title — uuid=\(uuid)")
-                            didApplyDatabaseState = true
-                            applyObservedTitleDocument(newTitleDocument)
-                        } else if isEditingTitle,
-                                  newTitle != noteTitleText || newTitleDocument != noteTitleDocument {
-                            print("[BLOCK-NOTE] 🔔 observation DEFERRED title (editing) — uuid=\(uuid)")
-                            pendingObservedTitleDocument = newTitleDocument
-                        }
+    private func applyObservedAtom(_ atom: Atom) {
+        // Style changes (made in focus mode) apply immediately —
+        // they never touch the text, so no stale-write guard needed.
+        noteDocumentStyle = NoteDocumentStyle.load(fromMetadata: atom.metadata)
+        let newTitleDocument = RichDocumentPersistence.loadAtomDocument(
+            field: .title,
+            metadata: atom.metadata,
+            fallbackPlainText: atom.title
+        )
+        let newBodyDocument = RichDocumentPersistence.loadAtomDocument(
+            field: .body,
+            metadata: atom.metadata,
+            fallbackPlainText: atom.body
+        )
+        let newTitle = RichDocumentPersistence.titlePlainText(from: newTitleDocument)
+        let newBody = newBodyDocument.plainText
+        DispatchQueue.main.async {
+            var didApplyDatabaseState = false
+            var didApplyObservedBody = false
 
-                        // Only overwrite body from DB when NOT actively editing —
-                        // otherwise the observation echo from auto-save overwrites
-                        // text the user typed since the save was initiated.
-                        let observedBodyChanged = newBody != noteText || newBodyDocument != noteBodyDocument
-                        let isLocalSaveEcho = newBody == lastLocalSaveEchoBodyPlainText
-                            && newBodyDocument == lastLocalSaveEchoBodyDocument
-                        if NoteWritePolicy.shouldApplyObservedBody(
-                            isEditingBody: isEditingBody,
-                            hasLocalEdits: hasLocalEdits,
-                            observedBodyChanged: observedBodyChanged,
-                            isLocalSaveEcho: isLocalSaveEcho
-                        ) {
-                            print("[BLOCK-NOTE] 🔔 observation APPLYING body — uuid=\(uuid) overwriting localLen=\(noteText.count) with dbLen=\(newBody.count)")
-                            didApplyDatabaseState = true
-                            didApplyObservedBody = true
-                            noteBodyDocument = newBodyDocument
-                            noteText = newBody
-                            noteWordCount = Self.wordCount(in: newBody)
-                        } else if observedBodyChanged {
-                            print("[BLOCK-NOTE] 🔔 observation SKIPPED body (local/editing/echo) — uuid=\(uuid) isEditingBody=\(isEditingBody) hasLocalEdits=\(hasLocalEdits) isLocalSaveEcho=\(isLocalSaveEcho) dbLen=\(newBody.count) localLen=\(noteText.count)")
-                        }
+            if !isEditingTitle,
+               newTitle != noteTitleText || newTitleDocument != noteTitleDocument {
+                didApplyDatabaseState = true
+                applyObservedTitleDocument(newTitleDocument)
+            } else if isEditingTitle,
+                      newTitle != noteTitleText || newTitleDocument != noteTitleDocument {
+                pendingObservedTitleDocument = newTitleDocument
+            }
 
-                        guard didApplyDatabaseState else { return }
-                        // Only a body apply proves local body content now matches DB.
-                        // A title-only DB update must not clear pending body edits.
-                        if didApplyObservedBody {
-                            hasLocalEdits = false
-                        }
-                        isSyncingFromDB = true
-                        DispatchQueue.main.async {
-                            isSyncingFromDB = false
-                        }
-                    }
-                }
-            )
+            // Only overwrite body from DB when NOT actively editing —
+            // otherwise the observation echo from auto-save overwrites
+            // text the user typed since the save was initiated.
+            let observedBodyChanged = newBody != noteText || newBodyDocument != noteBodyDocument
+            let isLocalSaveEcho = newBody == lastLocalSaveEchoBodyPlainText
+                && newBodyDocument == lastLocalSaveEchoBodyDocument
+            if NoteWritePolicy.shouldApplyObservedBody(
+                isEditingBody: isEditingBody,
+                hasLocalEdits: hasLocalEdits,
+                observedBodyChanged: observedBodyChanged,
+                isLocalSaveEcho: isLocalSaveEcho
+            ) {
+                didApplyDatabaseState = true
+                didApplyObservedBody = true
+                noteBodyDocument = newBodyDocument
+                noteText = newBody
+                noteWordCount = Self.wordCount(in: newBody)
+            }
+
+            guard didApplyDatabaseState else { return }
+            // Only a body apply proves local body content now matches DB.
+            // A title-only DB update must not clear pending body edits.
+            if didApplyObservedBody {
+                hasLocalEdits = false
+            }
+            isSyncingFromDB = true
+            DispatchQueue.main.async {
+                isSyncingFromDB = false
+            }
+        }
     }
 
     private func applyObservedTitleDocument(_ document: RichDocument) {
@@ -1138,6 +1186,115 @@ extension Notification.Name {
 
 // MARK: - Preview
 
+// MARK: - Thought card
+
+/// The compact costume for a quick thought on the canvas: the words on quiet
+/// paper with one caption line — no 40pt serif title, no word-count footer,
+/// no page chrome. Same interaction grammar as the sticky (tap selects,
+/// double-click opens focus mode, hover lifts); the frame is the block's own
+/// compact footprint, so it reads as an object, not a shrunken document.
+private struct NoteThoughtCard: View {
+    let block: CanvasBlock
+    let text: String
+    let paper: Color
+    let onOpen: () -> Void
+
+    @State private var isSelected = false
+    @State private var isHovered = false
+    @State private var hasAppeared = false
+    @Environment(\.canvasBlockSelectionSuppressed) private var selectionNotificationsSuppressed
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.space8) {
+            Text(text.isEmpty ? "A thought…" : text)
+                .font(DS.callout)
+                .foregroundStyle(text.isEmpty ? DS.documentTextMuted : DS.documentText)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+
+            Spacer(minLength: 0)
+
+            HStack(spacing: DS.space4) {
+                Image(systemName: "leaf")
+                    .font(.system(size: 9, weight: .semibold))
+                    .accessibilityHidden(true)
+                Text(metaLine)
+                    .font(DS.caption2)
+            }
+            .foregroundStyle(DS.textMuted)
+        }
+        .padding(DS.space16)
+        .frame(
+            width: block.size.width,
+            height: block.size.height,
+            alignment: .topLeading
+        )
+        .background(paper)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            ZStack {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(
+                        isSelected ? DS.accent.opacity(0.55) : DS.borderSubtle,
+                        lineWidth: isSelected ? 1.5 : 0.5
+                    )
+                if isSelected {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(DS.accent.opacity(0.22), lineWidth: 3)
+                        .blur(radius: 4)
+                }
+            }
+        )
+        .shadow(
+            color: .black.opacity(isSelected ? 0.08 : (isHovered ? 0.06 : 0.04)),
+            radius: isSelected ? 14 : (isHovered ? 12 : 8),
+            x: 0,
+            y: isSelected ? 4 : (isHovered ? 4 : 2)
+        )
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            isHovered = hovering
+        }
+        .onTapGesture {
+            guard !selectionNotificationsSuppressed else { return }
+            NotificationCenter.default.post(
+                name: CosmoNotification.Canvas.blockSelected,
+                object: nil,
+                userInfo: ["blockId": block.id]
+            )
+        }
+        .simultaneousGesture(
+            TapGesture(count: 2).onEnded { onOpen() }
+        )
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Canvas.blockSelected)) { notification in
+            if let selectedId = notification.userInfo?["blockId"] as? String {
+                isSelected = (selectedId == block.id)
+            }
+        }
+        .help("A quick thought — double-click to open and develop it")
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Thought: \(text)")
+        .scaleEffect(hasAppeared ? 1.0 : 0.92)
+        .opacity(hasAppeared ? 1.0 : 0)
+        .animation(ProMotionSprings.hover, value: isHovered)
+        .animation(ProMotionSprings.hover, value: isSelected)
+        .onAppear {
+            withAnimation(ProMotionSprings.cardEntrance) {
+                hasAppeared = true
+            }
+        }
+    }
+
+    private var metaLine: String {
+        if let updated = block.metadata["updated"],
+           let date = ISO8601.date(from: updated) {
+            return "Thought · \(date.cosmoCompactAge)"
+        }
+        return "Thought"
+    }
+}
+
 #if DEBUG
 struct NoteBlockView_Previews: PreviewProvider {
     static var previews: some View {
@@ -1151,5 +1308,30 @@ struct NoteBlockView_Previews: PreviewProvider {
         }
         .frame(width: 500, height: 400)
     }
+}
+
+struct NoteThoughtCard_Previews: PreviewProvider {
+    static var previews: some View {
+        ZStack {
+            DS.bg.ignoresSafeArea()
+            NoteThoughtCard(
+                block: {
+                    var block = CanvasBlock.noteBlock(position: .zero)
+                    block.size = InboxActionExecutor.thoughtCardSize(
+                        for: previewThought
+                    )
+                    block.metadata["updated"] = ISO8601.string(from: Date().addingTimeInterval(-7_200))
+                    return block
+                }(),
+                text: previewThought,
+                paper: DS.surfaceElevated,
+                onOpen: {}
+            )
+        }
+        .frame(width: 420, height: 360)
+    }
+
+    private static let previewThought =
+        "What you think about and where you spend your time most develops itself and feeds you ideas. Make repeated mental thoughts more intentional."
 }
 #endif

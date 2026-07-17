@@ -42,7 +42,7 @@ public final class ContentPipelineService: ObservableObject {
     public init(
         database: (any DatabaseWriter)? = nil
     ) {
-        self.database = database ?? (CosmoDatabase.shared.dbQueue! as any DatabaseWriter)
+        self.database = database ?? (CosmoDatabase.shared.dbPool! as any DatabaseWriter)
         self.analyticsEngine = ContentAnalyticsEngine(database: self.database)
 
         Task {

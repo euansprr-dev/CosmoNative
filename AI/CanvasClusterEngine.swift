@@ -458,6 +458,10 @@ class CanvasClusterEngine {
 
     /// Select a cluster (deselects any previous selection)
     func selectCluster(_ id: UUID?) {
+        // Equality-guarded: block drags call this every gesture frame, and an
+        // unguarded @Observable set fires observation even when the value is
+        // unchanged, re-invalidating everything that reads selection.
+        guard selectedClusterId != id else { return }
         selectedClusterId = id
     }
 
@@ -546,7 +550,18 @@ class CanvasClusterEngine {
         viewportInCanvas: CGRect?
     ) -> CGRect? {
         guard let index = userClusters.firstIndex(where: { $0.id == clusterId }) else { return nil }
-        let cluster = userClusters[index]
+        return fitRect(for: userClusters[index], mode: mode, blocks: blocks, viewportInCanvas: viewportInCanvas)
+    }
+
+    /// Rect-fitting on a cluster VALUE — lets `computeUserClusters` fit a
+    /// freshly-loaded array before publishing it (the id-based variant above
+    /// only sees clusters already in `userClusters`).
+    func fitRect(
+        for cluster: CanvasCluster,
+        mode: ClusterViewMode,
+        blocks: [CanvasBlock],
+        viewportInCanvas: CGRect?
+    ) -> CGRect? {
         var rect = cluster.boundingRect
 
         let sizing: ModeSizing = {
@@ -875,7 +890,7 @@ class CanvasClusterEngine {
 
     /// Clear the drop target (call on drag end / cancel)
     func clearDropTarget() {
-        dropTargetClusterId = nil
+        if dropTargetClusterId != nil { dropTargetClusterId = nil }
     }
 
     private func resolvedDropTargetCluster(
@@ -984,31 +999,54 @@ class CanvasClusterEngine {
     }
 
     func loadUserClusters(thinkspaceId: String?, blocks: [CanvasBlock]) async {
-        guard let tsId = thinkspaceId else {
-            userClusters = []
+        guard let loaded = await computeUserClusters(thinkspaceId: thinkspaceId, blocks: blocks) else {
             return
+        }
+        userClusters = loaded
+    }
+
+    /// Load user clusters and publish ONLY when they differ from the applied
+    /// set. A thinkspace switch that already mounted identical clusters from
+    /// the snapshot cache must not rebuild the cluster layer mid-animation
+    /// (`userClusters` assignment bumps the data revision unconditionally).
+    func refreshUserClustersIfChanged(thinkspaceId: String?, blocks: [CanvasBlock]) async {
+        guard let loaded = await computeUserClusters(thinkspaceId: thinkspaceId, blocks: blocks) else {
+            return
+        }
+        if loaded != userClusters {
+            userClusters = loaded
+        }
+    }
+
+    /// Pure load: fetch + map + fit, no engine mutation. Returns nil on a
+    /// read error so callers preserve existing state (matching the old
+    /// loadUserClusters error behavior); returns [] when the thinkspace has
+    /// no clusters.
+    private func computeUserClusters(thinkspaceId: String?, blocks: [CanvasBlock]) async -> [CanvasCluster]? {
+        guard let tsId = thinkspaceId else {
+            return []
         }
 
         do {
             let repo = AtomRepository.shared
             guard let atom = try await repo.fetch(uuid: tsId),
                   let metadata = atom.metadataValue(as: ThinkspaceMetadata.self) else {
-                userClusters = []
-                return
+                return []
             }
 
-            userClusters = metadata.clusters.map { $0.toCanvasCluster(blocks: blocks, thinkspaceId: tsId) }
-            for idx in userClusters.indices where shouldFitLoadedCluster(userClusters[idx]) {
-                let id = userClusters[idx].id
-                let mode = userClusters[idx].viewMode
-                if let fitted = fitClusterRectForMode(clusterId: id, mode: mode, blocks: blocks, viewportInCanvas: nil) {
-                    userClusters[idx].boundingRect = fitted
+            var loaded = metadata.clusters.map { $0.toCanvasCluster(blocks: blocks, thinkspaceId: tsId) }
+            for idx in loaded.indices where shouldFitLoadedCluster(loaded[idx]) {
+                let mode = loaded[idx].viewMode
+                if let fitted = fitRect(for: loaded[idx], mode: mode, blocks: blocks, viewportInCanvas: nil) {
+                    loaded[idx].boundingRect = fitted
                     // Don't overwrite manualSizeOverride — it should only be set by
                     // explicit user resize, not recalculated on every load.
                 }
             }
+            return loaded
         } catch {
             print("CanvasClusterEngine: Failed to load user clusters: \(error)")
+            return nil
         }
     }
 

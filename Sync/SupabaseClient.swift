@@ -409,7 +409,13 @@ final class SupabaseClient {
         addHeaders(to: &request)
         request.httpBody = try JSONSerialization.data(withJSONObject: [
             "is_deleted": true,
-            "updated_at": ISO8601.string(from: Date())
+            "updated_at": ISO8601.string(from: Date()),
+            // Same invariant as softDelete(): a tombstone still tagged with
+            // the OTHER device's _source is invisible to that device's pull
+            // (`_source neq <self>`), so it never deletes locally and later
+            // resurrects the row. Hard-rebuild tombstones of iOS-authored
+            // rows were leaking exactly this way.
+            "_source": SupabaseSyncTrafficPolicy.localSource
         ])
 
         let (_, response) = try await session.data(for: request)

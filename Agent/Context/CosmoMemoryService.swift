@@ -238,14 +238,14 @@ actor CosmoMemoryService {
 
     // MARK: - Helpers
 
-    /// Same resolution pattern as CosmoInlineSkillStore: dbQueue is main-actor
-    /// state; hop when called off-main (GRDB queues are thread-safe once held).
-    private static func resolveDBQueue() -> DatabaseQueue? {
+    /// Same resolution pattern as CosmoInlineSkillStore: dbPool is main-actor
+    /// state; hop when called off-main (GRDB connections are thread-safe once held).
+    private static func resolveDBQueue() -> DatabasePool? {
         if Thread.isMainThread {
-            return MainActor.assumeIsolated { CosmoDatabase.shared.dbQueue }
+            return MainActor.assumeIsolated { CosmoDatabase.shared.dbPool }
         }
         return DispatchQueue.main.sync {
-            MainActor.assumeIsolated { CosmoDatabase.shared.dbQueue }
+            MainActor.assumeIsolated { CosmoDatabase.shared.dbPool }
         }
     }
 

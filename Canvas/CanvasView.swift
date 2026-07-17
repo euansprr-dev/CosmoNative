@@ -217,7 +217,7 @@ struct CanvasView: View {
 
     // Thinkspace sidebar state
     @State private var isSidebarVisible = false
-    @StateObject private var thinkspaceManager = ThinkspaceManager.shared
+    private let thinkspaceManager = ThinkspaceManager.shared
 
     // Zoom/pan persistence
     @State private var zoomPanSaveTask: Task<Void, Never>?
@@ -226,7 +226,6 @@ struct CanvasView: View {
     @State private var thinkspaceSwitchTask: Task<Void, Never>?
     @State private var canvasContentOpacity: Double = 1.0
     @State private var canvasContentScale: CGFloat = 1.0
-    @State private var canvasContentBlur: CGFloat = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     // PERF: Debounced frame tracker update — only needed for right-click hit testing
@@ -324,7 +323,10 @@ struct CanvasView: View {
                 }
                 .opacity(canvasContentOpacity)
                 .scaleEffect(canvasContentScale)
-                .blur(radius: canvasContentBlur)
+                // NOTE: no .blur here — animating a Gaussian blur over the whole
+                // world (every block carries a multi-shadow stack) forced an
+                // offscreen render + filter pass per frame during switches.
+                // The transition is opacity + scale transforms only.
                 // In library mode the world is only a backdrop behind the
                 // browser overlay — kill hit-testing so covered blocks can't
                 // capture right-clicks and show another document's menu.
@@ -477,6 +479,20 @@ struct CanvasView: View {
             // allowsHitTesting gate).
             .onChange(of: thinkspaceMode) { _, newMode in
                 blockFrameTracker.isCanvasSurfaceActive = (newMode == .canvas)
+                // The library owns its chrome row (trail island embedded) —
+                // MainView's floating trail island stands down while it's up.
+                NotificationCenter.default.post(
+                    name: CosmoNotification.Canvas.thinkspaceModeChanged,
+                    object: nil,
+                    userInfo: ["isLibrary": newMode == .library]
+                )
+            }
+            .onDisappear {
+                NotificationCenter.default.post(
+                    name: CosmoNotification.Canvas.thinkspaceModeChanged,
+                    object: nil,
+                    userInfo: ["isLibrary": false]
+                )
             }
         }
         // NOTE: Removed .drawingGroup() from here - it was breaking async image loading
@@ -980,15 +996,19 @@ struct CanvasView: View {
                 removeFromFolder: { removeLibraryItemFromFolder(itemUUID: $0, clusterID: $1) },
                 renameFolder: { clusterEngine.renameUserCluster(id: $0, to: $1) },
                 recolorFolder: { clusterEngine.changeClusterColor(id: $0, colorIndex: $1) },
-                deleteFolder: { clusterEngine.removeUserCluster(id: $0) }
-            )
+                deleteFolder: { clusterEngine.removeUserCluster(id: $0) },
+                renameItem: { item, newName in renameLibraryItem(item, to: newName) },
+                deleteItem: { item in deleteLibraryItem(item) }
+            ),
+            // The library stays full-bleed like the canvas — the floating
+            // glass sidebar opens OVER it and lenses the folders behind.
+            // Only the chrome row steps aside: past the pinned sidebar when
+            // it's open, past the sidebar toggle island when it's hidden
+            // (16 inset + 44 capsule + 10 gap − the row's own 16 side inset).
+            chromeLeadingInset: crossDragManager.sidebarTotalWidth > 0
+                ? crossDragManager.sidebarTotalWidth - 8
+                : 54
         )
-        // The Library is a PAGE, not the spatial canvas: it must yield to the
-        // floating sidebar like every other destination (the masthead and the
-        // first grid column were rendering underneath it). The drag manager's
-        // sidebar footprint is stamped by MainView and reads 0 when hidden.
-        .padding(.leading, crossDragManager.sidebarTotalWidth)
-        .animation(ProMotionSprings.gentle, value: crossDragManager.sidebarTotalWidth)
         .onAppear {
             refreshLibraryInventory()
         }
@@ -1092,6 +1112,41 @@ struct CanvasView: View {
         )
     }
 
+    /// Delete from the library: the atom is tombstoned (the app's standard
+    /// restorable delete — it cascades to canvas_blocks on sync), and any
+    /// in-memory canvas block leaves immediately so both views agree now.
+    /// Atomless sticky/note blocks (entityId <= 0) have nothing to tombstone
+    /// — removing the block IS the delete the user asked for.
+    private func deleteLibraryItem(_ item: ThinkspaceLibraryItem) {
+        Task { @MainActor in
+            if let block = spatialEngine.blocks.first(where: { $0.entityUuid == item.entityUuid }) {
+                await spatialEngine.removeBlock(block.id)
+            }
+            if !item.entityUuid.isEmpty {
+                try? await AtomRepository.shared.delete(uuid: item.entityUuid)
+            }
+            refreshLibraryInventory()
+        }
+    }
+
+    /// Rename from the library (Enter on a selected document): the atom title
+    /// is the source of truth; an on-canvas block mirrors it immediately so
+    /// the two views never disagree.
+    private func renameLibraryItem(_ item: ThinkspaceLibraryItem, to newName: String) {
+        if let blockIndex = spatialEngine.blocks.firstIndex(where: { $0.entityUuid == item.entityUuid }) {
+            spatialEngine.blocks[blockIndex].title = newName
+            let block = spatialEngine.blocks[blockIndex]
+            Task { await spatialEngine.saveBlock(block) }
+        }
+        Task { @MainActor in
+            guard var atom = try? await AtomRepository.shared.fetch(uuid: item.entityUuid) else { return }
+            atom.title = newName
+            atom.updatedAt = ISO8601.string(from: Date())
+            _ = try? await AtomRepository.shared.update(atom)
+            refreshLibraryInventory()
+        }
+    }
+
     private func openCurrentThinkspaceDeepDive() {
         let activeThinkspaceId = thinkspaceId ?? spatialEngine.currentThinkspaceId
         guard let activeThinkspace = thinkspaceManager.currentThinkspace
@@ -1121,10 +1176,10 @@ struct CanvasView: View {
         if let preview = canvasClusterDropPreview,
            let block = spatialEngine.blocks.first(where: { $0.id == preview.blockId }),
            let cluster = clusterEngine.userClusters.first(where: { $0.id == preview.targetClusterId }) {
-            CanvasClusterDropPreviewView(
+            CanvasClusterDropPreviewHost(
                 block: block,
                 clusterColor: cluster.color,
-                previewPosition: preview.previewPosition
+                interaction: interactionState
             )
             .allowsHitTesting(false)
         }
@@ -1230,7 +1285,40 @@ struct CanvasView: View {
                 ids.insert(block.id)
             }
         }
-        mediaContentBlockIds = ids
+        // Idempotent: a switch calls this after the authoritative apply; an
+        // unchanged set must not invalidate the canvas body again.
+        if ids != mediaContentBlockIds {
+            mediaContentBlockIds = ids
+        }
+    }
+
+    /// Block ids whose canvas-persisted content actually changed between the
+    /// applied cached snapshot and the authoritative fetch — the targeted
+    /// resync notification carries these so only affected note/sticky views
+    /// re-run their load, instead of every mounted editor on every switch.
+    static func changedCanvasBlockIds(
+        previous: [CanvasBlock],
+        fetched: [CanvasBlock]
+    ) -> Set<String> {
+        var previousById: [String: CanvasBlock] = [:]
+        previousById.reserveCapacity(previous.count)
+        for block in previous {
+            previousById[block.id] = block
+        }
+        var changed: Set<String> = []
+        for block in fetched {
+            guard let old = previousById[block.id] else {
+                changed.insert(block.id)
+                continue
+            }
+            if old.metadata != block.metadata
+                || old.title != block.title
+                || old.entityUuid != block.entityUuid
+                || old.entityId != block.entityId {
+                changed.insert(block.id)
+            }
+        }
+        return changed
     }
 
     @discardableResult
@@ -1306,8 +1394,12 @@ struct CanvasView: View {
     }
 
     private func refreshLibraryInventoryForThinkspaceSwitch() {
-        libraryInventory = []
-        librarySelectedFolderID = nil
+        if !libraryInventory.isEmpty {
+            libraryInventory = []
+        }
+        if librarySelectedFolderID != nil {
+            librarySelectedFolderID = nil
+        }
         if thinkspaceMode == .library {
             refreshLibraryInventory()
         }
@@ -1348,7 +1440,6 @@ struct CanvasView: View {
 
     private func animateThinkspaceContentIn() async {
         canvasContentScale = 0.97
-        canvasContentBlur = 6
 
         // Give freshly-swapped block views one frame to mount while content is
         // still invisible, so the enter spring animates an already-built tree
@@ -1359,7 +1450,6 @@ struct CanvasView: View {
         withAnimation(reduceMotion ? .easeOut(duration: 0.15) : ProMotionSprings.worldEnter) {
             canvasContentOpacity = 1.0
             canvasContentScale = 1.0
-            canvasContentBlur = 0
         }
     }
 
@@ -2331,7 +2421,6 @@ struct CanvasView: View {
                 withAnimation(reduceMotion ? .easeOut(duration: 0.1) : ProMotionSprings.worldExit) {
                     canvasContentOpacity = 0
                     canvasContentScale = 0.97
-                    canvasContentBlur = 6
                 }
 
                 // 2. Overlap the authoritative fetch (DB + atom JSON decode, all
@@ -2358,13 +2447,34 @@ struct CanvasView: View {
 
                     let fetchedBlocks = await prefetchedBlocks
                     guard !Task.isCancelled else { return }
+
+                    // Apply the authoritative fetch only when it differs from
+                    // what the cached snapshot already mounted — an identical
+                    // world must not rebuild every block view mid-entry-spring.
+                    let previousBlocks = spatialEngine.blocks
+                    let fetchedBlocksDiffer = fetchedBlocks.map { $0 != previousBlocks } ?? false
                     spatialEngine.applyFetchedBlocks(
-                        fetchedBlocks, for: "home", documentId: 0, thinkspaceId: newId
+                        fetchedBlocksDiffer ? fetchedBlocks : nil,
+                        for: "home", documentId: 0, thinkspaceId: newId
                     )
                     // The cached snapshot may have mounted stale sticky/note text —
-                    // tell mounted editors to re-sync now that authoritative data landed.
-                    if cachedThinkspaceSnapshotApplied, fetchedBlocks != nil {
-                        NotificationCenter.default.post(name: .canvasBlocksDidResync, object: nil)
+                    // tell exactly the affected editors to re-sync now that
+                    // authoritative data landed. (Atom-backed text corrects via
+                    // the observation hub's absorb; this covers blocks whose
+                    // content lives in canvas_blocks itself.)
+                    if cachedThinkspaceSnapshotApplied,
+                       let fetchedBlocks,
+                       fetchedBlocksDiffer {
+                        let changedIds = Self.changedCanvasBlockIds(
+                            previous: previousBlocks, fetched: fetchedBlocks
+                        )
+                        if !changedIds.isEmpty {
+                            NotificationCenter.default.post(
+                                name: .canvasBlocksDidResync,
+                                object: nil,
+                                userInfo: ["blockIds": Array(changedIds)]
+                            )
+                        }
                     }
                     CosmoWindowViewModel.shared.refreshContext()
 
@@ -2373,7 +2483,7 @@ struct CanvasView: View {
                         CosmoUndoManager.shared.clearHistory()
                     }
 
-                    await clusterEngine.loadUserClusters(
+                    await clusterEngine.refreshUserClustersIfChanged(
                         thinkspaceId: newId,
                         blocks: spatialEngine.blocks
                     )
@@ -3762,7 +3872,6 @@ struct CanvasView: View {
 
     /// Optimized drag end - commits position to @Published array and database
     private func handleDragEndOptimized(blockId: String, translation: CGSize) {
-        let cachedPreview = canvasClusterDropPreview?.blockId == blockId ? canvasClusterDropPreview : nil
         clearCanvasClusterDropPreview()
 
         let isCrossThinkspaceDrop =
@@ -3806,21 +3915,16 @@ struct CanvasView: View {
                 x: oldPosition.x + translation.width,
                 y: oldPosition.y + translation.height
             )
-            let resolvedPreview = cachedPreview ?? clusterEngine.resolveCanvasDrop(
+            // Resolve fresh at drop (deterministic — same computation the live
+            // preview ran, but with the final translation).
+            let resolution = clusterEngine.resolveCanvasDrop(
                 blockUUID: spatialEngine.blocks[index].entityUuid,
                 point: rawDropPosition,
                 blockSize: spatialEngine.blocks[index].size
-            ).map {
-                ActiveCanvasClusterDropPreview(
-                    blockId: spatialEngine.blocks[index].id,
-                    blockUUID: spatialEngine.blocks[index].entityUuid,
-                    targetClusterId: $0.clusterId,
-                    previewPosition: $0.previewPosition
-                )
-            }
+            )
 
-            finalResolvedTargetClusterId = resolvedPreview?.targetClusterId
-            newPosition = resolvedPreview?.previewPosition ?? rawDropPosition
+            finalResolvedTargetClusterId = resolution?.clusterId
+            newPosition = resolution?.previewPosition ?? rawDropPosition
             // Batch: commit position + clear drag state in one pass
             spatialEngine.blocks[index].position = newPosition
             interactionState.clearBlockDrag()
@@ -3882,21 +3986,27 @@ struct CanvasView: View {
             blockSize: block.size
         )
 
-        let newPreview = resolution.map {
-            ActiveCanvasClusterDropPreview(
-                blockId: block.id,
-                blockUUID: block.entityUuid,
-                targetClusterId: $0.clusterId,
-                previewPosition: $0.previewPosition
-            )
+        guard let resolution else {
+            if canvasClusterDropPreview != nil { canvasClusterDropPreview = nil }
+            return
         }
 
-        guard canvasClusterDropPreview != newPreview else { return }
-        canvasClusterDropPreview = newPreview
+        // Per-frame ghost position rides the interaction observable (leaf host
+        // re-evaluates); the @State identity below changes on enter/exit only.
+        interactionState.updateDropPreviewPosition(resolution.previewPosition)
+
+        let newPreview = ActiveCanvasClusterDropPreview(
+            blockId: block.id,
+            blockUUID: block.entityUuid,
+            targetClusterId: resolution.clusterId
+        )
+        if canvasClusterDropPreview != newPreview {
+            canvasClusterDropPreview = newPreview
+        }
     }
 
     private func clearCanvasClusterDropPreview() {
-        canvasClusterDropPreview = nil
+        if canvasClusterDropPreview != nil { canvasClusterDropPreview = nil }
         clusterEngine.clearDropTarget()
     }
 
@@ -5957,11 +6067,14 @@ extension CanvasBlockTransformHost: Equatable where StaticContent: Equatable {
     }
 }
 
+/// Stable identity of an in-flight cluster drop preview — changes only when
+/// the drag enters/leaves a cluster. The per-frame ghost position rides
+/// CanvasInteractionState.dropPreviewPosition so gesture frames never
+/// re-enter CanvasView.body.
 private struct ActiveCanvasClusterDropPreview: Equatable {
     let blockId: String
     let blockUUID: String
     let targetClusterId: UUID
-    let previewPosition: CGPoint
 }
 
 private struct ActiveClusterResizeSession {
@@ -6036,6 +6149,23 @@ private struct CanvasDropDelegate: DropDelegate {
         }
         onImageDrop(imageProviders, canvasPosition)
         return true
+    }
+}
+
+/// Leaf host for the drop-preview ghost: the only view that reads the
+/// per-frame dropPreviewPosition, so a drag frame over a cluster invalidates
+/// just this body — CanvasView.body stays out of the gesture hot path.
+private struct CanvasClusterDropPreviewHost: View {
+    let block: CanvasBlock
+    let clusterColor: Color
+    let interaction: CanvasInteractionState
+
+    var body: some View {
+        CanvasClusterDropPreviewView(
+            block: block,
+            clusterColor: clusterColor,
+            previewPosition: interaction.dropPreviewPosition
+        )
     }
 }
 

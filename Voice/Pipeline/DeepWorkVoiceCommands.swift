@@ -578,7 +578,7 @@ actor VoiceWorkoutHandler {
 
     @MainActor
     init(database: (any DatabaseWriter)? = nil) {
-        self.database = database ?? (CosmoDatabase.shared.dbQueue! as any DatabaseWriter)
+        self.database = database ?? (CosmoDatabase.shared.dbPool! as any DatabaseWriter)
         // HealthKit sync is initialized elsewhere
         self.healthKitSync = nil
     }

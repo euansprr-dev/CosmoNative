@@ -34,7 +34,13 @@ actor InboxAtlasRouter {
         case attachClient
         case placeCluster
         case placeThinkspace
-        case germinateConnection
+        // The global Seedbed (July 2026): insight captures GROW instead of
+        // landing as canvas objects or premature concept pages. feedSeedling
+        // adds mass to a growing proto-concept; startSeedling names a new one.
+        // (startSeedling replaces the old germinateConnection, which created a
+        // dead one-line page — pages are born ripe or not at all.)
+        case feedSeedling
+        case startSeedling
         case germinateDeepDive
     }
 
@@ -148,9 +154,13 @@ actor InboxAtlasRouter {
     listed niche, do not attach any client.
     - "placeCluster" — the capture belongs with an existing cluster's material. targetKey = cluster key.
     - "placeThinkspace" — it fits a workspace but no cluster there. targetKey = thinkspace key.
-    - "germinateConnection" — the capture is the seed of a durable concept that deserves its own page \
-    and no listed page covers it. newTitle = a noun-phrase name for the concept. Use sparingly: only \
-    when the thought states a reusable principle, framework, or named idea — not for fleeting notes.
+    - "feedSeedling" — the capture adds mass to one of the GROWING SEEDLINGS listed (a named \
+    proto-concept still accruing thoughts before it earns a page). targetKey = that seedling's key. \
+    This is the DEFAULT home for insight-shaped captures.
+    - "startSeedling" — the capture states a reusable principle, framework, or named idea that no \
+    listed seedling or concept page covers. newTitle = a noun-phrase name for the concept. The \
+    seedling grows in the nursery — no page and no canvas object is created until it ripens and the \
+    user develops it. Not for fleeting notes.
     - "germinateDeepDive" — the capture opens a substantial research territory no listed topic covers. \
     newTitle = the topic name. Rare; prefer spawnQuestion under an existing topic when one fits.
 
@@ -165,7 +175,13 @@ actor InboxAtlasRouter {
     charter and example contents. The name alone is never enough evidence.
     4. QUESTIONS BEFORE FOLDERS — if the capture is a question or clearly serves one, prefer \
     advanceQuestion/spawnQuestion over spatial placement; research threads compound, folders don't.
-    5. ABSTAIN OVER GUESS — if two destinations feel equally plausible, or nothing fits, return \
+    5. INSIGHTS GROW BEFORE THEY LAND — a raw thought (captureType "insight") prefers feedSeedling / \
+    startSeedling (or feedConnection when a developed page already covers it) over placeCluster / \
+    placeThinkspace. A canvas is a workspace of deliberate objects, not a pile of loose thoughts; \
+    spatial placement is for material that IS an object (a document, an image, a reference). When an \
+    insight matches a cluster's theme, that cluster tells you what the seedling is ABOUT — it does \
+    not make the canvas the right home.
+    6. ABSTAIN OVER GUESS — if two destinations feel equally plausible, or nothing fits, return \
     fewer moves or none. moves: [] is a correct, honest answer. Guessing wrong is worse.
 
     HARD RULES:
@@ -197,6 +213,24 @@ actor InboxAtlasRouter {
     → {"title":"Habit formation takes 59-66 days","captureType":"insight","moves":[{"kind":"feedConnection",\
     "targetKey":"connection-C4","section":"evidence","newTitle":null,"parentQuestionKey":null,\
     "growth":"Adds cited evidence to a page that has claims but no support yet.","confidence":0.9}]}
+
+    Example B2 — a raw insight grows a seedling instead of landing on a canvas:
+    Capture: "What you think about most develops itself and feeds you ideas — make repeated mental \
+    thoughts intentional"
+    DESTINATIONS include {"key":"cluster-K2"} Mindset (in Philosophy), and \
+    {"key":"seedling-S1"} "Directed attention" — Growing seedling (3 thoughts).
+    → {"title":"Repeated thoughts compound — direct them","captureType":"insight","moves":[{"kind":"feedSeedling",\
+    "targetKey":"seedling-S1","section":null,"newTitle":null,"parentQuestionKey":null,\
+    "growth":"Fourth thought on directed attention — the seedling is nearly ripe.","confidence":0.85}]}
+    (The Mindset cluster fits thematically, but a raw thought grows; it does not get pinned to a canvas.)
+
+    Example B3 — a principle with no home starts a seedling, never a page:
+    Capture: "constraints are a gift: the smaller the canvas, the sharper the idea"
+    DESTINATIONS list no seedling or concept page about constraints.
+    → {"title":"Constraints sharpen ideas","captureType":"insight","moves":[{"kind":"startSeedling",\
+    "targetKey":null,"section":null,"newTitle":"Constraints as a creative gift","parentQuestionKey":null,\
+    "growth":"Names a proto-concept so future thoughts about constraints accrue in one place.",\
+    "confidence":0.7}]}
 
     Example C — the niche test picks the right client (and vetoes the familiar one):
     Capture: "hook idea: what a $40k emergency fund actually feels like"
@@ -236,6 +270,7 @@ actor InboxAtlasRouter {
             (.question, "OPEN QUESTIONS:"),
             (.deepDive, "RESEARCH TOPICS:"),
             (.connection, "CONCEPT PAGES:"),
+            (.seedling, "GROWING SEEDLINGS (proto-concepts accruing thoughts — the default home for insights):"),
             (.cluster, "CLUSTERS:"),
             (.thinkspace, "WORKSPACES:")
         ]
@@ -335,7 +370,9 @@ actor InboxAtlasRouter {
                 guard let key = targetKey, entriesByKey[key]?.kind == .cluster else { continue }
             case .placeThinkspace:
                 guard let key = targetKey, entriesByKey[key]?.kind == .thinkspace else { continue }
-            case .germinateConnection, .germinateDeepDive:
+            case .feedSeedling:
+                guard let key = targetKey, entriesByKey[key]?.kind == .seedling else { continue }
+            case .startSeedling, .germinateDeepDive:
                 guard newTitle != nil else { continue }
                 if usedCreationMove { continue }
                 usedCreationMove = true

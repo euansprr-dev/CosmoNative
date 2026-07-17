@@ -26,7 +26,6 @@ struct ResearchFocusModeView: View {
     @StateObject private var focusConnectManager = FocusConnectManager()
     @StateObject private var floatingBlocksManager: FocusFloatingBlocksManager
     @State private var viewportState = CanvasViewportState()
-    @State private var showCommandK = false
     @State private var showResearchAgentSheet = false
     @State private var sidebarVisible = false
     @State private var sidebarLocked = false
@@ -35,11 +34,11 @@ struct ResearchFocusModeView: View {
     @State private var canvasFrameSize: CGSize = CGSize(width: 1440, height: 900)
     @State private var viewFrameInWindow: CGRect = .zero
 
-    @AppStorage("sidebarCollapsed") private var isSidebarHidden: Bool = false
     @Environment(\.isPaneContext) private var isPaneContext
     @Environment(\.isPeekContext) private var isPeekContext
     @Environment(\.isPaneActive) private var isPaneActive
     @Environment(\.atomWindowChromeContext) private var atomChrome
+    @Environment(\.paneDeckChrome) private var paneDeckChrome
 
     // MARK: - Initialization
 
@@ -124,20 +123,6 @@ struct ResearchFocusModeView: View {
             .padding(.leading, 8)
             .padding(.top, 56)
         }
-        .overlay(alignment: .topTrailing) {
-            if isPaneContext, !isPeekContext, atomChrome == nil {
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .font(DS.buttonText)
-                        .foregroundStyle(DS.textMuted)
-                        .frame(width: 28, height: 28)
-                        .background(DS.glassCardFill, in: Circle())
-                }
-                .buttonStyle(.plain)
-                .padding(.trailing, 16)
-                .padding(.top, 16)
-            }
-        }
         .background(
             GeometryReader { geo in
                 Color.clear
@@ -178,24 +163,15 @@ struct ResearchFocusModeView: View {
                 viewModel.radialMenuPosition = nil
                 return .handled
             }
-            if showCommandK {
-                showCommandK = false
-                return .handled
-            }
             onClose()
             return .handled
         }
         .onKeyPress { keyPress in
             if keyPress.characters == "k" && keyPress.modifiers.contains(.command) {
-                showCommandK = true
+                presentSharedCommandK()
                 return .handled
             }
             return .ignored
-        }
-        // Command-K sheet
-        .sheet(isPresented: $showCommandK) {
-            CommandKView()
-                .frame(minWidth: 900, minHeight: 600)
         }
         // Cmd+K single-click: add as floating block
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.NodeGraph.addItemToCurrentCanvas)) { notification in
@@ -203,7 +179,6 @@ struct ResearchFocusModeView: View {
             let title = notification.userInfo?["title"] as? String ?? "Untitled"
             let typeRaw = notification.userInfo?["atomType"] as? String ?? AtomType.idea.rawValue
             let atomType = AtomType(rawValue: typeRaw) ?? .idea
-            showCommandK = false
             floatingBlocksManager.addBlock(
                 linkedAtomUUID: uuid,
                 linkedAtomType: atomType,
@@ -439,34 +414,24 @@ struct ResearchFocusModeView: View {
 
     private var topBar: some View {
         HStack(spacing: 16) {
-            // Main sidebar toggle (standalone only)
             if let atomChrome {
                 CosmoChromeIsland {
                     AtomWindowChromeLeadingControls(context: atomChrome)
                 }
-            } else if !isPaneContext {
-                Button {
-                    withAnimation(ProMotionSprings.sidebar) {
-                        isSidebarHidden.toggle()
-                    }
-                } label: {
-                    Image(systemName: "sidebar.left")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(isSidebarHidden ? DS.textMuted : DS.textSecondary)
-                        .frame(width: 28, height: 28)
-                        .background(DS.border, in: Circle())
-                }
-                .buttonStyle(.plain)
-                .help(isSidebarHidden ? "Show sidebar (⌘\\)" : "Hide sidebar (⌘\\)")
             }
 
-            // Universal back/forward (hidden in pane mode — X button handles close)
+            // Universal back/forward full-screen (the trail island carries the
+            // sidebar toggle); the deck tab strip rides this seam in pane
+            // context (tabs carry identity and close).
             if atomChrome == nil, !isPaneContext {
                 NavigationTrailIsland()
+            } else if let paneDeckChrome {
+                CosmoChromeIsland { PaneDeckTabStrip(context: paneDeckChrome) }
             }
 
-            // Title
-            if atomChrome == nil {
+            // Title — the focused deck tab already names the pane, so the
+            // inline title would say it twice there.
+            if atomChrome == nil, paneDeckChrome == nil {
                 Text(atom.title ?? "Research")
                     .font(DS.headline)
                     .foregroundStyle(DS.text)
@@ -674,11 +639,16 @@ struct ResearchFocusModeView: View {
             showResearchAgentSheet = true
 
         case .fromDatabase:
-            showCommandK = true
-
-        case .createTemplate:
-            break // Templates not supported in focus mode
+            presentSharedCommandK()
         }
+    }
+
+    /// The one shared ⌘K palette lives in MainView (zIndex 200, above focus
+    /// modes). A local `.sheet(CommandKView())` here rendered a second,
+    /// backdropped copy of the palette — never present ⌘K locally. The shared
+    /// palette closes itself after posting a pick.
+    private func presentSharedCommandK() {
+        NotificationCenter.default.post(name: .showCommandPalette, object: nil)
     }
 
     private func addPanelForAtom(_ atom: Atom, at position: CGPoint) {

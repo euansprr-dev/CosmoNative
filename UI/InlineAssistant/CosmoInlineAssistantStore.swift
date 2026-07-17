@@ -1232,7 +1232,10 @@ final class CosmoInlineAssistantStore: ObservableObject {
         operation: CosmoAssistantProposalOperation,
         accepted: Bool
     ) {
-        guard let skillID = proposal.skillID else { return }
+        // Plain edit runs (no explicit skill) accrue to the default edit skill —
+        // otherwise the most common proposals would never build a track record
+        // for the review-outcome recall block.
+        let skillID = proposal.skillID ?? CosmoInlineAssistantSkillID.inlineEdit.rawValue
         let suggestion = operation.proposedText ?? proposal.summary
         Task {
             await AgentOutcomeTracker.shared.trackSuggestionAcceptance(
@@ -1289,12 +1292,46 @@ final class CosmoInlineAssistantStore: ObservableObject {
         }
 
         let snapshot = provider.editableSnapshot()
-        let plan = CosmoInlineEditTransaction.compile(
-            operations: pending,
-            sourceText: snapshot.text
-        )
-        for step in plan.steps {
-            await accept(operationID: step.id, provider: provider, applying: step)
+
+        // Drift shield for the one-click path: an operation that was staged as
+        // a LOCATED edit but no longer matches the document would degrade to a
+        // bottom-append here — silently, because accept-all doesn't force the
+        // user through each woven diff. Those stay pending for individual
+        // review; everything still anchored applies as one transaction.
+        // (Individual accepts keep the never-block contract untouched.)
+        var applicable: [CosmoAssistantProposalOperation] = []
+        var driftedCount = 0
+        for operation in pending {
+            let isTextEdit = operation.kind == .textReplacement
+                || operation.kind == .structuredFieldReplacement
+                || operation.kind == .textInsertion
+            let anchoredAtStaging = operation.originalText?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .isEmpty == false
+            if isTextEdit, anchoredAtStaging,
+               let placement = CosmoInlineTextEditResolver.placement(for: operation, in: snapshot.text),
+               placement.placementKind == .appendFallback {
+                driftedCount += 1
+                continue
+            }
+            applicable.append(operation)
+        }
+        if !applicable.isEmpty {
+            let plan = CosmoInlineEditTransaction.compile(
+                operations: applicable,
+                sourceText: snapshot.text
+            )
+            for step in plan.steps {
+                await accept(operationID: step.id, provider: provider, applying: step)
+            }
+        }
+
+        // After the applies — a successful accept clears errorText, and the
+        // drift notice must survive the transaction it was excluded from.
+        if driftedCount > 0 {
+            errorText = driftedCount == 1
+                ? "1 change no longer matches the document — review it in the diff before accepting."
+                : "\(driftedCount) changes no longer match the document — review them in the diff before accepting."
         }
     }
 

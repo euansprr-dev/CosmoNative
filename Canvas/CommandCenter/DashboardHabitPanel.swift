@@ -211,7 +211,7 @@ private struct DashboardHabitOrbitCard: View {
             // Habit identity, the App Store register: a typed emoji in the
             // name wins, then the curated keyword pass; the user's picked SF
             // icon stays as the explicit-choice fallback.
-            if let emoji = CollectionEmoji.resolve(name: habit.title).emoji {
+            if let emoji = habit.identityMark {
                 Text(emoji)
                     .font(.system(size: 14))
             } else {
@@ -230,7 +230,8 @@ private struct DashboardHabitOrbitCard: View {
 
     private var titleRow: some View {
         HStack(spacing: 6) {
-            Text(habit.title)
+            // The ring carries the mark — the label must never repeat it.
+            Text(habit.displayTitle)
                 .font(DS.subheadline).fontWeight(.medium)
                 .foregroundStyle(habit.isTodayComplete ? habit.accentColor : DS.text)
                 .lineLimit(1)

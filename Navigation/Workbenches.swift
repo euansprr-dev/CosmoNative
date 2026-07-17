@@ -37,6 +37,7 @@ struct WorkspaceSnapshot: Codable, Equatable {
         var urlString: String?
         var title: String?
 
+        @MainActor
         init?(from content: PaneContent) {
             switch content {
             case .entity(let selection):
@@ -50,10 +51,14 @@ struct WorkspaceSnapshot: Codable, Equatable {
                 kind = .commandCenter
             case .swipeGallery:
                 kind = .swipeGallery
-            case .webBrowser(let url, let webTitle):
+            case .webBrowser(_, let url, let webTitle):
                 kind = .webBrowser
-                urlString = url.absoluteString
-                title = webTitle
+                // Capture what the pane is showing NOW, not its launch URL —
+                // a bench should restore the page you were actually reading.
+                let liveURL = BrowserPaneRegistry.shared.currentURL(for: content.id)
+                let liveTitle = BrowserPaneRegistry.shared.displayTitle(for: content.id)
+                urlString = (liveURL ?? url).absoluteString
+                title = liveTitle ?? webTitle
             case .cosmoWindow:
                 kind = .cosmoWindow
             case .inlineAssistant:

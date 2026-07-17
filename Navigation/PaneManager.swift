@@ -17,10 +17,16 @@ enum PaneContent: Identifiable, Equatable {
     case thinkspace(thinkspaceId: String)
     case commandCenter
     case swipeGallery
-    case webBrowser(url: URL, title: String?)
+    case webBrowser(instanceId: UUID, url: URL, title: String?)
     case cosmoWindow
     case collaborator(target: CollaborationTarget, presetId: String?)
     case inlineAssistant
+
+    /// Browser panes carry instance identity, not URL identity — two panes on
+    /// the same page are legal (the URL is only the launch destination).
+    static func webBrowser(url: URL, title: String?) -> PaneContent {
+        .webBrowser(instanceId: UUID(), url: url, title: title)
+    }
 
     var id: String {
         switch self {
@@ -32,8 +38,8 @@ enum PaneContent: Identifiable, Equatable {
             return "commandCenter"
         case .swipeGallery:
             return "swipeGallery"
-        case .webBrowser(let url, _):
-            return "web_\(url.absoluteString)"
+        case .webBrowser(let instanceId, _, _):
+            return "web_\(instanceId.uuidString)"
         case .cosmoWindow:
             return "cosmoWindow"
         case .collaborator:
@@ -68,7 +74,7 @@ enum PaneContent: Identifiable, Equatable {
     }
 
     var webURL: URL? {
-        guard case .webBrowser(let url, _) = self else { return nil }
+        guard case .webBrowser(_, let url, _) = self else { return nil }
         return url
     }
 
@@ -126,6 +132,11 @@ class PaneManager: ObservableObject {
     /// Maximum number of simultaneous panes in the deck (tabs are cheap)
     let maxPanes: Int = 6
 
+    /// Maximum simultaneous browser panes. Each keeps a live WKWebView, and
+    /// the cap is also the anti-sprawl stance: this is a research browser,
+    /// not a tab hoard.
+    let maxBrowserPanes: Int = 3
+
     /// Minimum/maximum main split ratio
     private let minMainRatio: CGFloat = 0.25
     private let maxMainRatio: CGFloat = 0.75
@@ -145,9 +156,9 @@ class PaneManager: ObservableObject {
         Set(panes.compactMap { $0.thinkspaceId })
     }
 
-    /// Set of web URLs currently open in panes.
-    var openBrowserURLs: Set<URL> {
-        Set(panes.compactMap { $0.webURL })
+    /// Browser panes currently in the deck (opening order).
+    var browserPanes: [PaneContent] {
+        panes.filter { $0.webURL != nil }
     }
 
     // MARK: - Duplicate Prevention
@@ -185,9 +196,10 @@ class PaneManager: ObservableObject {
         return true
     }
 
-    /// Check if a browser pane can be opened for the URL.
-    func canOpenBrowser(url: URL) -> Bool {
-        guard !openBrowserURLs.contains(url) else { return false }
+    /// Check if another browser pane can be opened. URL-level routing (reuse
+    /// vs new pane) is BrowserPaneRouter's job — the manager only budgets.
+    func canOpenBrowserPane() -> Bool {
+        guard browserPanes.count < maxBrowserPanes else { return false }
         guard panes.count < maxPanes else { return false }
         return true
     }
@@ -199,6 +211,9 @@ class PaneManager: ObservableObject {
         // Check duplicates
         guard !panes.contains(where: { $0.id == content.id }) else { return }
         guard panes.count < maxPanes else { return }
+        if content.webURL != nil {
+            guard browserPanes.count < maxBrowserPanes else { return }
+        }
 
         let isFirst = panes.isEmpty
         panes.append(content)
@@ -215,6 +230,21 @@ class PaneManager: ObservableObject {
             withAnimation(ProMotionSprings.snappy) {
                 mainSplitRatio = 0.5
             }
+        }
+    }
+
+    /// Open a pane focused while keeping the currently focused pane visible
+    /// beside it — the "open in split" gesture (new pane 60%, source pinned
+    /// at 40%). An existing pin is never stolen.
+    func openPaneBeside(_ content: PaneContent) {
+        let sourceId = focusedPaneId
+        openPane(content)
+        guard focusedPaneId == content.id else { return }
+        if let sourceId,
+           sourceId != content.id,
+           pinnedPaneId == nil,
+           panes.contains(where: { $0.id == sourceId }) {
+            pinnedPaneId = sourceId
         }
     }
 

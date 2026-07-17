@@ -346,8 +346,6 @@ struct CosmoDocumentEditor: View {
             syncEditorFromDocument()
         }
         .onChange(of: document) { _, _ in
-            if splitsOnReturn {
-            }
             guard !isApplyingExternalUpdate, !isSyncingFromEditor else { return }
             syncEditorFromDocument()
         }
@@ -374,8 +372,6 @@ struct CosmoDocumentEditor: View {
     private func syncEditorFromDocument(preferLivePlainText: Bool = false) {
         isApplyingExternalUpdate = true
         let resolved = resolvedDocumentForEditor(preferLivePlainText: preferLivePlainText)
-        if splitsOnReturn {
-        }
         attributedText = EditorRhythmPolicy.applyingLineSpacing(
             lineSpacingAdjustment,
             to: EditorFontPolicy.applyingDesign(

@@ -169,19 +169,31 @@ struct ConnectionPendingInsertRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: DS.space8) {
-            Image(systemName: "sparkles")
+            // Sparkles = collaborator proposal; tray = your own captured
+            // material waiting to be swept in (inbox feed, seedling develop).
+            Image(systemName: insert.isFromCapture ? "tray.and.arrow.down" : "sparkles")
                 .font(.system(size: 9, weight: .semibold))
                 .foregroundStyle(accent)
                 .padding(.top, 3)
                 .accessibilityHidden(true)
 
-            VStack(alignment: .leading, spacing: DS.space4) {
+            // Each bullet previews as its own dotted row — the exact rows that
+            // will land in the section — so a multi-item capture never reads
+            // as one blob before it's accepted.
+            VStack(alignment: .leading, spacing: DS.space6) {
                 ForEach(Array(insert.bullets.enumerated()), id: \.offset) { _, bullet in
-                    Text(bullet)
-                        .font(DS.callout)
-                        .foregroundStyle(DS.text)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    HStack(alignment: .top, spacing: DS.space8) {
+                        Circle()
+                            .fill(accent.opacity(0.9))
+                            .frame(width: 5, height: 5)
+                            .padding(.top, 6)
+                            .accessibilityHidden(true)
+                        Text(bullet)
+                            .font(DS.callout)
+                            .foregroundStyle(DS.text)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
             }
 
@@ -198,7 +210,11 @@ struct ConnectionPendingInsertRow: View {
                 .stroke(accent.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
         )
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Suggested for this section: \(insert.bullets.joined(separator: ", "))")
+        .accessibilityLabel(
+            insert.isFromCapture
+                ? "From your inbox, waiting to be swept in: \(insert.bullets.joined(separator: ", "))"
+                : "Suggested for this section: \(insert.bullets.joined(separator: ", "))"
+        )
     }
 
     private func decisionButton(

@@ -207,7 +207,7 @@ enum BlockCommandCatalog {
             title: "Elements",
             subtitle: "Insert a reusable custom block",
             systemImage: "square.stack.3d.up",
-            aliases: ["custom", "template"],
+            aliases: ["custom"],
             action: .openElementsSubmenu
         )
     ]

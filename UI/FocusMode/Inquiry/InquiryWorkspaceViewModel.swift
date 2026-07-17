@@ -96,24 +96,70 @@ final class InquiryWorkspaceViewModel {
     var activeReaderSourceId: String?           // when non-nil, center morphs into reader
     var isMapOverlayPresented: Bool = false     // Cmd+M session-map overlay
 
-    // Study shell: floating panel visibility (persisted per session) and the
-    // tick that drives dock focus from keyboard shortcuts.
-    var isTrailShowing: Bool {
+    // Study shell: current width class, kept in sync by StudyShellView so
+    // panel toggles route to the right presentation (the ConnectionWorkspace
+    // pattern). Regular keeps the persisted column preference; compact/narrow
+    // use TRANSIENT overlay flags that default closed — when a pane squeezes
+    // the shell below regular, the panels animate out instead of lingering
+    // over the manuscript.
+    var breakpoint: StudyBreakpoint = .regular
+    var isTrailOverlayPresented = false
+    var isReadingOverlayPresented = false
+
+    /// Persisted column preference — meaningful only at regular width.
+    private var showsTrailColumn: Bool {
         get { structured.uiState.showTrailPanel ?? true }
         set { structured.uiState.showTrailPanel = newValue; scheduleSave() }
     }
-    var isReadingShowing: Bool {
+    private var showsReadingColumn: Bool {
         get { structured.uiState.showReadingPanel ?? true }
         set { structured.uiState.showReadingPanel = newValue; scheduleSave() }
     }
+
+    /// Whether each panel is showing in this breakpoint's form.
+    var isTrailShowing: Bool {
+        breakpoint == .regular ? showsTrailColumn : isTrailOverlayPresented
+    }
+    var isReadingShowing: Bool {
+        breakpoint == .regular ? showsReadingColumn : isReadingOverlayPresented
+    }
+
     var dockFocusTick: Int = 0
     /// Reader-mode preference for the open source (chrome-row toggle).
     var readerPrefersReaderMode: Bool = true
     /// The Gardener's structure proposals, surfaced in the Session map.
     var gardenerProposals: [InquiryGardenerProposal] = []
 
-    func toggleTrail() { isTrailShowing.toggle() }
-    func toggleReading() { isReadingShowing.toggle() }
+    func toggleTrail() {
+        switch breakpoint {
+        case .regular:
+            showsTrailColumn.toggle()
+        case .compact, .narrow:
+            isTrailOverlayPresented.toggle()
+            // At overlay widths the panels share one lane over the page —
+            // opening one closes the other.
+            if isTrailOverlayPresented { isReadingOverlayPresented = false }
+        }
+    }
+
+    func toggleReading() {
+        switch breakpoint {
+        case .regular:
+            showsReadingColumn.toggle()
+        case .compact, .narrow:
+            isReadingOverlayPresented.toggle()
+            if isReadingOverlayPresented { isTrailOverlayPresented = false }
+        }
+    }
+
+    var hasOverlayPanelPresented: Bool {
+        isTrailOverlayPresented || isReadingOverlayPresented
+    }
+
+    func dismissOverlayPanels() {
+        isTrailOverlayPresented = false
+        isReadingOverlayPresented = false
+    }
     func focusDock() { dockFocusTick += 1 }
     var ephemeralAIReplies: [EphemeralAIReplyCard] = []
     var liveUnderstandingIsForming: Bool = false
@@ -148,7 +194,7 @@ final class InquiryWorkspaceViewModel {
         if let ddUUID = metadata.parentDeepDiveUUID,
            let dd = try? await AtomRepository.shared.fetch(uuid: ddUUID) {
             deepDive = dd
-            conceptSeedbed = dd.deepDiveStructured?.conceptSeedbed ?? []
+            conceptSeedbed = await ConceptSeedbedService.shared.seedbed(deepDiveUUID: ddUUID)
             await reloadDeepDiveScopedAtoms()
         }
         if let rqUUID = metadata.mainQuestionUUID,
@@ -2107,9 +2153,8 @@ final class InquiryWorkspaceViewModel {
     /// Re-mirrors the Deep Dive's seedbed after any write (accrual, tidy, pin,
     /// dismiss) so the SEEDLINGS strip ticks live while the user captures.
     func reloadSeedbed() async {
-        guard let uuid = deepDive?.uuid,
-              let fresh = try? await AtomRepository.shared.fetch(uuid: uuid) else { return }
-        conceptSeedbed = fresh.deepDiveStructured?.conceptSeedbed ?? []
+        guard let uuid = deepDive?.uuid else { return }
+        conceptSeedbed = await ConceptSeedbedService.shared.seedbed(deepDiveUUID: uuid)
     }
 
     /// Seedlings worth showing: incubating mass and developed pages with

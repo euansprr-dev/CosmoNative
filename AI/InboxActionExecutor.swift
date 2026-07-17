@@ -2,6 +2,20 @@ import Foundation
 import SwiftUI
 import GRDB
 
+/// What accepting a suggestion actually produced. Most verbs birth or mutate
+/// an atom; the Seedbed verbs grow a seedling — no atom, no canvas object.
+enum InboxExecutionOutcome {
+    case atom(Atom)
+    case seedling(Seedling)
+
+    /// The produced atom, when the outcome is spatial/knowledge-graph work
+    /// (navigation targets, reindex hooks). Seedling growth has none.
+    var atom: Atom? {
+        if case .atom(let atom) = self { return atom }
+        return nil
+    }
+}
+
 @MainActor
 final class InboxActionExecutor {
     static let shared = InboxActionExecutor()
@@ -15,7 +29,7 @@ final class InboxActionExecutor {
     private init() {}
 
     @discardableResult
-    func executePrimaryRecommendation(item: InboxItem) async throws -> Atom? {
+    func executePrimaryRecommendation(item: InboxItem) async throws -> InboxExecutionOutcome? {
         if let recommendation = item.primaryRecommendationValue {
             return try await executeRecommendation(item: item, recommendation: recommendation)
         }
@@ -23,39 +37,45 @@ final class InboxActionExecutor {
         switch item.classification {
         case .merge:
             guard let targetUuid = item.mergeTargetUuid else { return nil }
-            return try await executeMerge(item: item, targetAtomUuid: targetUuid)
+            return try await executeMerge(item: item, targetAtomUuid: targetUuid).map { .atom($0) }
         case .place:
-            guard let thinkspaceId = item.placeThinkspaceId else { return try await executeNew(item: item) }
+            guard let thinkspaceId = item.placeThinkspaceId else { return .atom(try await executeNew(item: item)) }
             let atomType = AtomType(rawValue: item.placeAtomType ?? AtomType.connection.rawValue) ?? .connection
-            return try await executePlace(item: item, thinkspaceId: thinkspaceId, atomType: atomType)
+            return .atom(try await executePlace(item: item, thinkspaceId: thinkspaceId, atomType: atomType))
         case .new, .unsorted, .none:
-            return try await executeNew(item: item)
+            return .atom(try await executeNew(item: item))
         }
     }
 
     @discardableResult
-    func executeRecommendation(item: InboxItem, recommendation: InboxRecommendation) async throws -> Atom? {
+    func executeRecommendation(item: InboxItem, recommendation: InboxRecommendation) async throws -> InboxExecutionOutcome? {
         switch recommendation.kind {
         case .mergeAtom:
             guard let targetUuid = recommendation.mergeTargetUuid else { return nil }
-            return try await executeMerge(item: item, targetAtomUuid: targetUuid)
+            return try await executeMerge(item: item, targetAtomUuid: targetUuid).map { .atom($0) }
         case .placeInExistingCluster, .createClusterAndPlace, .placeInThinkspace, .createThinkspaceAndPlace:
-            return try await executePlacementRecommendation(item: item, recommendation: recommendation)
+            return try await executePlacementRecommendation(item: item, recommendation: recommendation).map { .atom($0) }
         case .advanceQuestion:
-            return try await executeAdvanceQuestion(item: item, recommendation: recommendation)
+            return try await executeAdvanceQuestion(item: item, recommendation: recommendation).map { .atom($0) }
         case .spawnQuestion:
-            return try await executeSpawnQuestion(item: item, recommendation: recommendation)
+            return try await executeSpawnQuestion(item: item, recommendation: recommendation).map { .atom($0) }
         case .feedConnection:
-            return try await executeFeedConnection(item: item, recommendation: recommendation)
+            return try await executeFeedConnection(item: item, recommendation: recommendation).map { .atom($0) }
         case .attachClient:
-            return try await executeAttachClient(item: item, recommendation: recommendation)
-        case .germinateConnection:
-            return try await executeGerminateConnection(item: item, recommendation: recommendation)
+            return try await executeAttachClient(item: item, recommendation: recommendation).map { .atom($0) }
+        case .feedSeedling:
+            return try await executeFeedSeedling(item: item, recommendation: recommendation).map { .seedling($0) }
+        case .startSeedling, .germinateConnection:
+            // germinateConnection is the pre-Seedbed kind (rows classified
+            // before July 2026): it used to create a one-line concept page —
+            // exactly the "seed packet" disease. Both now start a seedling;
+            // pages are born ripe or not at all.
+            return try await executeStartSeedling(item: item, recommendation: recommendation).map { .seedling($0) }
         case .germinateDeepDive:
-            return try await executeGerminateDeepDive(item: item, recommendation: recommendation)
+            return try await executeGerminateDeepDive(item: item, recommendation: recommendation).map { .atom($0) }
         case .createStandaloneAtom:
             let atomType = AtomType(rawValue: recommendation.suggestedAtomType) ?? .connection
-            return try await executeNew(item: item, atomType: atomType)
+            return .atom(try await executeNew(item: item, atomType: atomType))
         }
     }
 
@@ -407,9 +427,11 @@ final class InboxActionExecutor {
         return question
     }
 
-    /// The capture develops a concept page: it lands as an item in the router's
-    /// chosen section. The pre-edit structured JSON is persisted on the inbox
-    /// item BEFORE mutation (the merge pattern) so undo survives restarts.
+    /// The capture develops a concept page: it STAGES into the router's chosen
+    /// section as a pending ghost row (✓/✗ on the next page visit) — a page
+    /// you shaped by hand is never silently edited by a pipeline (the
+    /// CONCEPT_RIPENING_PLAN contract). Attachments stay with the capture
+    /// until the row is accepted.
     @discardableResult
     func executeFeedConnection(item: InboxItem, recommendation: InboxRecommendation) async throws -> Atom? {
         guard let move = recommendation.atlasMove,
@@ -419,53 +441,34 @@ final class InboxActionExecutor {
               let connection = try await atomRepo.fetch(uuid: connectionUUID),
               !connection.isDeleted else { return nil }
 
-        let previousStructured = connection.structured ?? ""
-        var data = connection.structured.flatMap { ConnectionStructuredData.fromJSON($0) }
-            ?? ConnectionStructuredData(sections: [])
-
-        let newItem = ConnectionItem(content: item.rawText)
-        if let index = data.sections.firstIndex(where: { $0.type == sectionType }) {
-            data.sections[index].items.append(newItem)
-        } else {
-            data.sections.append(ConnectionSection(type: sectionType, items: [newItem]))
-        }
-        guard let encoded = data.toJSON() else { return nil }
-
-        do {
-            try await inboxRepo.updateMetadata(uuid: item.uuid, merging: [
-                "prefeedStructured": previousStructured,
-                "prefeedConnectionUuid": connectionUUID
-            ])
-        } catch {
-            print("⚠️ [InboxAction] Failed to persist pre-feed snapshot: \(error)")
-            PersistenceHealth.note(.writeFailure, context: "InboxActionExecutor.executeFeedConnection", detail: "pre-feed snapshot store failed for \(item.uuid): \(error.localizedDescription)")
+        let insert = ConnectionStagedInsert(
+            section: sectionType.rawValue,
+            text: item.rawText,
+            sourceKind: "inbox",
+            sourceUUID: item.uuid,
+            attachmentUUIDs: item.attachmentUUIDs
+        )
+        guard let updated = try await ConnectionStagingStore.stage(insert, onConnection: connectionUUID) else {
+            return nil
         }
 
-        guard let updated = try await atomRepo.update(uuid: connectionUUID, updates: { atom in
-            atom.structured = encoded
-        }) else { return nil }
-
-        await adoptAttachments(from: item, into: updated.uuid)
-        await reindex(atom: updated)
+        let name = connection.title ?? "concept page"
+        try? await inboxRepo.updateMetadata(uuid: item.uuid, merging: [
+            "actionOutcome": "Staged for \(name) › \(sectionType.displayName)"
+        ])
         try await inboxRepo.markActioned(uuid: item.uuid)
 
         let originalItem = item
-        let restoredStructured = previousStructured
-        let fedStructured = encoded
+        let insertId = insert.id
+        let stagedInsert = insert
 
         CosmoUndoManager.shared.register(
             InlineUndoAction(actionDescription: "Feed Concept Page") { [weak self] in
-                guard let self else { return }
-                _ = try? await self.atomRepo.update(uuid: connectionUUID) { atom in
-                    atom.structured = restoredStructured.isEmpty ? nil : restoredStructured
-                }
-                try? await self.inboxRepo.restore(originalItem)
+                _ = try? await ConnectionStagingStore.remove(insertId: insertId, fromConnection: connectionUUID)
+                try? await self?.inboxRepo.restore(originalItem)
             } redo: { [weak self] in
-                guard let self else { return }
-                _ = try? await self.atomRepo.update(uuid: connectionUUID) { atom in
-                    atom.structured = fedStructured
-                }
-                try? await self.inboxRepo.markActioned(uuid: originalItem.uuid)
+                _ = try? await ConnectionStagingStore.stage(stagedInsert, onConnection: connectionUUID)
+                try? await self?.inboxRepo.markActioned(uuid: originalItem.uuid)
             }
         )
 
@@ -509,30 +512,86 @@ final class InboxActionExecutor {
         return atom
     }
 
-    /// The capture seeds a brand-new concept page under the router's name,
-    /// linked to the material it bridges.
+    /// The capture adds mass to a growing seedling — no atom is created, no
+    /// canvas is touched. The thought accrues with provenance; the seedling
+    /// ripens toward one development conversation.
     @discardableResult
-    func executeGerminateConnection(item: InboxItem, recommendation: InboxRecommendation) async throws -> Atom? {
-        var atom = Atom.new(
-            type: .connection,
-            title: recommendation.atlasMove?.germinateTitle ?? item.title ?? fallbackTitle(for: item),
-            body: item.rawText
-        )
-        for uuid in item.relatedAtomUUIDsValue {
-            guard let related = try? await atomRepo.fetch(uuid: uuid), !related.isDeleted else { continue }
-            atom = atom.appendingLink(AtomLink(
-                type: AtomLinkType.related.rawValue,
-                uuid: related.uuid,
-                entityType: related.type.rawValue
-            ))
-        }
-        atom = atom.mergingMetadataKeys(captureProvenance(for: item))
-        atom = try await atomRepo.create(atom)
-        await adoptAttachments(from: item, into: atom.uuid)
-        await reindex(atom: atom)
+    func executeFeedSeedling(item: InboxItem, recommendation: InboxRecommendation) async throws -> Seedling? {
+        guard let move = recommendation.atlasMove,
+              let seedlingUUID = move.seedlingUUID,
+              let seedling = try await SeedlingRepository.shared.fetch(uuid: seedlingUUID),
+              !seedling.isDeleted, seedling.status != .developed else { return nil }
+
+        let thought = SeedlingThought(text: item.rawText, sourceKind: .inbox, sourceUUID: item.uuid)
+        // A nil feed means the dedup guard caught a repeat (same capture) —
+        // the thought is already growing there, which IS the desired state.
+        let fed = try await SeedlingRepository.shared.feed(uuid: seedlingUUID, thought: thought) ?? seedling
+        try? await inboxRepo.updateMetadata(uuid: item.uuid, merging: [
+            "actionOutcome": "Grew \u{201C}\(fed.name)\u{201D}"
+        ])
         try await inboxRepo.markActioned(uuid: item.uuid)
-        registerCreationUndo(created: atom, item: item, actionDescription: "Germinate Concept Page")
-        return atom
+
+        let originalItem = item
+        CosmoUndoManager.shared.register(
+            InlineUndoAction(actionDescription: "Grow Seedling") { [weak self] in
+                _ = try? await SeedlingRepository.shared.removeThought(uuid: seedlingUUID, sourceUUID: originalItem.uuid)
+                try? await self?.inboxRepo.restore(originalItem)
+            } redo: { [weak self] in
+                _ = try? await SeedlingRepository.shared.feed(uuid: seedlingUUID, thought: thought)
+                try? await self?.inboxRepo.markActioned(uuid: originalItem.uuid)
+            }
+        )
+        return fed
+    }
+
+    /// The capture names a new proto-concept: a seedling is born in the
+    /// nursery. Deliberately NOT a connection atom — a one-line page on the
+    /// canvas is a to-do item wearing a finished costume. The page comes
+    /// later, through development, if the seedling earns it.
+    @discardableResult
+    func executeStartSeedling(item: InboxItem, recommendation: InboxRecommendation) async throws -> Seedling? {
+        let name = recommendation.atlasMove?.germinateTitle ?? item.title ?? fallbackTitle(for: item)
+        let thought = SeedlingThought(text: item.rawText, sourceKind: .inbox, sourceUUID: item.uuid)
+
+        // A live seedling already carries this concept key? Feed it instead
+        // of forking a twin — starting twice is a vocabulary echo, not intent.
+        let seedling: Seedling
+        let fedExisting: Bool
+        if let existing = try await SeedlingRepository.shared.fetchLive(conceptKey: ConceptResolver.conceptKey(name)) {
+            seedling = try await SeedlingRepository.shared.feed(uuid: existing.uuid, thought: thought) ?? existing
+            fedExisting = true
+        } else {
+            seedling = try await SeedlingRepository.shared.create(Seedling.new(name: name, firstThought: thought))
+            fedExisting = false
+        }
+
+        try? await inboxRepo.updateMetadata(uuid: item.uuid, merging: [
+            "actionOutcome": fedExisting
+                ? "Grew \u{201C}\(seedling.name)\u{201D}"
+                : "Started seedling \u{201C}\(seedling.name)\u{201D}"
+        ])
+        try await inboxRepo.markActioned(uuid: item.uuid)
+
+        let originalItem = item
+        let seedlingUUID = seedling.uuid
+        CosmoUndoManager.shared.register(
+            InlineUndoAction(actionDescription: "Start Seedling") { [weak self] in
+                if fedExisting {
+                    _ = try? await SeedlingRepository.shared.removeThought(uuid: seedlingUUID, sourceUUID: originalItem.uuid)
+                } else {
+                    try? await SeedlingRepository.shared.delete(uuid: seedlingUUID)
+                }
+                try? await self?.inboxRepo.restore(originalItem)
+            } redo: { [weak self] in
+                if fedExisting {
+                    _ = try? await SeedlingRepository.shared.feed(uuid: seedlingUUID, thought: thought)
+                } else {
+                    try? await SeedlingRepository.shared.undelete(uuid: seedlingUUID)
+                }
+                try? await self?.inboxRepo.markActioned(uuid: originalItem.uuid)
+            }
+        )
+        return seedling
     }
 
     /// The capture opens a research territory of its own: a new deep dive
@@ -587,6 +646,28 @@ final class InboxActionExecutor {
             .joined(separator: " ")
     }
 
+    // MARK: - Quick-thought placement (compact card, never a letter page)
+
+    /// A capture short enough to be a glanceable thought rather than a
+    /// document. Mirrors NoteBlockView's graduation cap.
+    static let quickThoughtWordCap = 60
+
+    nonisolated static func isQuickThought(_ text: String) -> Bool {
+        let words = text.split(whereSeparator: \.isWhitespace).count
+        return words > 0 && words <= quickThoughtWordCap
+    }
+
+    /// Card footprint sized to the thought: fixed 280pt column, height
+    /// estimated from the text's wrap, clamped so one line still reads as a
+    /// card and a 60-word thought never becomes a tower.
+    nonisolated static func thoughtCardSize(for text: String) -> CGSize {
+        let width: CGFloat = 280
+        let charsPerLine: CGFloat = 30
+        let lines = max(2, (CGFloat(text.count) / charsPerLine).rounded(.up))
+        let height = min(340, max(116, lines * 21 + 62))
+        return CGSize(width: width, height: height)
+    }
+
     private func executePlacementRecommendation(
         item: InboxItem,
         recommendation: InboxRecommendation
@@ -637,7 +718,15 @@ final class InboxActionExecutor {
             if let placementPlan = recommendation.placementPlan,
                let x = placementPlan.blockPositionX,
                let y = placementPlan.blockPositionY {
-                let block = CanvasBlock.fromAtom(atom, position: CGPoint(x: x, y: y))
+                var block = CanvasBlock.fromAtom(atom, position: CGPoint(x: x, y: y))
+                // A quick thought never wears the letter-page costume: it
+                // lands as a compact card sized to its own words (the block's
+                // footprint IS the contract — NoteBlockView renders compact
+                // short notes as thought cards, and growing the note past a
+                // page's worth of words graduates it back to the page shape).
+                if atom.type == .note, Self.isQuickThought(item.rawText) {
+                    block.size = Self.thoughtCardSize(for: item.rawText)
+                }
                 let record = CanvasBlockRecord.from(block, documentType: "home", documentId: 0, thinkspaceId: thinkspaceId)
                 try await persistCanvasBlockSnapshot(record)
                 createdBlockRecord = record
@@ -861,7 +950,12 @@ final class InboxActionExecutor {
             }
         }
         _ = try? await atomRepo.update(uuid: atomUUID) { atom in
-            atom = atom.mergingMetadataKeys(["attachmentUUIDs": uuids])
+            // UNION, never replace (the iOS engine's contract): routing a
+            // second capture onto the same atom must not drop the pages the
+            // first one carried.
+            let existing = atom.attachmentUUIDs
+            let union = existing + uuids.filter { !existing.contains($0) }
+            atom = atom.mergingMetadataKeys(["attachmentUUIDs": union])
         }
     }
 

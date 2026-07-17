@@ -18,6 +18,12 @@ enum InboxRouteKind: String, Codable, CaseIterable, Sendable {
     case attachClient
     case germinateConnection
     case germinateDeepDive
+    // The global Seedbed (July 2026) — insight captures GROW: they add mass
+    // to a named proto-concept instead of landing as canvas objects or
+    // premature pages. startSeedling supersedes germinateConnection (kept
+    // decodable for rows classified before the Seedbed shipped).
+    case feedSeedling
+    case startSeedling
 
     var legacyClassification: InboxClassification {
         switch self {
@@ -26,7 +32,7 @@ enum InboxRouteKind: String, Codable, CaseIterable, Sendable {
         case .placeInExistingCluster, .createClusterAndPlace, .placeInThinkspace, .createThinkspaceAndPlace:
             return .place
         case .advanceQuestion, .spawnQuestion, .feedConnection, .attachClient,
-             .germinateConnection, .germinateDeepDive:
+             .germinateConnection, .germinateDeepDive, .feedSeedling, .startSeedling:
             // Actionable destination suggestions — the pill renders like a place.
             return .place
         case .createStandaloneAtom:
@@ -59,8 +65,12 @@ struct InboxAtlasMove: Codable, Equatable, Sendable {
     var clientUUID: String?
     var clientName: String?
 
-    // Germination (germinateConnection / germinateDeepDive)
+    // Germination (startSeedling / germinateDeepDive; legacy germinateConnection)
     var germinateTitle: String?
+
+    // The global Seedbed (feedSeedling)
+    var seedlingUUID: String?
+    var seedlingName: String?
 
     init(
         deepDiveUUID: String? = nil,
@@ -74,7 +84,9 @@ struct InboxAtlasMove: Codable, Equatable, Sendable {
         connectionSection: String? = nil,
         clientUUID: String? = nil,
         clientName: String? = nil,
-        germinateTitle: String? = nil
+        germinateTitle: String? = nil,
+        seedlingUUID: String? = nil,
+        seedlingName: String? = nil
     ) {
         self.deepDiveUUID = deepDiveUUID
         self.deepDiveName = deepDiveName
@@ -88,6 +100,8 @@ struct InboxAtlasMove: Codable, Equatable, Sendable {
         self.clientUUID = clientUUID
         self.clientName = clientName
         self.germinateTitle = germinateTitle
+        self.seedlingUUID = seedlingUUID
+        self.seedlingName = seedlingName
     }
 }
 

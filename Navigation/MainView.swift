@@ -118,7 +118,9 @@ struct MainView: View {
     @EnvironmentObject var swipeFileEngine: SwipeFileEngine
 
     // Observe ThinkspaceManager for sidebar visibility changes
-    @ObservedObject private var thinkspaceManager = ThinkspaceManager.shared
+    // @Observable — a plain reference; SwiftUI tracks only the properties
+    // this body actually reads, not every manager mutation.
+    private let thinkspaceManager = ThinkspaceManager.shared
 
     @State private var showRadialMenu = false
     @State private var radialMenuPosition: CGPoint = .zero
@@ -144,9 +146,6 @@ struct MainView: View {
     @State private var showDatabasePicker = false
     @State private var databasePickerPosition: CGPoint = .zero
 
-    // Template gallery (from radial menu "Template" option)
-    @State private var showTemplateGallery = false
-    @State private var templateGalleryPosition: CGPoint = .zero
 
     // Navigation destination (Command Center is home)
     @State private var currentDestination: SidebarDestination = .commandCenter
@@ -165,6 +164,14 @@ struct MainView: View {
     @State private var sidebarInteractionWidth: CGFloat = 0
     @State private var sidebarReservedWidth: CGFloat = UnifiedSidebarMetrics.defaultExpandedWidth
     @State private var isSidebarHoverRevealed = false
+    /// Focus modes are full-screen surfaces, so the sidebar rides OVER them as
+    /// an on-demand overlay: the trail-island toggle (or ⌘\) flips this, and
+    /// any focus change resets it. Never persisted — every focus entrance
+    /// starts full-screen regardless of the sidebar's docked preference.
+    @State private var isSidebarFocusRevealed = false
+    /// True while the thinkspace library browser is up — it embeds its own
+    /// trail island, so the floating global copy stands down (no collision).
+    @State private var isThinkspaceLibraryActive = false
     @State private var isHoveringSidebarRevealTrigger = false
     @State private var isHoveringSidebarPanel = false
     @State private var sidebarHoverCloseTask: Task<Void, Never>?
@@ -393,9 +400,6 @@ struct MainView: View {
                 .zIndex(150)
             }
 
-            // Template Gallery (from radial menu "Template" option)
-            templateGalleryOverlay
-
             // Block Context Menu (right-click on block)
             if showBlockContextMenu, let blockId = rightClickedBlockId {
                 // Dismiss backdrop
@@ -529,6 +533,12 @@ struct MainView: View {
             guard isRequested else { return }
             openInlineAssistantPane()
             CosmoInlineAssistantStore.shared.dismissPaneRequest()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Canvas.thinkspaceModeChanged)) { notification in
+            let isLibrary = notification.userInfo?["isLibrary"] as? Bool ?? false
+            withAnimation(ProMotionSprings.gentle) {
+                isThinkspaceLibraryActive = isLibrary
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .showCommandPalette)) { _ in
             presentCommandK()
@@ -717,13 +727,9 @@ struct MainView: View {
             guard let url else { return }
 
             let title = notification.userInfo?["title"] as? String
-            withAnimation(ProMotionSprings.snappy) {
-                if paneManager.canOpenBrowser(url: url) {
-                    paneManager.openPane(.webBrowser(url: url, title: title))
-                } else if let pane = paneManager.panes.first(where: { $0.webURL == url }) {
-                    paneManager.activatePane(pane.id)
-                }
-            }
+            let disposition = (notification.userInfo?["disposition"] as? String)
+                .flatMap(BrowserOpenDisposition.init(rawValue:)) ?? .reuse
+            openBrowserURL(url, title: title, disposition: disposition)
             if showCommandK || commandKBehindFocusMode {
                 closeCommandK()
             }
@@ -743,6 +749,9 @@ struct MainView: View {
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.openInlineAssistantPane)) { _ in
             openInlineAssistantPane()
         }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.toggleSidebar)) { _ in
+            handleGlobalSidebarToggle()
+        }
         .onChange(of: appState.focusedEntity) { _, newValue in
             if let newValue {
                 recordTrailArrival(forFocus: newValue)
@@ -756,6 +765,9 @@ struct MainView: View {
                 isHoveringSidebarPanel = false
                 isSidebarHoverRevealed = false
             }
+            // The overlay reveal is per-focus-surface: entering, swapping, or
+            // exiting a focus mode always resets to full-screen.
+            isSidebarFocusRevealed = false
 
             // When focus mode closes, reveal Command-K if the prior command
             // asked to return here. The view model is preserved in MainView;
@@ -1013,7 +1025,10 @@ struct MainView: View {
                 .animation(ProMotionSprings.focusTransition, value: appState.focusedEntity)
                 .animation(sidebarAnimation, value: contentPushOffset)
 
-                if isSidebarVisible {
+                // In a focus mode the sidebar is a transient overlay above the
+                // full-screen focus surface (zIndex 196 > the container's 195);
+                // outside focus it's the docked panel at its usual layer.
+                if isFocusModeActive ? isSidebarFocusRevealed : isSidebarVisible {
                     sidebarPanel(cornerRadius: sidebarLayout.cornerRadius)
                         .padding(.leading, sidebarLayout.leadingInset)
                         .padding(.trailing, sidebarLayout.trailingInset)
@@ -1025,7 +1040,7 @@ struct MainView: View {
                         )
                         .transition(.move(edge: .leading).combined(with: .opacity))
                         .onHover { handleSidebarPanelHover($0) }
-                        .zIndex(20)
+                        .zIndex(isFocusModeActive ? 196 : 20)
                 }
 
                 if isSidebarHidden && appState.focusedEntity == nil {
@@ -1047,14 +1062,18 @@ struct MainView: View {
                 // Every focus mode draws the trail island inside its own
                 // chrome row (NavigationTrailIsland) so it shares the islands'
                 // baseline — the global copy shows only outside focus modes.
-                if appState.focusedEntity == nil {
+                // The thinkspace library embeds one in its toolbar the same
+                // way, so the floating copy stands down there too.
+                if appState.focusedEntity == nil && !isThinkspaceLibraryActive {
                     NavigationTrailChrome(
                         onBack: { navigateTrailBack() },
                         onForward: { navigateTrailForward() },
                         onJump: { jumpTrail(to: $0) }
                     )
                     .padding(.top, CosmoChromeMetrics.topInset)
-                    .padding(.leading, isSidebarVisible ? sidebarLayout.reservedWidth + 8 : 44)
+                    // 70 = toggle island (16 inset + 44 capsule + 10 gap) —
+                    // the trail rides beside the sidebar toggle on one baseline.
+                    .padding(.leading, isSidebarVisible ? sidebarLayout.reservedWidth + 8 : 70)
                     .zIndex(201)
                     .transition(.opacity)
                 }
@@ -1102,6 +1121,7 @@ struct MainView: View {
             }
             .animation(sidebarAnimation, value: isSidebarHidden)
             .animation(sidebarAnimation, value: isSidebarHoverRevealed)
+            .animation(sidebarAnimation, value: isSidebarFocusRevealed)
             .animation(sidebarAnimation, value: sidebarPanelWidth)
             .animation(routeContentTransitionAnimation, value: currentDestination)
             .onAppear {
@@ -1150,7 +1170,18 @@ struct MainView: View {
 
     private func sidebarPanel(cornerRadius: CGFloat) -> some View {
         UnifiedSidebar(
-            currentDestination: $currentDestination,
+            // Wrapped so sidebar navigation ALWAYS leaves an open focus mode —
+            // the onChange path only fires when the destination actually
+            // changes, which misses "navigate to the place already underneath".
+            currentDestination: Binding(
+                get: { currentDestination },
+                set: { newDestination in
+                    if isFocusModeActive {
+                        FocusNavigationCoordinator.shared.close()
+                    }
+                    currentDestination = newDestination
+                }
+            ),
             inboxRoute: $inboxRoute,
             activeContext: $activeSidebarContext,
             panelWidth: $sidebarPanelWidth,
@@ -1173,21 +1204,14 @@ struct MainView: View {
             .accessibilityHidden(true)
     }
 
+    /// The app shell's copy of the ONE sidebar toggle (ghost manner), on the
+    /// shared chrome baseline so it aligns with the floating trail capsule
+    /// and every focus header's embedded copy.
     private var sidebarToggleButton: some View {
-        Button("Show sidebar", systemImage: "sidebar.left") {
-            openSidebarPersistently()
-        }
-        .labelStyle(.iconOnly)
-        .font(.system(size: 14, weight: .medium))
-        .foregroundStyle(DS.textSecondary)
-        .frame(width: 32, height: 32)
-        .contentShape(Rectangle())
-        .buttonStyle(.plain)
-        .padding(.top, 4)
-        .padding(.leading, 4)
-        .onHover { handleSidebarRevealTriggerHover($0) }
-        .help(isSidebarHoverRevealed ? "Keep sidebar open (Cmd+\\)" : "Show sidebar (Cmd+\\)")
-        .accessibilityLabel("Show sidebar")
+        SidebarToggleIsland(style: .floating)
+            .padding(.top, CosmoChromeMetrics.topInset)
+            .padding(.leading, CosmoChromeMetrics.sideInset)
+            .onHover { handleSidebarRevealTriggerHover($0) }
     }
 
     private var isSidebarVisible: Bool {
@@ -1195,6 +1219,10 @@ struct MainView: View {
             isSidebarHidden: isSidebarHidden,
             isHoverRevealed: isSidebarHoverRevealed
         )
+    }
+
+    private var isFocusModeActive: Bool {
+        appState.focusedEntity != nil
     }
 
     private var sidebarAnimation: Animation? {
@@ -1237,7 +1265,13 @@ struct MainView: View {
     }
 
     private func handleSidebarButtonPress() {
-        if isSidebarTransientlyRevealed {
+        if isFocusModeActive {
+            // The focus-mode overlay closes without touching the docked
+            // preference — full-screen focus stays full-screen next time.
+            withAnimation(sidebarAnimation) {
+                isSidebarFocusRevealed = false
+            }
+        } else if isSidebarTransientlyRevealed {
             openSidebarPersistently()
         } else {
             closeSidebar()
@@ -1350,6 +1384,19 @@ struct MainView: View {
         withAnimation(sidebarAnimation) {
             isSidebarHidden.toggle()
             isSidebarHoverRevealed = false
+        }
+    }
+
+    /// One toggle for every entry point (⌘\, the trail-island button): inside
+    /// a focus mode it flips the transient overlay; outside it flips the
+    /// persistent docked state.
+    private func handleGlobalSidebarToggle() {
+        if isFocusModeActive {
+            withAnimation(sidebarAnimation) {
+                isSidebarFocusRevealed.toggle()
+            }
+        } else {
+            toggleSidebarFromKeyboard()
         }
     }
 
@@ -1872,6 +1919,47 @@ struct MainView: View {
         }
     }
 
+    private var focusedPaneIsBrowser: Bool {
+        guard let id = paneManager.focusedPaneId else { return false }
+        return paneManager.panes.first(where: { $0.id == id })?.webURL != nil
+    }
+
+    /// Route a browser open through BrowserPaneRouter: reuse navigates the
+    /// existing browser pane in place; newPane/split open beside it. At the
+    /// browser cap the router falls back to navigating the focused pane.
+    private func openBrowserURL(_ url: URL, title: String?, disposition: BrowserOpenDisposition) {
+        let focusedBrowserPaneId = paneManager.focusedPaneId.flatMap { id in
+            paneManager.panes.first(where: { $0.id == id && $0.webURL != nil })?.id
+        } ?? paneManager.browserPanes.last?.id
+
+        let action = BrowserPaneRouter.route(
+            url: url,
+            disposition: disposition,
+            paneShowingURL: BrowserPaneRegistry.shared.paneId(showing: url),
+            focusedBrowserPaneId: focusedBrowserPaneId,
+            canOpenNewPane: paneManager.canOpenBrowserPane()
+        )
+
+        withAnimation(ProMotionSprings.snappy) {
+            switch action {
+            case .activateExisting(let paneId):
+                paneManager.focusPane(paneId)
+            case .navigateExisting(let paneId, let url):
+                BrowserPaneRegistry.shared.navigate(paneId: paneId, to: url)
+                paneManager.focusPane(paneId)
+            case .openNewPane(let besideCurrent):
+                let content = PaneContent.webBrowser(url: url, title: title)
+                if besideCurrent {
+                    paneManager.openPaneBeside(content)
+                } else {
+                    paneManager.openPane(content)
+                }
+            case nil:
+                break
+            }
+        }
+    }
+
     private func handleOpenCollaboratorPane(atomUUID: String, presetId: String?) {
         Task { @MainActor in
             do {
@@ -2273,6 +2361,26 @@ struct MainView: View {
                 return nil
             }
 
+            // Cmd+T — new browser pane beside the current one, scoped to a
+            // focused browser pane (the research browser's only "new tab").
+            if event.type == .keyDown,
+               event.keyCode == 17,  // T key
+               event.modifierFlags.contains(.command),
+               !event.modifierFlags.contains(.shift),
+               !event.modifierFlags.contains(.option),
+               focusedPaneIsBrowser {
+                // Bypass the router: a new tab is always a fresh pane, even
+                // when another pane sits on the start page.
+                if paneManager.canOpenBrowserPane() {
+                    withAnimation(ProMotionSprings.snappy) {
+                        paneManager.openPaneBeside(
+                            .webBrowser(url: CosmoBrowserURLResolver.defaultHomeURL, title: nil)
+                        )
+                    }
+                }
+                return nil
+            }
+
             // T key — navigate to last-used thinkspace
             if event.type == .keyDown,
                event.keyCode == 17,  // T key
@@ -2282,12 +2390,12 @@ struct MainView: View {
                 return nil
             }
 
-            // Cmd+\ — toggle sidebar visibility
+            // Cmd+\ — toggle sidebar visibility (focus-aware: overlays in focus modes)
             if event.type == .keyDown,
                event.keyCode == 42,  // \ key
                event.modifierFlags.contains(.command),
                !isKeyboardInputReserved() {
-                toggleSidebarFromKeyboard()
+                handleGlobalSidebarToggle()
                 return nil
             }
 
@@ -2563,9 +2671,6 @@ struct MainView: View {
         case .fromDatabase:
             databasePickerPosition = radialMenuPosition
             showDatabasePicker = true
-        case .createTemplate:
-            templateGalleryPosition = radialMenuPosition
-            showTemplateGallery = true
         }
     }
 
@@ -2597,42 +2702,6 @@ struct MainView: View {
                 "existingAtomUUID": atom.uuid
             ]
         )
-    }
-
-    @ViewBuilder
-    private var templateGalleryOverlay: some View {
-        if showTemplateGallery {
-            templateGalleryBackdrop
-            templateGalleryPanel
-        }
-    }
-
-    private var templateGalleryBackdrop: some View {
-        Color.clear
-            .ignoresSafeArea()
-            .contentShape(Rectangle())
-            .onTapGesture {
-                withAnimation(.spring(response: 0.2)) {
-                    showTemplateGallery = false
-                }
-            }
-            .zIndex(149)
-    }
-
-    private var templateGalleryPanel: some View {
-        TemplateGalleryView(
-            position: templateGalleryPosition,
-            onSelect: { instanceAtom in
-                showTemplateGallery = false
-                placeAtomOnCanvas(instanceAtom, at: templateGalleryPosition)
-            },
-            onDismiss: {
-                withAnimation(.spring(response: 0.2)) {
-                    showTemplateGallery = false
-                }
-            }
-        )
-        .zIndex(150)
     }
 
     private func createCosmoAIBlock(at position: CGPoint) {

@@ -29,6 +29,7 @@ struct StudyShellView: View {
                     StudyChromeRow(
                         viewModel: viewModel,
                         breakpoint: breakpoint,
+                        availableWidth: StudyChromeRow.quantizedWidth(proxy.size.width),
                         isReceded: dockFocused
                     )
                     workspaceSheet(breakpoint)
@@ -46,6 +47,18 @@ struct StudyShellView: View {
             .animation(ProMotionSprings.focusTransition, value: viewModel.isMapOverlayPresented)
             .animation(ProMotionSprings.gentle, value: viewModel.toast)
             .animation(ProMotionSprings.focusTransition, value: viewModel.activeReaderSourceId)
+            // The view model routes panel toggles by width class — kept in
+            // sync here (the ConnectionWorkspace pattern) so a pane opening
+            // beside the Study reflows panels instead of leaving them
+            // stranded over the manuscript.
+            .onChange(of: proxy.size.width, initial: true) { _, width in
+                let resolved = StudyBreakpoint(width: width)
+                if viewModel.breakpoint != resolved {
+                    withAnimation(ProMotionSprings.focusTransition) {
+                        viewModel.breakpoint = resolved
+                    }
+                }
+            }
         }
         .background(StudyShortcuts(viewModel: viewModel, onEscape: handleEscape))
         .fileImporter(
@@ -143,8 +156,7 @@ struct StudyShellView: View {
 
     private func dismissOverlayPanels() {
         withAnimation(ProMotionSprings.focusTransition) {
-            viewModel.isTrailShowing = false
-            viewModel.isReadingShowing = false
+            viewModel.dismissOverlayPanels()
         }
     }
 
@@ -233,7 +245,8 @@ struct StudyShellView: View {
 
     // MARK: - Exits
 
-    /// Esc walks back: dock focus → desk → debrief → reader → map → workspace.
+    /// Esc walks back: dock focus → desk → debrief → reader → overlay panels
+    /// → map → workspace.
     /// The dock peels first — with the field focused, Esc previously fell
     /// through and read as dead (or worse, closed the whole session mid-thought).
     private func handleEscape() {
@@ -245,6 +258,8 @@ struct StudyShellView: View {
             viewModel.cancelDebrief()
         } else if viewModel.activeReaderSourceId != nil {
             withAnimation(ProMotionSprings.focusTransition) { viewModel.dismissReader() }
+        } else if viewModel.hasOverlayPanelPresented {
+            dismissOverlayPanels()
         } else if viewModel.isMapOverlayPresented {
             withAnimation(ProMotionSprings.focusTransition) { viewModel.dismissMap() }
         } else {

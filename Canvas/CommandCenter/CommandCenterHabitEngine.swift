@@ -88,6 +88,21 @@ struct HabitDefinition: Identifiable, Codable, Equatable, Sendable {
     }
 }
 
+extension HabitDefinition {
+    /// Identity in the App Store register (typed emoji → curated keyword →
+    /// picked SF icon fallback) — one resolution for every habit surface.
+    var identityMark: String? { CollectionEmoji.resolve(name: title).emoji }
+
+    /// The title with any leading mark lifted out. The ring renders the mark,
+    /// so the label beside it must never repeat it.
+    var displayTitle: String { CollectionEmoji.resolve(name: title).label }
+}
+
+extension HabitState {
+    var identityMark: String? { CollectionEmoji.resolve(name: title).emoji }
+    var displayTitle: String { CollectionEmoji.resolve(name: title).label }
+}
+
 struct HabitVisibilityConfig: Codable, Equatable, Sendable {
     var disabledBuiltInHabitIDs: Set<String> = []
 }

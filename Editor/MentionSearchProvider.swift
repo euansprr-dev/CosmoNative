@@ -262,8 +262,7 @@ private extension AtomType {
         .creator,
         .thinkspace,
         .image,
-        .stickyNote,
-        .templateInstance
+        .stickyNote
     ]
 
     var entityTypeForMention: EntityType {

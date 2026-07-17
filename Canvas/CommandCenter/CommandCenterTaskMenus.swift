@@ -131,9 +131,13 @@ struct CommandCenterComposerHost: View {
                         .contentShape(Rectangle())
                         .onTapGesture { composer.dismiss() }
 
+                    // A fixed-height, top-aligned box: shells that fill keep
+                    // their exact size, and content-hugging panels (the habit
+                    // composer) still top out at the anchor — the position
+                    // math centers this box, not the panel.
                     composerView(for: route)
                         .frame(width: metrics.width)
-                        .frame(maxHeight: metrics.maxHeight)
+                        .frame(height: metrics.height, alignment: .top)
                         .position(position)
                         .transition(
                             .asymmetric(
@@ -515,10 +519,12 @@ private struct CommandCenterComposerMetrics {
             width = 380
             height = min(viewport.height - 48, 500)
         case .habitEditor:
-            width = 420
-            height = min(viewport.height - 48, 660)
+            // Compact menu-register panel; the composer hugs its content and
+            // falls back to internal scrolling only when the viewport is short.
+            width = 360
+            height = min(viewport.height - 48, 620)
         case .habitLibrary:
-            width = 380
+            width = 340
             height = min(viewport.height - 48, 520)
         case .taskActions:
             width = 360
@@ -811,7 +817,7 @@ struct CommandCenterTaskActionComposer: View {
             }
 
             if let currentHabit {
-                metaGlyph(text: currentHabit.title, icon: currentHabit.icon, color: currentHabit.accent.opacity(0.9))
+                metaGlyph(text: currentHabit.displayTitle, icon: currentHabit.icon, color: currentHabit.accent.opacity(0.9))
             }
         }
     }
@@ -1405,9 +1411,10 @@ struct CommandCenterHabitPickerSection: View {
 
             ForEach(availableHabits, id: \.id) { habit in
                 habitRow(
-                    title: habit.title,
+                    title: habit.displayTitle,
                     subtitle: habit.taskIntents.map(\.displayName).joined(separator: " · "),
                     icon: habit.icon,
+                    mark: habit.identityMark,
                     tint: habit.accent,
                     isSelected: currentHabitUUID == habit.id,
                     action: { onSelect(habit.id) }
@@ -1420,6 +1427,7 @@ struct CommandCenterHabitPickerSection: View {
         title: String,
         subtitle: String,
         icon: String,
+        mark: String? = nil,
         tint: Color,
         isSelected: Bool,
         action: @escaping () -> Void
@@ -1429,11 +1437,18 @@ struct CommandCenterHabitPickerSection: View {
                 Circle()
                     .fill(tint.opacity(isSelected ? 0.16 : 0.08))
                     .frame(width: 32, height: 32)
-                    .overlay(
-                        Image(systemName: icon)
-                            .font(DS.subheadline).fontWeight(.medium)
-                            .foregroundStyle(tint)
-                    )
+                    .overlay {
+                        // Habit identity, the App Store register: typed or
+                        // keyword emoji first, picked SF icon as fallback.
+                        if let mark {
+                            Text(mark)
+                                .font(.system(size: 14))
+                        } else {
+                            Image(systemName: icon)
+                                .font(DS.subheadline).fontWeight(.medium)
+                                .foregroundStyle(tint)
+                        }
+                    }
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
@@ -1960,21 +1975,6 @@ func composerSectionLabel(_ text: String) -> some View {
         Rectangle()
             .fill(DS.sepiaSubtle)
             .frame(height: 0.5)
-    }
-}
-
-/// Greenhouse Glass variant of `composerSectionLabel` — neutral sans small-caps + a hairline
-/// `glassBorder` rule. Used by composers presented with `.glass` chrome (schedule, habits).
-func glassComposerSectionLabel(_ text: String) -> some View {
-    HStack(spacing: DS.space8) {
-        Text(text.uppercased())
-            .font(DS.smallCaps)
-            .foregroundStyle(DS.textSecondary)
-            .tracking(1.4)
-        Rectangle()
-            .fill(DS.glassBorder)
-            .frame(height: 0.5)
-            .opacity(0.7)
     }
 }
 

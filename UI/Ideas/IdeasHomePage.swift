@@ -54,7 +54,7 @@ final class IdeasPageModel {
 
     /// Any idea-table write re-queries — local edits, sync applies, drops.
     private func startObserving() {
-        guard observation == nil, let db = CosmoDatabase.shared.dbQueue else { return }
+        guard observation == nil, let db = CosmoDatabase.shared.dbPool else { return }
         let tracked = ValueObservation
             .tracking { db in
                 try String.fetchOne(

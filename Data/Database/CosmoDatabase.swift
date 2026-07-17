@@ -48,7 +48,13 @@ extension String {
 class CosmoDatabase: ObservableObject {
     static let shared = CosmoDatabase()
 
-    var dbQueue: DatabaseQueue!
+    /// The app's database connection — a DatabasePool since July 2026, so
+    /// reads (thinkspace-switch snapshots, block observations, ⌘K search)
+    /// run concurrently on reader connections instead of queueing single-file
+    /// behind sync writes. All writes still serialize on ONE writer
+    /// connection, so TransactionObserver ordering and the suppressingSync
+    /// window behave exactly as they did on the old serial DatabaseQueue.
+    var dbPool: DatabasePool!
     @Published var isReady = false
     @Published var error: String? = nil
 
@@ -74,38 +80,44 @@ class CosmoDatabase: ObservableObject {
             // as silent save failures.
             var config = Configuration()
             config.busyMode = .timeout(5.0)
-            dbQueue = try DatabaseQueue(path: dbPath.path, configuration: config)
+            // Per-CONNECTION pragmas. A DatabasePool opens one writer plus a
+            // set of reader connections, so settings that used to be executed
+            // once on the single DatabaseQueue connection must apply to every
+            // connection the pool opens. (journal_mode = WAL is a persistent
+            // database-file property — DatabasePool activates it itself.)
+            config.prepareDatabase { db in
+                try db.execute(sql: "PRAGMA foreign_keys = ON")
+                try db.execute(sql: "PRAGMA synchronous = NORMAL")
+                try db.execute(sql: "PRAGMA temp_store = MEMORY")
+                try db.execute(sql: "PRAGMA mmap_size = 30000000000")
+            }
+            dbPool = try DatabasePool(path: dbPath.path, configuration: config)
 
             // Daily safety backup. When a migration is about to run, take it
             // synchronously BEFORE migrating so a bad migration stays
             // recoverable. On every other launch, defer the copy off the
             // launch path — the file is 250MB+ and the synchronous copy was
             // costing 1–2s of cold open once per day.
-            let hasPendingMigrations = !((try? dbQueue.read { try migrator.hasCompletedMigrations($0) }) ?? false)
+            let hasPendingMigrations = !((try? dbPool.read { try migrator.hasCompletedMigrations($0) }) ?? false)
             if hasPendingMigrations {
                 Self.performDailyBackupIfNeeded(dbPath: dbPath)
             }
 
-            // Configure PRAGMA settings - ALL must be outside transactions
-            // These settings modify the database behavior and can't be changed mid-transaction
-            try dbQueue.inDatabase { db in
-                try db.execute(sql: "PRAGMA journal_mode = WAL")
-                try db.execute(sql: "PRAGMA foreign_keys = ON")
-                try db.execute(sql: "PRAGMA synchronous = NORMAL")
-                try db.execute(sql: "PRAGMA temp_store = MEMORY")
-                try db.execute(sql: "PRAGMA mmap_size = 30000000000")
-            }
-
             // Run migrations (this will create tables)
-            try migrator.migrate(dbQueue)
+            try migrator.migrate(dbPool)
 
             // Auto-track local canvas_blocks writes for cloud sync. Registered
             // AFTER migrations so schema maintenance never enqueues pushes.
-            dbQueue.add(transactionObserver: CanvasBlockSyncObserver.shared, extent: .databaseLifetime)
-            dbQueue.add(transactionObserver: CanvasDrawingSyncObserver.shared, extent: .databaseLifetime)
+            dbPool.add(transactionObserver: CanvasBlockSyncObserver.shared, extent: .databaseLifetime)
+            dbPool.add(transactionObserver: CanvasDrawingSyncObserver.shared, extent: .databaseLifetime)
+            // Atoms twin (July 2026): raw-SQL atom writers no longer need to
+            // remember the ChangeTracker enqueue — the observer catches every
+            // committed local write. Remote applies + push bookkeeping stay
+            // excluded via the shared suppressingSync window.
+            dbPool.add(transactionObserver: AtomSyncObserver.shared, extent: .databaseLifetime)
 
             // Initialize the Sendable actor core for FoundationModels tools
-            let core = DatabaseActorCore(queue: dbQueue)
+            let core = DatabaseActorCore(writer: dbPool)
             self.actorCore = core
             DatabaseActorCore.shared = core
 
@@ -189,20 +201,23 @@ class CosmoDatabase: ObservableObject {
         // Let launch-time sync pushes/pulls drain before taking long locks.
         try? await Task.sleep(for: .seconds(45))
 
-        let queue = await MainActor.run { shared.isReady ? shared.dbQueue : nil }
-        guard let queue else { return }
+        let writer = await MainActor.run { shared.isReady ? shared.dbPool : nil }
+        guard let writer else { return }
 
         let start = Date()
         do {
             // Best-effort FTS housekeeping; a missing FTS table is non-fatal.
-            queue.inDatabase { db in
+            // Async variant: schedules on the writer connection without
+            // blocking this background task's thread.
+            try? await writer.writeWithoutTransaction { db in
                 try? db.execute(sql: "INSERT INTO atoms_fts(atoms_fts) VALUES('optimize')")
                 try? db.execute(sql: "INSERT INTO context_chunks_fts(context_chunks_fts) VALUES('optimize')")
             }
-            // VACUUM cannot run inside a transaction; inDatabase executes it
-            // bare. GRDB serializes it against this process's other writes and
-            // the cross-process busy timeout covers the daemon/web app.
-            try queue.inDatabase { db in
+            // VACUUM cannot run inside a transaction; writeWithoutTransaction
+            // executes it bare on the writer connection. GRDB serializes it
+            // against this process's other writes and the cross-process busy
+            // timeout covers the daemon/web app.
+            try await writer.writeWithoutTransaction { db in
                 try db.execute(sql: "VACUUM")
             }
             defaults.set(Date(), forKey: maintenanceStampKey)
@@ -2431,6 +2446,76 @@ class CosmoDatabase: ObservableObject {
             print("✅ pdf_highlights table created")
         }
 
+        migrator.registerMigration("sync_queue_pending_indices") { db in
+            // Every enqueue dedupe, the orphaned-pending healer's NOT EXISTS,
+            // and push bookkeeping all probe sync_queue by (uuid, table_name,
+            // status) — previously a full scan per probe. The partial atoms
+            // index serves the healer's shield scan without taxing writes.
+            try db.execute(sql: """
+                CREATE INDEX IF NOT EXISTS idx_sync_queue_uuid_table_status
+                    ON sync_queue(uuid, table_name, status);
+                CREATE INDEX IF NOT EXISTS idx_atoms_local_pending
+                    ON atoms(_local_pending) WHERE _local_pending = 1;
+                CREATE INDEX IF NOT EXISTS idx_atoms_local_ahead
+                    ON atoms(_local_version, _server_version)
+                    WHERE _local_version > _server_version;
+            """)
+            print("✅ sync_queue + atoms pending indices created")
+        }
+
+        // The global Seedbed (July 2026): named proto-concepts accruing
+        // captured thoughts before they earn a Concept page. Mirrors the iOS
+        // table exactly (camelCase data columns + snake sync columns).
+        migrator.registerMigration("create_seedlings") { db in
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS seedlings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    uuid TEXT UNIQUE NOT NULL,
+                    conceptKey TEXT NOT NULL DEFAULT '',
+                    name TEXT NOT NULL DEFAULT '',
+                    aliasesJSON TEXT,
+                    thoughtsJSON TEXT,
+                    status TEXT NOT NULL DEFAULT 'growing',
+                    pinnedAt TEXT,
+                    mergeTargetConnectionUUID TEXT,
+                    developedConnectionUUID TEXT,
+                    scopeDeepDiveUUID TEXT,
+                    affinityClusterId TEXT,
+                    affinityClusterName TEXT,
+                    affinityThinkspaceId TEXT,
+                    affinityThinkspaceName TEXT,
+                    createdAt TEXT NOT NULL,
+                    updatedAt TEXT NOT NULL,
+                    lastTouchedAt TEXT NOT NULL,
+                    is_deleted INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT,
+                    updated_at TEXT,
+                    synced_at TEXT,
+                    _local_version INTEGER NOT NULL DEFAULT 1,
+                    _server_version INTEGER NOT NULL DEFAULT 0,
+                    _sync_version INTEGER NOT NULL DEFAULT 0,
+                    _local_pending INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE INDEX IF NOT EXISTS idx_seedlings_growing
+                    ON seedlings(status, is_deleted, lastTouchedAt DESC);
+                CREATE INDEX IF NOT EXISTS idx_seedlings_key ON seedlings(conceptKey);
+            """)
+            print("✅ seedlings table created")
+        }
+
+        // Seedbed unification (July 2026): Deep Dive seedbeds move onto the
+        // seedlings store (scopeDeepDiveUUID) — the resolver's concept
+        // hierarchy travels with them.
+        migrator.registerMigration("seedlings_dive_scope_fields") { db in
+            try db.execute(sql: """
+                ALTER TABLE seedlings ADD COLUMN parentConceptName TEXT;
+                ALTER TABLE seedlings ADD COLUMN relatedConceptNamesJSON TEXT;
+                CREATE INDEX IF NOT EXISTS idx_seedlings_scope
+                    ON seedlings(scopeDeepDiveUUID, conceptKey, is_deleted);
+            """)
+            print("✅ seedlings dive-scope fields added")
+        }
+
         return migrator
     }
 
@@ -2814,19 +2899,19 @@ class CosmoDatabase: ObservableObject {
 
     // MARK: - Database Access
     func read<T>(_ block: (Database) throws -> T) throws -> T {
-        return try dbQueue.read(block)
+        return try dbPool.read(block)
     }
 
     func write<T>(_ block: (Database) throws -> T) throws -> T {
-        return try dbQueue.write(block)
+        return try dbPool.write(block)
     }
 
     func asyncRead<T>(_ block: @Sendable @escaping (Database) throws -> T) async throws -> T {
-        return try await dbQueue.read(block)
+        return try await dbPool.read(block)
     }
 
     func asyncWrite<T>(_ block: @Sendable @escaping (Database) throws -> T) async throws -> T {
-        return try await dbQueue.write(block)
+        return try await dbPool.write(block)
     }
 
     // MARK: - Observation
@@ -2834,6 +2919,6 @@ class CosmoDatabase: ObservableObject {
         _ observation: @escaping (Database) throws -> T
     ) -> DatabasePublishers.Value<T> {
         return ValueObservation.tracking(observation)
-            .publisher(in: dbQueue)
+            .publisher(in: dbPool)
     }
 }

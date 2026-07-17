@@ -38,6 +38,19 @@ final class AttachmentTranscriptionWorker {
 
         let pending = (try? await MediaAttachmentRepository.shared.fetchNeedingTranscription()) ?? []
         for attachment in pending {
+            // Only page scans earn the LLM pass. A photo row carrying
+            // needsLLMPass (older builds set it on every image) is released —
+            // flag cleared, deferred classification unblocked — never read.
+            guard attachment.kind == .pageScan else {
+                _ = try? await MediaAttachmentRepository.shared.trackedMutation(uuid: attachment.uuid) { mutable in
+                    mutable.metadata = MediaAttachmentRepository.mergingMetadataKey(
+                        mutable.metadata, key: "needsLLMPass", value: false
+                    )
+                    return true
+                }
+                kickDeferredClassification(for: attachment)
+                continue
+            }
             let attempts = attachment.metadataIntValue("transcriptionAttempts") ?? 0
             guard attempts < maxAttempts else { continue }
             await process(attachment, attempts: attempts)

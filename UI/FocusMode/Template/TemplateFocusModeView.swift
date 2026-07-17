@@ -16,7 +16,6 @@ struct TemplateFocusModeView: View {
     @State private var isLoading = true
     @State private var expandedFields: Set<String> = []
 
-    @AppStorage("sidebarCollapsed") private var isSidebarHidden: Bool = false
 
     private static let fieldColors: [Color] = [
         Color(hex: "#6366F1") ?? .indigo,
@@ -69,7 +68,6 @@ struct TemplateFocusModeView: View {
 
     private var topBar: some View {
         HStack(spacing: 10) {
-            sidebarToggle
             backButton
             typeBadge
             Spacer()
@@ -77,21 +75,6 @@ struct TemplateFocusModeView: View {
         }
         .padding(.horizontal, DS.space16)
         .padding(.top, DS.space12)
-    }
-
-    private var sidebarToggle: some View {
-        Button {
-            withAnimation(ProMotionSprings.sidebar) {
-                isSidebarHidden.toggle()
-            }
-        } label: {
-            Image(systemName: "sidebar.left")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(isSidebarHidden ? DS.textMuted : DS.textSecondary)
-                .frame(width: 28, height: 28)
-                .background(DS.border, in: Circle())
-        }
-        .buttonStyle(.plain)
     }
 
     private var backButton: some View {

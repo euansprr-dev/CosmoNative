@@ -569,6 +569,9 @@ private struct HighlightRowView: View {
 
     @State private var isHovered = false
     @State private var isPlacing = false
+    /// Recent concept pages for the "Stage for a page" menu — loaded on
+    /// first hover so the ledger never pays for a menu nobody opens.
+    @State private var stageablePages: [Atom] = []
 
     var body: some View {
         Button {
@@ -577,12 +580,57 @@ private struct HighlightRowView: View {
             rowContent
         }
         .buttonStyle(.plain)
-        .onHover { isHovered = $0 }
+        .onHover { hovering in
+            isHovered = hovering
+            if hovering, stageablePages.isEmpty {
+                Task { await loadStageablePages() }
+            }
+        }
+        .contextMenu { stageMenu }
         .opacity(hasAppeared ? 1.0 : 0.0)
         .animation(
             ProMotionSprings.gentle.delay(Double(index % 20) * 0.02),
             value: hasAppeared
         )
+    }
+
+    /// Right-click: the highlight stages as a ✓/✗ ghost row under a concept
+    /// page's Evidence — the sweep grammar, never a silent edit.
+    @ViewBuilder
+    private var stageMenu: some View {
+        Menu("Stage for a page…") {
+            if stageablePages.isEmpty {
+                Text("No concept pages yet")
+            } else {
+                ForEach(stageablePages, id: \.uuid) { page in
+                    Button(page.title ?? "Untitled") {
+                        stage(on: page)
+                    }
+                }
+            }
+        }
+    }
+
+    private func loadStageablePages() async {
+        let pages = ((try? await AtomRepository.shared.fetchAll(type: .connection)) ?? [])
+            .filter { !$0.isDeleted && !($0.title ?? "").isEmpty }
+            .sorted { $0.updatedAt > $1.updatedAt }
+        stageablePages = Array(pages.prefix(12))
+    }
+
+    private func stage(on page: Atom) {
+        let citation = book.author.map { "\(book.title) — \($0)" } ?? book.title
+        let text = "\u{201C}\(highlight.text)\u{201D} — \(citation)"
+        Task {
+            _ = try? await ConnectionStagingStore.stage(
+                ConnectionStagedInsert(
+                    section: ConnectionSectionType.evidence.rawValue,
+                    text: text,
+                    sourceKind: "readwise"
+                ),
+                onConnection: page.uuid
+            )
+        }
     }
 
     private var rowContent: some View {

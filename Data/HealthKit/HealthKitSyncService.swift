@@ -47,7 +47,7 @@ public final class HealthKitSyncService: ObservableObject {
         database: (any DatabaseWriter)? = nil,
         configuration: HealthKitConfiguration = .shared
     ) {
-        self.database = database ?? (CosmoDatabase.shared.dbQueue! as any DatabaseWriter)
+        self.database = database ?? (CosmoDatabase.shared.dbPool! as any DatabaseWriter)
         self.configuration = configuration
         self.healthStore = configuration.healthStore
         self.atomFactory = HealthKitAtomFactory(configuration: configuration)

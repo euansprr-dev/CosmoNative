@@ -18,20 +18,34 @@ final class BlockFocusCoordinator {
     /// Blocks that currently have a live editor row (membership). Maintained by
     /// register/unregister on row appear/disappear. Order here reflects AppKit
     /// onAppear timing, NOT document order — do not navigate by it directly.
-    private var registeredBlockIDs: [UUID] = []
+    /// Observation-ignored: it is only read imperatively (key handlers), and a
+    /// long note registers every row on mount — tracking it from row bodies
+    /// made each registration invalidate every mounted row (quadratic open).
+    @ObservationIgnored private var registeredBlockIDs: [UUID] = []
+    /// The first registered row — the command-routing default while nothing is
+    /// focused. Tracked separately from `registeredBlockIDs` so row bodies
+    /// depend on a value that changes rarely (first mount, first-row delete)
+    /// instead of on every registration.
+    private(set) var firstRegisteredBlockID: UUID?
     /// The document's visual (top-to-bottom) block order, supplied by the block
     /// list. Keyboard navigation walks THIS order so ⬆/⬇ always match what the
     /// user sees, regardless of the order rows happened to mount in.
-    private var navigationOrder: [UUID] = []
+    @ObservationIgnored private var navigationOrder: [UUID] = []
 
     func register(_ blockID: UUID?) {
         guard let blockID, !registeredBlockIDs.contains(blockID) else { return }
         registeredBlockIDs.append(blockID)
+        if firstRegisteredBlockID == nil {
+            firstRegisteredBlockID = blockID
+        }
     }
 
     func unregister(_ blockID: UUID?) {
         guard let blockID else { return }
         registeredBlockIDs.removeAll { $0 == blockID }
+        if firstRegisteredBlockID == blockID {
+            firstRegisteredBlockID = registeredBlockIDs.first
+        }
         if focusedBlockID == blockID {
             focusedBlockID = nil
         }
@@ -72,7 +86,7 @@ final class BlockFocusCoordinator {
         guard let baseTargetID, !baseTargetID.isEmpty else { return nil }
         guard let blockID else { return baseTargetID }
 
-        if focusedBlockID == blockID || (focusedBlockID == nil && registeredBlockIDs.first == blockID) {
+        if focusedBlockID == blockID || (focusedBlockID == nil && firstRegisteredBlockID == blockID) {
             return baseTargetID
         }
 

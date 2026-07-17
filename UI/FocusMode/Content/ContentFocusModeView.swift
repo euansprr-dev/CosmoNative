@@ -35,10 +35,18 @@ enum ContentFocusLayoutPolicy {
         preferredWritingWidth: CGFloat,
         isPaneContext: Bool,
         zenMode: Bool,
-        layoutMode: ContentFocusModeView.ContentLayoutMode
+        layoutMode: ContentFocusModeView.ContentLayoutMode,
+        paneWidthFraction: CGFloat = 1
     ) -> CGFloat {
         if isPaneContext {
-            return min(preferredWritingWidth, max(320, availableWidth - 48))
+            // A pane is narrower than every absolute preset (narrow = 680), so
+            // clamping to `availableWidth - 48` for all modes would collapse the
+            // width setting into a no-op. Instead scale each mode as a share of
+            // the pane's usable width; the absolute preset still caps it, so a
+            // pane wide enough to seat the preset matches full-window behaviour.
+            let usable = max(320, availableWidth - 48)
+            let scaled = usable * max(0, min(1, paneWidthFraction))
+            return max(300, min(preferredWritingWidth, scaled))
         }
 
         if layoutMode == .compact {
@@ -247,6 +255,20 @@ struct ContentFocusModeView: View {
             case .immersive: return 1_120
             }
         }
+
+        /// Share of the pane's usable width each mode claims when the absolute
+        /// `width` above is wider than the pane (the common side-by-side case).
+        /// Panes are narrower than even `narrow` (680), so without this every
+        /// mode would clamp to the same pane width and the setting would do
+        /// nothing. Immersive fills the pane; the rest step down from it.
+        var paneWidthFraction: CGFloat {
+            switch self {
+            case .narrow: return 0.58
+            case .comfort: return 0.72
+            case .wide: return 0.85
+            case .immersive: return 1.0
+            }
+        }
     }
 
     enum WritingFocusBandMode: String, CaseIterable, Identifiable {
@@ -274,6 +296,7 @@ struct ContentFocusModeView: View {
     @Environment(\.isPeekContext) private var isPeekContext
     @Environment(\.isPaneContextOwner) private var isPaneContextOwner
     @Environment(\.atomWindowChromeContext) private var atomChrome
+    @Environment(\.paneDeckChrome) private var paneDeckChrome
 
     // Responsive layout
     @State private var layoutMode: ContentLayoutMode = .full
@@ -377,7 +400,8 @@ struct ContentFocusModeView: View {
             preferredWritingWidth: writingWidthMode.width,
             isPaneContext: isPaneContext,
             zenMode: zenMode,
-            layoutMode: layoutMode
+            layoutMode: layoutMode,
+            paneWidthFraction: writingWidthMode.paneWidthFraction
         )
     }
 
@@ -988,8 +1012,10 @@ struct ContentFocusModeView: View {
 
     private var scriptoriumToolbar: some View {
         // Chrome islands, not a full-width bar: navigate | ledger | tools —
-        // the wrapper already provides the row insets.
-        CosmoChromeRow(insetsEnabled: false) {
+        // the wrapper already provides the row insets. In pane context the
+        // ledger flows between the clusters instead of absolute-centering,
+        // so nothing can overlap at pane widths.
+        CosmoChromeRow(insetsEnabled: false, centersAbsolutely: !isPaneContext) {
             scriptoriumLeadingIsland
         } center: {
             CosmoChromeIsland { toolbarCenterSlot }
@@ -1000,18 +1026,8 @@ struct ContentFocusModeView: View {
                 if let atomChrome {
                     AtomWindowChromeDivider()
                     AtomWindowChromeTrailingControls(context: atomChrome)
-                } else if isPaneContext, !isPeekContext {
-                    Button(action: onClose) {
-                        Image(systemName: "xmark")
-                            .font(DS.caption)
-                            .foregroundStyle(focusTextMuted)
-                            .frame(width: 28, height: 28)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Close pane")
-                    .help("Close")
                 }
+                // Pane close lives in the deck tab (the strip's ✕).
             }
         }
         .background(FocusModeEditorBlurTapLayer())
@@ -1030,6 +1046,15 @@ struct ContentFocusModeView: View {
             }
         } else if !isPaneContext {
             NavigationTrailIsland()
+        } else if let paneDeckChrome {
+            // The scriptorium row is the app's densest (ledger + writing
+            // cluster) — the strip budgets against the dense reserve.
+            CosmoChromeIsland {
+                PaneDeckTabStrip(
+                    context: paneDeckChrome,
+                    hostReserve: PaneTabStripLayoutPolicy.denseHostReserve
+                )
+            }
         }
     }
 

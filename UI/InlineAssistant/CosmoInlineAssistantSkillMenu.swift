@@ -87,6 +87,11 @@ final class CosmoInlineSkillMenuModel {
     private(set) var highlightedIndex = 0
     private(set) var isBrowsing = true
 
+    /// Fired after every applied rebuild/highlight move — the menu view bumps
+    /// an @State revision from this instead of relying on @Observable
+    /// invalidation (see CosmoInlineContextMenuModel.onApply).
+    var onApply: (() -> Void)?
+
     private let registry: CosmoInlineSkillRegistry
     private let recency: CosmoInlineSkillRecencyStore
 
@@ -108,13 +113,19 @@ final class CosmoInlineSkillMenuModel {
     }
 
     func moveHighlight(_ delta: Int) {
-        highlightedIndex = CosmoAssistantMenuHighlightPolicy.moved(
+        let moved = CosmoAssistantMenuHighlightPolicy.moved(
             highlightedIndex, by: delta, count: flattened.count
         )
+        guard moved != highlightedIndex else { return }
+        highlightedIndex = moved
+        onApply?()
     }
 
     func setHighlight(_ index: Int) {
-        highlightedIndex = CosmoAssistantMenuHighlightPolicy.clamped(index, count: flattened.count)
+        let clamped = CosmoAssistantMenuHighlightPolicy.clamped(index, count: flattened.count)
+        guard clamped != highlightedIndex else { return }
+        highlightedIndex = clamped
+        onApply?()
     }
 
     func update(query: String) {
@@ -169,6 +180,7 @@ final class CosmoInlineSkillMenuModel {
         self.sections = sections
         flattened = flat
         highlightedIndex = CosmoAssistantMenuHighlightPolicy.clamped(highlightedIndex, count: flat.count)
+        onApply?()
     }
 }
 
@@ -180,10 +192,15 @@ struct CosmoInlineAssistantSkillMenu: View {
     let selectedSkillID: String?
     let onCommit: (CosmoInlineSkillMenuModel.Entry) -> Void
 
+    /// Bumped by the model's onApply — a @State write always repaints, where
+    /// @Observable invalidation was not firing in this overlay hierarchy.
+    @State private var appliedRevision = 0
+
     private let menuWidth: CGFloat = 320
     private let listMaxHeight: CGFloat = 296
 
     var body: some View {
+        let _ = appliedRevision
         VStack(spacing: 0) {
             header
             CosmoGradientDivider()
@@ -194,8 +211,12 @@ struct CosmoInlineAssistantSkillMenu: View {
         .frame(width: menuWidth)
         .cosmoMenuChrome(cornerRadius: 14)
         .onAppear {
+            model.onApply = { appliedRevision &+= 1 }
             model.setHighlight(0)
             model.update(query: searchText)
+        }
+        .onDisappear {
+            model.onApply = nil
         }
         .onChange(of: searchText) { _, value in
             model.update(query: value)
@@ -245,10 +266,13 @@ struct CosmoInlineAssistantSkillMenu: View {
         }
     }
 
+    // Plain VStack + entry-id row identity — same repaint law as the context
+    // menu (LazyVStack + `.id(index)` served stale cached rows when a new
+    // result set replaced the list).
     private var listView: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 0) {
+                VStack(spacing: 0) {
                     ForEach(model.sections) { section in
                         if let title = section.title {
                             CosmoAssistantMenuSectionHeader(title: title)
@@ -263,8 +287,9 @@ struct CosmoInlineAssistantSkillMenu: View {
             .frame(maxHeight: listMaxHeight)
             .scrollBounceBehavior(.basedOnSize)
             .onChange(of: model.highlightedIndex) { _, newIndex in
+                guard model.flattened.indices.contains(newIndex) else { return }
                 withAnimation(.easeOut(duration: 0.12)) {
-                    proxy.scrollTo(newIndex)
+                    proxy.scrollTo(model.flattened[newIndex].id)
                 }
             }
         }
@@ -279,7 +304,7 @@ struct CosmoInlineAssistantSkillMenu: View {
             showsCheckmark: isArmed(entry),
             isHighlighted: index == model.highlightedIndex
         )
-        .id(index)
+        .id(entry.id)
         .onTapGesture {
             CosmicHaptics.shared.play(.selection)
             onCommit(entry)

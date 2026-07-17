@@ -276,7 +276,15 @@ struct TemplateBlockView: View {
     private func loadInstance() {
         Task {
             defer { isLoading = false }
-            guard let atom = try? await AtomRepository.shared.fetch(uuid: block.entityUuid) else { return }
+            // Warm store only for the initial mount — post-action reloads
+            // (template buttons just wrote the instance row) need fresh data.
+            var loaded: Atom? = instanceAtom == nil
+                ? CanvasAtomWarmStore.shared.atom(uuid: block.entityUuid)
+                : nil
+            if loaded == nil {
+                loaded = try? await AtomRepository.shared.fetch(uuid: block.entityUuid)
+            }
+            guard let atom = loaded else { return }
             instanceAtom = atom
             instanceData = atom.templateInstanceData
             let templateUUID = instanceData?.templateUUID ?? atom.templateDefinitionUUID

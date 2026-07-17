@@ -842,7 +842,7 @@ final class CosmoInlineAssistantRoutingTests: XCTestCase {
     func testBottomBarUsesWorkingCopyInsteadOfComposerPlaceholderWhileProcessing() {
         XCTAssertEqual(
             CosmoInlineAssistantBarProcessingPolicy.leadingText(isProcessing: true),
-            "Working..."
+            "Working…"
         )
         XCTAssertEqual(
             CosmoInlineAssistantBarProcessingPolicy.trailingText(
@@ -972,7 +972,7 @@ final class CosmoInlineAssistantRoutingTests: XCTestCase {
         )
 
         XCTAssertLessThanOrEqual(label?.count ?? 0, 72)
-        XCTAssertEqual(label?.hasSuffix("..."), true)
+        XCTAssertEqual(label?.hasSuffix("…"), true)
     }
 
     func testStatusGrammarRewritesKnownToolsVerbFirst() {

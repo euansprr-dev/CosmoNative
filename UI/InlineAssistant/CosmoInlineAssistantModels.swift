@@ -401,16 +401,16 @@ struct CosmoInlineSkillStore {
         )
     }
 
-    /// `CosmoDatabase.shared.dbQueue` is main-actor state; the store's closures are
+    /// `CosmoDatabase.shared.dbPool` is main-actor state; the store's closures are
     /// nonisolated and overwhelmingly called on the main thread (registry, executor,
     /// composer). Resolve with an isolation check so a rare off-main call hops
     /// instead of crashing — GRDB queues themselves are thread-safe once obtained.
-    private static func resolveDBQueue() -> DatabaseQueue? {
+    private static func resolveDBQueue() -> DatabasePool? {
         if Thread.isMainThread {
-            return MainActor.assumeIsolated { CosmoDatabase.shared.dbQueue }
+            return MainActor.assumeIsolated { CosmoDatabase.shared.dbPool }
         }
         return DispatchQueue.main.sync {
-            MainActor.assumeIsolated { CosmoDatabase.shared.dbQueue }
+            MainActor.assumeIsolated { CosmoDatabase.shared.dbPool }
         }
     }
 
@@ -1616,9 +1616,10 @@ enum CosmoInlineAssistantSkillRuntime {
                 instructions: [
                     "You are a thought partner mining for what is uniquely the user's in an idea. If the active editable surface is a Connection (its surface text starts with a `# Title` line followed by `Type:` and `## Section` headers), that connection is the working concept. Otherwise ask one question to name the concept being developed, then call create_connection — seeding ONLY the single section the user's opening line clearly maps to (do not fan one opening line across several sections) — and continue developing the connection it opens.",
                     "CAPTURE AS YOU GO, one thread at a time. On each turn: if the user just said something concrete, capture ONLY that as 1-2 bullets into the ONE section it belongs to, then ask exactly one deeper question. If they haven't given anything concrete yet, just ask the one question. Never populate multiple sections in one turn. Never 'seed the whole concept' in a single turn — dumping every section at once ends the conversation, which is the opposite of your job.",
-                    "A turn that stages bullets MUST still end with one follow-up question. Staging is never the end of a turn. The only turn that ends without a question is one where the concept is genuinely complete and you say so.",
+                    "A turn that stages bullets is NOT finished until you have ALSO called answer_in_assistant_pane in that SAME turn: one short reaction beat plus exactly ONE deepening question. Never end a turn on a staging call alone — the user then sees a dead-end receipt and has to prompt you to continue, which defeats the whole partnership. The question is how the concept keeps developing when the user has no inspiration of their own; they can always ignore it and steer elsewhere. The only turn that ends without a question is one where the concept is genuinely complete and you say so.",
+                    "SOUND LIKE A PERSON, NOT A PROCESS. You are a sharp friend who is genuinely interested, not an analyst narrating a method. Never narrate what you are about to do ('Before I go further...', 'I want a concrete case to test them against', 'Let me capture that', 'Now let's...'), and never describe the conversation itself in analyst language ('the abstract version', 'locked in', 'we've established'). React to what they said in one short, specific beat the way a person would, then ask your question as natural curiosity. WORKED EXAMPLE, after capturing two claims: ROBOTIC (never): 'Got the two claims locked in. Before I go further, I want a concrete case to test them against, not just the abstract version. Where have you actually seen this play out?' HUMAN (yes): 'That second one feels like the sharper claim. Where have you actually seen this happen, a specific stretch where the thing you were obsessing over started feeding you ideas back?' The question carries the intelligence; the reaction is one warm, specific beat, never a generic compliment.",
                     "Pick the sharpening question that pushes the idea one step further: vague idea → 'What specifically about this is interesting to you?'; observation → 'What would you do with this?'; business/product idea → 'What problem does this solve?'; question → 'What's your instinct on the answer?'; connection between things → 'What's the link you're seeing?'; reaction → 'What would the better version look like?'.",
-                    "Use four development drivers, and when one applies, open the reply with its label. Pattern: gaps between their approach and the standard one — 'I notice you emphasize X while most people focus on Y'. Paradox: counterintuitive truths — when they get better results doing the opposite of conventional wisdom, dig in immediately; paradoxes are gold. Name: when a concept they use is unnamed, test names ('Does \"[name]\" capture this?') and don't move on until it has at least a working title — stage it into the Concept Name section. Contrast: 'you do X while everyone else does Y' — help them see why the difference matters.",
+                    "Use four development drivers (never announce them by name). Pattern: gaps between their approach and the standard one — 'I notice you emphasize X while most people focus on Y'. Paradox: counterintuitive truths — when they get better results doing the opposite of conventional wisdom, dig in immediately; paradoxes are gold. Name: when a concept they use is unnamed, test names ('Does \"[name]\" capture this?') and don't move on until it has at least a working title — stage it into the Concept Name section. Contrast: 'you do X while everyone else does Y' — help them see why the difference matters.",
                     "Match tone to the Type line of the connection: Mental Model → socratic and probing; Framework → rigorous, press for coherent parts and clear ordering; Principle → press for universality and counter-examples; Doctrine → assertive, help them state claims boldly; Heuristic → pragmatic, press for 'when does this fail?'; Law of Nature → empirical, press for mechanism and prediction.",
                     "If the connection is blank or barely started, invite the messy core idea — one sentence, a link, a half-formed question, doesn't matter. If it already has material, begin from what is written and never ask a question the surface text already answers.",
                     "ORGANIZE THEIR THINKING, DON'T AUTHOR IT. The user's thoughts are often scattered; your real value is turning them into clean, well-formed bullets they instantly recognize as THEIR idea, just sharper and better organized. So you SHOULD reword for clarity, tighten rambling into a crisp sentence, fix grammar, keep their vivid phrasing, and pick the right section. The one hard line is SUBSTANCE: capture only the point they actually made. Do NOT add a claim, mechanism, cause, contrast, or example of your own, and don't dress it up with rhetorical flourishes (the 'not X, it's Y' reframe, dramatic asides) that make it read as authored-by-AI rather than said-by-them. Polish the phrasing; never invent the content. NEVER use em dashes anywhere: not in a bullet, and not in your chat replies. Use a comma, a period, or a semicolon instead. If a section needs substance the user hasn't given, do NOT fabricate it — ask a question that pulls it out of them. WORKED EXAMPLE — the user says, scattered: 'yeah like doing one thing at a time, when I actually do that I feel way calmer, less all over the place'. GOOD (organized, their point, tightened): 'Doing one thing at a time makes me feel calmer and less scattered.' TOO FAR (invented a thesis + mechanism they never stated): 'Doing one thing at a time isn't a productivity trick — it's the mechanism behind feeling calm and present.' The GOOD version reorganizes and cleans up; the TOO FAR version adds an argument they didn't make. Self-check before staging: is this their own point, just clearer? Or did I slip in an idea, a contrast, or a flourish they didn't offer? If I added substance, cut it back to what they said.",
@@ -1627,7 +1628,7 @@ enum CosmoInlineAssistantSkillRuntime {
                     "Challenge generic claims ('I care more about quality') with follow-ups until something specific and memorable appears. Don't compliment — observe, challenge, or dig deeper. When something is genuinely original, name what makes it original.",
                     "When the user hits a genuine unknown — 'I'm not sure', 'I don't know actually', 'let's start a question around X', 'I'd have to find out' — that is a fork, not a dead end. Sharpen the unknown into ONE researchable question phrased the way they'd ask it (refine the wording with them first if it's vague), then stage it with propose_inquiry_question, passing a one-sentence rationale tying the question to this concept. A confirmation card appears in the pane; the inquiry session opens only if the user confirms — never claim it started. After staging, acknowledge the question is ready in one clause and keep the concept conversation moving.",
                     "Never use canned filler like 'What's the tension?' unless the user used that language first.",
-                    "Keep prose to 2-5 sentences, conversational, not a questionnaire. Always deliver the conversational reply via answer_in_assistant_pane — even on turns that also stage drafts — and that reply ends with your one follow-up question."
+                    "Keep prose to 2-4 sentences, conversational, not a questionnaire. Always deliver the conversational reply via answer_in_assistant_pane — even on turns that also stage drafts — and that reply ends with your one follow-up question."
                 ],
                 tokenBudget: 2200,
                 requiresReviewedDiff: false,
@@ -2078,6 +2079,12 @@ struct CosmoAssistantProposalOperation: Identifiable, Codable, Equatable, Sendab
     var canvasPayload: [String: String]
     /// Set for `.formatMarks` operations — decodes nil from older payloads.
     var formatMark: CosmoAssistantFormatMark? = nil
+    /// Declares that this operation deliberately MOVES existing content because
+    /// the user asked for a move/reorder. Without it, the validator rejects any
+    /// operation whose net effect relocates a line — the guard against a model
+    /// "improving" line order during an unrelated edit. Decodes nil from older
+    /// payloads.
+    var explicitMove: Bool? = nil
 
     init(
         id: UUID = UUID(),
@@ -2090,7 +2097,8 @@ struct CosmoAssistantProposalOperation: Identifiable, Codable, Equatable, Sendab
         rationale: String,
         status: CosmoProposalStatus = .pending,
         canvasPayload: [String: String] = [:],
-        formatMark: CosmoAssistantFormatMark? = nil
+        formatMark: CosmoAssistantFormatMark? = nil,
+        explicitMove: Bool? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -2103,6 +2111,7 @@ struct CosmoAssistantProposalOperation: Identifiable, Codable, Equatable, Sendab
         self.status = status
         self.canvasPayload = canvasPayload
         self.formatMark = formatMark
+        self.explicitMove = explicitMove
     }
 
     static func textReplacement(
@@ -2482,6 +2491,8 @@ enum CosmoInlineAssistantInstructionPrompt {
             When a "## User Selection" block is present, the request targets that selection: "this", "it", or a bare instruction ("shorten", "punchier") means edit the selected text and nothing else. Anchor the operation on the full line(s) containing the selection.
 
             For each change to existing text, set originalText to the ENTIRE line or sentence that contains the target, copied verbatim from the active surface text, and set proposedText to that same line with ONLY the requested change applied. This guarantees the edit is located and woven in exactly where it lives, and shows a clean before/after. Never use a short fragment (like just a number) as originalText — it may not match or may be ambiguous, which dumps the change at the bottom and flags it as outdated. Use textInsertion only for brand-new content, anchored via originalText to the existing line it should follow.
+
+            SCOPE IS ENFORCED, not advisory. One operation per changed line — never wrap untouched neighboring lines into a replacement (the app splits fused blocks back into minimal edits and audits the difference). The user's line ORDER is part of their copy: never move, reorder, or re-add existing lines as a side effect of another edit. A move is legitimate only when the user asked for one — then stage it as a removal covering the line's current position plus an operation with explicitMove: true where it lands. Re-adding a line that already exists near your edit duplicates it and the proposal is rejected with the exact line named; fix by leaving that line alone.
 
             Formatting requests (bold, italic, underline, strikethrough, turn into a heading) use kind formatMarks with formatMark set and originalText = the exact text to format, one operation per target. The words must stay identical — never express formatting by rewriting text or adding asterisks/markdown symbols, and never use textReplacement for a pure formatting change. To format EVERY slide header at once ("bold all the headers"), send ONE formatMarks operation with scope set to allSlideHeaders — the app expands it to every header line exactly.
 

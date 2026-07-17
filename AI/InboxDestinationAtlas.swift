@@ -28,6 +28,9 @@ enum InboxAtlasKind: String, Sendable, CaseIterable {
     case deepDive
     case question
     case client
+    /// Growing proto-concepts (the global Seedbed) — where insight-shaped
+    /// captures accrue mass instead of landing as canvas objects.
+    case seedling
 }
 
 struct InboxAtlasEntry: Sendable, Equatable {
@@ -141,6 +144,7 @@ actor InboxDestinationAtlas {
         take(.connection, 3)
         take(.deepDive, 2)
         take(.question, 3)
+        take(.seedling, 3)
         // Clients are few and the misattribution stakes are high ("always
         // Josh") — the model always sees the full roster to pick or veto.
         result.append(contentsOf: scored[.client] ?? [])
@@ -167,7 +171,32 @@ actor InboxDestinationAtlas {
         async let connectionEntries = buildConnectionEntries()
         async let inquiryEntries = buildInquiryEntries()
         async let clientEntries = buildClientEntries()
-        return await spatialEntries + connectionEntries + inquiryEntries + clientEntries
+        async let seedlingEntries = buildSeedlingEntries()
+        return await spatialEntries + connectionEntries + inquiryEntries + clientEntries + seedlingEntries
+    }
+
+    private func buildSeedlingEntries() async -> [InboxAtlasEntry] {
+        let seedlings = (try? await SeedlingRepository.shared.fetchGrowing(limit: 40)) ?? []
+        return seedlings.map { seedling in
+            var charterParts = ["Growing seedling — a proto-concept still accruing thoughts (\(seedling.massSummary))."]
+            let aliases = seedling.aliases
+            if !aliases.isEmpty {
+                charterParts.append("Also phrased as: \(aliases.prefix(3).joined(separator: ", ")).")
+            }
+            let examples = seedling.pendingThoughts
+                .suffix(exampleTitleLimit)
+                .map { String($0.text.prefix(80)) }
+            return InboxAtlasEntry(
+                key: "seedling-\(seedling.uuid)",
+                kind: .seedling,
+                uuid: seedling.uuid,
+                name: seedling.name,
+                charter: charterParts.joined(separator: " "),
+                examples: examples,
+                parentUUID: nil,
+                parentName: nil
+            )
+        }
     }
 
     private func buildSpatialEntries() async -> [InboxAtlasEntry] {

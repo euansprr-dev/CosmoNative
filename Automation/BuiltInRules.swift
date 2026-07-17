@@ -20,7 +20,7 @@ enum BuiltInRules {
     /// Seed built-in rules into the database if they don't already exist
     @MainActor
     static func seedIfNeeded() async {
-        guard let db = CosmoDatabase.shared.dbQueue else { return }
+        guard let db = CosmoDatabase.shared.dbPool else { return }
 
         do {
             let existingCount = try await db.read { db in

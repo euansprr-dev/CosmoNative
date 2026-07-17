@@ -114,8 +114,10 @@ struct InboxQueueRow: View {
         } else if item.classification == .merge, let target = item.mergeTargetTitle {
             pill(icon: "arrow.triangle.merge", text: target, tint: DS.orange, prominent: true)
         } else if item.classification == .place {
+            // A seedling suggestion GROWS something rather than filing it —
+            // the leaf makes the two futures legible at a glance.
             pill(
-                icon: "arrow.turn.down.right",
+                icon: isSeedlingSuggestion ? "leaf" : "arrow.turn.down.right",
                 text: item.spatialDestinationTitle,
                 tint: DS.accent,
                 prominent: item.confidence >= InboxRoutingConfig.shared.confidentTier
@@ -125,6 +127,14 @@ struct InboxQueueRow: View {
                 .font(DS.caption)
                 .foregroundStyle(DS.textMuted)
         }
+    }
+
+    /// The stored route-kind column, not the decoded bundle — a per-row JSON
+    /// decode in a ledger is the kind of hot-path work the revamp evicted.
+    private var isSeedlingSuggestion: Bool {
+        item.primaryRouteKind == InboxRouteKind.feedSeedling.rawValue
+            || item.primaryRouteKind == InboxRouteKind.startSeedling.rawValue
+            || item.primaryRouteKind == InboxRouteKind.germinateConnection.rawValue
     }
 
     private func pill(icon: String, text: String, tint: Color, prominent: Bool) -> some View {

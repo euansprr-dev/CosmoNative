@@ -1,6 +1,64 @@
 import SwiftUI
 import AVKit
 
+#if DEBUG
+/// TEMPORARY diagnostic for the stuck/clipped quick look — appends geometry
+/// truth to /tmp/cosmo-quicklook-debug.log on every body pass so the SwiftUI
+/// state can be compared against what the screen shows. Remove when closed.
+enum SwipeQuickLookDebugLog {
+    nonisolated(unsafe) private static var lastLine = ""
+    private static let url = URL(fileURLWithPath: "/tmp/cosmo-quicklook-debug.log")
+
+    static func log(_ line: String) {
+        guard line != lastLine else { return }
+        lastLine = line
+        let stamped = "\(Date().timeIntervalSince1970) \(line)\n"
+        if let data = stamped.data(using: .utf8) {
+            if let handle = try? FileHandle(forWritingTo: url) {
+                handle.seekToEndOfFile()
+                handle.write(data)
+                try? handle.close()
+            } else {
+                try? data.write(to: url)
+            }
+        }
+    }
+
+    /// Dump every glass-flavored AppKit view in the key window: real frames,
+    /// layer presentation values, and one level of children.
+    @MainActor
+    static func dumpGlassViews() {
+        guard let root = NSApp.keyWindow?.contentView else {
+            log("GLASS-DUMP no key window")
+            return
+        }
+        var found = 0
+        func walk(_ view: NSView) {
+            let cls = String(describing: type(of: view))
+            if cls.localizedCaseInsensitiveContains("glass") {
+                found += 1
+                let inWindow = view.superview?.convert(view.frame, to: nil) ?? view.frame
+                var line = "GLASS-DUMP \(cls) frame=\(view.frame) inWindow=\(inWindow)"
+                if let layer = view.layer {
+                    line += " layerBounds=\(layer.bounds) tf=\(layer.affineTransform())"
+                    if let pres = layer.presentation() {
+                        line += " presBounds=\(pres.bounds) presTF=\(pres.affineTransform())"
+                    }
+                }
+                log(line)
+                for sub in view.subviews {
+                    let subIn = view.convert(sub.frame, to: nil)
+                    log("GLASS-DUMP   child \(String(describing: type(of: sub))) frame=\(sub.frame) inWindow=\(subIn)")
+                }
+            }
+            view.subviews.forEach(walk)
+        }
+        walk(root)
+        log("GLASS-DUMP done, glassViews=\(found)")
+    }
+}
+#endif
+
 // MARK: - Frame store
 
 /// Last-known media frames of on-screen cards, in page coordinates. A plain class
@@ -95,6 +153,14 @@ struct SwipeQuickLook<Content: View>: View {
             let scaleX = frame.width / max(target.width, 1)
             let scaleY = frame.height / max(target.height, 1)
 
+            #if DEBUG
+            let _ = SwipeQuickLookDebugLog.log(
+                "SHELL expanded=\(expanded) proxy=\(proxy.size) aspect=\(String(describing: panelAspect)) "
+                + "target=\(target) collapsed=\(collapsed) frame=\(frame) source=\(String(describing: sourceFrame)) "
+                + "hero=\(heroModel != nil)"
+            )
+            #endif
+
             ZStack(alignment: .topLeading) {
                 Color.black.opacity(expanded ? 0.30 : 0)
                     .ignoresSafeArea()
@@ -132,10 +198,22 @@ struct SwipeQuickLook<Content: View>: View {
             }
         }
         .onAppear(perform: expandOnMount)
+        #if DEBUG
+        .onChange(of: expanded) { _, isExpanded in
+            guard isExpanded else { return }
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(1.5))
+                SwipeQuickLookDebugLog.dumpGlassViews()
+            }
+        }
+        #endif
         .onExitCommand(perform: onRequestClose)
     }
 
     private func expandOnMount() {
+        #if DEBUG
+        SwipeQuickLookDebugLog.log("EXPAND-ON-MOUNT expanded=\(expanded) reduceMotion=\(reduceMotion)")
+        #endif
         guard !expanded else { return }
         if reduceMotion {
             expanded = true
@@ -198,6 +276,11 @@ struct SwipeQuickLookLibraryContent: View {
         // stages blow past the panel and swallow the footer.
         GeometryReader { geo in
             let stageHeight = max(0, geo.size.height - SwipeQuickLookGeometry.footerHeight)
+            #if DEBUG
+            let _ = SwipeQuickLookDebugLog.log(
+                "CONTENT geo=\(geo.size) stageHeight=\(stageHeight) modelAspect=\(model.aspect) item=\(item.platform ?? "nil")"
+            )
+            #endif
             VStack(spacing: 0) {
                 stage
                     .frame(width: geo.size.width, height: stageHeight)

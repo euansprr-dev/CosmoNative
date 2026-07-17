@@ -5,15 +5,15 @@
 import GRDB
 import Foundation
 
-/// A Sendable database actor that owns the GRDB queue.
+/// A Sendable database actor that owns the GRDB connection.
 /// Tools can depend on this actor (actors are inherently Sendable)
 /// instead of the @MainActor CosmoDatabase which is not Sendable.
 public actor DatabaseActorCore {
-    private let dbQueue: DatabaseQueue
+    private let dbPool: DatabasePool
 
-    /// Initialize with an existing database queue
-    public init(queue: DatabaseQueue) {
-        self.dbQueue = queue
+    /// Initialize with the app's database pool.
+    public init(writer: DatabasePool) {
+        self.dbPool = writer
     }
 
     /// Shared instance - initialized lazily from CosmoDatabase
@@ -23,23 +23,23 @@ public actor DatabaseActorCore {
 
     /// Perform an async read operation
     public func asyncRead<T: Sendable>(_ block: @Sendable @escaping (Database) throws -> T) async throws -> T {
-        return try await dbQueue.read(block)
+        return try await dbPool.read(block)
     }
 
     /// Perform an async write operation
     public func asyncWrite<T: Sendable>(_ block: @Sendable @escaping (Database) throws -> T) async throws -> T {
-        return try await dbQueue.write(block)
+        return try await dbPool.write(block)
     }
 
     // MARK: - Sync Read/Write (for special cases)
 
     /// Perform a synchronous read operation
     public func read<T>(_ block: (Database) throws -> T) throws -> T {
-        return try dbQueue.read(block)
+        return try dbPool.read(block)
     }
 
     /// Perform a synchronous write operation
     public func write<T>(_ block: (Database) throws -> T) throws -> T {
-        return try dbQueue.write(block)
+        return try dbPool.write(block)
     }
 }

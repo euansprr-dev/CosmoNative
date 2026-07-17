@@ -545,8 +545,19 @@ struct ResearchBlockView: View {
                 }
             }
 
+            // Warm store first — the thinkspace switch batch-fetched every
+            // entity atom (skipped on forceReload: callers demand fresh data).
+            var loaded: Atom? = nil
+            if !forceReload {
+                loaded = CanvasAtomWarmStore.shared.atom(id: block.entityId)
+                if loaded == nil, !block.entityUuid.isEmpty {
+                    loaded = CanvasAtomWarmStore.shared.atom(uuid: block.entityUuid)
+                }
+            }
             // Try by ID first, fall back to UUID (handles paste where ID may be stale)
-            var loaded: Atom? = try? await AtomRepository.shared.fetch(id: block.entityId)
+            if loaded == nil {
+                loaded = try? await AtomRepository.shared.fetch(id: block.entityId)
+            }
             if loaded == nil, !block.entityUuid.isEmpty {
                 loaded = try? await AtomRepository.shared.fetch(uuid: block.entityUuid)
             }

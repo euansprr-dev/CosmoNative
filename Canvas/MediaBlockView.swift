@@ -839,7 +839,13 @@ struct MediaBlockView: View {
                 }
             }
 
-            guard let loaded = try? await AtomRepository.shared.fetch(id: block.entityId) else {
+            // Warm store first — the thinkspace switch batch-fetched every
+            // entity atom (skipped on forceReload: callers demand fresh data).
+            var fetched: Atom? = forceReload ? nil : CanvasAtomWarmStore.shared.atom(id: block.entityId)
+            if fetched == nil {
+                fetched = try? await AtomRepository.shared.fetch(id: block.entityId)
+            }
+            guard let loaded = fetched else {
                 guard !Task.isCancelled else { return }
                 await MainActor.run { isLoading = false }
                 return

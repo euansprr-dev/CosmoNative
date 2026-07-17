@@ -227,7 +227,7 @@ struct ContentBlockView: View {
                 .filter(Column("id") == id)
                 .fetchOne(db)
         }
-        observationCancellable = observation.publisher(in: CosmoDatabase.shared.dbQueue)
+        observationCancellable = observation.publisher(in: CosmoDatabase.shared.dbPool)
             .receive(on: DispatchQueue.main)
             .sink(
                 receiveCompletion: { _ in },
@@ -253,23 +253,38 @@ struct ContentBlockView: View {
 
     private func loadContent() {
         contentTitle = block.title
-        reloadFocusState()
 
-        // Load atom from database for title/body
-        if block.entityId > 0 {
-            Task {
-                if let atom = try? await AtomRepository.shared.fetch(id: block.entityId) {
-                    await MainActor.run {
-                        if let title = atom.title, !title.isEmpty {
-                            contentTitle = title
-                        }
-                        if let body = atom.body {
-                            contentBody = body
-                        }
-                    }
+        guard block.entityId > 0 else { return }
+
+        // Warm store first — the thinkspace switch batch-fetched every entity
+        // atom, and a mount must not queue its own round-trips (content blocks
+        // used to fire two fetches each: title/body plus focus state).
+        if let warm = CanvasAtomWarmStore.shared.atom(id: block.entityId) {
+            applyLoadedAtom(warm)
+            return
+        }
+
+        Task {
+            if let atom = try? await AtomRepository.shared.fetch(id: block.entityId) {
+                await MainActor.run {
+                    applyLoadedAtom(atom)
                 }
             }
         }
+    }
+
+    /// Apply a freshly-loaded entity atom: title/body plus the parsed focus
+    /// state (pipeline phase, draft, outline). Stamping `lastParsedMetadata`
+    /// lets the GRDB observation's first echo skip a redundant re-parse.
+    private func applyLoadedAtom(_ atom: Atom) {
+        if let title = atom.title, !title.isEmpty {
+            contentTitle = title
+        }
+        if let body = atom.body {
+            contentBody = body
+        }
+        lastParsedMetadata = atom.metadata
+        parseAtomState(atom)
     }
 
     /// Reload workflow state from the atom in the database
@@ -299,7 +314,6 @@ struct ContentBlockView: View {
         }
 
         if let state = ContentFocusModeState.from(atom: atom) {
-            print("🔄 ContentBlock parseAtomState: step=\(state.currentStep.rawValue), coreIdea=\(state.coreIdea.prefix(20)), hooks=\(state.hooks.count), outline=\(state.outline.count), draft=\(state.draftContent.count)chars")
             currentStep = state.currentStep
             coreIdea = state.coreIdea
             hooks = state.hooks
@@ -309,16 +323,24 @@ struct ContentBlockView: View {
             wordCount = state.draftContent.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).count
             polishAnalysis = state.polishAnalysis
             lastModified = state.lastModified
-        } else {
-            print("🔄 ContentBlock parseAtomState: from(atom:) returned nil — metadata: \(atom.metadata?.prefix(100) ?? "nil")")
         }
     }
 
+    /// Client display names, cached process-wide — dozens of content blocks
+    /// routinely share one client, and each used to fetch the profile atom
+    /// on every mount.
+    @MainActor private static var clientNameCache: [String: String] = [:]
+
     /// Load client display name from clientProfile atom
     private func loadClientName(uuid: String) {
+        if let cached = Self.clientNameCache[uuid] {
+            clientName = cached
+            return
+        }
         Task {
             if let atom = try? await AtomRepository.shared.fetch(uuid: uuid) {
                 await MainActor.run {
+                    Self.clientNameCache[uuid] = atom.title ?? ""
                     clientName = atom.title
                 }
             }

@@ -122,6 +122,54 @@ class ChangeTracker: ObservableObject {
     ) async {
         guard SupabaseSyncTrafficPolicy.allowsNetworkSync else { return }
         ConsoleLog.verbose("immediatePush table=\(table) uuid=\(uuid) op=\(operation)", subsystem: .sync)
+
+        // Serialize + prepare the payload HERE, in ChangeTracker's nonisolated
+        // context — a fat metadata column (rich note documents run to hundreds
+        // of KB) must never JSON round-trip on the main thread. Only the
+        // SupabaseClient access below is main-bound.
+        guard let data = try? JSONEncoder().encode(entity),
+              var payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return
+        }
+
+        let serverVersion = payload["_server_version"] as? Int ?? 0
+        // The exact local version this push carries. Bookkeeping below is scoped
+        // to it so an edit made while this push is in flight stays pending and
+        // gets its own push, instead of being silently marked synced.
+        let pushedLocalVersion = payload["_local_version"] as? Int ?? 0
+
+        // Remove local-only fields + GRDB autoincrement id (conflicts with Postgres serial)
+        payload.removeValue(forKey: "id")
+        payload.removeValue(forKey: "_local_version")
+        payload.removeValue(forKey: "_server_version")
+        payload.removeValue(forKey: "_sync_version")
+        payload.removeValue(forKey: "_local_pending")
+
+        // Convert JSON TEXT fields to objects for JSONB
+        if table == "atoms" {
+            for key in ["structured", "metadata", "links"] {
+                if let jsonString = payload[key] as? String,
+                   !jsonString.isEmpty,
+                   let jsonData = jsonString.data(using: .utf8),
+                   let parsed = try? JSONSerialization.jsonObject(with: jsonData) {
+                    payload[key] = parsed
+                }
+            }
+        }
+
+        let writeDisposition: SyncWriteDisposition
+        if table == "atoms" {
+            writeDisposition = SyncWriteDisposition.resolve(
+                requestedOperation: operation,
+                serverVersion: serverVersion
+            )
+        } else if operation == "INSERT" {
+            writeDisposition = .upsert
+        } else {
+            writeDisposition = .update
+        }
+
+        nonisolated(unsafe) let preparedPayload = payload
         Task.detached { @MainActor in
             guard let client = SupabaseClient.shared, client.isAuthenticated else {
                 ConsoleLog.verbose("immediatePush skipped no client or not authenticated uuid=\(uuid)", subsystem: .sync)
@@ -129,52 +177,10 @@ class ChangeTracker: ObservableObject {
             }
             guard let userId = client.currentUserId else { return }
 
-            // Serialize entity
-            guard let data = try? JSONEncoder().encode(entity),
-                  var payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                return
-            }
-
-            let serverVersion = payload["_server_version"] as? Int ?? 0
-            // The exact local version this push carries. Bookkeeping below is scoped
-            // to it so an edit made while this push is in flight stays pending and
-            // gets its own push, instead of being silently marked synced.
-            let pushedLocalVersion = payload["_local_version"] as? Int ?? 0
-
-            // Remove local-only fields + GRDB autoincrement id (conflicts with Postgres serial)
-            payload.removeValue(forKey: "id")
-            payload.removeValue(forKey: "_local_version")
-            payload.removeValue(forKey: "_server_version")
-            payload.removeValue(forKey: "_sync_version")
-            payload.removeValue(forKey: "_local_pending")
-
+            var payload = preparedPayload
             // Add cloud fields
             payload["user_id"] = userId
             payload["_source"] = "mac"
-
-            // Convert JSON TEXT fields to objects for JSONB
-            if table == "atoms" {
-                for key in ["structured", "metadata", "links"] {
-                    if let jsonString = payload[key] as? String,
-                       !jsonString.isEmpty,
-                       let jsonData = jsonString.data(using: .utf8),
-                       let parsed = try? JSONSerialization.jsonObject(with: jsonData) {
-                        payload[key] = parsed
-                    }
-                }
-            }
-
-            let writeDisposition: SyncWriteDisposition
-            if table == "atoms" {
-                writeDisposition = SyncWriteDisposition.resolve(
-                    requestedOperation: operation,
-                    serverVersion: serverVersion
-                )
-            } else if operation == "INSERT" {
-                writeDisposition = .upsert
-            } else {
-                writeDisposition = .update
-            }
 
             do {
                 switch writeDisposition {
@@ -193,15 +199,20 @@ class ChangeTracker: ObservableObject {
                             sql: "UPDATE sync_queue SET status = 'synced', synced_at = ? WHERE uuid = ? AND table_name = ? AND status = 'pending' AND local_version <= ?",
                             arguments: [ISO8601.string(from: Date()), uuid, table, pushedLocalVersion]
                         )
-                        try db.execute(
-                            sql: """
-                                UPDATE \(table)
-                                SET _server_version = MAX(_server_version, ?),
-                                    _local_pending = CASE WHEN _local_version > ? THEN _local_pending ELSE 0 END
-                                WHERE uuid = ?
-                                """,
-                            arguments: [pushedLocalVersion, pushedLocalVersion, uuid]
-                        )
+                        // Suppressed: this is push bookkeeping, not a local edit —
+                        // the table observers (canvas_blocks, atoms) must not
+                        // re-enqueue it or every successful push loops forever.
+                        try CanvasBlockSyncObserver.suppressingSync {
+                            try db.execute(
+                                sql: """
+                                    UPDATE \(table)
+                                    SET _server_version = MAX(_server_version, ?),
+                                        _local_pending = CASE WHEN _local_version > ? THEN _local_pending ELSE 0 END
+                                    WHERE uuid = ?
+                                    """,
+                                arguments: [pushedLocalVersion, pushedLocalVersion, uuid]
+                            )
+                        }
                     }
                 } catch {
                     PersistenceHealth.note(.syncFailure, context: "ChangeTracker.immediatePush(\(uuid.prefix(8)))", detail: "post-push bookkeeping failed: \(error)")
@@ -244,7 +255,7 @@ class ChangeTracker: ObservableObject {
                     arguments: [uuid, table]
                 )
 
-                if let existingId = existing?["id"] as? Int64 {
+                if let existingId = existing?["id"] as Int64? {
                     try db.execute(
                         sql: """
                         UPDATE sync_queue
@@ -279,10 +290,14 @@ class ChangeTracker: ObservableObject {
         ConsoleLog.verbose("markAsPending table=\(table) uuid=\(uuid)", subsystem: .sync)
         do {
             try await database.asyncWrite { db in
-                try db.execute(
-                    sql: "UPDATE \(table) SET _local_pending = 1 WHERE uuid = ?",
-                    arguments: [uuid]
-                )
+                // Suppressed: shield bookkeeping, not content — queueChange
+                // right after this is the explicit enqueue for the change.
+                try CanvasBlockSyncObserver.suppressingSync {
+                    try db.execute(
+                        sql: "UPDATE \(table) SET _local_pending = 1 WHERE uuid = ?",
+                        arguments: [uuid]
+                    )
+                }
             }
         } catch {
             // If the pending shield doesn't get set, an inbound remote change can
@@ -295,10 +310,13 @@ class ChangeTracker: ObservableObject {
     private func incrementLocalVersion(table: String, uuid: String) async {
         ConsoleLog.verbose("incrementLocalVersion table=\(table) uuid=\(uuid)", subsystem: .sync)
         try? await database.asyncWrite { db in
-            try db.execute(
-                sql: "UPDATE \(table) SET _local_version = _local_version + 1 WHERE uuid = ?",
-                arguments: [uuid]
-            )
+            // Suppressed: version bookkeeping — queueChange carries the bump.
+            try CanvasBlockSyncObserver.suppressingSync {
+                try db.execute(
+                    sql: "UPDATE \(table) SET _local_version = _local_version + 1 WHERE uuid = ?",
+                    arguments: [uuid]
+                )
+            }
         }
     }
 
@@ -312,7 +330,13 @@ class ChangeTracker: ObservableObject {
             )
         }
 
-        return result?["_local_version"] as? Int ?? 1
+        // Typed GRDB subscript (`as Int?`), NEVER `as? Int`: SQLite integers
+        // come back as Int64 and the untyped cast silently fails. This exact
+        // cast previously pinned every queued change to local_version = 1,
+        // which made batch pushes unable to clear the _local_pending shield
+        // for any atom edited more than once — the manufactured-orphan bug
+        // behind the recurring "requeueOrphanedPending" health notes.
+        return (result?["_local_version"] as Int?) ?? 1
     }
 }
 

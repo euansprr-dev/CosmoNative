@@ -339,7 +339,7 @@ struct ConnectionNavigatorRail: View {
     var body: some View {
         VStack(spacing: DS.space4) {
             Button(action: onExpand) {
-                Image(systemName: "sidebar.left")
+                Image(systemName: "sidebar.squares.left")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(DS.textSecondary)
                     .frame(width: 28, height: 28)

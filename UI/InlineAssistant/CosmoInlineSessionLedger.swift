@@ -66,7 +66,10 @@ enum CosmoInlineSessionLedger {
             record.proposalID = proposal.id
             record.proposalTitle = proposal.title
             record.proposalSummary = clipped(proposal.summary, limit: digestCap)
-            record.operationCount = newProposals.reduce(0) { $0 + $1.operations.count }
+            // Count only the recorded proposal's operations — review-state sync
+            // (`updated(_:withReviewStateOf:)`) tracks this same proposal, so a
+            // multi-proposal run must not inflate the count it can never settle.
+            record.operationCount = proposal.operations.count
         }
         if let answer = newAnswerText?.trimmingCharacters(in: .whitespacesAndNewlines),
            !answer.isEmpty {
@@ -171,6 +174,48 @@ enum CosmoInlineSessionLedger {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count > limit else { return trimmed }
         return String(trimmed.prefix(limit)).trimmingCharacters(in: .whitespaces) + "…"
+    }
+}
+
+// MARK: - Review track record (learning render-back)
+
+/// Closes the loop on review-outcome learning: accept/reject decisions were
+/// recorded (AgentOutcomeTracker) but never read back, so the assistant could
+/// repeat a rejected pattern forever. This distills the skill's recent review
+/// outcomes into a short volatile-prompt block — acceptance rate plus the most
+/// recent rejected edits as concrete negative examples.
+@MainActor
+enum CosmoInlineReviewTrackRecord {
+    static let minimumOutcomesForSignal = 3
+    static let maxRejectedExamples = 2
+
+    static func promptBlock(skillID: String?) async -> String? {
+        let category = "skill:\(skillID ?? CosmoInlineAssistantSkillID.inlineEdit.rawValue)"
+        let events = await AgentOutcomeTracker.shared.getRecentEvents(
+            category: .suggestionAcceptance,
+            limit: 50
+        )
+        let scoped = events.filter { $0.context["category"] == category }
+        guard scoped.count >= minimumOutcomesForSignal else { return nil }
+
+        let acceptedCount = scoped.filter { $0.context["accepted"] == "true" }.count
+        let rejected = scoped.filter { $0.context["accepted"] != "true" }
+        guard !rejected.isEmpty else { return nil }
+
+        var lines = [
+            "## Review Track Record",
+            "For this kind of request, the user accepted \(acceptedCount) of the last \(scoped.count) staged edits. Rejected edits are the strongest available signal — do not repeat their shape."
+        ]
+        for event in rejected.prefix(maxRejectedExamples) {
+            let preview = event.offered
+                .replacingOccurrences(of: "\n", with: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .prefix(140)
+            guard !preview.isEmpty else { continue }
+            lines.append("- Recently REJECTED: \"\(preview)\"")
+        }
+        lines.append("Stay closer to the user's wording and scope than these rejected attempts did.")
+        return lines.joined(separator: "\n")
     }
 }
 

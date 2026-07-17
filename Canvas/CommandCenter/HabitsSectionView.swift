@@ -235,7 +235,8 @@ private struct HabitPlanningRow: View {
 
             VStack(alignment: .leading, spacing: DS.space4) {
                 HStack(spacing: DS.space8) {
-                    Text(habit.title)
+                    // The ring carries the mark — the label must never repeat it.
+                    Text(habit.displayTitle)
                         .font(DS.headline)
                         .foregroundStyle(habit.isTodayComplete ? habit.accentColor : DS.text)
                         .lineLimit(1)
@@ -296,11 +297,26 @@ private struct HabitPlanningRow: View {
                 .rotationEffect(.degrees(-90))
                 .frame(width: 44, height: 44)
 
-            Image(systemName: habit.isTodayComplete ? "checkmark" : habit.iconName)
-                .font(DS.callout.weight(.semibold))
-                .foregroundStyle(habit.accentColor)
-                .frame(width: 34, height: 34)
-                .background(habit.accentColor.opacity(0.08), in: Circle())
+            // Habit identity, the App Store register: a typed emoji in the
+            // name wins, then the curated keyword pass; the picked SF icon
+            // stays as the explicit-choice fallback (orbit-card parity).
+            if habit.isTodayComplete {
+                Image(systemName: "checkmark")
+                    .font(DS.callout.weight(.semibold))
+                    .foregroundStyle(habit.accentColor)
+                    .frame(width: 34, height: 34)
+                    .background(habit.accentColor.opacity(0.08), in: Circle())
+            } else if let emoji = habit.identityMark {
+                Text(emoji)
+                    .font(.system(size: 16))
+                    .frame(width: 34, height: 34)
+            } else {
+                Image(systemName: habit.iconName)
+                    .font(DS.callout.weight(.semibold))
+                    .foregroundStyle(habit.accentColor)
+                    .frame(width: 34, height: 34)
+                    .background(habit.accentColor.opacity(0.08), in: Circle())
+            }
         }
         .animation(ProMotionSprings.gentle, value: animateProgress)
     }
@@ -347,7 +363,7 @@ private struct HabitPlanningRow: View {
         .animation(ProMotionSprings.hover, value: isManualHovered)
         .onHover { isManualHovered = $0 }
         .help(habit.allowManualComplete ? "Log one completion" : "This habit completes from tasks or focus sessions")
-        .accessibilityLabel(habit.allowManualComplete ? "Log \(habit.title)" : "\(habit.title) completes automatically")
+        .accessibilityLabel(habit.allowManualComplete ? "Log \(habit.displayTitle)" : "\(habit.displayTitle) completes automatically")
     }
 
     private var editButton: some View {
@@ -364,8 +380,8 @@ private struct HabitPlanningRow: View {
         .scaleEffect(isEditHovered ? 1.01 : 1)
         .animation(ProMotionSprings.hover, value: isEditHovered)
         .onHover { isEditHovered = $0 }
-        .help("Edit \(habit.title)")
-        .accessibilityLabel("Edit \(habit.title)")
+        .help("Edit \(habit.displayTitle)")
+        .accessibilityLabel("Edit \(habit.displayTitle)")
     }
 
     private var rowFill: Color {
@@ -409,14 +425,20 @@ private struct HabitRecoveryPane: View {
 
     private func recoveryRow(_ habit: HabitState) -> some View {
         HStack(spacing: DS.space8) {
-            Image(systemName: habit.iconName)
-                .font(DS.caption.weight(.semibold))
-                .foregroundStyle(habit.accentColor)
-                .frame(width: 24, height: 24)
-                .background(habit.accentColor.opacity(0.08), in: Circle())
+            if let emoji = habit.identityMark {
+                Text(emoji)
+                    .font(.system(size: 13))
+                    .frame(width: 24, height: 24)
+            } else {
+                Image(systemName: habit.iconName)
+                    .font(DS.caption.weight(.semibold))
+                    .foregroundStyle(habit.accentColor)
+                    .frame(width: 24, height: 24)
+                    .background(habit.accentColor.opacity(0.08), in: Circle())
+            }
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(habit.title)
+                Text(habit.displayTitle)
                     .font(DS.subheadline.weight(.semibold))
                     .foregroundStyle(DS.text)
                     .lineLimit(1)
@@ -476,7 +498,7 @@ private struct HabitConsistencyPane: View {
         let accent = entry.habitDefinition.accent
         return VStack(alignment: .leading, spacing: DS.space4) {
             HStack {
-                Text(entry.habitDefinition.title)
+                Text(entry.habitDefinition.displayTitle)
                     .font(DS.caption.weight(.semibold))
                     .foregroundStyle(DS.text)
                     .lineLimit(1)

@@ -6,6 +6,7 @@
 // Pages are born only through a development conversation (the Concept Desk).
 
 import Foundation
+import GRDB
 
 // MARK: - Ripeness
 
@@ -243,12 +244,106 @@ enum ConceptSeedbedReducer {
     }
 }
 
-// MARK: - Service (read-modify-write on the Deep Dive atom, serialized)
+// MARK: - Row adapters (the unified seedlings store)
 
-/// The single writer for `DeepDiveStructured.conceptSeedbed`. All mutations
-/// chain behind the previous one — seedbed updates are read-modify-write on
-/// the deep dive atom, and two in-flight batches must never clobber each
-/// other's fetch.
+// The Deep Dive seedbed lives on the global `seedlings` table (July 2026
+// unification): one row per incubating concept, scoped by
+// `scopeDeepDiveUUID`. `IncubatingConcept` stays as the dive-facing view
+// model — the reducer, ripeness, and every Study surface keep their shapes —
+// and these adapters convert at the storage boundary, preserving provenance
+// field-for-field (sourceExtractUUID, session, proposed section, item ids).
+
+extension StagedConceptItem {
+    init(thought: SeedlingThought) {
+        self.init(
+            id: thought.id,
+            sourceExtractUUID: thought.sourceExtractUUID ?? "",
+            rawSnippet: thought.text,
+            proposedSection: thought.proposedSection,
+            sourceUUID: thought.sourceAtomUUID,
+            sessionUUID: thought.sessionUUID,
+            capturedAt: thought.capturedAt,
+            consumedAt: thought.consumedAt
+        )
+    }
+
+    var asThought: SeedlingThought {
+        SeedlingThought(
+            id: id,
+            text: rawSnippet,
+            sourceKind: .study,
+            sourceUUID: nil,
+            capturedAt: capturedAt,
+            consumedAt: consumedAt,
+            sourceExtractUUID: sourceExtractUUID.isEmpty ? nil : sourceExtractUUID,
+            sourceAtomUUID: sourceUUID,
+            proposedSection: proposedSection,
+            sessionUUID: sessionUUID
+        )
+    }
+}
+
+extension IncubatingConcept {
+    init(row: Seedling) {
+        let status: Status
+        switch row.status {
+        case .growing: status = .incubating
+        case .developed: status = .developed
+        case .folded: status = .dismissed
+        }
+        self.init(
+            conceptKey: row.conceptKey,
+            name: row.name,
+            aliases: row.aliases,
+            parentConceptName: row.parentConceptName,
+            relatedConceptNames: row.relatedConceptNames,
+            stagedItems: row.thoughts.map(StagedConceptItem.init(thought:)),
+            status: status,
+            mergeTargetConnectionUUID: row.mergeTargetConnectionUUID,
+            developedConnectionUUID: row.developedConnectionUUID,
+            pinnedAt: row.pinnedAt,
+            createdAt: row.createdAt,
+            lastTouchedAt: row.lastTouchedAt
+        )
+    }
+}
+
+extension Seedling {
+    /// Write every dive-owned field from the view model onto the row.
+    mutating func apply(_ concept: IncubatingConcept) {
+        conceptKey = concept.conceptKey
+        name = concept.name
+        setAliases(concept.aliases)
+        parentConceptName = concept.parentConceptName
+        setRelatedConceptNames(concept.relatedConceptNames)
+        setThoughts(concept.stagedItems.map(\.asThought))
+        switch concept.status {
+        case .incubating: status = .growing
+        case .developed: status = .developed
+        case .dismissed: status = .folded
+        }
+        pinnedAt = concept.pinnedAt
+        mergeTargetConnectionUUID = concept.mergeTargetConnectionUUID
+        developedConnectionUUID = concept.developedConnectionUUID
+        // setThoughts stamps "now" — the concept's own recency wins.
+        lastTouchedAt = concept.lastTouchedAt
+    }
+
+    static func fromIncubating(_ concept: IncubatingConcept, scopeDeepDiveUUID: String) -> Seedling {
+        var row = Seedling.new(name: concept.name, scopeDeepDiveUUID: scopeDeepDiveUUID)
+        row.apply(concept)
+        row.createdAt = concept.createdAt
+        return row
+    }
+}
+
+// MARK: - Service (scoped rows on the seedlings store, serialized)
+
+/// The single writer for a Deep Dive's seedbed rows. All mutations chain
+/// behind the previous one — seedbed updates are read-modify-write across
+/// several rows, and two in-flight batches must never clobber each other's
+/// fetch. Legacy beds (pre-unification `DeepDiveStructured.conceptSeedbed`)
+/// migrate lazily on first touch and in bulk at launch.
 @MainActor
 final class ConceptSeedbedService {
     static let shared = ConceptSeedbedService()
@@ -309,20 +404,18 @@ final class ConceptSeedbedService {
     func developSeedling(deepDiveUUID: String, conceptKey: String) async -> String? {
         var opened: String?
         await enqueue {
-            guard let deepDive = try? await AtomRepository.shared.fetch(uuid: deepDiveUUID) else { return }
-            var structured = deepDive.deepDiveStructured ?? DeepDiveStructured()
-            guard let idx = structured.conceptSeedbed.firstIndex(where: { $0.conceptKey == conceptKey }),
-                  structured.conceptSeedbed[idx].status != .dismissed else { return }
+            let rows = await Self.loadScoped(deepDiveUUID: deepDiveUUID)
+            guard let row = rows.first(where: { $0.conceptKey == conceptKey }),
+                  row.status != .folded else { return }
 
-            let seedling = structured.conceptSeedbed[idx]
             let connectionUUID: String
-            if let existing = seedling.developedConnectionUUID ?? seedling.mergeTargetConnectionUUID {
+            if let existing = row.developedConnectionUUID ?? row.mergeTargetConnectionUUID {
                 connectionUUID = existing
             } else {
                 // The connection→dive backlink is what loadLinkTargets reads to
                 // resolve siblings for inline mention links — pages born here
                 // must carry it, like crystallization-born pages always did.
-                let atom = Atom.new(type: .connection, title: seedling.name, body: nil, metadata: nil)
+                let atom = Atom.new(type: .connection, title: row.name, body: nil, metadata: nil)
                     .addingLink(AtomLink(
                         type: AtomLinkType.deepDiveConnection.rawValue,
                         uuid: deepDiveUUID,
@@ -332,26 +425,28 @@ final class ConceptSeedbedService {
                 connectionUUID = created.uuid
             }
 
-            structured.conceptSeedbed[idx].status = .developed
-            structured.conceptSeedbed[idx].developedConnectionUUID = connectionUUID
-            structured.conceptSeedbed[idx].lastTouchedAt = ISO8601.string(from: Date())
-
-            var copy = deepDive.withStructured(structured)
-            var links = copy.linksList
-            let link = AtomLink(
-                type: AtomLinkType.deepDiveConnection.rawValue,
-                uuid: connectionUUID,
-                entityType: AtomType.connection.rawValue
-            )
-            if !links.contains(where: { $0.type == link.type && $0.uuid == link.uuid }) {
-                links.append(link)
-                copy = copy.withLinks(links)
+            // NB: dive develops never consume items — pending material
+            // surfaces on the page's evidence rail as "new since last visit"
+            // (never SeedlingRepository.markDeveloped, which consumes).
+            _ = try? await SeedlingRepository.shared.mutate(uuid: row.uuid) { seedling in
+                seedling.status = .developed
+                seedling.developedConnectionUUID = connectionUUID
+                seedling.lastTouchedAt = ISO8601.string(from: Date())
+                return true
             }
-            do {
-                _ = try await AtomRepository.shared.update(copy)
-            } catch {
-                print("[ConceptSeedbedService] develop save failed: \(error)")
-                return
+
+            // The dive atom still carries the scoping link to the new page.
+            if let deepDive = try? await AtomRepository.shared.fetch(uuid: deepDiveUUID) {
+                var links = deepDive.linksList
+                let link = AtomLink(
+                    type: AtomLinkType.deepDiveConnection.rawValue,
+                    uuid: connectionUUID,
+                    entityType: AtomType.connection.rawValue
+                )
+                if !links.contains(where: { $0.type == link.type && $0.uuid == link.uuid }) {
+                    links.append(link)
+                    _ = try? await AtomRepository.shared.update(deepDive.withLinks(links))
+                }
             }
             NotificationCenter.default.post(
                 name: CosmoNotification.Inquiry.seedbedChanged,
@@ -369,20 +464,24 @@ final class ConceptSeedbedService {
     /// seedling to incubating so its mass keeps ripening.
     func abandonEmptyDevelopment(deepDiveUUID: String, conceptKey: String) async {
         await enqueue {
-            guard let deepDive = try? await AtomRepository.shared.fetch(uuid: deepDiveUUID) else { return }
-            var structured = deepDive.deepDiveStructured ?? DeepDiveStructured()
-            guard let idx = structured.conceptSeedbed.firstIndex(where: { $0.conceptKey == conceptKey }),
-                  structured.conceptSeedbed[idx].status == .developed,
-                  structured.conceptSeedbed[idx].mergeTargetConnectionUUID == nil,
-                  let connectionUUID = structured.conceptSeedbed[idx].developedConnectionUUID else { return }
-            structured.conceptSeedbed[idx].status = .incubating
-            structured.conceptSeedbed[idx].developedConnectionUUID = nil
-            var copy = deepDive.withStructured(structured)
-            copy = copy.withLinks(copy.linksList.filter {
-                !($0.type == AtomLinkType.deepDiveConnection.rawValue && $0.uuid == connectionUUID)
-            })
+            let rows = await Self.loadScoped(deepDiveUUID: deepDiveUUID)
+            guard let row = rows.first(where: { $0.conceptKey == conceptKey }),
+                  row.status == .developed,
+                  row.mergeTargetConnectionUUID == nil,
+                  let connectionUUID = row.developedConnectionUUID else { return }
+
+            _ = try? await SeedlingRepository.shared.mutate(uuid: row.uuid) { seedling in
+                seedling.status = .growing
+                seedling.developedConnectionUUID = nil
+                return true
+            }
             do {
-                _ = try await AtomRepository.shared.update(copy)
+                if let deepDive = try? await AtomRepository.shared.fetch(uuid: deepDiveUUID) {
+                    let links = deepDive.linksList.filter {
+                        !($0.type == AtomLinkType.deepDiveConnection.rawValue && $0.uuid == connectionUUID)
+                    }
+                    _ = try await AtomRepository.shared.update(deepDive.withLinks(links))
+                }
                 try await AtomRepository.shared.delete(uuid: connectionUUID)
             } catch {
                 print("[ConceptSeedbedService] abandon failed: \(error)")
@@ -414,6 +513,51 @@ final class ConceptSeedbedService {
         }
     }
 
+    // MARK: - Read accessor (the one way every surface sees a dive's seedbed)
+
+    /// The dive's seedbed as the Study surfaces know it. Serialized with the
+    /// write chain so a read never interleaves a lazy migration with a batch.
+    func seedbed(deepDiveUUID: String) async -> [IncubatingConcept] {
+        var out: [IncubatingConcept] = []
+        await enqueue {
+            out = await Self.loadScoped(deepDiveUUID: deepDiveUUID).map(IncubatingConcept.init(row:))
+        }
+        return out
+    }
+
+    // MARK: - Launch migration (bulk; the lazy path covers stragglers)
+
+    /// One-shot: move every dive's legacy `conceptSeedbed` onto the seedlings
+    /// store so cross-dive collisions see all mass without each dive needing
+    /// to be opened first. app_flags-gated (survives UserDefaults resets); a
+    /// dive atom arriving from the cloud later still migrates lazily on
+    /// first touch.
+    func migrateAllLegacySeedbeds() {
+        Task { @MainActor in
+            let flagKey = "seedbed_unification_v1"
+            let alreadyRan = (try? await CosmoDatabase.shared.asyncRead { db in
+                try Row.fetchOne(db, sql: "SELECT value FROM app_flags WHERE key = ?", arguments: [flagKey]) != nil
+            }) ?? false
+            guard !alreadyRan else { return }
+
+            let dives = ((try? await AtomRepository.shared.fetchAll(type: .deepDive)) ?? [])
+                .filter { !$0.isDeleted }
+            for dive in dives {
+                // loadScoped migrates any legacy bed as a side effect.
+                await self.enqueue {
+                    _ = await Self.loadScoped(deepDiveUUID: dive.uuid)
+                }
+            }
+            try? await CosmoDatabase.shared.asyncWrite { db in
+                try db.execute(
+                    sql: "INSERT OR REPLACE INTO app_flags (key, value, updated_at) VALUES (?, '1', ?)",
+                    arguments: [flagKey, ISO8601.string(from: Date())]
+                )
+            }
+            print("✅ [ConceptSeedbedService] seedbed unification pass complete (\(dives.count) dives checked)")
+        }
+    }
+
     // MARK: - Internals
 
     private func enqueue(_ operation: @escaping @MainActor () async -> Void) async {
@@ -426,28 +570,81 @@ final class ConceptSeedbedService {
         await task.value
     }
 
-    /// Fetch fresh → mutate → save. The transform returns (newSeedbed,
-    /// changed, ripePayload); nothing is written when unchanged.
+    /// The scoped rows for one dive — lazily migrating a legacy bed the first
+    /// time it's touched. Only ever called from inside an enqueued operation,
+    /// so migration and batches never interleave.
+    private static func loadScoped(deepDiveUUID: String) async -> [Seedling] {
+        let rows = (try? await SeedlingRepository.shared.fetchScoped(deepDiveUUID: deepDiveUUID)) ?? []
+        if !rows.isEmpty { return rows }
+        return await migrateLegacyBed(deepDiveUUID: deepDiveUUID)
+    }
+
+    /// Move a legacy `DeepDiveStructured.conceptSeedbed` onto scoped rows,
+    /// preserving every field (item ids, extract/session provenance, pins,
+    /// merge targets, timestamps), then clear the legacy field so an old
+    /// build can't resurrect stale mass.
+    private static func migrateLegacyBed(deepDiveUUID: String) async -> [Seedling] {
+        guard let dive = try? await AtomRepository.shared.fetch(uuid: deepDiveUUID),
+              var structured = dive.deepDiveStructured,
+              !structured.conceptSeedbed.isEmpty else { return [] }
+
+        var created: [Seedling] = []
+        for concept in structured.conceptSeedbed {
+            let row = Seedling.fromIncubating(concept, scopeDeepDiveUUID: deepDiveUUID)
+            if let saved = try? await SeedlingRepository.shared.create(row) {
+                created.append(saved)
+            }
+        }
+        // Clear only when every seedling landed — a partial write keeps the
+        // legacy bed so the next touch retries (create dedup is by conceptKey
+        // upsert in reconcile, and fetchScoped short-circuits once non-empty).
+        if created.count == structured.conceptSeedbed.count {
+            structured.conceptSeedbed = []
+            _ = try? await AtomRepository.shared.update(dive.withStructured(structured))
+            print("[ConceptSeedbedService] migrated \(created.count) seedlings onto the store for \(dive.title ?? deepDiveUUID)")
+        }
+        return created
+    }
+
+    /// Fetch fresh → transform the dive-facing view → reconcile back onto
+    /// rows. The transform returns (newSeedbed, changed, ripePayload);
+    /// nothing is written when unchanged. Folds become row soft-deletes.
     private static func mutate(
         deepDiveUUID: String,
         _ transform: @MainActor ([IncubatingConcept]) -> ([IncubatingConcept], Bool, [IncubatingConcept])
     ) async -> [IncubatingConcept] {
-        guard let deepDive = try? await AtomRepository.shared.fetch(uuid: deepDiveUUID) else { return [] }
-        var structured = deepDive.deepDiveStructured ?? DeepDiveStructured()
-        let (newSeedbed, changed, ripe) = transform(structured.conceptSeedbed)
+        let rows = await loadScoped(deepDiveUUID: deepDiveUUID)
+        let current = rows.map(IncubatingConcept.init(row:))
+        let (newSeedbed, changed, ripe) = transform(current)
         guard changed else { return ripe }
-        structured.conceptSeedbed = newSeedbed
-        do {
-            _ = try await AtomRepository.shared.update(deepDive.withStructured(structured))
-            NotificationCenter.default.post(
-                name: CosmoNotification.Inquiry.seedbedChanged,
-                object: nil,
-                userInfo: ["deepDiveUUID": deepDiveUUID]
-            )
-        } catch {
-            print("[ConceptSeedbedService] seedbed save failed: \(error)")
-            return []
+
+        let rowsByKey = Dictionary(rows.map { ($0.conceptKey, $0) }, uniquingKeysWith: { first, _ in first })
+        var survivingKeys = Set<String>()
+        for concept in newSeedbed {
+            survivingKeys.insert(concept.conceptKey)
+            if let existing = rowsByKey[concept.conceptKey] {
+                guard IncubatingConcept(row: existing) != concept else { continue }
+                _ = try? await SeedlingRepository.shared.mutate(uuid: existing.uuid) { row in
+                    row.apply(concept)
+                    return true
+                }
+            } else {
+                _ = try? await SeedlingRepository.shared.create(
+                    Seedling.fromIncubating(concept, scopeDeepDiveUUID: deepDiveUUID)
+                )
+            }
         }
+        // Rows whose key vanished from the transform result were folded into
+        // a survivor — their mass already lives there.
+        for row in rows where !survivingKeys.contains(row.conceptKey) {
+            try? await SeedlingRepository.shared.delete(uuid: row.uuid)
+        }
+
+        NotificationCenter.default.post(
+            name: CosmoNotification.Inquiry.seedbedChanged,
+            object: nil,
+            userInfo: ["deepDiveUUID": deepDiveUUID]
+        )
         return ripe
     }
 }

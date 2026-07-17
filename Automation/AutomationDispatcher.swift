@@ -75,7 +75,7 @@ class AutomationDispatcher: ObservableObject {
 
     func loadRuleCache() async {
         do {
-            guard let db = CosmoDatabase.shared.dbQueue else { return }
+            guard let db = CosmoDatabase.shared.dbPool else { return }
 
             let rules = try await db.read { db in
                 try AutomationRule
@@ -504,7 +504,7 @@ class AutomationDispatcher: ObservableObject {
 
     private func updateRuleStats(_ rule: AutomationRule) async {
         do {
-            guard let db = CosmoDatabase.shared.dbQueue else { return }
+            guard let db = CosmoDatabase.shared.dbPool else { return }
             let now = ISO8601.string(from: Date())
 
             try await db.write { db in
@@ -583,7 +583,7 @@ extension AutomationDispatcher {
     /// Create a new automation rule and persist it
     @discardableResult
     func createRule(_ rule: AutomationRule) async throws -> AutomationRule {
-        guard let db = CosmoDatabase.shared.dbQueue else {
+        guard let db = CosmoDatabase.shared.dbPool else {
             throw AutomationError.databaseNotReady
         }
 
@@ -610,7 +610,7 @@ extension AutomationDispatcher {
 
     /// Update an existing rule
     func updateRule(_ rule: AutomationRule) async throws {
-        guard let db = CosmoDatabase.shared.dbQueue else {
+        guard let db = CosmoDatabase.shared.dbPool else {
             throw AutomationError.databaseNotReady
         }
 
@@ -623,7 +623,7 @@ extension AutomationDispatcher {
 
     /// Toggle a rule's enabled state
     func toggleRule(uuid: String) async throws {
-        guard let db = CosmoDatabase.shared.dbQueue else {
+        guard let db = CosmoDatabase.shared.dbPool else {
             throw AutomationError.databaseNotReady
         }
 
@@ -640,7 +640,7 @@ extension AutomationDispatcher {
 
     /// Delete a rule
     func deleteRule(uuid: String) async throws {
-        guard let db = CosmoDatabase.shared.dbQueue else {
+        guard let db = CosmoDatabase.shared.dbPool else {
             throw AutomationError.databaseNotReady
         }
 
@@ -653,7 +653,7 @@ extension AutomationDispatcher {
 
     /// Fetch all rules
     func fetchAllRules() async throws -> [AutomationRule] {
-        guard let db = CosmoDatabase.shared.dbQueue else {
+        guard let db = CosmoDatabase.shared.dbPool else {
             throw AutomationError.databaseNotReady
         }
 

@@ -232,7 +232,11 @@ final class InboxDropIngestService {
         let extracted = await extractText(from: data, type: type, kind: kind)
 
         let title = (filename as NSString).deletingPathExtension
-        let rawText = extracted.flatMap { $0.isEmpty ? nil : $0 } ?? title
+        // Pictures attach as pictures: their OCR rides the attachment row for
+        // search, never as the capture's text — transcription belongs to the
+        // scan-pages pipeline alone.
+        let isPicture = kind == .image || kind == .screenshot
+        let rawText = isPicture ? title : (extracted.flatMap { $0.isEmpty ? nil : $0 } ?? title)
         let outcome = await ingestText(
             rawText: rawText, title: title,
             dropSessionId: dropSessionId, capturedFrom: capturedFrom, attachmentUUIDs: [attachmentId]

@@ -299,3 +299,106 @@ final class ConceptSeedbedTests: XCTestCase {
         XCTAssertEqual(decoded.conceptSeedbed.first?.pendingItems.count, 1)
     }
 }
+
+// MARK: - Unified-store adapters (July 2026)
+
+/// The dive seedbed's storage moved onto the global `seedlings` table; these
+/// lock the boundary: a round trip through the row loses NOTHING — item ids,
+/// extract/session provenance, section hints, pins, merge targets, statuses.
+extension ConceptSeedbedTests {
+
+    private func richSeedling() -> IncubatingConcept {
+        var concept = IncubatingConcept(
+            conceptKey: "vagal tone",
+            name: "Vagal tone",
+            aliases: ["Vagus tone"],
+            parentConceptName: "Breathwork",
+            relatedConceptNames: ["HRV"],
+            stagedItems: [
+                StagedConceptItem(
+                    id: "item-1",
+                    sourceExtractUUID: "e-1",
+                    rawSnippet: "Slow exhales raise vagal tone",
+                    proposedSection: ConnectionSectionType.evidence.rawValue,
+                    sourceUUID: "source-9",
+                    sessionUUID: "s-1",
+                    capturedAt: "2026-07-01T09:00:00Z"
+                ),
+                StagedConceptItem(
+                    id: "item-2",
+                    sourceExtractUUID: "e-2",
+                    rawSnippet: "HRV rises with vagal tone",
+                    sessionUUID: "s-2",
+                    capturedAt: "2026-07-02T09:00:00Z",
+                    consumedAt: "2026-07-03T09:00:00Z"
+                ),
+            ],
+            status: .incubating,
+            mergeTargetConnectionUUID: "conn-3",
+            pinnedAt: "2026-07-04T09:00:00Z",
+            createdAt: "2026-07-01T08:00:00Z",
+            lastTouchedAt: "2026-07-02T09:00:00Z"
+        )
+        concept.developedConnectionUUID = nil
+        return concept
+    }
+
+    func testIncubatingConceptRoundTripsThroughSeedlingRow() {
+        let original = richSeedling()
+        let row = Seedling.fromIncubating(original, scopeDeepDiveUUID: "dive-1")
+        XCTAssertEqual(row.scopeDeepDiveUUID, "dive-1")
+        XCTAssertEqual(row.status, .growing)
+        XCTAssertEqual(row.createdAt, original.createdAt)
+
+        let back = IncubatingConcept(row: row)
+        XCTAssertEqual(back, original)
+    }
+
+    func testStatusMappingCoversAllCases() {
+        var concept = richSeedling()
+
+        concept.status = .developed
+        concept.developedConnectionUUID = "conn-7"
+        var row = Seedling.fromIncubating(concept, scopeDeepDiveUUID: "dive-1")
+        XCTAssertEqual(row.status, .developed)
+        XCTAssertEqual(IncubatingConcept(row: row).status, .developed)
+        XCTAssertEqual(IncubatingConcept(row: row).developedConnectionUUID, "conn-7")
+
+        concept.status = .dismissed
+        row = Seedling.fromIncubating(concept, scopeDeepDiveUUID: "dive-1")
+        XCTAssertEqual(row.status, .folded)
+        XCTAssertEqual(IncubatingConcept(row: row).status, .dismissed)
+    }
+
+    func testStudyThoughtCarriesResearchProvenance() {
+        let item = StagedConceptItem(
+            id: "item-1",
+            sourceExtractUUID: "e-1",
+            rawSnippet: "text",
+            proposedSection: "evidence",
+            sourceUUID: "source-9",
+            sessionUUID: "s-1"
+        )
+        let thought = item.asThought
+        XCTAssertEqual(thought.sourceKind, .study)
+        XCTAssertEqual(thought.sourceExtractUUID, "e-1")
+        XCTAssertEqual(thought.sourceAtomUUID, "source-9")
+        XCTAssertEqual(thought.proposedSection, "evidence")
+        XCTAssertEqual(thought.sessionUUID, "s-1")
+        XCTAssertNil(thought.sourceUUID)
+
+        let back = StagedConceptItem(thought: thought)
+        XCTAssertEqual(back, item)
+    }
+
+    func testDiveRipenessSurvivesTheRowRoundTrip() {
+        // Four captures across two sessions is the dive ripeness rule —
+        // sessionUUIDs must survive storage or ripeness silently breaks.
+        let concept = seedling("Vagus nerve", items: [
+            item("e-1", session: "s-0"), item("e-2", session: "s-0"),
+            item("e-3", session: "s-1"), item("e-4", session: "s-1")
+        ])
+        let back = IncubatingConcept(row: .fromIncubating(concept, scopeDeepDiveUUID: "dive-1"))
+        XCTAssertTrue(ConceptRipeness.evaluate(back).isRipe)
+    }
+}

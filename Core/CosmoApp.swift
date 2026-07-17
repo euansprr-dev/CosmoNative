@@ -93,9 +93,18 @@ struct CosmoApp: App {
                 await TelegramBridgeService.shared.start()
             }
 
+            // Readwise mirror: highlights sync in as evidence (never inbox
+            // rows). No-op without a token; defers its first pass internally.
+            ReadwiseService.shared.startAutoSync()
+
             // Inbox hygiene: drain stuck pending captures through the classifier
             // queue and dismiss captures another system already consumed.
             InboxIngestService.shared.reconcileOnLaunch()
+
+            // Seedbed unification: move any legacy Deep Dive seedbeds onto
+            // the seedlings store (one-shot, app_flags-gated; lazy per-dive
+            // migration covers atoms that sync in later).
+            ConceptSeedbedService.shared.migrateAllLegacySeedbeds()
 
             // Recall-index reconciliation: catch atoms that are missing from
             // the semantic index OR stale (content changed since indexing).

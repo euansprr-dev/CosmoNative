@@ -393,7 +393,11 @@ struct CommandKVisualIdentity: Equatable {
         case .research:
             return CommandKVisualIdentity(style: .research, symbolName: "doc.text.magnifyingglass", title: "Research", subtitle: "Source", badge: "SRC")
         case .content:
-            return CommandKVisualIdentity(style: .content, symbolName: "paperplane", title: "Content", subtitle: "Writing", badge: "POST")
+            // The library's kind mark (doc.richtext) — one content identity
+            // everywhere; the paper plane read as "send", not "writing".
+            return CommandKVisualIdentity(style: .content, symbolName: "doc.richtext", title: "Content", subtitle: "Writing", badge: "POST")
+        case .note:
+            return CommandKVisualIdentity(style: .document, symbolName: "doc.text", title: "Note", subtitle: "Page", badge: "NOTE")
         case .connection:
             return CommandKVisualIdentity(style: .connection, symbolName: "point.3.connected.trianglepath.dotted", title: "Concept", subtitle: "Relationship", badge: "LINK")
         case .image:
@@ -445,7 +449,7 @@ enum CommandKActionParser {
         ("!idea:", .createIdea, "Create idea", "lightbulb"),
         ("idea:", .createIdea, "Create idea", "lightbulb"),
         ("research:", .captureResearch, "Capture research", "doc.text.magnifyingglass"),
-        ("content:", .createContent, "Create content", "paperplane"),
+        ("content:", .createContent, "Create content", "doc.richtext"),
         ("thinkspace:", .createThinkspace, "Create Thinkspace", "rectangle.3.group")
     ]
 
@@ -739,7 +743,7 @@ enum CommandKActionParser {
             // grammar (parseScopedIdeaCapture claims it first).
             BareCreationShape(kind: .createIdea, keywords: ["idea"], title: "Create idea", icon: "lightbulb", prefillsBody: false),
             BareCreationShape(kind: .captureInbox, keywords: ["capture", "inbox"], title: "Capture to Inbox", icon: "tray.and.arrow.down.fill", prefillsBody: true),
-            BareCreationShape(kind: .createContent, keywords: ["content"], title: "Create content", icon: "paperplane", prefillsBody: false),
+            BareCreationShape(kind: .createContent, keywords: ["content"], title: "Create content", icon: "doc.richtext", prefillsBody: false),
             BareCreationShape(kind: .captureSwipe, keywords: ["swipe"], title: "Capture swipe", icon: "bolt.fill", prefillsBody: false),
         ]
     }

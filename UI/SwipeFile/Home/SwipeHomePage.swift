@@ -115,10 +115,10 @@ struct SwipeHomePage: View {
             }
         }
         if !newThisWeek.isEmpty {
-            librarySwipeShelf(label: "NEW THIS WEEK", models: newThisWeek)
+            librarySwipeShelf(label: "NEW THIS WEEK", count: newThisWeek.count, models: newThisWeek)
         }
         if !newThisMonth.isEmpty {
-            librarySwipeShelf(label: "NEW THIS MONTH", models: newThisMonth)
+            librarySwipeShelf(label: "NEW THIS MONTH", count: newThisMonth.count, models: newThisMonth)
         }
         boardsShelf
         patternsShelf
@@ -188,22 +188,18 @@ struct SwipeHomePage: View {
         return (items[0], models[0])
     }
 
+    /// Every save in the window belongs on its shelf — a capped shelf silently
+    /// drops the overflow into Everything and the header count lies.
     private var newThisWeek: [SwipeCardModel] {
-        Array(
-            SwipeLibraryDateBucket.lastWeekModels(items: viewModel.visibleItems, models: viewModel.visibleCardModels)
-                .filter { $0.id != heroPick?.1.id }
-                .prefix(12)
-        )
-        .map { $0.poster() }
+        SwipeLibraryDateBucket.lastWeekModels(items: viewModel.visibleItems, models: viewModel.visibleCardModels)
+            .filter { $0.id != heroPick?.1.id }
+            .map { $0.poster().hookless() }
     }
 
     private var newThisMonth: [SwipeCardModel] {
-        Array(
-            SwipeLibraryDateBucket.lastMonthModels(items: viewModel.visibleItems, models: viewModel.visibleCardModels)
-                .filter { $0.id != heroPick?.1.id }
-                .prefix(12)
-        )
-        .map { $0.poster() }
+        SwipeLibraryDateBucket.lastMonthModels(items: viewModel.visibleItems, models: viewModel.visibleCardModels)
+            .filter { $0.id != heroPick?.1.id }
+            .map { $0.poster().hookless() }
     }
 
     private var topOutliers: [SwipeCardModel] {
@@ -310,13 +306,16 @@ struct SwipeHomePage: View {
             order: items.map(\.entityId),
             current: first.entityId
         )
+        // No "commandKTab" tag: this surface is the Swipe Studio, not the ⌘K
+        // palette. Tagging a ⌘K return tab makes MainView's focus-exit observer
+        // re-present Command-K on close, which would pop ⌘K instead of landing
+        // back in the studio.
         NotificationCenter.default.post(
             name: .enterFocusMode,
             object: nil,
             userInfo: [
                 "type": EntityType.research,
-                "id": first.entityId,
-                "commandKTab": "swipeGallery"
+                "id": first.entityId
             ]
         )
     }

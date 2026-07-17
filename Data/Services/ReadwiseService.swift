@@ -1,8 +1,13 @@
 // CosmoOS/Data/Services/ReadwiseService.swift
-// Real Readwise API v2 integration
-// Syncs highlights from books/articles into CosmoOS knowledge graph as .research atoms
+// Real Readwise API v2 integration.
+// Two layers: the Command-K Library browse cache (fetchBooksWithHighlights →
+// ReadwiseBookStore), and the knowledge-graph MIRROR (syncHighlights): one
+// `.research` atom per book with highlights in structured JSON, feeding
+// search, recall, the evidence matcher, and iPhone sync. See
+// READWISE_INTEGRATION_PLAN.md.
 
 import Foundation
+import GRDB
 
 // MARK: - Readwise API Data Models
 
@@ -82,6 +87,9 @@ struct ReadwiseExportHighlight: Codable, Sendable {
     let tags: [ReadwiseTag]?
     let highlightedAt: String?
     let isDiscard: Bool?
+    /// Present when the export is called with includeDeleted=true — the
+    /// mirror prunes these rows.
+    let isDeleted: Bool?
 }
 
 // MARK: - ReadwiseService
@@ -117,8 +125,8 @@ class ReadwiseService: ObservableObject {
         set { UserDefaults.standard.set(newValue, forKey: "readwiseHighlightCount") }
     }
 
-    // Book metadata cache (keyed by book ID)
-    private var bookCache: [Int: ReadwiseBook] = [:]
+    /// Launch + 6-hourly mirror scheduling (startAutoSync).
+    private var autoSyncTask: Task<Void, Never>?
 
     private init() {
         let token = UserDefaults.standard.string(forKey: "readwiseAPIKey")
@@ -187,189 +195,154 @@ class ReadwiseService: ObservableObject {
         isTokenValid = nil
         highlightCount = 0
         lastSyncDate = nil
-        bookCache = [:]
     }
 
-    // MARK: - Sync Highlights
+    // MARK: - Sync Highlights (the book mirror — July 2026)
 
-    /// Full sync: fetches highlights from Readwise and creates .research atoms in GRDB
-    /// Uses incremental sync if lastSyncDate is available
+    /// Mirror sync: one `.research` atom per Readwise book/article, highlights
+    /// in structured JSON (`ReadwiseMirrorReducer` owns the pure mapping).
+    /// Incremental via `updatedAfter` + `includeDeleted`; idempotent (an
+    /// unchanged book writes nothing). The first mirror pass runs FULL and
+    /// consolidates the legacy one-atom-per-highlight rows.
     func syncHighlights() async throws {
         guard let token = apiToken, !token.isEmpty else {
             throw ReadwiseError.noToken
         }
+        _ = token
 
         isSyncing = true
         syncError = nil
+        defer { isSyncing = false }
 
-        defer {
-            Task { @MainActor in
-                self.isSyncing = false
+        let startedAt = Date()
+        let mirrorFlagDone = await Self.readFlag(Self.mirrorFlagKey)
+        // Until the mirror is complete once, every pass is a full export —
+        // consolidating legacy rows against a partial mirror would lose data.
+        let cursor = mirrorFlagDone ? storedLastSyncDate : nil
+
+        let books = try await fetchExportBooks(updatedAfter: cursor, includeDeleted: cursor != nil)
+
+        // Existing mirror snapshot once per pass — upserts key on bookId.
+        var mirrorByBookId: [String: Atom] = [:]
+        for atom in await Self.mirrorAtoms() {
+            if let bookId = atom.readwiseBookId {
+                mirrorByBookId[bookId] = atom
             }
         }
 
-        // First sync books for metadata enrichment
-        try await syncBooks()
+        var booksTouched = 0
+        for book in books {
+            let existing = mirrorByBookId[String(book.userBookId)]
+            let merged = ReadwiseMirrorReducer.mergedStructured(
+                existing: existing?.readwiseStructured,
+                incoming: book
+            )
 
-        // Build initial URL with pagination
-        var urlString = "\(baseURL)highlights/?page_size=1000"
-
-        // Incremental sync: only fetch highlights updated after last sync
-        if let lastSync = storedLastSyncDate {
-            let formatter = ISO8601DateFormatter()
-            formatter.formatOptions = [.withInternetDateTime]
-            let dateStr = formatter.string(from: lastSync)
-            urlString += "&updated__gt=\(dateStr)"
-        }
-
-        var allHighlights: [ReadwiseHighlight] = []
-        var nextURL: String? = urlString
-
-        // Paginate through all results
-        while let currentURL = nextURL {
-            let (highlights, next) = try await fetchHighlightsPage(urlString: currentURL, token: token)
-            allHighlights.append(contentsOf: highlights)
-            nextURL = next
-        }
-
-        // Get existing Readwise IDs to detect duplicates
-        let existingIds = await getExistingReadwiseIds()
-
-        // Create atoms for new highlights
-        var newCount = 0
-        let repo = AtomRepository.shared
-
-        for highlight in allHighlights {
-            let readwiseId = String(highlight.id)
-
-            // Skip duplicates
-            if existingIds.contains(readwiseId) {
+            // Every highlight pruned → the mirror forgets the book.
+            if merged.structured.highlights.isEmpty {
+                if let existing {
+                    try? await AtomRepository.shared.delete(uuid: existing.uuid)
+                    mirrorByBookId.removeValue(forKey: String(book.userBookId))
+                    booksTouched += 1
+                }
                 continue
             }
 
-            // Look up book metadata
-            let book = highlight.bookId.flatMap { bookCache[$0] }
+            let title = ReadwiseMirrorReducer.displayTitle(for: book)
+            let body = ReadwiseMirrorReducer.indexableBody(merged.structured)
+            let overlay = ReadwiseMirrorReducer.metadataOverlay(for: book)
 
-            // Build structured JSON
-            var structuredDict: [String: Any] = [
-                "readwiseId": readwiseId
-            ]
-            if let note = highlight.note, !note.isEmpty {
-                structuredDict["note"] = note
-            }
-            if let bookTitle = book?.title {
-                structuredDict["bookTitle"] = bookTitle
-            }
-            if let author = book?.author {
-                structuredDict["author"] = author
-            }
-            if let category = book?.category {
-                structuredDict["category"] = category
-            }
-            if let highlightedAt = highlight.highlightedAt {
-                structuredDict["highlightedAt"] = highlightedAt
-            }
-            if let sourceUrl = highlight.url ?? book?.sourceUrl {
-                structuredDict["sourceUrl"] = sourceUrl
-            }
-            if let tags = highlight.tags, !tags.isEmpty {
-                structuredDict["tags"] = tags.map { $0.name }
-            }
-
-            let structuredJson = try? JSONSerialization.data(withJSONObject: structuredDict)
-            let structuredString = structuredJson.flatMap { String(data: $0, encoding: .utf8) }
-
-            // Build metadata JSON
-            var metadataDict: [String: Any] = [
-                "source": "readwise",
-                "readwiseId": readwiseId,
-                "researchType": "highlight"
-            ]
-            if let bookId = highlight.bookId {
-                metadataDict["bookId"] = bookId
-            }
-            if let sourceUrl = highlight.url ?? book?.sourceUrl {
-                metadataDict["sourceUrl"] = sourceUrl
-            }
-
-            let metadataJson = try? JSONSerialization.data(withJSONObject: metadataDict)
-            let metadataString = metadataJson.flatMap { String(data: $0, encoding: .utf8) }
-
-            // Compose title from book info
-            let title: String
-            if let bookTitle = book?.title {
-                let authorSuffix = book?.author.map { " — \($0)" } ?? ""
-                title = "\(bookTitle)\(authorSuffix)"
+            if let existing {
+                guard merged.changed || existing.title != title else { continue }
+                let structuredJSON = merged.structured.toJSON()
+                if let updated = try? await AtomRepository.shared.update(uuid: existing.uuid, updates: { atom in
+                    atom.title = title
+                    atom.body = body
+                    atom.structured = structuredJSON
+                    atom = atom.mergingMetadataKeys(overlay)
+                }) {
+                    mirrorByBookId[String(book.userBookId)] = updated
+                    await RecallIndexer.shared.noteAtomChanged(updated)
+                    booksTouched += 1
+                }
             } else {
-                title = "Readwise Highlight"
-            }
-
-            do {
-                try await repo.create(
-                    type: .research,
-                    title: title,
-                    body: highlight.text,
-                    structured: structuredString,
-                    metadata: metadataString
-                )
-                newCount += 1
-            } catch {
-                print("Failed to create atom for Readwise highlight \(highlight.id): \(error)")
+                var atom = Atom.new(type: .research, title: title, body: body)
+                atom.structured = merged.structured.toJSON()
+                atom = atom.mergingMetadataKeys(overlay)
+                if let created = try? await AtomRepository.shared.create(atom) {
+                    mirrorByBookId[String(book.userBookId)] = created
+                    await RecallIndexer.shared.noteAtomChanged(created)
+                    booksTouched += 1
+                }
             }
         }
 
-        // Update sync state
-        let totalCount = existingIds.count + newCount
-        storedLastSyncDate = Date()
-        storedHighlightCount = totalCount
-        lastSyncDate = storedLastSyncDate
-        highlightCount = totalCount
+        if !mirrorFlagDone {
+            await consolidateLegacyHighlightAtoms()
+            await Self.writeFlag(Self.mirrorFlagKey)
+        }
 
-        print("Readwise sync complete: \(newCount) new highlights, \(totalCount) total")
+        // Cursor = the moment this pass STARTED, so highlights updated while
+        // we paged are re-covered next pass instead of silently skipped.
+        storedLastSyncDate = startedAt
+        let mirrored = mirrorByBookId.values.reduce(0) { $0 + ($1.readwiseStructured?.highlights.count ?? 0) }
+        storedHighlightCount = mirrored
+        lastSyncDate = Date()
+        highlightCount = mirrored
+
+        print("Readwise mirror sync complete: \(booksTouched) sources touched, \(mirrored) highlights mirrored")
     }
 
-    // MARK: - Sync Books
-
-    /// Fetch all books from Readwise and cache metadata
-    func syncBooks() async throws {
-        guard let token = apiToken, !token.isEmpty else {
-            throw ReadwiseError.noToken
-        }
-
-        var nextURL: String? = "\(baseURL)books/?page_size=1000"
-
-        while let currentURL = nextURL {
-            guard let url = URL(string: currentURL) else { break }
-
-            var request = URLRequest(url: url)
-            request.httpMethod = "GET"
-            request.setValue("Token \(token)", forHTTPHeaderField: "Authorization")
-            request.timeoutInterval = 30
-
-            let (data, httpResponse) = try await withNetworkRetry(
-                maxAttempts: 3,
-                baseBackoff: 2.0,
-                label: "ReadwiseBooks"
-            ) {
-                try await URLSession.shared.data(for: request)
-            }
-
-            guard httpResponse.statusCode == 200 else {
-                if httpResponse.statusCode == 401 {
-                    throw ReadwiseError.unauthorized
+    /// Launch + 6-hourly mirror passes. No-op without a token; the first
+    /// pass defers so it never competes with interactive startup.
+    func startAutoSync() {
+        guard autoSyncTask == nil else { return }
+        autoSyncTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(45))
+            while !Task.isCancelled {
+                if self?.isConnected == true, self?.isSyncing == false {
+                    try? await self?.syncHighlights()
                 }
-                throw ReadwiseError.httpError(httpResponse.statusCode)
+                try? await Task.sleep(for: .seconds(6 * 3600))
             }
+        }
+    }
 
-            let decoder = JSONDecoder()
-            decoder.keyDecodingStrategy = .convertFromSnakeCase
-            let page = try decoder.decode(ReadwisePaginatedResponse<ReadwiseBook>.self, from: data)
+    /// The legacy pre-mirror shape: one `.research` atom per highlight
+    /// (metadata.source == "readwise"). Their content now lives inside the
+    /// complete book mirror — soft-delete them so the library and search
+    /// stop double-serving every quote. Runs once, only after a FULL pass.
+    private func consolidateLegacyHighlightAtoms() async {
+        let legacy = ((try? await AtomRepository.shared.fetchAll(type: .research)) ?? [])
+            .filter { $0.isReadwiseContent && !$0.isReadwiseMirror && !$0.isDeleted }
+        guard !legacy.isEmpty else { return }
+        for atom in legacy {
+            try? await AtomRepository.shared.delete(uuid: atom.uuid)
+        }
+        print("Readwise mirror: consolidated \(legacy.count) legacy per-highlight atoms")
+    }
 
-            for book in page.results {
-                bookCache[book.id] = book
-            }
+    // MARK: - Mirror queries + flags
 
-            nextURL = page.next
+    static func mirrorAtoms() async -> [Atom] {
+        ((try? await AtomRepository.shared.fetchAll(type: .research)) ?? [])
+            .filter { $0.isReadwiseMirror && !$0.isDeleted }
+    }
+
+    private static let mirrorFlagKey = "readwise_book_mirror_v1"
+
+    private static func readFlag(_ key: String) async -> Bool {
+        ((try? await CosmoDatabase.shared.asyncRead { db in
+            try Row.fetchOne(db, sql: "SELECT value FROM app_flags WHERE key = ?", arguments: [key]) != nil
+        }) ?? false)
+    }
+
+    private static func writeFlag(_ key: String) async {
+        try? await CosmoDatabase.shared.asyncWrite { db in
+            try db.execute(
+                sql: "INSERT OR REPLACE INTO app_flags (key, value, updated_at) VALUES (?, '1', ?)",
+                arguments: [key, ISO8601.string(from: Date())]
+            )
         }
     }
 
@@ -408,9 +381,10 @@ class ReadwiseService: ObservableObject {
 
     // MARK: - Export API (Books with Highlights)
 
-    /// Fetch all books with nested highlights via the Export API
-    /// Returns ReadwiseLibraryBook models ready for the Library tab UI
-    func fetchBooksWithHighlights(updatedAfter: Date? = nil) async throws -> [ReadwiseLibraryBook] {
+    /// Raw export pages — the shared fetch behind both the browse cache and
+    /// the mirror sync. `includeDeleted` only matters on incremental passes
+    /// (the mirror prunes what Readwise removed).
+    func fetchExportBooks(updatedAfter: Date? = nil, includeDeleted: Bool = false) async throws -> [ReadwiseExportBook] {
         guard let token = apiToken, !token.isEmpty else {
             throw ReadwiseError.noToken
         }
@@ -432,6 +406,9 @@ class ReadwiseService: ObservableObject {
                 let formatter = ISO8601DateFormatter()
                 formatter.formatOptions = [.withInternetDateTime]
                 queryParams.append("updatedAfter=\(formatter.string(from: updatedAfter))")
+            }
+            if includeDeleted {
+                queryParams.append("includeDeleted=true")
             }
             if !queryParams.isEmpty {
                 urlString += "?" + queryParams.joined(separator: "&")
@@ -471,6 +448,14 @@ class ReadwiseService: ObservableObject {
             cursor = page.nextPageCursor
         }
 
+        return allExportBooks
+    }
+
+    /// Fetch all books with nested highlights via the Export API
+    /// Returns ReadwiseLibraryBook models ready for the Library tab UI
+    func fetchBooksWithHighlights(updatedAfter: Date? = nil) async throws -> [ReadwiseLibraryBook] {
+        let allExportBooks = try await fetchExportBooks(updatedAfter: updatedAfter)
+
         // Convert to UI-ready models
         return allExportBooks.compactMap { exportBook -> ReadwiseLibraryBook? in
             let category = ReadwiseCategory(rawValue: exportBook.category ?? "books") ?? .books
@@ -505,71 +490,6 @@ class ReadwiseService: ObservableObject {
         }
     }
 
-    // MARK: - Private Helpers
-
-    /// Fetch a single page of highlights
-    private func fetchHighlightsPage(urlString: String, token: String) async throws -> ([ReadwiseHighlight], String?) {
-        guard let url = URL(string: urlString) else {
-            throw ReadwiseError.invalidURL
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("Token \(token)", forHTTPHeaderField: "Authorization")
-        request.timeoutInterval = 30
-
-        let (data, httpResponse) = try await withNetworkRetry(
-            maxAttempts: 3,
-            baseBackoff: 2.0,
-            label: "ReadwiseHighlights"
-        ) {
-            try await URLSession.shared.data(for: request)
-        }
-
-        guard httpResponse.statusCode == 200 else {
-            if httpResponse.statusCode == 401 {
-                isConnected = false
-                isTokenValid = false
-                throw ReadwiseError.unauthorized
-            }
-            throw ReadwiseError.httpError(httpResponse.statusCode)
-        }
-
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
-        let page = try decoder.decode(ReadwisePaginatedResponse<ReadwiseHighlight>.self, from: data)
-
-        return (page.results, page.next)
-    }
-
-    /// Get all existing Readwise highlight IDs from GRDB to avoid duplicates
-    private func getExistingReadwiseIds() async -> Set<String> {
-        do {
-            let atoms = try await AtomRepository.shared.search(
-                metadataKey: "source",
-                value: "readwise",
-                type: .research
-            )
-            var ids = Set<String>()
-            for atom in atoms {
-                if let metadataStr = atom.metadata,
-                   let data = metadataStr.data(using: .utf8),
-                   let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let readwiseId = dict["readwiseId"] as? String {
-                    ids.insert(readwiseId)
-                } else if let metadataStr = atom.metadata,
-                          let data = metadataStr.data(using: .utf8),
-                          let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                          let readwiseId = dict["readwiseId"] as? Int {
-                    ids.insert(String(readwiseId))
-                }
-            }
-            return ids
-        } catch {
-            print("Failed to fetch existing Readwise IDs: \(error)")
-            return []
-        }
-    }
 }
 
 // MARK: - Errors

@@ -174,11 +174,22 @@ enum CortexDetailSubject {
         }
     }
 
-    var preferredPreviewHeight: CGFloat {
+    /// True when the selection is known to be a swipe before the atom fetch
+    /// lands — recents and unified results carry the flag so the pane can
+    /// commit to swipe-stage geometry on the first frame (no 220→380 reflow,
+    /// no cropped-fill thumbnail flash while the atom hydrates).
+    var isKnownSwipe: Bool {
         switch self {
-        case .swipe: return 380
-        default: return 220
+        case .swipe: return true
+        case .recent(let item): return item.isSwipeFile
+        case .result(let result): return result.source == .swipes
+        default: return false
         }
+    }
+
+    var preferredPreviewHeight: CGFloat {
+        if isKnownSwipe { return 380 }
+        return 220
     }
 }
 
@@ -203,7 +214,7 @@ struct CortexDetailPane: View {
     var viewModel: CommandKViewModel? = nil
 
     @State private var atom: Atom?
-    @State private var detailScrollMetrics = CortexScrollMetrics()
+    @State private var detailScrollMetrics = CortexScrollMetricsStore()
 
     var body: some View {
         Group {
@@ -328,12 +339,12 @@ struct CortexDetailPane: View {
                 .padding(DS.space24)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(CortexScrollViewIntrospector { metrics in
-                detailScrollMetrics = metrics
+            .background(CortexScrollViewIntrospector { [detailScrollMetrics] metrics in
+                detailScrollMetrics.publish(metrics)
             })
         }
         .scrollIndicators(.hidden)
-        .cortexThinScrollbar(metrics: detailScrollMetrics)
+        .cortexThinScrollbar(store: detailScrollMetrics)
     }
 
     private var previewHeight: CGFloat {
@@ -394,7 +405,15 @@ private struct CortexPreviewBlock: View {
                     identity: CommandKVisualIdentity.result(result)
                 )
             default:
-                genericPreview
+                if subject.isKnownSwipe {
+                    // The atom is still hydrating but the selection is known
+                    // to be a swipe: render the swipe stage geometry now so
+                    // the resolved preview swaps in without a reflow (the
+                    // cropped-fill generic thumbnail at 220pt was the flash).
+                    CortexSwipeStageLoading(thumbnailURLString: subject.thumbnailURL)
+                } else {
+                    genericPreview
+                }
             }
         }
     }
@@ -550,6 +569,63 @@ private struct CortexTaskDomainPreview: View {
         .padding(.horizontal, DS.space24)
         .padding(.vertical, DS.space20)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+/// First-frame stand-in for `CortexSwipeDomainPreview` while the atom fetch
+/// is in flight: identical chrome (toolbar row, contained stage, caption
+/// line) so the resolved preview replaces it without any layout shift. The
+/// thumbnail is keyed exactly like the resolved single-image media
+/// (`thumb-<url>`), so for non-carousel swipes the image never reloads.
+private struct CortexSwipeStageLoading: View {
+    let thumbnailURLString: String?
+
+    private var thumbnailURL: URL? {
+        thumbnailURLString.flatMap { $0.isEmpty ? nil : URL(string: $0) }
+    }
+
+    var body: some View {
+        VStack(spacing: DS.space10) {
+            HStack(spacing: DS.space6) {
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("Swipe")
+                    .font(DS.smallCaps)
+                Spacer(minLength: DS.space8)
+            }
+            .foregroundStyle(DS.giltMuted)
+
+            ZStack {
+                RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
+                    .fill(CommandKPreviewPaper.stageFill)
+
+                Group {
+                    if let thumbnailURL {
+                        CortexSwipeImageSurface(
+                            url: thumbnailURL,
+                            stableKey: "thumb-\(thumbnailURL.absoluteString)"
+                        )
+                    } else {
+                        Color.clear
+                    }
+                }
+                .aspectRatio(CortexSwipePreviewMedia.Style.square.aspectRatio, contentMode: .fit)
+                .frame(maxWidth: CortexSwipePreviewMedia.Style.square.maxWidth)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.vertical, DS.space4)
+            }
+            .clipShape(.rect(cornerRadius: DS.radiusMedium))
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
+                    .strokeBorder(CommandKPreviewPaper.hairline, lineWidth: 0.5)
+            )
+
+            Text(" ")
+                .font(DS.caption)
+        }
+        .padding(DS.space12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(CommandKPreviewPaper.panelFill)
     }
 }
 
@@ -872,6 +948,16 @@ private struct CortexSwipePreviewMedia: Identifiable, Equatable {
             return [media]
         }
 
+        // Atom still hydrating for a carousel: when slide 0 is already in the
+        // local carousel cache, render it under its real stable key — the
+        // resolved carousel's first slide is then pixel-identical, so the
+        // atom arriving causes no image swap.
+        if atom == nil, style == .square, isCarousel(item: item, richContent: richContent),
+           let shortcode,
+           let cached = InstagramCarouselImageCache.cachedFirstSlide(shortcode: shortcode) {
+            return [Self(id: cached.key, kind: .image(cached.url), style: .square)]
+        }
+
         if let thumbnailURL = thumbnailURL(for: item, atom: atom, richContent: richContent) {
             return [Self(id: "thumb-\(thumbnailURL.absoluteString)", kind: .image(thumbnailURL), style: style)]
         }
@@ -889,7 +975,10 @@ private struct CortexSwipePreviewMedia: Identifiable, Equatable {
         let thumbnailURL = thumbnailURL(for: item, atom: atom, richContent: richContent)
         guard playableURL != nil || thumbnailURL != nil else { return nil }
 
-        let id = playableURL?.absoluteString ?? thumbnailURL?.absoluteString ?? item.id
+        // Key on the thumbnail, which is identical before and after the atom
+        // hydrates — keying on the playable URL made the poster image reload
+        // (new CachedAsyncImage stable key) the moment richContent arrived.
+        let id = thumbnailURL?.absoluteString ?? playableURL?.absoluteString ?? item.id
         return Self(
             id: "video-\(id)",
             kind: .video(url: playableURL, thumbnailURL: thumbnailURL),

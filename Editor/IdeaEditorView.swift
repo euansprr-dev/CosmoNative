@@ -288,7 +288,7 @@ struct IdeaEditorView: View {
                 .fetchOne(db)
         }
 
-        observationCancellable = observation.publisher(in: database.dbQueue)
+        observationCancellable = observation.publisher(in: database.dbPool)
             .receive(on: DispatchQueue.main)
             .sink(
                 receiveCompletion: { completion in

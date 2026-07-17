@@ -76,16 +76,26 @@ struct SlideTextEditor: NSViewRepresentable {
 
         context.coordinator.textView = textView
         context.coordinator.lastSyncedText = text
+        context.coordinator.lastAppliedColor = textColor
 
         return scrollView
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         let textView = scrollView.documentView as! NSTextView
-        let editorTextColor = NSColor(textColor)
-        textView.textColor = editorTextColor
-        textView.insertionPointColor = editorTextColor
-        if textView.string != text {
+        // Color churn guard: NSColor(Color) conversion + property sets on
+        // every SwiftUI update are wasted work when nothing changed (there is
+        // one editor per slide — a transcript re-eval touches all of them).
+        if context.coordinator.lastAppliedColor != textColor {
+            let editorTextColor = NSColor(textColor)
+            textView.textColor = editorTextColor
+            textView.insertionPointColor = editorTextColor
+            context.coordinator.lastAppliedColor = textColor
+        }
+        // Compare against the coordinator's shadow copy — `textView.string`
+        // bridges (copies) the whole document on every access.
+        if context.coordinator.lastSyncedText != text {
+            let editorTextColor = NSColor(textColor)
             let selectedRange = textView.selectedRange()
             let isFirstResponder = textView.window?.firstResponder === textView
             // Apply paragraph spacing via attributed string so it persists through updates
@@ -144,6 +154,7 @@ struct SlideTextEditor: NSViewRepresentable {
         var onNewSlide: () -> Void
         weak var textView: NSTextView?
         var lastSyncedText: String = ""
+        var lastAppliedColor: Color?
 
         init(text: Binding<String>, onNewSlide: @escaping () -> Void) {
             self.text = text

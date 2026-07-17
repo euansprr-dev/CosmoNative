@@ -13,16 +13,65 @@ final class ContentFocusPaneLayoutPolicyTests: XCTestCase {
         )
     }
 
-    func testPaneContextUsesPaneWidthForManuscriptInsteadOfFullWindowRailBudget() {
+    func testPaneImmersiveFillsPaneUsableWidth() {
+        // Immersive (fraction 1) fills the pane's usable width (available − 48),
+        // capped by its 1120 preset — the pane here is far narrower than that.
         let width = ContentFocusLayoutPolicy.manuscriptWidth(
             availableWidth: 720,
-            preferredWritingWidth: 860,
+            preferredWritingWidth: ContentFocusModeView.WritingWidthMode.immersive.width,
             isPaneContext: true,
             zenMode: false,
-            layoutMode: .regular
+            layoutMode: .regular,
+            paneWidthFraction: ContentFocusModeView.WritingWidthMode.immersive.paneWidthFraction
         )
 
         XCTAssertEqual(width, 672)
+    }
+
+    /// The bug this fixes: in a pane narrower than the smallest preset (680),
+    /// every width mode used to clamp to the same `available − 48`, so the
+    /// setting did nothing. The four modes must now render distinct, increasing
+    /// column widths for the same pane.
+    func testPaneWidthModesProduceDistinctIncreasingWidths() {
+        let paneWidth: CGFloat = 720
+        func columnWidth(for mode: ContentFocusModeView.WritingWidthMode) -> CGFloat {
+            ContentFocusLayoutPolicy.manuscriptWidth(
+                availableWidth: paneWidth,
+                preferredWritingWidth: mode.width,
+                isPaneContext: true,
+                zenMode: false,
+                layoutMode: .regular,
+                paneWidthFraction: mode.paneWidthFraction
+            )
+        }
+
+        let narrow = columnWidth(for: .narrow)
+        let comfort = columnWidth(for: .comfort)
+        let wide = columnWidth(for: .wide)
+        let immersive = columnWidth(for: .immersive)
+
+        XCTAssertLessThan(narrow, comfort)
+        XCTAssertLessThan(comfort, wide)
+        XCTAssertLessThan(wide, immersive)
+        // Immersive still fits inside the pane's usable width.
+        XCTAssertLessThanOrEqual(immersive, paneWidth - 48)
+    }
+
+    /// When the pane is wide enough to seat a preset, the absolute preset caps
+    /// the column so pane mode matches full-window measures (a preset-wide pane
+    /// should not stretch `narrow` past 680).
+    func testPaneWideEnoughForPresetHonoursAbsoluteWidth() {
+        let width = ContentFocusLayoutPolicy.manuscriptWidth(
+            availableWidth: 1_400,
+            preferredWritingWidth: ContentFocusModeView.WritingWidthMode.narrow.width,
+            isPaneContext: true,
+            zenMode: false,
+            layoutMode: .full,
+            paneWidthFraction: ContentFocusModeView.WritingWidthMode.narrow.paneWidthFraction
+        )
+
+        // usable = 1352, scaled = 1352 × 0.58 ≈ 784, capped by the 680 preset.
+        XCTAssertEqual(width, ContentFocusModeView.WritingWidthMode.narrow.width)
     }
 
     func testFullWindowKeepsSideRailAllowance() {

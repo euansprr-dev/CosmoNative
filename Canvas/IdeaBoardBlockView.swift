@@ -187,7 +187,7 @@ struct IdeaBoardBlockView: View {
     }
 
     private func startObservation() {
-        guard let db = CosmoDatabase.shared.dbQueue else { return }
+        guard let db = CosmoDatabase.shared.dbPool else { return }
 
         let obs = ValueObservation.tracking { db in
             try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM atoms WHERE type = 'idea' AND is_deleted = 0") ?? 0

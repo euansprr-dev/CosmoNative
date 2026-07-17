@@ -28,14 +28,13 @@ struct RadialMenuView: View {
         self.customActions = customActions
     }
 
-    // Default 6 block types for canvas creation
+    // Default block types for canvas creation
     private static let defaultActions: [RadialAction] = [
         RadialAction(icon: "doc.text.fill", label: "Content", color: DS.entityContent, type: .createContent),
         RadialAction(icon: "note.text", label: "Note", color: DS.entityNote, type: .createNote),
         RadialAction(icon: "square.and.pencil", label: "Sticky", color: DS.entityStickyNote, type: .createStickyNote),
         RadialAction(icon: "point.3.connected.trianglepath.dotted", label: "Concept", color: DS.entityConnection, type: .createConnection),
         RadialAction(icon: "circle.hexagongrid.circle.fill", label: "Deep Dive", color: CosmoMentionColors.color(for: .deepDive), type: .createDeepDive),
-        RadialAction(icon: "rectangle.3.group.fill", label: "Template", color: DS.accent, type: .createTemplate),
     ]
 
     private var actions: [RadialAction] {
@@ -271,7 +270,6 @@ enum RadialActionType {
     case createDeepDive     // Creates a Deep Dive portal block
     case researchAgent      // Opens Research Agent panel (Perplexity AI)
     case fromDatabase       // Opens database picker overlay
-    case createTemplate     // Opens template gallery to spawn a template block
 }
 
 // MARK: - Preview

@@ -18,12 +18,21 @@ struct CosmoMenuChrome: ViewModifier {
     @State private var menuAppeared = false
 
     func body(content: Content) -> some View {
-        CosmoGlassPanel(
-            role: .globalSidebar,
-            cornerRadius: cornerRadius
-        ) {
-            content
-        }
+        // INVARIANT: the glass is a BACKDROP layer behind the content, never
+        // the content's container. The AppKit glass layer latches its
+        // composite when its layout size changes inside an animated
+        // transaction (see glass_layer_animated_frame_latch) — menus resize
+        // as their rows change, and with rows rendered INSIDE glassEffect the
+        // on-screen pixels froze while SwiftUI kept rendering fresh bodies
+        // (the @-menu "results never update while typing" bug). Content in
+        // the plain SwiftUI tree can never be captured by the latch.
+        content
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .background {
+                CosmoGlassPanel(role: .globalSidebar, cornerRadius: cornerRadius) {
+                    Color.clear
+                }
+            }
             .scaleEffect(menuAppeared ? 1 : 0.95)
             .opacity(menuAppeared ? 1 : 0)
             .blur(radius: menuAppeared ? 0 : 4)

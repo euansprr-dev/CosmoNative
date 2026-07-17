@@ -379,6 +379,11 @@ struct InboxInspector: View {
                 }
             }
             HStack(spacing: DS.space8) {
+                // Manual grow — a thought becomes (or feeds) a seedling in
+                // the nursery, no canvas object, no premature page.
+                secondaryVerb(label: "Grow", icon: "leaf", shortcut: "G") {
+                    Task { await viewModel.growSeedling(item) }
+                }
                 if !item.relatedAtomUUIDsValue.isEmpty {
                     secondaryVerb(label: "Connect", icon: "point.3.connected.trianglepath.dotted", shortcut: "C") {
                         Task { await viewModel.connectCapture(item) }
@@ -394,11 +399,19 @@ struct InboxInspector: View {
 
     @ViewBuilder
     private var primaryVerb: some View {
-        let label = item.classification == .merge ? "Merge" : "Place"
+        // The button says what accepting DOES: a seedling suggestion grows
+        // mass in the nursery; a page feed stages a ✓/✗ ghost row; only
+        // spatial suggestions actually "place".
+        let label: String = {
+            if item.classification == .merge { return "Merge" }
+            if isSeedlingSuggestion { return "Grow" }
+            if item.primaryRouteKind == InboxRouteKind.feedConnection.rawValue { return "Stage" }
+            return "Place"
+        }()
         Button {
             Task { await viewModel.place(item, adjustedPosition: adjustedPosition) }
         } label: {
-            Label(label, systemImage: "checkmark")
+            Label(label, systemImage: isSeedlingSuggestion ? "leaf" : "checkmark")
                 .font(DS.subheadline.weight(.semibold))
                 .foregroundStyle(DS.textOnAccent)
                 .frame(maxWidth: .infinity)
@@ -409,6 +422,12 @@ struct InboxInspector: View {
         .help("\(label) (⏎)")
         .disabled(!item.hasActionableSuggestion)
         .opacity(item.hasActionableSuggestion ? 1 : 0.4)
+    }
+
+    private var isSeedlingSuggestion: Bool {
+        item.primaryRouteKind == InboxRouteKind.feedSeedling.rawValue
+            || item.primaryRouteKind == InboxRouteKind.startSeedling.rawValue
+            || item.primaryRouteKind == InboxRouteKind.germinateConnection.rawValue
     }
 
     private func secondaryVerb(label: String, icon: String, shortcut: String?, action: @escaping () -> Void) -> some View {

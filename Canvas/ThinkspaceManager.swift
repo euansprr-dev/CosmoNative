@@ -217,23 +217,29 @@ final class ThinkspaceNavigationCacheStore: ObservableObject {
 // MARK: - Thinkspace Manager
 
 /// Manages Thinkspace CRUD operations and switching
+///
+/// @Observable (July 2026): consumers hold plain references and SwiftUI
+/// tracks only the specific properties each body actually reads — an
+/// ObservableObject here re-evaluated MainView's entire body on every
+/// published mutation during a thinkspace switch.
 @MainActor
-class ThinkspaceManager: ObservableObject {
+@Observable
+class ThinkspaceManager {
     static let shared = ThinkspaceManager()
 
     /// Well-known UUID for the Command Center thinkspace
     static let commandCenterUUID = "00000000-CC00-4000-A000-COMMANDCENTER"
 
-    // MARK: - Published State
+    // MARK: - Observable State
 
     /// All available Thinkspaces
-    @Published private(set) var thinkspaces: [Thinkspace] = []
+    private(set) var thinkspaces: [Thinkspace] = []
 
     /// Currently active Thinkspace (nil = default/global canvas)
-    @Published private(set) var currentThinkspace: Thinkspace?
+    private(set) var currentThinkspace: Thinkspace?
 
     /// Loading state
-    @Published private(set) var isLoading = false
+    private(set) var isLoading = false
 
     /// Non-reactive forwarding accessors — reactive readers observe
     /// ThinkspaceNavigationCacheStore.shared directly.
@@ -241,13 +247,18 @@ class ThinkspaceManager: ObservableObject {
     var navigationCache: [String: ThinkspaceNavigationData] { ThinkspaceNavigationCacheStore.shared.navigationCache }
 
     /// Sidebar visibility state - shared for coordinating UI elements
-    @Published var isSidebarVisible: Bool = false
+    var isSidebarVisible: Bool = false
 
     // MARK: - Private Properties
 
-    private let repository = AtomRepository.shared
-    private let database = CosmoDatabase.shared
-    private var cancellables = Set<AnyCancellable>()
+    @ObservationIgnored private let repository = AtomRepository.shared
+    @ObservationIgnored private let database = CosmoDatabase.shared
+    @ObservationIgnored private var cancellables = Set<AnyCancellable>()
+
+    /// Deferred per-switch bookkeeping (Deep Dive profile warm-up + recency
+    /// persistence). Owned by the manager — deliberately unstructured so the
+    /// caller's cancelled navigation task can't drop the recency write.
+    @ObservationIgnored private var deferredSwitchBookkeepingTask: Task<Void, Never>?
 
     static let accentColorPalette: [String] = [
         "#2D6A4F", "#4A7B9D", "#C7623F", "#8B6BAB",
@@ -534,27 +545,43 @@ class ThinkspaceManager: ObservableObject {
 
         print("🔄 Switched to Thinkspace: \(thinkspace.name)")
 
-        // Resolve the Deep Dive profile AFTER publishing the route — it is a
-        // DB round-trip that can even create the profile atom on a first
-        // visit; navigation must never wait on storage. The uuid is patched
-        // in once resolved (nothing reads it synchronously at switch time).
-        if thinkspace.id != Self.commandCenterUUID {
-            do {
-                let profile = try await InquiryRepository.shared.resolveDeepDiveProfile(
-                    forThinkspace: thinkspace.id,
-                    title: thinkspace.name
-                )
-                if currentThinkspace?.id == thinkspace.id,
-                   currentThinkspace?.deepDiveProfileUUID != profile.uuid {
-                    currentThinkspace?.deepDiveProfileUUID = profile.uuid
-                }
-            } catch {
-                print("⚠️ Failed to resolve DeepDiveProfile for Thinkspace \(thinkspace.name): \(error)")
+        // Bookkeeping trails the switch animation entirely (~700ms): every
+        // atoms write wakes canvas observations and the sync pipeline, so the
+        // switch window must stay free of DB writes. A superseding switch
+        // still persists the pending recency stamp (never lost), it only
+        // skips the profile warm-up — consumers resolve profiles on demand
+        // via InquiryRepository.
+        deferredSwitchBookkeepingTask?.cancel()
+        deferredSwitchBookkeepingTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(700))
+            guard let self else { return }
+            if Task.isCancelled {
+                await updateLastOpened(thinkspace)
+                return
             }
-        }
 
-        // Persist recency after publishing the visible route so navigation does not wait on storage.
-        await updateLastOpened(thinkspace)
+            // Resolve the Deep Dive profile AFTER publishing the route — it is a
+            // DB round-trip that can even create the profile atom on a first
+            // visit; navigation must never wait on storage. The uuid is patched
+            // in once resolved (nothing reads it synchronously at switch time).
+            if thinkspace.id != Self.commandCenterUUID {
+                do {
+                    let profile = try await InquiryRepository.shared.resolveDeepDiveProfile(
+                        forThinkspace: thinkspace.id,
+                        title: thinkspace.name
+                    )
+                    if currentThinkspace?.id == thinkspace.id,
+                       currentThinkspace?.deepDiveProfileUUID != profile.uuid {
+                        currentThinkspace?.deepDiveProfileUUID = profile.uuid
+                    }
+                } catch {
+                    print("⚠️ Failed to resolve DeepDiveProfile for Thinkspace \(thinkspace.name): \(error)")
+                }
+            }
+
+            // Persist recency after publishing the visible route so navigation does not wait on storage.
+            await updateLastOpened(thinkspace)
+        }
     }
 
     /// Switch to default/global canvas (no Thinkspace)
@@ -715,7 +742,10 @@ class ThinkspaceManager: ObservableObject {
 
     /// Synchronous cache of the open canvas's Places — lets Command-K offer
     /// them without an async fetch. CanvasView refreshes it on load/save.
-    @Published private(set) var currentPlaces: [CanvasPlace] = []
+    /// Deliberately unobserved: its only consumer (the ⌘K action registry)
+    /// reads it imperatively, and an observed write here re-rendered UI in
+    /// the middle of every thinkspace switch.
+    @ObservationIgnored private(set) var currentPlaces: [CanvasPlace] = []
 
     func updateCurrentPlaces(_ places: [CanvasPlace]) {
         currentPlaces = places

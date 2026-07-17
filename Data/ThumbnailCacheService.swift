@@ -384,6 +384,16 @@ enum InstagramCarouselImageCache {
         }
     }
 
+    /// Local copy of a carousel's first slide, resolvable from the shortcode
+    /// alone — lets previews render the real slide 0 before the atom's rich
+    /// content (and thus the CarouselItem list) has loaded.
+    static func cachedFirstSlide(shortcode: String) -> (key: String, url: URL)? {
+        guard !shortcode.isEmpty else { return nil }
+        let key = "ig-carousel-\(shortcode)-0"
+        guard let url = cachedFileURL(for: key) else { return nil }
+        return (key, url)
+    }
+
     static func cachedFileURL(for stableKey: String) -> URL? {
         let path = cachePath(for: stableKey)
         guard fileManager.fileExists(atPath: path.path) else { return nil }

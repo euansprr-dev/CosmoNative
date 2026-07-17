@@ -10,6 +10,23 @@ struct CortexScrollMetrics: Equatable {
     var isScrollable: Bool = false
 }
 
+/// Scroll metrics behind @Observable so per-frame scroll updates invalidate
+/// ONLY the views that read them (the thin scrollbar host), never the owning
+/// surface's whole body. Storing the metrics as plain @State on the scroll
+/// surface re-evaluated the entire surface on every scroll tick — in the
+/// Swipe Study that meant every slide's NSTextView ran updateNSView +
+/// sizeThatFits per frame, which is exactly what scroll jank feels like.
+@MainActor
+@Observable
+final class CortexScrollMetricsStore {
+    var metrics = CortexScrollMetrics()
+
+    func publish(_ next: CortexScrollMetrics) {
+        guard next != metrics else { return }
+        metrics = next
+    }
+}
+
 struct CortexThinScrollbar: View {
     let metrics: CortexScrollMetrics
 
@@ -36,10 +53,23 @@ struct CortexThinScrollbar: View {
             }
             .frame(width: Self.touchWidth, height: trackHeight)
             .opacity(metrics.isScrollable ? 1 : 0)
-            .animation(ProMotionSprings.gentle, value: metrics)
+            // Animate only the appear/disappear fade. The thumb itself must
+            // track the live scroll 1:1 — a spring per progress tick both lags
+            // the thumb and allocates a fresh animation every frame.
+            .animation(ProMotionSprings.gentle, value: metrics.isScrollable)
             .allowsHitTesting(false)
         }
         .frame(width: Self.touchWidth)
+    }
+}
+
+/// The invalidation firewall: this tiny view is the only thing that reads the
+/// store's metrics, so per-frame scroll updates re-evaluate it alone.
+struct CortexThinScrollbarHost: View {
+    let store: CortexScrollMetricsStore
+
+    var body: some View {
+        CortexThinScrollbar(metrics: store.metrics)
     }
 }
 
@@ -153,6 +183,16 @@ extension View {
     func cortexThinScrollbar(metrics: CortexScrollMetrics) -> some View {
         overlay(alignment: .trailing) {
             CortexThinScrollbar(metrics: metrics)
+                .padding(.trailing, DS.space4)
+                .padding(.vertical, DS.space8)
+        }
+    }
+
+    /// Store-backed variant — the owning surface passes the store without
+    /// reading it, so scroll ticks never invalidate the surface's body.
+    func cortexThinScrollbar(store: CortexScrollMetricsStore) -> some View {
+        overlay(alignment: .trailing) {
+            CortexThinScrollbarHost(store: store)
                 .padding(.trailing, DS.space4)
                 .padding(.vertical, DS.space8)
         }

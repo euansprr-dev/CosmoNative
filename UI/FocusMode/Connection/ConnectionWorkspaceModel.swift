@@ -201,19 +201,28 @@ final class ConnectionWorkspaceModel {
 
 // MARK: - Pending staged insert
 
-/// A staged (not-yet-accepted) concept-collaborator insertion, routed to the
-/// board/outline section it targets. This is what lets the assistant's edits
-/// render as ghost rows *inside* the section card (or inline in Outline) with
-/// their own ✓/✗ — instead of the full-screen linear text diff. Built from a
-/// pending `CosmoAssistantProposalOperation` via
-/// `ConnectionSurfaceSerializer.pendingInsert(for:in:)`.
+/// A staged (not-yet-accepted) insertion, routed to the board/outline section
+/// it targets and rendered as a ghost row with its own ✓/✗. Two origins share
+/// the one staging grammar:
+/// - concept-collaborator proposals (ephemeral; built from a pending
+///   `CosmoAssistantProposalOperation` via
+///   `ConnectionSurfaceSerializer.pendingInsert(for:in:)`), and
+/// - persisted pending material (`ConnectionStagedInsert` on the atom's
+///   metadata — inbox feeds, seedling develops; survives restarts and syncs).
 struct ConnectionPendingInsert: Identifiable, Equatable {
     let proposalID: UUID
     let operationID: UUID
     let section: ConnectionSectionType
     let bullets: [String]
+    /// Set when this row is persisted pending material — accept/reject then
+    /// route through `ConnectionStagingStore` instead of the assistant store.
+    var stagedEntryId: String? = nil
 
     var id: UUID { operationID }
+
+    /// True for material that arrived from a capture (inbox/seedling) rather
+    /// than an assistant proposal — the row wears a different mark.
+    var isFromCapture: Bool { stagedEntryId != nil }
 }
 
 // MARK: - Host data + actions

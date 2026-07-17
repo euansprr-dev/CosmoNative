@@ -194,14 +194,16 @@ class SpatialEngine {
                 return (records, metadataById)
             }
 
-            // Enrich rich block types with atom metadata in two batch reads instead
-            // of one DB round-trip per block during thinkspace switches.
-            let enrichableTypes: Set<String> = ["research", "image", "note", "template"]
-            let enrichableRecords = savedBlocks.filter { enrichableTypes.contains($0.entityType) }
-            let idsToFetch = enrichableRecords
+            // Batch-fetch the entity atoms for EVERY block in two reads instead
+            // of one DB round-trip per block during thinkspace switches. The
+            // enrichment below still only rewrites rich block types; the full
+            // batch feeds CanvasAtomWarmStore so mounting block views read
+            // their atom synchronously instead of re-fetching what this switch
+            // just loaded.
+            let idsToFetch = savedBlocks
                 .map { Int64($0.entityId) }
                 .filter { $0 > 0 }
-            let uuidsToFetch = enrichableRecords
+            let uuidsToFetch = savedBlocks
                 .compactMap(\.entityUuid)
                 .filter { !$0.isEmpty }
 
@@ -209,6 +211,13 @@ class SpatialEngine {
             async let atomsByUUIDTask = AtomRepository.shared.fetchBatch(uuids: Array(Set(uuidsToFetch)))
             let fetchedAtomsByID = (try? await atomsByIDTask) ?? []
             let fetchedAtomsByUUID = (try? await atomsByUUIDTask) ?? []
+
+            // Warm the shared atom store BEFORE returning, so views mounting
+            // off this snapshot (and off the cached snapshot the hub keeps
+            // fresh) hit it synchronously. Absorb also fans genuinely-newer
+            // atoms out to already-mounted subscribers — this is what corrects
+            // stale cached-snapshot content as targeted per-atom updates.
+            CanvasAtomObservationHub.shared.absorb(fetchedAtomsByID + fetchedAtomsByUUID)
 
             // Record→block conversion decodes atom metadata JSON per rich block —
             // too heavy for the main actor during a switch animation.

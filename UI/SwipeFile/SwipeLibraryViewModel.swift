@@ -155,13 +155,16 @@ final class SwipeLibraryViewModel {
             order: visibleItems.map(\.entityId),
             current: item.entityId
         )
+        // No "commandKTab" tag: this surface is the Swipe Studio, not the ⌘K
+        // palette. Tagging a ⌘K return tab makes MainView's focus-exit observer
+        // re-present Command-K on close (the return tab is its restore signal),
+        // which would pop ⌘K instead of landing back in the studio.
         NotificationCenter.default.post(
             name: .enterFocusMode,
             object: nil,
             userInfo: [
                 "type": EntityType.research,
-                "id": item.entityId,
-                "commandKTab": "swipeGallery"
+                "id": item.entityId
             ]
         )
     }

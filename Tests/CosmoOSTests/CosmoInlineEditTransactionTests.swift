@@ -409,6 +409,249 @@ final class CosmoInlineEditTransactionTests: XCTestCase {
         }
     }
 
+    // MARK: - Minimal-edit splitting (the slide-9 over-rewrite regression)
+
+    /// The exact July 17 failure: "fill in the percentage" came back as ONE
+    /// replacement covering the whole slide-9 block, with the block's closing
+    /// line moved to the top (duplicating it against the line that still
+    /// follows the block) and the real change buried in the last line.
+    private var foreclosureDoc: String {
+        """
+        SLIDE 8
+        These numbers are wild.
+        One income used to buy a home, raise a family, and still put money away.
+
+        SLIDE 9
+        With rising costs, people can't afford the mortgages they signed up for years ago.
+        We saw 119,000 foreclosures in Q1 of 2026.
+        Sure these aren't 2008 levels...
+        But foreclosures have still risen X% in the last 10 years alone.
+        As hard as this is for homeowners, it's creating opportunities in the market we haven't seen in decades.
+
+        SLIDE 10
+        Here's what the data shows.
+        """
+    }
+
+    func testSplitterShrinksFusedBlockToTheLinesThatChange() {
+        let fused = replacement(
+            """
+            With rising costs, people can't afford the mortgages they signed up for years ago.
+            We saw 119,000 foreclosures in Q1 of 2026.
+            Sure these aren't 2008 levels...
+            But foreclosures have still risen X% in the last 10 years alone.
+            """,
+            """
+            With rising costs, people can't afford the mortgages they signed up for years ago.
+            We saw 119,000 foreclosures in Q1 of 2026.
+            Sure these aren't 2008 levels...
+            But foreclosures have risen 28% in the last 10 years alone.
+            """
+        )
+
+        let split = CosmoInlineMinimalEditSplitter.split(operation: fused, sourceText: foreclosureDoc)
+
+        XCTAssertEqual(split.count, 1, "three untouched lines must be dropped from the operation")
+        XCTAssertEqual(split.first?.originalText, "But foreclosures have still risen X% in the last 10 years alone.")
+        XCTAssertEqual(split.first?.proposedText, "But foreclosures have risen 28% in the last 10 years alone.")
+    }
+
+    func testSplitterKeepsSingleLineAndFullRewriteOperationsIntact() {
+        let singleLine = replacement("Here's what the data shows.", "Here's what the data actually shows.")
+        XCTAssertEqual(
+            CosmoInlineMinimalEditSplitter.split(operation: singleLine, sourceText: foreclosureDoc).count,
+            1
+        )
+
+        // A genuine full rewrite shares no lines — nothing smaller to extract.
+        let rewrite = replacement(
+            "These numbers are wild.\nOne income used to buy a home, raise a family, and still put money away.",
+            "Completely different line one.\nCompletely different line two."
+        )
+        let split = CosmoInlineMinimalEditSplitter.split(operation: rewrite, sourceText: foreclosureDoc)
+        XCTAssertEqual(split.count, 1)
+        XCTAssertEqual(split.first?.originalText, rewrite.originalText)
+    }
+
+    func testSplitterExpandsAmbiguousSplitAnchorsWithContext() {
+        let doc = """
+        SLIDE 1
+        Repeated hook line that appears twice.
+        Unique middle line for slide one.
+        Closing line one.
+
+        SLIDE 2
+        Repeated hook line that appears twice.
+        Unique middle line for slide two.
+        Closing line two.
+        """
+        // Changing only the repeated line inside slide 2's block: the split op
+        // must carry enough preceding context to locate uniquely.
+        let fused = replacement(
+            "SLIDE 2\nRepeated hook line that appears twice.\nUnique middle line for slide two.",
+            "SLIDE 2\nRepeated hook line that appears twice — sharpened.\nUnique middle line for slide two."
+        )
+
+        let split = CosmoInlineMinimalEditSplitter.split(operation: fused, sourceText: doc)
+
+        XCTAssertFalse(split.isEmpty)
+        for operation in split {
+            XCTAssertTrue(
+                CosmoInlineDiffLocator.isUnique(operation.originalText ?? "", in: doc),
+                "split op anchor \"\(operation.originalText ?? "")\" is ambiguous"
+            )
+        }
+        let plan = CosmoInlineEditTransaction.compile(operations: split, sourceText: doc)
+        XCTAssertTrue(plan.simulatedFinalText.contains("Repeated hook line that appears twice — sharpened."))
+        // Slide 1's copy of the repeated line is untouched.
+        XCTAssertTrue(plan.simulatedFinalText.contains("SLIDE 1\nRepeated hook line that appears twice.\n"))
+    }
+
+    // MARK: - Structural rules: duplication + undeclared moves
+
+    func testValidatorBlocksAdjacentDuplication() {
+        // The model re-adds the block's closing line at the top while the
+        // original stays right below the replaced range → accepting would
+        // put the sentence in the document twice.
+        let fused = replacement(
+            """
+            With rising costs, people can't afford the mortgages they signed up for years ago.
+            We saw 119,000 foreclosures in Q1 of 2026.
+            Sure these aren't 2008 levels...
+            But foreclosures have still risen X% in the last 10 years alone.
+            """,
+            """
+            As hard as this is for homeowners, it's creating opportunities in the market we haven't seen in decades.
+            With rising costs, people can't afford the mortgages they signed up for years ago.
+            We saw 119,000 foreclosures in Q1 of 2026.
+            Sure these aren't 2008 levels...
+            But foreclosures have risen 28% in the last 10 years alone.
+            """
+        )
+        let split = CosmoInlineMinimalEditSplitter.split(operation: fused, sourceText: foreclosureDoc)
+
+        let validation = CosmoInlineProposalValidator.validate(
+            operations: split,
+            sourceText: foreclosureDoc,
+            summary: "Filled in the foreclosure increase — 28% over the last 10 years."
+        )
+
+        XCTAssertFalse(validation.isValid)
+        XCTAssertTrue(
+            validation.issues.contains { $0.contains("ALREADY EXISTS") },
+            "expected a duplication issue, got: \(validation.issues)"
+        )
+    }
+
+    func testValidatorBlocksUndeclaredMoveAndAllowsExplicitMove() {
+        let doc = """
+        SLIDE 3
+        The hook line that should move to the top eventually.
+        Middle line stays put right here.
+        Closing line of the slide body.
+        """
+        // Remove the hook from position 1, re-add it after the closing line.
+        let removal = replacement(
+            "The hook line that should move to the top eventually.\nMiddle line stays put right here.",
+            "Middle line stays put right here."
+        )
+        var reAdd = CosmoAssistantProposalOperation(
+            kind: .textInsertion,
+            targetID: "content:deck:draft",
+            anchorID: nil,
+            originalText: "Closing line of the slide body.",
+            proposedText: "The hook line that should move to the top eventually.",
+            sourceHash: "hash",
+            rationale: "move the hook to the end"
+        )
+
+        let undeclared = CosmoInlineProposalValidator.validate(
+            operations: [removal, reAdd],
+            sourceText: doc,
+            summary: "Moved the hook to the end of the slide."
+        )
+        XCTAssertFalse(undeclared.isValid)
+        XCTAssertTrue(
+            undeclared.issues.contains { $0.contains("MOVES") },
+            "expected a move issue, got: \(undeclared.issues)"
+        )
+
+        reAdd.explicitMove = true
+        let declared = CosmoInlineProposalValidator.validate(
+            operations: [removal, reAdd],
+            sourceText: doc,
+            summary: "Moved the hook to the end of the slide."
+        )
+        XCTAssertTrue(declared.isValid, declared.issues.joined(separator: " | "))
+    }
+
+    func testStructuralRulesIgnoreRenumberCascadesAndShortLines() {
+        let deck = slideDeck(count: 6)
+        let operations = CosmoInlineSeriesExpansion.renumberOperations(
+            seriesKind: "slideHeaders",
+            fromNumber: 3,
+            delta: 1,
+            sourceText: deck,
+            targetID: "content:deck:draft",
+            sourceHash: "hash",
+            rationale: "make room"
+        )!
+
+        let issues = CosmoInlineProposalValidator.structuralIssues(
+            operations: operations,
+            sourceText: deck
+        )
+        XCTAssertTrue(issues.isEmpty, "renumber cascade tripped structural rules: \(issues)")
+    }
+
+    // MARK: - Step numbering simulation
+
+    func testStepNumberingDegradationIsCaught() {
+        let original = """
+        SLIDE 4
+        1. Find the deal.
+        2. Run the numbers.
+        3. Close fast.
+        """
+        let corrupted = """
+        SLIDE 4
+        1. Find the deal.
+        3. Run the numbers.
+        3. Close fast.
+        """
+        let issues = CosmoInlineProposalValidator.stepNumberingIssues(
+            original: original,
+            simulated: corrupted
+        )
+        XCTAssertFalse(issues.isEmpty)
+
+        // Pre-existing imperfection never vetoes an unrelated edit.
+        let alreadyImperfect = corrupted
+        XCTAssertTrue(
+            CosmoInlineProposalValidator.stepNumberingIssues(
+                original: alreadyImperfect,
+                simulated: alreadyImperfect
+            ).isEmpty
+        )
+    }
+
+    // MARK: - LCS hunks (display honesty)
+
+    func testHunksKeepIdenticalLinesAsContextWhenALineIsInserted() {
+        let original = "Line one.\nLine two.\nLine three."
+        let proposed = "Brand new opener.\nLine one.\nLine two.\nLine three."
+
+        let hunks = CosmoInlineAssistantDiffEngine.hunks(original: original, proposed: proposed)
+
+        XCTAssertEqual(hunks.filter { $0.kind == .added }.map(\.text), ["Brand new opener."])
+        XCTAssertEqual(
+            hunks.filter { $0.kind == .context }.map(\.text),
+            ["Line one.", "Line two.", "Line three."],
+            "identical lines must render as context, not removed+added pairs"
+        )
+        XCTAssertTrue(hunks.filter { $0.kind == .removed }.isEmpty)
+    }
+
     // MARK: - Helpers
 
     private func slideNumbers(in text: String) -> [Int] {

@@ -79,6 +79,11 @@ struct CosmoInlineAssistantAgentBridge {
         // (renumberSequence, scoped formatMarks) against real document state.
         executor.workspaceEditBoundSurface = snapshot.map { ($0.surfaceID, $0.targetID) }
         executor.workspaceEditBoundSurfaceText = snapshot?.text
+        // Concept turns finish with a reaction + one deepening question in the
+        // SAME pass — the staging tool result itself demands it (see
+        // proposeWorkspaceEdit). The post-run nudge below stays as the net.
+        executor.conceptTurnContractActive =
+            store.activeSubmissionSkillID == CosmoInlineAssistantSkillID.concept.rawValue
 
         let paneAnswerCount = store.paneMessages.filter {
             $0.role == .assistant && $0.proposalID == nil
@@ -91,6 +96,7 @@ struct CosmoInlineAssistantAgentBridge {
             executor.onCanvasPlan = nil
             executor.workspaceEditBoundSurface = nil
             executor.workspaceEditBoundSurfaceText = nil
+            executor.conceptTurnContractActive = false
             executor.contextAtomUUIDs = []
             executor.contextSourceIDs = []
             executor.contextConversationID = nil
@@ -174,18 +180,23 @@ struct CosmoInlineAssistantAgentBridge {
             )
         }
 
-        // Escalation ladder: a fast-lane (Haiku) edit run whose proposals kept
-        // failing validation retries ONCE on the daily driver. Cheap requests
-        // stay cheap; hard ones self-heal instead of dead-ending.
+        // Escalation ladder: an edit run whose proposals kept failing
+        // validation (locator misses, structure corruption, scope/move/
+        // duplication rejections) retries ONCE — the Haiku fast lane steps up
+        // to the daily driver; stronger tiers get one clean re-run with the
+        // rejection feedback already in the conversation. Cheap requests stay
+        // cheap; hard ones self-heal instead of dead-ending.
         if preparedRequest.pipelineSteps.isEmpty,
            route == .action,
-           preparedRequest.tierOverride == .sensor,
            store.proposals.count == proposalCount,
            executor.workspaceEditValidationRejections >= 2 {
-            print("[AGENT-PERF] inline fast-lane escalation → sonnet5 after \(executor.workspaceEditValidationRejections) validation rejections")
+            let escalationTier: AgentModelTier = preparedRequest.tierOverride == .sensor
+                ? .sonnet5
+                : (preparedRequest.tierOverride ?? CosmoInlineAssistantRequestShape.defaultModelTier)
+            print("[AGENT-PERF] inline validation escalation → \(escalationTier) after \(executor.workspaceEditValidationRejections) validation rejections")
             store.receiveToolActivity(.started(
                 name: "inline_thinking",
-                displayLabel: "Taking another pass with a stronger model…",
+                displayLabel: "Taking another pass at the edit…",
                 args: [:]
             ))
             executor.resetSessionSourceRefs()
@@ -193,7 +204,7 @@ struct CosmoInlineAssistantAgentBridge {
                 preparedRequest.prompt,
                 conversationId: preparedRequest.conversationID,
                 source: .inApp,
-                tierOverride: .sonnet5,
+                tierOverride: escalationTier,
                 intentOverride: preparedRequest.intentOverride,
                 systemPromptOverride: preparedRequest.systemPromptOverride,
                 volatileContextOverride: preparedRequest.volatileContextOverride,
@@ -266,20 +277,25 @@ struct CosmoInlineAssistantAgentBridge {
         // question. The prompt says so, but prompts alone let a "let me seed
         // that" turn end flat; this forces the question when the turn produced
         // work but no "?". Mirrors the action route's stage-contract nudge.
+        // Not gated on route: a concept run must end with its question no
+        // matter how the classifier routed the user's message.
         if store.activeSubmissionSkillID == CosmoInlineAssistantSkillID.concept.rawValue,
-           route == .answer,
            preparedRequest.pipelineSteps.isEmpty,
            !Task.isCancelled {
-            let lastAnswer = store.paneMessages.last {
-                $0.role == .assistant && $0.proposalID == nil
-            }?.content ?? ""
-            let askedQuestion = lastAnswer.contains("?")
-            let didWork = store.proposals.count > proposalCount
-                || store.paneMessages.filter({ $0.role == .assistant && $0.proposalID == nil }).count > paneAnswerCount
+            // Only answers produced by THIS run count. The previous turn's
+            // question always contains a "?", so reading the session's last
+            // answer let a capture-only turn (stage receipt, no prose) slip
+            // through with the backstop silently satisfied — the exact flat
+            // ending this nudge exists to prevent.
+            let turnAnswers = store.paneMessages
+                .filter { $0.role == .assistant && $0.proposalID == nil }
+                .dropFirst(paneAnswerCount)
+            let askedQuestion = turnAnswers.contains { $0.content.contains("?") }
+            let didWork = store.proposals.count > proposalCount || !turnAnswers.isEmpty
             if didWork, !askedQuestion {
                 print("[AGENT-PERF] inline concept go-deeper nudge: turn ended without a question")
                 let nudge = await CosmoAgentService.shared.processMessage(
-                    "Continue: you ended the turn without a deepening question. Reply now with a single answer_in_assistant_pane containing exactly ONE short follow-up question that pulls this concept one step further, phrased in the user's own vocabulary. Do not stage any more edits and do not restate what you already said — only the one question. (Skip only if the concept is genuinely complete, in which case say so in one clause.)",
+                    "Continue: you ended the turn without a deepening question. Reply now with a single answer_in_assistant_pane containing exactly ONE short follow-up question that pulls this concept one step further, phrased in the user's own vocabulary, warm and human, with zero process narration (no 'before I go further', no 'let me'). Do not stage any more edits and do not restate what you already said — only the one question. (Skip only if the concept is genuinely complete, in which case say so in one clause.)",
                     conversationId: preparedRequest.conversationID,
                     source: .inApp,
                     tierOverride: preparedRequest.tierOverride,

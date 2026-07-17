@@ -9,18 +9,20 @@ struct PaneContentView: View {
     let isContextOwner: Bool
     let onClose: () -> Void
 
+    @Environment(\.paneDeckChrome) private var paneDeckChrome
+
     @State private var loadedAtom: Atom?
     @State private var swipeLibraryViewModel = SwipeLibraryViewModel()
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
-            // Content
-            contentBody
-
-            // Close button (for generic panes — entity focus modes and browser panes handle their own)
-            if content.thinkspaceId != nil || content.id == "commandCenter" || content.id == "swipeGallery" {
-                paneCloseButton
+        VStack(spacing: 0) {
+            // Shell-owned tab row, STACKED above content (never overlaid), for
+            // pane kinds whose surface has no chrome row of its own — and for
+            // entity panes while the atom loads, so no pane is ever tab-less.
+            if let paneDeckChrome, showsStandaloneDeckChrome {
+                PaneDeckStandaloneChrome(context: paneDeckChrome)
             }
+            contentBody
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(backgroundFill)
@@ -37,6 +39,14 @@ struct PaneContentView: View {
                 loadedAtom = atom
             }
         }
+    }
+
+    /// The mode-hosted strip takes over only once the routed mode is actually
+    /// on screen — an entity pane shows the shell row while its atom loads.
+    private var showsStandaloneDeckChrome: Bool {
+        guard PaneDeckChromeAdoption.modeHostsDeckChrome(content) else { return true }
+        if case .entity = content { return loadedAtom == nil }
+        return false
     }
 
     // MARK: - Content Body
@@ -68,8 +78,8 @@ struct PaneContentView: View {
                 .environment(\.isPaneActive, isActive)
                 .environment(\.isPaneContextOwner, isContextOwner)
 
-        case .webBrowser(let url, let title):
-            CosmoWebBrowserPane(url: url, title: title, onClose: onClose)
+        case .webBrowser(_, let url, let title):
+            CosmoWebBrowserPane(paneId: content.id, url: url, title: title, onClose: onClose)
                 .environment(\.isPaneContext, true)
                 .environment(\.isPaneActive, isActive)
                 .environment(\.isPaneContextOwner, isContextOwner)
@@ -144,20 +154,6 @@ struct PaneContentView: View {
                     .font(.system(size: 13))
             }
         }
-    }
-
-    // MARK: - Close Button
-
-    private var paneCloseButton: some View {
-        Button(action: onClose) {
-            Image(systemName: "xmark")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(DS.textMuted)
-                .frame(width: 28, height: 28)
-                .background(DS.border, in: Circle())
-        }
-        .buttonStyle(.plain)
-        .padding(8)
     }
 
     private var backgroundFill: some View {

@@ -13,7 +13,7 @@ struct CommandKComposerPane: View {
     @FocusState private var focusedField: CommandKComposerField?
     @State private var clients: [CommandKComposerClient] = []
     @State private var hookDraft = ""
-    @State private var scrollMetrics = CortexScrollMetrics()
+    @State private var scrollMetrics = CortexScrollMetricsStore()
 
     var body: some View {
         ScrollView {
@@ -26,10 +26,10 @@ struct CommandKComposerPane: View {
                 Spacer(minLength: DS.space48)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(CortexScrollViewIntrospector { scrollMetrics = $0 })
+            .background(CortexScrollViewIntrospector { [scrollMetrics] in scrollMetrics.publish($0) })
         }
         .scrollIndicators(.hidden)
-        .cortexThinScrollbar(metrics: scrollMetrics)
+        .cortexThinScrollbar(store: scrollMetrics)
         .overlay(alignment: .bottomTrailing) { floatingSave }
         .task(id: action.id) {
             viewModel.ensureComposerDraft(for: action)

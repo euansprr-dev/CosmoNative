@@ -62,6 +62,53 @@ final class CommandCenterComposerTests: XCTestCase {
         XCTAssertEqual(draft.keywords, ["write", "draft", "article"])
     }
 
+    // MARK: - Leading-emoji identity contract
+
+    func testCollectionEmojiApplyingRewritesLeadingMark() {
+        XCTAssertEqual(CollectionEmoji.applying(mark: "🎬", to: "Personal content"), "🎬 Personal content")
+        XCTAssertEqual(CollectionEmoji.applying(mark: "📚", to: "🎬 Personal content"), "📚 Personal content")
+        XCTAssertEqual(CollectionEmoji.applying(mark: nil, to: "🎬 Personal content"), "Personal content")
+        XCTAssertEqual(CollectionEmoji.applying(mark: nil, to: "Personal content"), "Personal content")
+        XCTAssertEqual(CollectionEmoji.applying(mark: "🎬", to: ""), "🎬")
+        // A mark-only name strips to empty — it never doubles into "🎬 🎬".
+        XCTAssertEqual(CollectionEmoji.applying(mark: nil, to: "🎬"), "")
+        XCTAssertEqual(CollectionEmoji.applying(mark: "📚", to: "🎬"), "📚")
+    }
+
+    func testHabitDraftMarkAccessorsFollowLeadingEmojiContract() {
+        var draft = CommandCenterHabitEditorDraft()
+        draft.title = "Personal content"
+
+        // "content" resolves a keyword mark, but no explicit mark exists yet.
+        XCTAssertNil(draft.explicitMark)
+        XCTAssertNotNil(draft.effectiveMark)
+        XCTAssertEqual(draft.effectiveMark, CollectionEmoji.resolve(name: "Personal content").emoji)
+        XCTAssertEqual(draft.displayLabel, "Personal content")
+
+        draft.applyMark("🧘")
+        XCTAssertEqual(draft.title, "🧘 Personal content")
+        XCTAssertEqual(draft.explicitMark, "🧘")
+        XCTAssertEqual(draft.effectiveMark, "🧘")
+        XCTAssertEqual(draft.displayLabel, "Personal content")
+
+        draft.applyMark(nil)
+        XCTAssertEqual(draft.title, "Personal content")
+        XCTAssertNil(draft.explicitMark)
+    }
+
+    func testHabitAccentSwatchesAppendLegacyCurrentColor() {
+        let curated = CommandCenterHabitComposer.accentSwatches(current: "2D6A4F")
+        XCTAssertEqual(curated.map(\.hex), DS.collectionAccentPalette.map(\.hex))
+
+        // Case-insensitive membership — stored hexes may differ in casing.
+        let lowercased = CommandCenterHabitComposer.accentSwatches(current: "2d6a4f")
+        XCTAssertEqual(lowercased.count, DS.collectionAccentPalette.count)
+
+        let legacy = CommandCenterHabitComposer.accentSwatches(current: "DC3545")
+        XCTAssertEqual(legacy.count, DS.collectionAccentPalette.count + 1)
+        XCTAssertEqual(legacy.last?.hex, "DC3545")
+    }
+
     func testIntentBehaviorTemplateMapsToLegacyIntent() {
         XCTAssertEqual(IntentBehaviorTemplate.writeContent.taskIntent, .writeContent)
         XCTAssertEqual(IntentBehaviorTemplate(.research), .research)

@@ -21,23 +21,133 @@ final class PaneManagerBrowserPaneTests: XCTestCase {
         XCTAssertEqual(manager.activePaneId, "cosmoWindow")
     }
 
-    func testBrowserPaneOpensOncePerURLAndActivatesSplitPane() {
+    func testBrowserPanesAllowMultipleInstancesUpToCap() {
         let manager = PaneManager()
         let url = URL(string: "https://www.instagram.com/reel/example/")!
 
-        XCTAssertTrue(manager.canOpenBrowser(url: url))
+        XCTAssertTrue(manager.canOpenBrowserPane())
 
         manager.openPane(.webBrowser(url: url, title: "Instagram"))
 
         XCTAssertTrue(manager.isActive)
         XCTAssertEqual(manager.mainSplitRatio, 0.5)
         XCTAssertEqual(manager.panes.count, 1)
-        XCTAssertEqual(manager.activePaneId, "web_\(url.absoluteString)")
-        XCTAssertFalse(manager.canOpenBrowser(url: url))
+        XCTAssertEqual(manager.activePaneId, manager.panes.first?.id)
+
+        // Instance identity: the same URL opens a second, distinct pane.
+        manager.openPane(.webBrowser(url: url, title: "Instagram"))
+        XCTAssertEqual(manager.panes.count, 2)
 
         manager.openPane(.webBrowser(url: url, title: "Instagram"))
+        XCTAssertEqual(manager.panes.count, 3)
+        XCTAssertFalse(manager.canOpenBrowserPane())
 
-        XCTAssertEqual(manager.panes.count, 1)
+        // The browser cap holds even through openPane directly.
+        manager.openPane(.webBrowser(url: url, title: "Instagram"))
+        XCTAssertEqual(manager.panes.count, 3)
+        XCTAssertEqual(manager.browserPanes.count, 3)
+    }
+
+    func testOpenPaneBesidePinsSourceAndFocusesNewPane() {
+        let manager = PaneManager()
+        let first = PaneContent.webBrowser(url: URL(string: "https://example.com/a")!, title: "A")
+        manager.openPane(first)
+        XCTAssertEqual(manager.focusedPaneId, first.id)
+
+        let second = PaneContent.webBrowser(url: URL(string: "https://example.com/b")!, title: "B")
+        manager.openPaneBeside(second)
+
+        XCTAssertEqual(manager.focusedPaneId, second.id)
+        XCTAssertEqual(manager.pinnedPaneId, first.id)
+
+        // An existing pin is never stolen by a later split.
+        let third = PaneContent.webBrowser(url: URL(string: "https://example.com/c")!, title: "C")
+        manager.openPaneBeside(third)
+        XCTAssertEqual(manager.focusedPaneId, third.id)
+        XCTAssertEqual(manager.pinnedPaneId, first.id)
+    }
+
+    func testBrowserPaneRouterPolicyTable() {
+        let url = URL(string: "https://example.com/article")!
+
+        // A pane already showing the page always wins, whatever the gesture.
+        for disposition in [BrowserOpenDisposition.reuse, .newPane, .split] {
+            XCTAssertEqual(
+                BrowserPaneRouter.route(
+                    url: url,
+                    disposition: disposition,
+                    paneShowingURL: "web_x",
+                    focusedBrowserPaneId: "web_y",
+                    canOpenNewPane: true
+                ),
+                .activateExisting(paneId: "web_x")
+            )
+        }
+
+        // Reuse navigates the existing browser pane in place.
+        XCTAssertEqual(
+            BrowserPaneRouter.route(
+                url: url,
+                disposition: .reuse,
+                paneShowingURL: nil,
+                focusedBrowserPaneId: "web_y",
+                canOpenNewPane: true
+            ),
+            .navigateExisting(paneId: "web_y", url: url)
+        )
+
+        // Reuse with no browser pane opens one.
+        XCTAssertEqual(
+            BrowserPaneRouter.route(
+                url: url,
+                disposition: .reuse,
+                paneShowingURL: nil,
+                focusedBrowserPaneId: nil,
+                canOpenNewPane: true
+            ),
+            .openNewPane(besideCurrent: false)
+        )
+
+        // Split opens beside the current pane.
+        XCTAssertEqual(
+            BrowserPaneRouter.route(
+                url: url,
+                disposition: .split,
+                paneShowingURL: nil,
+                focusedBrowserPaneId: "web_y",
+                canOpenNewPane: true
+            ),
+            .openNewPane(besideCurrent: true)
+        )
+
+        // At the cap, split/newPane fall back to navigating the focused pane —
+        // never a silent drop.
+        XCTAssertEqual(
+            BrowserPaneRouter.route(
+                url: url,
+                disposition: .split,
+                paneShowingURL: nil,
+                focusedBrowserPaneId: "web_y",
+                canOpenNewPane: false
+            ),
+            .navigateExisting(paneId: "web_y", url: url)
+        )
+    }
+
+    func testBrowserPaneRegistryMatchesNormalizedURLsAndUnregisters() {
+        let registry = BrowserPaneRegistry()
+        let url = URL(string: "https://www.example.com/articles/1")!
+        let state = CosmoWebBrowserState(initialURL: url, title: "Example")
+        registry.register(state, for: "web_pane")
+
+        // Tracking noise must not defeat reuse.
+        let noisyURL = URL(string: "https://www.example.com/articles/1/?utm_source=newsletter")!
+        XCTAssertEqual(registry.paneId(showing: noisyURL), "web_pane")
+        XCTAssertEqual(registry.currentURL(for: "web_pane"), url)
+
+        registry.unregister(paneId: "web_pane")
+        XCTAssertNil(registry.paneId(showing: noisyURL))
+        XCTAssertNil(registry.state(for: "web_pane"))
     }
 
     func testSwipeGalleryPaneOpensOnceAndActivatesSplitPane() {
@@ -95,26 +205,22 @@ final class PaneManagerBrowserPaneTests: XCTestCase {
         XCTAssertEqual(PaneSlotPresentationPolicy.interSlotSpacing(leftIsExpanded: false, rightIsExpanded: false), 0)
     }
 
-    func testPaneTabRailFollowsWorkspaceToolbarGrammar() throws {
+    func testPaneTabStripFollowsWorkspaceToolbarGrammar() throws {
         let source = try String(
-            contentsOf: repositoryRoot.appendingPathComponent("Navigation/SplitPaneContainer.swift"),
+            contentsOf: repositoryRoot.appendingPathComponent("Navigation/PaneDeckTabStrip.swift"),
             encoding: .utf8
         )
 
         XCTAssertTrue(
-            source.contains(".cosmoGlassPanel(role: .floatingAssistant"),
-            "The tab rail is floating chrome and must use the sanctioned glass panel, not ad-hoc materials."
+            source.contains("CosmoChromeIsland {"),
+            "The standalone tab strip rides a sanctioned chrome island, not ad-hoc materials."
         )
         XCTAssertTrue(
             source.contains("matchedGeometryEffect(id: \"pane-tab-selection\""),
-            "The focused tab's fill must slide between rail positions instead of swapping."
+            "The focused tab's fill must slide between strip positions instead of swapping."
         )
         XCTAssertTrue(
-            source.contains("paneManager.panes.count > 1"),
-            "The tab rail only appears once a second pane exists — a single pane needs no tab."
-        )
-        XCTAssertTrue(
-            source.contains(".help(\"\\(displayTitle) (⌘⌃\\(position))\")"),
+            source.contains(".help(\"\\(displayTitle) (⌘⌃\\(tab.position))\")"),
             "Every tab must carry a tooltip with its focus shortcut (macOS manners)."
         )
         XCTAssertTrue(
@@ -239,10 +345,21 @@ final class PaneManagerBrowserPaneTests: XCTestCase {
     func testBrowserStateDoesNotRepublishIdenticalSnapshots() {
         let url = URL(string: "https://www.instagram.com/reel/example/")!
         let state = CosmoWebBrowserState(initialURL: url, title: "Instagram")
-        var publishCount = 0
+        final class MutationFlag: @unchecked Sendable { var didMutate = false }
+        let flag = MutationFlag()
 
-        let cancellable = state.objectWillChange.sink { _ in
-            publishCount += 1
+        withObservationTracking {
+            _ = state.currentURL
+            _ = state.displayURL
+            _ = state.addressText
+            _ = state.displayTitle
+            _ = state.isLoading
+            _ = state.estimatedProgress
+            _ = state.canGoBack
+            _ = state.canGoForward
+            _ = state.authenticationRoute
+        } onChange: {
+            flag.didMutate = true
         }
 
         state.applySnapshot(
@@ -254,13 +371,12 @@ final class PaneManagerBrowserPaneTests: XCTestCase {
             canGoForward: false
         )
 
-        XCTAssertEqual(publishCount, 0)
-        withExtendedLifetime(cancellable) {}
+        XCTAssertFalse(flag.didMutate, "An identical snapshot must not mutate observable browser state.")
     }
 
     func testBrowserWebViewObservesURLChangesOutsideNavigationDelegateCallbacks() throws {
         let source = try String(
-            contentsOf: repositoryRoot.appendingPathComponent("Navigation/CosmoWebBrowserPane.swift"),
+            contentsOf: repositoryRoot.appendingPathComponent("Navigation/Browser/CosmoBrowserWebView.swift"),
             encoding: .utf8
         )
 
@@ -274,28 +390,65 @@ final class PaneManagerBrowserPaneTests: XCTestCase {
         )
     }
 
-    func testBrowserChromeUsesFavoriteLanguageAndAdaptiveOverflow() throws {
+    func testBrowserStartPageKeepsFavoriteManagementLanguage() throws {
         let source = try String(
-            contentsOf: repositoryRoot.appendingPathComponent("Navigation/CosmoWebBrowserPane.swift"),
+            contentsOf: repositoryRoot.appendingPathComponent("Navigation/Browser/CosmoBrowserStartPage.swift"),
             encoding: .utf8
         )
 
-        XCTAssertTrue(source.contains("private var favoriteLimitForBar: Int"))
-        XCTAssertTrue(source.contains("private var visibleFavorites: [CosmoBrowserPinnedSite]"))
-        XCTAssertTrue(source.contains("private var overflowFavorites: [CosmoBrowserPinnedSite]"))
         XCTAssertTrue(source.contains("Label(\"Open Favorite\", systemImage: \"arrow.up.forward.app\")"))
         XCTAssertTrue(source.contains("Label(\"Rename Favorite\", systemImage: \"pencil\")"))
         XCTAssertTrue(source.contains("Label(\"Remove Favorite\", systemImage: \"trash\")"))
-        XCTAssertTrue(source.contains("Image(systemName: \"ellipsis.circle\")"))
+        XCTAssertTrue(source.contains("Label(\"Open in Split\", systemImage: \"rectangle.split.2x1\")"))
+        XCTAssertTrue(
+            source.contains("CommandKFavicon("),
+            "Favorites wear their site's own mark — identity outranks type."
+        )
     }
 
-    func testBrowserStartPageQuickAccessIsWiredToHomeURL() throws {
-        let source = try String(
+    func testBrowserChromeStaysNeutralGlass() throws {
+        let browserDirectory = repositoryRoot.appendingPathComponent("Navigation/Browser")
+        let paneSource = try String(
             contentsOf: repositoryRoot.appendingPathComponent("Navigation/CosmoWebBrowserPane.swift"),
             encoding: .utf8
         )
+        let browserSources = try FileManager.default
+            .contentsOfDirectory(at: browserDirectory, includingPropertiesForKeys: nil)
+            .filter { $0.pathExtension == "swift" }
+            .map { try String(contentsOf: $0, encoding: .utf8) }
+            .joined()
+        let source = paneSource + browserSources
 
-        XCTAssertTrue(source.contains("@Published var showsStartPage: Bool"))
+        XCTAssertTrue(
+            source.contains(".cosmoGlassPanel(role: .floatingAssistant, cornerRadius: 22)"),
+            "The browser toolbar floats on the same glass family as the pane tab rail."
+        )
+        XCTAssertFalse(
+            source.contains("DS.entitySwipe"),
+            "Entity tints are category washes, not chrome — the tan address bar is dead."
+        )
+        XCTAssertFalse(
+            source.contains("\"star.fill\""),
+            "Stars are replaced by favicons (tiles/rows) and the bookmark toggle (toolbar)."
+        )
+        XCTAssertFalse(
+            source.contains(".font(.system(size"),
+            "All browser type comes from the DS scale."
+        )
+    }
+
+    func testBrowserStartPageQuickAccessIsWiredToHomeURL() throws {
+        let paneSource = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Navigation/CosmoWebBrowserPane.swift"),
+            encoding: .utf8
+        )
+        let stateSource = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Navigation/Browser/CosmoBrowserState.swift"),
+            encoding: .utf8
+        )
+        let source = paneSource + stateSource
+
+        XCTAssertTrue(source.contains("var showsStartPage: Bool"))
         XCTAssertTrue(source.contains("self.showsStartPage = initialURL == CosmoBrowserURLResolver.defaultHomeURL"))
         XCTAssertTrue(source.contains("CosmoBrowserStartPage("))
         XCTAssertTrue(source.contains("favorites: browserState.pins"))

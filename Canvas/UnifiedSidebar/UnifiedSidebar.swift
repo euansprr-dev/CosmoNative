@@ -308,7 +308,7 @@ struct UnifiedSidebar: View {
     @Binding var inboxRoute: SidebarInboxRoute
     @Binding var activeContext: SidebarContext
     @Binding var panelWidth: CGFloat
-    @ObservedObject var thinkspaceManager: ThinkspaceManager
+    var thinkspaceManager: ThinkspaceManager
     var commandCenterViewModel: CommandCenterDashboardViewModel
     var cornerRadius: CGFloat = UnifiedSidebarMetrics.panelCornerRadius
     var sidebarButtonTitle: String = "Close sidebar"

@@ -13,14 +13,20 @@ struct ConnectionWorkspaceToolbar: View {
     let actions: ConnectionWorkspaceActions
 
     @Environment(\.atomWindowChromeContext) private var atomChrome
+    @Environment(\.paneDeckChrome) private var paneDeckChrome
     @FocusState private var searchFocused: Bool
 
     var body: some View {
         // Chrome islands, not a full-width bar: navigate | modes | tools,
-        // grouped by function on the shared chrome baseline.
-        CosmoChromeRow {
+        // grouped by function on the shared chrome baseline. In pane context
+        // the mode switcher flows between the clusters — no ZStack overlap
+        // at pane widths.
+        CosmoChromeRow(centersAbsolutely: !isPaneContext) {
             if atomChrome == nil, !isPaneContext {
                 NavigationTrailIsland()
+            }
+            if let paneDeckChrome {
+                CosmoChromeIsland { PaneDeckTabStrip(context: paneDeckChrome) }
             }
             CosmoChromeIsland { leadingControls }
         } center: {
@@ -45,7 +51,7 @@ struct ConnectionWorkspaceToolbar: View {
             AtomWindowChromeDivider()
         }
         toolbarButton(
-            icon: "sidebar.left",
+            icon: "sidebar.squares.left",
             help: workspace.isNavigatorShowing ? "Hide navigator (⌘0)" : "Show navigator (⌘0)",
             isActive: workspace.isNavigatorShowing
         ) {

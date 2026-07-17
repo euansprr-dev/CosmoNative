@@ -5,6 +5,7 @@
 // and the pane composer.
 // July 2026 rebuild (was the card-chassis picker, June 2026)
 
+import os
 import SwiftUI
 
 // MARK: - Kind-scope grammar
@@ -98,12 +99,18 @@ enum CosmoInlineContextScopeParser {
 /// Temporary live-debug tap for the @ menu pipeline — prints every hop from
 /// composer keystroke to applied results so a frozen list can be traced to
 /// the exact link that broke. Flip `enabled` off once the pipeline is stable.
+/// Streams via os_log too: `log stream --predicate 'category == "AtMenu"'`
+/// traces a normally-launched app, no Xcode attach needed.
 enum CosmoInlineContextMenuDebug {
-    nonisolated(unsafe) static var enabled = true
+    nonisolated(unsafe) static var enabled = false
+
+    private static let logger = os.Logger(subsystem: "com.cosmo.os", category: "AtMenu")
 
     static func log(_ message: @autoclosure () -> String) {
         guard enabled else { return }
-        print("🔍 [@menu] \(message())")
+        let text = message()
+        print("🔍 [@menu] \(text)")
+        logger.info("\(text, privacy: .public)")
     }
 }
 
@@ -163,12 +170,19 @@ final class CosmoInlineContextMenuModel {
     private var searchTask: Task<Void, Never>?
     private var snapshotTask: Task<SearchSnapshot, Never>?
     private var snapshotLoadedAt: Date?
-    private var snapshotReleaseTask: Task<Void, Never>?
+    private var isUpgradingSnapshot = false
+    private var lastRawQuery = ""
+    private var lastSelectedAtoms: [Atom] = []
     private var generation = 0
 
-    /// How long a built snapshot keeps answering queries before a fresh one
-    /// is fetched (new atoms created since the build won't appear until then).
+    /// After this age a snapshot still answers instantly but a background
+    /// rebuild starts (new atoms appear once it swaps in).
     private static let snapshotLifetime: TimeInterval = 180
+    /// Stage-one snapshot: small enough to land in a few hundred ms so the
+    /// first keystrokes have something real to search.
+    private static let starterSnapshotLimit = 500
+    /// Stage-two snapshot: ⌘K's own prewarm size.
+    private static let fullSnapshotLimit = 10_000
 
     var highlightedEntry: Entry? {
         flattened.indices.contains(highlightedIndex) ? flattened[highlightedIndex] : nil
@@ -179,7 +193,6 @@ final class CosmoInlineContextMenuModel {
     /// waiting out the 10k-atom build.
     func prewarmSearchIndex() {
         loadSnapshotIfNeeded()
-        scheduleSnapshotRelease()
     }
 
     func moveHighlight(_ delta: Int) {
@@ -204,6 +217,8 @@ final class CosmoInlineContextMenuModel {
         generation += 1
         let requestGeneration = generation
         searchTask?.cancel()
+        lastRawQuery = rawQuery
+        lastSelectedAtoms = selectedAtoms
         CosmoInlineContextMenuDebug.log("update raw=\"\(rawQuery)\" parsed=\"\(parse.query)\" scope=\(parse.scope.map(\.rawValue) ?? "nil") gen=\(requestGeneration)")
 
         if parse.query.isEmpty {
@@ -249,24 +264,13 @@ final class CosmoInlineContextMenuModel {
         searchTask?.cancel()
         searchTask = nil
         onApply = nil
+        lastRawQuery = ""
+        lastSelectedAtoms = []
         // INVARIANT: never cancel or discard the snapshot here. Teardown runs
         // on every menu dismiss; discarding meant every reopen paid a
         // multi-second rebuild and typing raced a half-built index (the
-        // "search never updates live" bug). The snapshot stays warm for quick
-        // reopens and is released only after a idle grace period.
-        scheduleSnapshotRelease()
-    }
-
-    /// The bar's model lives as long as the app — don't pin 10k atoms forever
-    /// after the user walks away from the menu.
-    private func scheduleSnapshotRelease() {
-        snapshotReleaseTask?.cancel()
-        snapshotReleaseTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 300_000_000_000) // 5 min idle
-            guard !Task.isCancelled, let self else { return }
-            self.snapshotTask = nil
-            self.snapshotLoadedAt = nil
-        }
+        // "search never updates live" bug). Like ⌘K's prewarm, the snapshot
+        // is retained for the app's lifetime and refreshed in the background.
     }
 
     // MARK: Row assembly
@@ -353,10 +357,12 @@ final class CosmoInlineContextMenuModel {
     /// the architecture:
     /// - `title/body LIKE %phrase%` ordered by updatedAt (the original) had
     ///   no relevance ranking at all.
-    /// - Per-keystroke SQL (FTS prefix scan + LIKE table scan) starves on
-    ///   `CosmoDatabase.dbQueue` — one SERIAL DatabaseQueue shared by the
-    ///   whole app. Every keystroke queued multi-second scans behind the
-    ///   previous one, so the visible list froze on the first query forever.
+    /// - Per-keystroke SQL (FTS prefix scan + LIKE table scan) starved on
+    ///   the database connection (then one SERIAL DatabaseQueue shared by
+    ///   the whole app; a concurrent-read DatabasePool since July 2026, but
+    ///   per-keystroke table scans are wasteful on any connection). Every
+    ///   keystroke queued multi-second scans behind the previous one, so the
+    ///   visible list froze on the first query forever.
     /// The fix is ⌘K's own recipe: pay the database exactly once per menu
     /// session (fetchRecent 10k — the same prewarm ⌘K runs), normalize into
     /// a `CommandKSearchIndex` off the main actor, then answer every
@@ -367,36 +373,66 @@ final class CosmoInlineContextMenuModel {
         let atomsByUUID: [String: Atom]
     }
 
-    /// Kicked off the moment the menu opens so the first typed character
-    /// scans a warm index. The snapshot outlives the menu session (quick
-    /// reopens must not pay the multi-second rebuild) and is refreshed once
-    /// it ages past `snapshotLifetime`.
+    /// Kicked off from prewarm (bar hover, pane appear) and every update.
+    /// LAW: queries must NEVER await a rebuild when any snapshot exists — a
+    /// full build on a transcript-heavy library takes seconds, and awaiting
+    /// it is exactly the "list frozen while I type" bug. The first-ever call
+    /// two-stages the warmup (a ~500-atom starter lands in a few hundred ms,
+    /// the full ⌘K-sized build swaps in behind it); afterwards a stale
+    /// snapshot keeps answering while its replacement builds in the
+    /// background, and the live query re-runs when the swap lands.
     @discardableResult
     private func loadSnapshotIfNeeded() -> Task<SearchSnapshot, Never> {
-        snapshotReleaseTask?.cancel()
-        snapshotReleaseTask = nil
-
-        if let snapshotTask,
-           let snapshotLoadedAt,
-           Date().timeIntervalSince(snapshotLoadedAt) < Self.snapshotLifetime {
+        if let snapshotTask {
+            let isStale = snapshotLoadedAt.map {
+                Date().timeIntervalSince($0) >= Self.snapshotLifetime
+            } ?? true
+            if isStale {
+                upgradeSnapshotInBackground(reason: "stale refresh")
+            }
             return snapshotTask
         }
 
-        CosmoInlineContextMenuDebug.log("snapshot build started")
-        let task = Task.detached(priority: .userInitiated) { () -> SearchSnapshot in
+        let starter = buildSnapshot(limit: Self.starterSnapshotLimit, label: "starter")
+        snapshotTask = starter
+        snapshotLoadedAt = Date()
+        upgradeSnapshotInBackground(reason: "initial full build")
+        return starter
+    }
+
+    private func buildSnapshot(limit: Int, label: String) -> Task<SearchSnapshot, Never> {
+        CosmoInlineContextMenuDebug.log("snapshot(\(label)) build started limit=\(limit)")
+        return Task.detached(priority: .userInitiated) { () -> SearchSnapshot in
             let startedAt = Date()
-            let atoms = (try? await AtomRepository.shared.fetchRecent(limit: 10_000)) ?? []
+            let atoms = (try? await AtomRepository.shared.fetchRecent(limit: limit)) ?? []
             // Entry construction normalizes every full body/metadata — that's
             // why this runs detached, exactly like the ⌘K prewarm.
             var index = CommandKSearchIndex()
             index.replace(CommandKSearchIndex.entries(for: atoms))
             let byUUID = Dictionary(atoms.map { ($0.uuid, $0) }, uniquingKeysWith: { first, _ in first })
-            CosmoInlineContextMenuDebug.log("snapshot build finished atoms=\(atoms.count) in \(String(format: "%.2f", Date().timeIntervalSince(startedAt)))s")
+            CosmoInlineContextMenuDebug.log("snapshot(\(label)) build finished atoms=\(atoms.count) in \(String(format: "%.2f", Date().timeIntervalSince(startedAt)))s")
             return SearchSnapshot(index: index, atomsByUUID: byUUID)
         }
-        snapshotLoadedAt = Date()
-        snapshotTask = task
-        return task
+    }
+
+    /// Builds the full snapshot without ever blocking queries, swaps it in on
+    /// completion, and re-runs the query the user is currently looking at so
+    /// the visible results upgrade in place.
+    private func upgradeSnapshotInBackground(reason: String) {
+        guard !isUpgradingSnapshot else { return }
+        isUpgradingSnapshot = true
+        let build = buildSnapshot(limit: Self.fullSnapshotLimit, label: "full — \(reason)")
+        Task { [weak self] in
+            _ = await build.value
+            guard let self else { return }
+            self.snapshotTask = build
+            self.snapshotLoadedAt = Date()
+            self.isUpgradingSnapshot = false
+            if !self.lastRawQuery.isEmpty {
+                CosmoInlineContextMenuDebug.log("snapshot swap → re-running \"\(self.lastRawQuery)\"")
+                self.update(query: self.lastRawQuery, selectedAtoms: self.lastSelectedAtoms)
+            }
+        }
     }
 
     nonisolated private static func scan(
@@ -461,8 +497,11 @@ struct CosmoInlineAssistantContextMenu: View {
     private let listMaxHeight: CGFloat = 296
 
     var body: some View {
+        // Unconditional @State read — the repaint dependency must not hide
+        // behind the debug flag.
+        let revision = appliedRevision
         let _ = CosmoInlineContextMenuDebug.log(
-            "menu RENDER rev=\(appliedRevision) browsing=\(model.isBrowsing) rows=\(model.flattened.count) firstRow=\"\(model.flattened.first?.atom.title ?? "-")\""
+            "menu RENDER rev=\(revision) browsing=\(model.isBrowsing) rows=\(model.flattened.count) firstRow=\"\(model.flattened.first?.atom.title ?? "-")\""
         )
         VStack(spacing: 0) {
             header
@@ -549,10 +588,14 @@ struct CosmoInlineAssistantContextMenu: View {
         }
     }
 
+    // Plain VStack, rows identified by their entry id: the list tops out at
+    // 18 rows so laziness buys nothing, and `.id(index)` gave the NEW row at
+    // a position the SAME explicit identity as the OLD row there — fighting
+    // the ForEach's uuid identity when a fresh result set replaced the list.
     private var listView: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 0) {
+                VStack(spacing: 0) {
                     ForEach(model.sections) { section in
                         if let title = section.title {
                             CosmoAssistantMenuSectionHeader(title: title)
@@ -567,15 +610,17 @@ struct CosmoInlineAssistantContextMenu: View {
             .frame(maxHeight: listMaxHeight)
             .scrollBounceBehavior(.basedOnSize)
             .onChange(of: model.highlightedIndex) { _, newIndex in
+                guard model.flattened.indices.contains(newIndex) else { return }
                 withAnimation(.easeOut(duration: 0.12)) {
-                    proxy.scrollTo(newIndex)
+                    proxy.scrollTo(model.flattened[newIndex].id)
                 }
             }
         }
     }
 
     private func entryRow(_ entry: CosmoInlineContextMenuModel.Entry, index: Int) -> some View {
-        CosmoAssistantMenuRow(
+        let _ = CosmoInlineContextMenuDebug.log("row BUILD idx=\(index) \"\(entry.atom.title ?? "Untitled")\"")
+        return CosmoAssistantMenuRow(
             icon: icon(for: entry),
             iconTint: tint(for: entry),
             title: entry.atom.title ?? "Untitled",
@@ -583,7 +628,7 @@ struct CosmoInlineAssistantContextMenu: View {
             showsCheckmark: entry.isSelected,
             isHighlighted: index == model.highlightedIndex
         )
-        .id(index)
+        .id(entry.id)
         .onTapGesture {
             CosmicHaptics.shared.play(.selection)
             onCommit(entry)

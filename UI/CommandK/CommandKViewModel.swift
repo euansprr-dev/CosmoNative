@@ -207,6 +207,9 @@ public struct RecentDisplayItem: Identifiable {
     let relativeDate: String
     let thumbnailURL: String?
     let preview: String?
+    /// Known at compose time so the detail pane can render the swipe stage on
+    /// the first frame instead of reflowing when the atom fetch lands.
+    var isSwipeFile: Bool = false
 }
 
 enum CommandKLibraryScope {
@@ -258,7 +261,8 @@ enum CommandKRecentComposer {
                     preview: CommandKPreviewExcerpt.clampOptional(
                         atom.body,
                         limit: CommandKPreviewExcerpt.thumbnailLimit
-                    )
+                    ),
+                    isSwipeFile: atom.type == .research && (researchMeta?.isSwipeFile ?? false)
                 )
             }
     }
@@ -592,7 +596,7 @@ enum UnifiedSearchSource: String, CaseIterable {
         case .swipes: return "bolt.fill"
         case .ideas: return "lightbulb.fill"
         case .readwise: return "books.vertical.fill"
-        case .browser: return "star.fill"
+        case .browser: return "bookmark.fill"
         }
     }
 
@@ -1019,7 +1023,7 @@ enum CommandKUnifiedSearchComposer {
                 title: pin.displayName,
                 subtitle: "\(pin.host) · Browser Favorite",
                 snippet: pin.url.absoluteString,
-                icon: "star.fill",
+                icon: "bookmark.fill",
                 accentColor: DS.entityResearch,
                 relevance: rank.relevance,
                 lexicalTier: rank.tier,
@@ -3125,7 +3129,11 @@ public final class CommandKViewModel {
         NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
     }
 
-    private func openBrowserPaneAfterCommandKDismissal(url: URL, title: String) {
+    private func openBrowserPaneAfterCommandKDismissal(
+        url: URL,
+        title: String,
+        disposition: BrowserOpenDisposition = .reuse
+    ) {
         NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
         actionStatusMessage = nil
         setQueryProgrammatically("")
@@ -3135,7 +3143,8 @@ public final class CommandKViewModel {
             object: nil,
             userInfo: [
                 "url": url,
-                "title": title
+                "title": title,
+                "disposition": disposition.rawValue
             ]
         )
     }
@@ -3152,9 +3161,11 @@ public final class CommandKViewModel {
 
     private func openUnifiedSearchResultAsPane(_ result: UnifiedSearchResult) async {
         if result.resultKind == .browserPin, let browserURL = result.browserURL {
+            // The explicit open-as-pane gesture (⌘⏎) always earns a new pane.
             openBrowserPaneAfterCommandKDismissal(
                 url: browserURL,
-                title: result.browserTitle ?? result.subtitle ?? "Browser"
+                title: result.browserTitle ?? result.subtitle ?? "Browser",
+                disposition: .newPane
             )
         } else if result.resultKind == .thinkspace, let thinkspaceId = result.thinkspaceId {
             openThinkspaceAsPane(id: thinkspaceId)
@@ -4240,7 +4251,7 @@ public final class CommandKViewModel {
 
     /// Available filter types with their display info
     public var filterTypes: [AtomType] {
-        [.idea, .task, .research, .content, .connection, .templateInstance]
+        [.idea, .task, .research, .content, .connection]
     }
 
     /// Get count for a specific filter type

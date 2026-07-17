@@ -8,6 +8,7 @@
 
 import SwiftUI
 import Combine
+import UniformTypeIdentifiers
 
 struct InboxSectionIdentity: Equatable {
     private let ids: [String]
@@ -85,6 +86,33 @@ final class InboxViewModel {
             }
         case .failed(let detail):
             captureError = "Couldn't digitize the scan — \(detail)"
+        }
+    }
+
+    /// "Upload images…" — pictures attach as pictures through the drop
+    /// pipeline (OCR rides the attachment for search only). The LLM
+    /// transcription pass is reserved for the scan intake above.
+    func ingestUploadedImages(_ files: [(data: Data, filename: String)]) async {
+        guard !files.isEmpty else { return }
+        captureError = nil
+        let payloads: [DropPayload] = files.map { file in
+            let ext = (file.filename as NSString).pathExtension
+            let type = UTType(filenameExtension: ext) ?? .image
+            return .data(file.data, type: type, suggestedName: file.filename)
+        }
+        let results = await InboxDropIngestService.shared.ingest(payloads)
+        let failure = results.compactMap { result -> String? in
+            if case .failed(let detail) = result.outcome { return detail }
+            return nil
+        }.first
+        if let failure {
+            captureError = "Couldn't attach — \(failure)"
+        } else {
+            showCaptureConfirmation = true
+            Task {
+                try? await Task.sleep(for: .seconds(1.5))
+                showCaptureConfirmation = false
+            }
         }
     }
 
@@ -271,7 +299,8 @@ final class InboxViewModel {
     /// (spatial placements are plentiful; knowledge-graph moves are the signal).
     private static let atlasMoveKinds: Set<InboxRouteKind> = [
         .advanceQuestion, .spawnQuestion, .feedConnection,
-        .attachClient, .germinateConnection, .germinateDeepDive
+        .attachClient, .germinateConnection, .germinateDeepDive,
+        .feedSeedling, .startSeedling
     ]
 
     /// Fire-and-forget ledger write: what the user did with this capture, and
@@ -423,11 +452,14 @@ final class InboxViewModel {
         defer { processingItemIds.remove(item.uuid) }
 
         do {
-            guard let atom = try await executor.executePrimaryRecommendation(item: item) else {
+            guard let outcome = try await executor.executePrimaryRecommendation(item: item) else {
                 await recoverFromNilExecution(for: item)
                 return
             }
             presentUndoToast(for: item, destination: item.spatialDestinationTitle)
+            // Seedling growth has no canvas destination — the receipt is the
+            // Growing section swelling, not a navigation.
+            guard let atom = outcome.atom else { return }
             let targetThinkspaceId = item.primaryRecommendationValue?.thinkspaceId
                 ?? item.primaryRecommendationValue?.placementPlan?.targetThinkspaceId
                 ?? item.placeThinkspaceId
@@ -557,6 +589,37 @@ final class InboxViewModel {
             print("⚠️ [InboxVM] Connect failed: \(error)")
             PersistenceHealth.note(.writeFailure, context: "InboxVM.connectCapture", detail: error.localizedDescription)
             presentErrorToast("Couldn't create the concept — the capture is still in your inbox.")
+        }
+    }
+
+    /// G — manual grow: the thought becomes (or feeds, when a live seedling
+    /// already carries its concept key) a seedling in the nursery. No atom,
+    /// no canvas object, no premature page.
+    func growSeedling(_ item: InboxItem) async {
+        processingItemIds.insert(item.uuid)
+        defer { processingItemIds.remove(item.uuid) }
+
+        do {
+            let recommendation = InboxRecommendation(
+                kind: .startSeedling,
+                confidence: 1.0,
+                suggestedAtomType: AtomType.connection.rawValue,
+                destinationPath: "Seedling",
+                rationale: "Manual grow.",
+                atlasMove: InboxAtlasMove(germinateTitle: item.title)
+            )
+            if let seedling = try await executor.executeStartSeedling(item: item, recommendation: recommendation) {
+                presentUndoToast(for: item, destination: "\u{201C}\(seedling.name)\u{201D} is growing")
+                recordRoutingOutcome(
+                    for: item,
+                    chosenKind: InboxRouteKind.startSeedling.rawValue,
+                    chosenLabel: seedling.name
+                )
+            }
+        } catch {
+            print("⚠️ [InboxVM] Grow failed: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "InboxVM.growSeedling", detail: error.localizedDescription)
+            presentErrorToast("Couldn't grow the seedling — the capture is still in your inbox.")
         }
     }
 

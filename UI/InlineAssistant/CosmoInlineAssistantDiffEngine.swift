@@ -1,32 +1,21 @@
 import Foundation
 
 enum CosmoInlineAssistantDiffEngine {
+    /// Line-level LCS diff: identical lines render as context wherever they sit,
+    /// so an inserted line at the top can no longer cascade every following
+    /// (unchanged) line into a removed+added pair the way index-pairing did.
     static func hunks(original: String, proposed: String) -> [CosmoProposalHunk] {
-        let originalLines = normalizedLines(original)
-        let proposedLines = normalizedLines(proposed)
-        let maxCount = max(originalLines.count, proposedLines.count)
-        var hunks: [CosmoProposalHunk] = []
-
-        for index in 0..<maxCount {
-            let oldLine = index < originalLines.count ? originalLines[index] : nil
-            let newLine = index < proposedLines.count ? proposedLines[index] : nil
-
-            switch (oldLine, newLine) {
-            case let (.some(old), .some(new)) where old == new:
-                hunks.append(CosmoProposalHunk(kind: .context, text: old))
-            case let (.some(old), .some(new)):
-                hunks.append(CosmoProposalHunk(kind: .removed, text: old))
-                hunks.append(CosmoProposalHunk(kind: .added, text: new))
-            case let (.some(old), .none):
-                hunks.append(CosmoProposalHunk(kind: .removed, text: old))
-            case let (.none, .some(new)):
-                hunks.append(CosmoProposalHunk(kind: .added, text: new))
-            case (.none, .none):
-                break
+        CosmoInlineLineDiff.elements(
+            original: normalizedLines(original),
+            proposed: normalizedLines(proposed)
+        )
+        .map { element in
+            switch element {
+            case .common(let line): return CosmoProposalHunk(kind: .context, text: line)
+            case .removed(let line): return CosmoProposalHunk(kind: .removed, text: line)
+            case .added(let line): return CosmoProposalHunk(kind: .added, text: line)
             }
         }
-
-        return hunks
     }
 
     private static func normalizedLines(_ text: String) -> [String] {
@@ -35,6 +24,131 @@ enum CosmoInlineAssistantDiffEngine {
             .replacingOccurrences(of: "\r", with: "\n")
             .components(separatedBy: "\n")
             .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+}
+
+// MARK: - Line-level diff primitives
+
+/// Shared line-level LCS diff. Feeds the review hunks, the minimal-edit
+/// splitter (which shrinks a fused block replacement down to the lines that
+/// actually change), and the validator's move/duplication rules — one diff
+/// definition so display, splitting, and validation can never disagree about
+/// what changed.
+enum CosmoInlineLineDiff {
+    enum Element: Equatable {
+        /// A line present on both sides. Carries the ORIGINAL side's verbatim
+        /// text — the side that can be located in the live document.
+        case common(String)
+        case removed(String)
+        case added(String)
+    }
+
+    /// LCS over lines, matched with whitespace collapsed and typography folded
+    /// (the same tolerance the locator applies), so a smart-quote drift doesn't
+    /// turn an untouched line into a removed+added pair.
+    static func elements(original: [String], proposed: [String]) -> [Element] {
+        let originalKeys = original.map(matchKey)
+        let proposedKeys = proposed.map(matchKey)
+
+        // DP table for LCS length.
+        let rows = original.count
+        let columns = proposed.count
+        var table = [[Int]](repeating: [Int](repeating: 0, count: columns + 1), count: rows + 1)
+        if rows > 0, columns > 0 {
+            for row in stride(from: rows - 1, through: 0, by: -1) {
+                for column in stride(from: columns - 1, through: 0, by: -1) {
+                    if originalKeys[row] == proposedKeys[column] {
+                        table[row][column] = table[row + 1][column + 1] + 1
+                    } else {
+                        table[row][column] = max(table[row + 1][column], table[row][column + 1])
+                    }
+                }
+            }
+        }
+
+        var elements: [Element] = []
+        var row = 0
+        var column = 0
+        while row < rows, column < columns {
+            if originalKeys[row] == proposedKeys[column] {
+                elements.append(.common(original[row]))
+                row += 1
+                column += 1
+            } else if table[row + 1][column] >= table[row][column + 1] {
+                elements.append(.removed(original[row]))
+                row += 1
+            } else {
+                elements.append(.added(proposed[column]))
+                column += 1
+            }
+        }
+        while row < rows {
+            elements.append(.removed(original[row]))
+            row += 1
+        }
+        while column < columns {
+            elements.append(.added(proposed[column]))
+            column += 1
+        }
+        return elements
+    }
+
+    /// Equality key for "is this the same line": whitespace collapsed,
+    /// typographic variants folded. Punctuation is content — a period-only
+    /// change is a real edit and must NOT match.
+    static func matchKey(_ line: String) -> String {
+        var result: [Character] = []
+        var previousWasSpace = false
+        for character in line {
+            if character.isWhitespace {
+                if !previousWasSpace, !result.isEmpty { result.append(" ") }
+                previousWasSpace = true
+            } else {
+                result.append(foldedTypography(character))
+                previousWasSpace = false
+            }
+        }
+        if result.last == " " { result.removeLast() }
+        return String(result)
+    }
+
+    /// Looser key for the validator's move/duplication rules: the match key
+    /// with trailing punctuation stripped, so "…decades." and "…decades…"
+    /// count as the same sentence when checking for duplicated content.
+    static func contentKey(_ line: String) -> String {
+        var key = matchKey(line)
+        while let last = key.last, isTrailingPunctuation(last) {
+            key.removeLast()
+        }
+        return key
+    }
+
+    /// Whether a line carries enough substance for move/duplication analysis.
+    /// Short lines (separators, "SLIDE 7", "Step 3:") repeat legitimately and
+    /// must never trip structural rules.
+    static func isSubstantialContentLine(_ line: String) -> Bool {
+        let key = contentKey(line)
+        guard key.count >= 15 else { return false }
+        guard key.contains(where: { $0.isLetter }) else { return false }
+        // Bare slide headers repeat by design during renumber cascades.
+        if key.range(of: #"^(?:-{2,}\s*)?SLIDE\s+\d+$"#, options: [.regularExpression, .caseInsensitive]) != nil {
+            return false
+        }
+        return true
+    }
+
+    private static func isTrailingPunctuation(_ character: Character) -> Bool {
+        character == "." || character == "…" || character == "!" || character == "?"
+            || character == "," || character == ";" || character == ":"
+    }
+
+    private static func foldedTypography(_ character: Character) -> Character {
+        switch character {
+        case "\u{201C}", "\u{201D}", "\u{201E}", "\u{201F}", "\u{2033}": return "\""
+        case "\u{2018}", "\u{2019}", "\u{201A}", "\u{201B}", "\u{2032}": return "'"
+        case "\u{2014}", "\u{2013}", "\u{2212}", "\u{2012}", "\u{2015}": return "-"
+        default: return character
+        }
     }
 }
 

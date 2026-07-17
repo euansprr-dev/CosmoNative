@@ -239,7 +239,7 @@ private struct SwipeCardFooter: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            if model.aspect != .paper {
+            if model.aspect != .paper && model.showsHookLine {
                 hookLine
             }
             metaRow

@@ -346,6 +346,49 @@ final class CosmoInlineAssistantApplicatorTests: XCTestCase {
         XCTAssertEqual(store.proposals.first?.operations.map(\.status), [.reverted, .reverted])
     }
 
+    func testAcceptAllSkipsDriftedOperationsInsteadOfSilentlyAppending() async {
+        let registry = CosmoEditableSurfaceRegistry()
+        let surface = ApplyingEditableSurface(text: "Rent: $X/mo\nTaxes: $410/mo")
+        registry.register(surface)
+
+        let anchored = CosmoAssistantProposalOperation.textReplacement(
+            targetID: surface.targetID,
+            anchorID: "body",
+            originalText: "Rent: $X/mo",
+            proposedText: "Rent: $4,556/mo",
+            sourceHash: "stale-hash",
+            rationale: "Fill the rent placeholder."
+        )
+        // Staged against text that has since been deleted — one-click accept-all
+        // must NOT let this degrade into a silent bottom-append.
+        let drifted = CosmoAssistantProposalOperation.textReplacement(
+            targetID: surface.targetID,
+            anchorID: "body",
+            originalText: "Insurance: $Y/mo — a line that no longer exists anywhere.",
+            proposedText: "Insurance: $180/mo",
+            sourceHash: "stale-hash",
+            rationale: "Fill the insurance placeholder."
+        )
+        let store = CosmoInlineAssistantStore(agentBridge: .mock)
+        let staged = CosmoAssistantProposal(
+            prompt: "Fill in the numbers",
+            surfaceID: surface.surfaceID,
+            title: "Fill placeholders",
+            summary: "Fill rent and insurance.",
+            operations: [anchored, drifted]
+        )
+        store.receive(proposal: staged)
+
+        await store.acceptAll(proposalID: staged.id, registry: registry)
+
+        XCTAssertEqual(surface.text, "Rent: $4,556/mo\nTaxes: $410/mo")
+        XCTAssertFalse(surface.text.contains("Insurance"), "drifted op must not append")
+        let statuses = store.proposals.first?.operations.map(\.status)
+        XCTAssertEqual(statuses?.first, .applied)
+        XCTAssertEqual(statuses?.last, .pending, "drifted op stays pending for individual review")
+        XCTAssertNotNil(store.errorText)
+    }
+
     private func proposal(
         with operation: CosmoAssistantProposalOperation,
         surfaceID: String

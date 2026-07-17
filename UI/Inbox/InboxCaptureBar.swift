@@ -53,12 +53,15 @@ struct InboxCaptureBar: View {
             allowsMultipleSelection: true
         ) { result in
             guard case .success(let urls) = result else { return }
-            let images = urls.compactMap { url -> Data? in
+            // Uploaded pictures attach without transcription — only the
+            // scan intakes (Continuity Camera / iPhone scan) digitize.
+            let files = urls.compactMap { url -> (data: Data, filename: String)? in
                 let scoped = url.startAccessingSecurityScopedResource()
                 defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-                return try? Data(contentsOf: url)
+                guard let data = try? Data(contentsOf: url) else { return nil }
+                return (data, url.lastPathComponent)
             }
-            Task { await viewModel.ingestScanImages(images) }
+            Task { await viewModel.ingestUploadedImages(files) }
         }
     }
 

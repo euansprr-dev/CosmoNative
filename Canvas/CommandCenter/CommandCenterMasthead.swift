@@ -40,6 +40,42 @@ struct CommandCenterInboxChip: View {
     }
 }
 
+/// The Seedbed's one line on Today: "N ripe" when seedlings are ready for a
+/// development conversation. Disappears entirely otherwise — ripeness is an
+/// invitation, never a nag. Click opens the inbox (the Growing section).
+struct CommandCenterRipeChip: View {
+    @ObservedObject private var seedlings = SeedlingRepository.shared
+    @State private var isHovered = false
+
+    var body: some View {
+        if seedlings.ripeCount > 0 {
+            Button {
+                NotificationCenter.default.post(name: CosmoNotification.Inbox.open, object: nil)
+            } label: {
+                HStack(spacing: DS.space4) {
+                    Image(systemName: "leaf.fill")
+                        .font(DS.caption2.weight(.semibold))
+                    Text("\(seedlings.ripeCount) ripe")
+                        .font(DS.caption.weight(.medium))
+                        .monospacedDigit()
+                }
+                .foregroundStyle(isHovered ? DS.accent : DS.accent.opacity(0.85))
+                .padding(.horizontal, DS.space8)
+                .padding(.vertical, 3)
+                .background(DS.accentSoft.opacity(0.5), in: .capsule)
+                .overlay(Capsule().strokeBorder(DS.accent.opacity(0.25), lineWidth: 0.5))
+                .contentTransition(.numericText())
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering in
+                withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+            }
+            .help("Seedlings ready to develop into Concept pages")
+            .accessibilityLabel("\(seedlings.ripeCount) seedlings ripe — open inbox")
+        }
+    }
+}
+
 struct CommandCenterMasthead: View {
 
     var viewModel: CommandCenterDashboardViewModel
@@ -74,6 +110,7 @@ struct CommandCenterMasthead: View {
 
                         if viewModel.viewMode == .today {
                             CommandCenterInboxChip()
+                            CommandCenterRipeChip()
                         }
                     }
                 }

@@ -1228,7 +1228,7 @@ struct StagedConceptItem: Codable, Sendable, Identifiable, Hashable {
 /// A concept accruing mass in a Deep Dive before it has earned a page.
 /// Identity is the normalized `conceptKey` (ConceptResolver.conceptKey) — the
 /// same key the live router's capture-time tags and the tidy pass both use.
-struct IncubatingConcept: Codable, Sendable, Identifiable {
+struct IncubatingConcept: Codable, Sendable, Identifiable, Equatable {
     enum Status: String, Codable, Sendable {
         case incubating
         case developed      // Page born through a development conversation

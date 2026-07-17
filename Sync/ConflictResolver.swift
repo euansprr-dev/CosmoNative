@@ -28,35 +28,67 @@ class ConflictResolver {
             }
 
             if let local = local {
-                let localVersion = local["_local_version"] as? Int ?? 0
-                let serverVersion = local["_server_version"] as? Int ?? 0
-                let localPending = local["_local_pending"] as? Int ?? 0
-
-                let remoteVersion = data["_version"] as? Int ?? data["_server_version"] as? Int ?? data["version"] as? Int ?? 0
-                print("[SYNC-RESOLVE] local state — uuid=\(uuid) localVersion=\(localVersion) serverVersion=\(serverVersion) localPending=\(localPending) remoteVersion=\(remoteVersion)")
+                // Typed GRDB subscripts (`as Int?` / `as Bool?`), NEVER `as? Int`:
+                // SQLite integers surface as Int64 and the untyped cast silently
+                // returns nil. These casts were broken for months — version and
+                // pending reads all collapsed to 0, which disabled the pending
+                // shield here, the stale-remote skip, and the entire conflict-
+                // merge branch (every remote apply degraded to a blind whole-row
+                // overwrite). See the same incident class documented on
+                // CanvasBlockRecord.cloudSyncPayload.
+                let localVersion = local["_local_version"] as Int? ?? 0
+                let serverVersion = local["_server_version"] as Int? ?? 0
+                let localPending = local["_local_pending"] as Int? ?? 0
+                print("[SYNC-RESOLVE] local state — uuid=\(uuid) localVersion=\(localVersion) serverVersion=\(serverVersion) localPending=\(localPending)")
 
                 if localPending == 1 {
                     print("[SYNC-RESOLVE] SKIPPED — localPending=1 uuid=\(uuid)")
                     return
                 }
 
-                if remoteVersion <= serverVersion && remoteVersion > 0 {
-                    print("[SYNC-RESOLVE] SKIPPED — stale remote version uuid=\(uuid) remote=\(remoteVersion) <= server=\(serverVersion)")
-                    return
-                }
-
                 // Deletes are one-way: a locally-deleted row is never
                 // resurrected by a remote live row (covers Realtime, which
                 // calls this resolver directly and skips SyncEngine's guard).
-                let localDeleted = (local["is_deleted"] as? Int64 ?? Int64(local["is_deleted"] as? Int ?? 0)) != 0
+                // Sole escape hatch: an explicit user restore, proven by a
+                // metadata.restoredAt marker strictly newer than the local
+                // tombstone (wire contract shared with the iOS repo).
+                let localDeleted = (local["is_deleted"] as Bool?) ?? false
                 let remoteDeleted = (data["is_deleted"] as? Bool) ?? ((data["is_deleted"] as? Int).map { $0 == 1 } ?? false)
                 if localDeleted && !remoteDeleted {
+                    if SyncEngine.remoteCarriesExplicitRestore(data: data, localTombstoneUpdatedAt: local["updated_at"] as String?) {
+                        PersistenceHealth.note(.conflict, context: "ConflictResolver.applyRemoteChange(\(uuid.prefix(8)))", detail: "explicit restore applied — restoredAt newer than local tombstone")
+                        await applyExplicitRestore(table: table, uuid: uuid, data: data)
+                        return
+                    }
                     print("[SYNC-RESOLVE] SKIPPED — locally deleted, remote live; deletes are one-way uuid=\(uuid)")
                     return
                 }
 
+                // LWW stale guard. This replaces the old version-based skip,
+                // which compared THIS device's push-ack counter against the
+                // OTHER device's counter — the values share no lineage, so the
+                // comparison was meaningless (and, with the broken casts, dead).
+                // A live remote row strictly OLDER than the local row by
+                // updated_at can never regress local state; equal timestamps
+                // re-apply (idempotent) so same-second edits are never dropped.
+                // Tombstone flows never reach here (handled above / diverted to
+                // applyRemoteTombstone) — deletes stay timestamp-independent.
+                if !remoteDeleted,
+                   let remoteUpdatedStr = data["updated_at"] as? String,
+                   let remoteUpdated = ISO8601.date(from: ISO8601.normalize(remoteUpdatedStr)),
+                   let localUpdatedStr = local["updated_at"] as String?,
+                   let localUpdated = ISO8601.date(from: ISO8601.normalize(localUpdatedStr)),
+                   remoteUpdated < localUpdated {
+                    print("[SYNC-RESOLVE] SKIPPED — stale remote row uuid=\(uuid) remote=\(remoteUpdatedStr) < local=\(localUpdatedStr)")
+                    return
+                }
+
                 if localVersion > serverVersion {
-                    // Local was modified since last sync — conflict!
+                    // Local is genuinely ahead of the last acknowledged push
+                    // (both counters are local-only, so this comparison IS
+                    // sound): unpushed local edits exist even though the
+                    // pending shield is down. Merge local-wins instead of
+                    // letting the remote row stomp them.
                     await handleConflict(
                         table: table,
                         uuid: uuid,
@@ -75,6 +107,43 @@ class ConflictResolver {
         } catch {
             print("[SYNC-RESOLVE] ❌ error — uuid=\(uuid) error=\(error)")
             PersistenceHealth.note(.syncFailure, context: "ConflictResolver.applyRemoteChange(\(uuid.prefix(8)))", detail: String(describing: error))
+        }
+    }
+
+    // MARK: - Explicit Restore
+
+    /// Undelete accepted by the explicit-resurrection gate
+    /// (`SyncEngine.remoteCarriesExplicitRestore`). Routed straight to
+    /// applyRemoteUpdate — the local row is a tombstone, so there are no live
+    /// local edits for handleConflict's local-wins merge to protect (and that
+    /// merge would keep is_deleted = 1, silently dropping the restore).
+    /// Mirrors the iOS implementation — shared wire contract.
+    private func applyExplicitRestore(table: String, uuid: String, data: [String: Any]) async {
+        var restored = data
+        restored["is_deleted"] = 0 // undelete even if the remote row omitted the column
+        await applyRemoteUpdate(table: table, uuid: uuid, data: restored)
+
+        // delete() tombstones an atom's canvas placements with it — bring
+        // them back too or the restored atom stays invisible on every space
+        // (mirrors AtomRepository.restore()). Deliberately NOT suppressed:
+        // the Mac owns placement sync, so the un-tombstoned blocks should be
+        // enqueued and pushed live again by the CanvasBlockSyncObserver.
+        guard table == Atom.databaseTableName else { return }
+        do {
+            try await database.asyncWrite { db in
+                try db.execute(
+                    sql: "UPDATE canvas_blocks SET is_deleted = 0, updated_at = ? WHERE entity_uuid = ? AND is_deleted = 1",
+                    arguments: [ISO8601.string(from: Date()), uuid]
+                )
+            }
+            await MainActor.run {
+                NotificationCenter.default.post(
+                    name: Notification.Name("com.cosmo.canvasBlocksChanged"),
+                    object: nil
+                )
+            }
+        } catch {
+            PersistenceHealth.note(.writeFailure, context: "ConflictResolver.applyExplicitRestore(\(uuid.prefix(8)))", detail: String(describing: error))
         }
     }
 
@@ -144,7 +213,12 @@ class ConflictResolver {
 
         // Update server version to remote
         merged["_server_version"] = remoteData["_version"] ?? remoteData["_server_version"] ?? remoteData["version"]
-        merged["_sync_version"] = (merged["_sync_version"] as? Int ?? 0) + 1
+        // merged comes from rowToDictionary — GRDB row values are Int64, so
+        // coerce both widths (the bare `as? Int` read always failed).
+        let currentSyncVersion = (merged["_sync_version"] as? Int)
+            ?? (merged["_sync_version"] as? Int64).map(Int.init)
+            ?? 0
+        merged["_sync_version"] = currentSyncVersion + 1
 
         await applyMergedData(table: table, uuid: uuid, data: merged)
 

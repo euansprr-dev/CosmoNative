@@ -108,6 +108,12 @@ class AgentToolExecutor {
     /// asterisk-formatting deterministically, and expand series instructions
     /// (renumberSequence, scoped formatMarks) from the document's own state.
     var workspaceEditBoundSurfaceText: String?
+    /// Set by the inline bridge for concept-collaborator runs. A staged capture
+    /// alone never finishes a concept turn — when this is on and no pane answer
+    /// has been delivered yet, `proposeWorkspaceEdit`'s tool result tells the
+    /// model to finish the turn (reaction + one deepening question) IN THE SAME
+    /// PASS, instead of relying on a second nudge call after the run.
+    var conceptTurnContractActive = false
     var inlineSkillStore: CosmoInlineSkillStore = .defaultForRuntime()
 
     private init() {}
@@ -122,9 +128,15 @@ class AgentToolExecutor {
     /// (Haiku) run keeps producing invalid operations.
     private(set) var workspaceEditValidationRejections = 0
 
+    /// Whether answer_in_assistant_pane ran during THIS run — the state the
+    /// concept turn contract reads to decide if a staging tool result must
+    /// demand the closing reaction + question.
+    private(set) var paneAnswerDeliveredThisRun = false
+
     func resetSessionSourceRefs() {
         sessionSourceRefs = []
         workspaceEditValidationRejections = 0
+        paneAnswerDeliveredThisRun = false
     }
 
     func recordSourceRef(uuid: String, title: String, kind: String) {
@@ -1951,7 +1963,19 @@ class AgentToolExecutor {
     }
 
     private func proposeWorkspaceEdit(_ args: [String: Any]) async throws -> String {
-        let buildResult = workspaceEditProposal(arguments: args)
+        // Close the unvalidated-path gap: when no surface text was bound at
+        // submit (e.g. targeting a note that isn't open), resolve the target's
+        // live text so anchors and structure are validated on EVERY path.
+        var fallbackSourceText: String?
+        if workspaceEditBoundSurfaceText == nil,
+           let surfaceID = trimmedString(args["surfaceID"]) {
+            if let registered = CosmoEditableSurfaceRegistry.shared.provider(surfaceID: surfaceID) {
+                fallbackSourceText = registered.editableSnapshot().text
+            } else if let loaded = await CosmoAtomBackedEditableSurface.load(surfaceID: surfaceID) {
+                fallbackSourceText = loaded.editableSnapshot().text
+            }
+        }
+        let buildResult = workspaceEditProposal(arguments: args, sourceTextFallback: fallbackSourceText)
         guard let proposal = buildResult.proposal else {
             return jsonError(buildResult.error ?? "Missing required workspace edit proposal fields")
         }
@@ -1964,6 +1988,13 @@ class AgentToolExecutor {
             "operationCount": proposal.operations.count,
             "message": "Workspace edit proposal is ready for review. Do not say it has been applied until the user accepts changes."
         ]
+        // Concept turn contract: staging is never the end of a concept turn.
+        // Saying so in the tool result keeps the reaction + question in the
+        // same model pass — the question lands right under the staged receipt
+        // without a second billed call.
+        if conceptTurnContractActive, !paneAnswerDeliveredThisRun {
+            payload["message"] = "Staged for review — but this turn is NOT finished. Call answer_in_assistant_pane now, in this same turn, with your short natural reaction plus exactly ONE deepening question in the user's own vocabulary. Without it the user sees a dead-end receipt instead of a conversation. Do not narrate process; just react and ask."
+        }
         if let afterOutline = buildResult.afterOutline {
             // The simulated post-apply structure — verify it matches what the
             // user asked for; if it doesn't, stage a corrected proposal.
@@ -1973,7 +2004,8 @@ class AgentToolExecutor {
     }
 
     func workspaceEditProposal(
-        arguments args: [String: Any]
+        arguments args: [String: Any],
+        sourceTextFallback: String? = nil
     ) -> (proposal: CosmoAssistantProposal?, error: String?, afterOutline: String?) {
         guard let prompt = trimmedString(args["prompt"]),
               let modelSurfaceID = trimmedString(args["surfaceID"]),
@@ -1988,7 +2020,7 @@ class AgentToolExecutor {
         // surfaces expose several targets under one surfaceID prefix).
         let boundSurface = workspaceEditBoundSurface
         let surfaceID = boundSurface?.surfaceID ?? modelSurfaceID
-        let boundText = workspaceEditBoundSurfaceText
+        let boundText = workspaceEditBoundSurfaceText ?? sourceTextFallback
 
         var operations: [CosmoAssistantProposalOperation] = []
         for raw in rawOperations {
@@ -2056,7 +2088,8 @@ class AgentToolExecutor {
                 proposedText: raw["proposedText"] as? String,
                 sourceHash: sourceHash,
                 rationale: rationale,
-                formatMark: (raw["formatMark"] as? String).flatMap(CosmoAssistantFormatMark.init(rawValue:))
+                formatMark: (raw["formatMark"] as? String).flatMap(CosmoAssistantFormatMark.init(rawValue:)),
+                explicitMove: raw["explicitMove"] as? Bool
             )
             operations.append(CosmoInlineAssistantOutlineBodyInsertionNormalizer.normalized(
                 operation: operation,
@@ -2064,7 +2097,22 @@ class AgentToolExecutor {
             ))
         }
 
+        // Minimal-edit normalization: a fused multi-line replacement is split
+        // into one operation per changed region (unchanged lines dropped), so
+        // review, validation, and the scope guard all see the TRUE delta
+        // instead of a block rewrite. Deterministic; no-op for minimal ops.
+        if let boundText, !boundText.isEmpty {
+            operations = CosmoInlineMinimalEditSplitter.split(
+                operations: operations,
+                sourceText: boundText
+            )
+        }
+
         if operations.contains(where: { CosmoInlineAssistantEditScopeGuard.shouldReject(operation: $0, prompt: prompt) }) {
+            // Scope violations count toward the escalation ladder exactly like
+            // locator/structure rejections — repeated over-scoping must trigger
+            // the stronger-model retry, not silently exhaust the run.
+            workspaceEditValidationRejections += 1
             return (nil, CosmoInlineAssistantEditScopeGuard.rejectionMessage, nil)
         }
 
@@ -2105,6 +2153,7 @@ class AgentToolExecutor {
         guard let answer = trimmedString(args["answer"]) else {
             return jsonError("Missing required parameter: answer")
         }
+        paneAnswerDeliveredThisRun = true
         onAssistantPaneAnswer?(trimmedString(args["title"]), answer)
         return jsonEncode(["success": true, "message": "Answer sent to assistant pane"])
     }
@@ -2148,10 +2197,12 @@ class AgentToolExecutor {
         ] as [String: Any])
     }
 
-    /// The evidence-aware collaborator: everything the dive already gathered
-    /// about the working concept — the seedbed's staged captures plus tag/key-
-    /// matched extracts — with source titles as provenance. Read-only; the
-    /// model cites from it and stages only what the user accepts.
+    /// The evidence-aware collaborator: everything already gathered about the
+    /// working concept — the seedbed's staged captures, tag/key-matched dive
+    /// extracts, AND matching Readwise highlights (the user's bookshelf) —
+    /// each with its source. Read-only; the model cites from it and stages
+    /// only what the user accepts. Readwise evidence surfaces even for
+    /// concepts with no deep dive: the bookshelf is always in the room.
     private func pullEvidence(_ args: [String: Any]) async throws -> String {
         let rawSurfaceID = trimmedString(args["surfaceID"])
             ?? CosmoEditableSurfaceRegistry.shared.activeSurface?.editableSnapshot().surfaceID
@@ -2160,64 +2211,96 @@ class AgentToolExecutor {
         }
         let conceptName = trimmedString(args["concept"]) ?? connection.title ?? ""
         let conceptKey = ConceptResolver.conceptKey(conceptName)
-        guard let deepDive = await CosmoInlineInquiryQuestionResolver.resolveDeepDive(for: connection) else {
-            return jsonEncode([
-                "success": true,
-                "evidence": [] as [Any],
-                "message": "No deep dive is linked to this concept — nothing has been gathered yet."
-            ] as [String: Any])
-        }
-
-        let sources = (try? await InquiryRepository.shared.fetchSources(forDeepDive: deepDive)) ?? []
-        let sourceTitles = Dictionary(
-            sources.compactMap { source in source.title.map { (source.uuid, $0) } },
-            uniquingKeysWith: { first, _ in first }
-        )
+        let deepDive = await CosmoInlineInquiryQuestionResolver.resolveDeepDive(for: connection)
 
         var rows: [[String: Any]] = []
-        var seenExtracts = Set<String>()
-        func addRow(text: String, extractUUID: String, sourceUUID: String?, kind: String) {
-            guard rows.count < 20, !seenExtracts.contains(extractUUID) else { return }
-            seenExtracts.insert(extractUUID)
+        var seenKeys = Set<String>()
+        func addRow(text: String, dedupKey: String, sourceLabel: String?, kind: String, url: String? = nil) {
+            guard rows.count < 24, !seenKeys.contains(dedupKey) else { return }
+            seenKeys.insert(dedupKey)
             var row: [String: Any] = ["text": String(text.prefix(400)), "kind": kind]
-            if let sourceUUID, let title = sourceTitles[sourceUUID] { row["source"] = title }
+            if let sourceLabel { row["source"] = sourceLabel }
+            if let url { row["url"] = url }
             rows.append(row)
         }
 
-        let seedling = deepDive.deepDiveStructured?.conceptSeedbed.first { candidate in
-            candidate.conceptKey == conceptKey
-                || candidate.developedConnectionUUID == connection.uuid
-                || candidate.mergeTargetConnectionUUID == connection.uuid
-        }
-        for item in seedling?.pendingItems ?? [] {
-            addRow(
-                text: item.rawSnippet,
-                extractUUID: item.sourceExtractUUID,
-                sourceUUID: item.sourceUUID,
-                kind: item.proposedSection ?? "capture"
+        if let deepDive {
+            let sources = (try? await InquiryRepository.shared.fetchSources(forDeepDive: deepDive)) ?? []
+            let sourceTitles = Dictionary(
+                sources.compactMap { source in source.title.map { (source.uuid, $0) } },
+                uniquingKeysWith: { first, _ in first }
             )
-        }
-        let extracts = (try? await InquiryRepository.shared.fetchExtracts(forDeepDive: deepDive.uuid)) ?? []
-        for extract in extracts {
-            guard let metadata = extract.extractMetadata else { continue }
-            let body = (extract.body ?? extract.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !body.isEmpty else { continue }
-            let tagKeys = (metadata.conceptNames ?? []).map(ConceptResolver.conceptKey)
-            let matches = tagKeys.contains(conceptKey)
-                || (conceptKey.count >= 4 && body.lowercased().contains(conceptKey))
-            guard matches else { continue }
-            addRow(text: body, extractUUID: extract.uuid, sourceUUID: metadata.sourceUUID, kind: metadata.kind.rawValue)
+
+            let seedbed = await ConceptSeedbedService.shared.seedbed(deepDiveUUID: deepDive.uuid)
+            let seedling = seedbed.first { candidate in
+                candidate.conceptKey == conceptKey
+                    || candidate.developedConnectionUUID == connection.uuid
+                    || candidate.mergeTargetConnectionUUID == connection.uuid
+            }
+            for item in seedling?.pendingItems ?? [] {
+                addRow(
+                    text: item.rawSnippet,
+                    dedupKey: item.sourceExtractUUID,
+                    sourceLabel: item.sourceUUID.flatMap { sourceTitles[$0] },
+                    kind: item.proposedSection ?? "capture"
+                )
+            }
+            let extracts = (try? await InquiryRepository.shared.fetchExtracts(forDeepDive: deepDive.uuid)) ?? []
+            for extract in extracts {
+                guard let metadata = extract.extractMetadata else { continue }
+                let body = (extract.body ?? extract.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !body.isEmpty else { continue }
+                let tagKeys = (metadata.conceptNames ?? []).map(ConceptResolver.conceptKey)
+                let matches = tagKeys.contains(conceptKey)
+                    || (conceptKey.count >= 4 && body.lowercased().contains(conceptKey))
+                guard matches else { continue }
+                addRow(
+                    text: body,
+                    dedupKey: extract.uuid,
+                    sourceLabel: metadata.sourceUUID.flatMap { sourceTitles[$0] },
+                    kind: metadata.kind.rawValue
+                )
+            }
         }
 
-        return jsonEncode([
+        // The bookshelf: highlights whose own words carry the concept. Any
+        // seedling with this key contributes its aliases, so the matcher
+        // sees the concept's whole vocabulary. Threshold-gated — silence
+        // beats a random quote.
+        let aliasSeedlings = (try? await SeedlingRepository.shared.fetchGrowingEverywhere(conceptKey: conceptKey)) ?? []
+        let aliases = Array(Set(aliasSeedlings.flatMap { $0.aliases }))
+        let bookshelf = await ReadwiseEvidenceMatcher.evidence(
+            conceptName: conceptName,
+            aliases: aliases,
+            limit: 6
+        )
+        for match in bookshelf {
+            let sourceLabel = match.author.map { "\(match.bookTitle) — \($0)" } ?? match.bookTitle
+            var text = match.text
+            if let note = match.note, !note.isEmpty {
+                text += "\n(Your note: \(note))"
+            }
+            addRow(
+                text: text,
+                dedupKey: "readwise-\(match.highlightId)",
+                sourceLabel: sourceLabel,
+                kind: "readwise",
+                url: match.readwiseUrl
+            )
+        }
+
+        var payload: [String: Any] = [
             "success": true,
             "concept": conceptName,
-            "deepDive": deepDive.title ?? "Untitled",
             "evidence": rows,
             "message": rows.isEmpty
-                ? "Nothing gathered about this concept yet."
-                : "Cite this material conversationally; stage a bullet into the page only after the user accepts it."
-        ] as [String: Any])
+                ? "Nothing gathered about this concept yet — no dive material and no matching highlights."
+                : "Cite this material conversationally (kind \"readwise\" = the user's own book highlights — name the book). Stage a bullet into the page only after the user accepts it."
+        ]
+        if let deepDive {
+            payload["deepDive"] = deepDive.title ?? "Untitled"
+        }
+        return jsonEncode(payload)
     }
 
     /// Surface ids for connections look like "connection:<uuid>" (target ids add

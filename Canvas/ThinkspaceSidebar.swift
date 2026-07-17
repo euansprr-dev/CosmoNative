@@ -19,7 +19,7 @@ enum ThinkspaceSidebarMetrics {
 // MARK: - Thinkspace Sidebar
 
 struct ThinkspaceSidebar: View {
-    @ObservedObject var manager: ThinkspaceManager
+    var manager: ThinkspaceManager
     /// Navigation caches live on their own store so fills re-render only the
     /// views that show them (this sidebar), not every manager observer.
     @ObservedObject private var navCache = ThinkspaceNavigationCacheStore.shared

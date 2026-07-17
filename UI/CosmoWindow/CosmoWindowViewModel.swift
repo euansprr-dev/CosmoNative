@@ -1493,6 +1493,13 @@ final class CosmoWindowViewModel: ObservableObject {
             query: [prompt, snapshot?.title ?? ""].joined(separator: " "),
             limit: 3
         )
+        // What the user actually accepted/rejected for this skill recently —
+        // the render-back half of review-outcome learning.
+        let reviewTrackRecord = route == .action
+            ? await CosmoInlineReviewTrackRecord.promptBlock(
+                skillID: selectedSkillID ?? skillPlan.primarySkill.id.rawValue
+            )
+            : nil
         let contextPack = ContextPackAssembler.assemble(
             request: retrievalRequest,
             retrievalResults: retrievalResults,
@@ -1521,6 +1528,7 @@ final class CosmoWindowViewModel: ObservableObject {
             hasContextPackContent ? contextPack.promptBlock : nil,
             runtimePrompt,
             resolvedSkillContext.isEmpty ? nil : resolvedSkillContext.promptBlock,
+            reviewTrackRecord,
             // Prefetched related-work digest — assembled in the background when the
             // surface activated, so the common request needs zero tool round-trips.
             CosmoInlineAmbientContextPack.shared.digest(forSurfaceID: snapshot?.surfaceID),

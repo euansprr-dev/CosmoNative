@@ -257,7 +257,7 @@ struct NoteFocusModeView: View {
     @State private var autoSaveTask: Task<Void, Never>?
     @State private var editingLockRefreshTask: Task<Void, Never>?
     @State private var saveClosed = false
-    @State private var observationCancellable: AnyCancellable?
+    @State private var atomSubscription: CanvasAtomSubscription?
     @State private var isInitialLoad = true
     @State private var hasLocalBodyEdits = false
     /// Title/tags/style edits since load — gates the close save together with
@@ -344,6 +344,7 @@ struct NoteFocusModeView: View {
     @Environment(\.isPeekContext) private var isPeekContext
     @Environment(\.isPaneContextOwner) private var isPaneContextOwner
     @Environment(\.atomWindowChromeContext) private var atomChrome
+    @Environment(\.paneDeckChrome) private var paneDeckChrome
 
     enum SaveState: Equatable {
         case idle
@@ -500,7 +501,8 @@ struct NoteFocusModeView: View {
             autoSaveTask?.cancel()
             textAnalysisTask?.cancel()
             stopEditingLockRefresh()
-            observationCancellable?.cancel()
+            CanvasAtomObservationHub.shared.unsubscribe(atomSubscription)
+            atomSubscription = nil
             // Defer save by one frame so CosmoDocumentEditor's flushPendingSync()
             // can propagate the latest text via onDocumentChange first.
             DispatchQueue.main.async {
@@ -708,9 +710,11 @@ struct NoteFocusModeView: View {
         // Chrome islands on the shared baseline — nav + identity · tools — never a
         // full-width bar. Same island grammar as the Content workspace toolbar
         // (CosmoChromeRow / CosmoChromeIsland): glass hugs each control group.
-        CosmoChromeRow(insetsEnabled: false) {
+        CosmoChromeRow(insetsEnabled: false, centersAbsolutely: !isPaneContext) {
             if !isPaneContext {
                 NavigationTrailIsland()
+            } else if let paneDeckChrome {
+                CosmoChromeIsland { PaneDeckTabStrip(context: paneDeckChrome) }
             }
             CosmoChromeIsland {
                 noteTypeBadge
@@ -756,18 +760,10 @@ struct NoteFocusModeView: View {
     }
 
     private var topBarChromeButtons: some View {
+        // Pane close lives in the deck tab (the strip's ✕) — no mode-owned
+        // xmark in pane context anymore.
         HStack(spacing: DS.space8) {
             styleMenuButton
-            if isPaneContext, !isPeekContext, atomChrome == nil {
-                chromeIconButton(
-                    systemName: "xmark",
-                    isActive: false,
-                    tint: focusTextMuted,
-                    help: "Close",
-                    accessibilityLabel: "Close note",
-                    action: onClose
-                )
-            }
         }
     }
 
@@ -1444,7 +1440,12 @@ struct NoteFocusModeView: View {
             // Typing is the strongest "this is what I'm working on" signal.
             CosmoEditableSurfaceRegistry.shared.activateIfNeeded(surfaceID: "note:\(atom.uuid)")
         }
-        bodyDocument = document
+        // The block-row pipeline writes the document binding before firing
+        // this callback, so on the typing path this is already-equal — skip
+        // the redundant second full-body invalidation per keystroke.
+        if bodyDocument != document {
+            bodyDocument = document
+        }
         plainContent = plainText
         updateBodyHeadingOutline(from: document)
         refreshCosmoContextIfActive()
@@ -1863,28 +1864,23 @@ struct NoteFocusModeView: View {
         }
     }
 
-    // MARK: - GRDB Live Observation
+    // MARK: - Atom Observation (via shared canvas hub)
 
     private func startObservingAtom() {
+        CanvasAtomObservationHub.shared.unsubscribe(atomSubscription)
+        atomSubscription = nil
+
         let uuid = atom.uuid
 
-        let observation = ValueObservation.tracking { db in
-            try Atom
-                .filter(Column("uuid") == uuid)
-                .fetchOne(db)
-        }
-
-        observationCancellable = observation.publisher(in: database.dbQueue)
-            .receive(on: DispatchQueue.main)
-            .sink(
-                receiveCompletion: { completion in
-                    if case .failure(let error) = completion {
-                        print("Note observation error: \(error)")
-                    }
-                },
-                receiveValue: { [self] fetchedAtom in
-                    guard let fetchedAtom = fetchedAtom else { return }
-
+        // deliverCurrentValue: focus mode LOADS its content through the
+        // observation's first delivery (the old per-view ValueObservation's
+        // initial fetch). The hub then dedupes subsequent wakes on version
+        // fields, so typing auto-saves no longer re-decode documents on
+        // every unrelated atoms write.
+        atomSubscription = CanvasAtomObservationHub.shared.subscribe(
+            uuid: uuid,
+            deliverCurrentValue: true
+        ) { fetchedAtom in
                     let nextTitleDocument = RichDocumentPersistence.loadAtomDocument(
                         field: .title,
                         metadata: fetchedAtom.metadata,
@@ -1942,8 +1938,7 @@ struct NoteFocusModeView: View {
                             isInitialLoad = false
                         }
                     }
-                }
-            )
+        }
     }
 
     // MARK: - Auto-Save

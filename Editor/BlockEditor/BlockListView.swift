@@ -373,6 +373,7 @@ struct BlockListView: View {
             document: $document,
             path: path,
             blockID: block.id,
+            block: block,
             focusCoordinator: resolvedFocusCoordinator,
             fontSize: fontSize,
             fontDesign: fontDesign,
@@ -400,6 +401,8 @@ struct BlockListView: View {
                 handleEditorSelectionCommand(block.id, command)
             }
         )
+        // Skips idle rows on document-driven re-renders (see the row's ==).
+        .equatable()
     }
 
     private var dividerRow: some View {

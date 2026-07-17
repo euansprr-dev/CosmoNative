@@ -26,6 +26,11 @@ final class DeepDiveOverviewViewModel {
     var extracts: [Atom] = []
     /// The Gardener's structure proposals for this topic (promote/merge/graduate).
     var gardenerProposals: [InquiryGardenerProposal] = []
+    /// This dive's seedbed, read through the unified seedlings store.
+    var seedbed: [IncubatingConcept] = []
+    /// Cross-dive collisions: conceptKey → where else that concept is
+    /// growing ("Inbox" for the global nursery, or another dive's title).
+    var seedlingCollisions: [String: [String]] = [:]
 
     // Computed
     var currentQuestionTitle: String? {
@@ -127,6 +132,9 @@ final class DeepDiveOverviewViewModel {
         async let inbox = (try? await loadTopicInboxItems()) ?? (routed: [], suggested: [])
         async let ext = (try? await InquiryRepository.shared.fetchExtracts(forDeepDive: atom.uuid)) ?? []
 
+        seedbed = await ConceptSeedbedService.shared.seedbed(deepDiveUUID: atom.uuid)
+        await loadSeedlingCollisions()
+
         let (loadedQs, loadedLex, loadedSes, loadedSrc, loadedCons, loadedInbox, loadedExt) = await (qs, lex, ses, src, cons, inbox, ext)
         questions = loadedQs.sorted { ($0.updatedAt) > ($1.updatedAt) }
         lexicon = loadedLex.sorted { ($0.title ?? "") < ($1.title ?? "") }
@@ -162,6 +170,28 @@ final class DeepDiveOverviewViewModel {
     /// - `suggested`: the classifier recommended this deep dive by exact UUID.
     ///   Fuzzy title matching is gone — it leaked unrelated captures into
     ///   topics the user never sent them to.
+    /// The same concept ripening in more than one place is a link to propose,
+    /// never an automatic merge — the row shows where else it's growing.
+    private func loadSeedlingCollisions() async {
+        var collisions: [String: [String]] = [:]
+        for concept in seedbed where concept.status == .incubating {
+            let everywhere = (try? await SeedlingRepository.shared.fetchGrowingEverywhere(conceptKey: concept.conceptKey)) ?? []
+            var places: [String] = []
+            for row in everywhere where row.scopeDeepDiveUUID != atom.uuid {
+                if let scope = row.scopeDeepDiveUUID {
+                    if let dive = try? await AtomRepository.shared.fetch(uuid: scope),
+                       !dive.isDeleted, let title = dive.title, !title.isEmpty {
+                        places.append(title)
+                    }
+                } else {
+                    places.append("Inbox")
+                }
+            }
+            if !places.isEmpty { collisions[concept.conceptKey] = places }
+        }
+        seedlingCollisions = collisions
+    }
+
     private func loadTopicInboxItems() async throws -> (routed: [InboxItem], suggested: [InboxItem]) {
         let database = CosmoDatabase.shared
         let deepDiveUUID = atom.uuid

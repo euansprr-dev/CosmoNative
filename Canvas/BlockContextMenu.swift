@@ -65,9 +65,6 @@ struct BlockContextMenu: View {
             items.append(MenuItem("askCosmo", icon: "sparkle", label: "Ask Cosmo"))
         }
         items.append(MenuItem("duplicate", icon: "plus.square.on.square", label: "Duplicate", shortcut: "⌘D"))
-        if block.entityType == .template {
-            items.append(MenuItem("editTemplate", icon: "rectangle.3.group.fill", label: "Edit Template"))
-        }
         return items
     }
 
@@ -338,12 +335,6 @@ struct BlockContextMenu: View {
                 name: .removeBlock,
                 object: nil,
                 userInfo: ["blockId": blockId]
-            )
-        case "editTemplate":
-            NotificationCenter.default.post(
-                name: CosmoNotification.Template.editTemplate,
-                object: nil,
-                userInfo: ["blockUUID": block.entityUuid]
             )
         default:
             break

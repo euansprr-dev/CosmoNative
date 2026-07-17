@@ -54,13 +54,19 @@ enum BlockRowSyncPolicy {
     }
 }
 
-struct BlockTextEditorRow: View {
+struct BlockTextEditorRow: View, Equatable {
     @Environment(\.undoManager) private var undoManager
 
     @Binding var document: RichDocument
 
     let path: BlockPath
     let blockID: UUID
+    /// Snapshot of the block this row renders, taken by the parent list's
+    /// ForEach. Used ONLY for the Equatable render gate below — live reads
+    /// always go through the document binding. Because every content change
+    /// re-runs the list body with a fresh snapshot, comparing it is a sound
+    /// proxy for "does this row need to re-render".
+    let block: RichBlock
     let focusCoordinator: BlockFocusCoordinator
     var fontSize: CGFloat
     var fontDesign: NSFontDescriptor.SystemDesign = .default
@@ -84,6 +90,38 @@ struct BlockTextEditorRow: View {
 
     @State private var undoRegistrar = BlockUndoRegistrar()
     @State private var typingUndoBurst = BlockTypingUndoBurst()
+
+    /// Render gate: a keystroke in ONE block writes the whole document, which
+    /// re-runs the list body and used to re-render (and re-run updateNSView
+    /// for) every row's AppKit text view — O(rows) per keystroke, the long-note
+    /// lag. Rows whose visible inputs are unchanged are skipped entirely.
+    ///
+    /// Closures and the document binding are deliberately excluded: they read
+    /// live state through stable references, so a skipped row's old closures
+    /// stay correct. Focus/caret/selection state is NOT compared here — row
+    /// bodies read those from @Observable coordinators, and Observation
+    /// invalidates the affected rows directly, bypassing this gate.
+    static func == (lhs: BlockTextEditorRow, rhs: BlockTextEditorRow) -> Bool {
+        lhs.blockID == rhs.blockID
+            && lhs.path == rhs.path
+            && lhs.block == rhs.block
+            && lhs.fontSize == rhs.fontSize
+            && lhs.fontDesign == rhs.fontDesign
+            && lhs.lineSpacingAdjustment == rhs.lineSpacingAdjustment
+            && lhs.placeholder == rhs.placeholder
+            && lhs.darkMode == rhs.darkMode
+            && lhs.overrideTextColor == rhs.overrideTextColor
+            && lhs.allowSlashCommands == rhs.allowSlashCommands
+            && lhs.allowMentions == rhs.allowMentions
+            && lhs.allowSelectionMenu == rhs.allowSelectionMenu
+            && lhs.allowImages == rhs.allowImages
+            && lhs.typewriterMode == rhs.typewriterMode
+            && lhs.scrollsInternally == rhs.scrollsInternally
+            && lhs.editorTargetID == rhs.editorTargetID
+            && lhs.navigationTargetID == rhs.navigationTargetID
+            && lhs.autoFocus == rhs.autoFocus
+            && lhs.focusCoordinator === rhs.focusCoordinator
+    }
 
     var body: some View {
         CosmoDocumentEditor(
@@ -137,7 +175,14 @@ struct BlockTextEditorRow: View {
     }
 
     private var currentPath: BlockPath? {
-        BlockOperations.path(of: blockID, in: document)
+        // Fast path: the parent list rebuilt this row with its current path,
+        // so the hint is almost always still valid — an O(depth) index walk
+        // instead of an O(blocks) full-tree search per binding read.
+        if let hinted = try? BlockOperations.currentBlock(in: document, at: path),
+           hinted.id == blockID {
+            return path
+        }
+        return BlockOperations.path(of: blockID, in: document)
     }
 
     private var blockDocumentBinding: Binding<RichDocument> {

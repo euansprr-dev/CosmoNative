@@ -280,7 +280,7 @@ struct SmartTaskCaptureRow: View {
                 if let habitTitle = parsedInput.habitTitle {
                     metadataChip(
                         icon: parsedInput.habitIcon ?? "repeat",
-                        label: habitTitle,
+                        label: CollectionEmoji.resolve(name: habitTitle).label,
                         color: parsedInput.habitColorHex.map(Color.init(hex:)) ?? DS.accent
                     )
                 }

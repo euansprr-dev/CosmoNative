@@ -27,7 +27,6 @@ struct ConnectionFocusModeView: View {
     @State private var viewModel: ConnectionFocusModeViewModel
     @State private var workspace = ConnectionWorkspaceModel()
     @State private var coDevEngine = ConnectionCoDevEngine()
-    @State private var showCommandK = false
     /// The view OWNS its context provider — the editable-surface registry holds
     /// it weakly; the old single global slot deallocated it on any other view's
     /// registration, unbinding this surface from the assistant.
@@ -47,6 +46,9 @@ struct ConnectionFocusModeView: View {
     /// Board cards and Outline rows show them as in-place ghost rows with ✓/✗
     /// rather than replacing the whole center column with a linear text diff.
     @State private var pendingInsertsBySection: [ConnectionSectionType: [ConnectionPendingInsert]] = [:]
+    /// Persisted pending material (inbox feeds, seedling develops) — loaded
+    /// from the atom's metadata; renders through the same ghost-row grammar.
+    @State private var persistedInserts: [ConnectionStagedInsert] = []
 
     @Environment(\.isPaneContext) private var isPaneContext
     @Environment(\.isPeekContext) private var isPeekContext
@@ -68,7 +70,6 @@ struct ConnectionFocusModeView: View {
             .background(DS.bg.ignoresSafeArea())
             .cosmoSurfaceKeyWindowActivation(surfaceID: "connection:\(atom.uuid)")
             .focusImmersiveEntryTransition()
-            .overlay(alignment: .topTrailing) { paneCloseButton }
             .onAppear(perform: handleAppear)
             .onDisappear(perform: handleDisappear)
             .onChange(of: isPaneContextOwner) { _, isOwner in
@@ -84,12 +85,14 @@ struct ConnectionFocusModeView: View {
             .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Connection.referencesChanged)) { _ in
                 Task { await loadLinkTargets() }
             }
+            // Material staged onto this page while it's open (an inbox feed,
+            // a seedling develop) appears as ghost rows immediately.
+            .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Connection.stagedInsertsChanged)) { notification in
+                guard notification.userInfo?["connectionUUID"] as? String == atom.uuid else { return }
+                Task { await loadPersistedInserts() }
+            }
             .onKeyPress(.escape) { handleEscape() }
             .onKeyPress { handleKeyCommand($0) }
-            .sheet(isPresented: $showCommandK) {
-                CommandKView()
-                    .frame(minWidth: 900, minHeight: 600)
-            }
             .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.NodeGraph.addItemToCurrentCanvas)) { notification in
                 handleAtomPicked(notification)
             }
@@ -105,28 +108,39 @@ struct ConnectionFocusModeView: View {
             isRefreshingInsights: isRefreshingInsights,
             reviewProposal: reviewProposal,
             reviewSourceText: reviewSourceText,
-            pendingInsertsBySection: pendingInsertsBySection,
+            pendingInsertsBySection: combinedInsertsBySection,
             isPaneContext: isPaneContext,
             actions: workspaceActions
         )
         .environment(\.connectionLinkTargets, linkTargets)
     }
 
-    @ViewBuilder
-    private var paneCloseButton: some View {
-        if isPaneContext, !isPeekContext, atomChrome == nil {
-            Button(action: onClose) {
-                Image(systemName: "xmark")
-                    .font(DS.buttonText)
-                    .foregroundStyle(DS.textMuted)
-                    .frame(width: 28, height: 28)
-                    .background(DS.border, in: Circle())
-            }
-            .buttonStyle(.plain)
-            .padding(.trailing, DS.space16)
-            .padding(.top, DS.space16)
-            .accessibilityLabel("Close concept")
+    /// One ghost-row stream: persisted pending material first (it's been
+    /// waiting longest), then live collaborator proposals.
+    private var combinedInsertsBySection: [ConnectionSectionType: [ConnectionPendingInsert]] {
+        var combined: [ConnectionSectionType: [ConnectionPendingInsert]] = [:]
+        for entry in persistedInserts {
+            // An unknown section rawValue (newer app version) stays staged
+            // but unrendered — never guessed into the wrong section.
+            guard let section = entry.sectionType else { continue }
+            combined[section, default: []].append(ConnectionPendingInsert(
+                proposalID: Self.stableUUID(for: entry.id),
+                operationID: Self.stableUUID(for: entry.id),
+                section: section,
+                bullets: [entry.text],
+                stagedEntryId: entry.id
+            ))
         }
+        for (section, inserts) in pendingInsertsBySection {
+            combined[section, default: []].append(contentsOf: inserts)
+        }
+        return combined
+    }
+
+    /// Staged entry ids are UUID strings — reuse them so ForEach identity is
+    /// stable across reloads (a fresh UUID per render would churn the rows).
+    private static func stableUUID(for entryId: String) -> UUID {
+        UUID(uuidString: entryId) ?? UUID()
     }
 
     // MARK: - Workspace wiring
@@ -163,7 +177,7 @@ struct ConnectionFocusModeView: View {
     private var workspaceActions: ConnectionWorkspaceActions {
         ConnectionWorkspaceActions(
             onSourceTap: { openSource($0) },
-            onAddSource: { showCommandK = true },
+            onAddSource: { presentSharedCommandK() },
             onRequestSuggestions: { Task { await requestSuggestedSources() } },
             onLinkSuggestedSource: { source in Task { await linkSourceToConnection(source) } },
             onRefreshInsights: { refreshInsights() },
@@ -203,12 +217,43 @@ struct ConnectionFocusModeView: View {
     }
 
     private func acceptInsert(_ insert: ConnectionPendingInsert) {
+        // Persisted pending material (inbox feed / seedling develop): the
+        // sweep-in — the bullet becomes a real section item, the capture's
+        // originals re-own onto the page, and the staged entry is consumed.
+        if let entryId = insert.stagedEntryId {
+            guard let entry = persistedInserts.first(where: { $0.id == entryId }) else { return }
+            viewModel.attachItem(ConnectionItem(content: entry.text), toSection: insert.section)
+            persistedInserts.removeAll { $0.id == entryId }
+            Task {
+                _ = try? await ConnectionStagingStore.remove(insertId: entryId, fromConnection: atom.uuid)
+                await ConnectionStagingStore.adoptAttachments(of: entry, ontoConnection: atom.uuid)
+            }
+            return
+        }
         guard let provider = ownedContextProvider else { return }
         Task { await CosmoInlineAssistantStore.shared.accept(operationID: insert.operationID, provider: provider) }
     }
 
     private func rejectInsert(_ insert: ConnectionPendingInsert) {
+        // Rejecting persisted material discards the row here — and hands an
+        // inbox-fed capture back to the queue (it was still a real thought;
+        // "not on this page" must never mean "gone").
+        if let entryId = insert.stagedEntryId {
+            guard let entry = persistedInserts.first(where: { $0.id == entryId }) else { return }
+            persistedInserts.removeAll { $0.id == entryId }
+            Task {
+                _ = try? await ConnectionStagingStore.remove(insertId: entryId, fromConnection: atom.uuid)
+                await ConnectionStagingStore.returnSourceCapture(of: entry)
+            }
+            return
+        }
         Task { await CosmoInlineAssistantStore.shared.reject(operationID: insert.operationID) }
+    }
+
+    /// Fresh read of the page's persisted pending material.
+    private func loadPersistedInserts() async {
+        guard let fresh = try? await AtomRepository.shared.fetch(uuid: atom.uuid) else { return }
+        persistedInserts = fresh.connectionStagedInserts
     }
 
     // MARK: - Lifecycle
@@ -225,6 +270,7 @@ struct ConnectionFocusModeView: View {
             // Sections come from a FRESH DB fetch — never from the UserDefaults
             // blob or the (possibly stale) open-time atom snapshot.
             await viewModel.refreshSectionsFromDatabase()
+            await loadPersistedInserts()
             await loadSources()
             await loadLinkTargets()
             await refreshInsightsIfStale()
@@ -255,10 +301,6 @@ struct ConnectionFocusModeView: View {
     // MARK: - Keyboard
 
     private func handleEscape() -> KeyPress.Result {
-        if showCommandK {
-            showCommandK = false
-            return .handled
-        }
         if workspace.isNavigatorOverlayPresented {
             withAnimation(ProMotionSprings.focusTransition) {
                 workspace.isNavigatorOverlayPresented = false
@@ -314,7 +356,7 @@ struct ConnectionFocusModeView: View {
             workspace.searchFocusTick += 1
             return .handled
         case "k":
-            showCommandK = true
+            presentSharedCommandK()
             return .handled
         default:
             return .ignored
@@ -331,13 +373,20 @@ struct ConnectionFocusModeView: View {
 
     // MARK: - Sources
 
+    /// The one shared ⌘K palette lives in MainView (zIndex 200, above focus
+    /// modes). A local `.sheet(CommandKView())` here rendered a second,
+    /// backdropped copy of the palette — never present ⌘K locally.
+    private func presentSharedCommandK() {
+        NotificationCenter.default.post(name: .showCommandPalette, object: nil)
+    }
+
     /// ⌘K picker selection — connections only accept source links now
-    /// (floating canvas blocks are gone).
+    /// (floating canvas blocks are gone). The shared palette closes itself
+    /// after posting the pick.
     private func handleAtomPicked(_ notification: Notification) {
         guard let uuid = notification.userInfo?["atomUUID"] as? String else { return }
         let typeRaw = notification.userInfo?["atomType"] as? String ?? AtomType.idea.rawValue
         let atomType = AtomType(rawValue: typeRaw) ?? .idea
-        showCommandK = false
         guard isEligibleSourceType(atomType) else { return }
         Task {
             guard let source = try? await AtomRepository.shared.fetch(uuid: uuid) else { return }
@@ -405,8 +454,28 @@ struct ConnectionFocusModeView: View {
         let linkedIDs = Set(wellSources.map(\.uuid))
         var suggestionSeed = atom
         suggestionSeed.title = viewModel.editableTitle
-        let suggestions = await coDevEngine.findSourceMaterials(for: suggestionSeed, limit: 8)
+        var suggestions = await coDevEngine.findSourceMaterials(for: suggestionSeed, limit: 8)
             .filter { !linkedIDs.contains($0.uuid) }
+
+        // The bookshelf: Readwise books whose highlights carry this concept's
+        // words join the rail — linking one cites it like any other source.
+        // Threshold-gated by the matcher, so a book only appears when a real
+        // highlight matches, never because its title sounds adjacent.
+        let bookshelf = await ReadwiseEvidenceMatcher.evidence(
+            conceptName: viewModel.editableTitle,
+            limit: 6
+        )
+        let suggestedIDs = Set(suggestions.map(\.uuid))
+        var seenBooks = Set<String>()
+        for match in bookshelf where !linkedIDs.contains(match.bookUUID)
+            && !suggestedIDs.contains(match.bookUUID)
+            && !seenBooks.contains(match.bookUUID) {
+            seenBooks.insert(match.bookUUID)
+            if let book = try? await AtomRepository.shared.fetch(uuid: match.bookUUID), !book.isDeleted {
+                suggestions.append(book)
+            }
+        }
+
         suggestedWellSources = suggestions
         isLoadingSuggestedSources = false
     }

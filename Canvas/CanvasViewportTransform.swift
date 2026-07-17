@@ -531,6 +531,11 @@ final class CanvasInteractionState {
     private(set) var clusterDragTranslation: CGSize = .zero
     private(set) var draggingClusterMemberUUIDs: Set<String> = []
 
+    /// Per-frame position of the cluster drop-preview ghost. Lives here (not
+    /// on CanvasView @State) so a drag over a cluster invalidates only the
+    /// preview host, never CanvasView.body.
+    private(set) var dropPreviewPosition: CGPoint = .zero
+
     /// Snapshot in the legacy struct shape for consumers that keep one
     /// (connection lines' throttled endpoint recompute).
     var blockDrag: ActiveCanvasDragState<String> {
@@ -549,6 +554,10 @@ final class CanvasInteractionState {
     func clearBlockDrag() {
         if activeBlockDragId != nil { activeBlockDragId = nil }
         if blockDragTranslation != .zero { blockDragTranslation = .zero }
+    }
+
+    func updateDropPreviewPosition(_ position: CGPoint) {
+        if dropPreviewPosition != position { dropPreviewPosition = position }
     }
 
     func beginClusterDrag(id: UUID, memberUUIDs: Set<String>) {

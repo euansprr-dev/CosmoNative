@@ -46,6 +46,10 @@ struct SwipeCardModel: Identifiable, Equatable {
     let isUnstudied: Bool
     let processing: SwipeCardProcessing
     var boardIDs: Set<String> = []
+    /// Recency shelves drop the footer hook line — the thumbnail already
+    /// carries the hook, so printing it twice reads as a stutter. Paper
+    /// cards ignore this (their text IS the media).
+    var showsHookLine = true
 
     // MARK: Height math (single source of truth for the masonry)
 
@@ -64,7 +68,7 @@ struct SwipeCardModel: Identifiable, Equatable {
     /// Paper cards carry their text in the well, so the footer is meta-only.
     /// Heights are the exact sum of the footer's fixed slots — see SwipeCardFooter.
     var footerHeight: CGFloat {
-        if aspect == .paper { return 34 }
+        if aspect == .paper || !showsHookLine { return metricsLine == nil ? 34 : 51 }
         return metricsLine == nil ? 74 : 91
     }
 
@@ -80,6 +84,13 @@ struct SwipeCardModel: Identifiable, Equatable {
         if copy.aspect != .paper {
             copy.aspect = .portrait
         }
+        return copy
+    }
+
+    /// Shelf variant: no footer hook line (see `showsHookLine`).
+    func hookless() -> SwipeCardModel {
+        var copy = self
+        copy.showsHookLine = false
         return copy
     }
 }

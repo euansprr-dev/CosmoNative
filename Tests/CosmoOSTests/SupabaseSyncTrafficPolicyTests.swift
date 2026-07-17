@@ -256,6 +256,107 @@ final class SupabaseSyncTrafficPolicyTests: XCTestCase {
         }
     }
 
+    // REGRESSION (July 2026): a conflict auto-merge (ConflictResolver.handleConflict)
+    // leaves the merged row local-ahead with the shield DOWN. The old healer
+    // required _local_pending = 1, so the merged local-wins content never
+    // re-pushed and devices silently diverged.
+    func testReconcilerReEnqueuesLocalAheadRowEvenWithShieldDown() throws {
+        let queue = try makeAtomsAndQueueSchema()
+        try queue.write { db in
+            try db.execute(sql: """
+                INSERT INTO atoms (id, uuid, type, title, is_deleted, _local_version, _server_version, _local_pending)
+                VALUES (1, 'MERGED', 'note', 'Conflict-merged content', 0, 6, 4, 0)
+                """)
+        }
+
+        let outcome = try queue.write { db in
+            try SyncQueueReconciler.reconcileOrphanedPendingAtoms(db)
+        }
+
+        XCTAssertEqual(outcome.requeued, 1, "local-ahead rows must upload even when the shield is down")
+        try queue.read { db in
+            XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM sync_queue WHERE uuid = 'MERGED' AND status = 'pending'"), 1)
+        }
+    }
+
+    func testReconcilerNeverDuplicatesAFailedQueueRow() throws {
+        let queue = try makeAtomsAndQueueSchema()
+        try queue.write { db in
+            try db.execute(sql: """
+                INSERT INTO atoms (id, uuid, type, title, is_deleted, _local_version, _server_version, _local_pending)
+                VALUES (1, 'FAILED', 'task', 'Push failed earlier', 0, 8, 3, 1)
+                """)
+            // requeueStaleFailedPushes owns this row's retry cadence.
+            try db.execute(sql: "INSERT INTO sync_queue (uuid, table_name, operation, local_version, status) VALUES ('FAILED', 'atoms', 'UPDATE', 8, 'failed')")
+        }
+
+        let outcome = try queue.write { db in
+            try SyncQueueReconciler.reconcileOrphanedPendingAtoms(db)
+        }
+
+        XCTAssertEqual(outcome.requeued, 0, "failed rows already have a retry owner — no duplicate enqueue")
+        try queue.read { db in
+            XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM sync_queue WHERE uuid = 'FAILED'"), 1)
+        }
+    }
+
+    // MARK: - Explicit resurrection gate (restoredAt wire contract, shared with iOS)
+
+    func testExplicitRestoreRequiresMarkerStrictlyNewerThanTombstone() {
+        let tombstonedAt = "2026-07-10T08:00:00Z"
+
+        // Marker newer than the tombstone → deliberate restore, accepted.
+        XCTAssertTrue(SyncEngine.remoteCarriesExplicitRestore(
+            data: ["metadata": "{\"restoredAt\":\"2026-07-11T09:00:00Z\"}"],
+            localTombstoneUpdatedAt: tombstonedAt
+        ))
+
+        // Marker older than a re-delete → blocked.
+        XCTAssertFalse(SyncEngine.remoteCarriesExplicitRestore(
+            data: ["metadata": "{\"restoredAt\":\"2026-07-09T09:00:00Z\"}"],
+            localTombstoneUpdatedAt: tombstonedAt
+        ))
+
+        // No marker (stale mirror re-pushing an old live row) → blocked.
+        XCTAssertFalse(SyncEngine.remoteCarriesExplicitRestore(
+            data: ["metadata": "{\"other\":true}"],
+            localTombstoneUpdatedAt: tombstonedAt
+        ))
+
+        // JSONB dictionary shape (pre-Postgres-conversion path) → accepted.
+        XCTAssertTrue(SyncEngine.remoteCarriesExplicitRestore(
+            data: ["metadata": ["restoredAt": "2026-07-11T09:00:00Z"]],
+            localTombstoneUpdatedAt: tombstonedAt
+        ))
+
+        // Unparseable/missing tombstone timestamp fails CLOSED.
+        XCTAssertFalse(SyncEngine.remoteCarriesExplicitRestore(
+            data: ["metadata": "{\"restoredAt\":\"2026-07-11T09:00:00Z\"}"],
+            localTombstoneUpdatedAt: nil
+        ))
+        XCTAssertFalse(SyncEngine.remoteCarriesExplicitRestore(
+            data: ["metadata": "{\"restoredAt\":\"not-a-date\"}"],
+            localTombstoneUpdatedAt: tombstonedAt
+        ))
+    }
+
+    func testRestoreStampMergesMarkerWithoutDestroyingMetadata() throws {
+        // Existing metadata keeps its keys and gains the marker.
+        let stamped = try XCTUnwrap(AtomRepository.metadataStampingRestoredAt(
+            "{\"noteStyle\":\"paper\"}", restoredAt: "2026-07-15T04:00:00Z"
+        ))
+        let dict = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(stamped.utf8)) as? [String: Any])
+        XCTAssertEqual(dict["noteStyle"] as? String, "paper")
+        XCTAssertEqual(dict["restoredAt"] as? String, "2026-07-15T04:00:00Z")
+
+        // Empty/absent metadata becomes a fresh object with the marker.
+        let fresh = try XCTUnwrap(AtomRepository.metadataStampingRestoredAt(nil, restoredAt: "2026-07-15T04:00:00Z"))
+        XCTAssertTrue(fresh.contains("restoredAt"))
+
+        // Unparseable metadata → nil (caller keeps the original column).
+        XCTAssertNil(AtomRepository.metadataStampingRestoredAt("not json", restoredAt: "2026-07-15T04:00:00Z"))
+    }
+
     func testReconcilerIsIdempotentAcrossRepeatedPasses() throws {
         let queue = try makeAtomsAndQueueSchema()
         try queue.write { db in

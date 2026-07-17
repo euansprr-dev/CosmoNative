@@ -237,14 +237,15 @@ final class ConnectionPromotionService {
 
         // 2. Obtain the page: absorb the seedling when one is waiting.
         var page: Atom?
-        if let deepDive,
-           deepDive.deepDiveStructured?.conceptSeedbed
-               .contains(where: { $0.conceptKey == key && $0.status != .dismissed }) == true,
-           let absorbed = await ConceptSeedbedService.shared.developSeedling(
-               deepDiveUUID: deepDive.uuid,
-               conceptKey: key
-           ) {
-            page = try? await atoms.fetch(uuid: absorbed)
+        if let deepDive {
+            let seedbed = await ConceptSeedbedService.shared.seedbed(deepDiveUUID: deepDive.uuid)
+            if seedbed.contains(where: { $0.conceptKey == key && $0.status != .dismissed }),
+               let absorbed = await ConceptSeedbedService.shared.developSeedling(
+                   deepDiveUUID: deepDive.uuid,
+                   conceptKey: key
+               ) {
+                page = try? await atoms.fetch(uuid: absorbed)
+            }
         }
         if page == nil {
             var links: [AtomLink] = []

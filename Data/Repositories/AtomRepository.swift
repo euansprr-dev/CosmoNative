@@ -631,12 +631,17 @@ class AtomRepository: ObservableObject {
             // Queue the change for sync in the SAME transaction so a quit-time save
             // still reaches Supabase on next launch.
             let dataJson = (try? JSONEncoder().encode(result)).flatMap { String(data: $0, encoding: .utf8) }
+            // Scoped by table_name (mirrors ChangeTracker.queueChange): legacy
+            // pulled placements have canvas_blocks.id == atom uuid, so a
+            // uuid-only match could hijack a pending canvas_blocks row —
+            // swapping its payload for atom data while the table stays
+            // canvas_blocks, and dropping this atom edit from the queue.
             let existing = try Row.fetchOne(
                 db,
-                sql: "SELECT id FROM sync_queue WHERE uuid = ? AND status = 'pending'",
-                arguments: [atom.uuid]
+                sql: "SELECT id FROM sync_queue WHERE uuid = ? AND table_name = ? AND status = 'pending'",
+                arguments: [atom.uuid, Atom.databaseTableName]
             )
-            if let existingId = existing?["id"] as? Int64 {
+            if let existingId = existing?["id"] as Int64? {
                 try db.execute(
                     sql: "UPDATE sync_queue SET operation = 'UPDATE', data = ?, local_version = ?, created_at = ? WHERE id = ?",
                     arguments: [dataJson, result.localVersion, Int64(Date().timeIntervalSince1970 * 1000), existingId]
@@ -852,10 +857,13 @@ class AtomRepository: ObservableObject {
                 arguments: [ISO8601.string(from: Date()), uuid]
             )
 
-            // Also soft-delete any canvas blocks referencing this atom
+            // Also soft-delete any canvas blocks referencing this atom.
+            // ISO8601, not SQLite CURRENT_TIMESTAMP — the block observer
+            // pushes this updated_at to the cloud, and CURRENT_TIMESTAMP's
+            // space-separated format breaks ISO8601 cursor/LWW comparisons.
             try db.execute(
-                sql: "UPDATE canvas_blocks SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE entity_uuid = ?",
-                arguments: [uuid]
+                sql: "UPDATE canvas_blocks SET is_deleted = 1, updated_at = ? WHERE entity_uuid = ?",
+                arguments: [ISO8601.string(from: Date()), uuid]
             )
         }
 
@@ -948,25 +956,53 @@ class AtomRepository: ObservableObject {
     /// Restore any soft-deleted atom, including its canvas placements
     /// (delete() soft-deletes both; restoring only the atom left its blocks
     /// permanently invisible).
+    ///
+    /// Writes the explicit-resurrection marker `metadata.restoredAt` — the
+    /// ONLY writer of that key (wire contract shared with the iOS repo).
+    /// Receiving devices' one-way delete guards accept the undelete only when
+    /// the marker is strictly newer than their local tombstone's updated_at,
+    /// so stale mirrors re-pushing old live rows still can't resurrect.
+    /// Without the marker, a restore performed here never propagates past the
+    /// other device's tombstone.
     func restore(uuid: String) async throws {
+        let now = ISO8601.string(from: Date())
         try await database.asyncWrite { db in
+            let existingMetadata = try String.fetchOne(
+                db,
+                sql: "SELECT metadata FROM atoms WHERE uuid = ?",
+                arguments: [uuid]
+            )
+            let stamped = Self.metadataStampingRestoredAt(existingMetadata, restoredAt: now)
+            if stamped == nil, existingMetadata?.isEmpty == false {
+                // Unparseable metadata: restore locally anyway, but the
+                // undelete won't cross other devices' tombstone guards.
+                PersistenceHealth.note(.decodeFailure, context: "AtomRepository.restore(\(uuid.prefix(8)))", detail: "metadata unparseable; restoring without restoredAt marker")
+            }
             try db.execute(
                 sql: """
                 UPDATE atoms
-                SET is_deleted = 0, updated_at = ?, _local_version = _local_version + 1
+                SET is_deleted = 0, updated_at = ?, _local_version = _local_version + 1,
+                    metadata = COALESCE(?, metadata)
                 WHERE uuid = ?
                 """,
-                arguments: [ISO8601.string(from: Date()), uuid]
+                arguments: [now, stamped, uuid]
             )
             try db.execute(
-                sql: "UPDATE canvas_blocks SET is_deleted = 0, updated_at = CURRENT_TIMESTAMP WHERE entity_uuid = ?",
-                arguments: [uuid]
+                sql: "UPDATE canvas_blocks SET is_deleted = 0, updated_at = ? WHERE entity_uuid = ?",
+                arguments: [now, uuid]
             )
         }
 
         // Track for sync - fetch the updated atom to track properly
         if let restoredAtom = try? await fetch(uuid: uuid) {
             await changeTracker.trackUpdate(table: Atom.databaseTableName, entity: restoredAtom, skipVersionIncrement: true)
+        }
+
+        // Recall index: the atom is live again.
+        Task.detached(priority: .utility) {
+            if let restoredAtom = try? await AtomRepository.shared.fetch(uuid: uuid) {
+                await RecallIndexer.shared.noteAtomChanged(restoredAtom)
+            }
         }
 
         await MainActor.run {
@@ -976,6 +1012,25 @@ class AtomRepository: ObservableObject {
             )
             NotificationCenter.default.post(name: .atomsDidChange, object: nil)
         }
+    }
+
+    /// Merge `restoredAt` into an existing metadata JSON string. Returns nil
+    /// when the existing metadata is non-empty but unparseable (the caller
+    /// keeps the original column rather than destroying it). Empty/absent
+    /// metadata becomes a fresh object holding just the marker.
+    nonisolated static func metadataStampingRestoredAt(_ existingMetadata: String?, restoredAt: String) -> String? {
+        var dict: [String: Any] = [:]
+        if let existing = existingMetadata, !existing.isEmpty {
+            guard let data = existing.data(using: .utf8),
+                  let parsed = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+                return nil
+            }
+            dict = parsed
+        }
+        dict["restoredAt"] = restoredAt
+        guard let json = try? JSONSerialization.data(withJSONObject: dict),
+              let string = String(data: json, encoding: .utf8) else { return nil }
+        return string
     }
 
     /// Soft-deleted atoms, newest deletions first — backs the Trash UI.

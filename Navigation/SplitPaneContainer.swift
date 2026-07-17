@@ -70,8 +70,6 @@ enum PaneSlotPresentationPolicy {
     /// contribute no gap — two expanded panes separated by collapsed slots
     /// still read as one seam.
     static let expandedSlotSpacing: CGFloat = 6
-    /// Height of the tab rail row (tab content + rail padding).
-    static let tabRailHeight: CGFloat = 36
 
     static func interSlotSpacing(leftIsExpanded: Bool, rightIsExpanded: Bool) -> CGFloat {
         (leftIsExpanded && rightIsExpanded) ? expandedSlotSpacing : 0
@@ -89,8 +87,11 @@ enum PaneSlotPresentationPolicy {
 
 // MARK: - Pane Deck
 
-/// The tab rail + content deck. Tabs keep their opening-order position so
-/// they don't shuffle when focus moves; only slot widths animate.
+/// The content deck. Panes keep their opening-order position so they don't
+/// shuffle when focus moves; only slot widths animate. The focused pane's
+/// environment carries the deck chrome payload — its own chrome row (or the
+/// shell's standalone row) renders the tab strip, so tabs and mode tools
+/// share one row of islands instead of stacking two bars.
 struct PaneDeckView: View {
     @ObservedObject var paneManager: PaneManager
 
@@ -99,22 +100,18 @@ struct PaneDeckView: View {
     var body: some View {
         GeometryReader { geo in
             let layout = deckLayout(columnWidth: geo.size.width)
-
-            VStack(spacing: PaneSlotPresentationPolicy.expandedSlotSpacing) {
-                if paneManager.panes.count > 1 {
-                    PaneTabRail(paneManager: paneManager, deckSpring: deckSpring)
-                }
-                slotRow(layout: layout)
-                    .frame(maxHeight: .infinity)
-            }
-            .animation(deckSpring, value: deckSignature)
+            slotRow(layout: layout)
+                .animation(deckSpring, value: deckSignature)
         }
     }
 
     // MARK: Slots
 
     private func slotRow(layout: DeckLayout) -> some View {
-        HStack(spacing: 0) {
+        let focusedId = paneManager.focusedPaneId ?? paneManager.panes.last?.id
+        let payload = deckChromePayload(layout: layout, focusedId: focusedId)
+
+        return HStack(spacing: 0) {
             ForEach(paneManager.panes, id: \.id) { pane in
                 let slotWidth = layout.widths[pane.id] ?? 0
                 PaneSlotView(
@@ -122,6 +119,7 @@ struct PaneDeckView: View {
                     isExpanded: layout.expandedIds.contains(pane.id),
                     isActive: paneManager.activePaneId == pane.id,
                     isContextOwner: paneManager.contextOwnerPaneId == pane.id,
+                    deckChrome: pane.id == focusedId ? payload : nil,
                     expandedWidth: layout.contentWidths[pane.id] ?? slotWidth,
                     slotWidth: slotWidth,
                     onClose: {
@@ -139,6 +137,47 @@ struct PaneDeckView: View {
                 }
             }
         }
+    }
+
+    // MARK: Deck chrome payload
+
+    /// The focused pane's chrome handoff: every tab in deck order plus the
+    /// deck mutations, pre-wrapped in the deck spring.
+    private func deckChromePayload(layout: DeckLayout, focusedId: String?) -> PaneDeckChromePayload {
+        let tabs = paneManager.panes.enumerated().map { index, pane in
+            PaneDeckTab(
+                content: pane,
+                isFocused: pane.id == focusedId,
+                isPinned: paneManager.pinnedPaneId == pane.id,
+                position: index + 1
+            )
+        }
+        let paneWidth = focusedId.flatMap { layout.contentWidths[$0] }
+            ?? PaneSlotPresentationPolicy.minimumContentWidth
+
+        return PaneDeckChromePayload(
+            tabs: tabs,
+            actions: PaneDeckChromeActions(
+                focus: { id in
+                    withAnimation(deckSpring) { paneManager.focusPane(id) }
+                },
+                close: { id in
+                    guard let pane = paneManager.panes.first(where: { $0.id == id }) else { return }
+                    withAnimation(deckSpring) { paneManager.closePane(pane) }
+                },
+                togglePin: { id in
+                    withAnimation(deckSpring) { paneManager.togglePin(id) }
+                },
+                move: { id, delta in
+                    guard let index = paneManager.panes.firstIndex(where: { $0.id == id }) else { return }
+                    withAnimation(deckSpring) { paneManager.movePane(id, toIndex: index + delta) }
+                },
+                closeOthers: { id in
+                    withAnimation(deckSpring) { paneManager.closeOtherPanes(keeping: id) }
+                }
+            ),
+            paneWidth: PaneDeckChromePayload.quantizedWidth(paneWidth)
+        )
     }
 
     private var deckSpring: Animation? {
@@ -234,267 +273,6 @@ struct PaneDeckView: View {
     }
 }
 
-// MARK: - Pane Tab Rail
-
-/// One glass strip naming every open pane — the Safari/Xcode tab grammar.
-/// Tabs are flat capsules inside the glass (never glass-on-glass); the
-/// focused tab's fill slides between positions via matched geometry.
-private struct PaneTabRail: View {
-    @ObservedObject var paneManager: PaneManager
-    let deckSpring: Animation?
-
-    @Namespace private var selectionNamespace
-
-    // Drag-to-reorder (the Safari gesture): the dragged tab follows the
-    // pointer rigidly while its neighbors spring around it. Reorders commit
-    // live at half-tab thresholds — releasing never snaps to a surprise slot.
-    @State private var draggedPaneId: String?
-    @State private var dragIsTracking = false
-    @State private var dragTranslation: CGFloat = 0
-    @State private var dragBaseline: CGFloat = 0
-    @State private var tabWidth: CGFloat = 0
-
-    var body: some View {
-        HStack(spacing: DS.space4) {
-            ForEach(Array(paneManager.panes.enumerated()), id: \.element.id) { index, pane in
-                tab(for: pane, at: index)
-            }
-        }
-        .padding(DS.space4)
-        .frame(height: PaneSlotPresentationPolicy.tabRailHeight)
-        .cosmoGlassPanel(role: .floatingAssistant, cornerRadius: 18)
-    }
-
-    private var focusedId: String? {
-        paneManager.focusedPaneId ?? paneManager.panes.last?.id
-    }
-
-    // MARK: Tabs
-
-    private func tab(for pane: PaneContent, at index: Int) -> some View {
-        PaneTabView(
-            pane: pane,
-            position: index + 1,
-            paneCount: paneManager.panes.count,
-            isFocused: focusedId == pane.id,
-            isPinned: paneManager.pinnedPaneId == pane.id,
-            selectionNamespace: selectionNamespace,
-            onFocus: {
-                // A completed drag releases over the tab it moved — that
-                // mouse-up must not read as a focus click.
-                guard draggedPaneId == nil else { return }
-                withAnimation(deckSpring) { paneManager.focusPane(pane.id) }
-            },
-            onClose: { withAnimation(deckSpring) { paneManager.closePane(pane) } },
-            onTogglePin: { withAnimation(deckSpring) { paneManager.togglePin(pane.id) } },
-            onCloseOthers: { withAnimation(deckSpring) { paneManager.closeOtherPanes(keeping: pane.id) } },
-            onMove: { delta in
-                withAnimation(deckSpring) { paneManager.movePane(pane.id, toIndex: index + delta) }
-            }
-        )
-        .onGeometryChange(for: CGFloat.self) { proxy in
-            proxy.size.width
-        } action: { width in
-            tabWidth = width
-        }
-        .offset(x: pane.id == draggedPaneId ? dragTranslation : 0)
-        .zIndex(pane.id == draggedPaneId ? 1 : 0)
-        // While tracking, the dragged tab is pinned to the pointer: its slot
-        // change from a live reorder and its offset compensation must both
-        // land in the same frame, unanimated. Neighbors animate normally.
-        .transaction { transaction in
-            if pane.id == draggedPaneId && dragIsTracking {
-                transaction.animation = nil
-            }
-        }
-        .simultaneousGesture(reorderGesture(for: pane))
-    }
-
-    // MARK: Reorder gesture
-
-    private func reorderGesture(for pane: PaneContent) -> some Gesture {
-        DragGesture(minimumDistance: 4)
-            .onChanged { value in
-                if draggedPaneId != pane.id {
-                    draggedPaneId = pane.id
-                    dragBaseline = 0
-                    dragIsTracking = true
-                }
-                updateDrag(for: pane, translation: value.translation.width)
-            }
-            .onEnded { _ in settleDrag() }
-    }
-
-    /// Commit a reorder every time the pointer crosses half a tab beyond the
-    /// dragged tab's current slot; `dragBaseline` re-zeroes the translation
-    /// after each commit so the tab never visually jumps.
-    private func updateDrag(for pane: PaneContent, translation: CGFloat) {
-        guard tabWidth > 0 else { return }
-        let step = tabWidth + DS.space4
-        var offset = translation - dragBaseline
-        var index = paneManager.panes.firstIndex(where: { $0.id == pane.id }) ?? 0
-
-        while offset > step / 2, index < paneManager.panes.count - 1 {
-            paneManager.movePane(pane.id, toIndex: index + 1)
-            index += 1
-            dragBaseline += step
-            offset -= step
-        }
-        while offset < -step / 2, index > 0 {
-            paneManager.movePane(pane.id, toIndex: index - 1)
-            index -= 1
-            dragBaseline -= step
-            offset += step
-        }
-        dragTranslation = offset
-    }
-
-    /// Spring the released tab home, keep it floating above its neighbors
-    /// until the settle finishes, then release the drag state.
-    private func settleDrag() {
-        dragIsTracking = false
-        withAnimation(deckSpring) { dragTranslation = 0 }
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(350))
-            guard !dragIsTracking else { return }
-            draggedPaneId = nil
-            dragBaseline = 0
-        }
-    }
-}
-
-/// One tab: the pane's identity glyph in its entity tint + the live title.
-/// Hover swaps the glyph for the close affordance (the Safari gesture).
-/// The focused tab wears the elevated fill; a pinned pane is also on screen,
-/// so its tab keeps a quieter version of the same fill plus the pin mark.
-private struct PaneTabView: View {
-    let pane: PaneContent
-    let position: Int
-    let paneCount: Int
-    let isFocused: Bool
-    let isPinned: Bool
-    let selectionNamespace: Namespace.ID
-    let onFocus: () -> Void
-    let onClose: () -> Void
-    let onTogglePin: () -> Void
-    let onCloseOthers: () -> Void
-    /// Move this tab by a slot delta (−1 left, +1 right) — the keyboard-
-    /// reachable path to the same reorder the drag gesture performs.
-    let onMove: (Int) -> Void
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var isHovered = false
-    @State private var title: String = ""
-
-    private var displayTitle: String {
-        title.isEmpty ? PaneInfo.fallbackTitle(for: pane) : title
-    }
-
-    var body: some View {
-        Button(action: onFocus) {
-            tabLabel
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            withAnimation(reduceMotion ? nil : ProMotionSprings.hover) {
-                isHovered = hovering
-            }
-        }
-        .contextMenu { tabMenu }
-        .help("\(displayTitle) (⌘⌃\(position))")
-        .accessibilityLabel("\(displayTitle) pane")
-        .accessibilityAddTraits(isFocused ? [.isSelected] : [])
-        .task(id: pane.id) {
-            title = await PaneInfo.title(for: pane)
-        }
-    }
-
-    // MARK: Pieces
-
-    private var tabLabel: some View {
-        HStack(spacing: DS.space6) {
-            leadingMark
-            Text(displayTitle)
-                .font(DS.buttonText)
-                .foregroundStyle(isFocused ? DS.text : DS.textSecondary)
-                .lineLimit(1)
-                .truncationMode(.tail)
-            if isPinned {
-                Image(systemName: "pin.fill")
-                    .font(DS.caption2)
-                    .foregroundStyle(DS.accent)
-                    .accessibilityLabel("Pinned")
-            }
-        }
-        .padding(.horizontal, DS.space10)
-        .padding(.vertical, DS.space6)
-        .frame(maxWidth: .infinity)
-        .background { hoverFill }
-        .background { selectionFill }
-        .contentShape(Capsule())
-    }
-
-    /// Constant-structure hover wash — opacity-driven, never inserted.
-    private var hoverFill: some View {
-        Capsule()
-            .fill(DS.glassSectionFill)
-            .opacity(isHovered && !isFocused && !isPinned ? 1 : 0)
-    }
-
-    /// The focused tab's fill slides between rail positions (matched
-    /// geometry); a pinned-but-unfocused tab keeps a quieter static fill
-    /// because its pane is still on screen.
-    @ViewBuilder
-    private var selectionFill: some View {
-        if isFocused {
-            Capsule()
-                .fill(DS.surfaceElevated)
-                .matchedGeometryEffect(id: "pane-tab-selection", in: selectionNamespace)
-        } else if isPinned {
-            Capsule().fill(DS.surfaceElevated.opacity(0.55))
-        }
-    }
-
-    /// 16pt identity slot: entity-tinted glyph at rest, close button on hover.
-    private var leadingMark: some View {
-        ZStack {
-            Image(systemName: PaneInfo.glyph(for: pane))
-                .font(DS.caption.weight(.medium))
-                .foregroundStyle(PaneInfo.tint(for: pane).opacity(isFocused ? 1 : 0.7))
-                .opacity(isHovered ? 0 : 1)
-                .accessibilityHidden(true)
-
-            Button(action: onClose) {
-                Image(systemName: "xmark")
-                    .font(DS.caption2.weight(.semibold))
-                    .foregroundStyle(DS.textSecondary)
-                    .frame(width: 16, height: 16)
-                    .contentShape(Circle().inset(by: -8))
-            }
-            .buttonStyle(.plain)
-            .opacity(isHovered ? 1 : 0)
-            .allowsHitTesting(isHovered)
-            .help("Close pane")
-            .accessibilityLabel("Close \(displayTitle)")
-        }
-        .frame(width: 16, height: 16)
-    }
-
-    @ViewBuilder
-    private var tabMenu: some View {
-        Button(isPinned ? "Unpin Pane" : "Pin Pane", action: onTogglePin)
-        Divider()
-        Button("Move Pane Left") { onMove(-1) }
-            .disabled(position == 1)
-        Button("Move Pane Right") { onMove(1) }
-            .disabled(position == paneCount)
-        Divider()
-        Button("Close Pane", action: onClose)
-        Button("Close Other Panes", action: onCloseOthers)
-            .disabled(paneCount == 1)
-    }
-}
-
 // MARK: - Pane Slot
 
 /// One deck slot. The pane body is always rendered (state survives collapse),
@@ -505,6 +283,8 @@ private struct PaneSlotView: View {
     let isExpanded: Bool
     let isActive: Bool
     let isContextOwner: Bool
+    /// Non-nil only for the focused pane — its chrome row hosts the tab strip.
+    let deckChrome: PaneDeckChromePayload?
     let expandedWidth: CGFloat
     let slotWidth: CGFloat
     let onClose: () -> Void
@@ -518,6 +298,7 @@ private struct PaneSlotView: View {
             isContextOwner: isContextOwner,
             onClose: onClose
         )
+        .environment(\.paneDeckChrome, deckChrome)
         .frame(width: contentWidth)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         // NSView-backed editors and scroll views can keep painting through
@@ -580,7 +361,7 @@ enum PaneInfo {
         case .thinkspace: return "Thinkspace"
         case .commandCenter: return "Command Center"
         case .swipeGallery: return "Swipe File"
-        case .webBrowser(let url, let title): return title ?? url.host() ?? "Web"
+        case .webBrowser(_, let url, let title): return title ?? url.host() ?? "Web"
         case .cosmoWindow: return "Cosmo"
         case .collaborator: return "Collaborator"
         case .inlineAssistant: return "Assistant"

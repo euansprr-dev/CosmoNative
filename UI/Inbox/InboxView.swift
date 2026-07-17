@@ -195,6 +195,9 @@ struct InboxView: View {
                         InboxSectionHeader(title: section.title, itemCount: section.items.count)
                     }
                 }
+                // The Seedbed rides below the queue: proto-concepts accruing
+                // mass, ripest first — the "what should I develop?" answer.
+                InboxGrowingSection()
             }
             // Rows sit slightly inside the masthead margin — the same
             // title-to-content rhythm as the Today page's task list.
@@ -319,6 +322,7 @@ private struct InboxKeyboardModel: ViewModifier {
             .onKeyPress(KeyEquivalent("a")) { runVerb { await viewModel.askInDeepDive($0) } }
             .onKeyPress(KeyEquivalent("i")) { runVerb { await viewModel.fileAsIdea($0) } }
             .onKeyPress(KeyEquivalent("c")) { runVerb { await viewModel.connectCapture($0) } }
+            .onKeyPress(KeyEquivalent("g")) { runVerb { await viewModel.growSeedling($0) } }
             .background {
                 Button("") { viewModel.selectAll() }
                     .keyboardShortcut("a", modifiers: .command)
@@ -404,6 +408,13 @@ private struct InboxEmptyState: View {
                 }
 
                 recentActivitySection
+
+                // Inbox zero never hides the nursery — growing seedlings are
+                // the queue's continuation, not its clutter.
+                LazyVStack(spacing: 0) {
+                    InboxGrowingSection()
+                }
+                .frame(maxWidth: 420)
 
                 Spacer(minLength: DS.space32)
             }

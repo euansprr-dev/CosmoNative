@@ -324,7 +324,6 @@ struct RichTextEditor: View {
     // Tracks measured text content height so the representable can be explicitly sized
     // (needed for non-scrolling mode inside a parent ScrollView)
     @State private var measuredContentHeight: CGFloat = 0
-    @EnvironmentObject var voiceEngine: VoiceEngine
 
     let placeholder: String
     let onSave: ((NSAttributedString) -> Void)?

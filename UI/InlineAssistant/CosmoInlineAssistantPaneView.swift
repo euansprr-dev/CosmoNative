@@ -24,13 +24,35 @@ enum CosmoInlineAssistantPaneProgressPolicy {
 /// the hero — plain prose on the page with no card chrome. User prompts and
 /// staged proposals are quiet, warm-filled cards; the thinking row narrates the
 /// phase in Cosmo's own voice; the composer stays out of the way until focused.
+///
+/// The pane wears the browser's window anatomy: one glass toolbar row hosting
+/// the deck tab strip (the pane's name and close live in its tab — never
+/// duplicated), then the conversation inset in a bordered content well.
 struct CosmoInlineAssistantPaneView: View {
     @ObservedObject var store: CosmoInlineAssistantStore
     let onClose: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
-            CosmoInlineAssistantPaneHeader(store: store, onClose: onClose)
+            CosmoInlineAssistantPaneToolbar(store: store, onClose: onClose)
+                .padding(.horizontal, 10)
+                .padding(.top, 8)
+                .padding(.bottom, 8)
+
+            contentWell
+                .clipShape(RoundedRectangle(cornerRadius: 7))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7)
+                        .stroke(DS.borderSubtle, lineWidth: 1)
+                )
+                .padding(.horizontal, 10)
+                .padding(.bottom, 10)
+        }
+        .background(DS.bg)
+    }
+
+    private var contentWell: some View {
+        VStack(spacing: 0) {
             CosmoInlineAssistantPaneMessages(store: store)
             CosmoInlineAssistantAutoSkillChip(store: store)
             CosmoInlineAssistantPaneFollowUps(store: store)
@@ -97,31 +119,45 @@ private struct CosmoInlineAssistantAutoSkillChip: View {
     }
 }
 
-// MARK: - Header
+// MARK: - Toolbar
 
-private struct CosmoInlineAssistantPaneHeader: View {
+/// One glass row in the browser-toolbar grammar: the deck tab strip rides the
+/// leading seam when sibling panes exist (the pane's name lives in its tab —
+/// never written twice), one close affordance, then the assistant's identity
+/// (phase orb + scope pill) and the session spine on the trailing side.
+private struct CosmoInlineAssistantPaneToolbar: View {
     @ObservedObject var store: CosmoInlineAssistantStore
     let onClose: () -> Void
 
-    @State private var isCloseHovered = false
+    @Environment(\.paneDeckChrome) private var paneDeckChrome
     @State private var memoryFacts: [String] = []
     @State private var isMemoryPopoverShown = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: DS.space8) {
-                orb
-                titleBlock
-                Spacer()
-                closeButton
+        HStack(spacing: DS.space6) {
+            deckTabStrip
+            CosmoBrowserToolbarButton(icon: "xmark", help: "Close assistant pane (Esc)", action: onClose)
+            orb
+            if !showsDeckTabs {
+                Text("Cosmo")
+                    .font(DS.headline)
+                    .foregroundStyle(DS.text)
             }
-            .padding(.horizontal, DS.space16)
-            .frame(height: 52)
-
-            if !store.sessionLedger.isEmpty || !memoryFacts.isEmpty {
-                sessionSpine
-            }
+            CosmoScopePill(
+                title: store.activeSurfaceTitle,
+                entity: store.activeSurfaceEntity
+            )
+            Spacer(minLength: DS.space8)
+            sessionSpine
         }
+        .padding(.horizontal, DS.space10)
+        .padding(.vertical, DS.space6)
+        // A persistent bar attached to its pane, not a floating overlay —
+        // material alone separates it (the browser-toolbar elevation class);
+        // a cast shadow this close to the pane edges reads as smudge.
+        .cosmoGlassPanel(role: .floatingAssistant, cornerRadius: 22, castsShadow: false)
+        .background(escapeShortcut)
+        .animation(ProMotionSprings.gentle, value: store.activeSurfaceTitle)
         .task { await refreshMemoryFacts() }
         .onChange(of: store.isProcessing) { _, processing in
             guard !processing else { return }
@@ -129,36 +165,70 @@ private struct CosmoInlineAssistantPaneHeader: View {
         }
     }
 
+    // MARK: Deck tabs
+
+    private var showsDeckTabs: Bool {
+        (paneDeckChrome?.tabs.count ?? 0) > 1
+    }
+
+    /// The deck tab strip rides the toolbar's leading seam when this pane is
+    /// the focused deck pane and siblings exist — one row of glass, never two
+    /// stacked bars (the browser-toolbar seam).
+    @ViewBuilder
+    private var deckTabStrip: some View {
+        if let paneDeckChrome, paneDeckChrome.tabs.count > 1 {
+            PaneDeckTabStrip(
+                context: paneDeckChrome,
+                hostReserve: PaneTabStripLayoutPolicy.denseHostReserve
+            )
+            Divider()
+                .frame(height: 18)
+                .overlay(DS.borderSubtle)
+                .padding(.horizontal, DS.space2)
+        }
+    }
+
+    /// Esc closes the pane — hosted by a hidden button so the visible close
+    /// stays in the shared toolbar-button grammar.
+    private var escapeShortcut: some View {
+        Button("") { onClose() }
+            .keyboardShortcut(.escape, modifiers: [])
+            .opacity(0)
+            .frame(width: 0, height: 0)
+            .accessibilityHidden(true)
+    }
+
     // MARK: Session spine
 
-    /// The session's living state in one quiet line: what this session has
-    /// produced, which model answers, and what Cosmo has remembered (tap to
-    /// inspect or forget — memory transparency).
+    /// The session's living state, trailing on the one row: what this session
+    /// has produced, which model answers, and what Cosmo has remembered (tap
+    /// to inspect or forget — memory transparency).
+    @ViewBuilder
     private var sessionSpine: some View {
-        HStack(spacing: DS.space10) {
-            if editCount > 0 || answerCount > 0 {
-                Text(spineSummary)
+        if !store.sessionLedger.isEmpty || !memoryFacts.isEmpty {
+            HStack(spacing: DS.space10) {
+                if editCount > 0 || answerCount > 0 {
+                    Text(spineSummary)
+                        .font(DS.caption)
+                        .monospacedDigit()
+                        .foregroundStyle(DS.textMuted)
+                        .contentTransition(.numericText())
+                        .animation(ProMotionSprings.gentle, value: spineSummary)
+                        .lineLimit(1)
+                }
+
+                Text(CosmoInlineAssistantCacheWarmer.effectiveTier.displayLabel)
                     .font(DS.caption)
-                    .monospacedDigit()
                     .foregroundStyle(DS.textMuted)
-                    .contentTransition(.numericText())
-                    .animation(ProMotionSprings.gentle, value: spineSummary)
+                    .lineLimit(1)
+                    .help("The model answering in this session")
+
+                if !memoryFacts.isEmpty {
+                    memoryChip
+                }
             }
-
-            Text(CosmoInlineAssistantCacheWarmer.effectiveTier.displayLabel)
-                .font(DS.caption)
-                .foregroundStyle(DS.textMuted)
-                .help("The model answering in this session")
-
-            if !memoryFacts.isEmpty {
-                memoryChip
-            }
-
-            Spacer()
+            .accessibilityElement(children: .combine)
         }
-        .padding(.horizontal, DS.space16)
-        .padding(.bottom, DS.space6)
-        .accessibilityElement(children: .combine)
     }
 
     private var editCount: Int {
@@ -251,47 +321,14 @@ private struct CosmoInlineAssistantPaneHeader: View {
             .accessibilityHidden(true)
     }
 
-    /// "Cosmo" plus the scope pill — the pane always SHOWS what "this
-    /// document" means. Visible context truth.
-    private var titleBlock: some View {
-        HStack(spacing: DS.space10) {
-            Text("Cosmo")
-                .font(DS.headline)
-                .foregroundStyle(DS.text)
-
-            CosmoScopePill(
-                title: store.activeSurfaceTitle,
-                entity: store.activeSurfaceEntity
-            )
-        }
-        .animation(ProMotionSprings.gentle, value: store.activeSurfaceTitle)
-    }
-
-    private var closeButton: some View {
-        Button(action: onClose) {
-            Image(systemName: "xmark")
-                .font(DS.caption.weight(.semibold))
-                .foregroundStyle(isCloseHovered ? DS.text : DS.textMuted)
-                .frame(width: 28, height: 28)
-                .background(isCloseHovered ? AnyShapeStyle(DS.surfaceHover) : AnyShapeStyle(Color.clear), in: Circle())
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .cosmoClickCursor()
-        .onHover { hovering in
-            withAnimation(ProMotionSprings.snappy) { isCloseHovered = hovering }
-        }
-        .keyboardShortcut(.escape, modifiers: [])
-        .help("Close assistant pane (Esc)")
-        .accessibilityLabel("Close assistant pane")
-    }
 }
 
 // MARK: - Scope pill
 
 /// The pane's name tag for what Cosmo is looking at — the iOS CosmoContextPill
-/// grammar (a real glass capsule, semibold title, muted kind subtitle), no
-/// ornament. One component for the header and the empty state.
+/// grammar (semibold title, muted kind subtitle), no ornament. A flat warm
+/// fill, never glass: it lives ON the glass toolbar (Law 3 — glass cannot
+/// sample glass). One component for the toolbar and the empty state.
 struct CosmoScopePill: View {
     let title: String?
     let entity: String?
@@ -321,9 +358,13 @@ struct CosmoScopePill: View {
         }
         .padding(.horizontal, DS.space10)
         .padding(.vertical, DS.space4)
-        .glassEffect(.regular, in: .capsule)
+        .background(DS.glassCardFill, in: Capsule())
+        .overlay {
+            Capsule().strokeBorder(DS.glassBorder, lineWidth: 1)
+        }
+        // Compressible, never fixed: under pressure the title truncates
+        // instead of shoving the row's trailing cluster off the bar.
         .frame(maxWidth: 280, alignment: .leading)
-        .fixedSize()
         .help(title == nil
             ? "Open a document or thinkspace to scope Cosmo"
             : "Cosmo is scoped to this")

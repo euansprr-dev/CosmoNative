@@ -50,7 +50,7 @@ final class ConnectionStore: ObservableObject {
                         .map { ConnectionWrapper(atom: $0) }
                 }
                 
-                for try await connections in observation.values(in: database.dbQueue) {
+                for try await connections in observation.values(in: database.dbPool) {
                     await MainActor.run {
                         // Update cache, preserving any unsaved local changes
                         var newCache: [Int64: Connection] = [:]

@@ -346,7 +346,7 @@ private struct TodayTimelineRow: View {
                         .lineLimit(1)
 
                     if let habitTitle = session.habitTitle {
-                        Text(habitTitle)
+                        Text(CollectionEmoji.resolve(name: habitTitle).label)
                             .font(DS.caption)
                             .foregroundStyle(DS.textMuted)
                             .lineLimit(1)

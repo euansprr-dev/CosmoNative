@@ -33,6 +33,11 @@ enum CosmoNotification {
 
     // MARK: - Canvas Notifications
     enum Canvas {
+        /// Posted when the thinkspace surface flips between canvas and library
+        /// (userInfo: ["isLibrary": Bool]). MainView hides its floating trail
+        /// island while the library's own toolbar embeds one.
+        static let thinkspaceModeChanged = Notification.Name("com.cosmo.canvas.thinkspaceModeChanged")
+
         // Block lifecycle
         static let blockExpanded = Notification.Name("com.cosmo.canvas.blockExpanded")
         static let blockCollapsed = Notification.Name("com.cosmo.canvas.blockCollapsed")
@@ -145,6 +150,9 @@ enum CosmoNotification {
         static let trailStepForward = Notification.Name("com.cosmo.nav.trailStepForward")
         /// Jump to a trail moment. userInfo: ["momentId": String (UUID)]
         static let trailJump = Notification.Name("com.cosmo.nav.trailJump")
+        /// Toggle the unified sidebar from chrome that can't reach MainView's
+        /// state directly (the trail-island sidebar button in focus headers).
+        static let toggleSidebar = Notification.Name("com.cosmo.nav.toggleSidebar")
 
         // Focus mode
         static let enterFocusMode = Notification.Name("com.cosmo.nav.enterFocusMode")
@@ -595,6 +603,11 @@ enum CosmoNotification {
         /// hosts refresh their link targets so mentions light up immediately.
         /// userInfo: ["originUUID": String, "connectionUUID": String]
         static let referencesChanged = Notification.Name("com.cosmo.connection.referencesChanged")
+        /// A staged insert was added to / removed from a page's pending
+        /// material (inbox feed, seedling develop-into-existing) — open
+        /// workspaces refresh their ghost rows.
+        /// userInfo: ["connectionUUID": String]
+        static let stagedInsertsChanged = Notification.Name("com.cosmo.connection.stagedInsertsChanged")
     }
 }
 
@@ -908,6 +921,10 @@ final class PersistenceHealth {
         case decodeFailure
         case conflict
         case syncFailure
+        /// A self-healing pass SUCCEEDED (e.g. the orphaned-pending reconciler
+        /// re-enqueued stranded rows). Logged for observability, but never a
+        /// user-facing failure — the banner only surfaces write/sync failures.
+        case recovery
     }
 
     struct Incident: Identifiable {

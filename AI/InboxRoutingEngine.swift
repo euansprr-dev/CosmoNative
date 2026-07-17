@@ -328,13 +328,27 @@ actor InboxRoutingEngine {
                     placementPlan: plan
                 ))
 
-            case .germinateConnection:
-                guard let newTitle = move.newTitle else { continue }
+            case .feedSeedling:
+                guard let key = move.targetKey, let entry = entriesByKey[key] else { continue }
                 results.append(InboxRecommendation(
-                    kind: .germinateConnection,
+                    kind: .feedSeedling,
                     confidence: move.confidence,
                     suggestedAtomType: AtomType.connection.rawValue,
-                    destinationPath: "New concept: \(newTitle)",
+                    destinationPath: "Grows \u{201C}\(entry.name)\u{201D}",
+                    rationale: rationale,
+                    atlasMove: InboxAtlasMove(
+                        seedlingUUID: entry.uuid,
+                        seedlingName: entry.name
+                    )
+                ))
+
+            case .startSeedling:
+                guard let newTitle = move.newTitle else { continue }
+                results.append(InboxRecommendation(
+                    kind: .startSeedling,
+                    confidence: move.confidence,
+                    suggestedAtomType: AtomType.connection.rawValue,
+                    destinationPath: "New seedling: \(newTitle)",
                     rationale: rationale,
                     atlasMove: InboxAtlasMove(germinateTitle: newTitle)
                 ))
@@ -372,7 +386,10 @@ actor InboxRoutingEngine {
                   let atom = atomsByUUID[uuid],
                   AtomType.triageable.contains(atom.type),
                   !atom.isDeleted,
-                  !isAgentConversation(atom) else {
+                  !isAgentConversation(atom),
+                  // Readwise mirrors are evidence, never merge targets — the
+                  // next sync would clobber anything absorbed into them.
+                  !atom.isReadwiseContent else {
                 return nil
             }
 

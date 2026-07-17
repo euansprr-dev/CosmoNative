@@ -257,7 +257,7 @@ struct LiveQueryBlockView: View {
     }
 
     private func startObservation() {
-        guard let db = CosmoDatabase.shared.dbQueue else { return }
+        guard let db = CosmoDatabase.shared.dbPool else { return }
 
         // Re-run query when atoms table changes (debounced by GRDB)
         let obs = ValueObservation.tracking { db in

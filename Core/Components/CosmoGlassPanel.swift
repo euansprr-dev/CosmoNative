@@ -37,6 +37,12 @@ enum CosmoGlassPanelRole {
 struct CosmoGlassPanel<Content: View>: View {
     let role: CosmoGlassPanelRole
     let cornerRadius: CGFloat
+    /// Elevation class (the Apple rule): a TRANSIENT/FLOATING panel casts a
+    /// drop shadow; a PERSISTENT bar attached to its surface (the browser
+    /// pane's toolbar) does not — the glass material and rim are its whole
+    /// separation. Inside a bounded pane a cast shadow smears against the
+    /// pane edges and reads as smudge, not depth.
+    let castsShadow: Bool
     let glassID: String?
     let glassNamespace: Namespace.ID?
     let content: Content
@@ -44,12 +50,14 @@ struct CosmoGlassPanel<Content: View>: View {
     init(
         role: CosmoGlassPanelRole = .globalSidebar,
         cornerRadius: CGFloat = 22,
+        castsShadow: Bool = true,
         glassID: String? = nil,
         glassNamespace: Namespace.ID? = nil,
         @ViewBuilder content: () -> Content
     ) {
         self.role = role
         self.cornerRadius = cornerRadius
+        self.castsShadow = castsShadow
         self.glassID = glassID
         self.glassNamespace = glassNamespace
         self.content = content()
@@ -71,7 +79,7 @@ struct CosmoGlassPanel<Content: View>: View {
         return shape
             .fill(.black)
             .shadow(
-                color: DS.glassPanelShadow,
+                color: castsShadow ? DS.glassPanelShadow : .clear,
                 radius: role.shadowRadius,
                 x: 0,
                 y: role.shadowYOffset
@@ -100,12 +108,14 @@ extension View {
     func cosmoGlassPanel(
         role: CosmoGlassPanelRole = .globalSidebar,
         cornerRadius: CGFloat = 22,
+        castsShadow: Bool = true,
         glassID: String? = nil,
         glassNamespace: Namespace.ID? = nil
     ) -> some View {
         CosmoGlassPanel(
             role: role,
             cornerRadius: cornerRadius,
+            castsShadow: castsShadow,
             glassID: glassID,
             glassNamespace: glassNamespace
         ) {

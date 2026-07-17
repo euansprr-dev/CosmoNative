@@ -279,6 +279,20 @@ enum CollectionEmoji {
         character.isIdentityEmoji
     }
 
+    /// Rewrites a name's leading identity mark: an emoji replaces the current
+    /// mark, nil clears it; the bare label always survives untouched. The
+    /// write-side twin of `resolve` — every mark editor goes through this so
+    /// the leading-emoji contract stays one implementation. Ported
+    /// field-for-field with the iOS CollectionEmoji.applying.
+    static func applying(mark: String?, to name: String) -> String {
+        var label = name.trimmingCharacters(in: .whitespaces)
+        if let first = label.first, first.isIdentityEmoji {
+            label = String(label.dropFirst()).trimmingCharacters(in: .whitespaces)
+        }
+        guard let mark, !mark.isEmpty else { return label }
+        return label.isEmpty ? mark : "\(mark) \(label)"
+    }
+
     /// A content format's mark — curated per case, the same identity
     /// register as board pills and lanes. Never an SF stand-in. Ported
     /// field-for-field from the iOS CollectionEmoji.formatMark.

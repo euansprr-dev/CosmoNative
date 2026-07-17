@@ -330,7 +330,7 @@ struct DashboardScheduleStrip: View {
                     .lineLimit(1)
 
                 if let habitTitle = session.habitTitle {
-                    Text(habitTitle)
+                    Text(CollectionEmoji.resolve(name: habitTitle).label)
                         .font(.system(size: 8))
                         .foregroundStyle(DS.textOnAccent.opacity(0.85))
                         .lineLimit(1)

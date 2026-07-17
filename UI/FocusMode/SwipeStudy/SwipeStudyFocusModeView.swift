@@ -16,7 +16,10 @@ struct SwipeStudyFocusModeView: View {
     let onClose: () -> Void
 
     @State private var model: SwipeStudyModel
-    @State private var scrollMetrics = CortexScrollMetrics()
+    /// Scroll metrics live behind @Observable so per-frame scroll ticks
+    /// invalidate ONLY the thin scrollbar host — never this whole view
+    /// (which would run updateNSView on every slide's NSTextView per frame).
+    @State private var scrollMetrics = CortexScrollMetricsStore()
     /// The analysis rail as a true column (regular widths) — the choice
     /// persists; studying is the room's point, so it defaults on.
     @State private var isRailVisible: Bool
@@ -173,17 +176,15 @@ struct SwipeStudyFocusModeView: View {
             .frame(maxWidth: 680, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .center)
             .background(
-                CortexScrollViewIntrospector { metrics in
-                    if metrics != scrollMetrics {
-                        scrollMetrics = metrics
-                    }
+                CortexScrollViewIntrospector { [scrollMetrics] metrics in
+                    scrollMetrics.publish(metrics)
                 }
             )
         }
         .scrollIndicators(.hidden)
         .scrollEdgeEffectStyle(.soft, for: .all)
         .overlay(alignment: .trailing) {
-            CortexThinScrollbar(metrics: scrollMetrics)
+            CortexThinScrollbarHost(store: scrollMetrics)
                 .padding(.trailing, DS.space4)
                 .padding(.vertical, DS.space16)
         }
@@ -338,14 +339,24 @@ private struct SwipeStudyChromeRow: View {
     let onUseInIdea: () -> Void
     let onClose: () -> Void
 
+    @Environment(\.paneDeckChrome) private var paneDeckChrome
+
     var body: some View {
-        CosmoChromeRow {
+        CosmoChromeRow(centersAbsolutely: !isPaneContext) {
             if atomChrome == nil, !isPaneContext {
                 NavigationTrailIsland()
             }
+            if let paneDeckChrome {
+                CosmoChromeIsland { PaneDeckTabStrip(context: paneDeckChrome) }
+            }
             CosmoChromeIsland { leadingControls }
         } center: {
-            CosmoChromeIsland { swipePill }
+            // The focused tab already names the swipe in pane context — a
+            // center pill would say it twice (its vitals move to the
+            // session island).
+            if paneDeckChrome == nil {
+                CosmoChromeIsland { swipePill }
+            }
         } trailing: {
             sessionIsland
             CosmoChromeIsland { trailingControls }
@@ -362,7 +373,7 @@ private struct SwipeStudyChromeRow: View {
             AtomWindowChromeDivider()
         }
         StudyToolbarButton(
-            icon: "sidebar.left",
+            icon: "sidebar.squares.left",
             help: isRailShowing ? "Hide analysis (⌘0)" : "Show analysis (⌘0)",
             isActive: isRailShowing,
             action: onToggleRail
@@ -422,6 +433,26 @@ private struct SwipeStudyChromeRow: View {
                 .disabled(!session.hasPrevious)
                 .opacity(session.hasPrevious ? 1 : 0.35)
 
+                // In pane context the center pill is gone (the tab names the
+                // swipe) — the queue position and studied seal ride between
+                // the session chevrons instead.
+                if paneDeckChrome != nil {
+                    if let position = session.positionLabel {
+                        Text(position)
+                            .font(DS.caption.monospacedDigit())
+                            .foregroundStyle(DS.textMuted)
+                            .contentTransition(.numericText())
+                            .animation(ProMotionSprings.gentle, value: session.positionLabel)
+                    }
+                    if model.analysis?.studiedAt != nil {
+                        Image(systemName: "checkmark.seal.fill")
+                            .font(DS.caption2)
+                            .foregroundStyle(DS.accent.opacity(0.7))
+                            .help("Studied")
+                            .accessibilityLabel("Studied")
+                    }
+                }
+
                 StudyToolbarButton(icon: "chevron.right", help: "Next swipe (⌘])") {
                     model.goNext()
                 }
@@ -439,9 +470,9 @@ private struct SwipeStudyChromeRow: View {
         if let atomChrome {
             AtomWindowChromeDivider()
             AtomWindowChromeTrailingControls(context: atomChrome)
-        } else if isPaneContext, !isPeekContext {
-            StudyToolbarButton(icon: "xmark", help: "Close (Esc)", action: onClose)
         }
+        // Pane close lives in the deck tab (the strip's ✕) — no mode-owned
+        // xmark in pane context anymore.
     }
 
     private var overflowMenu: some View {

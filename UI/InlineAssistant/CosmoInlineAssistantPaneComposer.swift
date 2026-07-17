@@ -390,9 +390,12 @@ struct CosmoInlineAssistantPaneComposer: View {
             in: text,
             selectedRange: selectionRange
         ) else {
+            CosmoInlineContextMenuDebug.log("pane sync text=\"\(text)\" sel=\(selectionRange) → no active mention")
             if isContextMenuVisible { dismissContextMenu(trimMentionQuery: false) }
             return
         }
+
+        CosmoInlineContextMenuDebug.log("pane sync text=\"\(text)\" sel=\(selectionRange) → mention query=\"\(activeMention.query)\"")
 
         if isCompletedInsertedMention(activeMention) {
             if isContextMenuVisible { dismissContextMenu(trimMentionQuery: false) }

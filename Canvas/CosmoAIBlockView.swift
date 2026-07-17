@@ -309,7 +309,13 @@ final class CosmoAIBlockChatState: ObservableObject {
 
     func loadConversation(entityUuid: String) {
         Task {
-            guard let atom = try? await AtomRepository.shared.fetch(uuid: entityUuid),
+            // Warm store first — the thinkspace switch batch-fetched every
+            // entity atom; the repository round-trip is the fallback.
+            var loadedAtom: Atom? = CanvasAtomWarmStore.shared.atom(uuid: entityUuid)
+            if loadedAtom == nil {
+                loadedAtom = try? await AtomRepository.shared.fetch(uuid: entityUuid)
+            }
+            guard let atom = loadedAtom,
                   let structured = atom.structured,
                   let data = structured.data(using: .utf8),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

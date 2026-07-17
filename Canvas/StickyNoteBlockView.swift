@@ -104,7 +104,7 @@ struct StickyNoteBlockView: View {
     @State private var isSyncingFromDB = false
 
     // GRDB observation
-    @State private var observationCancellable: AnyCancellable?
+    @State private var atomSubscription: CanvasAtomSubscription?
 
     // Visual states
     @State private var isSelected = false
@@ -244,14 +244,13 @@ struct StickyNoteBlockView: View {
             }
         }
         .onDisappear {
-            print("[BLOCK-STICKY] onDisappear — uuid=\(block.entityUuid) bodyLen=\(noteText.count) bodyPreview=\"\(String(noteText.prefix(60)))\"")
             autoSaveTask?.cancel()
-            observationCancellable?.cancel()
+            CanvasAtomObservationHub.shared.unsubscribe(atomSubscription)
+            atomSubscription = nil
             // Defer sync save by one frame so CosmoDocumentEditor's flushPendingSync()
             // can propagate the latest text via onDocumentChange first.
             DispatchQueue.main.async {
                 saveClosed = true
-                print("[BLOCK-STICKY] onDisappear(deferred) — saving uuid=\(block.entityUuid) bodyLen=\(noteText.count)")
                 saveNoteSync()
                 DirtyEditorRegistry.shared.unregister(id: "stickyblock-\(block.id)")
             }
@@ -275,8 +274,13 @@ struct StickyNoteBlockView: View {
         }
         // Authoritative blocks landed after a thinkspace switch — the mounted view
         // may still hold text from a stale snapshot cache. Re-run the load when
-        // there's nothing local to lose.
-        .onReceive(NotificationCenter.default.publisher(for: .canvasBlocksDidResync)) { _ in
+        // there's nothing local to lose. Targeted: a payload of changed block
+        // ids scopes the reload to actually-affected views.
+        .onReceive(NotificationCenter.default.publisher(for: .canvasBlocksDidResync)) { notification in
+            if let changedIds = notification.userInfo?["blockIds"] as? [String],
+               !changedIds.contains(block.id) {
+                return
+            }
             guard !isEditingBody, !hasLocalEdits else { return }
             isSyncingFromDB = true
             loadNote()
@@ -337,30 +341,24 @@ struct StickyNoteBlockView: View {
         )
         noteText = noteBodyDocument.plainText
 
-        // If linked to an atom, load freshest data from database
+        // If linked to an atom, load freshest data — warm store first (the
+        // thinkspace switch batch-fetched every entity atom), repository
+        // round-trip only as a fallback for blocks outside a snapshot fetch.
         if block.entityId > 0 {
-            Task {
-                do {
-                    if let atom = try await AtomRepository.shared.fetch(id: block.entityId) {
-                        await MainActor.run {
-                            // Don't clobber text the user typed (or is typing) while
-                            // the fetch was in flight — mirror the GRDB observation.
-                            guard !isEditingBody, !hasLocalEdits else { return }
-                            isSyncingFromDB = true
-                            noteBodyDocument = RichDocumentPersistence.loadAtomDocument(
-                                field: .body,
-                                metadata: atom.metadata,
-                                fallbackPlainText: atom.body
-                            )
-                            noteText = noteBodyDocument.plainText
-                            DispatchQueue.main.async {
-                                isSyncingFromDB = false
+            if let warm = CanvasAtomWarmStore.shared.atom(id: block.entityId) {
+                applyLoadedAtom(warm)
+            } else {
+                Task {
+                    do {
+                        if let atom = try await AtomRepository.shared.fetch(id: block.entityId) {
+                            await MainActor.run {
+                                applyLoadedAtom(atom)
                             }
                         }
+                    } catch {
+                        PersistenceHealth.note(.writeFailure, context: "stickyNote.loadAtom", detail: "uuid=\(block.entityUuid): \(error)")
+                        print("StickyNote: Failed to load atom: \(error)")
                     }
-                } catch {
-                    PersistenceHealth.note(.writeFailure, context: "stickyNote.loadAtom", detail: "uuid=\(block.entityUuid): \(error)")
-                    print("StickyNote: Failed to load atom: \(error)")
                 }
             }
         } else {
@@ -394,59 +392,60 @@ struct StickyNoteBlockView: View {
         }
     }
 
-    // MARK: - GRDB Observation
+    /// Apply a freshly-loaded entity atom to view state. Shared by the warm
+    /// store hit (synchronous, at mount) and the repository fallback.
+    private func applyLoadedAtom(_ atom: Atom) {
+        // Don't clobber text the user typed (or is typing) while
+        // the load was in flight — mirror the hub observation.
+        guard !isEditingBody, !hasLocalEdits else { return }
+        isSyncingFromDB = true
+        noteBodyDocument = RichDocumentPersistence.loadAtomDocument(
+            field: .body,
+            metadata: atom.metadata,
+            fallbackPlainText: atom.body
+        )
+        noteText = noteBodyDocument.plainText
+        DispatchQueue.main.async {
+            isSyncingFromDB = false
+        }
+    }
+
+    // MARK: - Atom Observation (via shared canvas hub)
 
     private func startObservingAtom() {
+        CanvasAtomObservationHub.shared.unsubscribe(atomSubscription)
+        atomSubscription = nil
+
         let uuid = block.entityUuid
         guard !uuid.isEmpty else { return }
 
-        let observation = ValueObservation.tracking { db in
-            try Atom
-                .filter(Column("uuid") == uuid)
-                .fetchOne(db)
-        }
-        observationCancellable = observation.publisher(in: CosmoDatabase.shared.dbQueue)
-            .receive(on: DispatchQueue.main)
-            .removeDuplicates(by: { prev, next in
-                guard let prev, let next else { return prev == nil && next == nil }
-                return prev.body == next.body && prev.metadata == next.metadata
-            })
-            .sink(
-                receiveCompletion: { _ in },
-                receiveValue: { fetchedAtom in
-                    guard let atom = fetchedAtom else { return }
-                    let newBodyDocument = RichDocumentPersistence.loadAtomDocument(
-                        field: .body,
-                        metadata: atom.metadata,
-                        fallbackPlainText: atom.body
-                    )
-                    let newBody = newBodyDocument.plainText
-                    let bodyChanged = newBody != noteText || newBodyDocument != noteBodyDocument
-                    print("[BLOCK-STICKY] 🔔 GRDB observation fired — uuid=\(uuid) isEditingBody=\(isEditingBody) hasLocalEdits=\(hasLocalEdits) bodyChanged=\(bodyChanged) dbBodyLen=\(newBody.count) localBodyLen=\(noteText.count) dbPreview=\"\(String(newBody.prefix(60)))\"")
-                    // Only overwrite body from DB when NOT actively editing and
-                    // there are no unsaved local edits — otherwise the observation
-                    // echo from auto-save overwrites text the user typed since the
-                    // save was initiated.
-                    guard NoteWritePolicy.shouldApplyObservedBody(
-                        isEditingBody: isEditingBody,
-                        hasLocalEdits: hasLocalEdits,
-                        observedBodyChanged: bodyChanged
-                    ) else {
-                        if bodyChanged {
-                            print("[BLOCK-STICKY] 🔔 observation SKIPPED body (editing/local) — uuid=\(uuid) dbLen=\(newBody.count) localLen=\(noteText.count)")
-                        }
-                        return
-                    }
-                    print("[BLOCK-STICKY] 🔔 observation APPLYING body — uuid=\(uuid) overwriting localLen=\(noteText.count) with dbLen=\(newBody.count)")
-                    isSyncingFromDB = true
-                    noteBodyDocument = newBodyDocument
-                    noteText = newBody
-                    hasLocalEdits = false
-                    DispatchQueue.main.async {
-                        isSyncingFromDB = false
-                    }
-                }
+        // One hub observation covers every mounted block; version-keyed dedupe
+        // there replaces the old per-block full-atom removeDuplicates.
+        atomSubscription = CanvasAtomObservationHub.shared.subscribe(uuid: uuid) { atom in
+            let newBodyDocument = RichDocumentPersistence.loadAtomDocument(
+                field: .body,
+                metadata: atom.metadata,
+                fallbackPlainText: atom.body
             )
+            let newBody = newBodyDocument.plainText
+            let bodyChanged = newBody != noteText || newBodyDocument != noteBodyDocument
+            // Only overwrite body from DB when NOT actively editing and
+            // there are no unsaved local edits — otherwise the observation
+            // echo from auto-save overwrites text the user typed since the
+            // save was initiated.
+            guard NoteWritePolicy.shouldApplyObservedBody(
+                isEditingBody: isEditingBody,
+                hasLocalEdits: hasLocalEdits,
+                observedBodyChanged: bodyChanged
+            ) else { return }
+            isSyncingFromDB = true
+            noteBodyDocument = newBodyDocument
+            noteText = newBody
+            hasLocalEdits = false
+            DispatchQueue.main.async {
+                isSyncingFromDB = false
+            }
+        }
     }
 
     // MARK: - Auto-save

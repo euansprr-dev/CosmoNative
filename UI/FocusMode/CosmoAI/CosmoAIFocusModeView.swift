@@ -14,10 +14,10 @@ struct CosmoAIFocusModeView: View {
     @State private var inputText = ""
     @State private var sidebarVisible = false
 
-    @AppStorage("sidebarCollapsed") private var isSidebarHidden: Bool = false
     @Environment(\.isPaneContext) private var isPaneContext
     @Environment(\.isPeekContext) private var isPeekContext
     @Environment(\.atomWindowChromeContext) private var atomChrome
+    @Environment(\.paneDeckChrome) private var paneDeckChrome
     @Environment(\.isPaneActive) private var isPaneActive
 
     init(atom: Atom, onClose: @escaping () -> Void) {
@@ -95,42 +95,17 @@ struct CosmoAIFocusModeView: View {
     // MARK: - Header
     private var header: some View {
         HStack(spacing: 12) {
-            // Main sidebar toggle
             if let atomChrome {
                 CosmoChromeIsland {
                     AtomWindowChromeLeadingControls(context: atomChrome)
                 }
-            } else if !isPaneContext {
-                Button {
-                    withAnimation(ProMotionSprings.sidebar) {
-                        isSidebarHidden.toggle()
-                    }
-                } label: {
-                    Image(systemName: "sidebar.left")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(isSidebarHidden ? DS.textMuted : DS.textSecondary)
-                        .frame(width: 28, height: 28)
-                        .background(DS.border, in: Circle())
-                }
-                .buttonStyle(.plain)
-                .help(isSidebarHidden ? "Show sidebar (⌘\\)" : "Hide sidebar (⌘\\)")
             }
 
             if atomChrome == nil {
-                if isPaneContext {
-                    Button(action: onClose) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundStyle(DS.textSecondary)
-                            .frame(width: 32, height: 32)
-                            .background(Circle().fill(DS.border))
-                    }
-                    .buttonStyle(.plain)
-                    .opacity(isPeekContext ? 0 : 1)
-                    .allowsHitTesting(!isPeekContext)
-                    .help("Close")
-                    .accessibilityLabel("Close")
-                } else {
+                // Pane close lives in the deck tab (the strip's ✕).
+                if let paneDeckChrome {
+                    CosmoChromeIsland { PaneDeckTabStrip(context: paneDeckChrome) }
+                } else if !isPaneContext {
                     NavigationTrailIsland()
                 }
             }

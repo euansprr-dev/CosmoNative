@@ -145,6 +145,14 @@ final class RealtimeSyncService {
             table: "capture_requests",
             filter: SupabaseSyncTrafficPolicy.remoteOnlyRealtimeFilter
         )
+        // The global Seedbed: phone-side feeds/renames/pins land live so the
+        // Growing section swells while the user is looking at the inbox.
+        let seedlingChanges = atoms.postgresChange(
+            AnyAction.self,
+            schema: "public",
+            table: "seedlings",
+            filter: SupabaseSyncTrafficPolicy.remoteOnlyRealtimeFilter
+        )
 
         await atoms.subscribe()
 
@@ -198,6 +206,13 @@ final class RealtimeSyncService {
                 guard let self, !self.isPaused else { continue }
                 await self.handleInboxDomainChange(action, table: "capture_requests")
                 NotificationCenter.default.post(name: .cosmoScanRequestUpdated, object: nil)
+            }
+        }
+
+        Task { [weak self] in
+            for await action in seedlingChanges {
+                guard let self, !self.isPaused else { continue }
+                await self.handleInboxDomainChange(action, table: "seedlings")
             }
         }
     }
@@ -447,7 +462,7 @@ final class RealtimeSyncService {
         // canvas_blocks: local identity is `id` (== cloud key).
         let keyColumn = table == "canvas_blocks" ? "id" : "uuid"
         do {
-            let hasPending = try CosmoDatabase.shared.dbQueue.read { db in
+            let hasPending = try CosmoDatabase.shared.dbPool.read { db in
                 try Row.fetchOne(
                     db,
                     sql: "SELECT _local_pending FROM \(table) WHERE \(keyColumn) = ? AND _local_pending = 1",
@@ -467,7 +482,7 @@ final class RealtimeSyncService {
     private func hasSyncFence(uuid: String) -> Bool {
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         do {
-            let fence = try CosmoDatabase.shared.dbQueue.read { db in
+            let fence = try CosmoDatabase.shared.dbPool.read { db in
                 try Row.fetchOne(
                     db,
                     sql: "SELECT expires_at FROM sync_fence WHERE uuid = ? AND expires_at > ?",

@@ -5,14 +5,52 @@
 // thinking in the dock or reading a source, and wake on hover.
 
 import SwiftUI
+import AppKit
 
 @MainActor
 struct StudyChromeRow: View {
     @Bindable var viewModel: InquiryWorkspaceViewModel
     let breakpoint: StudyBreakpoint
+    /// The shell's width, quantized to 24pt steps (pane divider drags must
+    /// not invalidate the row every frame). The center island is absolutely
+    /// centered, so its title cap is derived from this — overlap with the
+    /// side clusters becomes arithmetically impossible at any pane width.
+    let availableWidth: CGFloat
     let isReceded: Bool
 
     @State private var isQuestionHovered = false
+
+    static func quantizedWidth(_ width: CGFloat) -> CGFloat {
+        (width / 24).rounded() * 24
+    }
+
+    /// Width the centered question title may claim: the row width minus the
+    /// wider side cluster mirrored on BOTH sides (absolute centering), minus
+    /// the pill's own glyph/chevron/padding chrome.
+    private var questionTitleCap: CGFloat {
+        min(400, max(120, availableWidth - 530))
+    }
+
+    /// The reader's center island carries more controls (back, open, reader
+    /// mode) — its title budget is tighter.
+    private var readerTitleCap: CGFloat {
+        min(320, max(120, availableWidth - 640))
+    }
+
+    /// Hard title width: the measured text, capped by the budget. A hard
+    /// frame is the only shape that both HUGS a short title (a flexible
+    /// `maxWidth` frame greedily fills, ballooning the glass island) and
+    /// CAPS a long one (`.fixedSize()` reports the uncapped ideal — the bug
+    /// that ran a long question clean over the side islands at pane widths).
+    private static func measuredTitleWidth(_ title: String, cap: CGFloat) -> CGFloat {
+        // DS.buttonText.weight(.semibold) → 12pt semibold system.
+        let font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        let measured = (title as NSString)
+            .size(withAttributes: [.font: font])
+            .width
+            .rounded(.up)
+        return min(measured + 2, cap)
+    }
 
     var body: some View {
         CosmoChromeRow {
@@ -51,7 +89,8 @@ struct StudyChromeRow: View {
             .font(DS.buttonText.weight(.semibold))
             .foregroundStyle(DS.text)
             .lineLimit(1)
-            .frame(maxWidth: breakpoint == .narrow ? 180 : 320)
+            .truncationMode(.tail)
+            .frame(width: Self.measuredTitleWidth(tab.title, cap: readerTitleCap))
 
         if let urlString = tab.url, let url = URL(string: urlString) {
             toolbarButton(icon: "safari", help: "Open in browser") {
@@ -74,7 +113,7 @@ struct StudyChromeRow: View {
     @ViewBuilder
     private var navigateControls: some View {
         toolbarButton(
-            icon: "sidebar.left",
+            icon: "sidebar.squares.left",
             help: viewModel.isTrailShowing ? "Hide trail (⌘0)" : "Show trail (⌘0)",
             isActive: viewModel.isTrailShowing
         ) {
@@ -97,6 +136,11 @@ struct StudyChromeRow: View {
                     .font(DS.buttonText.weight(.semibold))
                     .foregroundStyle(DS.text)
                     .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(width: Self.measuredTitleWidth(
+                        viewModel.activeQuestionTitle,
+                        cap: questionTitleCap
+                    ))
                 Image(systemName: "chevron.down")
                     .font(DS.caption2.weight(.semibold))
                     .foregroundStyle(DS.textMuted)
@@ -104,12 +148,13 @@ struct StudyChromeRow: View {
             }
             .padding(.horizontal, DS.space8)
             .padding(.vertical, DS.space4)
-            .frame(maxWidth: breakpoint == .narrow ? 220 : 400)
             .background(isQuestionHovered ? DS.surfaceElevated.opacity(0.6) : .clear, in: Capsule())
             .contentShape(Capsule())
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
+        // Safe now that the title carries a HARD measured width — the pill's
+        // ideal is bounded, so fixing to it hugs without ever overflowing.
         .fixedSize()
         .onHover { hovering in
             withAnimation(ProMotionSprings.hover) { isQuestionHovered = hovering }

@@ -356,7 +356,7 @@ struct ConnectionBlockView: View {
                 .filter(Column("id") == id)
                 .fetchOne(db)
         }
-        observationCancellable = observation.publisher(in: CosmoDatabase.shared.dbQueue)
+        observationCancellable = observation.publisher(in: CosmoDatabase.shared.dbPool)
             .receive(on: DispatchQueue.main)
             .removeDuplicates(by: { prev, next in
                 guard let prev, let next else { return prev == nil && next == nil }
@@ -444,24 +444,37 @@ struct ConnectionBlockView: View {
 
         editableTitle = block.title
 
+        // Warm store first — the thinkspace switch batch-fetched every entity
+        // atom; the repository round-trip survives only as a fallback.
+        if let warm = CanvasAtomWarmStore.shared.atom(id: block.entityId) {
+            applyInitialAtom(warm)
+            return
+        }
+
         Task {
             if let loaded = try? await AtomRepository.shared.fetch(id: block.entityId) {
                 await MainActor.run {
-                    atom = loaded
-                    // Only update title if user hasn't started editing yet —
-                    // otherwise the async load overwrites what the user is typing
-                    if !isEditingTitle {
-                        titleDocument = RichDocumentPersistence.loadAtomDocument(
-                            field: .title,
-                            metadata: loaded.metadata,
-                            fallbackPlainText: loaded.title ?? block.title
-                        )
-                        editableTitle = RichDocumentPersistence.titlePlainText(from: titleDocument)
-                    }
-                    parseSections(from: loaded)
+                    applyInitialAtom(loaded)
                 }
             }
         }
+    }
+
+    /// Apply the initially-loaded entity atom to view state. Shared by the
+    /// warm store hit (synchronous, at mount) and the repository fallback.
+    private func applyInitialAtom(_ loaded: Atom) {
+        atom = loaded
+        // Only update title if user hasn't started editing yet —
+        // otherwise the async load overwrites what the user is typing
+        if !isEditingTitle {
+            titleDocument = RichDocumentPersistence.loadAtomDocument(
+                field: .title,
+                metadata: loaded.metadata,
+                fallbackPlainText: loaded.title ?? block.title
+            )
+            editableTitle = RichDocumentPersistence.titlePlainText(from: titleDocument)
+        }
+        parseSections(from: loaded)
     }
 
     private func parseSections(from atom: Atom) {

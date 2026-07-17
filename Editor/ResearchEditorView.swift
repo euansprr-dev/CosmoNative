@@ -439,7 +439,7 @@ struct ResearchEditorView: View {
                 .map { ResearchWrapper(atom: $0) }
         }
 
-        observationCancellable = observation.publisher(in: database.dbQueue)
+        observationCancellable = observation.publisher(in: database.dbPool)
             .receive(on: DispatchQueue.main)
             .sink(
                 receiveCompletion: { completion in

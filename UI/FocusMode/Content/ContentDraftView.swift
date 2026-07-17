@@ -163,7 +163,7 @@ struct ContentDraftView: View {
                         isSidebarVisible = false
                     }
                 }) {
-                    Image(systemName: "sidebar.left")
+                    Image(systemName: "sidebar.squares.left")
                         .font(.system(size: 12))
                         .foregroundStyle(DS.textMuted)
                         .frame(width: 20, height: 20)
@@ -528,7 +528,7 @@ struct ContentDraftView: View {
                         isSidebarVisible = true
                     }
                 }) {
-                    Image(systemName: "sidebar.left")
+                    Image(systemName: "sidebar.squares.left")
                         .font(.system(size: 14))
                         .foregroundStyle(DS.textMuted)
                         .padding(8)

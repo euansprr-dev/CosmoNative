@@ -479,8 +479,31 @@ struct RichDocument: Codable, Equatable, Hashable, Sendable {
     }
 
     private static func plainText(for blocks: [RichBlock], depth: Int) -> String {
-        blocks.enumerated().map { index, block in
-            let indentation = String(repeating: "  ", count: depth)
+        let indentation = String(repeating: "  ", count: depth)
+        // List-relative numbering as a running counter — this runs per
+        // keystroke on the whole document, and the old backward scan made a
+        // long numbered list quadratic in its length.
+        var numberedRun = 0
+        var entries: [String] = []
+        entries.reserveCapacity(blocks.count)
+        for block in blocks {
+            numberedRun = block.kind == .numberedList ? numberedRun + 1 : 0
+            entries.append(plainTextEntry(
+                for: block,
+                indentation: indentation,
+                depth: depth,
+                numberedPosition: numberedRun
+            ))
+        }
+        return entries.joined(separator: "\n")
+    }
+
+    private static func plainTextEntry(
+        for block: RichBlock,
+        indentation: String,
+        depth: Int,
+        numberedPosition: Int
+    ) -> String {
             let prefix: String
             switch block.kind {
             case .paragraph:
@@ -498,14 +521,7 @@ struct RichDocument: Codable, Equatable, Hashable, Sendable {
             case .bulletList:
                 prefix = "• "
             case .numberedList:
-                // Compute list-relative position (count consecutive .numberedList blocks before this one)
-                var listPosition = 1
-                var j = index - 1
-                while j >= 0 && blocks[j].kind == .numberedList {
-                    listPosition += 1
-                    j -= 1
-                }
-                prefix = "\(listPosition). "
+                prefix = "\(numberedPosition). "
             case .checklist:
                 prefix = (block.checked ?? false) ? "☑ " : "☐ "
             case .content:
@@ -541,8 +557,6 @@ struct RichDocument: Codable, Equatable, Hashable, Sendable {
                 return childText.isEmpty ? line : line + "\n" + childText
             }
             return line
-        }
-        .joined(separator: "\n")
     }
 
     private static func containsCollapsedHiddenContent(in blocks: [RichBlock]) -> Bool {

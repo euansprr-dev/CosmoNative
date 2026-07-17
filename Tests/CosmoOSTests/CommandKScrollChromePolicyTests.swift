@@ -19,8 +19,10 @@ final class CommandKScrollChromePolicyTests: XCTestCase {
         XCTAssertTrue(style.contains("private static let trackWidth: CGFloat = 2"))
         XCTAssertTrue(style.contains("private static let thumbWidth: CGFloat = 2.5"))
         XCTAssertTrue(style.contains("scrollView.hasVerticalScroller = false"))
-        XCTAssertTrue(rail.contains(".cortexThinScrollbar(metrics: railScrollMetrics)"))
-        XCTAssertTrue(detail.contains(".cortexThinScrollbar(metrics: detailScrollMetrics)"))
+        // Store-backed variant: scroll ticks invalidate only the scrollbar
+        // host, never the pane's whole body (July 2026 scroll-jank fix).
+        XCTAssertTrue(rail.contains(".cortexThinScrollbar(store: railScrollMetrics)"))
+        XCTAssertTrue(detail.contains(".cortexThinScrollbar(store: detailScrollMetrics)"))
     }
 
     private var repositoryRoot: URL {

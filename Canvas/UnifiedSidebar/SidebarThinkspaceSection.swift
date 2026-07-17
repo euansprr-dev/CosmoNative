@@ -29,7 +29,7 @@ private struct ThinkspaceInquirySidebarSummary: Equatable {
 }
 
 struct SidebarThinkspaceSection: View {
-    @ObservedObject var manager: ThinkspaceManager
+    var manager: ThinkspaceManager
     @Binding var currentDestination: SidebarDestination
     let isCollapsed: Bool
     var onNavigate: () -> Void = {}

@@ -18,6 +18,7 @@ struct IdeaWorkspaceToolbar: View {
     let actions: IdeaWorkspaceActions
 
     @Environment(\.atomWindowChromeContext) private var atomChrome
+    @Environment(\.paneDeckChrome) private var paneDeckChrome
 
     private var isBodyEmpty: Bool {
         viewModel.editableBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -31,13 +32,20 @@ struct IdeaWorkspaceToolbar: View {
     var body: some View {
         // The band owns its insets — it sits above the worksheet, not inside
         // a scroll inset (the Study chrome anatomy).
-        CosmoChromeRow {
+        CosmoChromeRow(centersAbsolutely: !isPaneContext) {
             if atomChrome == nil, !isPaneContext {
                 NavigationTrailIsland()
             }
+            if let paneDeckChrome {
+                CosmoChromeIsland(recede: isReceded) { PaneDeckTabStrip(context: paneDeckChrome) }
+            }
             CosmoChromeIsland(recede: isReceded) { leadingControls }
         } center: {
-            CosmoChromeIsland(recede: isReceded) { ideaPill }
+            // The focused deck tab already names the idea in pane context —
+            // the pill would say it twice.
+            if paneDeckChrome == nil {
+                CosmoChromeIsland(recede: isReceded) { ideaPill }
+            }
         } trailing: {
             CosmoChromeIsland(recede: isReceded) { trailingControls }
             beginWritingIsland
@@ -53,7 +61,7 @@ struct IdeaWorkspaceToolbar: View {
             AtomWindowChromeDivider()
         }
         toolbarButton(
-            icon: "sidebar.left",
+            icon: "sidebar.squares.left",
             help: workspace.isConversationShowing ? "Hide conversation (⌘0)" : "Show conversation (⌘0)",
             isActive: workspace.isConversationShowing
         ) {
@@ -120,9 +128,8 @@ struct IdeaWorkspaceToolbar: View {
         if let atomChrome {
             AtomWindowChromeDivider()
             AtomWindowChromeTrailingControls(context: atomChrome)
-        } else if isPaneContext {
-            toolbarButton(icon: "xmark", help: "Close (Esc)", action: actions.onClose)
         }
+        // Pane close lives in the deck tab (the strip's ✕).
     }
 
     // MARK: - Begin Writing (the one tinted glass element)

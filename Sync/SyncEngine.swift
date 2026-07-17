@@ -64,6 +64,9 @@ class SyncEngine: ObservableObject {
         // Camera relay: status/pageCount updates flow back as the phone
         // fulfills this Mac's scan requests.
         "capture_requests",
+        // The global Seedbed (July 2026): seedlings fed/renamed/pinned on the
+        // phone flow in; this Mac's router feeds and develop-settles flow out.
+        "seedlings",
     ]
 
     private init() {
@@ -323,7 +326,7 @@ class SyncEngine: ObservableObject {
                 for name in ["uuid", "body", "title", "metadata"] {
                     if let s: String = row[name] { dict[name] = s }
                 }
-                dict["is_deleted"] = (row["is_deleted"] as? Int) ?? 0
+                dict["is_deleted"] = (row["is_deleted"] as Int?) ?? 0
                 return dict
             }
         }
@@ -396,7 +399,7 @@ class SyncEngine: ObservableObject {
                     PersistenceHealth.note(.syncFailure, context: "SyncEngine.syncPendingChanges(\(item.uuid.prefix(8)))", detail: "post-push queue bookkeeping failed: \(error)")
                 }
 
-                pendingChanges -= 1
+                pendingChanges = max(0, pendingChanges - 1)
 
             } catch {
                 let resolution = SyncFailurePolicy.resolve(
@@ -475,7 +478,10 @@ class SyncEngine: ObservableObject {
             }
             if result.requeued > 0 || result.cleared > 0 {
                 print("🩹 Orphaned-pending heal — atoms: re-enqueued \(result.requeued), stale shield cleared \(result.cleared)")
-                PersistenceHealth.note(.syncFailure, context: "SyncEngine.requeueOrphanedPending(atoms)", detail: "re-enqueued \(result.requeued) local-ahead atom(s) with no queue row; cleared \(result.cleared) stale shield(s)")
+                // .recovery, NOT .syncFailure: this is the healer SUCCEEDING.
+                // Reporting it as a failure put a scary "Cloud sync issue"
+                // banner over routine self-repair.
+                PersistenceHealth.note(.recovery, context: "SyncEngine.requeueOrphanedPending(atoms)", detail: "re-enqueued \(result.requeued) local-ahead atom(s) with no queue row; cleared \(result.cleared) stale shield(s)")
             }
         } catch {
             PersistenceHealth.note(.writeFailure, context: "SyncEngine.requeueOrphanedPending(atoms)", detail: String(describing: error))
@@ -489,7 +495,7 @@ class SyncEngine: ObservableObject {
             }
             if requeued > 0 {
                 print("🩹 Orphaned-pending heal — canvas_blocks: re-enqueued \(requeued)")
-                PersistenceHealth.note(.syncFailure, context: "SyncEngine.requeueOrphanedPending(canvas_blocks)", detail: "re-enqueued \(requeued) block(s) with _local_pending=1 and no queue row")
+                PersistenceHealth.note(.recovery, context: "SyncEngine.requeueOrphanedPending(canvas_blocks)", detail: "re-enqueued \(requeued) block(s) with _local_pending=1 and no queue row")
             }
         } catch {
             PersistenceHealth.note(.writeFailure, context: "SyncEngine.requeueOrphanedPending(canvas_blocks)", detail: String(describing: error))
@@ -786,17 +792,25 @@ class SyncEngine: ObservableObject {
         // Deletes are one-way: a locally-deleted row is never resurrected by
         // a remote live row (e.g. another device's update in flight while the
         // delete's tombstone push races it). The queued DELETE tombstones the
-        // cloud copy and the other device follows.
-        let locallyDeleted = (try? await database.asyncRead { db in
-            try Bool.fetchOne(
+        // cloud copy and the other device follows. Sole escape hatch: an
+        // explicit user restore — see remoteCarriesExplicitRestore. COALESCE
+        // distinguishes "tombstone with NULL updated_at" ('') from "no
+        // tombstone" (nil).
+        let tombstoneUpdatedAt = (try? await database.asyncRead { db in
+            try String.fetchOne(
                 db,
-                sql: "SELECT EXISTS(SELECT 1 FROM \(table) WHERE \(keyColumn) = ? AND is_deleted = 1)",
+                sql: "SELECT COALESCE(updated_at, '') FROM \(table) WHERE \(keyColumn) = ? AND is_deleted = 1",
                 arguments: [uuid]
-            ) ?? false
-        }) ?? false
-        if locallyDeleted {
-            PersistenceHealth.note(.conflict, context: "SyncEngine.applyRemoteChange(\(uuid.prefix(8)))", detail: "remote live row skipped — row is locally deleted; deletes are one-way")
-            return
+            )
+        }) ?? nil
+        if let tombstoneUpdatedAt {
+            if Self.remoteCarriesExplicitRestore(data: data, localTombstoneUpdatedAt: tombstoneUpdatedAt.isEmpty ? nil : tombstoneUpdatedAt) {
+                PersistenceHealth.note(.conflict, context: "SyncEngine.applyRemoteChange(\(uuid.prefix(8)))", detail: "explicit restore accepted — remote restoredAt newer than local tombstone")
+                // Fall through: the conflict resolver applies the undelete.
+            } else {
+                PersistenceHealth.note(.conflict, context: "SyncEngine.applyRemoteChange(\(uuid.prefix(8)))", detail: "remote live row skipped — row is locally deleted; deletes are one-way")
+                return
+            }
         }
 
         // For atoms table: convert JSONB objects back to TEXT strings for GRDB
@@ -814,6 +828,38 @@ class SyncEngine: ObservableObject {
         if let flag = data["is_deleted"] as? Bool { return flag }
         if let flag = data["is_deleted"] as? Int { return flag == 1 }
         return false
+    }
+
+    // MARK: - Explicit Resurrection Gate
+
+    /// The one sanctioned escape hatch through "deletes are one-way".
+    /// `metadata.restoredAt` is written ONLY by an explicit user restore
+    /// (AtomRepository.restore — identical wire contract in the iOS repo),
+    /// never by a mirror re-pushing rows it already held. So a live remote
+    /// row whose marker is strictly newer than the local tombstone's
+    /// updated_at proves a deliberate restore happened after our delete.
+    /// Everything else stays blocked: rows with no marker (the July 3 2026
+    /// stale-mirror resurrection incident) and markers older than a
+    /// re-delete. Unparseable timestamps fail closed — never resurrect
+    /// without proof of ordering.
+    nonisolated static func remoteCarriesExplicitRestore(data: [String: Any], localTombstoneUpdatedAt: String?) -> Bool {
+        guard let marker = restoredAtMarker(inMetadata: data["metadata"]),
+              let restoredAt = ISO8601.date(from: ISO8601.normalize(marker)),
+              let tombstoneString = localTombstoneUpdatedAt,
+              let tombstonedAt = ISO8601.date(from: ISO8601.normalize(tombstoneString)) else { return false }
+        return restoredAt > tombstonedAt
+    }
+
+    /// metadata is a JSON string locally but a JSONB dictionary on paths that
+    /// run before Postgres conversion — accept both shapes.
+    private nonisolated static func restoredAtMarker(inMetadata metadata: Any?) -> String? {
+        if let dict = metadata as? [String: Any] { return dict["restoredAt"] as? String }
+        if let string = metadata as? String,
+           let data = string.data(using: .utf8),
+           let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            return dict["restoredAt"] as? String
+        }
+        return nil
     }
 
     /// Apply a remote deletion as a local SOFT-delete (is_deleted = 1 — never a
@@ -1048,14 +1094,21 @@ enum SyncQueueReconciler {
         return json
     }
 
-    /// - Re-enqueue atoms whose shield is up AND whose local version is genuinely
-    ///   ahead of the server (`_local_version > _server_version`) but that have no
-    ///   pending queue row — their stranded local edit must still upload.
+    /// - Re-enqueue atoms whose local version is genuinely ahead of the last
+    ///   acknowledged push (`_local_version > _server_version`) but that have
+    ///   no pending OR failed queue row — their stranded local edit must still
+    ///   upload. The shield is deliberately NOT required here: a conflict
+    ///   auto-merge (ConflictResolver.handleConflict) leaves the merged row
+    ///   local-ahead with the shield down, and without this clause its
+    ///   local-wins content would never reach the cloud. Failed rows are
+    ///   excluded because requeueStaleFailedPushes already owns their retry —
+    ///   re-inserting would duplicate the queue row.
     /// - Clear the stale shield on atoms whose local version is NOT ahead
-    ///   (`_local_version <= _server_version`) and that have no queue row: the
-    ///   flag is spurious (the edit already reached the cloud, or the server
-    ///   moved past it), and leaving it up would keep blocking inbound pulls.
-    ///   Re-pushing those would clobber newer remote content, so we never do.
+    ///   (`_local_version <= _server_version`) and that have no pending queue
+    ///   row: the flag is spurious (the edit already reached the cloud, or the
+    ///   server moved past it), and leaving it up would keep blocking inbound
+    ///   pulls. Re-pushing those would clobber newer remote content, so we
+    ///   never do.
     @discardableResult
     static func reconcileOrphanedPendingAtoms(_ db: Database) throws -> AtomOutcome {
         let orphanClause = """
@@ -1068,7 +1121,11 @@ enum SyncQueueReconciler {
 
         let requeueRows = try Row.fetchAll(db, sql: """
             SELECT * FROM atoms
-            WHERE \(orphanClause) AND _local_version > _server_version
+            WHERE _local_version > _server_version
+              AND NOT EXISTS (
+                SELECT 1 FROM sync_queue q
+                WHERE q.uuid = atoms.uuid AND q.table_name = 'atoms' AND q.status IN ('pending', 'failed')
+              )
             """)
 
         var requeued = 0
@@ -1085,11 +1142,17 @@ enum SyncQueueReconciler {
             requeued += 1
         }
 
-        try db.execute(sql: """
-            UPDATE atoms SET _local_pending = 0
-            WHERE \(orphanClause) AND _local_version <= _server_version
-            """)
-        let cleared = db.changesCount
+        // Suppressed: clearing a stale shield is bookkeeping on a row whose
+        // content already reached the cloud (local <= server). If the
+        // AtomSyncObserver enqueued this write, it would re-push local content
+        // over a potentially NEWER cloud row that is waiting to pull in.
+        let cleared = try CanvasBlockSyncObserver.suppressingSync { () -> Int in
+            try db.execute(sql: """
+                UPDATE atoms SET _local_pending = 0
+                WHERE \(orphanClause) AND _local_version <= _server_version
+                """)
+            return db.changesCount
+        }
 
         return AtomOutcome(requeued: requeued, cleared: cleared)
     }
@@ -1124,6 +1187,115 @@ enum SyncQueueReconciler {
             requeued += 1
         }
         return requeued
+    }
+}
+
+// MARK: - Atom Sync Observer
+
+/// GRDB transaction observer that auto-enqueues every LOCAL atoms
+/// insert/update for cloud sync — the atoms twin of CanvasBlockSyncObserver.
+///
+/// Why: atoms are written by raw SQL from ~20 call sites (focus modes, block
+/// views, agent tools, pipelines, …), each of which had to remember to pair
+/// its write with a ChangeTracker enqueue in a SEPARATE transaction. Every
+/// gap — quit between write and enqueue, a failed `try?` re-fetch, a future
+/// writer that forgets — stranded the edit until the orphaned-pending healer
+/// found it a cycle later. Observing the table catches every current and
+/// future writer at the commit itself. Existing trackUpdate calls stay
+/// harmless: queueChange dedupes on (uuid, table, pending).
+///
+/// Echo prevention: remote-apply and push-bookkeeping writers wrap their
+/// writes in `CanvasBlockSyncObserver.suppressingSync { }` — ONE shared
+/// suppression window honored by all table observers — so pulled changes are
+/// never re-enqueued as local edits and successful pushes never loop.
+///
+/// Hard DELETEs are ignored: AtomRepository.hardDelete tracks its own cloud
+/// deletion. Soft deletes are UPDATEs and flow through here as tombstone
+/// payloads (is_deleted = true), which correctly tombstone the cloud row.
+final class AtomSyncObserver: TransactionObserver, @unchecked Sendable {
+    static let shared = AtomSyncObserver()
+
+    // Writer-queue-confined (GRDB invokes observer callbacks on the database
+    // writer queue) — same pattern as CanvasBlockSyncObserver, no locking.
+    private var pendingRowIDs: Set<Int64> = []
+
+    private init() {}
+
+    func observes(eventsOfKind eventKind: DatabaseEventKind) -> Bool {
+        eventKind.tableName == Atom.databaseTableName
+    }
+
+    func databaseDidChange(with event: DatabaseEvent) {
+        guard !CanvasBlockSyncObserver.isSuppressingRemoteApply else { return }
+        switch event.kind {
+        case .insert, .update:
+            pendingRowIDs.insert(event.rowID)
+        case .delete:
+            break
+        }
+    }
+
+    func databaseDidCommit(_ db: Database) {
+        guard !pendingRowIDs.isEmpty else { return }
+        let rowIDs = pendingRowIDs
+        pendingRowIDs.removeAll()
+        Task { @MainActor in
+            await Self.enqueueForSync(rowIDs: rowIDs)
+        }
+    }
+
+    func databaseDidRollback(_ db: Database) {
+        pendingRowIDs.removeAll()
+    }
+
+    /// Fetch the committed rows and upsert sync_queue entries. Operation is
+    /// UPDATE — the push path resolves update-vs-upsert from _server_version
+    /// (0 = never pushed → upsert), so new atoms are covered too. The
+    /// fire-and-forget immediatePush or the periodic SyncEngine pass flushes
+    /// the queue.
+    @MainActor
+    private static func enqueueForSync(rowIDs: Set<Int64>) async {
+        let ids = Array(rowIDs)
+        do {
+            try await CosmoDatabase.shared.asyncWrite { db in
+                for chunkStart in stride(from: 0, to: ids.count, by: 100) {
+                    let chunk = Array(ids[chunkStart..<min(chunkStart + 100, ids.count)])
+                    let marks = chunk.map { _ in "?" }.joined(separator: ",")
+                    let rows = try Row.fetchAll(
+                        db,
+                        sql: "SELECT * FROM atoms WHERE rowid IN (\(marks))",
+                        arguments: StatementArguments(chunk)
+                    )
+                    for row in rows {
+                        guard let uuid = row["uuid"] as String?, !uuid.isEmpty,
+                              let json = SyncQueueReconciler.atomPayloadJSON(row) else { continue }
+                        let localVersion = row["_local_version"] as Int? ?? 1
+
+                        let existing = try Row.fetchOne(
+                            db,
+                            sql: "SELECT id FROM sync_queue WHERE uuid = ? AND table_name = 'atoms' AND status = 'pending'",
+                            arguments: [uuid]
+                        )
+                        if let existingId = existing?["id"] as Int64? {
+                            try db.execute(
+                                sql: "UPDATE sync_queue SET operation = 'UPDATE', data = ?, local_version = ?, created_at = ? WHERE id = ?",
+                                arguments: [json, localVersion, Int64(Date().timeIntervalSince1970 * 1000), existingId]
+                            )
+                        } else {
+                            try db.execute(
+                                sql: """
+                                INSERT INTO sync_queue (uuid, table_name, row_id, operation, data, local_version, status)
+                                VALUES (?, 'atoms', ?, 'UPDATE', ?, ?, 'pending')
+                                """,
+                                arguments: [uuid, row["id"] as Int64?, json, localVersion]
+                            )
+                        }
+                    }
+                }
+            }
+        } catch {
+            PersistenceHealth.note(.syncFailure, context: "AtomSyncObserver.enqueue", detail: "\(rowIDs.count) row(s) not enqueued: \(error)")
+        }
     }
 }
 

@@ -486,6 +486,20 @@ enum DS {
         return clientPalette[index]
     }
 
+    /// Curated identity accents for user collections (habits) — the warm,
+    /// parchment-friendly register of `clientPalette`, keyed by hex because
+    /// collection accents are stored as hex strings. Paired with iOS.
+    static let collectionAccentPalette: [(name: String, hex: String)] = [
+        ("Forest", "2D6A4F"),
+        ("Cerulean", "2E86AB"),
+        ("Berry", "A23B72"),
+        ("Warm Tan", "C18C5D"),
+        ("Sage", "5E8C61"),
+        ("Soft Violet", "7B68AE"),
+        ("Burnt Sienna", "D17B4F"),
+        ("Dusty Rose", "B5555A"),
+    ]
+
     // ═══════════════════════════════════════════════════════════════
     // GLASS — Dynamic per theme
     // ═══════════════════════════════════════════════════════════════

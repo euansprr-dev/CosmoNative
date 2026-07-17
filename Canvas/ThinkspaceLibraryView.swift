@@ -1,489 +1,367 @@
 // CosmoOS/Canvas/ThinkspaceLibraryView.swift
-// Thinkspace Library mode — a Finder-grade browser for everything in a thinkspace.
-// Folders (clusters) render as macOS-style folder icons in a fixed grid; documents
-// render as a Pinterest-style masonry of real-aspect previews (16:9 YouTube,
-// 9:16 reels, readable paper notes). Finder interaction grammar: click selects,
-// double-click opens, right-click for actions, drag to file into folders.
+// Thinkspace Library — a Finder-grade browser for everything in a thinkspace.
+// One chrome row on the app's island baseline (trail + breadcrumb + lenses +
+// sort + search), three lenses (Icons / List / Gallery), and the full Finder
+// selection grammar: multi-select, marquee, arrow keys, type-to-select,
+// Space to peek, Enter to rename. The lenses live in Canvas/Library/.
 
 import SwiftUI
 import AppKit
-
-// MARK: - Thinkspace Canvas Mode
-
-enum ThinkspaceCanvasMode: String, CaseIterable, Identifiable {
-    case canvas
-    case library
-    case deepDive
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .canvas: return "Canvas"
-        case .library: return "Library"
-        case .deepDive: return "Deep Dive"
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .canvas: return "square.grid.3x3"
-        case .library: return "folder"
-        case .deepDive: return "circle.hexagongrid.circle"
-        }
-    }
-}
-
-// MARK: - Models
-
-struct ThinkspaceLibraryItem: Identifiable, Equatable {
-    let id: String
-    let title: String
-    let entityType: EntityType
-    let entityId: Int64
-    let entityUuid: String
-    let isOnCanvas: Bool
-    let block: CanvasBlock?
-}
-
-struct ThinkspaceLibraryFolder: Identifiable, Equatable {
-    let id: UUID
-    let title: String
-    let colorIndex: Int
-    let items: [ThinkspaceLibraryItem]
-
-    var color: Color {
-        let index = ((colorIndex % CanvasCluster.palette.count) + CanvasCluster.palette.count) % CanvasCluster.palette.count
-        return CanvasCluster.palette[index]
-    }
-}
-
-struct ThinkspaceLibrarySnapshot: Equatable {
-    let folders: [ThinkspaceLibraryFolder]
-    let looseItems: [ThinkspaceLibraryItem]
-
-    static func make(
-        blocks: [CanvasBlock],
-        clusters: [CanvasCluster],
-        inventory: [ChildDoc]
-    ) -> ThinkspaceLibrarySnapshot {
-        var itemsByUUID: [String: ThinkspaceLibraryItem] = [:]
-
-        for doc in inventory where !doc.entityUuid.isEmpty {
-            itemsByUUID[doc.entityUuid] = ThinkspaceLibraryItem(
-                id: doc.entityUuid,
-                title: doc.title,
-                entityType: doc.entityType,
-                entityId: doc.entityId,
-                entityUuid: doc.entityUuid,
-                isOnCanvas: false,
-                block: nil
-            )
-        }
-
-        for block in blocks where !block.entityUuid.isEmpty {
-            itemsByUUID[block.entityUuid] = ThinkspaceLibraryItem(
-                id: block.entityUuid,
-                title: block.title.isEmpty ? block.entityType.rawValue.replacingOccurrences(of: "_", with: " ").capitalized : block.title,
-                entityType: block.entityType,
-                entityId: block.entityId,
-                entityUuid: block.entityUuid,
-                isOnCanvas: true,
-                block: block
-            )
-        }
-
-        let sortedClusters = clusters.sorted { lhs, rhs in
-            lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
-        }
-
-        let folders = sortedClusters.map { cluster in
-            let items = cluster.blockUUIDs
-                .compactMap { itemsByUUID[$0] }
-                .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
-            return ThinkspaceLibraryFolder(
-                id: cluster.id,
-                title: cluster.name,
-                colorIndex: cluster.colorIndex,
-                items: items
-            )
-        }
-
-        let clusteredUUIDs = Set(clusters.flatMap(\.blockUUIDs))
-        let looseItems = itemsByUUID.values
-            .filter { !clusteredUUIDs.contains($0.entityUuid) }
-            .sorted { lhs, rhs in
-                lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
-            }
-
-        return ThinkspaceLibrarySnapshot(folders: folders, looseItems: looseItems)
-    }
-}
-
-// MARK: - Atom Preview Store
-
-/// Loads the real document behind each library item — body prose and metadata
-/// (thumbnails, platform hints) straight from the atom store — so cards render
-/// actual content even for items that only live in storage, never on canvas.
-@MainActor
-@Observable
-final class ThinkspaceLibraryPreviewStore {
-    struct AtomPreview: Equatable {
-        var body: String?
-        var metadata: [String: String]
-
-        static let empty = AtomPreview(body: nil, metadata: [:])
-    }
-
-    private(set) var previews: [String: AtomPreview] = [:]
-    private var inFlight: Set<String> = []
-
-    func ensureLoaded(_ snapshot: ThinkspaceLibrarySnapshot) {
-        let uuids = (snapshot.looseItems + snapshot.folders.flatMap(\.items)).map(\.entityUuid)
-        let missing = uuids.filter { previews[$0] == nil && !inFlight.contains($0) }
-        guard !missing.isEmpty else { return }
-        inFlight.formUnion(missing)
-        Task {
-            let atoms = (try? await AtomRepository.shared.fetchBatch(uuids: missing)) ?? []
-            var loaded: [String: AtomPreview] = [:]
-            for atom in atoms {
-                var metadata: [String: String] = [:]
-                if let dict = atom.metadataDict {
-                    for (key, value) in dict {
-                        if let string = value as? String { metadata[key] = string }
-                    }
-                }
-                let body = (atom.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                loaded[atom.uuid] = AtomPreview(body: body.isEmpty ? nil : body, metadata: metadata)
-            }
-            // Unresolved uuids still get an entry so they aren't refetched forever.
-            for uuid in missing {
-                previews[uuid] = loaded[uuid] ?? .empty
-            }
-            inFlight.subtract(missing)
-        }
-    }
-}
-
-// MARK: - Card Model
-
-enum ThinkspaceLibraryPreviewKind: Equatable {
-    case media(source: String)
-    case page(text: String?)
-    case connection(preview: String?)
-    /// Non-document objects (portals, the live Cosmo block): an object motif
-    /// well — a blank white "page" for something that isn't a page reads
-    /// broken, not empty.
-    case objectMotif(icon: String, tint: Color)
-}
-
-/// Everything a card needs to draw an item, resolved from the canvas block's
-/// metadata first and the stored atom second — on-canvas and stored items
-/// render the same honest preview of their actual content.
-struct ThinkspaceLibraryCardModel {
-    let item: ThinkspaceLibraryItem
-    let metadata: [String: String]
-    let bodyText: String?
-
-    init(item: ThinkspaceLibraryItem, preview: ThinkspaceLibraryPreviewStore.AtomPreview?) {
-        self.item = item
-        var merged = preview?.metadata ?? [:]
-        if let blockMetadata = item.block?.metadata {
-            merged.merge(blockMetadata) { _, fromBlock in fromBlock }
-        }
-        self.metadata = merged
-        let blockText = ((item.block?.metadata["content"]) ?? item.block?.subtitle ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        self.bodyText = blockText.isEmpty ? preview?.body : blockText
-    }
-
-    /// Remote URL or local path for a visual preview; derives YouTube thumbnails from the source URL.
-    var thumbnailSource: String? {
-        if let thumb = metadata["thumbnail"], !thumb.isEmpty { return thumb }
-        if let path = metadata["imagePath"], !path.isEmpty { return path }
-        if let videoId = Self.youTubeVideoID(from: metadata["url"]) {
-            return "https://img.youtube.com/vi/\(videoId)/hqdefault.jpg"
-        }
-        return nil
-    }
-
-    var previewKind: ThinkspaceLibraryPreviewKind {
-        if item.entityType == .connection { return .connection(preview: bodyText) }
-        if let source = thumbnailSource { return .media(source: source) }
-        switch item.entityType {
-        case .portal:
-            return .objectMotif(icon: "rectangle.portrait.on.rectangle.portrait", tint: item.entityType.color)
-        case .cosmoAI, .cosmo:
-            return .objectMotif(icon: "circle.hexagongrid.circle", tint: DS.gilt)
-        default:
-            return .page(text: bodyText)
-        }
-    }
-
-    /// Card media ratio (width / height) — videos full 16:9, reels tall, posts
-    /// portrait; text documents are always a portrait page (the iOS file grammar).
-    var previewAspect: CGFloat {
-        switch previewKind {
-        case .media: return mediaAspect
-        case .page: return 90.0 / 116.0
-        case .connection, .objectMotif: return 4.0 / 5.0
-        }
-    }
-
-    private var mediaAspect: CGFloat {
-        if item.entityType == .image { return 4.0 / 5.0 }
-        let platform = (metadata["platform"] ?? "").lowercased()
-        let url = (metadata["url"] ?? "").lowercased()
-        if platform.contains("reel") || platform.contains("short") || platform.contains("tiktok") {
-            return 9.0 / 16.0
-        }
-        if url.contains("/shorts/") { return 9.0 / 16.0 }
-        if platform.contains("carousel") || platform == "instagram" || platform.contains("instagram_post") {
-            return 4.0 / 5.0
-        }
-        return 16.0 / 9.0
-    }
-
-    /// Short kind label for the metadata row — platform when known, entity type otherwise.
-    var kindLabel: String {
-        let platform = (metadata["platform"] ?? "").lowercased()
-        let url = (metadata["url"] ?? "").lowercased()
-        if platform.contains("youtube") || url.contains("youtube") || url.contains("youtu.be") { return "YouTube" }
-        if platform.contains("instagram") { return "Instagram" }
-        if platform.contains("tiktok") { return "TikTok" }
-        if platform.contains("twitter") || platform.contains("x_post") { return "X" }
-        switch item.entityType {
-        case .research: return metadata["isSwipeFile"] == "true" ? "Swipe" : "Research"
-        case .stickyNote: return "Sticky Note"
-        case .cosmoAI: return "Cosmo"
-        default:
-            return item.entityType.rawValue.replacingOccurrences(of: "_", with: " ").capitalized
-        }
-    }
-
-    /// True for video-bearing media — gets a small play badge on the card.
-    var isVideoMedia: Bool {
-        let platform = (metadata["platform"] ?? "").lowercased()
-        let url = (metadata["url"] ?? "").lowercased()
-        return platform.contains("youtube") || platform.contains("reel") || platform.contains("short")
-            || platform.contains("tiktok") || url.contains("youtube") || url.contains("youtu.be")
-    }
-
-    static func youTubeVideoID(from urlString: String?) -> String? {
-        guard let urlString, !urlString.isEmpty, let url = URL(string: urlString) else { return nil }
-        let host = (url.host ?? "").lowercased()
-        guard host.contains("youtube.com") || host.contains("youtu.be") else { return nil }
-        if host.contains("youtu.be") {
-            let id = url.pathComponents.dropFirst().first ?? ""
-            return id.isEmpty ? nil : id
-        }
-        if let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
-           let v = items.first(where: { $0.name == "v" })?.value, !v.isEmpty {
-            return v
-        }
-        let components = url.pathComponents
-        if let index = components.firstIndex(where: { $0 == "shorts" || $0 == "embed" }),
-           index + 1 < components.count {
-            return components[index + 1]
-        }
-        return nil
-    }
-}
-
-// MARK: - Actions
-
-/// Everything the library can do to the canvas, bundled so the view stays declarative.
-struct ThinkspaceLibraryActions {
-    var openItem: (ThinkspaceLibraryItem) -> Void
-    var revealOnCanvas: (ThinkspaceLibraryItem) -> Void
-    var fileIntoFolder: (String, UUID) -> Void
-    var removeFromFolder: (String, UUID) -> Void
-    var renameFolder: (UUID, String) -> Void
-    var recolorFolder: (UUID, Int) -> Void
-    var deleteFolder: (UUID) -> Void
-}
-
-// MARK: - Sort
-
-private enum ThinkspaceLibrarySort: String, CaseIterable, Identifiable {
-    case name
-    case kind
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .name: return "Name"
-        case .kind: return "Kind"
-        }
-    }
-}
-
-// MARK: - Root View
 
 struct ThinkspaceLibraryModeView: View {
     let thinkspaceName: String
     let thinkspaceId: String
     let snapshot: ThinkspaceLibrarySnapshot
     /// Hoisted to CanvasView so the universal navigation trail can walk in
-    /// and out of folders (there is no in-page breadcrumb).
+    /// and out of folders (the breadcrumb is the in-page echo of it).
     @Binding var selectedFolderID: UUID?
     let actions: ThinkspaceLibraryActions
+    /// Extra leading room for the chrome row only: clears the pinned sidebar
+    /// when it's open and the sidebar toggle button when it's hidden. The
+    /// content itself stays full-bleed — the glass sidebar floats over it.
+    var chromeLeadingInset: CGFloat = 0
 
-    @State private var selectedEntryID: String?
+    @State private var selection = ThinkspaceLibrarySelectionModel()
+    @State private var prefs = ThinkspaceLibraryPrefs()
+    @State private var prefsLoadedFor: String?
     @State private var searchText = ""
-    @State private var sortOrder: ThinkspaceLibrarySort = .name
+    /// Inside a folder, search can look through just the folder or everything.
+    @State private var searchEntireThinkspace = false
+    @State private var kindFilter: String?
     @State private var previewStore = ThinkspaceLibraryPreviewStore()
     /// The staggered tile cascade is an arrival flourish — first mount only.
-    /// Folder enter/exit swaps content with the section transition instead,
-    /// so navigation never replays the entrance.
     @State private var hasCompletedEntranceCascade = false
-    /// Drives the thin Cortex scrollbar (same chrome as Command-K and the
-    /// content manuscript) in place of the chunky native overlay scroller.
     @State private var scrollMetrics = CortexScrollMetrics()
+    /// Set after keyboard moves so the scroll can chase the focused cell.
+    @State private var keyboardScrollTarget: String?
     @FocusState private var searchFocused: Bool
+    @FocusState private var browserFocused: Bool
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: .top) {
             background
-            content
+            VStack(alignment: .leading, spacing: DS.space12) {
+                toolbar
+                    .padding(.leading, chromeLeadingInset)
+                    .animation(ProMotionSprings.gentle, value: chromeLeadingInset)
+                if isSearching { searchChipsRow }
+                lensContent
+            }
+            .animation(ProMotionSprings.gentle, value: isSearching)
         }
-        .background(keyboardShortcuts)
-        .onAppear {
-            previewStore.ensureLoaded(snapshot)
-            Task { @MainActor in hasCompletedEntranceCascade = true }
-        }
+        .background(keyboardShortcutButtons)
+        .onAppear(perform: prepare)
+        .onChange(of: thinkspaceId) { _, _ in prepare() }
         .onChange(of: snapshot) { _, newValue in previewStore.ensureLoaded(newValue) }
+        .onChange(of: prefs) { _, newValue in newValue.save(thinkspaceId: thinkspaceId) }
+        .onChange(of: visibleIDs) { _, _ in syncSelection() }
+        .onChange(of: searchFocused) { _, focused in
+            if !focused { browserFocused = true }
+        }
+        // Clearing the query (✕, Esc, or deleting text) retires its filters —
+        // a kind chip must never keep filtering an unsearched page invisibly.
+        .onChange(of: isSearching) { _, searching in
+            if !searching {
+                kindFilter = nil
+                searchEntireThinkspace = false
+            }
+        }
     }
 
-    // MARK: Layout
+    private func prepare() {
+        if prefsLoadedFor != thinkspaceId {
+            prefs = ThinkspaceLibraryPrefs.load(thinkspaceId: thinkspaceId)
+            prefsLoadedFor = thinkspaceId
+        }
+        previewStore.ensureLoaded(snapshot)
+        syncSelection()
+        browserFocused = true
+        Task { @MainActor in hasCompletedEntranceCascade = true }
+    }
+
+    // MARK: Chrome
 
     private var background: some View {
         DS.canvas
             .ignoresSafeArea()
             .filmGrain()
             .contentShape(Rectangle())
-            .onTapGesture { clearSelection() }
+            .onTapGesture {
+                clearSelection()
+                browserFocused = true
+            }
     }
 
-    private var content: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            ThinkspaceLibraryHeader(
-                folder: selectedFolder,
-                thinkspaceName: thinkspaceName,
-                searchText: $searchText,
-                sortOrder: $sortOrder,
-                searchFocused: $searchFocused,
-                onRenameFolder: actions.renameFolder
-            )
-            .padding(.horizontal, 48)
+    private var toolbar: some View {
+        ThinkspaceLibraryToolbar(
+            thinkspaceName: thinkspaceName,
+            folder: selectedFolder,
+            viewMode: viewModeBinding,
+            searchText: $searchText,
+            searchFocused: $searchFocused,
+            sortField: prefs.sortField,
+            sortAscending: prefs.sortAscending,
+            grouping: prefs.grouping,
+            iconScale: prefs.iconScale,
+            onSelectSort: selectSort,
+            onSelectGrouping: { grouping in
+                withAnimation(ProMotionSprings.snappy) { prefs.grouping = grouping }
+            },
+            onSelectIconScale: { scale in
+                withAnimation(ProMotionSprings.gentle) { prefs.iconScale = scale }
+            },
+            onExitFolder: exitFolder,
+            onRenameFolder: actions.renameFolder,
+            onDropToRoot: { uuid in
+                guard let folder = selectedFolder else { return false }
+                actions.removeFromFolder(uuid, folder.id)
+                return true
+            }
+        )
+    }
+
+    private var viewModeBinding: Binding<ThinkspaceLibraryViewMode> {
+        Binding(
+            get: { prefs.viewMode },
+            set: { mode in
+                withAnimation(ProMotionSprings.focusTransition) { prefs.viewMode = mode }
+            }
+        )
+    }
+
+    /// Re-picking the active field flips direction (Finder); a new field
+    /// arrives in its natural direction (names A→Z, dates newest-first).
+    private func selectSort(_ field: ThinkspaceLibrarySortField) {
+        withAnimation(ProMotionSprings.snappy) {
+            if prefs.sortField == field {
+                prefs.sortAscending.toggle()
+            } else {
+                prefs.sortField = field
+                prefs.sortAscending = field.defaultAscending
+            }
+        }
+    }
+
+    // MARK: Search chips (scope + kind — only while searching)
+
+    private var searchChipsRow: some View {
+        HStack(spacing: DS.space8) {
+            if selectedFolder != nil {
+                LibraryFilterChip(
+                    title: "This Folder",
+                    isSelected: !searchEntireThinkspace,
+                    tint: DS.accent
+                ) { searchEntireThinkspace = false }
+                LibraryFilterChip(
+                    title: "All of \(thinkspaceName)",
+                    isSelected: searchEntireThinkspace,
+                    tint: DS.accent
+                ) { searchEntireThinkspace = true }
+                if !availableKinds.isEmpty {
+                    Rectangle()
+                        .fill(DS.glassBorder)
+                        .frame(width: 1, height: 16)
+                }
+            }
+            ForEach(availableKinds, id: \.self) { kind in
+                LibraryFilterChip(
+                    title: kind,
+                    isSelected: kindFilter == kind,
+                    tint: DS.accent
+                ) {
+                    kindFilter = kindFilter == kind ? nil : kind
+                }
+            }
+            Spacer()
+        }
+        .padding(.horizontal, DS.space48)
+        .transition(.opacity.combined(with: .offset(y: -6)))
+        .animation(ProMotionSprings.gentle, value: availableKinds)
+    }
+
+    // MARK: Lens content
+
+    @ViewBuilder
+    private var lensContent: some View {
+        if prefs.viewMode == .gallery {
+            galleryLens
+        } else {
             browserScroll
         }
-        .padding(.top, 36)
+    }
+
+    private var galleryLens: some View {
+        ThinkspaceLibraryGalleryView(
+            items: currentVisibleItems,
+            provenance: provenanceLabel,
+            context: lensContext
+        )
+        .padding(.horizontal, DS.space48)
+        .padding(.bottom, DS.space24)
+        .coordinateSpace(name: ThinkspaceLibrarySpace.name)
+        .onTapGesture {
+            clearSelection()
+            browserFocused = true
+        }
+        .focusable()
+        .focusEffectDisabled()
+        .focused($browserFocused)
+        .overlay { if shouldShowEmptyState { emptyState } }
+        .modifier(LibraryKeyboardModifier(
+            selection: selection,
+            onMoveScroll: { keyboardScrollTarget = $0 },
+            onPeek: peekSelection,
+            onRename: beginRenameSelection,
+            onEscape: handleEscape
+        ))
     }
 
     private var browserScroll: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 30) {
-                if !visibleFolders.isEmpty { folderSection }
-                if !currentVisibleItems.isEmpty { itemSection }
+        ScrollViewReader { proxy in
+            ScrollView {
+                lensSections
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    // The backplane matches the sections' true size, so the
+                    // rubber band starts anywhere between and around cells.
+                    .background { marqueeBackplane }
+                    .overlay(alignment: .topLeading) { marqueeOverlay }
+                    .coordinateSpace(name: ThinkspaceLibrarySpace.name)
+                    .padding(.top, DS.space6)
+                    .padding(.bottom, 110)
+                // The page gutter lives INSIDE the scroll clip: edge cells get
+                // slack, so hover lift never clips against the viewport.
+                .padding(.horizontal, DS.space48)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .animation(ProMotionSprings.gentle, value: snapshot)
+                .animation(ProMotionSprings.snappy, value: sortSignature)
+                // Folder enter/exit plays the same dialect as document opens.
+                .animation(ProMotionSprings.focusTransition, value: selectedFolderID)
+                .background(CortexScrollViewIntrospector { scrollMetrics = $0 })
             }
-            .padding(.top, 6)
-            .padding(.bottom, 110)
-            // The page gutter lives INSIDE the scroll clip: edge cards get
-            // 48pt of slack, so hover lift/scale never clips against the
-            // viewport bounds.
-            .padding(.horizontal, 48)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
-            .animation(ProMotionSprings.gentle, value: snapshot)
-            .animation(ProMotionSprings.snappy, value: sortOrder)
-            // Folder enter/exit plays the same dialect as document opens:
-            // one focusTransition drives the section swap.
-            .animation(ProMotionSprings.focusTransition, value: selectedFolderID)
-            .background(CortexScrollViewIntrospector { scrollMetrics = $0 })
-        }
-        .scrollIndicators(.hidden)
-        .scrollEdgeEffectStyle(.soft, for: .all)
-        // Child gestures (cards, folders) take precedence; this only catches
-        // clicks on empty space between and below cards — Finder's deselect.
-        .onTapGesture { clearSelection() }
-        .cortexThinScrollbar(metrics: scrollMetrics)
-        .overlay {
-            if shouldShowEmptyState { emptyState }
-        }
-    }
-
-    private var folderSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            ThinkspaceLibrarySectionHeader(title: "Folders", count: visibleFolders.count)
-            LazyVGrid(columns: folderColumns, alignment: .leading, spacing: 14) {
-                ForEach(Array(visibleFolders.enumerated()), id: \.element.id) { index, folder in
-                    folderTile(folder, appearIndex: index)
-                        .transition(libraryEntryTransition)
-                }
+            .scrollIndicators(.hidden)
+            .scrollEdgeEffectStyle(.soft, for: .all)
+            .cortexThinScrollbar(metrics: scrollMetrics)
+            // Finder's deselect: a click on any empty area of the browser —
+            // beside the grid, below the last row — clears the selection.
+            // Cell gestures are descendants, so they always win over this.
+            .onTapGesture {
+                clearSelection()
+                browserFocused = true
             }
-        }
-        .transition(.opacity)
-    }
-
-    /// Finder-style settle: arriving content rises in a touch; departing
-    /// content simply fades so the two never fight for attention.
-    private var libraryEntryTransition: AnyTransition {
-        .asymmetric(
-            insertion: .opacity.combined(with: .offset(y: 10)),
-            removal: .opacity
-        )
-    }
-
-    private func folderTile(_ folder: ThinkspaceLibraryFolder, appearIndex: Int) -> some View {
-        ThinkspaceLibraryFolderTile(
-            folder: folder,
-            appearIndex: appearIndex,
-            cascadeOnAppear: !hasCompletedEntranceCascade,
-            isSelected: selectedEntryID == folder.id.uuidString,
-            onSelect: { select(folder.id.uuidString) },
-            onOpen: { openFolder(folder) },
-            onFileItem: { actions.fileIntoFolder($0, folder.id) },
-            onRename: { actions.renameFolder(folder.id, $0) },
-            onRecolor: { actions.recolorFolder(folder.id, $0) },
-            onDelete: { deleteFolder(folder) }
-        )
-    }
-
-    private var itemSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            if selectedFolder == nil && !visibleFolders.isEmpty {
-                ThinkspaceLibrarySectionHeader(title: "Documents", count: currentVisibleItems.count)
-            }
-            ThinkspaceLibraryMasonry(targetColumnWidth: 232, spacing: 20) {
-                ForEach(Array(currentVisibleItems.enumerated()), id: \.element.id) { index, item in
-                    itemCard(item, appearIndex: visibleFolders.count + index)
-                        .transition(libraryEntryTransition)
-                }
+            .focusable()
+            .focusEffectDisabled()
+            .focused($browserFocused)
+            .overlay { if shouldShowEmptyState { emptyState } }
+            .modifier(LibraryKeyboardModifier(
+                selection: selection,
+                onMoveScroll: { keyboardScrollTarget = $0 },
+                onPeek: peekSelection,
+                onRename: beginRenameSelection,
+                onEscape: handleEscape
+            ))
+            .onChange(of: keyboardScrollTarget) { _, target in
+                guard let target else { return }
+                proxy.scrollTo(target, anchor: nil)
+                keyboardScrollTarget = nil
             }
         }
     }
 
-    private func itemCard(_ item: ThinkspaceLibraryItem, appearIndex: Int) -> some View {
-        ThinkspaceLibraryItemCard(
-            model: cardModel(for: item),
+    @ViewBuilder
+    private var lensSections: some View {
+        switch prefs.viewMode {
+        case .icons:
+            ThinkspaceLibraryIconsView(
+                folders: visibleFolders,
+                sections: itemSections,
+                scale: prefs.iconScale,
+                cascadeOnAppear: !hasCompletedEntranceCascade,
+                context: lensContext
+            )
+        case .list:
+            ThinkspaceLibraryListView(
+                folders: visibleFolders,
+                sections: itemSections,
+                sortField: prefs.sortField,
+                sortAscending: prefs.sortAscending,
+                provenance: provenanceLabel,
+                dateLabel: { item in
+                    cardModel(for: item).updatedAt.map(ThinkspaceLibraryDateLabel.label(for:)) ?? "—"
+                },
+                onSelectSortColumn: selectSort,
+                context: lensContext
+            )
+        case .gallery:
+            EmptyView()
+        }
+    }
+
+    // MARK: Marquee (rubber-band selection on empty space)
+
+    private var marqueeBackplane: some View {
+        Color.clear
+            .contentShape(Rectangle())
+            .onTapGesture {
+                clearSelection()
+                browserFocused = true
+            }
+            .gesture(marqueeGesture)
+    }
+
+    private var marqueeGesture: some Gesture {
+        DragGesture(minimumDistance: 6, coordinateSpace: .named(ThinkspaceLibrarySpace.name))
+            .onChanged { value in
+                browserFocused = true
+                let rect = CGRect(
+                    x: min(value.startLocation.x, value.location.x),
+                    y: min(value.startLocation.y, value.location.y),
+                    width: abs(value.location.x - value.startLocation.x),
+                    height: abs(value.location.y - value.startLocation.y)
+                )
+                let additive = NSApp.currentEvent?.modifierFlags.contains(.command) ?? false
+                selection.marqueeChanged(rect, additive: additive)
+            }
+            .onEnded { _ in selection.marqueeEnded() }
+    }
+
+    @ViewBuilder
+    private var marqueeOverlay: some View {
+        if let rect = selection.marqueeRect {
+            RoundedRectangle(cornerRadius: 2, style: .continuous)
+                .fill(DS.accent.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 2, style: .continuous)
+                        .strokeBorder(DS.accent.opacity(0.4), lineWidth: 1)
+                )
+                .frame(width: rect.width, height: rect.height)
+                .offset(x: rect.minX, y: rect.minY)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+    }
+
+    // MARK: Lens context
+
+    private var lensContext: ThinkspaceLibraryLensContext {
+        ThinkspaceLibraryLensContext(
+            selection: selection,
+            actions: actions,
             folders: snapshot.folders,
             currentFolder: selectedFolder,
-            appearIndex: appearIndex,
-            cascadeOnAppear: !hasCompletedEntranceCascade,
-            isSelected: selectedEntryID == item.id,
-            onSelect: { select(item.id) },
-            onOpen: { actions.openItem(item) },
-            actions: actions
+            cardModel: cardModel(for:),
+            openFolder: openFolder,
+            selectedItems: { selectedItems },
+            fileSelectionIntoFolder: { folderID in
+                for item in selectedItems where item.isOnCanvas {
+                    actions.fileIntoFolder(item.entityUuid, folderID)
+                }
+            },
+            deleteFolder: deleteFolder
         )
     }
 
     private func cardModel(for item: ThinkspaceLibraryItem) -> ThinkspaceLibraryCardModel {
         ThinkspaceLibraryCardModel(item: item, preview: previewStore.previews[item.entityUuid])
-    }
-
-    private var folderColumns: [GridItem] {
-        [GridItem(.adaptive(minimum: 148, maximum: 178), spacing: 14, alignment: .top)]
     }
 
     // MARK: Derived state
@@ -492,72 +370,173 @@ struct ThinkspaceLibraryModeView: View {
         selectedFolderID.flatMap { id in snapshot.folders.first { $0.id == id } }
     }
 
+    private var trimmedSearch: String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var isSearching: Bool { !trimmedSearch.isEmpty }
+
+    /// Token search: every token must appear somewhere in the item's honest
+    /// text (title, subtitle, body) — any order, case-insensitive.
+    private func matchesSearch(_ item: ThinkspaceLibraryItem) -> Bool {
+        let tokens = trimmedSearch.lowercased().split(separator: " ")
+        guard !tokens.isEmpty else { return true }
+        let haystack = [
+            item.title,
+            item.block?.subtitle ?? "",
+            cardModel(for: item).bodyText ?? ""
+        ].joined(separator: " ").lowercased()
+        return tokens.allSatisfy { haystack.contains($0) }
+    }
+
+    /// While searching, folders leave the stage — results are documents with
+    /// provenance (Finder's grammar). At rest, root shows folders + loose items.
     private var visibleFolders: [ThinkspaceLibraryFolder] {
-        guard selectedFolder == nil else { return [] }
-        guard !trimmedSearch.isEmpty else { return snapshot.folders }
-        return snapshot.folders.filter { folder in
-            matches(folder.title) || folder.items.contains(where: { matches($0.title) })
+        guard selectedFolder == nil, !isSearching else { return [] }
+        return snapshot.folders
+    }
+
+    private var searchPool: [ThinkspaceLibraryItem] {
+        if let folder = selectedFolder {
+            return searchEntireThinkspace ? snapshot.allItems : folder.items
         }
+        return isSearching ? snapshot.allItems : snapshot.looseItems
+    }
+
+    private var searchResults: [ThinkspaceLibraryItem] {
+        guard isSearching else { return searchPool }
+        return searchPool.filter(matchesSearch)
+    }
+
+    /// Kinds present in the current results — the filter chips derive from
+    /// what's actually there, so a chip never leads to an empty screen.
+    private var availableKinds: [String] {
+        guard isSearching else { return [] }
+        var counts: [String: Int] = [:]
+        for item in searchResults {
+            counts[cardModel(for: item).kindLabel, default: 0] += 1
+        }
+        return counts.sorted { $0.value > $1.value }.map(\.key)
     }
 
     private var currentVisibleItems: [ThinkspaceLibraryItem] {
-        let base = selectedFolder == nil ? snapshot.looseItems : (selectedFolder?.items ?? [])
-        return sorted(filteredItems(base))
+        var items = searchResults
+        if let kindFilter {
+            items = items.filter { cardModel(for: $0).kindLabel == kindFilter }
+        }
+        return ThinkspaceLibrarySorter.sort(
+            items,
+            field: prefs.sortField,
+            ascending: prefs.sortAscending,
+            kindLabel: { cardModel(for: $0).kindLabel },
+            date: { item in
+                prefs.sortField == .dateAdded
+                    ? previewStore.addedDate(for: item.entityUuid)
+                    : previewStore.modifiedDate(for: item.entityUuid)
+            }
+        )
     }
 
-    private var trimmedSearch: String {
-        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// One section normally; kind-titled sections when grouping is on.
+    private var itemSections: [(title: String, items: [ThinkspaceLibraryItem])] {
+        let items = currentVisibleItems
+        guard !items.isEmpty else { return [] }
+        let fallbackTitle = isSearching ? "Results" : "Documents"
+        guard prefs.grouping == .kind else { return [(fallbackTitle, items)] }
+        var buckets: [String: [ThinkspaceLibraryItem]] = [:]
+        for item in items {
+            buckets[cardModel(for: item).kindLabel, default: []].append(item)
+        }
+        return buckets.keys.sorted().map { ($0, buckets[$0] ?? []) }
+    }
+
+    private func provenanceLabel(_ item: ThinkspaceLibraryItem) -> String {
+        if isSearching, searchEntireThinkspace || selectedFolder == nil,
+           let folderTitle = snapshot.folderTitle(for: item.id) {
+            return folderTitle
+        }
+        return item.isOnCanvas ? "On canvas" : "Stored"
+    }
+
+    private var selectedItems: [ThinkspaceLibraryItem] {
+        selection.selectedIDs.compactMap { id in
+            currentVisibleItems.first { $0.id == id }
+                ?? snapshot.allItems.first { $0.id == id }
+        }
+    }
+
+    private var sortSignature: String {
+        "\(prefs.sortField.rawValue)-\(prefs.sortAscending)-\(prefs.grouping.rawValue)-\(kindFilter ?? "")"
+    }
+
+    /// Everything selectable in visual order — folders first, then sections.
+    private var visibleIDs: [String] {
+        visibleFolders.map(\.id.uuidString) + itemSections.flatMap { $0.items.map(\.id) }
+    }
+
+    private func syncSelection() {
+        var titles: [String: String] = [:]
+        for folder in visibleFolders { titles[folder.id.uuidString] = folder.title }
+        for section in itemSections {
+            for item in section.items { titles[item.id] = item.title }
+        }
+        selection.syncVisible(ids: visibleIDs, titles: titles)
     }
 
     private var shouldShowEmptyState: Bool {
         visibleFolders.isEmpty && currentVisibleItems.isEmpty
     }
 
-    private func filteredItems(_ items: [ThinkspaceLibraryItem]) -> [ThinkspaceLibraryItem] {
-        guard !trimmedSearch.isEmpty else { return items }
-        return items.filter { item in
-            matches(item.title)
-                || matches(item.block?.subtitle ?? "")
-                || matches(cardModel(for: item).bodyText ?? "")
+    // MARK: Selection helpers
+
+    private func clearSelection() {
+        withAnimation(ProMotionSprings.snappy) { selection.clear() }
+    }
+
+    private func peekSelection() {
+        guard let primary = selection.primaryID,
+              let item = snapshot.allItems.first(where: { $0.id == primary }),
+              item.entityId > 0 else { return }
+        PeekController.shared.peek(.entity(EntitySelection(id: item.entityId, type: item.entityType)))
+    }
+
+    private func beginRenameSelection() {
+        guard selection.count == 1, let primary = selection.primaryID else { return }
+        selection.renamingID = primary
+    }
+
+    private func openSelection() {
+        guard let primary = selection.primaryID else { return }
+        if let folder = snapshot.folders.first(where: { $0.id.uuidString == primary }) {
+            openFolder(folder)
+        } else if let item = snapshot.allItems.first(where: { $0.id == primary }) {
+            actions.openItem(item)
         }
     }
 
-    private func sorted(_ items: [ThinkspaceLibraryItem]) -> [ThinkspaceLibraryItem] {
-        switch sortOrder {
-        case .name:
-            return items
-        case .kind:
-            return items.sorted { lhs, rhs in
-                let lhsKind = cardModel(for: lhs).kindLabel
-                let rhsKind = cardModel(for: rhs).kindLabel
-                if lhsKind != rhsKind { return lhsKind < rhsKind }
-                return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+    /// ⌘⌫, Finder's shortcut: deletes everything selected — documents
+    /// tombstone (restorable), folders dissolve (their contents survive).
+    private func deleteSelection() {
+        guard selection.renamingID == nil, !selection.isEmpty else { return }
+        let ids = selection.selectedIDs
+        selection.clear()
+        for id in ids {
+            if let folder = snapshot.folders.first(where: { $0.id.uuidString == id }) {
+                deleteFolder(folder)
+            } else if let item = snapshot.allItems.first(where: { $0.id == id }) {
+                actions.deleteItem(item)
             }
         }
     }
 
-    private func matches(_ value: String) -> Bool {
-        value.localizedCaseInsensitiveContains(trimmedSearch)
-    }
+    // MARK: Folder navigation (trail-recorded — folders are places)
 
-    // MARK: Selection & navigation
-
-    private func select(_ entryID: String) {
-        withAnimation(ProMotionSprings.snappy) { selectedEntryID = entryID }
-    }
-
-    private func clearSelection() {
-        withAnimation(ProMotionSprings.snappy) { selectedEntryID = nil }
-    }
-
-    // Folders are places: opening one records a trail moment, so the app's
-    // universal back/forward arrows walk in and out of folders — the library
-    // has no breadcrumb of its own.
     private func openFolder(_ folder: ThinkspaceLibraryFolder) {
         withAnimation(ProMotionSprings.focusTransition) {
             selectedFolderID = folder.id
-            selectedEntryID = nil
+            selection.clear()
         }
+        searchEntireThinkspace = false
         NavigationTrail.shared.recordArrival(
             .libraryFolder(thinkspaceId: thinkspaceId, folderID: folder.id),
             title: folder.title,
@@ -569,7 +548,7 @@ struct ThinkspaceLibraryModeView: View {
         guard selectedFolderID != nil else { return }
         withAnimation(ProMotionSprings.focusTransition) {
             selectedFolderID = nil
-            selectedEntryID = nil
+            selection.clear()
         }
         NavigationTrail.shared.recordArrival(
             .sidebar(.thinkspace(id: thinkspaceId)),
@@ -580,7 +559,6 @@ struct ThinkspaceLibraryModeView: View {
 
     private func deleteFolder(_ folder: ThinkspaceLibraryFolder) {
         if selectedFolderID == folder.id { selectedFolderID = nil }
-        if selectedEntryID == folder.id.uuidString { selectedEntryID = nil }
         NavigationTrail.shared.prune { moment in
             if case .libraryFolder(_, let folderID) = moment.destination {
                 return folderID == folder.id
@@ -592,8 +570,12 @@ struct ThinkspaceLibraryModeView: View {
 
     // MARK: Keyboard
 
-    private var keyboardShortcuts: some View {
+    /// Command-key paths as hidden buttons (the app's shortcut idiom);
+    /// character-level keys live in LibraryKeyboardModifier.
+    private var keyboardShortcutButtons: some View {
         Group {
+            // Esc fallback for when the browser isn't the focused responder
+            // (menus, toolbar) — the focused path handles it in onKeyPress.
             Button(action: handleEscape) {}
                 .keyboardShortcut(.escape, modifiers: [])
             Button(action: openSelection) {}
@@ -604,29 +586,56 @@ struct ThinkspaceLibraryModeView: View {
                 .keyboardShortcut(.upArrow, modifiers: .command)
             Button(action: { searchFocused = true }) {}
                 .keyboardShortcut("f", modifiers: .command)
+            Button(action: { withAnimation(ProMotionSprings.snappy) { selection.selectAll() } }) {}
+                .keyboardShortcut("a", modifiers: .command)
+            Button(action: deleteSelection) {}
+                .keyboardShortcut(.delete, modifiers: .command)
+            viewModeShortcuts
+            scaleShortcuts
         }
         .opacity(0)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }
 
-    private func handleEscape() {
-        if searchFocused || !searchText.isEmpty {
-            searchText = ""
-            searchFocused = false
-        } else if selectedEntryID != nil {
-            clearSelection()
-        } else if selectedFolderID != nil {
-            exitFolder()
+    private var viewModeShortcuts: some View {
+        ForEach(Array(ThinkspaceLibraryViewMode.allCases.enumerated()), id: \.element) { index, mode in
+            Button {
+                withAnimation(ProMotionSprings.focusTransition) { prefs.viewMode = mode }
+            } label: {}
+                .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
         }
     }
 
-    private func openSelection() {
-        guard let selectedEntryID else { return }
-        if let folder = snapshot.folders.first(where: { $0.id.uuidString == selectedEntryID }) {
-            openFolder(folder)
-        } else if let item = currentVisibleItems.first(where: { $0.id == selectedEntryID }) {
-            actions.openItem(item)
+    private var scaleShortcuts: some View {
+        Group {
+            Button {
+                if let up = prefs.iconScale.stepUp {
+                    withAnimation(ProMotionSprings.gentle) { prefs.iconScale = up }
+                }
+            } label: {}
+                .keyboardShortcut("=", modifiers: .command)
+            Button {
+                if let down = prefs.iconScale.stepDown {
+                    withAnimation(ProMotionSprings.gentle) { prefs.iconScale = down }
+                }
+            } label: {}
+                .keyboardShortcut("-", modifiers: .command)
+        }
+    }
+
+    private func handleEscape() {
+        if searchFocused || !searchText.isEmpty {
+            searchText = ""
+            kindFilter = nil
+            searchFocused = false
+            browserFocused = true
+        } else if selection.renamingID != nil {
+            selection.renamingID = nil
+        } else if !selection.isEmpty {
+            clearSelection()
+        } else if selectedFolderID != nil {
+            exitFolder()
         }
     }
 
@@ -634,7 +643,7 @@ struct ThinkspaceLibraryModeView: View {
 
     private var emptyState: some View {
         ThinkspaceLibraryEmptyState(
-            icon: trimmedSearch.isEmpty ? (selectedFolder == nil ? "square.grid.2x2" : "folder") : "magnifyingglass",
+            icon: isSearching ? "magnifyingglass" : (selectedFolder == nil ? "square.grid.2x2" : "folder"),
             title: emptyTitle,
             message: emptyMessage
         )
@@ -642,14 +651,17 @@ struct ThinkspaceLibraryModeView: View {
     }
 
     private var emptyTitle: String {
-        if !trimmedSearch.isEmpty { return "No matches for “\(trimmedSearch)”" }
+        if isSearching { return "No matches for “\(trimmedSearch)”" }
         if selectedFolder != nil { return "This folder is empty" }
         return "This Thinkspace is empty"
     }
 
     private var emptyMessage: String {
-        if !trimmedSearch.isEmpty {
-            return "Try a document title, folder, or phrase from this Thinkspace."
+        if isSearching {
+            if selectedFolder != nil && !searchEntireThinkspace {
+                return "Words match in any order. Try fewer words, or search all of \(thinkspaceName)."
+            }
+            return "Words match in any order — try fewer or different words."
         }
         if selectedFolder != nil {
             return "Drag any document onto this folder to file it."
@@ -658,1057 +670,110 @@ struct ThinkspaceLibraryModeView: View {
     }
 }
 
-// MARK: - Header
+// MARK: - Keyboard modifier (arrows, space, return, type-to-select)
 
-private struct ThinkspaceLibraryHeader: View {
-    let folder: ThinkspaceLibraryFolder?
-    let thinkspaceName: String
-    @Binding var searchText: String
-    @Binding var sortOrder: ThinkspaceLibrarySort
-    var searchFocused: FocusState<Bool>.Binding
-    /// Renames the open folder (cluster). Only wired inside a folder — the
-    /// thinkspace name itself isn't editable from here.
-    var onRenameFolder: (UUID, String) -> Void
+/// The character-level keyboard grammar, shared by the scroll lenses and the
+/// gallery. Requires the host to be focusable; command-key shortcuts stay in
+/// the hidden-button idiom on the root.
+private struct LibraryKeyboardModifier: ViewModifier {
+    let selection: ThinkspaceLibrarySelectionModel
+    let onMoveScroll: (String) -> Void
+    let onPeek: () -> Void
+    let onRename: () -> Void
+    let onEscape: () -> Void
 
-    @State private var sortHovered = false
-    @State private var titleHovered = false
-    @State private var isRenaming = false
-    @State private var draftName = ""
-    @FocusState private var renameFocused: Bool
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 10) {
-            titleBlock
-            Spacer(minLength: 24)
-            sortMenu
-            searchField
-        }
-        // Walking to another folder (or back out) abandons any in-flight rename.
-        .onChange(of: folder?.id) { _, _ in isRenaming = false }
-    }
-
-    // No breadcrumb: the universal back/forward arrows own folder navigation.
-    // Inside a folder the title carries the folder name; the thinkspace name
-    // stays present as quiet marginalia above it.
-    private var titleBlock: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            if let folder {
-                Text(thinkspaceName)
-                    .font(DS.caption.weight(.medium))
-                    .foregroundStyle(DS.textMuted)
-                    .lineLimit(1)
-                folderTitle(folder)
-            } else {
-                Text(thinkspaceName)
-                    .font(DS.pageTitle)
-                    .foregroundStyle(DS.text)
-                    .lineLimit(1)
-            }
-        }
-        .animation(ProMotionSprings.gentle, value: folder?.id)
-    }
-
-    // The open folder's name is click-to-rename: tap to blur in a field, the
-    // same rename dialect as the folder tiles and the canvas cluster label.
-    @ViewBuilder
-    private func folderTitle(_ folder: ThinkspaceLibraryFolder) -> some View {
-        if isRenaming {
-            renameField(for: folder)
-        } else {
-            Text(folder.title)
-                .font(DS.pageTitle)
-                .foregroundStyle(DS.text)
-                .lineLimit(1)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(titleHovered ? DS.text.opacity(0.055) : .clear)
-                )
-                .padding(.horizontal, -6)
-                .contentShape(Rectangle())
-                .onHover { titleHovered = $0 }
-                .onTapGesture { beginRename(folder) }
-                .animation(ProMotionSprings.hover, value: titleHovered)
-                .help("Rename folder")
-                .accessibilityAddTraits(.isButton)
-                .accessibilityHint("Rename this folder")
-        }
-    }
-
-    private func renameField(for folder: ThinkspaceLibraryFolder) -> some View {
-        TextField("Folder name", text: $draftName)
-            .textFieldStyle(.plain)
-            .font(DS.pageTitle)
-            .foregroundStyle(DS.text)
-            .lineLimit(1)
-            .focused($renameFocused)
-            .onSubmit { commitRename(folder) }
-            .onExitCommand { isRenaming = false }
-            .onChange(of: renameFocused) { _, focused in
-                if !focused && isRenaming { commitRename(folder) }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(DS.focusRing, lineWidth: 1)
-            )
-            .padding(.horizontal, -2)
-            .frame(maxWidth: 460, alignment: .leading)
-    }
-
-    private func beginRename(_ folder: ThinkspaceLibraryFolder) {
-        draftName = folder.title
-        isRenaming = true
-        DispatchQueue.main.async { renameFocused = true }
-    }
-
-    private func commitRename(_ folder: ThinkspaceLibraryFolder) {
-        let trimmed = draftName.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty && trimmed != folder.title {
-            onRenameFolder(folder.id, trimmed)
-        }
-        isRenaming = false
-    }
-
-    private var sortMenu: some View {
-        Menu {
-            Picker("Sort by", selection: $sortOrder) {
-                ForEach(ThinkspaceLibrarySort.allCases) { order in
-                    Text(order.title).tag(order)
+    func body(content: Content) -> some View {
+        content
+            .onKeyPress(keys: [.upArrow, .downArrow, .leftArrow, .rightArrow], phases: .down) { press in
+                let direction: ThinkspaceLibrarySelectionModel.MoveDirection = switch press.key {
+                case .upArrow: .up
+                case .downArrow: .down
+                case .leftArrow: .left
+                default: .right
                 }
-            }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "arrow.up.arrow.down")
-                    .font(DS.caption.weight(.semibold))
-                    .accessibilityHidden(true)
-                Text(sortOrder.title)
-                    .font(DS.footnote.weight(.medium))
-            }
-            .foregroundStyle(sortHovered ? DS.text : DS.textSecondary)
-            .padding(.horizontal, 12)
-            .frame(height: 36)
-            .background(sortHovered ? DS.glassInputFillFocused : DS.glassInputFill, in: Capsule())
-            .overlay(Capsule().strokeBorder(DS.glassBorder, lineWidth: 1))
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .onHover { sortHovered = $0 }
-        .animation(ProMotionSprings.hover, value: sortHovered)
-        .help("Sort documents")
-        .accessibilityLabel("Sort by \(sortOrder.title)")
-    }
-
-    private var searchField: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .font(DS.callout.weight(.medium))
-                .foregroundStyle(searchFocused.wrappedValue ? DS.accent : DS.textMuted)
-                .accessibilityHidden(true)
-            TextField("Find in library", text: $searchText)
-                .textFieldStyle(.plain)
-                .font(DS.callout)
-                .foregroundStyle(DS.text)
-                .focused(searchFocused)
-                .frame(width: 220)
-            if !searchText.isEmpty {
-                Button {
-                    searchText = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(DS.caption)
-                        .foregroundStyle(DS.textMuted)
+                let extend = press.modifiers.contains(.shift)
+                if let target = selection.move(direction, extend: extend) {
+                    onMoveScroll(target)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Clear search")
+                return .handled
             }
-        }
-        .padding(.horizontal, 14)
-        .frame(height: 36)
-        .dsGlassInput(isFocused: searchFocused.wrappedValue, cornerRadius: 18)
-        .animation(ProMotionSprings.gentle, value: searchFocused.wrappedValue)
-        .help("Find in library (⌘F)")
+            .onKeyPress(.space, phases: .down) { _ in
+                guard selection.renamingID == nil else { return .ignored }
+                onPeek()
+                return .handled
+            }
+            .onKeyPress(.return, phases: .down) { _ in
+                guard selection.renamingID == nil, selection.count == 1 else { return .ignored }
+                onRename()
+                return .handled
+            }
+            .onKeyPress(.escape, phases: .down) { _ in
+                onEscape()
+                return .handled
+            }
+            .onKeyPress(characters: .alphanumerics, phases: .down) { press in
+                guard selection.renamingID == nil,
+                      press.modifiers.isDisjoint(with: [.command, .control, .option]) else {
+                    return .ignored
+                }
+                if let target = selection.typeToSelect(press.characters) {
+                    onMoveScroll(target)
+                    return .handled
+                }
+                return .ignored
+            }
     }
 }
 
-// MARK: - Section Header
+// MARK: - Filter chip (scope + kind)
 
-private struct ThinkspaceLibrarySectionHeader: View {
+private struct LibraryFilterChip: View {
     let title: String
-    let count: Int
-
-    var body: some View {
-        // The one ledger-header voice — same grammar as the Today task list
-        // and the Inbox queue.
-        CosmoSectionHeader(label: title, detail: "\(count)")
-            .accessibilityLabel("\(title), \(count) items")
-    }
-}
-
-// MARK: - Folder Tile
-
-private struct ThinkspaceLibraryFolderTile: View {
-    let folder: ThinkspaceLibraryFolder
-    var appearIndex: Int = 0
-    /// False after the library's first mount — folder navigation swaps
-    /// content with the section transition, never a replayed cascade.
-    var cascadeOnAppear: Bool = true
     let isSelected: Bool
-    let onSelect: () -> Void
-    let onOpen: () -> Void
-    let onFileItem: (String) -> Void
-    let onRename: (String) -> Void
-    let onRecolor: (Int) -> Void
-    let onDelete: () -> Void
-
-    @State private var isHovered = false
-    @State private var isDropTarget = false
-    @State private var hasAppeared = false
-    @State private var isRenaming = false
-    @State private var draftName = ""
-    @FocusState private var renameFocused: Bool
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        tile
-            .scaleEffect(isDropTarget ? 1.05 : 1)
-            .animation(ProMotionSprings.hover, value: isHovered)
-            .animation(ProMotionSprings.snappy, value: isSelected)
-            .opacity(hasAppeared || reduceMotion ? 1 : 0)
-            .scaleEffect(hasAppeared || reduceMotion ? 1 : 0.96)
-            .onHover { isHovered = $0 }
-            .onAppear(perform: animateEntrance)
-            .accessibilityElement(children: .combine)
-            .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
-            .accessibilityLabel("\(folder.title) folder, \(folder.items.count) items. Drop a document here to file it.")
-    }
-
-    private var tile: some View {
-        VStack(spacing: 10) {
-            LibraryFolderIcon(color: folder.color, hasContents: !folder.items.isEmpty)
-                .frame(width: 112, height: 82)
-                .scaleEffect(isHovered && !isDropTarget ? 1.02 : 1)
-            label
-        }
-        .padding(.vertical, 14)
-        .padding(.horizontal, 8)
-        .frame(maxWidth: .infinity)
-        .background(tileBackground)
-        .overlay(tileRing)
-        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .gesture(tapGestures)
-        .dropDestination(for: String.self) { items, _ in
-            guard let uuid = items.first,
-                  !folder.items.contains(where: { $0.entityUuid == uuid }) else { return false }
-            onFileItem(uuid)
-            return true
-        } isTargeted: { targeting in
-            withAnimation(ProMotionSprings.bouncy) { isDropTarget = targeting }
-        }
-        // contextMenu must wrap the drop destination — the other way round, the
-        // drop machinery swallows right-clicks and the menu never appears.
-        .contextMenu { menuItems }
-        .help("Open \(folder.title)")
-    }
-
-    private var tileBackground: some View {
-        RoundedRectangle(cornerRadius: 16, style: .continuous)
-            .fill(isSelected ? DS.accentSoft : DS.text.opacity(isHovered ? 0.045 : 0))
-    }
-
-    private var tileRing: some View {
-        RoundedRectangle(cornerRadius: 16, style: .continuous)
-            .strokeBorder(
-                isDropTarget ? folder.color.opacity(0.6) : DS.accent.opacity(isSelected ? 0.35 : 0),
-                lineWidth: isDropTarget ? 2 : 1
-            )
-    }
-
-    private var tapGestures: some Gesture {
-        SimultaneousGesture(
-            TapGesture(count: 2).onEnded { if !isRenaming { onOpen() } },
-            TapGesture().onEnded { if !isRenaming { onSelect() } }
-        )
-    }
-
-    @ViewBuilder
-    private var label: some View {
-        VStack(spacing: 3) {
-            if isRenaming {
-                renameField
-            } else {
-                Text(folder.title)
-                    .font(DS.callout.weight(.medium))
-                    .foregroundStyle(DS.text)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.center)
-            }
-            Text("\(folder.items.count) item\(folder.items.count == 1 ? "" : "s")")
-                .font(DS.caption)
-                .foregroundStyle(DS.textMuted)
-                .monospacedDigit()
-        }
-        .frame(height: 44, alignment: .top)
-    }
-
-    private var renameField: some View {
-        TextField("Folder name", text: $draftName)
-            .textFieldStyle(.plain)
-            .font(DS.callout.weight(.medium))
-            .multilineTextAlignment(.center)
-            .focused($renameFocused)
-            .onSubmit(commitRename)
-            .onExitCommand(perform: cancelRename)
-            .onChange(of: renameFocused) { _, focused in
-                if !focused && isRenaming { commitRename() }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 2)
-            .background(DS.surfaceElevated, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .strokeBorder(DS.focusRing, lineWidth: 1)
-            )
-            .frame(maxWidth: 136)
-    }
-
-    @ViewBuilder
-    private var menuItems: some View {
-        Button("Open", systemImage: "folder") { onOpen() }
-        Button("Rename…", systemImage: "pencil") { beginRename() }
-        colorMenu
-        Divider()
-        Button("Delete Folder", systemImage: "trash", role: .destructive) { onDelete() }
-    }
-
-    private var colorMenu: some View {
-        Menu("Color") {
-            ForEach(Array(CanvasCluster.palette.enumerated()), id: \.offset) { index, color in
-                Button {
-                    onRecolor(index)
-                } label: {
-                    Label {
-                        Text(LibraryFolderSwatch.name(at: index))
-                    } icon: {
-                        Image(nsImage: LibraryFolderSwatch.image(for: color, selected: index == normalizedColorIndex))
-                    }
-                }
-            }
-        }
-    }
-
-    private var normalizedColorIndex: Int {
-        let count = CanvasCluster.palette.count
-        return ((folder.colorIndex % count) + count) % count
-    }
-
-    private func beginRename() {
-        draftName = folder.title
-        isRenaming = true
-        DispatchQueue.main.async { renameFocused = true }
-    }
-
-    private func commitRename() {
-        let trimmed = draftName.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty && trimmed != folder.title {
-            onRename(trimmed)
-        }
-        isRenaming = false
-    }
-
-    private func cancelRename() {
-        isRenaming = false
-    }
-
-    private func animateEntrance() {
-        guard cascadeOnAppear, !reduceMotion, !hasAppeared else { hasAppeared = true; return }
-        withAnimation(ProMotionSprings.cascade(index: min(appearIndex, 8))) { hasAppeared = true }
-    }
-}
-
-/// Color swatches for the folder context menu — pre-rendered NSImages so the
-/// menu shows real color (SwiftUI menus render SF Symbols as template/mono).
-private enum LibraryFolderSwatch {
-    // Mirrors CanvasCluster.paletteHexes order.
-    private static let paletteNames = ["Indigo", "Purple", "Pink", "Orange", "Green", "Cyan", "Blue", "Coral"]
-
-    static func name(at index: Int) -> String {
-        guard index >= 0, index < paletteNames.count else { return "Color \(index + 1)" }
-        return paletteNames[index]
-    }
-
-    static func image(for color: Color, selected: Bool) -> NSImage {
-        let size = NSSize(width: 16, height: 16)
-        let image = NSImage(size: size, flipped: false) { rect in
-            NSColor(color).setFill()
-            NSBezierPath(ovalIn: rect.insetBy(dx: 1.5, dy: 1.5)).fill()
-            if selected {
-                NSColor.white.setStroke()
-                let check = NSBezierPath()
-                check.lineWidth = 1.6
-                check.lineCapStyle = .round
-                check.lineJoinStyle = .round
-                check.move(to: NSPoint(x: rect.midX - 3.4, y: rect.midY + 0.2))
-                check.line(to: NSPoint(x: rect.midX - 1.2, y: rect.midY - 2.4))
-                check.line(to: NSPoint(x: rect.midX + 3.6, y: rect.midY + 2.8))
-                check.stroke()
-            }
-            return true
-        }
-        image.isTemplate = false
-        return image
-    }
-}
-
-// MARK: - Folder Icon (macOS-style)
-
-/// A faithful macOS folder silhouette: back panel with a top-left tab, paper
-/// peeking out when the folder has contents, and a lighter front face.
-private struct LibraryFolderIcon: View {
-    let color: Color
-    let hasContents: Bool
-
-    var body: some View {
-        GeometryReader { geo in
-            let h = geo.size.height
-            let radius = h * 0.11
-            ZStack(alignment: .bottom) {
-                backPanel
-                if hasContents { paper(size: geo.size, radius: radius) }
-                frontFace(height: h * 0.78, radius: radius)
-            }
-            .frame(width: geo.size.width, height: geo.size.height)
-        }
-        // Premium, not gamey: a tight neutral contact shadow plus only a whisper
-        // of color cast directly below — never an all-around bloom.
-        .shadow(color: .black.opacity(0.10), radius: 2, y: 1)
-        .shadow(color: color.opacity(0.13), radius: 5, y: 4)
-        .accessibilityHidden(true)
-    }
-
-    private var backPanel: some View {
-        LibraryFolderBackShape()
-            .fill(
-                LinearGradient(
-                    colors: [color.opacity(0.96), color.opacity(0.86)],
-                    startPoint: .top, endPoint: .bottom
-                )
-            )
-            .overlay(LibraryFolderBackShape().fill(Color.black.opacity(0.10)))
-    }
-
-    private func paper(size: CGSize, radius: CGFloat) -> some View {
-        RoundedRectangle(cornerRadius: radius * 0.45, style: .continuous)
-            .fill(DS.surfaceCard)
-            .overlay(
-                RoundedRectangle(cornerRadius: radius * 0.45, style: .continuous)
-                    .strokeBorder(Color.black.opacity(0.06), lineWidth: 0.5)
-            )
-            .frame(width: size.width * 0.82, height: size.height * 0.76)
-            .offset(y: -size.height * 0.07)
-    }
-
-    private func frontFace(height: CGFloat, radius: CGFloat) -> some View {
-        RoundedRectangle(cornerRadius: radius, style: .continuous)
-            .fill(
-                LinearGradient(
-                    colors: [color, color.opacity(0.93)],
-                    startPoint: .top, endPoint: .bottom
-                )
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [.white.opacity(0.16), .white.opacity(0.02)],
-                            startPoint: .top, endPoint: .bottom
-                        )
-                    )
-            )
-            .overlay(alignment: .top) {
-                Capsule()
-                    .fill(Color.white.opacity(0.30))
-                    .frame(height: 1)
-                    .padding(.horizontal, radius)
-                    .padding(.top, 1.5)
-            }
-            .overlay(
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.12), lineWidth: 0.75)
-            )
-            .frame(height: height)
-    }
-}
-
-/// Back panel of a macOS folder: full body with a rounded tab on the top-left
-/// that slopes down into the body's top edge.
-private struct LibraryFolderBackShape: Shape {
-    func path(in rect: CGRect) -> Path {
-        let tabWidth = rect.width * 0.40
-        let tabHeight = rect.height * 0.14
-        let slope = rect.width * 0.10
-        let radius = rect.height * 0.11
-        let tabRadius = radius * 0.6
-
-        var path = Path()
-        path.move(to: CGPoint(x: rect.minX, y: rect.maxY - radius))
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + tabRadius))
-        path.addQuadCurve(
-            to: CGPoint(x: rect.minX + tabRadius, y: rect.minY),
-            control: CGPoint(x: rect.minX, y: rect.minY)
-        )
-        path.addLine(to: CGPoint(x: rect.minX + tabWidth - tabRadius, y: rect.minY))
-        path.addQuadCurve(
-            to: CGPoint(x: rect.minX + tabWidth + slope, y: rect.minY + tabHeight),
-            control: CGPoint(x: rect.minX + tabWidth + slope * 0.35, y: rect.minY)
-        )
-        path.addLine(to: CGPoint(x: rect.maxX - radius, y: rect.minY + tabHeight))
-        path.addQuadCurve(
-            to: CGPoint(x: rect.maxX, y: rect.minY + tabHeight + radius),
-            control: CGPoint(x: rect.maxX, y: rect.minY + tabHeight)
-        )
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - radius))
-        path.addQuadCurve(
-            to: CGPoint(x: rect.maxX - radius, y: rect.maxY),
-            control: CGPoint(x: rect.maxX, y: rect.maxY)
-        )
-        path.addLine(to: CGPoint(x: rect.minX + radius, y: rect.maxY))
-        path.addQuadCurve(
-            to: CGPoint(x: rect.minX, y: rect.maxY - radius),
-            control: CGPoint(x: rect.minX, y: rect.maxY)
-        )
-        path.closeSubpath()
-        return path
-    }
-}
-
-// MARK: - Item Card
-
-private struct ThinkspaceLibraryItemCard: View {
-    let model: ThinkspaceLibraryCardModel
-    let folders: [ThinkspaceLibraryFolder]
-    let currentFolder: ThinkspaceLibraryFolder?
-    var appearIndex: Int = 0
-    /// False after the library's first mount — see ThinkspaceLibraryFolderTile.
-    var cascadeOnAppear: Bool = true
-    let isSelected: Bool
-    let onSelect: () -> Void
-    let onOpen: () -> Void
-    let actions: ThinkspaceLibraryActions
-
-    @State private var isHovered = false
-    @State private var hasAppeared = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    private var item: ThinkspaceLibraryItem { model.item }
-
-    var body: some View {
-        draggableCard
-            .scaleEffect(isHovered ? 1.012 : 1)
-            .animation(ProMotionSprings.hover, value: isHovered)
-            .animation(ProMotionSprings.snappy, value: isSelected)
-            .opacity(hasAppeared || reduceMotion ? 1 : 0)
-            .scaleEffect(hasAppeared || reduceMotion ? 1 : 0.96)
-            .onHover { isHovered = $0 }
-            .onAppear(perform: animateEntrance)
-            .accessibilityElement(children: .combine)
-            .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
-            .accessibilityLabel("\(item.title), \(model.kindLabel), \(item.isOnCanvas ? "on canvas" : "stored")")
-    }
-
-    // On-canvas items can be dragged into folders; stored items aren't draggable.
-    @ViewBuilder
-    private var draggableCard: some View {
-        if item.block != nil {
-            card.draggable(item.entityUuid) { ThinkspaceLibraryDragPreview(model: model) }
-        } else {
-            card
-        }
-    }
-
-    private var card: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            mediaWell
-            textBlock
-        }
-        .contentShape(Rectangle())
-        .gesture(tapGestures)
-        .contextMenu { menuItems }
-    }
-
-    private var tapGestures: some Gesture {
-        SimultaneousGesture(
-            TapGesture(count: 2).onEnded { onOpen() },
-            TapGesture().onEnded { onSelect() }
-        )
-    }
-
-    /// The document IS the object (the Files grammar): a page or thumbnail of
-    /// its actual content, never framed in a card. Text pages wear their kind
-    /// tint on the edge — the border carries identity; media stays neutral.
-    private var mediaWell: some View {
-        LibraryCardObject(model: model)
-            .overlay(selectionRing)
-            .overlay(alignment: .topTrailing) { quickOpenButton }
-            .cardShadow(isHovered: isHovered)
-    }
-
-    private var selectionRing: some View {
-        RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .strokeBorder(DS.accent.opacity(isSelected ? 0.55 : 0), lineWidth: 2)
-    }
-
-    private var quickOpenButton: some View {
-        Button(action: onOpen) {
-            Image(systemName: "arrow.up.left.and.arrow.down.right")
-                .font(DS.caption.weight(.semibold))
-                .foregroundStyle(DS.text)
-                .frame(width: 30, height: 30)
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: .circle)
-        .opacity(isHovered ? 1 : 0)
-        .allowsHitTesting(isHovered)
-        .padding(8)
-        .help("Open in Focus Mode (⌘O)")
-        .accessibilityLabel("Open \(item.title) in Focus Mode")
-    }
-
-    // Name and kind sit centered beneath the object — Finder's icon-view
-    // grammar, matching the iOS file tile.
-    private var textBlock: some View {
-        VStack(spacing: 3) {
-            Text(item.title)
-                .font(DS.callout.weight(.medium))
-                .foregroundStyle(DS.text)
-                .lineLimit(2)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(
-                    isSelected ? DS.accentSoft : .clear,
-                    in: RoundedRectangle(cornerRadius: 6, style: .continuous)
-                )
-            metaRow
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.horizontal, 2)
-    }
-
-    private var metaRow: some View {
-        Text("\(model.kindLabel) · \(item.isOnCanvas ? "On canvas" : "Stored")")
-            .font(DS.caption)
-            .foregroundStyle(DS.textMuted)
-            .lineLimit(1)
-    }
-
-    @ViewBuilder
-    private var menuItems: some View {
-        Button("Open", systemImage: "arrow.up.left.and.arrow.down.right") { onOpen() }
-        if item.isOnCanvas {
-            Button("Reveal on Canvas", systemImage: "scope") { actions.revealOnCanvas(item) }
-        }
-        moveMenuItems
-        copyLinkItem
-    }
-
-    @ViewBuilder
-    private var moveMenuItems: some View {
-        if item.isOnCanvas {
-            let targets = folders.filter { $0.id != currentFolder?.id }
-            if !targets.isEmpty || currentFolder != nil { Divider() }
-            if !targets.isEmpty {
-                Menu("Move to Folder") {
-                    ForEach(targets) { folder in
-                        Button(folder.title) { actions.fileIntoFolder(item.entityUuid, folder.id) }
-                    }
-                }
-            }
-            if let current = currentFolder {
-                Button("Remove from “\(current.title)”", systemImage: "folder.badge.minus") {
-                    actions.removeFromFolder(item.entityUuid, current.id)
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var copyLinkItem: some View {
-        if let url = model.metadata["url"], !url.isEmpty {
-            Divider()
-            Button("Copy Link", systemImage: "link") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(url, forType: .string)
-            }
-        }
-    }
-
-    private func animateEntrance() {
-        guard cascadeOnAppear, !reduceMotion, !hasAppeared else { hasAppeared = true; return }
-        withAnimation(ProMotionSprings.cascade(index: min(appearIndex, 8))) { hasAppeared = true }
-    }
-}
-
-// MARK: - Card Object
-
-/// The document rendered as an object — its page or thumbnail with the kind
-/// edge and play badge. Shared by the grid card and the drag preview, so
-/// dragging feels like carrying the real thing (Finder's grammar), never a
-/// stand-in chip.
-private struct LibraryCardObject: View {
-    let model: ThinkspaceLibraryCardModel
-
-    private var item: ThinkspaceLibraryItem { model.item }
-
-    var body: some View {
-        Color.clear
-            .aspectRatio(model.previewAspect, contentMode: .fit)
-            .overlay { previewContent }
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(objectEdge)
-            .overlay(alignment: .bottomLeading) { playBadge }
-    }
-
-    private var objectEdge: some View {
-        RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .strokeBorder(edgeColor, lineWidth: isPage ? 1 : 0.5)
-    }
-
-    private var isPage: Bool {
-        if case .page = model.previewKind { return true }
-        return false
-    }
-
-    private var edgeColor: Color {
-        isPage ? item.entityType.color.opacity(0.45) : DS.glassBorder
-    }
-
-    @ViewBuilder
-    private var playBadge: some View {
-        if model.isVideoMedia, case .media = model.previewKind {
-            Image(systemName: "play.fill")
-                .font(DS.caption.weight(.bold))
-                .foregroundStyle(.white)
-                .frame(width: 24, height: 24)
-                .background(Color.black.opacity(0.55), in: Circle())
-                .padding(8)
-                .accessibilityHidden(true)
-        }
-    }
-
-    @ViewBuilder
-    private var previewContent: some View {
-        switch model.previewKind {
-        case .media(let source):
-            LibraryMediaThumbnail(source: source, accent: item.entityType.color)
-        case .page(let text):
-            LibraryPagePreview(
-                title: item.title,
-                text: text,
-                // Notes carry their page personality onto the card — paper
-                // tone, cover, icon — via the read-through style cache.
-                pageStyle: item.entityType == .note
-                    ? NotePageStyleCache.shared.style(for: item.entityUuid)
-                    : nil
-            )
-        case .connection(let preview):
-            LibraryConnectionPreview(preview: preview)
-        case .objectMotif(let icon, let tint):
-            LibraryObjectMotifWell(icon: icon, tint: tint)
-        }
-    }
-}
-
-// MARK: - Drag Preview
-
-/// The card itself at grid scale — you drag the actual thumbnail with its
-/// name beneath, exactly what Finder does when you pick up a file.
-private struct ThinkspaceLibraryDragPreview: View {
-    let model: ThinkspaceLibraryCardModel
-
-    var body: some View {
-        VStack(spacing: 8) {
-            LibraryCardObject(model: model)
-                .cardShadow(isHovered: true)
-            Text(model.item.title)
-                .font(DS.callout.weight(.medium))
-                .foregroundStyle(DS.text)
-                .lineLimit(1)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(DS.canvas.opacity(0.88), in: Capsule())
-        }
-        .frame(width: 212)
-        // Slack so the object's shadow survives the drag snapshot's bounds.
-        .padding(14)
-    }
-}
-
-// MARK: - Preview Content
-
-private struct LibraryMediaThumbnail: View {
-    let source: String
-    let accent: Color
-
-    var body: some View {
-        Group {
-            if source.hasPrefix("http") {
-                remote
-            } else {
-                local
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .clipped()
-        .accessibilityHidden(true)
-    }
-
-    private var remote: some View {
-        CachedAsyncImage(url: URL(string: source)) { phase in
-            switch phase {
-            case .success(let image):
-                image.resizable().aspectRatio(contentMode: .fill)
-            case .empty:
-                Rectangle().fill(DS.glassSectionFill)
-            case .failure:
-                LibraryMediaFallback(accent: accent)
-            }
-        }
-    }
-
-    private var local: some View {
-        // Async + downsampled: the old sync NSImage(contentsOfFile:) decoded
-        // full-resolution files on the main thread during grid scrolling.
-        LocalFileThumbnail(path: source) { image in
-            image
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-        } placeholder: {
-            LibraryMediaFallback(accent: accent)
-        }
-    }
-}
-
-/// The object motif well: a tinted mark centered on a quiet wash — the honest
-/// face of a non-document object (portal, live Cosmo block). Title and kind
-/// live in the caption below, so the well carries only the identity.
-private struct LibraryObjectMotifWell: View {
-    let icon: String
     let tint: Color
+    let action: () -> Void
+
+    @State private var isHovered = false
 
     var body: some View {
-        ZStack {
-            Rectangle().fill(tint.opacity(0.07))
-            Image(systemName: icon)
-                .font(.system(size: 30, weight: .medium))
-                .foregroundStyle(tint.opacity(0.75))
-        }
-        .accessibilityHidden(true)
-    }
-}
-
-/// Quiet stand-in when a thumbnail can't load — a skeleton-toned well, not chrome.
-private struct LibraryMediaFallback: View {
-    let accent: Color
-
-    var body: some View {
-        ZStack {
-            Rectangle().fill(DS.glassSectionFill)
-            Image(systemName: "photo")
-                .font(DS.title2)
-                .foregroundStyle(accent.opacity(0.35))
-        }
-        .accessibilityHidden(true)
-    }
-}
-
-/// The document's actual first page at file-object scale — real title and
-/// prose, the way Files (and the iOS library) render a page. Never an icon.
-private struct LibraryPagePreview: View {
-    let title: String
-    let text: String?
-    /// A personalized note's page style — paper tone, icon, cover — so the
-    /// card is a faithful miniature. nil for every other page kind.
-    var pageStyle: NoteDocumentStyle? = nil
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            if let icon = pageStyle?.pageIcon {
-                NotePageIconView(
-                    icon: icon,
-                    style: pageStyle ?? .default,
-                    darkMode: DS.palette.isDark,
-                    size: 16
-                )
-            }
+        Button(action: action) {
             Text(title)
-                .font(DS.compactTitleSerif)
-                .foregroundStyle(CommandKPreviewPaper.text)
-                .lineLimit(2)
-                .multilineTextAlignment(.leading)
-            Text(text?.isEmpty == false ? text ?? "" : " ")
-                .font(DS.caption)
-                .foregroundStyle(CommandKPreviewPaper.textSecondary)
-                .lineSpacing(3)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .clipped()
+                .font(DS.footnote.weight(.semibold))
+                .foregroundStyle(isSelected ? tint : (isHovered ? DS.text : DS.textSecondary))
+                .padding(.horizontal, DS.space12)
+                .frame(height: 26)
+                .background(chipFill, in: Capsule())
+                .overlay(
+                    Capsule().strokeBorder(
+                        isSelected ? tint.opacity(0.42) : DS.glassBorder,
+                        lineWidth: 1
+                    )
+                )
+                .contentShape(Capsule())
         }
-        .padding(16)
-        .padding(.top, coverHeight > 0 ? coverHeight - 8 : 0)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(paperFill)
-        .background(alignment: .top) { coverBand }
-        .accessibilityHidden(true)
-    }
-
-    private var paperFill: Color {
-        pageStyle?.paperTone.pageColor(darkMode: DS.palette.isDark) ?? CommandKPreviewPaper.fill
-    }
-
-    private var coverHeight: CGFloat {
-        (pageStyle?.cover ?? NoteDocumentStyle.Cover.none) == NoteDocumentStyle.Cover.none ? 0 : 22
-    }
-
-    @ViewBuilder
-    private var coverBand: some View {
-        if let pageStyle, pageStyle.cover != .none {
-            NotePageCoverBand(
-                style: pageStyle,
-                darkMode: DS.palette.isDark,
-                height: coverHeight
-            )
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) { isHovered = hovering }
         }
-    }
-}
-
-/// Miniature of the connection workspace — its section stack at readable scale.
-/// Section colors mirror the connection focus mode's editorial palette.
-private struct LibraryConnectionPreview: View {
-    let preview: String?
-
-    private static let sectionDefs: [(key: String, label: String, hex: String)] = [
-        ("IDEA", "Idea", "#6B6EA8"),
-        ("BELIEF", "Belief", "#5B84B0"),
-        ("GOAL", "Goal", "#38B764"),
-        ("PROBLEMS", "Problems", "#D97706"),
-        ("BENEFIT", "Benefits", "#34A36A"),
-        ("OBJECTIONS", "Objections", "#8B6BAB"),
-        ("EXAMPLE", "Examples", "#D17B4F"),
-        ("PROCESS", "Process", "#5E8BB5"),
-        ("NOTES", "Notes", "#9B8A6E"),
-    ]
-
-    private var sections: [(label: String, color: Color, hasContent: Bool)] {
-        let filledKeys: Set<String>
-        if let preview, !preview.isEmpty {
-            filledKeys = Set(preview.components(separatedBy: "\n\n").compactMap {
-                $0.components(separatedBy: "\n").first
-            })
-        } else {
-            filledKeys = []
-        }
-        return Self.sectionDefs.map { def in
-            (def.label, Color(hex: def.hex), filledKeys.contains(def.key))
-        }
+        .animation(ProMotionSprings.snappy, value: isSelected)
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 
-    var body: some View {
-        VStack(spacing: 4) {
-            ForEach(Array(sections.enumerated()), id: \.offset) { _, section in
-                sectionRow(section)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(10)
-        .background(Color(white: 0.13))
-        .accessibilityHidden(true)
-    }
-
-    private func sectionRow(_ section: (label: String, color: Color, hasContent: Bool)) -> some View {
-        HStack(spacing: 6) {
-            Circle()
-                .fill(section.color)
-                .frame(width: 5, height: 5)
-            Text(section.label)
-                .font(DS.caption)
-                .foregroundStyle(Color.white.opacity(0.72))
-            Spacer(minLength: 0)
-            RoundedRectangle(cornerRadius: 2, style: .continuous)
-                .fill(section.color.opacity(section.hasContent ? 0.45 : 0))
-                .frame(width: 18, height: 5)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(
-            RoundedRectangle(cornerRadius: 5, style: .continuous)
-                .fill(Color.white.opacity(section.hasContent ? 0.09 : 0.04))
-        )
-    }
-}
-
-// MARK: - Masonry Layout (Pinterest-style waterfall)
-
-/// Computes its own column count from the proposed width, so callers never
-/// need a GeometryReader. Each item flows into the currently shortest column.
-struct ThinkspaceLibraryMasonry: Layout {
-    var targetColumnWidth: CGFloat = 264
-    var spacing: CGFloat = 20
-
-    private func columnCount(for width: CGFloat) -> Int {
-        max(2, Int((width + spacing) / (targetColumnWidth + spacing)))
-    }
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let width = proposal.width ?? 800
-        let count = columnCount(for: width)
-        let columnWidth = (width - CGFloat(count - 1) * spacing) / CGFloat(count)
-        var heights = Array(repeating: CGFloat(0), count: count)
-
-        for subview in subviews {
-            let shortest = heights.enumerated().min(by: { $0.element < $1.element })?.offset ?? 0
-            let size = subview.sizeThatFits(ProposedViewSize(width: columnWidth, height: nil))
-            heights[shortest] += size.height + spacing
-        }
-
-        return CGSize(width: width, height: max(0, (heights.max() ?? 0) - spacing))
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let count = columnCount(for: bounds.width)
-        let columnWidth = (bounds.width - CGFloat(count - 1) * spacing) / CGFloat(count)
-        var heights = Array(repeating: CGFloat(0), count: count)
-
-        for subview in subviews {
-            let shortest = heights.enumerated().min(by: { $0.element < $1.element })?.offset ?? 0
-            let x = bounds.minX + CGFloat(shortest) * (columnWidth + spacing)
-            let y = bounds.minY + heights[shortest]
-
-            subview.place(
-                at: CGPoint(x: x, y: y),
-                anchor: .topLeading,
-                proposal: ProposedViewSize(width: columnWidth, height: nil)
-            )
-
-            let size = subview.sizeThatFits(ProposedViewSize(width: columnWidth, height: nil))
-            heights[shortest] += size.height + spacing
-        }
+    private var chipFill: AnyShapeStyle {
+        if isSelected { return AnyShapeStyle(tint.opacity(0.14)) }
+        return AnyShapeStyle(isHovered ? DS.glassInputFillFocused : DS.glassInputFill)
     }
 }
 
 // MARK: - Empty State
 
-private struct ThinkspaceLibraryEmptyState: View {
+struct ThinkspaceLibraryEmptyState: View {
     let icon: String
     let title: String
     let message: String
 
     var body: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: DS.space16) {
             Image(systemName: icon)
                 .font(DS.title1)
                 .foregroundStyle(DS.textMuted)

@@ -1691,6 +1691,77 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         overrideTextColor ?? (darkMode ? NSColor.white : NSColor(DS.documentText))
     }
 
+    /// Every value input `configureTextView` renders from. When unchanged,
+    /// updateNSView skips the full reconfiguration — the pass sets ~40 AppKit
+    /// properties and re-derives fonts/styles, which is pure waste on the
+    /// every-row updates a block list triggers for focus changes and
+    /// structural edits. Live behavior (delegate callbacks) is NOT captured
+    /// here: closures read `coordinator.parent` at call time, and the parent
+    /// is refreshed on every update.
+    struct EditorConfigSignature: Equatable {
+        var fontSize: CGFloat
+        var fontDesign: NSFontDescriptor.SystemDesign
+        var compact: Bool
+        var lineSpacingAdjustment: CGFloat
+        var darkMode: Bool
+        var overrideTextColor: NSColor?
+        var overrideFont: NSFont?
+        var headingDisclosureColor: NSColor?
+        var allowImages: Bool
+        var rendersElementChrome: Bool
+        var singleLine: Bool
+        var titleConfiguration: TitleEditorConfiguration?
+        var baseFontWeight: NSFont.Weight
+        var textAlignment: NSTextAlignment
+        var isEditable: Bool
+        var scrollsInternally: Bool
+        var splitsOnReturn: Bool
+        var rowBlockID: UUID?
+        var dragControllerID: ObjectIdentifier?
+    }
+
+    /// The inputs `applyStorageOverrides` stamps into the text storage. The
+    /// stamp dirties the storage (full-range addAttribute inside
+    /// beginEditing/endEditing) and forces TextKit invalidation, so it must
+    /// only run when content was replaced or one of these actually changed.
+    struct StorageOverrideSignature: Equatable {
+        var overrideTextColor: NSColor?
+        var overrideFont: NSFont?
+        var appliesHeadingIndents: Bool
+    }
+
+    private var configSignature: EditorConfigSignature {
+        EditorConfigSignature(
+            fontSize: fontSize,
+            fontDesign: fontDesign,
+            compact: compact,
+            lineSpacingAdjustment: lineSpacingAdjustment,
+            darkMode: darkMode,
+            overrideTextColor: overrideTextColor,
+            overrideFont: overrideFont,
+            headingDisclosureColor: headingDisclosureColor,
+            allowImages: allowImages,
+            rendersElementChrome: rendersElementChrome,
+            singleLine: singleLine,
+            titleConfiguration: titleConfiguration,
+            baseFontWeight: baseFontWeight,
+            textAlignment: textAlignment,
+            isEditable: isEditable,
+            scrollsInternally: scrollsInternally,
+            splitsOnReturn: splitsOnReturn,
+            rowBlockID: rowBlockID,
+            dragControllerID: dragSelectionController.map(ObjectIdentifier.init)
+        )
+    }
+
+    private var storageOverrideSignature: StorageOverrideSignature {
+        StorageOverrideSignature(
+            overrideTextColor: overrideTextColor,
+            overrideFont: overrideFont,
+            appliesHeadingIndents: !singleLine && titleConfiguration == nil
+        )
+    }
+
     func makeNSView(context: Context) -> CosmoScrollView {
         let scrollView = CosmoTextView.scrollableCosmoTextView()
         scrollView.forwardsScrollEvents = !scrollsInternally
@@ -1700,8 +1771,11 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         }
 
         configureTextView(textView, context: context, isInitial: true)
+        context.coordinator.lastConfigSignature = configSignature
         replaceStorageDroppingUndo(textView, with: attributedText)
+        context.coordinator.lastReconciledBindingText = attributedText
         applyStorageOverrides(textView.textStorage)
+        context.coordinator.lastStorageOverrideSignature = storageOverrideSignature
         context.coordinator.applyPolishHighlights(to: textView)
         context.coordinator.applyFocusBand(to: textView)
         context.coordinator.textViewReference = textView
@@ -1724,7 +1798,14 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         // write @Binding values synchronously (causes "Modifying state during view update").
         context.coordinator.isUpdatingFromSwiftUI = true
         defer { context.coordinator.isUpdatingFromSwiftUI = false }
-        configureTextView(textView, context: context, isInitial: false)
+        let signature = configSignature
+        if context.coordinator.lastConfigSignature != signature {
+            context.coordinator.lastConfigSignature = signature
+            configureTextView(textView, context: context, isInitial: false)
+        }
+        // makeNSView runs before the view joins a window — window-scoped
+        // config re-runs once the (or a new) window is attached.
+        context.coordinator.attachWindowConfigIfNeeded(for: textView)
 
         // Skip text storage replacement when the change originated from user typing —
         // the text view already has the correct content, avoiding scroll position resets.
@@ -1740,6 +1821,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         let hasFreshExternalContent = context.coordinator.lastAppliedContentToken != externalContentToken
         guard (!context.coordinator.isUpdatingFromTextView && !isFirstResponder) || hasFreshExternalContent else {
             applyStorageOverrides(textView.textStorage)
+            context.coordinator.lastStorageOverrideSignature = storageOverrideSignature
             context.coordinator.applyPolishHighlights(to: textView)
             context.coordinator.applyFocusBand(to: textView)
             if shouldRefocus {
@@ -1757,25 +1839,41 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         // The text view is being aligned with the binding — it's authoritative
         // again, so stale-write-back suppression can lift.
         context.coordinator.awaitingExternalContent = false
-        if splitsOnReturn, hasFreshExternalContent {
-        }
-        if !textView.attributedString().isEqual(to: attributedText) {
-            let selectedRange = textView.selectedRange()
-            // The attachment objects the overlay points at are about to be replaced.
-            context.coordinator.removeImageResizeOverlay()
-            // Fresh external content (structural rebuild, inline-assistant apply,
-            // GRDB reload) replaces the buffer out-of-band — drop the now-stale
-            // per-view undo stack so a later ⌘Z can't message a freed undo target.
-            replaceStorageDroppingUndo(textView, with: attributedText)
-            applyStorageOverrides(textView.textStorage)
-            let safeLocation = min(selectedRange.location, textView.string.count)
-            let safeLength = min(selectedRange.length, textView.string.count - safeLocation)
-            textView.setSelectedRange(NSRange(location: safeLocation, length: safeLength))
-            context.coordinator.normalizeSingleLineViewport(for: textView)
-            context.coordinator.notifyContentHeightChange(for: textView)
+        // Identity fast path: the binding text is @State owned by this editor,
+        // so a new INSTANCE is the only way its content changes. Skipping the
+        // deep isEqual matters twice over: the compare is O(content) per row,
+        // and for themed editors the post-replace override stamp makes the
+        // view's storage permanently unequal to the serialized binding — the
+        // deep compare then re-ran a full storage replace (and TextKit
+        // relayout) for every idle row on every update.
+        var storageWasReplaced = false
+        if context.coordinator.lastReconciledBindingText !== attributedText {
+            context.coordinator.lastReconciledBindingText = attributedText
+            if !textView.attributedString().isEqual(to: attributedText) {
+                let selectedRange = textView.selectedRange()
+                // The attachment objects the overlay points at are about to be replaced.
+                context.coordinator.removeImageResizeOverlay()
+                // Fresh external content (structural rebuild, inline-assistant apply,
+                // GRDB reload) replaces the buffer out-of-band — drop the now-stale
+                // per-view undo stack so a later ⌘Z can't message a freed undo target.
+                replaceStorageDroppingUndo(textView, with: attributedText)
+                storageWasReplaced = true
+                applyStorageOverrides(textView.textStorage)
+                let safeLocation = min(selectedRange.location, textView.string.count)
+                let safeLength = min(selectedRange.length, textView.string.count - safeLocation)
+                textView.setSelectedRange(NSRange(location: safeLocation, length: safeLength))
+                context.coordinator.normalizeSingleLineViewport(for: textView)
+                context.coordinator.notifyContentHeightChange(for: textView)
+            }
         }
 
-        applyStorageOverrides(textView.textStorage)
+        let overrideSignature = storageOverrideSignature
+        if storageWasReplaced || context.coordinator.lastStorageOverrideSignature != overrideSignature {
+            context.coordinator.lastStorageOverrideSignature = overrideSignature
+            if !storageWasReplaced {
+                applyStorageOverrides(textView.textStorage)
+            }
+        }
         context.coordinator.applyPolishHighlights(to: textView)
         context.coordinator.applyFocusBand(to: textView)
         context.coordinator.normalizeSingleLineViewport(for: textView)
@@ -1837,7 +1935,10 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             if let coordinator, let tv = coordinator.textViewReference,
                !coordinator.awaitingExternalContent {
                 coordinator.deferredSyncWorkItem?.cancel()
-                coordinator.parent.attributedText = tv.attributedString()
+                let flushed = tv.attributedString()
+                coordinator.parent.attributedText = flushed
+                // Binding now mirrors the view — no compare/replace needed.
+                coordinator.lastReconciledBindingText = flushed
                 coordinator.isUpdatingFromTextView = false
             }
             coordinator?.parent.onDeactivate?()
@@ -2158,6 +2259,23 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         var awaitingExternalContent = false
         /// Last consumed one-shot caret request token.
         var lastAppliedCaretToken = 0
+        /// updateNSView fast-path caches — see EditorConfigSignature /
+        /// StorageOverrideSignature. A long block list re-runs updateNSView
+        /// for every row on focus changes and structural edits; these keep
+        /// each of those calls near-free when nothing relevant changed.
+        var lastConfigSignature: TextKitEditorRepresentable.EditorConfigSignature?
+        var lastStorageOverrideSignature: TextKitEditorRepresentable.StorageOverrideSignature?
+        /// The last binding NSAttributedString reconciled with the view's
+        /// storage (applied to it, or produced from it). Same instance ⇒
+        /// nothing to compare or replace. Held strongly (it is the instance
+        /// the binding already retains) so a recycled allocation can never
+        /// masquerade as the reconciled one.
+        var lastReconciledBindingText: NSAttributedString?
+        /// Whether a focus-band dim is currently painted — lets applyFocusBand
+        /// skip its full-range temporary-attribute clear when there is
+        /// provably nothing to clear.
+        var hasAppliedFocusBand = false
+        private weak var lastConfiguredWindow: NSWindow?
         private var lastReportedHeight: CGFloat = 0
         private var lastObservedFrameWidth: CGFloat = 0
         private var lastNavigationTargetID: UUID?
@@ -2405,12 +2523,31 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             hasAppliedHighlights = true
         }
 
+        /// Window-scoped config must land after the view joins a window —
+        /// makeNSView runs before attachment, and config passes are now
+        /// signature-gated so they no longer re-run on every update.
+        func attachWindowConfigIfNeeded(for textView: NSTextView) {
+            guard let window = textView.window, window !== lastConfiguredWindow else { return }
+            lastConfiguredWindow = window
+            window.acceptsMouseMovedEvents = true
+            window.invalidateCursorRects(for: textView)
+        }
+
         func applyFocusBand(to textView: NSTextView) {
+            // No band requested and none painted — skip the full-range
+            // temporary-attribute clear (it is O(content) and invalidates
+            // display for every row on every update in a block list).
+            if parent.focusBandRangeProvider == nil,
+               parent.focusBandRange == nil,
+               !hasAppliedFocusBand {
+                return
+            }
             guard let layoutManager = textView.layoutManager else { return }
             let fullRange = NSRange(location: 0, length: textView.string.utf16.count)
             guard fullRange.length > 0 else { return }
 
             layoutManager.removeTemporaryAttribute(.foregroundColor, forCharacterRange: fullRange)
+            hasAppliedFocusBand = false
 
             let requestedRange: NSRange?
             if let provider = parent.focusBandRangeProvider {
@@ -2434,6 +2571,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
             layoutManager.addTemporaryAttribute(.foregroundColor, value: mutedColor, forCharacterRange: fullRange)
             layoutManager.addTemporaryAttribute(.foregroundColor, value: activeColor, forCharacterRange: activeRange)
+            hasAppliedFocusBand = true
         }
 
         func navigateIfNeeded(to headingID: UUID?, in textView: CosmoTextView) {
@@ -4948,7 +5086,10 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                     DispatchQueue.main.async { self.isUpdatingFromTextView = false }
                     return
                 }
-                self.parent.attributedText = textView.attributedString()
+                let synced = textView.attributedString()
+                self.parent.attributedText = synced
+                // Binding now mirrors the view — no compare/replace needed.
+                self.lastReconciledBindingText = synced
                 self.notifyContentHeightChange(for: textView)
                 DispatchQueue.main.async { self.isUpdatingFromTextView = false }
             }
@@ -4977,6 +5118,8 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             let currentDocument = RichDocumentSerializer.document(from: currentAttributedText)
             parent.onStructuredDocumentChange?(currentDocument, currentString)
             parent.attributedText = currentAttributedText
+            // Binding now mirrors the view — no compare/replace needed.
+            lastReconciledBindingText = currentAttributedText
 
             DispatchQueue.main.async { [weak self] in
                 self?.isUpdatingFromTextView = false

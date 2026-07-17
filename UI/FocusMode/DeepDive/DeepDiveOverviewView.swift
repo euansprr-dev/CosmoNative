@@ -693,7 +693,7 @@ struct DeepDiveOverviewView: View {
     /// Incubating mass plus developed pages with unswept material — the
     /// "what should I develop next?" answer. Ripe first.
     private var overviewSeedlings: [IncubatingConcept] {
-        (viewModel.atom.deepDiveStructured?.conceptSeedbed ?? [])
+        viewModel.seedbed
             .filter { seedling in
                 switch seedling.status {
                 case .incubating: return !seedling.stagedItems.isEmpty
@@ -749,11 +749,20 @@ struct DeepDiveOverviewView: View {
     }
 
     private func seedlingDetail(_ seedling: IncubatingConcept, verdict: ConceptRipeness.Verdict) -> String {
+        var detail: String
         if seedling.status == .developed {
-            return "\(seedling.pendingItems.count) new"
+            detail = "\(seedling.pendingItems.count) new"
+        } else if let reason = verdict.reason {
+            detail = "Ripe · \(reason)"
+        } else {
+            detail = "\(seedling.pendingItems.count) captures"
         }
-        if let reason = verdict.reason { return "Ripe · \(reason)" }
-        return "\(seedling.pendingItems.count) captures"
+        // The same concept growing elsewhere is a link worth knowing about —
+        // proposed, never auto-merged.
+        if let places = viewModel.seedlingCollisions[seedling.conceptKey], !places.isEmpty {
+            detail += " · also in \(places.prefix(2).joined(separator: ", "))"
+        }
+        return detail
     }
 
     @ViewBuilder
@@ -927,7 +936,7 @@ struct DeepDiveOverviewView: View {
             questions: viewModel.questions,
             connections: viewModel.connections,
             extracts: viewModel.extracts,
-            seedbed: viewModel.atom.deepDiveStructured?.conceptSeedbed ?? [],
+            seedbed: viewModel.seedbed,
             includeQuestions: mapShowsQuestions
         )
         if graph.root.children.isEmpty {

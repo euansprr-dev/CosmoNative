@@ -77,6 +77,14 @@ final class SwipeStudyPrewarmer {
                 items: items,
                 shortcode: shortcode
             )
+        } else if let mirrorItems = SwipeCarouselCloudMirror.mirroredCarouselItems(from: atom.metadata) {
+            // No local slide list, but the worker's durable Supabase copies
+            // exist — warm those under the same shortcode-indexed keys the
+            // stage's mirror fast path will derive on open.
+            _ = await InstagramCarouselImageCache.cacheCarouselImages(
+                items: mirrorItems,
+                shortcode: shortcode
+            )
         }
 
         // 4) Reel video → local MP4 cache. Only when a durable source exists;

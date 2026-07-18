@@ -22,6 +22,7 @@ enum MediaAttachmentKind: String, Codable, CaseIterable, Sendable {
     case audio
     case video
     case document
+    case spreadsheet
     case unknown
 
     // Sync drift tolerance (Mac contract): one row with an unknown rawValue
@@ -43,6 +44,7 @@ enum MediaAttachmentKind: String, Codable, CaseIterable, Sendable {
         case .audio: return "Audio"
         case .video: return "Video"
         case .document: return "Document"
+        case .spreadsheet: return "Spreadsheet"
         case .unknown: return "File"
         }
     }

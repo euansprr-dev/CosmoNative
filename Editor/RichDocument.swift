@@ -478,6 +478,37 @@ struct RichDocument: Codable, Equatable, Hashable, Sendable {
         Self.containsCollapsedHiddenContent(in: blocks)
     }
 
+    /// True when any block (at any depth, including collapsed-away content)
+    /// carries a visual or structured body — a sketch canvas, an image, an
+    /// element container — that a plain-text rendering cannot represent.
+    /// Surfaces that show notes as flattened text (the canvas thought card)
+    /// must check this and fall back to real block rendering.
+    var containsVisualBlocks: Bool {
+        Self.containsVisualBlocks(in: blocks)
+    }
+
+    private static func containsVisualBlocks(in blocks: [RichBlock]) -> Bool {
+        for block in blocks {
+            switch block.kind {
+            case .sketch, .image, .element:
+                return true
+            default:
+                break
+            }
+            if block.inlines.contains(where: { $0.kind == .imageRef }) {
+                return true
+            }
+            if containsVisualBlocks(in: block.children) {
+                return true
+            }
+            if let collapsed = block.heading?.collapsedBlocks,
+               containsVisualBlocks(in: collapsed) {
+                return true
+            }
+        }
+        return false
+    }
+
     private static func plainText(for blocks: [RichBlock], depth: Int) -> String {
         let indentation = String(repeating: "  ", count: depth)
         // List-relative numbering as a running counter — this runs per

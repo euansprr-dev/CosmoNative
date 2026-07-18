@@ -160,7 +160,8 @@ final class HybridSearchEngine: ObservableObject {
         limit: Int = 10,
         hybridWeight: Double? = nil,
         entityTypes: [EntityType]? = nil,
-        excludedEntityUUIDs: [String] = []
+        excludedEntityUUIDs: [String] = [],
+        includeBroadFallback: Bool = true
     ) async throws -> [SearchResult] {
         try Task.checkCancellation()
         let weight = hybridWeight ?? defaultHybridWeight
@@ -174,7 +175,8 @@ final class HybridSearchEngine: ObservableObject {
             query: query,
             limit: maxBM25Candidates,
             entityTypes: entityTypes,
-            excludedEntityUUIDs: excludedUUIDs
+            excludedEntityUUIDs: excludedUUIDs,
+            includeBroadFallback: includeBroadFallback
         )
         try Task.checkCancellation()
 
@@ -423,7 +425,8 @@ final class HybridSearchEngine: ObservableObject {
         query: String,
         limit: Int,
         entityTypes: [EntityType]?,
-        excludedEntityUUIDs: Set<String>
+        excludedEntityUUIDs: Set<String>,
+        includeBroadFallback: Bool = true
     ) async throws -> [BM25Match] {
         try Task.checkCancellation()
         let grammar = Self.parseQueryGrammar(query)
@@ -455,7 +458,10 @@ final class HybridSearchEngine: ObservableObject {
         }
         // Broad fallback only for unquoted queries — a quoted query that
         // finds nothing means "not in your database", not "here's confetti".
-        if matches.isEmpty && grammar.quotedPhrases.isEmpty {
+        // Opportunistic callers (ambient prefetch) opt out entirely: an
+        // any-term OR query over a long seed matches most of the corpus, and
+        // "no ambient pack" is a fine outcome for a warm-up.
+        if includeBroadFallback && matches.isEmpty && grammar.quotedPhrases.isEmpty {
             let broadQuery = Self.prepareFTS5Query(query, matchAnyTerm: true)
             if broadQuery != Self.prepareFTS5Query(query) {
                 try await runPass(broadQuery, kind: .anyTerm)
@@ -469,7 +475,12 @@ final class HybridSearchEngine: ObservableObject {
     /// candidates, never the whole index.
     nonisolated static func termCoverage(tokens: [String], in haystack: String) -> Double {
         guard !tokens.isEmpty else { return 0 }
-        let folded = haystack.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        // Bound the fold+scan. Candidates carry their WHOLE body — folding
+        // and substring-scanning megabyte notes here was showing up as
+        // main-thread seconds during broad fallbacks; coverage over the
+        // document's lead ranks just as well.
+        let bounded = haystack.utf16.count > 4_096 ? String(haystack.prefix(4_096)) : haystack
+        let folded = bounded.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
         let matched = tokens.filter { token in
             folded.range(
                 of: token.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
@@ -505,14 +516,20 @@ final class HybridSearchEngine: ObservableObject {
             // Query atoms_fts (unified atom index) instead of legacy semantic_fts
             // BM25 weights: uuid=0, type=0, title=10, body=5, metadata=1
             // snippet() column index 3 = body (uuid, type, title, body, metadata)
+            //
+            // snippet() is computed in the OUTER query only, over the already
+            // rank-limited rowids. With it in the ranking query's SELECT list,
+            // SQLite evaluated a snippet for EVERY row the MATCH produced
+            // before sorting — a broad query made that a token-scan of nearly
+            // the whole corpus (seconds of fts5 time) to keep `limit` rows.
             var sql = """
-                SELECT atoms.uuid, atoms.type, atoms.title, atoms.body, atoms.updated_at,
-                       bm25(atoms_fts, 0, 0, 10, 5, 1) AS score,
-                       snippet(atoms_fts, 3, '\(Self.snippetMarkerStart)', '\(Self.snippetMarkerEnd)', '…', 24) AS body_snippet
-                FROM atoms_fts
-                JOIN atoms ON atoms.uuid = atoms_fts.uuid
-                WHERE atoms_fts MATCH ?
-                  AND atoms.is_deleted = 0
+                WITH ranked AS (
+                    SELECT atoms_fts.rowid AS fts_rowid,
+                           bm25(atoms_fts, 0, 0, 10, 5, 1) AS score
+                    FROM atoms_fts
+                    JOIN atoms ON atoms.uuid = atoms_fts.uuid
+                    WHERE atoms_fts MATCH ?1
+                      AND atoms.is_deleted = 0
             """
 
             var arguments: [DatabaseValueConvertible] = [ftsQuery]
@@ -544,7 +561,17 @@ final class HybridSearchEngine: ObservableObject {
                 arguments.append(contentsOf: Array(excludedEntityUUIDs))
             }
 
-            sql += " ORDER BY score LIMIT ?"
+            sql += """
+                    ORDER BY score LIMIT ?
+                )
+                SELECT atoms.uuid, atoms.type, atoms.title, atoms.body, atoms.updated_at,
+                       ranked.score AS score,
+                       snippet(atoms_fts, 3, '\(Self.snippetMarkerStart)', '\(Self.snippetMarkerEnd)', '…', 24) AS body_snippet
+                FROM ranked
+                JOIN atoms_fts ON atoms_fts.rowid = ranked.fts_rowid AND atoms_fts MATCH ?1
+                JOIN atoms ON atoms.uuid = atoms_fts.uuid
+                ORDER BY ranked.score
+            """
             arguments.append(limit)
 
             let rows = try Row.fetchAll(db, sql: sql, arguments: StatementArguments(arguments))

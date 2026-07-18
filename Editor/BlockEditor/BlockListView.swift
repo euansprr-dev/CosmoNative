@@ -86,6 +86,16 @@ struct BlockListView: View {
     /// bodies embed their own BlockListView on the SAME coordinator and pass
     /// `false` so they don't overwrite that full-document order with a subset.
     var providesNavigationOrder: Bool = true
+    /// Progressive open for long documents: only the first chunk of rows
+    /// mounts live editors on first render; the rest draw as cheap static
+    /// text and hydrate in chunks over the next few runloop ticks. SwiftUI
+    /// subtree instantiation (AttributeGraph node building) dominates a long
+    /// note's open — ~200 live rows cost around a second of blocked main
+    /// thread, while a static row is near-free. Within ~a second every row
+    /// is live and the all-rows-mounted invariants hold exactly as before.
+    /// Off by default: short lists (canvas blocks, toggle children, element
+    /// bodies) must keep single-pass mounting.
+    var progressiveHydration: Bool = false
     var autoFocusFirstTextRegion: Bool = false
     /// Jump-to-sentence landing: the block that holds a search match wears a
     /// soft accent wash while set (the host scrolls to it and clears this
@@ -110,22 +120,81 @@ struct BlockListView: View {
     @State private var ownedDragController = BlockDragSelectionController()
     @State private var selectionKeyMonitor = BlockSelectionKeyMonitor()
     @State private var listSize: CGSize = .zero
+    /// The list's frame in the hosting view's space, updated off the render
+    /// path (see onGeometryChange) — read only by the outside-click monitor.
+    @State private var listGeometry = BlockListGeometryBox()
+    /// Rows below this index render as static placeholders until the
+    /// hydration pump raises it (progressiveHydration only). `.max` = fully
+    /// hydrated; the non-progressive path never consults it.
+    @State private var hydratedRowLimit = BlockHydrationPolicy.initialChunk
     @FocusState private var selectionKeyboardFocused: Bool
 
     var body: some View {
+        let fingerprint = rowEnvironmentFingerprint
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(document.blocks.enumerated()), id: \.element.id) { index, block in
-                rowView(for: block, at: .root(index: index))
-                    .padding(.top, BlockRhythmPolicy.topSpacing(
+                let path = BlockPath.root(index: index)
+                if progressiveHydration && index >= hydratedRowLimit {
+                    BlockStaticRowPlaceholder(
+                        block: block,
+                        topSpacing: BlockRhythmPolicy.topSpacing(
+                            for: block.kind,
+                            following: index > 0 ? document.blocks[index - 1].kind : nil,
+                            baseGap: blockGap
+                        ),
+                        fontSize: fingerprint.fontSize,
+                        fontDesign: fingerprint.fontDesign,
+                        darkMode: fingerprint.darkMode,
+                        overrideTextColor: fingerprint.overrideTextColor,
+                        onTap: {
+                            // A click on a not-yet-hydrated row hydrates up to
+                            // it and hands it the caret — the row registers
+                            // with the focus coordinator as it mounts.
+                            hydratedRowLimit = max(hydratedRowLimit, index + 1)
+                            resolvedFocusCoordinator.focus(block.id)
+                        }
+                    )
+                    .id(block.id)
+                } else {
+                    BlockRowContainer(
+                    block: block,
+                    path: path,
+                    topSpacing: BlockRhythmPolicy.topSpacing(
                         for: block.kind,
                         following: index > 0 ? document.blocks[index - 1].kind : nil,
                         baseGap: blockGap
-                    ))
-                    .opacity(rowOpacity(for: block))
-                    .overlay { landingWash(for: block.id) }
-                    .id(block.id)
+                    ),
+                    isSelected: resolvedSelectionCoordinator.isSelected(block.id),
+                    landingActive: landingHighlightBlockID == block.id,
+                    dimsInactiveBlocks: dimsInactiveBlocks,
+                    environment: fingerprint,
+                    focusCoordinator: resolvedFocusCoordinator,
+                    selectionCoordinator: resolvedSelectionCoordinator,
+                    onMove: moveBlock,
+                    onInsertBelow: { insertParagraph(after: path) },
+                    onHandleClick: { handleClicked(block) },
+                    onHandleShiftClick: { resolvedSelectionCoordinator.selectRange(to: block.id, in: document) },
+                    handleMenu: { handleMenu(for: block) },
+                    onSelectionCatcherTap: { shiftPressed in
+                        if shiftPressed {
+                            resolvedSelectionCoordinator.selectRange(to: block.id, in: document)
+                        } else {
+                            resolvedSelectionCoordinator.clear()
+                            deactivateSelectionKeyboard()
+                            resolvedFocusCoordinator.focus(block.id)
+                        }
+                    }
+                ) {
+                    blockContent(for: block, at: path)
+                }
+                // The row's Equatable gate — a keystroke in one block must
+                // not rebuild and re-diff every row's chrome + editor subtree.
+                .equatable()
+                .id(block.id)
+                }
             }
         }
+        .onAppear { startHydrationPumpIfNeeded() }
         .animation(
             reduceMotion ? nil : ProMotionSprings.gentle,
             value: dimsInactiveBlocks ? resolvedFocusCoordinator.focusedBlockID : nil
@@ -153,11 +222,17 @@ struct BlockListView: View {
         .onKeyPress(phases: .down) { press in
             handleSelectionKeyPress(press)
         }
-        .onGeometryChange(for: CGSize.self) { proxy in
-            proxy.size
-        } action: { newSize in
-            listSize = newSize
-            onContentHeightChange?(newSize.height)
+        .onGeometryChange(for: CGRect.self) { proxy in
+            proxy.frame(in: .global)
+        } action: { newFrame in
+            // Frame goes into a plain reference box — it changes every frame
+            // during scrolling and must not invalidate the list body. Only a
+            // real size change touches @State.
+            listGeometry.globalFrame = newFrame
+            if listSize != newFrame.size {
+                listSize = newFrame.size
+                onContentHeightChange?(newFrame.size.height)
+            }
         }
         .onAppear {
             configureUndoRegistrar()
@@ -199,22 +274,30 @@ struct BlockListView: View {
         resolvedFocusCoordinator.syncNavigationOrder(navigationOrderSignature)
     }
 
-    @ViewBuilder
-    private func rowView(for block: RichBlock, at path: BlockPath) -> some View {
-        BlockRowView(
-            block: block,
-            path: path,
+    /// Everything a row's CONTENT closure captures that can change between
+    /// renders. The row container's Equatable gate compares this alongside
+    /// the block itself — any new style/config input the rows render from
+    /// MUST be added here, or a change to it won't reach skipped rows.
+    private var rowEnvironmentFingerprint: BlockRowEnvironmentFingerprint {
+        BlockRowEnvironmentFingerprint(
+            fontSize: fontSize,
+            fontDesign: fontDesign,
+            lineSpacingAdjustment: lineSpacingAdjustment,
+            blockGap: blockGap,
+            placeholder: placeholder,
             darkMode: darkMode,
-            isSelected: resolvedSelectionCoordinator.isSelected(block.id),
-            onMove: moveBlock,
-            onInsertBelow: { insertParagraph(after: path) },
-            onHandleClick: { handleClicked(block) },
-            onHandleShiftClick: { resolvedSelectionCoordinator.selectRange(to: block.id, in: document) },
-            handleMenu: { handleMenu(for: block) }
-        ) {
-            blockContent(for: block, at: path)
-                .overlay { selectionClickCatcher(for: block) }
-        }
+            overrideTextColor: overrideTextColor,
+            allowSlashCommands: allowSlashCommands,
+            allowMentions: allowMentions,
+            allowSelectionMenu: allowSelectionMenu,
+            allowImages: allowImages,
+            typewriterMode: typewriterMode,
+            scrollsInternally: scrollsInternally,
+            editorTargetID: editorTargetID,
+            navigationTargetID: navigationTargetID,
+            autoFocusFirstTextRegion: autoFocusFirstTextRegion,
+            firstBlockID: document.blocks.first?.id
+        )
     }
 
     @ViewBuilder
@@ -446,33 +529,6 @@ struct BlockListView: View {
         .padding(.leading, 2)
     }
 
-    /// Paragraph-focus dimming: 1.0 for the caret's block, faded-but-legible
-    /// for the rest. Suspended while block selection is active so selected
-    /// rows never fight their selection wash.
-    private func rowOpacity(for block: RichBlock) -> Double {
-        guard dimsInactiveBlocks,
-              !resolvedSelectionCoordinator.isActive,
-              let focusedID = resolvedFocusCoordinator.focusedBlockID,
-              focusedID != block.id else {
-            return 1
-        }
-        return 0.4
-    }
-
-    /// Soft accent wash on the block a search landing points at — a reveal,
-    /// not a selection: non-interactive, and it fades with the host clearing
-    /// `landingHighlightBlockID` after the pulse.
-    @ViewBuilder
-    private func landingWash(for blockID: UUID) -> some View {
-        if landingHighlightBlockID == blockID {
-            RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous)
-                .fill(DS.accent.opacity(0.10))
-                .padding(.horizontal, -DS.space6)
-                .allowsHitTesting(false)
-                .transition(.opacity)
-        }
-    }
-
     private var resolvedFocusCoordinator: BlockFocusCoordinator {
         focusCoordinator ?? ownedFocusCoordinator
     }
@@ -689,27 +745,6 @@ struct BlockListView: View {
 
     // MARK: - Block Selection
 
-    /// While block selection is active, clicks land on blocks instead of text
-    /// (the Notion model): Shift+Click extends the range, a plain click exits
-    /// selection and resumes editing the clicked block. The overlay only
-    /// exists during selection, so normal editing pays nothing for it.
-    @ViewBuilder
-    private func selectionClickCatcher(for block: RichBlock) -> some View {
-        if resolvedSelectionCoordinator.isActive {
-            Color.clear
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    if NSEvent.modifierFlags.contains(.shift) {
-                        resolvedSelectionCoordinator.selectRange(to: block.id, in: document)
-                    } else {
-                        resolvedSelectionCoordinator.clear()
-                        deactivateSelectionKeyboard()
-                        resolvedFocusCoordinator.focus(block.id)
-                    }
-                }
-        }
-    }
-
     private func handleClicked(_ block: RichBlock) {
         let selection = resolvedSelectionCoordinator
         if !(selection.isActive && selection.isSelected(block.id)) {
@@ -804,7 +839,33 @@ struct BlockListView: View {
                 perform: handleBlockSelectionClipboardAction
             )
             selectionKeyboardFocused = true
+            if let window {
+                selectionKeyMonitor.installMouseObserver { [weak window] event in
+                    handleSelectionOutsideClick(event, hostWindow: window)
+                }
+            }
         }
+    }
+
+    /// Blur-clears block selection: with selection active, a click that lands
+    /// outside the block list (page margins, toolbar, another surface in the
+    /// same window) drops the selection so the wash never outlives the menu.
+    /// Clicks in OTHER windows — the handle-menu popover above all — pass
+    /// untouched so menu actions still see an active selection. Clicks inside
+    /// the list stay owned by the per-row click-catchers.
+    private func handleSelectionOutsideClick(_ event: NSEvent, hostWindow: NSWindow?) {
+        let selection = resolvedSelectionCoordinator
+        guard selection.isActive,
+              let hostWindow,
+              event.window === hostWindow,
+              let contentView = hostWindow.contentView else { return }
+        var point = contentView.convert(event.locationInWindow, from: nil)
+        if !contentView.isFlipped {
+            point.y = contentView.bounds.height - point.y
+        }
+        guard !listGeometry.globalFrame.contains(point) else { return }
+        selection.clear()
+        deactivateSelectionKeyboard()
     }
 
     private func deactivateSelectionKeyboard() {
@@ -814,7 +875,11 @@ struct BlockListView: View {
     }
 
     /// AppKit-level key routing while blocks are selected. Returns true when
-    /// the event was consumed. ⌘C/⌘X stay on the clipboard-target path.
+    /// the event was consumed. ⌘C/⌘X must be handled here: the menu's
+    /// clipboard-target path never sees the keystroke because block-row text
+    /// views claim clipboard key equivalents during the window's hierarchy
+    /// traversal (and, with block selection active, their text selection is
+    /// collapsed — so the copy wrote nothing).
     private func handleSelectionKeyEvent(_ event: NSEvent) -> Bool {
         let selection = resolvedSelectionCoordinator
         guard selection.isActive else { return false }
@@ -849,6 +914,13 @@ struct BlockListView: View {
 
         if flags == .command, let characters = event.charactersIgnoringModifiers?.lowercased() {
             switch characters {
+            case "c":
+                copySelectionToPasteboard()
+                return true
+            case "x":
+                copySelectionToPasteboard()
+                deleteSelectedBlocks(selection.selectedBlockIDs)
+                return true
             case "d":
                 duplicateSelectedBlocks(selection.selectedBlockIDs)
                 return true
@@ -1027,6 +1099,28 @@ struct BlockListView: View {
         }
     }
 
+    // MARK: - Progressive Hydration
+
+    private func startHydrationPumpIfNeeded() {
+        guard progressiveHydration else { return }
+        pumpHydration()
+    }
+
+    /// Raises the hydrated-row limit one chunk per runloop turn until every
+    /// row is live, then parks it at .max so blocks appended later always
+    /// mount live. Chunked so the main thread stays responsive between
+    /// chunks — the whole document hydrates within roughly a second.
+    private func pumpHydration() {
+        guard hydratedRowLimit < document.blocks.count else {
+            hydratedRowLimit = .max
+            return
+        }
+        DispatchQueue.main.async {
+            hydratedRowLimit += BlockHydrationPolicy.chunk
+            pumpHydration()
+        }
+    }
+
     private func scheduleEnsureEditableDocument() {
         DispatchQueue.main.async {
             ensureEditableDocument()
@@ -1036,6 +1130,228 @@ struct BlockListView: View {
     private func ensureEditableDocument() {
         guard document.blocks.isEmpty else { return }
         document.blocks = [.paragraph("")]
+    }
+}
+
+/// Chunk sizes for progressive hydration. The initial chunk covers a bit
+/// more than one viewport of text so the first paint looks fully live; the
+/// pump chunk keeps each hydration tick well under a frame's worth of
+/// blocking work at Debug-build speeds.
+enum BlockHydrationPolicy {
+    static let initialChunk = 28
+    static let chunk = 24
+}
+
+/// Off-render-path frame storage: the block list's frame in the hosting
+/// view's coordinate space. A plain reference so per-scroll-frame geometry
+/// updates never invalidate the SwiftUI body — only the selection
+/// outside-click monitor reads it, at click time.
+@MainActor
+final class BlockListGeometryBox {
+    var globalFrame: CGRect = .zero
+}
+
+/// The static stand-in a not-yet-hydrated row renders during a progressive
+/// open: the block's text at editor-matched fonts, inset by the handle
+/// gutter, with no editor machinery behind it. Lives on screen for well
+/// under a second — visual parity matters, interactive parity does not
+/// (a tap hydrates the row and hands it focus).
+struct BlockStaticRowPlaceholder: View {
+    let block: RichBlock
+    let topSpacing: CGFloat
+    let fontSize: CGFloat
+    let fontDesign: NSFontDescriptor.SystemDesign
+    let darkMode: Bool
+    let overrideTextColor: NSColor?
+    let onTap: () -> Void
+
+    var body: some View {
+        Group {
+            if block.kind == .divider {
+                Rectangle()
+                    .fill(inkColor.opacity(0.28))
+                    .frame(height: 1)
+                    .padding(.vertical, 10)
+            } else {
+                Text(displayText)
+                    .font(Font(editorFont))
+                    .foregroundStyle(inkColor)
+                    .lineSpacing(6)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+        }
+        .padding(.leading, BlockInteractionPolicy.gutterWidth)
+        .padding(.top, topSpacing)
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onTap)
+    }
+
+    private var inkColor: Color {
+        Color(nsColor: overrideTextColor ?? (darkMode ? .white : NSColor(DS.documentText)))
+    }
+
+    /// Mirrors the serializer's rendered line: list/quote prefixes at the
+    /// head, heading text bare (size carries the hierarchy).
+    private var displayText: String {
+        let text = block.plainInlineText
+        switch block.kind {
+        case .bulletList: return "• " + text
+        case .numberedList: return "1. " + text
+        case .checklist: return ((block.checked ?? false) ? "☑ " : "☐ ") + text
+        case .quote: return "│ " + text
+        case .toggle: return "▸ " + text
+        case .image: return "[Image]"
+        case .sketch: return "[Sketch]"
+        default: return text
+        }
+    }
+
+    /// Matches the serializer's heading/body font metrics so hydration does
+    /// not shift layout noticeably.
+    private var editorFont: NSFont {
+        switch block.kind.headingLevelInt {
+        case 1: return EditorFontPolicy.font(ofSize: max(32, fontSize + 16), weight: .bold, design: fontDesign)
+        case 2: return EditorFontPolicy.font(ofSize: max(24, fontSize + 8), weight: .semibold, design: fontDesign)
+        case 3: return EditorFontPolicy.font(ofSize: max(20, fontSize + 4), weight: .medium, design: fontDesign)
+        default: return EditorFontPolicy.font(ofSize: fontSize, weight: .regular, design: fontDesign)
+        }
+    }
+}
+
+/// Everything a row's content closure captures that can change between list
+/// renders. Compared by BlockRowContainer's Equatable gate — a value change
+/// here re-renders every row (style switches are rare and must propagate);
+/// a value MISSING from here silently never reaches skipped rows.
+struct BlockRowEnvironmentFingerprint: Equatable {
+    var fontSize: CGFloat
+    var fontDesign: NSFontDescriptor.SystemDesign
+    var lineSpacingAdjustment: CGFloat
+    var blockGap: CGFloat
+    var placeholder: String
+    var darkMode: Bool
+    var overrideTextColor: NSColor?
+    var allowSlashCommands: Bool
+    var allowMentions: Bool
+    var allowSelectionMenu: Bool
+    var allowImages: Bool
+    var typewriterMode: Bool
+    var scrollsInternally: Bool
+    var editorTargetID: String?
+    var navigationTargetID: UUID?
+    var autoFocusFirstTextRegion: Bool
+    /// The placeholder policy renders differently for the document's first
+    /// block, so first-block identity is part of the render environment.
+    var firstBlockID: UUID?
+}
+
+/// One row of the block list — rhythm padding, gutter chrome, block content,
+/// and selection affordances — behind a single Equatable render gate.
+///
+/// THE load-bearing perf structure for long notes: a keystroke writes the
+/// whole document and re-runs the list body, and without this gate SwiftUI
+/// rebuilt and re-diffed every row's deep subtree (gutter buttons, drag/drop
+/// modifiers, popover, the NSTextView representable) on every keystroke —
+/// tens of milliseconds per keystroke at ~200 blocks. With it, unchanged
+/// rows cost one shallow struct + one == compare.
+///
+/// Closures and the content builder are deliberately excluded from ==: they
+/// read live state through stable references, so a skipped row's previous
+/// closures remain correct. Focus/caret/selection state is read from the
+/// @Observable coordinators inside body, so Observation invalidates affected
+/// rows directly, bypassing this gate.
+struct BlockRowContainer<Content: View>: View, Equatable {
+    let block: RichBlock
+    let path: BlockPath
+    let topSpacing: CGFloat
+    let isSelected: Bool
+    let landingActive: Bool
+    let dimsInactiveBlocks: Bool
+    let environment: BlockRowEnvironmentFingerprint
+    let focusCoordinator: BlockFocusCoordinator
+    let selectionCoordinator: BlockSelectionCoordinator
+    let onMove: (BlockDragPayload, BlockDropTarget) -> Void
+    let onInsertBelow: () -> Void
+    let onHandleClick: () -> Void
+    let onHandleShiftClick: () -> Void
+    let handleMenu: () -> BlockHandleMenuView
+    /// Tap on the selection click-catcher; the Bool is "shift was held".
+    let onSelectionCatcherTap: (Bool) -> Void
+    @ViewBuilder let content: () -> Content
+
+    static func == (lhs: BlockRowContainer, rhs: BlockRowContainer) -> Bool {
+        lhs.block == rhs.block
+            && lhs.path == rhs.path
+            && lhs.topSpacing == rhs.topSpacing
+            && lhs.isSelected == rhs.isSelected
+            && lhs.landingActive == rhs.landingActive
+            && lhs.dimsInactiveBlocks == rhs.dimsInactiveBlocks
+            && lhs.environment == rhs.environment
+            && lhs.focusCoordinator === rhs.focusCoordinator
+            && lhs.selectionCoordinator === rhs.selectionCoordinator
+    }
+
+    var body: some View {
+        BlockRowView(
+            block: block,
+            path: path,
+            darkMode: environment.darkMode,
+            isSelected: isSelected,
+            onMove: onMove,
+            onInsertBelow: onInsertBelow,
+            onHandleClick: onHandleClick,
+            onHandleShiftClick: onHandleShiftClick,
+            handleMenu: handleMenu
+        ) {
+            content()
+                .overlay { selectionClickCatcher }
+        }
+        .padding(.top, topSpacing)
+        .opacity(rowOpacity)
+        .overlay { landingWash }
+    }
+
+    /// Paragraph-focus dimming: 1.0 for the caret's block, faded-but-legible
+    /// for the rest. Suspended while block selection is active so selected
+    /// rows never fight their selection wash. Coordinator reads stay behind
+    /// the dims guard so the feature costs nothing when off.
+    private var rowOpacity: Double {
+        guard dimsInactiveBlocks,
+              !selectionCoordinator.isActive,
+              let focusedID = focusCoordinator.focusedBlockID,
+              focusedID != block.id else {
+            return 1
+        }
+        return 0.4
+    }
+
+    /// Soft accent wash on the block a search landing points at — a reveal,
+    /// not a selection: non-interactive, and it fades with the host clearing
+    /// its landing highlight after the pulse.
+    @ViewBuilder
+    private var landingWash: some View {
+        if landingActive {
+            RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous)
+                .fill(DS.accent.opacity(0.10))
+                .padding(.horizontal, -DS.space6)
+                .allowsHitTesting(false)
+                .transition(.opacity)
+        }
+    }
+
+    /// While block selection is active, clicks land on blocks instead of text
+    /// (the Notion model): Shift+Click extends the range, a plain click exits
+    /// selection and resumes editing the clicked block. The overlay only
+    /// exists during selection, so normal editing pays nothing for it.
+    @ViewBuilder
+    private var selectionClickCatcher: some View {
+        if selectionCoordinator.isActive {
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    onSelectionCatcherTap(NSEvent.modifierFlags.contains(.shift))
+                }
+        }
     }
 }
 

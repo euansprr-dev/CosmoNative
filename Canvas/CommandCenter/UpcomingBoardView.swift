@@ -37,6 +37,9 @@ struct CalendarOverlapPlacement: Equatable {
 enum CommandCenterCalendarEntrySource: Equatable {
     case task(String)
     case externalEvent(String)
+    /// A Cosmo schedule block (display-only on this board — creating,
+    /// moving, and nesting live on the Today timeline).
+    case scheduleBlock(String)
     case draft
 }
 
@@ -347,6 +350,14 @@ struct UpcomingBoardView: View {
             entries.append(entry(for: event))
         }
 
+        // Schedule blocks, day by day (a recurring template projects one
+        // occurrence per day it hits — the day key disambiguates the ids).
+        for (day, blocks) in viewModel.upcomingScheduleBlocksByDay {
+            for block in blocks {
+                entries.append(entry(for: block, on: day))
+            }
+        }
+
         if let dragDraft {
             entries.append(
                 CommandCenterCalendarEntry(
@@ -401,6 +412,22 @@ struct UpcomingBoardView: View {
             event: nil,
             isCompletedTask: isCompleted,
             isMissedOccurrence: isMissed
+        )
+    }
+
+    private func entry(for block: ScheduleBlockEntry, on day: Date) -> CommandCenterCalendarEntry {
+        CommandCenterCalendarEntry(
+            id: "block-\(block.id)-\(Int(day.timeIntervalSinceReferenceDate))",
+            title: block.title,
+            subtitle: timeRangeText(block.start, block.end),
+            start: block.start,
+            end: block.end,
+            isAllDay: false,
+            accent: block.colorHex.map { Color(hex: $0) } ?? DS.accent,
+            source: .scheduleBlock(block.id),
+            task: nil,
+            event: nil,
+            isCompletedTask: block.isCompleted
         )
     }
 

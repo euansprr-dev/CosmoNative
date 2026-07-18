@@ -157,6 +157,7 @@ struct MainView: View {
     @State private var commandCenterViewModel = CommandCenterDashboardViewModel()
     @State private var swipeLibraryViewModel = SwipeLibraryViewModel()
     @State private var swipeDiscoverModel = SwipeDiscoverModel()
+    @State private var ideasPageModel = IdeasPageModel()
     // Simple sidebar state: closed/open. Open sidebar reserves layout space.
     @AppStorage("sidebarCollapsed") private var isSidebarHidden: Bool = false
     @AppStorage("unifiedSidebarContext") private var activeSidebarContext: SidebarContext = .thinkspaces
@@ -1143,6 +1144,7 @@ struct MainView: View {
                 guard database.isReady else { return }
                 await commandKViewModel.prewarmForAppLaunch()
                 await prewarmCanvasForAppLaunch()
+                await prewarmStudioAndIdeasForAppLaunch()
             }
             .onDisappear {
                 cancelSidebarHoverClose()
@@ -1339,6 +1341,19 @@ struct MainView: View {
                 userInfo: ["thinkspaceId": thinkspace.id]
             )
         }
+    }
+
+    /// Warms the Studio (swipe home) and Ideas destinations at launch — the
+    /// same instances the sidebar navigates to, so the first click paints the
+    /// finished page instead of a skeleton (or a boards-first partial while
+    /// the library decode runs). Runs after the ⌘K/canvas prewarms in the
+    /// launch task, so it never competes with the visible startup path;
+    /// `loadIfNeeded`/`prewarmIfNeeded` make a real visit racing this a no-op.
+    private func prewarmStudioAndIdeasForAppLaunch() async {
+        await SwipeBoardStore.shared.loadIfNeeded()
+        await swipeLibraryViewModel.prewarmIfNeeded()
+        await swipeDiscoverModel.loadIfNeeded()
+        await ideasPageModel.prewarmIfNeeded()
     }
 
     private func switchToThinkspaceForDestination(id: String) {
@@ -1679,7 +1694,7 @@ struct MainView: View {
                     .offset(x: contentPushOffset)
                     .transition(.opacity)
             } else if case .ideas = currentDestination {
-                IdeasHomePage(boardRequest: $ideasBoardRequest)
+                IdeasHomePage(boardRequest: $ideasBoardRequest, model: ideasPageModel)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(DS.bg)
                     .offset(x: contentPushOffset)
@@ -2425,6 +2440,22 @@ struct MainView: View {
                         taskTitle: "Quick Session",
                         intent: .deepThink,
                         plannedMinutes: 25
+                    )
+                    return nil
+                }
+            }
+
+            // ⌥⌘←/→ — page the Command Center's viewed day (chevrons' keyboard twin)
+            if event.type == .keyDown,
+               event.modifierFlags.contains(.command),
+               event.modifierFlags.contains(.option),
+               [123, 124].contains(event.keyCode),
+               !isKeyboardInputReserved() {
+                if case .commandCenter = currentDestination {
+                    NotificationCenter.default.post(
+                        name: Notification.Name("com.cosmo.commandCenter.keyboardAction"),
+                        object: nil,
+                        userInfo: ["keyCode": event.keyCode, "modifiers": event.modifierFlags.rawValue]
                     )
                     return nil
                 }

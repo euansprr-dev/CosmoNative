@@ -33,18 +33,27 @@ struct CommandCenterDashboard: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
+            // The rail runs full-bleed to the pane's top/bottom/trailing
+            // edges (an integrated sidebar meets its window, never floats
+            // inset); only the working region keeps the page margin.
             HStack(alignment: .top, spacing: 0) {
-                if showsInternalSidebar {
-                    leftColumn
+                HStack(alignment: .top, spacing: 0) {
+                    if showsInternalSidebar {
+                        leftColumn
+                    }
+                    centerColumn
                 }
-                centerColumn
+                .padding(DS.space24)
+
                 if !viewModel.viewMode.isFullPlanningPage {
                     rightColumn
                 }
             }
-            .padding(DS.space24)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .task {
+                // Warm the sound graph so the first completion of the session
+                // is as tight as the tenth.
+                SoundEngine.shared.prewarm()
                 // First visit: migrations + refreshAll (moved out of the VM's
                 // init so app launch no longer pays them); revisits hit the
                 // loadIfNeeded guards and render the warm data instantly.
@@ -73,6 +82,16 @@ struct CommandCenterDashboard: View {
             }
 
             CommandCenterComposerHost(viewModel: viewModel, composer: composer)
+        }
+        // The cancelled-drag net: the drag preview's onDisappear is not a
+        // reliable end-of-session signal on macOS, and a drag dropped on no
+        // target hits no drop handler. Hover events are suppressed for the
+        // whole drag session and resume the instant it ends — so the first
+        // hover afterwards clears the invitation.
+        .onContinuousHover { phase in
+            if case .active = phase, viewModel.isTaskDragInFlight {
+                viewModel.isTaskDragInFlight = false
+            }
         }
     }
 
@@ -142,39 +161,77 @@ struct CommandCenterDashboard: View {
                     .frame(maxHeight: .infinity)
             }
         } else {
-            CommandCenterMasthead(viewModel: viewModel)
+            // ONE composed group: masthead, brief, gauge, divider, and the
+            // two working columns share a single bounded width — defined by
+            // the columns themselves (list + gap + timeline) — centered in
+            // the pane, so hairlines stop at the group's edges and the
+            // margins balance instead of pooling on one side.
+            VStack(alignment: .leading, spacing: DS.space16) {
+                CommandCenterMasthead(viewModel: viewModel)
 
-            if viewModel.viewMode == .today {
-                DailyBriefCard()
-                    .cascadeIn(hasAppeared, index: 0)
+                if viewModel.viewMode == .today {
+                    DailyBriefCard()
+                        .cascadeIn(hasAppeared, index: 0)
 
-                // The deep-work gauge is Today's hero — Anytime/Someday/
-                // Logbook are ledgers, not the day's cockpit.
-                DashboardTimeTracker(viewModel: viewModel)
-                    .cascadeIn(hasAppeared, index: 0)
+                    // The deep-work gauge is Today's hero — Anytime/Someday/
+                    // Logbook are ledgers, not the day's cockpit.
+                    DashboardTimeTracker(viewModel: viewModel)
+                        .cascadeIn(hasAppeared, index: 1)
 
-                // Divider only where the gauge sits above the list — the
-                // ledger lists already end their masthead with a hairline.
-                gradientDivider
-            }
+                    // Divider only where the gauge sits above the list — the
+                    // ledger lists already end their masthead with a hairline.
+                    gradientDivider
 
-            DashboardTaskList(viewModel: viewModel, composer: composer) { task in
-                withAnimation(ProMotionSprings.snappy) {
-                    selectedTaskForDetail = task
-                    viewModel.showReports = false
+                    HStack(alignment: .top, spacing: DS.space24) {
+                        selectingTaskList
+                            .cascadeIn(hasAppeared, index: 2)
+
+                        DashboardDayTimeline(viewModel: viewModel) { task in
+                            selectTaskForDetail(task)
+                        }
+                        .frame(width: 302)
+                        .cascadeIn(hasAppeared, index: 3)
+                    }
+                    .frame(maxHeight: .infinity)
+                } else {
+                    selectingTaskList
+                        .cascadeIn(hasAppeared, index: 2)
                 }
             }
-            .cascadeIn(hasAppeared, index: 1)
+            .frame(maxWidth: Self.ledgerGroupWidth, alignment: .leading)
+            .frame(maxWidth: .infinity)
         }
     }
 
+    /// The composition fills the pane — small gutters, never a floating
+    /// island (deep margins on three sides read as "a window in the top
+    /// half"). The cap only guards ultrawide displays; on normal windows
+    /// the group breathes out to the pane's edges and the list column takes
+    /// the flexible remainder beside the fixed timeline.
+    private static var ledgerGroupWidth: CGFloat { 1500 }
+
+    private var selectingTaskList: some View {
+        DashboardTaskList(viewModel: viewModel, composer: composer) { task in
+            selectTaskForDetail(task)
+        }
+    }
+
+    private func selectTaskForDetail(_ task: TaskViewModel) {
+        withAnimation(ProMotionSprings.snappy) {
+            selectedTaskForDetail = task
+            viewModel.showReports = false
+        }
+    }
+
+    // showReports must NOT be part of this ID — the habits/reports toggle
+    // lives in the right rail; folding it in remounted the whole center
+    // column (gauge, timer, masthead) on every rail tab switch.
     private var centerContentTransitionID: String {
         [
             viewModel.viewMode.rawValue,
             viewModel.viewMode == .upcoming ? viewModel.upcomingLens.rawValue : "no-lens",
             viewModel.selectedProjectUUID ?? "no-project",
-            viewModel.selectedAreaUUID ?? "no-area",
-            viewModel.showReports ? "rail-reports" : "rail-main"
+            viewModel.selectedAreaUUID ?? "no-area"
         ].joined(separator: ":")
     }
 
@@ -182,6 +239,17 @@ struct CommandCenterDashboard: View {
 
     private func handleKeyboardAction(_ notification: Notification) {
         guard let keyCode = notification.userInfo?["keyCode"] as? UInt16 else { return }
+
+        // ⌥⌘←/→ — page the viewed day (the masthead chevrons' keyboard twin).
+        let modifiersRaw = notification.userInfo?["modifiers"] as? UInt ?? 0
+        if (modifiersRaw & (1 << 20)) != 0, (modifiersRaw & (1 << 19)) != 0,
+           keyCode == 123 || keyCode == 124 {
+            guard viewModel.viewMode == .today else { return }
+            withAnimation(ProMotionSprings.snappy) {
+                viewModel.shiftSelectedDay(by: keyCode == 123 ? -1 : 1)
+            }
+            return
+        }
 
         let tasks = viewModel.currentVisibleTasks
 
@@ -211,8 +279,10 @@ struct CommandCenterDashboard: View {
         case 49: // Space — play/pause timer
             if viewModel.sessionEngine.activeSession != nil {
                 if viewModel.sessionEngine.isTimerRunning {
+                    Sound.focusPause()
                     viewModel.sessionEngine.pauseSession()
                 } else {
+                    Sound.focusResume()
                     viewModel.sessionEngine.resumeSession()
                 }
             } else if let idx = viewModel.selectedTaskIndex, tasks.indices.contains(idx) {
@@ -302,7 +372,7 @@ struct CommandCenterDashboard: View {
     }
 
     private var rightColumn: some View {
-        CommandCenterGlassRail(cornerRadius: 22) {
+        CommandCenterRail {
             VStack(alignment: .leading, spacing: DS.space16) {
                 if showsContentShelf {
                     ContentShelfRail(viewModel: viewModel)
@@ -314,7 +384,6 @@ struct CommandCenterDashboard: View {
             }
         }
         .frame(width: 280)
-        .padding(.leading, DS.space20)
         .animation(ProMotionSprings.gentle, value: showsContentShelf)
         .onChange(of: visibleTaskUUIDs) { _, taskUUIDs in
             clearDeletedTaskState(visibleTaskUUIDs: taskUUIDs)
@@ -445,9 +514,10 @@ struct CommandCenterDashboard: View {
 
     // MARK: - Gradient Divider
 
+    // The rule stops at the group's edges — it frames the columns below,
+    // never bleeds past them.
     private var gradientDivider: some View {
         AkashicSectionDivider()
-            .padding(.horizontal, -16) // edge-to-edge in center column
     }
 
 }

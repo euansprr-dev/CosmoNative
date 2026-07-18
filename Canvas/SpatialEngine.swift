@@ -311,7 +311,8 @@ class SpatialEngine {
                 guard block.entityType == .research ||
                         block.entityType == .image ||
                         block.entityType == .note ||
-                        block.entityType == .template else {
+                        block.entityType == .template ||
+                        block.entityType == .file else {
                     return block
                 }
 

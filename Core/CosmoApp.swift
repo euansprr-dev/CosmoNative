@@ -521,6 +521,7 @@ public enum EntityType: String, Codable, Sendable {
     case deepDive = "deep_dive"     // Inquiry Workspace: Deep Dive portal block (mastery topic home)
     case inquirySession = "inquiry_session"  // Inquiry Workspace: live inquiry session (focus mode)
     case portal                     // Window into another thinkspace (region miniature, travel on open)
+    case file                       // File portal block (PDF/XLSX/CSV/any file previewed in place)
 
     public var icon: String {
         switch self {
@@ -544,6 +545,7 @@ public enum EntityType: String, Codable, Sendable {
         case .deepDive: return "circle.hexagongrid.circle.fill"
         case .inquirySession: return "rectangle.split.3x1.fill"
         case .portal: return "arrow.up.forward.app"
+        case .file: return "doc.fill"
         }
     }
 
@@ -570,6 +572,7 @@ public enum EntityType: String, Codable, Sendable {
         case .deepDive: return DS.accent
         case .inquirySession: return DS.accent
         case .portal: return DS.accent
+        case .file: return DS.entityFile
         }
     }
 }

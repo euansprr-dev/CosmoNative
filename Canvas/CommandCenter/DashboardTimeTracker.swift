@@ -87,6 +87,14 @@ struct DashboardTimeTracker: View {
             }
             .frame(width: Self.arcDiameter, height: Self.arcDiameter)
             .frame(height: Self.arcBandHeight, alignment: .top)
+            // Inside the TimelineView so each tick re-evaluates it: the felt
+            // bell the moment the goal lands mid-session (never on page load —
+            // onChange only fires on a transition, and only while working).
+            .onChange(of: liveGoalMet) { _, met in
+                if met, sessionEngine.activeSession != nil {
+                    Sound.goalBell()
+                }
+            }
         }
     }
 
@@ -109,10 +117,12 @@ struct DashboardTimeTracker: View {
                         .hidden()
                         .accessibilityHidden(true)
                 }
+                // At zero the numeral recedes to muted — the morning must
+                // greet as an invitation, not a deficit scoreboard.
                 Text(formattedLiveTotal)
                     .font(DS.gaugeTitleSerif)
                     .monospacedDigit()
-                    .foregroundStyle(DS.text)
+                    .foregroundStyle(liveTotalSeconds == 0 ? DS.textMuted : DS.text)
                     .contentTransition(.numericText())
                 if liveGoalMet {
                     Image(systemName: "checkmark")
@@ -126,7 +136,9 @@ struct DashboardTimeTracker: View {
                 withAnimation(ProMotionSprings.snappy) { viewModel.showReports = true }
             } label: {
                 HStack(spacing: DS.space2) {
-                    Text("of your \(goalLabel) goal")
+                    // Anticipation, not deficit: an untouched day reads as
+                    // open road ("ahead"), never as zero progress.
+                    Text(liveTotalSeconds == 0 ? "your \(goalLabel) day ahead" : "of your \(goalLabel) goal")
                         .lineLimit(1)
                     Image(systemName: "chevron.right")
                         .font(DS.caption2.weight(.semibold))
@@ -187,11 +199,6 @@ struct DashboardTimeTracker: View {
             }
 
             actionRow
-
-            if !viewModel.todayIntentSummaries.isEmpty {
-                intentBreakdownBar
-                    .frame(width: 180)
-            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -242,8 +249,10 @@ struct DashboardTimeTracker: View {
                 ? "\(streak.current)-day streak · best \(streak.best)"
                 : "\(streak.current) \(days) and counting"
         }
-        if streak.best > 0 {
-            return "Best streak \(streak.best) day\(streak.best == 1 ? "" : "s")"
+        // "Best streak 1 day" is a scoreboard of failure; a single past day
+        // earns the same forward-facing line as none.
+        if streak.best > 1 {
+            return "Best streak \(streak.best) days"
         }
         return "Meet your goal to start a streak"
     }
@@ -332,14 +341,17 @@ struct DashboardTimeTracker: View {
             HStack(spacing: DS.space6) {
                 if sessionEngine.isTimerRunning {
                     iconControlButton(icon: "pause.fill", color: DS.text, bg: DS.glassInputFill, help: "Pause (Space)") {
+                        Sound.focusPause()
                         sessionEngine.pauseSession()
                     }
                 } else {
                     iconControlButton(icon: "play.fill", color: DS.textOnAccent, bg: DS.accent, help: "Resume (Space)") {
+                        Sound.focusResume()
                         sessionEngine.resumeSession()
                     }
                 }
                 iconControlButton(icon: "stop.fill", color: DS.red, bg: DS.redSoft.opacity(0.7), help: "End session") {
+                    Sound.focusEnd()
                     Task { await sessionEngine.endSession() }
                 }
             }
@@ -363,29 +375,6 @@ struct DashboardTimeTracker: View {
         }
         .buttonStyle(.plain)
         .help(help)
-    }
-
-    // MARK: - Intent breakdown
-
-    private var intentBreakdownBar: some View {
-        GeometryReader { geo in
-            let total = max(viewModel.todayTrackedMinutes, 1)
-            HStack(spacing: 1) {
-                ForEach(sortedIntentEntries, id: \.key.id) { entry in
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(entry.key.accent.opacity(0.75))
-                        .frame(width: max(CGFloat(entry.value) / CGFloat(total) * geo.size.width - 1, 3))
-                }
-            }
-        }
-        .frame(height: 4)
-        .clipShape(.rect(cornerRadius: 2))
-    }
-
-    private var sortedIntentEntries: [(key: IntentSummary, value: Int)] {
-        viewModel.todayIntentSummaries
-            .map { (key: $0, value: $0.minutes) }
-            .sorted { $0.value > $1.value }
     }
 
     private var focusCandidate: TaskViewModel? {

@@ -8,6 +8,10 @@ import SwiftUI
 import AppKit
 
 struct ThinkspaceLibraryToolbar: View {
+    /// True only at regular page widths — beside the open pane deck the
+    /// library squeezes to pane widths, where the switcher flows between
+    /// the side clusters so overlap is structurally impossible.
+    let centersAbsolutely: Bool
     let thinkspaceName: String
     let folder: ThinkspaceLibraryFolder?
     @Binding var viewMode: ThinkspaceLibraryViewMode
@@ -26,7 +30,7 @@ struct ThinkspaceLibraryToolbar: View {
     let onDropToRoot: (String) -> Bool
 
     var body: some View {
-        CosmoChromeRow(insetsEnabled: true, centersAbsolutely: true) {
+        CosmoChromeRow(insetsEnabled: true, centersAbsolutely: centersAbsolutely) {
             // The app shell's floating sidebar toggle already serves library
             // mode, so the island variant stands down here.
             NavigationTrailIsland(showsSidebarToggle: false)
@@ -297,7 +301,9 @@ struct LibrarySearchField: View {
                 .font(DS.callout)
                 .foregroundStyle(DS.text)
                 .focused(focused)
-                .frame(width: 168)
+                // Elastic, never fixed: compresses under width pressure so
+                // the row truncates gracefully instead of clipping.
+                .frame(minWidth: 64, idealWidth: 168, maxWidth: 168)
             if !searchText.isEmpty {
                 Button {
                     searchText = ""

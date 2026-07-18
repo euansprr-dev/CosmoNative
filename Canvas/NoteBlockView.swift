@@ -96,6 +96,10 @@ struct NoteBlockView: View {
     private var rendersAsThoughtCard: Bool {
         block.size.width <= Self.thoughtWidthCap
             && noteWordCount <= Self.thoughtWordCap
+            // The thought card is a plain-text costume — a note carrying a
+            // sketch, image, or element must render its real blocks or the
+            // preview degrades to "[Sketch]" and flattened element text.
+            && !noteBodyDocument.containsVisualBlocks
     }
 
     var body: some View {

@@ -94,6 +94,7 @@ final class CaptureMediaStorage: @unchecked Sendable {
             case .textFile: return "txt"
             case .audio: return "ogg"
             case .video: return "mp4"
+            case .spreadsheet: return "xlsx"
             default: return "bin"
             }
         }

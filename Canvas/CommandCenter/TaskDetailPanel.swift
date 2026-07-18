@@ -679,7 +679,7 @@ struct TaskDetailPanel: View {
                 onDeleted(task.uuid)
                 Task { _ = await viewModel.cancelOccurrence(task) }
             } else if task.isRecurring && task.recurrenceParentUUID == nil {
-                // Series template: deleting it takes the completion history — confirm first.
+                // Series template: removes the current + future occurrences — confirm first.
                 Task {
                     seriesCompletionCount = await viewModel.seriesCompletionCount(templateUUID: task.uuid)
                     showDeleteConfirmation = true
@@ -706,13 +706,13 @@ struct TaskDetailPanel: View {
             isPresented: $showDeleteConfirmation,
             titleVisibility: .visible
         ) {
-            Button("Delete series and \(seriesCompletionCount) logged completions", role: .destructive) {
+            Button("Delete series", role: .destructive) {
                 onDeleted(task.uuid)
                 Task { await viewModel.deleteTask(uuid: task.uuid) }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This removes the repeating task and its entire completion history.")
+            Text(SeriesDeleteCopy.message(completionCount: seriesCompletionCount))
         }
     }
 

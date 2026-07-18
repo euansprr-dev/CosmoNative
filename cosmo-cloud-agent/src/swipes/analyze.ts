@@ -154,7 +154,8 @@ ${transcriptBlock}
 
 ### displayTitle
 A short library headline for this swipe, ≤60 characters.
-- If slide 1 is already ≤60 characters, return it VERBATIM.
+- NEVER include author attribution in the title. If slide 1 opens with a person's name, @handle, or credential line from a screenshotted post (e.g. "Brennan Schlagbaum, CPA @Budgetdog_ How To Retire Early…"), drop that attribution and build the title from the post's body text only ("How To Retire Early (without waiting until 60)").
+- If slide 1 (after dropping any attribution) is already ≤60 characters, return it VERBATIM.
 - Otherwise compress slide 1 into one headline that keeps the creator's voice and the single most specific claim. Keep concrete numbers ("$75K", "90 days") — specificity is the value. No quotation marks, no emoji, no trailing period, no editorializing ("Amazing thread about...").
 - Example: slide 1 = "Housing didn't get expensive by accident. For decades, home prices ran way ahead of incomes, and now everyone wants to act surprised that young families can't buy" → displayTitle = "Housing didn't get expensive by accident".
 

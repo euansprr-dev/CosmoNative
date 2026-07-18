@@ -30,6 +30,7 @@ struct SwipeHomePage: View {
     @State private var quickLookSource: CGRect?
     @State private var studyHero: SwipeStudyHero?
     @State private var studyHeroExpanded = false
+    @State private var studyHeroArrived = false
     @State private var contextPillVisible = false
     @State private var scrollPosition = ScrollPosition()
     @State private var pageSize: CGSize = .zero
@@ -61,6 +62,9 @@ struct SwipeHomePage: View {
             await discoverModel.loadIfNeeded()
         }
         .onChange(of: viewModel.visibleItemsIdentity) { revealDate = Date() }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.swipeStudyDidAppear)) { _ in
+            relieveHeroAfterStudyAppears()
+        }
         .onExitCommand(perform: handleEscape)
         .background(keyboardLayer)
         .animation(ProMotionSprings.bouncy, value: showFilters)
@@ -74,7 +78,11 @@ struct SwipeHomePage: View {
         ScrollView {
             VStack(alignment: .leading, spacing: DS.space24) {
                 masthead
-                if viewModel.isLoading && viewModel.allItems.isEmpty {
+                // Gate on hasLoaded, not isLoading: before the load task even
+                // starts, isLoading is still false — the old gate let the page
+                // render its editorial with only the (already cached) boards
+                // shelf at the top for the first beats of a cold open.
+                if !viewModel.hasLoaded && viewModel.allItems.isEmpty {
                     SwipeSkeletonGrid()
                 } else if viewModel.allItems.isEmpty {
                     SwipeLibraryEmptyState(scope: .home, hasActiveFilters: false, onClearFilters: {})
@@ -514,15 +522,34 @@ struct SwipeHomePage: View {
 
         quickLook = nil
         quickLookExpanded = false
+        studyHeroArrived = false
         studyHero = SwipeStudyHero(model: model, sourceFrame: source)
 
         Task { @MainActor in
             withAnimation(ProMotionSprings.focusTransition) { studyHeroExpanded = true }
             try? await Task.sleep(for: .milliseconds(80))
             viewModel.openStudy(item)
-            try? await Task.sleep(for: .milliseconds(520))
+            // Teardown rides the study's did-appear signal (see onReceive in
+            // the body); this is only the failure fallback — if the study
+            // never mounts, retreat the card to the grid instead of vanishing.
+            try? await Task.sleep(for: .seconds(2))
+            guard studyHero != nil, !studyHeroArrived else { return }
+            withAnimation(ProMotionSprings.modal) { studyHeroExpanded = false }
+            try? await Task.sleep(for: .milliseconds(350))
+            if !studyHeroArrived { studyHero = nil }
+        }
+    }
+
+    /// The study is on screen — hold the hero one spring longer so the focus
+    /// layer is opaque before the card beneath it unmounts.
+    private func relieveHeroAfterStudyAppears() {
+        guard studyHero != nil, !studyHeroArrived else { return }
+        studyHeroArrived = true
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(500))
             studyHeroExpanded = false
             studyHero = nil
+            studyHeroArrived = false
         }
     }
 

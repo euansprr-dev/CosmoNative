@@ -150,6 +150,18 @@ extension Atom {
         metadataValue(as: ImageMetadata.self)
     }
 
+    /// File-portal metadata for `AtomType.file` atoms (namespaced under the
+    /// `filePortal` key of the shared metadata object).
+    var filePortalMetadata: FilePortalMetadata? {
+        metadataValue(as: FilePortalMetadataEnvelope.self)?.filePortal
+    }
+
+    /// Copy with updated file-portal metadata. Replaces only the `filePortal`
+    /// key; every sibling metadata key survives (merge-not-replace law).
+    func mergingFilePortalMetadata(_ value: FilePortalMetadata) -> Atom {
+        mergingMetadataKeys(FilePortalMetadataEnvelope(filePortal: value))
+    }
+
     var ideaMetadata: IdeaMetadata? {
         metadataValue(as: IdeaMetadata.self)
     }

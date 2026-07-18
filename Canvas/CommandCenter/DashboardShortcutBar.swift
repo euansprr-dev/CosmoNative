@@ -1,63 +1,56 @@
 // Canvas/CommandCenter/DashboardShortcutBar.swift
-// Contextual keyboard shortcut hints bar
-// March 2026
+// The Raycast law: shortcuts taught in place compound into expertise. A quiet
+// keycap footer under the ledger — every hint here is wired in MainView's key
+// monitor or the dashboard's keyboard handler; the bar must never advertise a
+// key that does nothing.
+// March 2026 · re-crafted July 2026
 
 import SwiftUI
 
 struct DashboardShortcutBar: View {
 
     var viewModel: CommandCenterDashboardViewModel
-    var isEditing: Bool
-    var isTimerRunning: Bool
+    @ObservedObject private var sessionEngine = DeepWorkSessionEngine.shared
 
     var body: some View {
-        HStack(spacing: 12) {
-            if isEditing {
-                shortcutHint("Esc", "Close")
-                shortcutHint("Tab", "Next field")
-            } else if isTimerRunning {
-                shortcutHint("Space", "Pause")
-                shortcutHint("Esc", "Stop")
-                shortcutHint("N", "Add task")
+        HStack(spacing: DS.space16) {
+            if sessionEngine.isTimerRunning {
+                hint("Space", "Pause")
+                hint("N", "Add task")
+                hint("↑↓", "Navigate")
+                hint("⌫", "Complete")
             } else {
-                shortcutHint("N", "Add task")
-                shortcutHint("S", "Start session")
-                shortcutHint("\u{2191}\u{2193}", "Navigate")
-                shortcutHint("Enter", "Edit")
-                shortcutHint("Space", "Play")
-                shortcutHint("Tab", "Switch view")
+                hint("N", "Add task")
+                hint("S", "Session")
+                hint("↑↓", "Navigate")
+                hint("Space", "Focus")
+                hint("⌫", "Complete")
+                hint("Tab", "Lists")
             }
         }
-        .frame(maxWidth: .infinity, alignment: .center)
-        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, DS.space6)
+        .animation(ProMotionSprings.gentle, value: sessionEngine.isTimerRunning)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Keyboard shortcuts")
     }
 
-    private func shortcutHint(_ key: String, _ label: String) -> some View {
-        HStack(spacing: 4) {
+    private func hint(_ key: String, _ label: String) -> some View {
+        HStack(spacing: DS.space4) {
             Text(key)
-                .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                .foregroundColor(DS.textSecondary)
-                .padding(.horizontal, 5)
+                .font(DS.caption2.weight(.semibold))
+                .foregroundStyle(DS.textSecondary)
+                .padding(.horizontal, DS.space6)
                 .padding(.vertical, 2.5)
-                .background(
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(DS.surfaceElevated)
-                )
+                .background(DS.glassSectionFill, in: .rect(cornerRadius: 5))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 4)
-                        .stroke(DS.border, lineWidth: 1)
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .stroke(DS.borderSubtle, lineWidth: 0.5)
                 )
-                .overlay(alignment: .bottom) {
-                    // Inset shadow for keycap depth
-                    RoundedRectangle(cornerRadius: 4)
-                        .stroke(DS.borderActive, lineWidth: 0.5)
-                        .offset(y: 1)
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                }
 
             Text(label)
-                .font(.system(size: 9))
-                .foregroundColor(DS.textMuted)
+                .font(DS.caption2)
+                .foregroundStyle(DS.textMuted)
         }
     }
 }

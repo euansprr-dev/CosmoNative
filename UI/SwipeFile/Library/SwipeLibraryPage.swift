@@ -14,6 +14,7 @@ struct SwipeLibraryPage: View {
     @State private var quickLookSource: CGRect?
     @State private var hero: SwipeStudyHero?
     @State private var heroExpanded = false
+    @State private var heroStudyArrived = false
     @State private var frameStore = SwipeFrameStore()
     @State private var scrollMetrics = SwipeScrollMetrics()
     @State private var scrollPosition = ScrollPosition()
@@ -46,6 +47,9 @@ struct SwipeLibraryPage: View {
             await viewModel.loadIfNeeded(section: section)
         }
         .onChange(of: viewModel.visibleItemsIdentity) { revealDate = Date() }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.swipeStudyDidAppear)) { _ in
+            relieveHeroAfterStudyAppears()
+        }
         .onExitCommand(perform: handleEscape)
         .background(keyboardLayer)
         .animation(ProMotionSprings.bouncy, value: showFilters)
@@ -198,15 +202,34 @@ struct SwipeLibraryPage: View {
 
         isQuickLookOpen = false
         quickLookExpanded = false
+        heroStudyArrived = false
         hero = SwipeStudyHero(model: model, sourceFrame: source)
 
         Task { @MainActor in
             withAnimation(ProMotionSprings.focusTransition) { heroExpanded = true }
             try? await Task.sleep(for: .milliseconds(80))
             viewModel.openStudy(item)
-            try? await Task.sleep(for: .milliseconds(520))
+            // Teardown rides the study's did-appear signal (see onReceive in
+            // the body); this is only the failure fallback — if the study
+            // never mounts, retreat the card to the grid instead of vanishing.
+            try? await Task.sleep(for: .seconds(2))
+            guard hero != nil, !heroStudyArrived else { return }
+            withAnimation(ProMotionSprings.modal) { heroExpanded = false }
+            try? await Task.sleep(for: .milliseconds(350))
+            if !heroStudyArrived { hero = nil }
+        }
+    }
+
+    /// The study is on screen — hold the hero one spring longer so the focus
+    /// layer is opaque before the card beneath it unmounts.
+    private func relieveHeroAfterStudyAppears() {
+        guard hero != nil, !heroStudyArrived else { return }
+        heroStudyArrived = true
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(500))
             heroExpanded = false
             hero = nil
+            heroStudyArrived = false
         }
     }
 

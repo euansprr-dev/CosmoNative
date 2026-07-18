@@ -158,6 +158,109 @@ final class RecurringSeriesEngineTests: XCTestCase {
         )
     }
 
+    // MARK: - Delete series keeps history (DB-backed)
+
+    /// "Delete series" contract (July 2026): the template atom and its completion
+    /// log survive — the rule is truncated so the live occurrence and everything
+    /// after it vanish while past days keep projecting.
+    func testEndSeriesPreservingHistoryRemovesCurrentAndFutureKeepsLog() async throws {
+        let today = day(2026, 6, 9, hour: 9)
+        let start = cal.date(byAdding: .day, value: -4, to: today)! // 6/5 09:00
+
+        var meta = TaskMetadata()
+        meta.startTime = PlannerumFormatters.iso8601.string(from: start)
+        meta.focusDate = PlannerumFormatters.iso8601.string(from: start)
+        meta.dueDate = PlannerumFormatters.iso8601.string(from: start)
+        meta.recurrence = RecurrenceRule.daily().toJSON()
+        meta.completedOccurrences = [
+            TaskOccurrenceCompletion(day: "2026-06-05", completedAt: PlannerumFormatters.iso8601.string(from: start)),
+            TaskOccurrenceCompletion(day: "2026-06-06", completedAt: PlannerumFormatters.iso8601.string(from: start))
+        ]
+        meta.skippedOccurrences = ["2026-06-07"]
+
+        let created = try await AtomRepository.shared.create(Atom.new(type: .task, title: "Daily").withMetadata(meta))
+        createdUUIDs.append(created.uuid)
+
+        try await RecurringSeriesEngine().endSeriesPreservingHistory(
+            templateUUID: created.uuid,
+            asOf: today,
+            calendar: cal
+        )
+
+        // The template atom still exists and its log is intact.
+        let fetchedOpt = try await AtomRepository.shared.fetch(uuid: created.uuid)
+        let fetched = try XCTUnwrap(fetchedOpt)
+        let log = try XCTUnwrap(fetched.metadataValue(as: TaskMetadata.self))
+        XCTAssertEqual(Set((log.completedOccurrences ?? []).map(\.day)), ["2026-06-05", "2026-06-06"])
+        XCTAssertEqual(log.skippedOccurrences, ["2026-06-07"])
+
+        // No live occurrence any more — the current (6/8 overdue) and future days are gone.
+        let snapshot = try XCTUnwrap(RecurringSeriesEngine.makeSnapshot(from: fetched, calendar: cal))
+        XCTAssertNil(RecurringSeriesEngine.liveOccurrenceDay(for: snapshot, asOf: today, calendar: cal))
+
+        // Past days still project with their logged statuses; nothing on/after the cutoff.
+        let occ = RecurringSeriesEngine.occurrences(
+            for: snapshot,
+            in: DateInterval(start: day(2026, 6, 5), end: day(2026, 6, 20)),
+            asOf: today,
+            calendar: cal
+        )
+        func status(_ d: Date) -> RecurringSeriesEngine.OccurrenceStatus? {
+            occ.first { cal.isDate($0.day, inSameDayAs: d) }?.status
+        }
+        XCTAssertEqual(status(day(2026, 6, 5)), .completed)
+        XCTAssertEqual(status(day(2026, 6, 6)), .completed)
+        XCTAssertEqual(status(day(2026, 6, 7)), .missed)
+        XCTAssertNil(status(day(2026, 6, 8)), "The un-actioned live day must not survive the delete")
+        XCTAssertNil(status(day(2026, 6, 9)))
+        XCTAssertNil(status(day(2026, 6, 10)))
+    }
+
+    /// Completing today then deleting the series keeps today's completion projecting:
+    /// the rule end lands on the last logged day, never before it.
+    func testEndSeriesAfterCompletingTodayKeepsTodaysCompletion() async throws {
+        let today = day(2026, 6, 9, hour: 9)
+        let start = cal.date(byAdding: .day, value: -2, to: today)! // 6/7 09:00
+
+        var meta = TaskMetadata()
+        meta.startTime = PlannerumFormatters.iso8601.string(from: start)
+        meta.focusDate = PlannerumFormatters.iso8601.string(from: start)
+        meta.dueDate = PlannerumFormatters.iso8601.string(from: start)
+        meta.recurrence = RecurrenceRule.daily().toJSON()
+        meta.completedOccurrences = [
+            TaskOccurrenceCompletion(day: "2026-06-07", completedAt: PlannerumFormatters.iso8601.string(from: start)),
+            TaskOccurrenceCompletion(day: "2026-06-08", completedAt: PlannerumFormatters.iso8601.string(from: start)),
+            TaskOccurrenceCompletion(day: "2026-06-09", completedAt: PlannerumFormatters.iso8601.string(from: today))
+        ]
+
+        let created = try await AtomRepository.shared.create(Atom.new(type: .task, title: "Daily").withMetadata(meta))
+        createdUUIDs.append(created.uuid)
+
+        try await RecurringSeriesEngine().endSeriesPreservingHistory(
+            templateUUID: created.uuid,
+            asOf: today,
+            calendar: cal
+        )
+
+        let fetchedOpt = try await AtomRepository.shared.fetch(uuid: created.uuid)
+        let fetched = try XCTUnwrap(fetchedOpt)
+        let snapshot = try XCTUnwrap(RecurringSeriesEngine.makeSnapshot(from: fetched, calendar: cal))
+
+        // Today's completion is still part of the projected history…
+        let occ = RecurringSeriesEngine.occurrences(
+            for: snapshot,
+            in: DateInterval(start: day(2026, 6, 7), end: day(2026, 6, 20)),
+            asOf: today,
+            calendar: cal
+        )
+        XCTAssertEqual(
+            occ.filter { $0.status == .completed }.map(\.dayKey).sorted(),
+            ["2026-06-07", "2026-06-08", "2026-06-09"]
+        )
+        // …and nothing lives on: no future occurrence surfaces.
+        XCTAssertNil(RecurringSeriesEngine.liveOccurrenceDay(for: snapshot, asOf: today, calendar: cal))
+    }
+
     // MARK: - Clean-slate migration (DB-backed)
 
     /// Data-safety contract (June 2026): the migration soft-deletes generated

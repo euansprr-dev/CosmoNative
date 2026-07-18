@@ -5,22 +5,24 @@ struct SwipeStudyHero: Equatable {
     let sourceFrame: CGRect?
 }
 
-/// The zoom-through into Swipe Study: the clicked card's media expands toward the
-/// window while the focus layer mounts above it (MainView's notification swap),
-/// so card → panel → studio reads as one continuous outward motion. Purely
-/// decorative — it never intercepts clicks and is removed once the study is opaque.
+/// The zoom-through into Swipe Study: the clicked card lifts to a centered,
+/// aspect-honest stage panel while the paper covers the library and the focus
+/// layer fades in above (MainView's notification swap) — card → stage → studio
+/// as one continuous motion, never the raw media cropped across the window.
+/// Purely decorative — it never intercepts clicks; the page removes it once
+/// the study reports itself on screen (`swipeStudyDidAppear`).
 struct SwipeStudyHeroOverlay: View {
     let hero: SwipeStudyHero
     let expanded: Bool
 
     var body: some View {
         GeometryReader { proxy in
-            let full = CGRect(origin: .zero, size: proxy.size)
-            let collapsed = hero.sourceFrame ?? full.insetBy(
-                dx: proxy.size.width * 0.06,
-                dy: proxy.size.height * 0.06
+            let stage = SwipeQuickLookGeometry.panelFrame(
+                in: proxy.size,
+                aspect: hero.model.aspect
             )
-            let frame = expanded ? full : collapsed
+            let collapsed = hero.sourceFrame ?? stage
+            let frame = expanded ? stage : collapsed
 
             ZStack(alignment: .topLeading) {
                 DS.swipeLibraryBackground
@@ -29,7 +31,7 @@ struct SwipeStudyHeroOverlay: View {
 
                 heroMedia
                     .frame(width: frame.width, height: frame.height)
-                    .clipShape(RoundedRectangle(cornerRadius: expanded ? 0 : 14, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: expanded ? 20 : 14, style: .continuous))
                     .position(x: frame.midX, y: frame.midY)
             }
         }

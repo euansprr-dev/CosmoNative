@@ -46,6 +46,14 @@ final class IdeasPageModel {
         startObserving()
     }
 
+    /// Launch-time warm: one load so the first visit paints instantly. No
+    /// observation — that belongs to the page's visible lifetime (start/stop),
+    /// and the page's own start() refreshes anything that moved while away.
+    func prewarmIfNeeded() async {
+        guard !isLoaded else { return }
+        await load()
+    }
+
     func stop() {
         observation?.cancel()
         observation = nil
@@ -266,7 +274,9 @@ struct IdeasHomePage: View {
     /// A ⌘K jump can land directly on a client's board.
     @Binding var boardRequest: String?
 
-    @State private var model = IdeasPageModel()
+    /// Owned by MainView (not this view) so launch prewarming can load it
+    /// before the first visit and revisits keep their data.
+    let model: IdeasPageModel
     @State private var selectedClientId: String?
     @State private var searchQuery = ""
     @State private var contextPillVisible = false

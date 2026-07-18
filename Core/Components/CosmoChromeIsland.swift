@@ -48,8 +48,8 @@ struct CosmoChromeRow<Leading: View, Center: View, Trailing: View>: View {
     /// True = the center island is truly centered via ZStack (full-screen
     /// workspaces). False = the center flows between the side clusters —
     /// at pane widths absolute centering can overlap the clusters, and flow
-    /// layout makes overlap structurally impossible. Constant per mount,
-    /// never toggled on animated state.
+    /// layout makes overlap structurally impossible. Constant per mount or
+    /// driven by a discrete width breakpoint — never toggled on animated state.
     var centersAbsolutely: Bool = true
     @ViewBuilder let leading: Leading
     @ViewBuilder let center: Center
@@ -59,7 +59,10 @@ struct CosmoChromeRow<Leading: View, Center: View, Trailing: View>: View {
         rowLayout
             .padding(.horizontal, insetsEnabled ? CosmoChromeMetrics.sideInset : 0)
             .padding(.top, insetsEnabled ? CosmoChromeMetrics.topInset : 0)
-            .frame(maxWidth: .infinity, alignment: .top)
+            // topLeading, not top: when a host is squeezed below the row's
+            // minimum, a centered overflow clips BOTH edges — the back/sidebar
+            // cluster must never be the thing that falls off screen.
+            .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
     @ViewBuilder

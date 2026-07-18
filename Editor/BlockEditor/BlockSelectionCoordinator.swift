@@ -219,6 +219,7 @@ final class BlockSelectionCoordinator {
 @MainActor
 final class BlockSelectionKeyMonitor {
     private var monitor: Any?
+    private var mouseMonitor: Any?
 
     /// Installs the local keyDown monitor (idempotent). The handler returns
     /// true when it consumed the event.
@@ -229,11 +230,28 @@ final class BlockSelectionKeyMonitor {
         }
     }
 
+    /// Installs a mouseDown observer alongside the key monitor (idempotent).
+    /// Observation only — the event always continues to the app, so block
+    /// click-catchers and popover dismissal behave exactly as without it.
+    func installMouseObserver(_ handler: @escaping (NSEvent) -> Void) {
+        guard mouseMonitor == nil else { return }
+        mouseMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+        ) { event in
+            handler(event)
+            return event
+        }
+    }
+
     func remove() {
         if let monitor {
             NSEvent.removeMonitor(monitor)
         }
         monitor = nil
+        if let mouseMonitor {
+            NSEvent.removeMonitor(mouseMonitor)
+        }
+        mouseMonitor = nil
     }
 }
 
@@ -278,5 +296,22 @@ enum BlockSelectionClipboardTarget {
             return false
         }
         return target.perform(action)
+    }
+
+    /// Maps a key equivalent to the block-selection clipboard action it
+    /// requests, or nil when the event isn't one. Text views consult this
+    /// before claiming ⌘C/⌘X/⌘A for their own (collapsed) text selection.
+    static func action(for event: NSEvent) -> BlockSelectionClipboardAction? {
+        guard event.type == .keyDown,
+              event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+              let character = event.charactersIgnoringModifiers?.lowercased() else {
+            return nil
+        }
+        switch character {
+        case "c": return .copy
+        case "x": return .cut
+        case "a": return .selectAll
+        default: return nil
+        }
     }
 }

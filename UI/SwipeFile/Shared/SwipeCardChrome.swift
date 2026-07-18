@@ -4,7 +4,7 @@ import SwiftUI
 
 /// Card surface for the rebuilt swipe surfaces: warm glass fill, a barely-there
 /// neutral wash, focus-aware hairline, and ONE static resting shadow. Hover reads
-/// through the border + tint + the caller's 1.01 scale — shadow parameters never
+/// through the border + tint + the caller's 1.02 scale — shadow parameters never
 /// animate (re-blurring hundreds of cards was the old grid's biggest GPU cost).
 /// The wash is deliberately neutral for every card: identity colors belong on
 /// identity surfaces (quick look header), never sprayed across a grid.
@@ -209,7 +209,7 @@ struct SwipeShelfScroller<Content: View>: View {
     @ViewBuilder let content: () -> Content
 
     /// How far the clip boundary extends past the measure column — sized for
-    /// shadows only (radius 10 / y 2 + the 1.01 hover lift), so no readable
+    /// shadows only (radius 10 / y 2 + the 1.02 hover lift), so no readable
     /// card sliver ever renders into the gutter where the arrows live.
     private let clipOutset: CGFloat = 14
     private let verticalOutset: CGFloat = 12

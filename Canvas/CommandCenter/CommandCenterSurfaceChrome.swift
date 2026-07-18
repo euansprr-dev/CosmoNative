@@ -1,20 +1,30 @@
 import SwiftUI
 
-struct CommandCenterGlassRail<Content: View>: View {
-    let cornerRadius: CGFloat
+/// The Command Center's right rail — an INTEGRATED sidebar (the Things /
+/// Fantastical / Apple split-view grammar, and the Concept navigator's exact
+/// material): flat `DS.surface` on the page plane, full height, one leading
+/// hairline, no glass, no shadow. Glass is for chrome; habits, reports, and
+/// the task inspector are CONTENT — and content never levitates. A floating
+/// pane's shadow outranked the page's actual hierarchy (elevation says
+/// "look here" while habits are the day's quietest content).
+struct CommandCenterRail<Content: View>: View {
     let content: Content
 
-    init(cornerRadius: CGFloat = 22, @ViewBuilder content: () -> Content) {
-        self.cornerRadius = cornerRadius
+    init(@ViewBuilder content: () -> Content) {
         self.content = content()
     }
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         content
             .padding(DS.space12)
-            .background(DS.commandCenterRailStabilizingFill, in: shape)
-            .cosmoGlassPanel(role: .globalSidebar, cornerRadius: cornerRadius)
+            .padding(.top, DS.space24)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(DS.surface)
+            .overlay(alignment: .leading) {
+                Rectangle()
+                    .fill(DS.borderSubtle)
+                    .frame(width: 0.5)
+            }
     }
 }
 

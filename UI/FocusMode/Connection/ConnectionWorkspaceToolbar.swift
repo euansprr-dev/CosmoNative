@@ -15,13 +15,15 @@ struct ConnectionWorkspaceToolbar: View {
     @Environment(\.atomWindowChromeContext) private var atomChrome
     @Environment(\.paneDeckChrome) private var paneDeckChrome
     @FocusState private var searchFocused: Bool
+    @State private var isNarrowSearchExpanded = false
 
     var body: some View {
         // Chrome islands, not a full-width bar: navigate | modes | tools,
-        // grouped by function on the shared chrome baseline. In pane context
-        // the mode switcher flows between the clusters — no ZStack overlap
-        // at pane widths.
-        CosmoChromeRow(centersAbsolutely: !isPaneContext) {
+        // grouped by function on the shared chrome baseline. Absolute
+        // centering needs regular width AND full-screen hosting — in panes
+        // or beside an open pane deck the mode switcher flows between the
+        // clusters, so overlap is structurally impossible at any width.
+        CosmoChromeRow(centersAbsolutely: !isPaneContext && breakpoint == .regular) {
             if atomChrome == nil, !isPaneContext {
                 NavigationTrailIsland()
             }
@@ -38,7 +40,16 @@ struct ConnectionWorkspaceToolbar: View {
             }
         }
         .onChange(of: workspace.searchFocusTick) {
+            isNarrowSearchExpanded = true
             searchFocused = true
+        }
+        // The collapsed magnifier returns once a narrow-width search ends —
+        // state-driven (focus gone AND query empty), no animation: glass
+        // island layout sizes swap discretely, never spring.
+        .onChange(of: searchFocused) { _, focused in
+            if !focused, workspace.searchQuery.isEmpty {
+                isNarrowSearchExpanded = false
+            }
         }
     }
 
@@ -123,7 +134,26 @@ struct ConnectionWorkspaceToolbar: View {
 
     // MARK: - Search
 
+    /// At narrow widths the field earns its room: a lone magnifier at rest,
+    /// the full field only while searching (focus or a live query). Wider
+    /// breakpoints always show the field, but its width is elastic — it
+    /// compresses before anything on the row can overflow and clip.
+    @ViewBuilder
     private var searchField: some View {
+        if breakpoint == .narrow, !isNarrowSearchExpanded, !workspace.isSearching, !searchFocused {
+            toolbarButton(
+                icon: "magnifyingglass",
+                help: "Find in concept"
+            ) {
+                isNarrowSearchExpanded = true
+                searchFocused = true
+            }
+        } else {
+            expandedSearchField
+        }
+    }
+
+    private var expandedSearchField: some View {
         HStack(spacing: DS.space6) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 11, weight: .medium))
@@ -134,7 +164,7 @@ struct ConnectionWorkspaceToolbar: View {
                 .font(DS.callout)
                 .foregroundStyle(DS.text)
                 .focused($searchFocused)
-                .frame(width: breakpoint == .regular ? 150 : 110)
+                .frame(minWidth: 64, idealWidth: breakpoint == .regular ? 150 : 110, maxWidth: breakpoint == .regular ? 150 : 110)
                 .onKeyPress(.escape) {
                     guard searchFocused else { return .ignored }
                     workspace.searchQuery = ""

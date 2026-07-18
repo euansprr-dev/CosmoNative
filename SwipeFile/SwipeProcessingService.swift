@@ -1353,6 +1353,19 @@ enum SwipeCarouselCloudMirror {
         return dict["carouselImageStorageURLs"] as? [String]
     }
 
+    /// Rebuilds a displayable slide list from the durable Supabase copies —
+    /// the exact media iOS renders instantly. The mirror is only ever written
+    /// complete (every page or nothing), so a non-nil result is the full set.
+    /// Upload order is page order; videos inside carousels are poster frames.
+    static func mirroredCarouselItems(from metadata: String?) -> [CarouselItem]? {
+        guard let urls = mirroredURLs(from: metadata), !urls.isEmpty else { return nil }
+        let items = urls.enumerated().compactMap { index, raw -> CarouselItem? in
+            guard let url = URL(string: raw) else { return nil }
+            return CarouselItem(index: index, mediaType: .image, mediaURL: url)
+        }
+        return items.count == urls.count ? items : nil
+    }
+
     private static func mirror(atom: Atom, items: [CarouselItem], client: SupabaseClient, userId: String) async -> Bool {
         let shortcode = atom.richContent?.instagramId
         let cacheDir = FileManager.default

@@ -318,21 +318,22 @@ struct DailyBriefCard: View {
         }
     }
 
+    /// The editorial register (peakui): serif marginalia hanging under the
+    /// masthead rule — content you *read*, never a boxed widget you manage.
+    /// A bordered card with a ✕ reads as a notification banner; the same
+    /// words in the serif voice read as the morning's marginal note. Actions
+    /// surface on hover only.
     private func card(_ brief: DailyBrief) -> some View {
-        VStack(alignment: .leading, spacing: DS.space8) {
+        VStack(alignment: .leading, spacing: DS.space6) {
             cardHeader
-            VStack(alignment: .leading, spacing: DS.space6) {
+            VStack(alignment: .leading, spacing: DS.space4) {
                 ForEach(brief.lines) { line in
                     briefLine(line)
                 }
             }
         }
-        .padding(DS.space16)
-        .background(DS.surfaceElevated, in: .rect(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(DS.giltMuted.opacity(0.25), lineWidth: 1)
-        )
+        .padding(.vertical, DS.space4)
+        .contentShape(Rectangle())
         .onHover { hovering in
             withAnimation(ProMotionSprings.hover) { isHovering = hovering }
         }
@@ -341,13 +342,13 @@ struct DailyBriefCard: View {
     private var cardHeader: some View {
         HStack(spacing: DS.space6) {
             Image(systemName: "sunrise")
-                .font(DS.caption.weight(.medium))
+                .font(DS.caption2.weight(.medium))
                 .foregroundStyle(DS.gilt)
                 .accessibilityHidden(true)
             Text("DAILY RETURN")
                 .font(DS.smallCaps)
                 .tracking(1.4)
-                .foregroundStyle(DS.textMuted)
+                .foregroundStyle(DS.giltMuted)
             Spacer()
             if isHovering {
                 Button {
@@ -365,20 +366,22 @@ struct DailyBriefCard: View {
                 .help("Compose again")
                 .accessibilityLabel("Compose the brief again")
                 .transition(.opacity)
+
+                Button {
+                    DailyBriefEngine.shared.dismissForToday()
+                    withAnimation(ProMotionSprings.gentle) { self.brief = nil }
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(DS.caption2.weight(.semibold))
+                        .foregroundStyle(DS.textMuted)
+                        .frame(width: 18, height: 18)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Dismiss for today")
+                .accessibilityLabel("Dismiss today's brief")
+                .transition(.opacity)
             }
-            Button {
-                DailyBriefEngine.shared.dismissForToday()
-                withAnimation(ProMotionSprings.gentle) { self.brief = nil }
-            } label: {
-                Image(systemName: "xmark")
-                    .font(DS.caption2.weight(.semibold))
-                    .foregroundStyle(DS.textMuted)
-                    .frame(width: 18, height: 18)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Dismiss for today")
-            .accessibilityLabel("Dismiss today's brief")
         }
     }
 
@@ -393,36 +396,57 @@ struct DailyBriefCard: View {
         }
     }
 
+    // Brief lines speak the marginalia serif (DS.dateSerif — the editorial
+    // accent voice): the lead line in ink, resurface links in secondary with
+    // a gilt arrow as the door.
     @ViewBuilder
     private func briefLine(_ line: DailyBrief.Line) -> some View {
         if let atomUuid = line.atomUuid {
-            Button {
+            BriefLinkLine(text: line.text, atomTitle: line.atomTitle) {
                 NotificationCenter.default.post(
                     name: CosmoNotification.Navigation.openBlockInFocusMode,
                     object: nil,
                     userInfo: ["atomUUID": atomUuid]
                 )
-            } label: {
-                HStack(alignment: .firstTextBaseline, spacing: DS.space6) {
-                    Image(systemName: "arrow.up.right")
-                        .font(DS.caption2.weight(.semibold))
-                        .foregroundStyle(DS.gilt)
-                        .accessibilityHidden(true)
-                    Text(line.text)
-                        .font(DS.callout)
-                        .foregroundStyle(DS.textSecondary)
-                        .multilineTextAlignment(.leading)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("\(line.text). Opens \(line.atomTitle ?? "the source")")
         } else {
             Text(line.text)
-                .font(DS.callout)
+                .font(DS.dateSerif)
                 .foregroundStyle(DS.text)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+}
+
+/// A resurface line — hovering warms the text toward ink so the whole line
+/// reads clickable without ever underlining the serif.
+private struct BriefLinkLine: View {
+    let text: String
+    let atomTitle: String?
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(alignment: .firstTextBaseline, spacing: DS.space6) {
+                Image(systemName: "arrow.up.right")
+                    .font(DS.caption2.weight(.semibold))
+                    .foregroundStyle(DS.gilt)
+                    .accessibilityHidden(true)
+                Text(text)
+                    .font(DS.dateSerif)
+                    .foregroundStyle(isHovered ? DS.text : DS.textSecondary)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+        }
+        .help("Open \(atomTitle ?? "the source")")
+        .accessibilityLabel("\(text). Opens \(atomTitle ?? "the source")")
     }
 }

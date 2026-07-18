@@ -94,6 +94,7 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
     case stickyNote = "sticky_note"                     // Square sticky note blocks (yellow)
     case thinkspace                                     // Saved Thinkspace configurations
     case image                                          // Native image blocks on canvas
+    case file                                           // File portal blocks (PDF/XLSX/CSV/any file previewed in place)
 
     // MARK: - Planning & Objectives
     case objective                                      // Quarter/annual objectives (goals)
@@ -133,7 +134,7 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         switch self {
         case .idea, .task, .project, .content, .research, .connection,
              .journalEntry, .calendarEvent, .scheduleBlock, .uncommittedItem,
-             .note, .stickyNote, .objective, .creator, .taxonomyValue, .image, .area,
+             .note, .stickyNote, .objective, .creator, .taxonomyValue, .image, .file, .area,
              .deepDive, .inquirySession, .question, .extract, .lexiconEntry:
             return .core
         case .xpEvent, .levelUpdate, .streakEvent, .badgeUnlocked, .badge, .dimensionSnapshot:
@@ -181,7 +182,7 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
     /// AtomRepository fetch methods.
     static let userSearchableTypes: [AtomType] = [
         .idea, .note, .task, .research, .content, .connection,
-        .project, .journalEntry, .image
+        .project, .journalEntry, .image, .file
     ]
 
     /// Whether this atom type contributes to XP
@@ -305,6 +306,8 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         case .agentLearning: return "Agent Learning"
         // Image
         case .image: return "Image"
+        // File portal
+        case .file: return "File"
         // Areas
         case .area: return "Area"
         // Automation
@@ -407,6 +410,8 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         case .agentLearning: return "Agent Learning"
         // Image
         case .image: return "Images"
+        // File portal
+        case .file: return "Files"
         // Areas
         case .area: return "Areas"
         // Automation
@@ -509,6 +514,8 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         case .agentLearning: return "brain"
         // Image
         case .image: return "photo.fill"
+        // File portal
+        case .file: return "doc.fill"
         // Areas
         case .area: return "square.stack.fill"
         // Automation
@@ -2380,6 +2387,103 @@ struct ImageMetadata: Codable, Sendable {
     var width: CGFloat?
     var height: CGFloat?
     var fileSize: Int?
+}
+
+// MARK: - File Portal Metadata
+
+/// Typed metadata for `AtomType.file` atoms — files placed on the canvas as
+/// portal blocks. Lives under the single top-level `filePortal` key (see
+/// `FilePortalMetadataEnvelope`) so the portal writer owns exactly one key of
+/// the shared metadata JSON object and sibling keys always survive the merge.
+struct FilePortalMetadata: Codable, Sendable, Equatable {
+    /// Portal kind discriminator. Raw string so a kind minted by a newer
+    /// build degrades to `.generic` here instead of failing the decode.
+    enum Kind: String, Codable, Sendable {
+        case pdf
+        case spreadsheet
+        case csv
+        case generic
+
+        init(from decoder: Decoder) throws {
+            let raw = try decoder.singleValueContainer().decode(String.self)
+            self = Kind(rawValue: raw) ?? .generic
+        }
+
+        static func detect(fileExtension: String) -> Kind {
+            switch fileExtension.lowercased() {
+            case "pdf": return .pdf
+            case "xlsx", "xls", "xlsm", "xltx", "numbers": return .spreadsheet
+            case "csv", "tsv": return .csv
+            default: return .generic
+            }
+        }
+    }
+
+    /// The `media_attachments` row (ownerType `atom`, ownerUUID = this atom's
+    /// uuid) that holds the file bytes locally and mirrors them to Supabase.
+    var attachmentUUID: String
+    var originalFilename: String
+    var fileExtension: String
+    var byteSize: Int64?
+    var portalKind: Kind
+    /// PDF page count, stamped at import when the document parses.
+    var pageCount: Int?
+    /// XLSX worksheet names, stamped at import when the workbook parses.
+    var sheetNames: [String]?
+    /// Portal view state — what the block shows, restored across sessions.
+    var currentPage: Int?
+    var currentSheetIndex: Int?
+    /// Content stamp for thumbnail-cache invalidation (bytes never change
+    /// after import today, but re-import replaces the stamp).
+    var thumbStamp: String?
+
+    init(
+        attachmentUUID: String,
+        originalFilename: String,
+        fileExtension: String,
+        byteSize: Int64? = nil,
+        portalKind: Kind,
+        pageCount: Int? = nil,
+        sheetNames: [String]? = nil,
+        currentPage: Int? = nil,
+        currentSheetIndex: Int? = nil,
+        thumbStamp: String? = nil
+    ) {
+        self.attachmentUUID = attachmentUUID
+        self.originalFilename = originalFilename
+        self.fileExtension = fileExtension
+        self.byteSize = byteSize
+        self.portalKind = portalKind
+        self.pageCount = pageCount
+        self.sheetNames = sheetNames
+        self.currentPage = currentPage
+        self.currentSheetIndex = currentSheetIndex
+        self.thumbStamp = thumbStamp
+    }
+
+    // Lenient decode: a row written by a newer build must never poison the
+    // fetch. Missing required-ish fields degrade to empty and the block view
+    // renders its unavailable state instead.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        attachmentUUID = try c.decodeIfPresent(String.self, forKey: .attachmentUUID) ?? ""
+        originalFilename = try c.decodeIfPresent(String.self, forKey: .originalFilename) ?? ""
+        fileExtension = try c.decodeIfPresent(String.self, forKey: .fileExtension) ?? ""
+        byteSize = try c.decodeIfPresent(Int64.self, forKey: .byteSize)
+        portalKind = try c.decodeIfPresent(Kind.self, forKey: .portalKind) ?? .generic
+        pageCount = try c.decodeIfPresent(Int.self, forKey: .pageCount)
+        sheetNames = try c.decodeIfPresent([String].self, forKey: .sheetNames)
+        currentPage = try c.decodeIfPresent(Int.self, forKey: .currentPage)
+        currentSheetIndex = try c.decodeIfPresent(Int.self, forKey: .currentSheetIndex)
+        thumbStamp = try c.decodeIfPresent(String.self, forKey: .thumbStamp)
+    }
+}
+
+/// Envelope that namespaces the portal metadata under one top-level key so
+/// `mergingMetadataKeys` replaces only `filePortal` and never touches sibling
+/// keys owned by other writers.
+struct FilePortalMetadataEnvelope: Codable, Sendable {
+    var filePortal: FilePortalMetadata?
 }
 
 // MARK: - Task Recommendation Types

@@ -1012,10 +1012,11 @@ struct ContentFocusModeView: View {
 
     private var scriptoriumToolbar: some View {
         // Chrome islands, not a full-width bar: navigate | ledger | tools —
-        // the wrapper already provides the row insets. In pane context the
-        // ledger flows between the clusters instead of absolute-centering,
-        // so nothing can overlap at pane widths.
-        CosmoChromeRow(insetsEnabled: false, centersAbsolutely: !isPaneContext) {
+        // the wrapper already provides the row insets. Absolute centering
+        // needs full-width hosting AND full layout width — beside the open
+        // pane deck main content squeezes to pane widths, where the ledger
+        // flows between the clusters so nothing can overlap.
+        CosmoChromeRow(insetsEnabled: false, centersAbsolutely: !isPaneContext && layoutMode == .full) {
             scriptoriumLeadingIsland
         } center: {
             CosmoChromeIsland { toolbarCenterSlot }

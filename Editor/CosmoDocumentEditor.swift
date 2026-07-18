@@ -340,6 +340,7 @@ struct CosmoDocumentEditor: View {
             },
             onStructuredDocumentChange: handleDirectStructuredDocumentChange,
             autoFocus: autoFocus,
+            initialContent: { serializedEditorContent() },
             onSave: { _ in syncDocumentFromEditor() }
         )
         .onAppear {
@@ -369,10 +370,12 @@ struct CosmoDocumentEditor: View {
         }
     }
 
-    private func syncEditorFromDocument(preferLivePlainText: Bool = false) {
-        isApplyingExternalUpdate = true
+    /// The fully styled editor content for the current document — the one
+    /// serialization used by external syncs AND by the representable's
+    /// mount-time seed (so both sides are always byte-identical).
+    private func serializedEditorContent(preferLivePlainText: Bool = false) -> NSAttributedString {
         let resolved = resolvedDocumentForEditor(preferLivePlainText: preferLivePlainText)
-        attributedText = EditorRhythmPolicy.applyingLineSpacing(
+        return EditorRhythmPolicy.applyingLineSpacing(
             lineSpacingAdjustment,
             to: EditorFontPolicy.applyingDesign(
                 fontDesign,
@@ -386,6 +389,12 @@ struct CosmoDocumentEditor: View {
                 )
             )
         )
+    }
+
+    private func syncEditorFromDocument(preferLivePlainText: Bool = false) {
+        isApplyingExternalUpdate = true
+        let resolved = resolvedDocumentForEditor(preferLivePlainText: preferLivePlainText)
+        attributedText = serializedEditorContent(preferLivePlainText: preferLivePlainText)
         let resolvedPlainText = resolvedPlainTextForCallbacks(from: resolved)
         plainTextMirror = resolvedPlainText
         lastEmittedPlainText = resolvedPlainText

@@ -149,6 +149,32 @@ final class BlockSelectionTests: XCTestCase {
         BlockSelectionClipboardTarget.deactivate()
     }
 
+    func testMarkdownOfSelectionRendersKindsForOtherApps() {
+        let document = makeDocument()
+        let ids: Set<UUID> = [document.blocks[0].id, document.blocks[2].id, document.blocks[3].id]
+
+        let markdown = BlockOperations.markdown(ofBlocksWithIDs: ids, in: document)
+
+        XCTAssertEqual(markdown, "Alpha\n## Gamma\nDelta")
+    }
+
+    func testClipboardActionMappingRecognizesCommandKeyEquivalents() throws {
+        func keyEvent(_ character: String, flags: NSEvent.ModifierFlags) throws -> NSEvent {
+            try XCTUnwrap(NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0,
+                windowNumber: 0, context: nil, characters: character,
+                charactersIgnoringModifiers: character, isARepeat: false, keyCode: 0
+            ))
+        }
+
+        XCTAssertEqual(BlockSelectionClipboardTarget.action(for: try keyEvent("c", flags: .command)), .copy)
+        XCTAssertEqual(BlockSelectionClipboardTarget.action(for: try keyEvent("x", flags: .command)), .cut)
+        XCTAssertEqual(BlockSelectionClipboardTarget.action(for: try keyEvent("a", flags: .command)), .selectAll)
+        XCTAssertNil(BlockSelectionClipboardTarget.action(for: try keyEvent("v", flags: .command)))
+        XCTAssertNil(BlockSelectionClipboardTarget.action(for: try keyEvent("c", flags: [.command, .shift])))
+        XCTAssertNil(BlockSelectionClipboardTarget.action(for: try keyEvent("c", flags: [])))
+    }
+
     func testClipboardTargetIgnoresInactiveSelection() {
         BlockSelectionClipboardTarget.activate(
             isActive: { false },

@@ -157,6 +157,10 @@ enum CosmoNotification {
         // Focus mode
         static let enterFocusMode = Notification.Name("com.cosmo.nav.enterFocusMode")
         static let exitFocusMode = Notification.Name("com.cosmo.nav.exitFocusMode")
+        /// Posted by Swipe Study on mount — the swipe pages hold their
+        /// zoom-through hero until the study is actually on screen, so the
+        /// handoff never depends on guessed timers.
+        static let swipeStudyDidAppear = Notification.Name("com.cosmo.nav.swipeStudyDidAppear")
         static let createEntityInFocusMode = Notification.Name("com.cosmo.nav.createEntityInFocusMode")
         static let bringRelatedBlocks = Notification.Name("com.cosmo.nav.bringRelatedBlocks")
 

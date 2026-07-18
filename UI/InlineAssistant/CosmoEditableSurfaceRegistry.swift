@@ -192,10 +192,18 @@ final class CosmoInlineAmbientContextPack {
         let excludedUUID = Self.atomUUID(fromSurfaceID: surfaceID)
 
         Task(priority: .utility) { [weak self] in
+            // Deferred: registration fires exactly when a document opens, and
+            // the open path needs every cycle it can get. A warm-up that
+            // lands a couple of seconds later is just as warm.
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
+            // Broad fallback off: the seed is a text lead, not a user query —
+            // an any-term OR over it matches most of the corpus, and "no
+            // ambient pack" is a fine outcome for a prefetch.
             let results = (try? await HybridSearchEngine.shared.search(
                 query: seedQuery,
                 limit: 5,
-                excludedEntityUUIDs: excludedUUID.map { [$0] } ?? []
+                excludedEntityUUIDs: excludedUUID.map { [$0] } ?? [],
+                includeBroadFallback: false
             )) ?? []
 
             await MainActor.run { [weak self] in
@@ -235,9 +243,17 @@ final class CosmoInlineAmbientContextPack {
     }
 
     private static func seedQuery(for snapshot: CosmoEditableSourceSnapshot) -> String {
+        // Cap the seed to a handful of tokens. A 300-char lead produced
+        // ~50-token FTS queries whose retrieval-ladder passes degenerated
+        // into corpus-wide scans; the title plus the first sentence's worth
+        // of words retrieves the same neighbors at a fraction of the cost.
         let bodyLead = String(snapshot.text.prefix(300))
-        return [snapshot.title, bodyLead]
+        let combined = [snapshot.title, bodyLead]
             .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .joined(separator: " ")
+        return combined
+            .split(whereSeparator: \.isWhitespace)
+            .prefix(12)
             .joined(separator: " ")
     }
 

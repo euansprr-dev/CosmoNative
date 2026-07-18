@@ -113,15 +113,21 @@ final class SwipeStudyModel {
 
     // MARK: - Lifecycle
 
-    /// Called from the view's onAppear. Fetches the fresh row (the injected
-    /// atom may be a stale snapshot) and loads it.
+    /// Called from the view's onAppear. First paint is synchronous from the
+    /// injected atom — FocusNavigationCoordinator preloaded it, so the bench
+    /// has real content on frame 1 of the entrance and the zoom-through hero
+    /// never sits over a loading state. The injected snapshot can still be
+    /// stale (pane/window contexts), so a background fetch reloads only when
+    /// the row actually moved.
     func start() {
         acquireLock(for: initialAtom.uuid)
+        loadAtom(using: initialAtom)
         Task {
-            if let id = initialAtom.id, let fresh = try? await AtomRepository.shared.fetch(id: id) {
+            if let id = initialAtom.id,
+               let fresh = try? await AtomRepository.shared.fetch(id: id),
+               fresh.updatedAt != initialAtom.updatedAt,
+               isViewingAtom(uuid: fresh.uuid) {
                 loadAtom(using: fresh)
-            } else {
-                loadAtom(using: initialAtom)
             }
         }
     }
@@ -1377,6 +1383,39 @@ final class SwipeStudyModel {
             guard isViewingAtom(uuid: expectedUUID) else { return }
 
             let shortcode = InstagramExtractor.shared.extractShortcode(from: url)
+
+            // Durable-mirror fast path: the cloud worker mirrors every carousel
+            // page into Supabase storage (`carouselImageStorageURLs`) — the same
+            // copies iOS renders instantly. When the local slide list is missing
+            // or shorter (worker-processed swipe that never stored rich-content
+            // items on this Mac), rebuild it from the mirror instead of running
+            // a live Instagram extraction against a rotting CDN link.
+            let storedItemCount = atom.richContent?.instagramData?.carouselItems?.count ?? 0
+            if isPostURL(urlString),
+               let mirrorItems = SwipeCarouselCloudMirror.mirroredCarouselItems(from: atom.metadata),
+               mirrorItems.count > storedItemCount {
+                isCarouselContent = true
+                let mirrorMedia = InstagramMediaData(
+                    originalURL: url,
+                    contentType: mirrorItems.count == 1 ? .image : .carousel,
+                    videoURL: nil,
+                    thumbnailURL: atom.thumbnailUrl.flatMap(URL.init(string:))
+                        ?? atom.richContent?.thumbnailUrl.flatMap(URL.init(string:))
+                        ?? mirrorItems.first?.mediaURL,
+                    duration: nil,
+                    authorUsername: atom.richContent?.instagramData?.authorUsername,
+                    caption: atom.richContent?.instagramData?.caption,
+                    carouselItems: mirrorItems,
+                    expectedCarouselItemCount: mirrorItems.count,
+                    extractedAt: Date()
+                )
+                igMediaData = mirrorMedia
+                carouselCurrentIndex = min(carouselCurrentIndex, mirrorItems.count - 1)
+                igIsExtractingVideo = false
+                await persistInstagramMediaToAtom(mirrorMedia, expectedAtomUUID: expectedUUID)
+                await handleCarouselTranscription(items: mirrorItems, expectedUUID: expectedUUID)
+                return
+            }
 
             // Fast path: stored carousel items (regardless of content-type label).
             if let storedIGData = atom.richContent?.instagramData,

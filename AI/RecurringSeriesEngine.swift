@@ -599,6 +599,83 @@ final class RecurringSeriesEngine {
         }
     }
 
+    /// Whether a series template has any logged history worth preserving. When false,
+    /// "delete series" can remove the template atom outright; when true it must end the
+    /// series in place (`endSeriesPreservingHistory`) so the log survives.
+    nonisolated static func hasLoggedHistory(_ meta: TaskMetadata) -> Bool {
+        !(meta.completedOccurrences ?? []).isEmpty || !(meta.skippedOccurrences ?? []).isEmpty
+    }
+
+    /// "Delete series" that keeps the completion history: truncates the recurrence rule to
+    /// end the day before the live occurrence (never earlier than the last logged day, so a
+    /// just-completed today keeps projecting), which removes the current occurrence and every
+    /// future one while past days — and the template that owns their log — stay intact.
+    func endSeriesPreservingHistory(
+        templateUUID: String,
+        asOf today: Date = Date(),
+        calendar: Calendar = .current
+    ) async throws {
+        try await mutateSeriesMetadata(
+            templateUUID: templateUUID,
+            context: "RecurringSeriesEngine.endSeries(\(templateUUID.prefix(8)))",
+            requiresSnapshot: true,
+            calendar: calendar
+        ) { meta, snapshot in
+            guard let snapshot else { return }
+
+            let todayStart = calendar.startOfDay(for: today)
+            let liveDay = Self.liveOccurrenceDay(for: snapshot, asOf: today, calendar: calendar)
+            let cutoff = min(todayStart, liveDay ?? todayStart)
+            let dayBeforeCutoff = calendar.date(byAdding: .day, value: -1, to: cutoff)
+                ?? cutoff.addingTimeInterval(-86_400)
+            let lastLoggedDay = (snapshot.completedDays.union(snapshot.skippedDays))
+                .compactMap { Self.day(fromKey: $0, calendar: calendar) }
+                .max()
+            let endDay = max(dayBeforeCutoff, lastLoggedDay ?? .distantPast)
+
+            let rule = snapshot.rule
+            meta.recurrence = RecurrenceRule(
+                frequency: rule.frequency,
+                interval: rule.interval,
+                daysOfWeek: rule.daysOfWeek,
+                dayOfMonth: rule.dayOfMonth,
+                monthOfYear: rule.monthOfYear,
+                endCondition: .onDate(endDay)
+            ).toJSON()
+
+            var overrides = meta.occurrenceOverrides ?? [:]
+
+            // A logged day can sit past the live one (completed today while an older
+            // occurrence was still open) — those un-actioned days survive the truncation,
+            // so cancel them explicitly. Canceled, not skipped: deleting the series
+            // shouldn't brand its tail as "missed".
+            if let liveDay, liveDay <= endDay,
+               let dayAfterEnd = calendar.date(byAdding: .day, value: 1, to: endDay) {
+                let span = DateInterval(start: liveDay, end: dayAfterEnd)
+                for date in rule.occurrenceDates(in: span, startingFrom: snapshot.startDate, calendar: calendar) {
+                    let key = Self.dayKey(for: calendar.startOfDay(for: date), calendar: calendar)
+                    if snapshot.completedDays.contains(key) || snapshot.skippedDays.contains(key) { continue }
+                    var override = overrides[key] ?? TaskOccurrenceOverride()
+                    override.isCanceled = true
+                    overrides[key] = override
+                }
+            }
+
+            // Moved occurrences project from their override, not the rule window — an
+            // un-actioned one would outlive the series no matter where the rule ends.
+            for (sourceKey, override) in overrides {
+                guard let targetKey = override.rescheduledTo,
+                      !snapshot.completedDays.contains(targetKey),
+                      !snapshot.skippedDays.contains(targetKey) else { continue }
+                var canceled = override
+                canceled.isCanceled = true
+                overrides[sourceKey] = canceled
+            }
+
+            meta.occurrenceOverrides = overrides.isEmpty ? nil : overrides
+        }
+    }
+
     // MARK: - Occurrence overrides (cancel / reschedule a single day)
 
     /// Remove a single occurrence from the series ("delete this occurrence") without

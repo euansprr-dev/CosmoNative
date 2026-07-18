@@ -43,10 +43,20 @@ final class SwipeLibraryViewModel {
 
     var displayMode: SwipeLibraryMode = .grid
 
-    private var hasLoaded = false
+    /// True once the first library load has landed — pages gate their
+    /// editorial layout on this so a cold open shows the skeleton, never a
+    /// partial page (boards shelf first, hero missing).
+    private(set) var hasLoaded = false
 
     func loadIfNeeded(section: SwipeLibrarySectionSelection) async {
         setScope(section)
+        guard !hasLoaded else { return }
+        await reload()
+    }
+
+    /// Launch-time warm: the first load WITHOUT touching scope — a prewarm
+    /// racing a real visit must never re-scope what the user is looking at.
+    func prewarmIfNeeded() async {
         guard !hasLoaded else { return }
         await reload()
     }

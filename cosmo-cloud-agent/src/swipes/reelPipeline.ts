@@ -237,6 +237,7 @@ TEXT TO IGNORE:
 - Instagram UI (like counts, username, share/comment buttons, progress bar)
 - Watermarks, @handles, brand logos
 - Music credits, audio attribution
+- Author attribution on a screenshotted post shown in-frame (tweet/thread/repost screenshots): the embedded post's profile photo, display name, @username handle, verified badge, timestamp, and like/reply counts are attribution, NOT content — skip them and read ONLY the post's body text
 - Text that is part of background photographs (not overlaid by the creator)
 - App/website UI inside screen recordings (browser pages, dashboards, listings) shown behind or between the creator's text overlays — the recorded screen's own menus, headers, and paragraphs are BACKGROUND; read ONLY the creator's overlay text
 

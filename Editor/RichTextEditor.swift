@@ -318,6 +318,8 @@ struct RichTextEditor: View {
     var onPlainTextDidChange: ((String) -> Void)? = nil
     var onStructuredDocumentChange: ((RichDocument, String) -> Void)? = nil
     var autoFocus: Bool = false
+    /// Mount-time content seed — see TextKitEditorRepresentable.initialContent.
+    var initialContent: (() -> NSAttributedString)? = nil
 
     // Geometry for menu clamping
     @State private var containerSize: CGSize = .zero
@@ -404,6 +406,7 @@ struct RichTextEditor: View {
         onPlainTextDidChange: ((String) -> Void)? = nil,
         onStructuredDocumentChange: ((RichDocument, String) -> Void)? = nil,
         autoFocus: Bool = false,
+        initialContent: (() -> NSAttributedString)? = nil,
         onSave: ((NSAttributedString) -> Void)? = nil
     ) {
         self._text = text
@@ -453,6 +456,7 @@ struct RichTextEditor: View {
         self.onPlainTextDidChange = onPlainTextDidChange
         self.onStructuredDocumentChange = onStructuredDocumentChange
         self.autoFocus = autoFocus
+        self.initialContent = initialContent
         self.onSave = onSave
     }
 
@@ -553,7 +557,8 @@ struct RichTextEditor: View {
                 rowBlockID: rowBlockID,
                 rowBlockKind: rowBlockKind,
                 rowHeadingIsCollapsible: rowHeadingIsCollapsible,
-                editorInstanceID: overlayEscapeOwnerID
+                editorInstanceID: overlayEscapeOwnerID,
+                initialContent: initialContent
             )
             // Non-scrolling editors report their live height through
             // CosmoScrollView.intrinsicContentSize. Do not also pin this view to

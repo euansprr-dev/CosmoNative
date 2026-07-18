@@ -6,6 +6,22 @@ import SwiftUI
 import Combine
 import GRDB
 
+/// Shared wording for the delete-series confirmations (task list, menus, detail
+/// panel, inline editor) — deleting a series keeps its completion history now,
+/// and every surface should say so the same way.
+enum SeriesDeleteCopy {
+    static func message(completionCount: Int) -> String {
+        switch completionCount {
+        case 0:
+            return "This removes the repeating task."
+        case 1:
+            return "This removes the current occurrence and all future ones. Your 1 logged completion stays in your history."
+        default:
+            return "This removes the current occurrence and all future ones. Your \(completionCount) logged completions stay in your history."
+        }
+    }
+}
+
 // MARK: - Stub Types (Plannerum directory deleted)
 
 /// Minimal stub for PlannerumViewModel (Plannerum deleted)
@@ -492,6 +508,13 @@ final class CommandCenterDashboardViewModel {
     // MARK: - Upcoming (Upcoming view)
 
     var upcomingDayGroups: [UpcomingDayViewModel] = []
+    /// Schedule blocks per visible day — the Upcoming board draws them as
+    /// display-only calendar cards (editing lives on the Today timeline).
+    var upcomingScheduleBlocksByDay: [Date: [ScheduleBlockEntry]] = [:]
+    /// True while a task row is being dragged anywhere in the ledger — the
+    /// timeline reads it to wake its drop targets (continuous feedback: the
+    /// invitation appears the moment the pickup happens, not at the drop).
+    var isTaskDragInFlight = false
     var upcomingWeekOffset: Int = 0
     var upcomingCalendarEvents: [String: [CalendarEvent]] = [:]  // keyed by date string
     var upcomingCalendarScope: UpcomingCalendarScope = .week
@@ -625,11 +648,22 @@ final class CommandCenterDashboardViewModel {
 
     // MARK: - Computed
 
+    /// Tasks completed on the viewed day — the receding "Completed" section at the
+    /// bottom of Today (iOS parity: finished work stays in place, dimmed, instead of
+    /// vanishing straight to the Logbook). Derived from the already-grouped completed
+    /// set so it stays correct as you navigate days; sorted completedAt-descending.
+    var completedTasksForSelectedDay: [TaskViewModel] {
+        let calendar = Calendar.current
+        return completedTasksByDay
+            .first { calendar.isDate($0.date, inSameDayAs: selectedDate) }?
+            .tasks ?? []
+    }
+
     /// Flat list of currently visible tasks for keyboard navigation
     var currentVisibleTasks: [TaskViewModel] {
         switch viewMode {
         case .today:
-            return overdueTasks + scheduledTasks + unscheduledTasks
+            return overdueTasks + scheduledTasks + unscheduledTasks + completedTasksForSelectedDay
         case .upcoming:
             return upcomingDayGroups.flatMap { $0.tasks }
         case .logbook:
@@ -1100,6 +1134,15 @@ final class CommandCenterDashboardViewModel {
 
             assignIfChanged(\.overdueTasks, to: [])
             assignIfChanged(\.upcomingDayGroups, to: dayGroups)
+
+            // The week's blocks, day by day (recurring templates project) —
+            // without them the board shows a plan with its scaffolding missing.
+            var blocksByDay: [Date: [ScheduleBlockEntry]] = [:]
+            for dayStart in visibleDates {
+                blocksByDay[dayStart] = await ScheduleBlockEngine.blocks(on: dayStart)
+            }
+            assignIfChanged(\.upcomingScheduleBlocksByDay, to: blocksByDay)
+
             await loadUpcomingCalendarEvents()
         } catch {
             print("❌ Dashboard: Failed to load upcoming tasks: \(error)")
@@ -1824,6 +1867,56 @@ final class CommandCenterDashboardViewModel {
     func refreshScheduleBlocks() async {
         let blocks = await ScheduleBlockEngine.blocks(on: selectedDate)
         assignIfChanged(\.todayScheduleBlocks, to: blocks)
+    }
+
+    /// The Mac block palette — iOS `ScheduleEngine.blockPalette`, hex for hex
+    /// (tokens move in pairs).
+    static let blockPalette: [String] = [
+        "#8B5CF6", // violet (default)
+        "#818CF8", // indigo
+        "#38BDF8", // sky
+        "#34D399", // emerald
+        "#FBBF24", // amber
+        "#F97316", // orange
+        "#EF4444", // red
+        "#6B7280", // slate
+    ]
+
+    /// Draw a block onto the day (the timeline's drag-create). Snapping to
+    /// the 15-minute grain is the caller's job; this persists and refreshes.
+    @discardableResult
+    func createScheduleBlock(title: String, start: Date, end: Date, colorHex: String? = nil) async -> String? {
+        var meta = ScheduleBlockMetadata()
+        meta.startTime = ISO8601.string(from: start)
+        meta.endTime = ISO8601.string(from: end)
+        meta.color = colorHex ?? Self.blockPalette[0]
+        var atom = Atom.new(type: .scheduleBlock, title: title)
+        atom.metadata = Atom.mergedJSONObjectString(existing: nil, overlay: meta, context: "Dashboard.createScheduleBlock")
+        guard let created = try? await AtomRepository.shared.create(atom) else { return nil }
+        await refreshScheduleBlocks()
+        return created.uuid
+    }
+
+    /// Move or resize a one-off block. Recurring templates are series-
+    /// anchored (whole-series time semantics) — the timeline disables their
+    /// drag rather than silently rewriting every occurrence.
+    func updateScheduleBlockTimes(uuid: String, start: Date, end: Date) async {
+        _ = try? await AtomRepository.shared.update(uuid: uuid) { atom in
+            var meta = atom.metadataValue(as: ScheduleBlockMetadata.self) ?? ScheduleBlockMetadata()
+            meta.startTime = ISO8601.string(from: start)
+            meta.endTime = ISO8601.string(from: end)
+            atom.metadata = Atom.mergedJSONObjectString(existing: atom.metadata, overlay: meta, context: "Dashboard.updateScheduleBlockTimes")
+        }
+        await refreshScheduleBlocks()
+    }
+
+    func renameScheduleBlock(uuid: String, title: String) async {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        _ = try? await AtomRepository.shared.update(uuid: uuid) { atom in
+            atom.title = trimmed
+        }
+        await refreshScheduleBlocks()
     }
 
     /// The one door from a block into the task world: the new task inherits
@@ -2882,7 +2975,7 @@ final class CommandCenterDashboardViewModel {
     }
 
     /// Number of logged completions on a recurring series template — surfaced by the
-    /// "Delete series and N logged completions?" confirmation.
+    /// delete-series confirmation message.
     func seriesCompletionCount(templateUUID: String) async -> Int {
         guard let atom = try? await AtomRepository.shared.fetch(uuid: templateUUID),
               let meta = atom.metadataValue(as: TaskMetadata.self) else { return 0 }
@@ -2895,6 +2988,18 @@ final class CommandCenterDashboardViewModel {
     ) async {
         do {
             guard let current = try await AtomRepository.shared.fetch(uuid: uuid) else { return }
+            // Virtual series template with logged history: deleting the atom would take the
+            // completion log with it. End the series in place instead — past occurrences
+            // (and their completions) stay; the current and future ones vanish.
+            if let meta = current.metadataValue(as: TaskMetadata.self),
+               meta.recurrenceParentUUID == nil,
+               meta.recurrence != nil,
+               RecurringSeriesEngine.hasLoggedHistory(meta) {
+                try await RecurringSeriesEngine.shared.endSeriesPreservingHistory(templateUUID: uuid)
+                await removeCalendarEvent(for: current)
+                await refreshTaskCollectionsAfterMutation()
+                return
+            }
             try await truncateRecurringTemplateIfNeeded(
                 for: current,
                 scope: recurrenceScope
@@ -3001,14 +3106,17 @@ final class CommandCenterDashboardViewModel {
     private func deleteTasksAndCalendarEvents(_ atoms: [Atom]) async throws {
         for atom in atoms {
             try await AtomRepository.shared.delete(uuid: atom.uuid)
-            if calendarService.hasCalendarAccess,
-               let calendarEventId = atom.metadataValue(as: TaskMetadata.self)?.calendarEventId {
-                do {
-                    try await calendarService.deleteCosmoEvent(eventId: calendarEventId)
-                } catch {
-                    PersistenceHealth.note(.syncFailure, context: "Dashboard.deleteTasksAndCalendarEvents(\(atom.uuid.prefix(8)))", detail: "EK event removal failed: \(error.localizedDescription)")
-                }
-            }
+            await removeCalendarEvent(for: atom)
+        }
+    }
+
+    private func removeCalendarEvent(for atom: Atom) async {
+        guard calendarService.hasCalendarAccess,
+              let calendarEventId = atom.metadataValue(as: TaskMetadata.self)?.calendarEventId else { return }
+        do {
+            try await calendarService.deleteCosmoEvent(eventId: calendarEventId)
+        } catch {
+            PersistenceHealth.note(.syncFailure, context: "Dashboard.deleteTasksAndCalendarEvents(\(atom.uuid.prefix(8)))", detail: "EK event removal failed: \(error.localizedDescription)")
         }
     }
 
@@ -3024,6 +3132,9 @@ final class CommandCenterDashboardViewModel {
     }
 
     func startFocusSession(for task: TaskViewModel) {
+        // The one choke point for starting a sitting (gauge button, row play,
+        // Space) — the cue lives with the action, not the surfaces.
+        Sound.focusStart()
         let habit = resolvedHabit(for: task)
         var intentPresentation = resolvedIntentPresentation(for: task)
         // Both-axes attribution: when the task carries no explicit intent, inherit the habit's
@@ -3553,6 +3664,52 @@ final class CommandCenterDashboardViewModel {
 
     var isViewingToday: Bool {
         Calendar.current.isDateInToday(selectedDate)
+    }
+
+    /// Every open band cleared with at least one completion on the viewed
+    /// day — the once-a-day earned moment (the masthead's "All clear ✦" and
+    /// the day-clear chime both read this).
+    var isDayClear: Bool {
+        isViewingToday
+            && overdueTasks.isEmpty
+            && scheduledTasks.isEmpty
+            && unscheduledTasks.isEmpty
+            && !completedTasksForSelectedDay.isEmpty
+    }
+
+    /// The evening register: today after 17:00 — or any moment the day
+    /// stands cleared — invites planning tomorrow.
+    var isEveningRegister: Bool {
+        guard isViewingToday else { return false }
+        if isDayClear { return true }
+        return Calendar.current.component(.hour, from: Date()) >= 17
+    }
+
+    /// Open work already waiting on `day` — the Plan-Tomorrow row's glance
+    /// count. One day's window over the same projection rules
+    /// loadUpcomingTasks uses (series occurrences + plain display dates).
+    func plannedOpenCount(for day: Date) async -> Int {
+        guard let atoms = try? await AtomRepository.shared.fetchAll(type: .task) else { return 0 }
+        let calendar = Calendar.current
+        let dayStart = calendar.startOfDay(for: day)
+        guard let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart) else { return 0 }
+        let interval = DateInterval(start: dayStart, end: dayEnd)
+
+        var count = 0
+        for atom in atoms {
+            if let snapshot = RecurringSeriesEngine.makeSnapshot(from: atom, calendar: calendar),
+               let templateVM = TaskViewModel.from(atom: atom) {
+                for occ in RecurringSeriesEngine.occurrences(for: snapshot, in: interval, asOf: Date(), calendar: calendar) {
+                    let vm = templateVM.makingOccurrence(occ)
+                    if !vm.isCompleted { count += 1 }
+                }
+            } else if let vm = TaskViewModel.from(atom: atom), !vm.isRecurring, !vm.isCompleted,
+                      let display = vm.calendarDisplayDate,
+                      display >= dayStart, display < dayEnd {
+                count += 1
+            }
+        }
+        return count
     }
 
     var activeTaskCount: Int {

@@ -98,7 +98,18 @@ struct CanvasBlock: Identifiable, Codable, Equatable {
         case .template:   return CGSize(width: 260, height: 380)
         case .deepDive:   return CGSize(width: 320, height: 280)
         case .inquirySession: return CGSize(width: 280, height: 200)
+        case .file:       return Self.filePortalSize(forKind: metadata["portalKind"])
         default:          return CGSize(width: 220, height: 310)
+        }
+    }
+
+    /// Default portal size per file kind — portrait page for PDFs, landscape
+    /// sheet for spreadsheets, compact card for everything else.
+    static func filePortalSize(forKind rawKind: String?) -> CGSize {
+        switch FilePortalMetadata.Kind(rawValue: rawKind ?? "") ?? .generic {
+        case .pdf:              return CGSize(width: 320, height: 414)
+        case .spreadsheet, .csv: return CGSize(width: 560, height: 400)
+        case .generic:          return CGSize(width: 300, height: 180)
         }
     }
 
@@ -173,6 +184,8 @@ struct CanvasBlock: Identifiable, Codable, Equatable {
             }
         case .templateInstance, .blockTemplate:
             size = CGSize(width: 260, height: 380)
+        case .file:
+            size = Self.filePortalSize(forKind: atom.filePortalMetadata?.portalKind.rawValue)
         default:
             size = CGSize(width: 220, height: 310)
         }
@@ -262,6 +275,14 @@ struct CanvasBlock: Identifiable, Codable, Equatable {
         case .image:
             if let imageMeta = atom.imageMetadata {
                 metadata["imagePath"] = imageMeta.imagePath
+            }
+        case .file:
+            // Frame-1 render data — the atom stays the source of truth; the
+            // block view re-reads it for anything beyond the card skeleton.
+            if let portalMeta = atom.filePortalMetadata {
+                metadata["attachmentUUID"] = portalMeta.attachmentUUID
+                metadata["portalKind"] = portalMeta.portalKind.rawValue
+                metadata["fileExtension"] = portalMeta.fileExtension
             }
         case .project:
             let projectWrapper = ProjectWrapper(atom: atom)

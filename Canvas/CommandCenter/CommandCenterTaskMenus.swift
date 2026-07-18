@@ -161,14 +161,14 @@ struct CommandCenterComposerHost: View {
             ),
             titleVisibility: .visible
         ) {
-            Button("Delete series and \(seriesDeleteCompletionCount) logged completions", role: .destructive) {
+            Button("Delete series", role: .destructive) {
                 guard let target = seriesDeleteTarget else { return }
                 seriesDeleteTarget = nil
                 Task { await viewModel.deleteTask(uuid: target.uuid) }
             }
             Button("Cancel", role: .cancel) { seriesDeleteTarget = nil }
         } message: {
-            Text("This removes the repeating task and its entire completion history.")
+            Text(SeriesDeleteCopy.message(completionCount: seriesDeleteCompletionCount))
         }
     }
 
@@ -215,8 +215,8 @@ struct CommandCenterComposerHost: View {
                 onDelete: {
                     composer.dismiss()
                     if task.isOccurrence {
-                        // Occurrence rows carry the template uuid — deleting the atom would
-                        // take the whole series and its history with it.
+                        // Occurrence rows carry the template uuid — a plain delete would
+                        // end the whole series, not just this day.
                         Task { _ = await viewModel.cancelOccurrence(task) }
                     } else {
                         Task { await viewModel.deleteTask(uuid: task.uuid) }

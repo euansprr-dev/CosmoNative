@@ -146,6 +146,9 @@ struct PaneContentView: View {
         case .cosmoAI:
             CosmoAIFocusModeView(atom: atom, onClose: onClose)
 
+        case .file:
+            FilePortalPreviewSurface(atom: atom, onClose: onClose)
+
         default:
             ZStack {
                 CosmoColors.thinkspaceVoid

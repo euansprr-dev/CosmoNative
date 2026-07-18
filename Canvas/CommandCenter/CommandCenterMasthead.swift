@@ -120,6 +120,7 @@ struct CommandCenterMasthead: View {
                     Text(dateContext)
                         .font(DS.dateSerif)
                         .foregroundStyle(DS.giltMuted)
+                        .contentTransition(.numericText())
 
                     if viewModel.viewMode == .today {
                         todayDayNavigation
@@ -136,28 +137,36 @@ struct CommandCenterMasthead: View {
         }
     }
 
+    // The Today pill appears only when you've paged away (iOS parity — the
+    // duplicate-word law: a page titled "Today" must not also wear a "Today"
+    // chip while you're already there). Chevrons carry the paging; their
+    // tooltips teach the keyboard twin.
     private var todayDayNavigation: some View {
         HStack(spacing: 0) {
-            MastheadNavChevron(direction: .left, help: "Previous day") {
+            MastheadNavChevron(direction: .left, help: "Previous day (⌥⌘←)") {
                 withAnimation(ProMotionSprings.snappy) {
                     viewModel.shiftSelectedDay(by: -1)
                 }
             }
             .accessibilityLabel("Previous Day")
 
-            MastheadTodayButton(help: "Jump back to today") {
-                withAnimation(ProMotionSprings.snappy) {
-                    viewModel.resetSelectedDateToToday()
+            if !viewModel.isViewingToday {
+                MastheadTodayButton(help: "Jump back to today") {
+                    withAnimation(ProMotionSprings.snappy) {
+                        viewModel.resetSelectedDateToToday()
+                    }
                 }
+                .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
 
-            MastheadNavChevron(direction: .right, help: "Next day") {
+            MastheadNavChevron(direction: .right, help: "Next day (⌥⌘→)") {
                 withAnimation(ProMotionSprings.snappy) {
                     viewModel.shiftSelectedDay(by: 1)
                 }
             }
             .accessibilityLabel("Next Day")
         }
+        .animation(ProMotionSprings.snappy, value: viewModel.isViewingToday)
     }
 
     private var upcomingMasthead: some View {
@@ -246,6 +255,10 @@ struct CommandCenterMasthead: View {
             return "Practice"
         case .reports:
             return "Review"
+        case .today where viewModel.isDayClear:
+            // The day's one earned flourish — the serif line itself
+            // celebrates (iOS greeting parity), no banner, no confetti.
+            return viewModel.dateText + "  ·  All clear ✦"
         default:
             return viewModel.dateText
         }

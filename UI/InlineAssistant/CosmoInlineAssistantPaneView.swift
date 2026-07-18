@@ -142,6 +142,7 @@ private struct CosmoInlineAssistantPaneToolbar: View {
                 Text("Cosmo")
                     .font(DS.headline)
                     .foregroundStyle(DS.text)
+                    .fixedSize()
             }
             CosmoScopePill(
                 title: store.activeSurfaceTitle,
@@ -206,28 +207,44 @@ private struct CosmoInlineAssistantPaneToolbar: View {
     @ViewBuilder
     private var sessionSpine: some View {
         if !store.sessionLedger.isEmpty || !memoryFacts.isEmpty {
-            HStack(spacing: DS.space10) {
-                if editCount > 0 || answerCount > 0 {
-                    Text(spineSummary)
-                        .font(DS.caption)
-                        .monospacedDigit()
-                        .foregroundStyle(DS.textMuted)
-                        .contentTransition(.numericText())
-                        .animation(ProMotionSprings.gentle, value: spineSummary)
-                        .lineLimit(1)
-                }
+            // At narrow pane widths the spine sheds detail instead of
+            // truncating into fragments: the model label goes first, then
+            // the counts; the memory chip (an affordance, not a receipt)
+            // survives as long as anything fits.
+            ViewThatFits(in: .horizontal) {
+                spineRow(showsCounts: true, showsModel: true)
+                spineRow(showsCounts: true, showsModel: false)
+                spineRow(showsCounts: false, showsModel: false)
+            }
+            .accessibilityElement(children: .combine)
+        }
+    }
 
+    private func spineRow(showsCounts: Bool, showsModel: Bool) -> some View {
+        HStack(spacing: DS.space10) {
+            if showsCounts, editCount > 0 || answerCount > 0 {
+                Text(spineSummary)
+                    .font(DS.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(DS.textMuted)
+                    .contentTransition(.numericText())
+                    .animation(ProMotionSprings.gentle, value: spineSummary)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+
+            if showsModel {
                 Text(CosmoInlineAssistantCacheWarmer.effectiveTier.displayLabel)
                     .font(DS.caption)
                     .foregroundStyle(DS.textMuted)
                     .lineLimit(1)
+                    .fixedSize()
                     .help("The model answering in this session")
-
-                if !memoryFacts.isEmpty {
-                    memoryChip
-                }
             }
-            .accessibilityElement(children: .combine)
+
+            if !memoryFacts.isEmpty {
+                memoryChip
+            }
         }
     }
 
@@ -345,10 +362,13 @@ struct CosmoScopePill: View {
                     .font(DS.caption.weight(.semibold))
                     .foregroundStyle(DS.text)
                     .lineLimit(1)
+                // The kind label is short and load-bearing — under width
+                // pressure the title truncates, never the kind.
                 Text(entityLabel)
                     .font(DS.caption)
                     .foregroundStyle(DS.textMuted)
                     .lineLimit(1)
+                    .fixedSize()
             } else {
                 Text("nothing in focus")
                     .font(DS.caption)

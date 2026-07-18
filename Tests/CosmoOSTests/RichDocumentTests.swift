@@ -15,6 +15,61 @@ final class RichDocumentTests: XCTestCase {
         XCTAssertEqual(decoded.blocks.map(\.plainInlineText), ["Draft the story", "Find source material"])
     }
 
+    // The canvas thought card renders a note as flattened plain text, so it
+    // must be refused for any document whose blocks carry visuals — the
+    // serializer would show "[Sketch]" / "[Image]" and flattened elements.
+    func testContainsVisualBlocksDetectsSketchImageAndElementAtAnyDepth() {
+        XCTAssertFalse(RichDocument(blocks: [
+            RichBlock(kind: .paragraph, inlines: [.text("Just words")]),
+            RichBlock(kind: .checklist, inlines: [.text("and a task")], checked: false),
+            RichBlock(kind: .toggle, inlines: [.text("folded")], children: [
+                RichBlock(kind: .paragraph, inlines: [.text("text child")])
+            ])
+        ]).containsVisualBlocks)
+
+        XCTAssertTrue(RichDocument(blocks: [
+            RichBlock(kind: .sketch)
+        ]).containsVisualBlocks)
+
+        XCTAssertTrue(RichDocument(blocks: [
+            RichBlock(kind: .paragraph, inlines: [
+                .image(RichImageReference(path: "img.png", width: 100, height: 100, displayWidth: nil))
+            ])
+        ]).containsVisualBlocks)
+
+        // Nested: a sketch inside a toggle's children.
+        XCTAssertTrue(RichDocument(blocks: [
+            RichBlock(kind: .toggle, inlines: [.text("folded")], children: [
+                RichBlock(kind: .sketch)
+            ])
+        ]).containsVisualBlocks)
+
+        // Hidden: an element folded away under a collapsed heading.
+        XCTAssertTrue(RichDocument(blocks: [
+            RichBlock(
+                kind: .heading2,
+                inlines: [.text("Section")],
+                heading: RichHeadingMetadata(
+                    isCollapsed: true,
+                    collapsedBlocks: [
+                        RichBlock(
+                            kind: .element,
+                            element: RichElementInstance(
+                                definitionID: UUID(),
+                                titleSnapshot: "Audience Situation",
+                                systemIconSnapshot: "person.2",
+                                isCollapsed: false,
+                                instanceTitleSnapshot: "Audience Situation",
+                                tintSnapshot: "sage"
+                            )
+                        )
+                    ],
+                    isCollapsible: true
+                )
+            )
+        ]).containsVisualBlocks)
+    }
+
     func testContentAndResearchBlocksContributePlainText() {
         let document = RichDocument(blocks: [
             RichBlock(kind: .content, inlines: [.text("Draft the story")]),

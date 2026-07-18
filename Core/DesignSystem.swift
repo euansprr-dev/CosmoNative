@@ -455,6 +455,9 @@ enum DS {
     /// Images — muted teal
     static let entityImage = Color(hex: "5A9BA0")
 
+    /// File portals — cool steel (documents seen through a window)
+    static let entityFile = Color(hex: "6E7F8D")
+
     /// Sticky notes — warm yellow
     static let entityStickyNote = Color(hex: "D4C36A")
 

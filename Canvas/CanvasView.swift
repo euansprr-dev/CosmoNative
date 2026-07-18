@@ -58,6 +58,23 @@ enum CanvasImageDropController {
         return nil
     }
 
+    /// Every file URL in the drop, for the non-image → file-portal path.
+    static func fileURLs(from providers: [NSItemProvider]) async -> [URL] {
+        var urls: [URL] = []
+        for provider in providers {
+            guard provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) else { continue }
+            let item = await loadItem(provider, typeIdentifier: UTType.fileURL.identifier)
+            if let url = item as? URL {
+                urls.append(url)
+            } else if let url = item as? NSURL {
+                urls.append(url as URL)
+            } else if let data = item as? Data, let url = URL(dataRepresentation: data, relativeTo: nil) {
+                urls.append(url)
+            }
+        }
+        return urls
+    }
+
     private static func imageFromFileURL(_ provider: NSItemProvider) async -> (data: Data, originalFilename: String?)? {
         guard provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) else { return nil }
 
@@ -3750,6 +3767,9 @@ struct CanvasView: View {
             block = CanvasBlock.stickyNoteBlock(position: position)
         case .cosmoAI:
             block = CanvasBlock.cosmoAIBlock(position: position)
+        case .file:
+            presentFilePortalOpenPanel(at: position)
+            return
         default:
             // For other types, create a generic block
             block = CanvasBlock(
@@ -5357,14 +5377,24 @@ struct CanvasView: View {
             return
         }
 
-        // Try file URL (copied image file from Finder)
+        // Try file URL (copied file from Finder) — images stay native image
+        // blocks, every other file becomes a file portal.
         if let fileURLData = pasteboard.data(forType: .fileURL),
-           let fileURL = URL(dataRepresentation: fileURLData, relativeTo: nil),
-           let uti = try? fileURL.resourceValues(forKeys: [.contentTypeKey]).contentType,
-           uti.conforms(to: .image),
-           let data = try? Data(contentsOf: fileURL) {
-            await createImageBlock(data: data, originalFilename: fileURL.lastPathComponent)
-            return
+           let fileURL = URL(dataRepresentation: fileURLData, relativeTo: nil) {
+            if let uti = try? fileURL.resourceValues(forKeys: [.contentTypeKey]).contentType,
+               uti.conforms(to: .image),
+               let data = try? Data(contentsOf: fileURL) {
+                await createImageBlock(data: data, originalFilename: fileURL.lastPathComponent)
+                return
+            }
+            if FilePortalImportService.acceptsFileURL(fileURL) {
+                let position = CGPoint(
+                    x: canvasSize.width / 2 - canvasOffset.width,
+                    y: canvasSize.height / 2 - canvasOffset.height
+                )
+                await createFilePortalBlocks(fileURLs: [fileURL], position: position)
+                return
+            }
         }
 
         // Fall through to URL handling
@@ -5482,19 +5512,73 @@ struct CanvasView: View {
         }
     }
 
-    /// Handles dropping image data onto the canvas — saves to disk, creates atom + block at the drop point.
+    /// Handles dropping external content onto the canvas. Images keep the
+    /// native image-block pipeline; every other file becomes a file portal.
     private func handleCanvasImageDrop(providers: [NSItemProvider], canvasPosition: CGPoint) {
         Task {
-            guard let image = await CanvasImageDropController.firstImage(from: providers) else {
-                print("⚠️ [CanvasView] Image drop did not contain readable image data")
+            if let image = await CanvasImageDropController.firstImage(from: providers) {
+                await createImageBlock(
+                    data: image.data,
+                    originalFilename: image.originalFilename,
+                    position: canvasPosition
+                )
                 return
             }
-            await createImageBlock(
-                data: image.data,
-                originalFilename: image.originalFilename,
-                position: canvasPosition
-            )
+
+            let fileURLs = await CanvasImageDropController.fileURLs(from: providers)
+                .filter { FilePortalImportService.acceptsFileURL($0) }
+            guard !fileURLs.isEmpty else {
+                print("⚠️ [CanvasView] Drop contained neither image data nor portal-able files")
+                return
+            }
+            await createFilePortalBlocks(fileURLs: fileURLs, position: canvasPosition)
         }
+    }
+
+    /// Imports files through the portal choke point and lays their blocks at
+    /// the drop point — multi-file drops fan out in a slight cascade so
+    /// nothing lands perfectly stacked.
+    private func createFilePortalBlocks(fileURLs: [URL], position: CGPoint) async {
+        for (index, fileURL) in fileURLs.prefix(10).enumerated() {
+            do {
+                let imported = try await FilePortalImportService.shared.importFile(at: fileURL)
+                let offset = CGFloat(index) * 36
+                let block = CanvasBlock.fromAtom(
+                    imported.atom,
+                    position: CGPoint(x: position.x + offset, y: position.y + offset)
+                )
+                await spatialEngine.addBlock(block, persist: true)
+                selectedBlockId = block.id
+                print("📄 Added file portal → canvas block (uuid: \(imported.atom.uuid))")
+            } catch {
+                print("⚠️ [CanvasView] File portal import failed for \(fileURL.lastPathComponent): \(error.localizedDescription)")
+                presentFilePortalImportError(error)
+            }
+        }
+    }
+
+    /// ⌘K / menu creation path: pick a file, portal it at the target position.
+    private func presentFilePortalOpenPanel(at position: CGPoint) {
+        let panel = NSOpenPanel()
+        panel.title = "Add File to Canvas"
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        guard panel.runModal() == .OK else { return }
+        let urls = panel.urls.filter { FilePortalImportService.acceptsFileURL($0) }
+        guard !urls.isEmpty else { return }
+        Task {
+            await createFilePortalBlocks(fileURLs: urls, position: position)
+        }
+    }
+
+    /// User-initiated imports fail loudly (Finder-style alert), never silently.
+    private func presentFilePortalImportError(_ error: Error) {
+        let alert = NSAlert()
+        alert.messageText = "Couldn't add file to canvas"
+        alert.informativeText = error.localizedDescription
+        alert.alertStyle = .warning
+        alert.runModal()
     }
 
     /// Saves image data to disk, creates an image atom, then places its canvas block.
@@ -5989,6 +6073,8 @@ struct CanvasBlockStaticView: View, Equatable {
             TemplateBlockView(block: block)
         case .deepDive:
             DeepDivePortalBlockView(block: block)
+        case .file:
+            FilePortalBlockView(block: block, isViewportActive: isViewportActive)
         default:
             FloatingBlockView(block: block)
         }

@@ -145,36 +145,75 @@ struct SwipeStudyStagePane: View {
         }
     }
 
+    /// No slide list yet. The thumbnail IS the post's first page, so it shows
+    /// clean at full opacity — loading is a quiet line BELOW the stage, in the
+    /// pager's upgrade-hint grammar. A scrim only ever covers the empty glass
+    /// placeholder, never real content.
     private var carouselLoadingState: some View {
-        ZStack {
-            igThumbnail
-            if model.igIsExtractingVideo || model.isAutoTranscribing {
-                loadingOverlay(model.isAutoTranscribing ? "Downloading carousel…" : "Loading carousel…")
-            } else {
-                VStack(spacing: DS.space10) {
-                    Image(systemName: "photo.on.rectangle.angled")
-                        .font(DS.display.weight(.regular))
-                        .foregroundStyle(DS.textMuted)
-                        .accessibilityHidden(true)
-                    Text("Carousel images not loaded")
-                        .font(DS.subheadline)
-                        .foregroundStyle(DS.textSecondary)
-                    if let url = atom.url, let openURL = URL(string: url) {
-                        Button("Open on Instagram") {
-                            model.openInstagramURLInPane(openURL)
-                        }
-                        .buttonStyle(.plain)
-                        .font(DS.caption.weight(.semibold))
-                        .foregroundStyle(DS.accent)
-                    }
+        VStack(spacing: DS.space8) {
+            ZStack {
+                igThumbnail
+                if !hasCarouselThumbnail {
+                    carouselPlaceholderState
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(DS.bg.opacity(0.72))
+            }
+            .aspectRatio(1, contentMode: .fit)
+            .frame(maxWidth: 400)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(DS.glassBorder, lineWidth: 0.5)
+            )
+            .shadow(color: .black.opacity(0.07), radius: 16, x: 0, y: 10)
+
+            if hasCarouselThumbnail && isCarouselLoading {
+                HStack(spacing: DS.space6) {
+                    ProgressView().controlSize(.small).tint(DS.textMuted)
+                    Text("Loading slides…")
+                        .font(DS.footnote)
+                        .foregroundStyle(DS.textMuted)
+                }
+                .transition(.opacity)
             }
         }
-        .aspectRatio(1, contentMode: .fit)
-        .frame(maxWidth: 400)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .animation(ProMotionSprings.gentle, value: isCarouselLoading)
+    }
+
+    private var hasCarouselThumbnail: Bool {
+        (model.igMediaData?.thumbnailURL
+            ?? model.extractThumbnailUrl(from: atom).flatMap(URL.init(string:))) != nil
+    }
+
+    private var isCarouselLoading: Bool {
+        model.igIsExtractingVideo || model.isAutoTranscribing
+    }
+
+    /// Nothing displayable at all — the only case that earns stage chrome.
+    @ViewBuilder
+    private var carouselPlaceholderState: some View {
+        if isCarouselLoading {
+            loadingOverlay("Loading carousel…")
+        } else {
+            VStack(spacing: DS.space10) {
+                Image(systemName: "photo.on.rectangle.angled")
+                    .font(DS.display.weight(.regular))
+                    .foregroundStyle(DS.textMuted)
+                    .accessibilityHidden(true)
+                Text("Carousel images not loaded")
+                    .font(DS.subheadline)
+                    .foregroundStyle(DS.textSecondary)
+                if let url = atom.url, let openURL = URL(string: url) {
+                    Button("Open on Instagram") {
+                        model.openInstagramURLInPane(openURL)
+                    }
+                    .buttonStyle(.plain)
+                    .font(DS.caption.weight(.semibold))
+                    .foregroundStyle(DS.accent)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(DS.bg.opacity(0.72))
+        }
     }
 
     private func loadingOverlay(_ message: String) -> some View {

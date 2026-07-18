@@ -73,6 +73,12 @@ struct SwipeStudyFocusModeView: View {
             model.onClose = onClose
             model.contextPublishingEnabled = !isPaneContext || isPaneActive
             model.start()
+            // Tells the launching swipe page its zoom-through hero has been
+            // relieved — the page holds the hero until this arrives.
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.swipeStudyDidAppear,
+                object: nil
+            )
         }
         .onDisappear {
             model.stop()
@@ -342,7 +348,10 @@ private struct SwipeStudyChromeRow: View {
     @Environment(\.paneDeckChrome) private var paneDeckChrome
 
     var body: some View {
-        CosmoChromeRow(centersAbsolutely: !isPaneContext) {
+        // Absolute centering needs regular width AND full-screen hosting —
+        // beside the open pane deck main content can be squeezed to pane
+        // widths, where the pill flows between the clusters instead.
+        CosmoChromeRow(centersAbsolutely: !isPaneContext && breakpoint == .regular) {
             if atomChrome == nil, !isPaneContext {
                 NavigationTrailIsland()
             }

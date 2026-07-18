@@ -1051,6 +1051,7 @@ private struct CaptureLaneQueueRow: View {
         case .video: return "film"
         case .markdown, .textFile: return "doc.text"
         case .epub: return "book.closed"
+        case .spreadsheet: return "tablecells"
         case .document, .unknown: return "doc"
         }
     }

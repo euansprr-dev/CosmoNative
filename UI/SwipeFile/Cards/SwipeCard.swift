@@ -39,7 +39,7 @@ struct SwipeCard: View {
         .frame(width: width, height: model.height(forWidth: width), alignment: .topLeading)
         .swipeCardSurface(isHovered: isHovered, isSelected: isSelected)
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .scaleEffect(isHovered ? 1.01 : 1)
+        .scaleEffect(isHovered ? 1.02 : 1)
         .animation(ProMotionSprings.hover, value: isHovered)
         .onHover { isHovered = $0 }
         .onTapGesture(count: 2, perform: actions.onStudy)
@@ -75,7 +75,6 @@ private struct SwipeCardMedia: View {
         }
         .frame(width: width, height: mediaHeight)
         .clipped()
-        .overlay(alignment: .bottom) { hoverScrim }
         .overlay(alignment: .topLeading) { outlierBadge }
         .overlay(alignment: .bottomTrailing) { durationBadge }
         .overlay(alignment: .topTrailing) {
@@ -103,18 +102,6 @@ private struct SwipeCardMedia: View {
             }
         }
         .frame(width: width, height: mediaHeight)
-    }
-
-    /// The only scrim on the card — bottom gradient, hover-only, carries the badges.
-    private var hoverScrim: some View {
-        LinearGradient(
-            colors: [.black.opacity(0), .black.opacity(0.38)],
-            startPoint: .top,
-            endPoint: .bottom
-        )
-        .frame(height: mediaHeight * 0.35)
-        .opacity(isHovered && model.aspect != .paper ? 1 : 0)
-        .allowsHitTesting(false)
     }
 
     /// Outlier multiplier reads like the duration stamp — quiet metadata on the

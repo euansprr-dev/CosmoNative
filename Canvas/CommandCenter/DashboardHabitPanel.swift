@@ -79,7 +79,14 @@ struct DashboardHabitPanel: View {
                         completedHabitId: completedHabitId,
                         reduceMotion: reduceMotion,
                         onRecordManual: {
-                            Task { await viewModel.recordManualHabitCompletion(habitUUID: habit.id) }
+                            Task {
+                                await viewModel.recordManualHabitCompletion(habitUUID: habit.id)
+                                // The mini-bloom belongs to the ring closing,
+                                // not to every check-in of a multi-count habit.
+                                if viewModel.habits.first(where: { $0.id == habit.id })?.isTodayComplete == true {
+                                    Sound.habitComplete()
+                                }
+                            }
                             if !reduceMotion {
                                 withAnimation(.spring(response: 0.3, dampingFraction: 0.5)) {
                                     completedHabitId = habit.id

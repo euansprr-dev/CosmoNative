@@ -355,6 +355,13 @@ final class InboxDropIngestService {
         if type.conforms(to: .pdf) { return .pdf }
         if type.identifier == "org.idpf.epub-container" { return .epub }
         if type.identifier.contains("markdown") || type.preferredFilenameExtension == "md" { return .markdown }
+        // Spreadsheets before plainText — CSV/TSV conform to public.plain-text.
+        if type.conforms(to: .spreadsheet)
+            || type.conforms(to: .commaSeparatedText)
+            || type.conforms(to: .tabSeparatedText)
+            || ["xlsx", "xls", "xlsm", "xltx"].contains(type.preferredFilenameExtension ?? "") {
+            return .spreadsheet
+        }
         if type.conforms(to: .plainText) { return .textFile }
         if type.conforms(to: .audio) { return .audio }
         if type.conforms(to: .movie) || type.conforms(to: .video) { return .video }

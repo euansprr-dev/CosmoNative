@@ -222,14 +222,14 @@ struct TaskDetailInlineEditor: View {
                 .confirmationDialog("Delete task?", isPresented: $showDeleteConfirm, titleVisibility: .visible) {
                     if task.isOccurrence {
                         // Occurrence rows carry the series template's uuid — a plain delete
-                        // would soft-delete the whole series and its completion history.
+                        // would remove the whole series, not just this day.
                         Button("Remove This Occurrence", role: .destructive) {
                             Task {
                                 _ = await viewModel.cancelOccurrence(task)
                                 onDismiss()
                             }
                         }
-                        Button("Delete series and \(seriesCompletionCount) logged completions", role: .destructive) {
+                        Button("Delete series", role: .destructive) {
                             Task {
                                 await viewModel.deleteTask(uuid: task.uuid)
                                 onDismiss()
@@ -244,6 +244,10 @@ struct TaskDetailInlineEditor: View {
                         }
                     }
                     Button("Cancel", role: .cancel) {}
+                } message: {
+                    if task.isOccurrence {
+                        Text(SeriesDeleteCopy.message(completionCount: seriesCompletionCount))
+                    }
                 }
 
                 Spacer()

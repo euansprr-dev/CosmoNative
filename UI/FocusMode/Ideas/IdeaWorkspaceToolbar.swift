@@ -31,8 +31,11 @@ struct IdeaWorkspaceToolbar: View {
 
     var body: some View {
         // The band owns its insets — it sits above the worksheet, not inside
-        // a scroll inset (the Study chrome anatomy).
-        CosmoChromeRow(centersAbsolutely: !isPaneContext) {
+        // a scroll inset (the Study chrome anatomy). Absolute centering needs
+        // regular width AND full-screen hosting — beside the open pane deck
+        // main content can be squeezed to pane widths, where the pill flows
+        // between the clusters so overlap is structurally impossible.
+        CosmoChromeRow(centersAbsolutely: !isPaneContext && workspace.breakpoint == .regular) {
             if atomChrome == nil, !isPaneContext {
                 NavigationTrailIsland()
             }

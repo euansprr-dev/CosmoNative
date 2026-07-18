@@ -69,6 +69,7 @@ IGNORE:
 - Instagram UI (like counts, username, share button)
 - Watermarks, brand logos
 - Text in background images (not overlaid by creator)
+- Author attribution on a screenshotted post: many slides are screenshots of a tweet, thread, or other social post. The attribution header/footer of that embedded post — profile photo, display name, @username handle, verified badge, timestamp, and like/reply/retweet counts — is attribution, NOT content. Skip it entirely and read ONLY the post's body text, verbatim. Example: for a tweet screenshot reading "Brennan Schlagbaum, CPA @Budgetdog_ / How To Retire Early…", output starts at "How To Retire Early" — the name and handle are never included.
 
 Return ONLY the text content as a single string. PRESERVE the line breaks from the original slide — if text appears on separate lines in the image, keep them on separate lines in your output. Do not merge lines into one flowing sentence.
 If no readable text is found, return an empty string.`;

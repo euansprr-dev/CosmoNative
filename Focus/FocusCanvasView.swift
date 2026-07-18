@@ -243,6 +243,9 @@ struct FocusCanvasView: View {
         case .inquirySession:
             InquiryWorkspaceView(sessionAtom: atom, onClose: closeFocusMode)
                 .ignoresSafeArea()
+        case .file:
+            FilePortalPreviewSurface(atom: atom, onClose: closeFocusMode)
+                .ignoresSafeArea()
         default:
             EmptyView()
         }

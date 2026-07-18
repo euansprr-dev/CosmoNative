@@ -69,6 +69,7 @@ YOUR TASKS:
 - LAST CARDS MATTER: the final card must be captured. Do not omit ending cards.
 - ANIMATION HANDLING: if text appears gradually (typing/fade-in), use the fully-visible version.
 - TEXT TO IGNORE: Instagram UI (like counts, usernames, buttons, progress bar), watermarks, @handles, brand logos, music/audio attribution, text that is part of background photographs rather than overlaid by the creator, and captions/subtitles of the speech.
+- AUTHOR ATTRIBUTION ON SCREENSHOTTED POSTS: when a card is a screenshot of a tweet, thread, or other social post, the embedded post's profile photo, display name, @username handle, verified badge, timestamp, and like/reply counts are attribution, NOT content — skip them and read ONLY the post's body text.
 - SCREEN RECORDINGS: reels often show a recorded website or app (a browser page, a dashboard, a listing) behind or between the creator's text cards. The recorded screen's own text (menus, headers, paragraphs of the web page) is BACKGROUND — never emit it as slides. Read ONLY the text the creator overlaid on top of it.
 - DIGITS AND YEARS: transcribe every number, year, price, and percentage EXACTLY as displayed — verify each digit character by character. Getting "2026" vs "2025" wrong changes the meaning entirely.
 - FORMATTING: join visual line breaks into one flowing sentence. Exception: a short year/date header (e.g. "2016", "Age 12") stays on its own line before the body: "2016\\nWe started a new business".

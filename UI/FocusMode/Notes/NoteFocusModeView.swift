@@ -330,6 +330,7 @@ struct NoteFocusModeView: View {
     /// Chrome recede — toolbar fades while the user is actively writing (iA pattern).
     @State private var isActivelyTyping = false
     @State private var typingActivityTask: Task<Void, Never>?
+    @State private var cosmoContextRefreshTask: Task<Void, Never>?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private let titleStyle = SharedTitleSurfaceStyle.noteFocus
 
@@ -710,7 +711,9 @@ struct NoteFocusModeView: View {
         // Chrome islands on the shared baseline — nav + identity · tools — never a
         // full-width bar. Same island grammar as the Content workspace toolbar
         // (CosmoChromeRow / CosmoChromeIsland): glass hugs each control group.
-        CosmoChromeRow(insetsEnabled: false, centersAbsolutely: !isPaneContext) {
+        // The center slot is empty, so flow layout is identical to absolute
+        // centering — minus the ZStack's overlap hazard at squeezed widths.
+        CosmoChromeRow(insetsEnabled: false, centersAbsolutely: false) {
             if !isPaneContext {
                 NavigationTrailIsland()
             } else if let paneDeckChrome {
@@ -968,6 +971,7 @@ struct NoteFocusModeView: View {
                             editorTargetID: EditorCommandTarget.noteBody(atom.uuid),
                             navigationTargetID: bodyNavigationTargetID,
                             focusCoordinator: bodyFocusCoordinator,
+                            progressiveHydration: true,
                             landingHighlightBlockID: landingHighlightBlockID,
                             onSelectionChanged: { snapshot in
                                 selectedText = snapshot.text
@@ -976,7 +980,7 @@ struct NoteFocusModeView: View {
                                     trimmed.isEmpty ? nil : CosmoEditableSelection(text: trimmed, containingLine: nil),
                                     forSurfaceID: "note:\(atom.uuid)"
                                 )
-                                refreshCosmoContextIfActive()
+                                scheduleCosmoContextRefresh()
                             },
                             onDocumentChange: handleBodyDocumentChange
                         )
@@ -1408,6 +1412,19 @@ struct NoteFocusModeView: View {
         CosmoWindowViewModel.shared.refreshContextIfCurrentAtomMatches(atomUUID: atom.uuid)
     }
 
+    /// Debounced variant for per-keystroke callers. Rebuilding context data
+    /// copies the whole note body and word-splits it, then publishes a fresh
+    /// context object to the assistant surface — none of which needs to
+    /// happen more than about once a second while the user types.
+    private func scheduleCosmoContextRefresh() {
+        cosmoContextRefreshTask?.cancel()
+        cosmoContextRefreshTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            guard !Task.isCancelled else { return }
+            refreshCosmoContextIfActive()
+        }
+    }
+
     private func handleBodyPlainTextChange(_ plainText: String) {
         let changed = NoteAutosaveChangePolicy.shouldAutosaveTextChange(
             isInitialLoad: isInitialLoad,
@@ -1417,7 +1434,7 @@ struct NoteFocusModeView: View {
 
         NoteFocusLog.debug("[FOCUS-NOTE] onPlainTextChange(body) — changed=\(changed) len=\(plainText.count) isInitialLoad=\(isInitialLoad) uuid=\(atom.uuid)")
         plainContent = plainText
-        refreshCosmoContextIfActive()
+        scheduleCosmoContextRefresh()
         scheduleTextAnalysis(for: plainText)
 
         if changed {
@@ -1448,7 +1465,7 @@ struct NoteFocusModeView: View {
         }
         plainContent = plainText
         updateBodyHeadingOutline(from: document)
-        refreshCosmoContextIfActive()
+        scheduleCosmoContextRefresh()
         scheduleTextAnalysis(for: plainText)
 
         if changed {

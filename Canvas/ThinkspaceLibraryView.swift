@@ -34,6 +34,10 @@ struct ThinkspaceLibraryModeView: View {
     @State private var scrollMetrics = CortexScrollMetrics()
     /// Set after keyboard moves so the scroll can chase the focused cell.
     @State private var keyboardScrollTarget: String?
+    /// Live page width — the chrome row centers its switcher absolutely only
+    /// when there's regular room (beside the open pane deck the library can
+    /// be squeezed to pane widths, where flow layout prevents overlap).
+    @State private var chromeWidth: CGFloat = 0
     @FocusState private var searchFocused: Bool
     @FocusState private var browserFocused: Bool
 
@@ -48,6 +52,11 @@ struct ThinkspaceLibraryModeView: View {
                 lensContent
             }
             .animation(ProMotionSprings.gentle, value: isSearching)
+        }
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.width
+        } action: { width in
+            chromeWidth = width
         }
         .background(keyboardShortcutButtons)
         .onAppear(perform: prepare)
@@ -94,6 +103,7 @@ struct ThinkspaceLibraryModeView: View {
 
     private var toolbar: some View {
         ThinkspaceLibraryToolbar(
+            centersAbsolutely: chromeWidth - chromeLeadingInset >= 1000,
             thinkspaceName: thinkspaceName,
             folder: selectedFolder,
             viewMode: viewModeBinding,

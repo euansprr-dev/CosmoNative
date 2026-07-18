@@ -543,6 +543,7 @@ final class InstagramAutoTranscriber: Sendable {
         - Instagram UI (like counts, username, share/comment buttons, progress bar)
         - Watermarks, @handles, brand logos
         - Music credits, audio attribution
+        - Author attribution on a screenshotted post shown in-frame (tweet/thread/repost screenshots): the embedded post's profile photo, display name, @username handle, verified badge, timestamp, and like/reply counts are attribution, NOT content — skip them and read ONLY the post's body text
         - Text that is part of background photographs (not overlaid by the creator)
         - App/website UI inside screen recordings (browser pages, dashboards, listings) shown behind or between the creator's text overlays — the recorded screen's own menus, headers, and paragraphs are BACKGROUND; read ONLY the creator's overlay text
 
@@ -2760,6 +2761,7 @@ final class InstagramAutoTranscriber: Sendable {
         - Instagram UI (like counts, username, share button)
         - Watermarks, brand logos
         - Text in background images (not overlaid by creator)
+        - Author attribution on a screenshotted post: many slides are screenshots of a tweet, thread, or other social post. The attribution header/footer of that embedded post — profile photo, display name, @username handle, verified badge, timestamp, and like/reply/retweet counts — is attribution, NOT content. Skip it entirely and read ONLY the post's body text, verbatim. Example: for a tweet screenshot reading "Brennan Schlagbaum, CPA @Budgetdog_ / How To Retire Early…", output starts at "How To Retire Early" — the name and handle are never included.
 
         Return ONLY the text content as a single string. PRESERVE the line breaks from the original slide — \
         if text appears on separate lines in the image, keep them on separate lines in your output. \

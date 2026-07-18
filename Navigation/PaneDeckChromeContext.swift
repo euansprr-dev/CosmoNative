@@ -96,7 +96,7 @@ enum PaneDeckChromeAdoption {
     /// (swipe atoms route by `isSwipeFileAtom`) — both host the strip.
     private static func entityModeHostsDeckChrome(_ type: EntityType) -> Bool {
         switch type {
-        case .research, .connection, .idea, .content, .note, .cosmoAI:
+        case .research, .connection, .idea, .content, .note, .cosmoAI, .file:
             return true
         default:
             // Unrouted entity kinds render the unsupported placeholder,

@@ -92,6 +92,17 @@ final class AttachmentCloudStore {
         }
     }
 
+    /// Force a fresh upload after local bytes changed (in-portal edits) —
+    /// `mirror` uploads with x-upsert, so the blob path stays stable and
+    /// peers' next download sees the new content.
+    func remirror(uuid: String) async {
+        guard SupabaseSyncTrafficPolicy.allowsNetworkSync,
+              let client = SupabaseClient.shared, client.isAuthenticated,
+              let userId = client.currentUserId,
+              let attachment = try? await MediaAttachmentRepository.shared.fetch(uuid: uuid) else { return }
+        await mirror(attachment: attachment, client: client, userId: userId)
+    }
+
     // MARK: - Resolve (any device → local bytes)
 
     /// Local file for the original image: the capturing device's own file when

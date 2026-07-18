@@ -233,6 +233,7 @@ final class CaptureDropTargetView: NSView {
         case .markdown, .textFile: return "doc.text"
         case .audio: return "waveform"
         case .video: return "film"
+        case .spreadsheet: return "tablecells"
         case .document, .unknown: return "doc"
         }
     }

@@ -47,6 +47,14 @@ struct DashboardTaskList: View {
                         case .area:
                             EmptyView()
                         }
+
+                        // The hints are ledger verbs (N, ↑↓, Space, ⌫ all act
+                        // on this list) — they live at the column's foot as
+                        // its quiet terminus, never at the window bottom
+                        // where the assistant island owns the center.
+                        DashboardShortcutBar(viewModel: viewModel)
+                            .padding(.horizontal, DS.space10)
+                            .padding(.top, DS.space16)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     // Rows glide to close the gap when a completed task departs
@@ -67,22 +75,26 @@ struct DashboardTaskList: View {
             ),
             titleVisibility: .visible
         ) {
-            Button("Delete series and \(seriesDeleteCompletionCount) logged completions", role: .destructive) {
+            Button("Delete series", role: .destructive) {
                 guard let target = seriesDeleteTarget else { return }
                 seriesDeleteTarget = nil
+                Sound.deleteTuck()
                 Task { await viewModel.deleteTask(uuid: target.uuid) }
             }
             Button("Cancel", role: .cancel) { seriesDeleteTarget = nil }
         } message: {
-            Text("This removes the repeating task and its entire completion history.")
+            Text(SeriesDeleteCopy.message(completionCount: seriesDeleteCompletionCount))
         }
     }
 
     /// Identity of the visible today sections — the animation key for row moves.
+    /// Completed ids are included so a task checked off glides into the Completed
+    /// section (and the gap it left closes) instead of teleporting.
     private var todayListIdentity: [String] {
         viewModel.overdueTasks.map(\.id)
             + viewModel.scheduledTasks.map(\.id)
             + viewModel.unscheduledTasks.map(\.id)
+            + viewModel.completedTasksForSelectedDay.map(\.id)
     }
 
     // MARK: - Delete Routing
@@ -99,6 +111,7 @@ struct DashboardTaskList: View {
     /// Batch delete that understands recurring occurrences: occurrence rows are canceled
     /// individually (never soft-deleting the series template they share a uuid with).
     private func deleteSelectedTasks(_ uuids: Set<String>) {
+        Sound.deleteTuck()
         let visible = viewModel.currentVisibleTasks
         var plainUUIDs = Set<String>()
         var occurrenceTasks: [TaskViewModel] = []
@@ -128,10 +141,6 @@ struct DashboardTaskList: View {
             batchActionBar
         }
 
-        if !timedTodayEvents.isEmpty {
-            scheduleSection
-        }
-
         if !viewModel.overdueTasks.isEmpty {
             taskSection(
                 title: "Overdue",
@@ -153,21 +162,63 @@ struct DashboardTaskList: View {
         }
 
         // "To do", not "Today" — the page title already says Today; a section
-        // must never echo it (the duplicate-word law).
+        // must never echo it (the duplicate-word law). The count speaks the
+        // reward-loop language ("4 left" ticks down as rows depart), never a
+        // bare tally.
         if !viewModel.unscheduledTasks.isEmpty {
             taskSection(
                 title: "To do",
                 tasks: viewModel.unscheduledTasks,
                 headerColor: DS.textSecondary,
+                countSuffix: "left",
                 section: .unscheduled
             )
         }
 
-        if viewModel.overdueTasks.isEmpty && viewModel.scheduledTasks.isEmpty && viewModel.unscheduledTasks.isEmpty {
+        let hasActiveTasks = !viewModel.overdueTasks.isEmpty
+            || !viewModel.scheduledTasks.isEmpty
+            || !viewModel.unscheduledTasks.isEmpty
+
+        // Only truly empty when nothing is planned AND nothing was finished today —
+        // a day cleared to completion shows its Completed section, not "No tasks".
+        if !hasActiveTasks && viewModel.completedTasksForSelectedDay.isEmpty {
             emptyState(message: "No tasks today", icon: "calendar")
         }
 
         SmartTaskCaptureRow(viewModel: viewModel)
+
+        // The evening register: after 17:00 (or the moment the day clears)
+        // the page hands you tomorrow — the "plan tomorrow today" ritual as
+        // a door, not another task.
+        if viewModel.isEveningRegister {
+            EveningPlanRow(viewModel: viewModel)
+        }
+
+        // Finished work files itself away at the very bottom — dimmed, struck
+        // through, still one tap from being reopened (iOS Today parity).
+        if !viewModel.completedTasksForSelectedDay.isEmpty {
+            completedTodaySection
+        }
+    }
+
+    // MARK: - Completed (Today)
+
+    /// The receding pile of today's checked-off tasks. Plain rows (no drag / no
+    /// reorder — completed work isn't planned) under one quiet "Completed" header.
+    @ViewBuilder
+    private var completedTodaySection: some View {
+        let completed = viewModel.completedTasksForSelectedDay
+        sectionHeader(
+            title: "Completed",
+            color: DS.textSecondary,
+            trailing: "\(completed.count)"
+        )
+
+        ForEach(completed) { task in
+            taskRow(task)
+        }
+
+        Spacer().frame(height: DS.space16)
     }
 
     // MARK: - Upcoming View
@@ -329,12 +380,13 @@ struct DashboardTaskList: View {
         isSemantic: Bool = false,
         showReschedule: Bool = false,
         showAddRow: Bool = false,
+        countSuffix: String? = nil,
         section: CommandCenterDashboardViewModel.TaskSection? = nil
     ) -> some View {
         sectionHeader(
             title: title,
             color: headerColor,
-            trailing: tasks.isEmpty ? nil : "\(tasks.count)",
+            trailing: tasks.isEmpty ? nil : countSuffix.map { "\(tasks.count) \($0)" } ?? "\(tasks.count)",
             isSemantic: isSemantic,
             showReschedule: showReschedule
         )
@@ -364,7 +416,18 @@ struct DashboardTaskList: View {
                             .stroke(DS.giltMuted, lineWidth: 0.5)
                     )
                     .dsFloatingShadow()
-                    .onAppear { draggedTaskUUID = task.uuid }
+                    // The drag preview's lifetime IS the drag session: appear
+                    // at pickup, disappear on drop or cancel — the one place
+                    // both ends of the gesture are observable.
+                    .onAppear {
+                        draggedTaskUUID = task.uuid
+                        viewModel.isTaskDragInFlight = true
+                        Sound.dragPickup()
+                    }
+                    .onDisappear {
+                        viewModel.isTaskDragInFlight = false
+                        if draggedTaskUUID == task.uuid { draggedTaskUUID = nil }
+                    }
                 }
                 .dropDestination(for: String.self) { droppedItems, _ in
                     guard let droppedUUID = droppedItems.first,
@@ -390,6 +453,7 @@ struct DashboardTaskList: View {
                     )
                     draggedTaskUUID = nil
                     dropTargetTaskUUID = nil
+                    viewModel.isTaskDragInFlight = false
                     return true
                 } isTargeted: { targeted in
                     dropTargetTaskUUID = targeted ? task.uuid : (dropTargetTaskUUID == task.uuid ? nil : dropTargetTaskUUID)
@@ -414,60 +478,8 @@ struct DashboardTaskList: View {
         Spacer().frame(height: DS.space16)
     }
 
-    // MARK: - Schedule (fixed before flexible — today's calendar givens
-    // anchor the day before the tasks you choose; the iOS CalendarStrip
-    // grammar at desktop density. Events only: scheduled tasks have their
-    // own section below, and the CosmoOS mirror calendar is already skipped
-    // by CalendarSyncService.)
-
-    private var timedTodayEvents: [CalendarEvent] {
-        guard viewModel.viewMode == .today else { return [] }
-        return viewModel.todayEvents.filter { !$0.isAllDay }
-    }
-
-    @ViewBuilder
-    private var scheduleSection: some View {
-        sectionHeader(
-            title: "Schedule",
-            color: DS.textSecondary,
-            trailing: "\(timedTodayEvents.count)"
-        )
-
-        ForEach(timedTodayEvents) { event in
-            scheduleRow(event)
-        }
-    }
-
-    private func scheduleRow(_ event: CalendarEvent) -> some View {
-        let isNow = (event.startDate...event.endDate).contains(Date())
-        return HStack(spacing: DS.space10) {
-            RoundedRectangle(cornerRadius: 1.5)
-                .fill(Color(nsColor: event.calendarColor))
-                .frame(width: 3, height: 24)
-
-            Text(event.title)
-                .font(DS.callout.weight(.medium))
-                .foregroundStyle(DS.text)
-                .lineLimit(1)
-
-            Text("\(event.startDate, format: .dateTime.hour().minute()) – \(event.endDate, format: .dateTime.hour().minute())")
-                .font(DS.caption2)
-                .foregroundStyle(DS.textMuted)
-                .monospacedDigit()
-
-            if isNow {
-                Text("Now")
-                    .font(DS.caption2.weight(.semibold))
-                    .foregroundStyle(Color(nsColor: event.calendarColor))
-            }
-
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, DS.space10)
-        .padding(.vertical, DS.space4)
-        .help("\(event.calendarName) · \(event.durationMinutes)m")
-        .accessibilityElement(children: .combine)
-    }
+    // (The Schedule story — events + blocks — lives in the right rail's
+    // Day Spine now; one home, and blocks there are live drop targets.)
 
     // MARK: - Section Header
 
@@ -614,8 +626,9 @@ struct DashboardTaskList: View {
                 }
             } else if task.isOccurrence {
                 // Occurrence rows share the series template's uuid — a plain delete would
-                // soft-delete the whole series and its completion history.
+                // end the whole series, not just this day.
                 Button(role: .destructive) {
+                    Sound.deleteTuck()
                     Task { _ = await viewModel.cancelOccurrence(task) }
                 } label: {
                     Label("Remove This Occurrence", systemImage: "trash")
@@ -627,6 +640,7 @@ struct DashboardTaskList: View {
                 }
             } else {
                 Button(role: .destructive) {
+                    Sound.deleteTuck()
                     Task { await viewModel.deleteTask(uuid: task.uuid) }
                 } label: {
                     Label("Delete", systemImage: "trash")
@@ -698,8 +712,17 @@ struct DashboardTaskList: View {
 
     // MARK: - Task Content
 
+    // Rows are monochrome until interaction matters (peakui — the accent-
+    // discipline law proven on iOS): intent, habit, repeat, and project meta
+    // all speak muted ink at rest; color arrives only on the row whose focus
+    // session is live. Identity colors live on identity surfaces, never
+    // sprayed across a ledger.
     @ViewBuilder
-    private func taskContent(_ task: TaskViewModel, completionState: CommandCenterTaskCompletionState?) -> some View {
+    private func taskContent(
+        _ task: TaskViewModel,
+        completionState: CommandCenterTaskCompletionState?,
+        isActiveSession: Bool
+    ) -> some View {
         let resolvedHabit = viewModel.resolvedHabit(for: task)
         let intentPresentation = viewModel.resolvedIntentPresentation(for: task)
         VStack(alignment: .leading, spacing: 2) {
@@ -707,7 +730,7 @@ struct DashboardTaskList: View {
                 if !intentPresentation.isUnassigned {
                     Image(systemName: intentPresentation.icon)
                         .font(DS.caption2)
-                        .foregroundStyle(intentPresentation.accent.opacity(0.7))
+                        .foregroundStyle(isActiveSession ? intentPresentation.accent : DS.textMuted)
                 }
 
                 if !task.titleMentions.isEmpty && completionState == nil && !task.isCompleted {
@@ -745,13 +768,13 @@ struct DashboardTaskList: View {
                 if task.isRecurring {
                     Label("Repeats", systemImage: "repeat")
                         .font(DS.caption2)
-                        .foregroundStyle(DS.accent.opacity(0.85))
+                        .foregroundStyle(DS.textMuted)
                 }
 
                 if let resolvedHabit {
                     Label(resolvedHabit.title, systemImage: resolvedHabit.icon)
                         .font(DS.caption2)
-                        .foregroundStyle(resolvedHabit.accent.opacity(0.9))
+                        .foregroundStyle(isActiveSession ? resolvedHabit.accent : DS.textMuted)
                 }
 
                 taskBlockBadge(task)
@@ -759,20 +782,23 @@ struct DashboardTaskList: View {
                 if let projectName = task.projectName {
                     Text(projectName)
                         .font(DS.caption2)
-                        .foregroundStyle(task.projectColor)
+                        .foregroundStyle(DS.textMuted)
                 }
 
                 if let goal = task.timeGoalMinutes {
                     // Timed task: progress toward the goal (recurring per-day progress
-                    // is session-scoped, so template rows show the goal itself)
+                    // is session-scoped, so template rows show the goal itself).
+                    // A met goal is a live achievement — the one meta accent.
                     Label(
-                        task.isRecurring ? "\(goal)m goal" : "\(min(task.totalFocusMinutes, goal))/\(goal)m",
+                        task.isRecurring
+                            ? "\(Self.durationLabel(goal)) goal"
+                            : "\(Self.durationLabel(min(task.totalFocusMinutes, goal))) of \(Self.durationLabel(goal))",
                         systemImage: "timer"
                     )
                     .font(DS.caption2)
                     .foregroundStyle(!task.isRecurring && task.totalFocusMinutes >= goal ? DS.accent : DS.textMuted)
                 } else if task.sessionCount > 0 {
-                    Label("\(task.totalFocusMinutes)m tracked", systemImage: "timer")
+                    Label("\(Self.durationLabel(task.totalFocusMinutes)) tracked", systemImage: "timer")
                         .font(DS.caption2)
                         .foregroundStyle(DS.textMuted)
                 }
@@ -835,6 +861,7 @@ struct DashboardTaskList: View {
     private func playButton(_ task: TaskViewModel, isActive: Bool) -> some View {
         Button {
             if isActive {
+                Sound.focusPause()
                 sessionEngine.pauseSession()
             } else {
                 viewModel.startFocusSession(for: task)
@@ -926,7 +953,7 @@ struct DashboardTaskList: View {
         HStack(spacing: DS.space10) {
             checkboxButton(task, completionState: completionState)
 
-            taskContent(task, completionState: completionState)
+            taskContent(task, completionState: completionState, isActiveSession: isActiveSession)
 
             Spacer(minLength: DS.space8)
 
@@ -1060,6 +1087,9 @@ struct DashboardTaskList: View {
         }
 
         let timings = CommandCenterCompletionTimings(reduceMotion: reduceMotion)
+        // The signature cue rides the animation keyframes: swish with the
+        // ring, pen stroke with the check, landing note with the strike.
+        Sound.taskCompletion(timings: timings)
         completionStates[task.uuid] = .initial
 
         withAnimation(.easeInOut(duration: timings.ringDuration)) {
@@ -1084,11 +1114,12 @@ struct DashboardTaskList: View {
             try? await Task.sleep(nanoseconds: (timings.fadeDelay - timings.strikeDelay).nanoseconds)
             withAnimation(.easeInOut(duration: timings.fadeDuration)) {
                 updateCompletionState(for: task.uuid) { state in
-                    state.rowOpacity = 0
-                    state.rowScale = reduceMotion ? 0.98 : 0.96
-                    // Depart downward — the row reads as filing itself away below.
-                    state.rowOffsetY = reduceMotion ? 4 : 14
-                    state.blurRadius = reduceMotion ? 0.6 : 1.8
+                    // Settle into the receded "completed" look (0.7, matching the
+                    // Completed section) and drift downward — the row files itself
+                    // into the pile below instead of vanishing, so the hand-off to
+                    // the Completed section reads as one continuous move.
+                    state.rowOpacity = 0.7
+                    state.rowOffsetY = reduceMotion ? 4 : 12
                 }
             }
 
@@ -1098,6 +1129,12 @@ struct DashboardTaskList: View {
             if completed {
                 completionStates.removeValue(forKey: task.uuid)
                 viewModel.notifyCompletedTaskArrival()
+                // The last open task of the day fell — the one earned moment.
+                // (completeTask refreshed the section arrays before returning,
+                // so isDayClear speaks the post-completion truth.)
+                if viewModel.viewMode == .today, viewModel.isDayClear {
+                    Sound.dayClear()
+                }
             } else {
                 // Persistence failed — reverse the optimistic animation so the row comes
                 // back instead of silently vanishing while the task stays incomplete.
@@ -1117,6 +1154,14 @@ struct DashboardTaskList: View {
         var state = completionStates[taskUUID] ?? .initial
         update(&state)
         completionStates[taskUUID] = state
+    }
+
+    /// The one duration voice: "2h 9m", never "129m".
+    static func durationLabel(_ minutes: Int) -> String {
+        guard minutes >= 60 else { return "\(minutes)m" }
+        let hours = minutes / 60
+        let rest = minutes % 60
+        return rest == 0 ? "\(hours)h" : "\(hours)h \(rest)m"
     }
 }
 
@@ -1260,6 +1305,85 @@ private struct CommandCenterCheckmarkShape: Shape {
         path.addLine(to: CGPoint(x: rect.minX + rect.width * 0.42, y: rect.minY + rect.height * 0.82))
         path.addLine(to: CGPoint(x: rect.minX + rect.width * 0.88, y: rect.minY + rect.height * 0.18))
         return path
+    }
+}
+
+// MARK: - Evening register (Plan Tomorrow)
+
+/// The "plan tomorrow today" ritual as a door: one click lands on tomorrow's
+/// page with the capture row waiting (⌥⌘← comes back; the masthead's Today
+/// pill appears on the far side). The glance line answers "how loaded is
+/// tomorrow already?" before you commit the evening to it.
+private struct EveningPlanRow: View {
+    var viewModel: CommandCenterDashboardViewModel
+
+    @State private var plannedCount: Int?
+    @State private var isHovered = false
+
+    private var tomorrow: Date {
+        let calendar = Calendar.current
+        return calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: Date())) ?? Date()
+    }
+
+    private var metaLine: String {
+        let dayName = tomorrow.formatted(.dateTime.weekday(.wide))
+        guard let plannedCount else { return dayName }
+        if plannedCount == 0 { return "\(dayName) · a clear slate" }
+        return "\(dayName) · \(plannedCount) already waiting"
+    }
+
+    var body: some View {
+        Button {
+            withAnimation(ProMotionSprings.focusTransition) {
+                viewModel.shiftSelectedDay(by: 1)
+            }
+        } label: {
+            HStack(spacing: DS.space10) {
+                Image(systemName: "moon.stars")
+                    .font(DS.caption)
+                    .foregroundStyle(DS.gilt)
+                    .frame(width: 18)
+                    .accessibilityHidden(true)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Plan tomorrow")
+                        .font(DS.callout.weight(.medium))
+                        .foregroundStyle(DS.text)
+                    Text(metaLine)
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textMuted)
+                        .monospacedDigit()
+                        .contentTransition(.numericText())
+                }
+
+                Spacer(minLength: 0)
+
+                Image(systemName: "chevron.right")
+                    .font(DS.caption2.weight(.semibold))
+                    .foregroundStyle(isHovered ? DS.text : DS.textMuted)
+            }
+            .padding(.horizontal, DS.space10)
+            .padding(.vertical, DS.space8)
+            .frame(minHeight: 44)
+            .background(
+                RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous)
+                    .fill(isHovered ? DS.glassCardFill : Color.clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.top, DS.space8)
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+        }
+        .help("Open tomorrow (⌥⌘→)")
+        // Re-glance when today's ledger changes — pushing a task to tomorrow
+        // updates the waiting count the moment the row departs.
+        .task(id: viewModel.currentVisibleTasks.count) {
+            plannedCount = await viewModel.plannedOpenCount(for: tomorrow)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Plan tomorrow. \(metaLine). Opens tomorrow's page.")
     }
 }
 

@@ -908,6 +908,15 @@ final class CosmoTextView: NSTextView {
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        // While whole blocks are selected, the block list owns the clipboard.
+        // The window's key-equivalent traversal reaches every block-row text
+        // view regardless of first responder — activating self here and
+        // performing copy on a collapsed text selection swallowed multi-block
+        // ⌘C and wrote nothing to the pasteboard.
+        if let blockAction = BlockSelectionClipboardTarget.action(for: event),
+           BlockSelectionClipboardTarget.send(blockAction) {
+            return true
+        }
         FocusModeTextClipboardTarget.activate(self)
         if FocusModeTextClipboardTarget.performKeyEquivalent(event, fallback: self) {
             return true
@@ -1686,6 +1695,11 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     /// target IDs are shared across surfaces (focus-mode row vs canvas block
     /// of the same note), instance IDs are not.
     var editorInstanceID: UUID? = nil
+    /// Mount-time content seed: makeNSView runs BEFORE onAppear's
+    /// syncEditorFromDocument, so the binding text is still empty on first
+    /// layout. Without a seed every row laid out empty, then re-laid out when
+    /// the sync landed — a long note's open paid the whole document twice.
+    var initialContent: (() -> NSAttributedString)? = nil
 
     var resolvedEditorTextColor: NSColor {
         overrideTextColor ?? (darkMode ? NSColor.white : NSColor(DS.documentText))
@@ -1772,8 +1786,20 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
         configureTextView(textView, context: context, isInitial: true)
         context.coordinator.lastConfigSignature = configSignature
-        replaceStorageDroppingUndo(textView, with: attributedText)
-        context.coordinator.lastReconciledBindingText = attributedText
+        let mountSeed: NSAttributedString? =
+            attributedText.length == 0 ? initialContent?() : nil
+        if let mountSeed {
+            replaceStorageDroppingUndo(textView, with: mountSeed)
+            // The binding is still empty; keep the reconcile cache unset and
+            // remember the seed so the first real binding write (onAppear's
+            // sync of this same serialization) is recognized as already
+            // applied instead of re-replacing — and so the deep compare runs
+            // serialized-vs-serialized, immune to the override stamp below.
+            context.coordinator.mountSeedContent = mountSeed
+        } else {
+            replaceStorageDroppingUndo(textView, with: attributedText)
+            context.coordinator.lastReconciledBindingText = attributedText
+        }
         applyStorageOverrides(textView.textStorage)
         context.coordinator.lastStorageOverrideSignature = storageOverrideSignature
         context.coordinator.applyPolishHighlights(to: textView)
@@ -1849,7 +1875,15 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         var storageWasReplaced = false
         if context.coordinator.lastReconciledBindingText !== attributedText {
             context.coordinator.lastReconciledBindingText = attributedText
-            if !textView.attributedString().isEqual(to: attributedText) {
+            // One-shot: a seeded mount already applied this exact
+            // serialization — compare against the pre-stamp seed (the view's
+            // live storage carries override stamps and would never compare
+            // equal to the serialized binding).
+            let mountSeed = context.coordinator.mountSeedContent
+            context.coordinator.mountSeedContent = nil
+            if let mountSeed, mountSeed.isEqual(to: attributedText) {
+                // Already applied at mount — heights and layout are current.
+            } else if !textView.attributedString().isEqual(to: attributedText) {
                 let selectedRange = textView.selectedRange()
                 // The attachment objects the overlay points at are about to be replaced.
                 context.coordinator.removeImageResizeOverlay()
@@ -2275,6 +2309,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         /// skip its full-range temporary-attribute clear when there is
         /// provably nothing to clear.
         var hasAppliedFocusBand = false
+        /// Content applied at makeNSView before the binding was populated —
+        /// consumed by the first binding reconcile (see updateNSView).
+        var mountSeedContent: NSAttributedString?
         private weak var lastConfiguredWindow: NSWindow?
         private var lastReportedHeight: CGFloat = 0
         private var lastObservedFrameWidth: CGFloat = 0

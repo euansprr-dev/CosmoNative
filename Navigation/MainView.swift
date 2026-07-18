@@ -613,6 +613,30 @@ struct MainView: View {
         .onReceive(NotificationCenter.default.publisher(for: .exitFocusMode)) { _ in
             FocusNavigationCoordinator.shared.close()
         }
+        // UUID-keyed navigation from Command Center surfaces: task play routes
+        // its primary linked atom here, and task-title mention pills post the
+        // same name. The coordinator owns the actual open.
+        .onReceive(NotificationCenter.default.publisher(for: .init("com.cosmo.navigateToAtom"))) { notification in
+            guard let uuid = notification.userInfo?["uuid"] as? String else { return }
+            FocusNavigationCoordinator.shared.open(atomUUID: uuid)
+            // Secondary linked atoms ride along as panes (play-task fan-out).
+            guard let paneUUIDs = notification.userInfo?["paneAtomUUIDs"] as? [String],
+                  !paneUUIDs.isEmpty else { return }
+            Task { @MainActor in
+                for paneUUID in paneUUIDs {
+                    guard let atom = try? await AtomRepository.shared.fetch(uuid: paneUUID),
+                          let atomId = atom.id else { continue }
+                    NotificationCenter.default.post(
+                        name: CosmoNotification.Navigation.openAsPane,
+                        object: nil,
+                        userInfo: [
+                            "id": atomId,
+                            "type": AtomWindowViewModel.entityType(for: atom.type)
+                        ]
+                    )
+                }
+            }
+        }
         // MARK: - Workbenches
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.applyWorkbench)) { notification in
             guard let uuid = notification.userInfo?["uuid"] as? String else { return }

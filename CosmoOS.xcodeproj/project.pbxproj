@@ -471,6 +471,7 @@
 		8063AEDAEBBDE0E8EA48A6E2 /* IdeaFocusModeState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42ABFC827D53B00ED0A7DD9C /* IdeaFocusModeState.swift */; };
 		807415AF357D1574ABAA26AD /* CosmoFunctionGemmaConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6756C5FABFDCA137729AC17D /* CosmoFunctionGemmaConfig.swift */; };
 		809EC44FC1A2C0006BF1712B /* WritingContextExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F5A881D8C212B563E77C61E /* WritingContextExporter.swift */; };
+		80B21A89ADACE6A1D2D00F26 /* IdeaTaskLinkService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03F21193ABAEE247C312DF0E /* IdeaTaskLinkService.swift */; };
 		8101A0138A377B51BE8B9639 /* AtomRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D2D24A09A17F5FC94002436 /* AtomRepository.swift */; };
 		81604D0DF4F8F52CD1BF453B /* SkillsAndPromptsSettingsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E1E9734948FF0C929133404 /* SkillsAndPromptsSettingsTab.swift */; };
 		81BB83C2A850B3685188E9EF /* InboxTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0AF15277D2538980C50048 /* InboxTypes.swift */; };
@@ -577,6 +578,7 @@
 		9C4229C2213C1DF64A36000F /* StatePersistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D27B0748EF6B964647C599E /* StatePersistence.swift */; };
 		9CA607325E141EE69F287355 /* NoteBlockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75DDE2C071AE42A0292720DB /* NoteBlockView.swift */; };
 		9CB5CA96A9225D1B52B172F7 /* DragToConnectOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D80D343FA53062109B36DDB /* DragToConnectOverlay.swift */; };
+		9CCAB8BED88F74C7591B80F9 /* IdeaSchedulePopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = A350EF8C6113A5F41CF183CE /* IdeaSchedulePopover.swift */; };
 		9D0B1502049B56D2C236921B /* snd_pickup_1.caf in Resources */ = {isa = PBXBuildFile; fileRef = 4C9FA524B23E07E7ADE72359 /* snd_pickup_1.caf */; };
 		9DB72A432E5B9238AD69B595 /* SupabaseSyncTrafficPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BDED19C2C59AFB51456090C /* SupabaseSyncTrafficPolicy.swift */; };
 		9E23C3CCCF2EAA5F53F3B41D /* CaptureMediaStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95B6D0842E027F48EA0D10C7 /* CaptureMediaStorage.swift */; };
@@ -1005,6 +1007,7 @@
 		0293A61997450F7F80C142B5 /* snd_focusstart_2.caf */ = {isa = PBXFileReference; includeInIndex = 1; name = snd_focusstart_2.caf; path = Sounds/snd_focusstart_2.caf; sourceTree = "<group>"; };
 		0298A247D45A39B2560DC92D /* InquiryDebriefEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = InquiryDebriefEngine.swift; sourceTree = "<group>"; };
 		03A2D8BAEE9BAC667786D335 /* DashboardDayTimeline.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DashboardDayTimeline.swift; sourceTree = "<group>"; };
+		03F21193ABAEE247C312DF0E /* IdeaTaskLinkService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = IdeaTaskLinkService.swift; sourceTree = "<group>"; };
 		0472097BDAA818AA65ADDDC4 /* AgentToolRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentToolRegistry.swift; sourceTree = "<group>"; };
 		04857F9A6D9A07F35178200D /* ProfileManagementTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileManagementTab.swift; sourceTree = "<group>"; };
 		04DCC4582FB65724D0520443 /* CanvasSelectionInspector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasSelectionInspector.swift; sourceTree = "<group>"; };
@@ -1574,6 +1577,7 @@
 		A2550F1D8304F236D09E7EC7 /* TelegramWritingSessionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TelegramWritingSessionManager.swift; sourceTree = "<group>"; };
 		A2B2D60689C8E7417FB6B73B /* SwipeBoardStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwipeBoardStore.swift; sourceTree = "<group>"; };
 		A2D5BA75760933D6A587CBB3 /* ConstellationLayoutEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConstellationLayoutEngine.swift; sourceTree = "<group>"; };
+		A350EF8C6113A5F41CF183CE /* IdeaSchedulePopover.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = IdeaSchedulePopover.swift; sourceTree = "<group>"; };
 		A385AD7AA219AF1C36936A91 /* ClusterListContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClusterListContent.swift; sourceTree = "<group>"; };
 		A38A1A006568D4B0CD0A2A83 /* InstagramExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InstagramExtractor.swift; sourceTree = "<group>"; };
 		A4A5FB5C2500DAB34AE41574 /* FilePortalEditEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = FilePortalEditEngine.swift; sourceTree = "<group>"; };
@@ -1989,6 +1993,7 @@
 				CF9A311F21565289DA5A7D3B /* IdeaWorkspaceToolbar.swift */,
 				13A15261C7527BFA65084E2A /* LinkConnectionsOverlay.swift */,
 				8B6129631F13F21045FFB59E /* LinkSwipesOverlay.swift */,
+				A350EF8C6113A5F41CF183CE /* IdeaSchedulePopover.swift */,
 			);
 			path = Ideas;
 			sourceTree = "<group>";
@@ -2466,6 +2471,7 @@
 				52A7D5E28FA0B000A17B1F66 /* InboxScanIngestService.swift */,
 				349E69E6CB0146A9F28EE7F7 /* InboxDropIngestService.swift */,
 				6DE009CEF6CB55BB298B4A36 /* SeedlingDevelopService.swift */,
+				03F21193ABAEE247C312DF0E /* IdeaTaskLinkService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -5090,6 +5096,8 @@
 				D8884E256DEADA866A1C5C0F /* FilePortalGridView.swift in Sources */,
 				178BABBCC41F2A6F5C92DEA0 /* FilePortalPreviewSurface.swift in Sources */,
 				E340BAC0A968B63A3482501A /* FilePortalEditEngine.swift in Sources */,
+				80B21A89ADACE6A1D2D00F26 /* IdeaTaskLinkService.swift in Sources */,
+				9CCAB8BED88F74C7591B80F9 /* IdeaSchedulePopover.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

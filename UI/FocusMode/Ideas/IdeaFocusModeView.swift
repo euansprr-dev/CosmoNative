@@ -287,6 +287,10 @@ struct IdeaFocusModeView: View {
                 viewModel.showLinkSwipesOverlay = true
                 return .handled
             }
+            if keyPress.key == KeyEquivalent("t") {
+                viewModel.showSchedulePopover = true
+                return .handled
+            }
         }
         return .ignored
     }
@@ -515,8 +519,44 @@ extension IdeaFocusModeView {
             platformMenu
             metaDot
             clientMenu
+            if let label = scheduledChipLabel {
+                metaDot
+                scheduledChip(label)
+            }
         }
         .font(DS.caption)
+    }
+
+    /// Quiet echo of the toolbar's schedule state: the next open development
+    /// session's day, in the identity line's own voice. Click opens the
+    /// schedule popover (anchored at the toolbar's calendar button).
+    private var scheduledChipLabel: String? {
+        let next = viewModel.scheduledTasks.first {
+            $0.metadataValue(as: TaskMetadata.self)?.isCompleted != true
+        }
+        guard let next, let day = IdeaTaskLinkService.plannedDay(next) else { return nil }
+        let calendar = Calendar.current
+        if calendar.isDateInToday(day) { return "Scheduled · Today" }
+        if calendar.isDateInTomorrow(day) { return "Scheduled · Tomorrow" }
+        return "Scheduled · " + day.formatted(.dateTime.weekday(.abbreviated).day())
+    }
+
+    private func scheduledChip(_ label: String) -> some View {
+        Button {
+            viewModel.showSchedulePopover = true
+        } label: {
+            HStack(spacing: DS.space4) {
+                Image(systemName: "calendar")
+                    .font(DS.caption2)
+                    .accessibilityHidden(true)
+                Text(label)
+            }
+            .foregroundStyle(ideaAccent.opacity(0.9))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("This idea has a scheduled development session — click to manage")
+        .accessibilityLabel(label)
     }
 
     private var metaDot: some View {

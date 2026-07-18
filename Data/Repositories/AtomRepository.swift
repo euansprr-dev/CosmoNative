@@ -1209,6 +1209,20 @@ class AtomRepository: ObservableObject {
         }
     }
 
+    /// Raw-LIKE candidate fetch: live atoms of `type` whose metadata contains
+    /// the substring anywhere. Callers MUST decode-filter the results — a bare
+    /// LIKE hit can false-positive (e.g. a uuid inside escaped nested JSON).
+    func fetchByMetadataSubstring(_ needle: String, type: AtomType) async throws -> [Atom] {
+        try await database.asyncRead { db in
+            try Atom
+                .filter(Atom.CodingKeys.isDeleted == false)
+                .filter(Atom.CodingKeys.type == type.rawValue)
+                .filter(sql: "metadata LIKE ?", arguments: ["%\(needle)%"])
+                .order(Atom.CodingKeys.updatedAt.desc)
+                .fetchAll(db)
+        }
+    }
+
     /// Fetch atoms whose outline-reference metadata points at the target UUID.
     func fetchOutlineBacklinks(to targetAtomUUID: String) async throws -> [Atom] {
         let candidates = try await database.asyncRead { db in

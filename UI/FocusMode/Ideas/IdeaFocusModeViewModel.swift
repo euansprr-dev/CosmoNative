@@ -153,10 +153,19 @@ final class IdeaFocusModeViewModel {
     var chatHistory: [IdeaChatMessage] = []
     var arcRecommendations: [ArcRecommendation] = []
 
+    // MARK: - Published State (Scheduled development tasks)
+
+    /// Tasks whose linkedAtoms point back at this idea — its scheduled
+    /// development sessions. The link lives on the task (IdeaTaskLinkService);
+    /// the idea atom is never written by scheduling.
+    var scheduledTasks: [Atom] = []
+
     // MARK: - Overlay State
 
     var showLinkSwipesOverlay: Bool = false
     var showLinkConnectionsOverlay: Bool = false
+    /// The toolbar's schedule popover (⌘⇧T) — schedule this idea into a task.
+    var showSchedulePopover: Bool = false
 
     // MARK: - Mention State
 
@@ -263,6 +272,7 @@ final class IdeaFocusModeViewModel {
         Task { await loadLinkedConnections() }
         Task { await loadMentionedAtoms() }
         Task { await loadSuggestedConnections() }
+        Task { await loadScheduledTasks() }
     }
 
     deinit {
@@ -762,6 +772,46 @@ final class IdeaFocusModeViewModel {
             await loadLinkedConnections()
         } catch {
             print("IdeaFocusMode: unlinkConnection failed: \(error)")
+        }
+    }
+
+    // MARK: - Scheduled Development Tasks
+
+    func loadScheduledTasks() async {
+        scheduledTasks = (try? await IdeaTaskLinkService.scheduledTasks(for: idea.uuid)) ?? []
+    }
+
+    /// Schedule this idea into a development task on `day`. The task carries
+    /// the link (title mention pill + primary linked atom); the idea itself
+    /// is never written.
+    func scheduleTask(on day: Date) async {
+        // The task snapshots whatever title is on screen, not the last save.
+        var snapshot = idea
+        let liveTitle = editableTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !liveTitle.isEmpty { snapshot.title = liveTitle }
+        do {
+            _ = try await IdeaTaskLinkService.createScheduledTask(for: snapshot, on: day)
+            await loadScheduledTasks()
+        } catch {
+            print("IdeaFocusMode: scheduleTask failed: \(error)")
+        }
+    }
+
+    func rescheduleTask(uuid: String, to day: Date) async {
+        do {
+            try await IdeaTaskLinkService.reschedule(taskUUID: uuid, to: day)
+            await loadScheduledTasks()
+        } catch {
+            print("IdeaFocusMode: rescheduleTask failed: \(error)")
+        }
+    }
+
+    func removeScheduledTask(uuid: String) async {
+        do {
+            try await IdeaTaskLinkService.removeScheduledTask(taskUUID: uuid)
+            await loadScheduledTasks()
+        } catch {
+            print("IdeaFocusMode: removeScheduledTask failed: \(error)")
         }
     }
 

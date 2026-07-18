@@ -120,6 +120,16 @@ struct IdeaWorkspaceToolbar: View {
     @ViewBuilder
     private var trailingControls: some View {
         toolbarButton(
+            icon: "calendar.badge.plus",
+            help: "Schedule this idea as a task (⌘⇧T)",
+            isActive: !viewModel.scheduledTasks.isEmpty
+        ) {
+            viewModel.showSchedulePopover = true
+        }
+        .popover(isPresented: Bindable(viewModel).showSchedulePopover, arrowEdge: .bottom) {
+            IdeaSchedulePopover(viewModel: viewModel)
+        }
+        toolbarButton(
             icon: "sidebar.right",
             help: workspace.isInspectorShowing ? "Hide swipes (⌘⌥I)" : "Show swipes (⌘⌥I)",
             isActive: workspace.isInspectorShowing

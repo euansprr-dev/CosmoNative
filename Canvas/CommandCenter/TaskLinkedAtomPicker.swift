@@ -87,17 +87,29 @@ struct TaskLinkedAtomPicker: View {
         let icon = entityType?.icon ?? "link"
 
         HStack(spacing: 8) {
-            // Entity icon
-            Image(systemName: icon)
-                .font(DS.caption2)
-                .foregroundStyle(color)
-                .frame(width: 16)
+            // Icon + title open the linked atom (the row's star/✕ stay edits).
+            Button {
+                NotificationCenter.default.post(
+                    name: .init("com.cosmo.navigateToAtom"),
+                    object: nil,
+                    userInfo: ["uuid": linked.atomUUID, "intent": "general"]
+                )
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: icon)
+                        .font(DS.caption2)
+                        .foregroundStyle(color)
+                        .frame(width: 16)
 
-            // Title
-            Text(linked.titleSnapshot)
-                .font(DS.caption)
-                .foregroundStyle(DS.text)
-                .lineLimit(1)
+                    Text(linked.titleSnapshot)
+                        .font(DS.caption)
+                        .foregroundStyle(DS.text)
+                        .lineLimit(1)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open \(linked.titleSnapshot)")
 
             Spacer()
 

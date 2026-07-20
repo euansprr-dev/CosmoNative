@@ -1282,7 +1282,7 @@ private struct SidebarSwipeFileContext: View {
     /// which both land on the merged page.
     private var swipeFileRow: some View {
         SidebarContextRow(
-            title: "Studio",
+            title: "Swipe File",
             icon: "rectangle.stack",
             subtitle: "Up next, new saves & all",
             isActive: currentDestination == .swipeFile(section: .home)

@@ -481,6 +481,10 @@ struct ProMotionSprings {
     static let menuAppear = Animation.spring(response: 0.25, dampingFraction: 0.8)
     static let focusTransition = Animation.spring(response: 0.3, dampingFraction: 0.82)
     static let modal = Animation.spring(response: 0.35, dampingFraction: 0.8)
+    /// Arrow-paging a horizontal shelf. Effectively critically damped on
+    /// purpose: a bouncy spring overshoots the page target, and at the content
+    /// edges the scroll view hard-clamps that overshoot into a visible stall.
+    static let shelfPage = Animation.spring(response: 0.32, dampingFraction: 0.95)
 
     // WORLD-SWITCHING
     static let worldExit = Animation.spring(response: 0.35, dampingFraction: 0.88)

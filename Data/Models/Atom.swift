@@ -2830,6 +2830,14 @@ struct TaskMetadata: Codable, Sendable {
     /// JSON array of RichMention — @ mentions embedded in the task title
     var titleMentions: String?
 
+    /// The idea this task was originally scheduled from, kept after Begin Writing
+    /// retargets the live link onto the promoted content atom. Provenance only —
+    /// deliberately NOT a second `TaskLinkedAtom`, because non-primary linked atoms
+    /// fan out as side panes on play and the promoted task must open the content
+    /// piece alone. Read by `IdeaTaskLinkService.scheduledTasks(for:)` so the idea
+    /// keeps listing its scheduled session after promotion.
+    var originIdeaUUID: String?
+
     // MARK: - Recurring Series Log (virtual-occurrence model)
 
     /// Completed occurrences of this recurring series. **Template-only** (the series owner).

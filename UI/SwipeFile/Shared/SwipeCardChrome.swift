@@ -152,6 +152,14 @@ extension View {
 
 // MARK: - Shelf (the App Store row)
 
+/// The one source of truth for the shelf's interior card spacing. Callers that
+/// size cards to tile the shelf, or hand the scroller a `cardPitch`, MUST read
+/// it from here — a pitch that disagrees with the real spacing drifts a little
+/// further out of card alignment on every page.
+enum SwipeShelfMetrics {
+    static let cardSpacing: CGFloat = 14
+}
+
 /// Live shelf scroll geometry, stored outside observation — continuous scrolling
 /// never invalidates the view tree; only the can-page threshold crossings do.
 private final class SwipeShelfScrollMetrics {
@@ -159,6 +167,15 @@ private final class SwipeShelfScrollMetrics {
     var normalizedOffsetX: CGFloat = 0
     var viewportWidth: CGFloat = 0
     var contentWidth: CGFloat = 0
+    /// Where an in-flight programmatic page is headed. Successive arrow clicks
+    /// chain off THIS, never off the live mid-spring offset — chaining off the
+    /// live offset makes the second click step a fraction of a page and stacks
+    /// two springs on one scroll offset.
+    var pendingTargetX: CGFloat?
+
+    /// Raw offset minus normalized offset is just the negated leading content
+    /// inset — constant for the shelf, so it survives an in-flight animation.
+    var leadingInset: CGFloat { rawOffsetX - normalizedOffsetX }
 }
 
 /// The App Store row shell: section-voice header with a docked "See All ›",
@@ -170,12 +187,15 @@ struct SwipeShelfRow<Content: View>: View {
     let label: String
     var count: Int?
     var onSeeAll: (() -> Void)?
+    /// Card width + the scroller's spacing, when the shelf's cards are uniform
+    /// — lets arrow paging land on card boundaries. See `SwipeShelfScroller`.
+    var cardPitch: CGFloat?
     @ViewBuilder let content: () -> Content
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space10) {
             header
-            SwipeShelfScroller(content: content)
+            SwipeShelfScroller(cardPitch: cardPitch, content: content)
         }
     }
 
@@ -206,6 +226,13 @@ struct SwipeShelfRow<Content: View>: View {
 /// SwipeShelfRow wraps it in the small-caps header voice; the Ideas surface
 /// pairs it with the editorial CosmoShelfHeader.
 struct SwipeShelfScroller<Content: View>: View {
+    /// Card pitch (card width + the LazyHStack's spacing) when the caller tiles
+    /// the shelf to a known card size. Paging then steps a WHOLE number of
+    /// cards, so the programmatic target is itself a `.viewAligned` snap target
+    /// and the shelf makes exactly one motion. Without it the spring lands
+    /// mid-card and the scroll behavior drags it the rest of the way in a
+    /// second, differently-timed motion — the "two speeds" glitch.
+    var cardPitch: CGFloat?
     @ViewBuilder let content: () -> Content
 
     /// How far the clip boundary extends past the measure column — sized for
@@ -223,15 +250,26 @@ struct SwipeShelfScroller<Content: View>: View {
 
     @State private var scrollPosition = ScrollPosition()
     @State private var isHovering = false
-    @State private var isHoveringArrow = false
+    /// One flag per arrow. Sharing a single flag let the two arrows race: moving
+    /// the pointer from one to the other fires both a `false` and a `true` in
+    /// unspecified order, so the arrows could blink out mid-hover.
+    @State private var isHoveringBack = false
+    @State private var isHoveringForward = false
     @State private var canPageBack = false
     @State private var canPageForward = false
     @State private var metrics = SwipeShelfScrollMetrics()
 
     var body: some View {
         ScrollView(.horizontal) {
-            LazyHStack(alignment: .top, spacing: 14) {
+            LazyHStack(alignment: .top, spacing: SwipeShelfMetrics.cardSpacing) {
+                // Cells realized mid-page must NOT inherit the paging spring.
+                // A lazily built card that animates in from its birth position
+                // travels at its own rate while the offset springs at another —
+                // that phantom is the "second row of ideas rolling behind the
+                // real one". Cards' own `.animation(_:value:)` still governs
+                // their hover and selection states.
                 content()
+                    .transaction { $0.animation = nil }
             }
             .padding(.vertical, verticalOutset)
             .scrollTargetLayout()
@@ -251,25 +289,33 @@ struct SwipeShelfScroller<Content: View>: View {
             metrics.rawOffsetX = new.rawOffset
             metrics.normalizedOffsetX = new.normalizedOffset
             metrics.viewportWidth = new.viewport
+            if let pending = metrics.pendingTargetX, abs(new.rawOffset - pending) < 0.5 {
+                metrics.pendingTargetX = nil
+            }
             let back = new.normalizedOffset > 4
             let forward = new.normalizedOffset + new.viewport < metrics.contentWidth - 4
             if back != canPageBack { canPageBack = back }
             if forward != canPageForward { canPageForward = forward }
         }
+        .onScrollPhaseChange { _, phase in
+            // A drag or its deceleration makes any in-flight page target stale.
+            if phase != .animating { metrics.pendingTargetX = nil }
+        }
         .padding(.horizontal, -clipOutset)
         .padding(.vertical, -verticalOutset)
         .overlay(alignment: .leading) {
-            pagingChevron("chevron.compact.left", canPage: canPageBack) { page(-1) }
+            pagingChevron(isLeft: true, canPage: canPageBack, isHovering: $isHoveringBack) { page(-1) }
                 .offset(x: -arrowOffset)
         }
         .overlay(alignment: .trailing) {
-            pagingChevron("chevron.compact.right", canPage: canPageForward) { page(1) }
+            pagingChevron(isLeft: false, canPage: canPageForward, isHovering: $isHoveringForward) { page(1) }
                 .offset(x: arrowOffset)
         }
         .onHover { isHovering = $0 }
         .onDisappear {
             isHovering = false
-            isHoveringArrow = false
+            isHoveringBack = false
+            isHoveringForward = false
         }
     }
 
@@ -279,11 +325,15 @@ struct SwipeShelfScroller<Content: View>: View {
     /// height and reaches back into the shelf, and each arrow tracks its own
     /// hover — the shelf's hover region ends at the clip boundary, so without
     /// this the arrow would vanish the moment the pointer reached it.
-    private func pagingChevron(_ icon: String, canPage: Bool, action: @escaping () -> Void) -> some View {
-        let isLeft = icon.contains("left")
-        let visible = isHovering || isHoveringArrow
+    private func pagingChevron(
+        isLeft: Bool,
+        canPage: Bool,
+        isHovering hovering: Binding<Bool>,
+        action: @escaping () -> Void
+    ) -> some View {
+        let visible = isHovering || isHoveringBack || isHoveringForward
         return Button(action: action) {
-            Image(systemName: icon)
+            Image(systemName: isLeft ? "chevron.compact.left" : "chevron.compact.right")
                 .font(.system(size: 44, weight: .light))
                 .foregroundStyle(DS.textSecondary)
                 .frame(width: arrowWidth)
@@ -296,19 +346,42 @@ struct SwipeShelfScroller<Content: View>: View {
         .animation(ProMotionSprings.hover, value: visible)
         .animation(ProMotionSprings.hover, value: canPage)
         .allowsHitTesting(canPage)
-        .onHover { isHoveringArrow = $0 }
+        .onHover { hovering.wrappedValue = $0 }
+        // Hit testing goes away with `canPage`, and with it the hover-exit
+        // event — without this the flag latches true and the arrows stay lit.
+        .onChange(of: canPage) { _, new in
+            if !new { hovering.wrappedValue = false }
+        }
         .help(isLeft ? "Previous" : "Next")
         .accessibilityLabel(isLeft ? "Scroll back" : "Scroll forward")
         .accessibilityHidden(!visible)
     }
 
+    /// One page = a whole number of cards when the caller declared a pitch, and
+    /// the landing point is snapped to a card boundary either way — so
+    /// `.viewAligned` has nothing left to correct and the shelf moves once.
+    /// Clicks chain off the in-flight target, so holding the arrow down queues
+    /// clean pages instead of piling springs onto a moving offset.
     private func page(_ direction: CGFloat) {
-        let step = direction * metrics.viewportWidth * 0.9
-        let maxRaw = metrics.rawOffsetX + (metrics.contentWidth - metrics.normalizedOffsetX - metrics.viewportWidth)
-        let minRaw = metrics.rawOffsetX - metrics.normalizedOffsetX
-        let target = max(minRaw, min(maxRaw, metrics.rawOffsetX + step))
-        withAnimation(ProMotionSprings.focusTransition) {
-            scrollPosition.scrollTo(x: target)
+        let viewport = metrics.viewportWidth
+        guard viewport > 0, metrics.contentWidth > 0 else { return }
+
+        let pitch = (cardPitch ?? 0) > 0 ? cardPitch : nil
+        let step = pitch.map { max(1, (viewport / $0).rounded()) * $0 } ?? viewport * 0.9
+
+        // Work in normalized space (0 ... contentWidth - viewport), where card
+        // boundaries are exact multiples of the pitch, then convert back.
+        let inset = metrics.leadingInset
+        let origin = (metrics.pendingTargetX ?? metrics.rawOffsetX) - inset
+        var target = origin + direction * step
+        if let pitch { target = (target / pitch).rounded() * pitch }
+        target = min(max(0, target), max(0, metrics.contentWidth - viewport))
+
+        let raw = target + inset
+        guard abs(raw - (metrics.pendingTargetX ?? metrics.rawOffsetX)) > 0.5 else { return }
+        metrics.pendingTargetX = raw
+        withAnimation(ProMotionSprings.shelfPage) {
+            scrollPosition.scrollTo(x: raw)
         }
     }
 }
@@ -332,7 +405,12 @@ struct SwipeShelf: View {
     let actions: (SwipeCardModel) -> SwipeCardActions
 
     var body: some View {
-        SwipeShelfRow(label: label, count: count ?? models.count, onSeeAll: onSeeAll) {
+        SwipeShelfRow(
+            label: label,
+            count: count ?? models.count,
+            onSeeAll: onSeeAll,
+            cardPitch: cardWidth + SwipeShelfMetrics.cardSpacing
+        ) {
             ForEach(models) { model in
                 cell(model)
             }

@@ -443,8 +443,9 @@ struct IdeasHomePage: View {
         }
     }
 
-    /// The scroller's card spacing (SwipeShelfScroller's LazyHStack).
-    private static let shelfSpacing: CGFloat = 14
+    /// The scroller's card spacing — read from the scroller itself so the
+    /// tiling math and the arrow paging can never disagree.
+    private static let shelfSpacing = SwipeShelfMetrics.cardSpacing
     /// Ideal shelf card width — the tiling math snaps to whole cards.
     private static let shelfIdealCardWidth: CGFloat = 300
     /// Uniform shelf card height: room for a 3-line serif hook + the meta
@@ -473,7 +474,9 @@ struct IdeasHomePage: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: DS.space10) {
             CosmoShelfHeader(title: title, detail: detail, onTap: onTap)
-            SwipeShelfScroller {
+            // Cards tile the viewport exactly, so declaring the pitch makes
+            // every arrow page land on a card boundary — one motion, no snap-back.
+            SwipeShelfScroller(cardPitch: shelfCardWidth + Self.shelfSpacing) {
                 ForEach(ideas, id: \.atomUUID) { idea in
                     ideaCard(idea, surface: surface, fixedHeight: Self.shelfCardHeight)
                         .frame(width: shelfCardWidth, alignment: .topLeading)

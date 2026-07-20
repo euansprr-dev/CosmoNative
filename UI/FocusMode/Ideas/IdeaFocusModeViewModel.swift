@@ -551,6 +551,17 @@ final class IdeaFocusModeViewModel {
             idea = try await AtomRepository.shared.update(updatedIdea)
             selectedStatus = .inProduction
 
+            // The step moves with the idea: any unfinished scheduled session now
+            // opens the content piece instead of ideation, on the hyperlink and on
+            // play. The idea keeps the session via originIdeaUUID, so reopening it
+            // from the content's sources still shows "Scheduled · Tue 21".
+            // Never fatal — a failed retarget must not block Begin Writing.
+            _ = try? await IdeaTaskLinkService.retargetToPromotedContent(
+                ideaUUID: idea.uuid,
+                content: contentAtom
+            )
+            await loadScheduledTasks()
+
             // Notify the Ideas Library to remove this idea (it's now a content piece)
             NotificationCenter.default.post(
                 name: Notification.Name("ideaActivated"),

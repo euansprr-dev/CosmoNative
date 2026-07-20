@@ -68,6 +68,13 @@ final class SwipeStudyModel {
     private var pendingTranscriptText: String?
 
     // Slide-based transcript
+    /// False during the entrance: slide cards render pixel-matched plain-Text
+    /// stand-ins instead of NSTextViews. Mounting one AppKit text stack per
+    /// slide (plus its sizeThatFits layout passes) in the entrance frame WAS
+    /// the open hitch — the editors arrive one beat after the spring settles,
+    /// or instantly when a stand-in is clicked.
+    var slideEditorsActive = false
+    private var slideEditorActivationTask: Task<Void, Never>?
     var transcriptSlides: [TranscriptSlide] = [TranscriptSlide(text: "", slideNumber: 1)]
     var rawTranscriptSlides: [TranscriptSlide] = []
     var transcriptSpeechSegments: [TranscriptSegment] = []
@@ -138,6 +145,11 @@ final class SwipeStudyModel {
         flushPendingDebouncedSavesSync()
         releaseLock()
         igPlayer?.pause()
+        // Window context follows presence: leaving the study releases it.
+        if let published = publishedContextProvider {
+            CosmoWindowViewModel.shared.releaseContext(provider: published)
+            publishedContextProvider = nil
+        }
     }
 
     private func acquireLock(for uuid: String) {
@@ -155,6 +167,30 @@ final class SwipeStudyModel {
     }
 
     var displayAtom: Atom { currentAtom ?? initialAtom }
+
+    // MARK: - Deferred slide editors
+
+    /// The entrance beat: long enough for the focus spring + hero teardown to
+    /// finish, short enough that the swap lands before the user reaches for a
+    /// slide. The stand-ins are pixel-matched, so the swap itself is invisible.
+    private func scheduleSlideEditorActivation() {
+        slideEditorActivationTask?.cancel()
+        slideEditorActivationTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(650))
+            guard !Task.isCancelled else { return }
+            self?.slideEditorsActive = true
+        }
+    }
+
+    /// A stand-in was clicked before the scheduled swap — mount the editors
+    /// now and forward focus to the clicked slide.
+    func activateSlideEditors(focusing slideID: UUID?) {
+        slideEditorActivationTask?.cancel()
+        slideEditorsActive = true
+        if let slideID {
+            slideFocusRequestID = slideID
+        }
+    }
 
     private func isViewingAtom(uuid: String) -> Bool {
         currentAtom?.uuid == uuid
@@ -265,6 +301,7 @@ final class SwipeStudyModel {
         resetLoadedAtomState()
         acquireLock(for: sourceAtom.uuid)
         currentAtom = sourceAtom
+        scheduleSlideEditorActivation()
         personalNotes = extractPersonalNotes(from: sourceAtom)
         loadCommentsFromAtom(sourceAtom)
         SwipeStudySession.shared.syncPointer(to: sourceAtom.id ?? -1)
@@ -403,6 +440,8 @@ final class SwipeStudyModel {
         hasPendingCommentEdits = false
         pendingTranscriptText = nil
 
+        slideEditorActivationTask?.cancel()
+        slideEditorsActive = false
         analysis = nil
         isAnalyzing = false
         personalNotes = ""
@@ -469,6 +508,7 @@ final class SwipeStudyModel {
     /// Pane-context gate: an inactive pane must not stomp the Cosmo window's
     /// context. The view keeps this in sync with its environment.
     var contextPublishingEnabled = true
+    private var publishedContextProvider: SwipeStudyContextProvider?
 
     func publishContextProvider() {
         guard contextPublishingEnabled else { return }
@@ -480,6 +520,7 @@ final class SwipeStudyModel {
                 return self.transcriptText.isEmpty ? self.instagramTranscript : self.transcriptText
             }
         )
+        publishedContextProvider = provider
         CosmoWindowViewModel.shared.updateContext(provider: provider)
     }
 
@@ -955,6 +996,9 @@ final class SwipeStudyModel {
     }
 
     func appendSlide() {
+        // Creating a slide is an edit — promote the stand-ins so the focus
+        // request has a real editor to land in.
+        activateSlideEditors(focusing: nil)
         withAnimation(ProMotionSprings.snappy) {
             let newSlide = TranscriptSlide(text: "", slideNumber: transcriptSlides.count + 1)
             transcriptSlides.append(newSlide)

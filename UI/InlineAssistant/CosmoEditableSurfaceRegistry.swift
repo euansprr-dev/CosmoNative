@@ -54,6 +54,9 @@ final class CosmoEditableSurfaceRegistry {
         // A closed document's highlight dies with it — even when no new
         // editable surface takes over (e.g. returning to the library).
         CosmoInlineAssistantStore.shared.clearSelectionIfOwned(bySurfaceID: surfaceID)
+        // Scope follows presence: a session pinned to this surface falls back
+        // to the next live surface (or global) the moment the document closes.
+        CosmoInlineAssistantStore.shared.releaseSessionIfScoped(toSurfaceID: surfaceID)
     }
 
     private func cleanupReleasedProviders() {
@@ -63,6 +66,11 @@ final class CosmoEditableSurfaceRegistry {
         for key in released {
             providers.removeValue(forKey: key)
             activationOrder.removeAll { $0 == key }
+        }
+        // Notify only after every dead entry is gone — the release path reads
+        // the registry back (fallback surface lookup) and must see it settled.
+        for key in released {
+            CosmoInlineAssistantStore.shared.releaseSessionIfScoped(toSurfaceID: key)
         }
     }
 }

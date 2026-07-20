@@ -184,7 +184,7 @@ struct CommandCenterComposerHost: View {
         switch route {
         case let .batchSchedule(title, taskUUIDs, _):
             CommandCenterScheduleComposer(
-                title: title.uppercased(),
+                title: title,
                 subtitle: taskUUIDs.count == 1 ? "1 task" : "\(taskUUIDs.count) tasks",
                 currentDate: nil,
                 includeNilActions: true,
@@ -230,7 +230,7 @@ struct CommandCenterComposerHost: View {
             )
         case let .taskDate(task, target, currentDate, _):
             CommandCenterScheduleComposer(
-                title: target.title.uppercased(),
+                title: target.title,
                 subtitle: task.title,
                 currentDate: currentDate,
                 includeNilActions: true,
@@ -527,8 +527,10 @@ private struct CommandCenterComposerMetrics {
             width = 340
             height = min(viewport.height - 48, 520)
         case .taskActions:
+            // Menu-register panel: hugs its content per tab, so the box is a
+            // ceiling — the Schedule tab's calendar is the tallest state.
             width = 360
-            height = min(viewport.height - 48, 470)
+            height = min(viewport.height - 48, 680)
         case .taskHabit, .taskIntent:
             width = 320
             height = min(viewport.height - 48, 380)
@@ -698,6 +700,179 @@ private struct CommandCenterComposerChromeModifier: ViewModifier {
     }
 }
 
+/// The task menus' chassis in the assistant-menu register — the habit
+/// composer / slash-menu grammar: an icon-tile header with the one 26pt close
+/// circle, a gradient divider, a content column that hugs until the viewport
+/// is short, and an optional pinned footer. Glass is applied as a BACKDROP
+/// (`cosmoMenuChrome`) so the panel can change height as tabs swap without
+/// latching the glass layer (see CosmoMenuChrome's invariant).
+struct CommandCenterMenuShell<Content: View, Footer: View>: View {
+    let icon: String
+    let title: String
+    var subtitle: String?
+    let onClose: () -> Void
+    @ViewBuilder let content: () -> Content
+    @ViewBuilder let footer: () -> Footer
+
+    init(
+        icon: String,
+        title: String,
+        subtitle: String? = nil,
+        onClose: @escaping () -> Void,
+        @ViewBuilder content: @escaping () -> Content,
+        @ViewBuilder footer: @escaping () -> Footer
+    ) {
+        self.icon = icon
+        self.title = title
+        self.subtitle = subtitle
+        self.onClose = onClose
+        self.content = content
+        self.footer = footer
+    }
+
+    // Static per instantiation (the Footer type never changes at runtime),
+    // so the structural branch below can never animate a subtree rebuild.
+    private var hasFooter: Bool { Footer.self != EmptyView.self }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            CosmoGradientDivider()
+            ViewThatFits(in: .vertical) {
+                column
+                ScrollView(.vertical, showsIndicators: false) { column }
+            }
+            if hasFooter {
+                Rectangle()
+                    .fill(DS.sepiaBorder.opacity(0.7))
+                    .frame(height: 1)
+                footer()
+                    .padding(.horizontal, DS.space16)
+                    .padding(.vertical, DS.space12)
+            }
+        }
+        .cosmoMenuChrome(cornerRadius: 16)
+        .onExitCommand(perform: onClose)
+    }
+
+    private var column: some View {
+        content()
+            .padding(.horizontal, DS.space16)
+            .padding(.vertical, DS.space16)
+    }
+
+    private var header: some View {
+        HStack(spacing: DS.space10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(DS.accentSoft)
+                    .frame(width: 26, height: 26)
+                Image(systemName: icon)
+                    .font(DS.caption.weight(.semibold))
+                    .foregroundStyle(DS.accent)
+            }
+            .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(DS.callout.weight(.semibold))
+                    .foregroundStyle(DS.text)
+                    .lineLimit(subtitle == nil ? 2 : 1)
+                if let subtitle {
+                    Text(subtitle)
+                        .font(DS.caption)
+                        .foregroundStyle(DS.textSecondary)
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button(action: onClose) {
+                Image(systemName: "xmark")
+                    .font(DS.caption)
+                    .foregroundStyle(DS.textSecondary)
+                    .frame(width: 26, height: 26)
+                    .background(DS.glassInputFill, in: Circle())
+                    .overlay(Circle().stroke(DS.glassBorder, lineWidth: 0.5))
+            }
+            .buttonStyle(.plain)
+            .help("Close (Esc)")
+            .accessibilityLabel("Close \(title)")
+        }
+        .padding(.horizontal, DS.space12)
+        .padding(.vertical, DS.space10)
+    }
+}
+
+extension CommandCenterMenuShell where Footer == EmptyView {
+    init(
+        icon: String,
+        title: String,
+        subtitle: String? = nil,
+        onClose: @escaping () -> Void,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.init(
+            icon: icon,
+            title: title,
+            subtitle: subtitle,
+            onClose: onClose,
+            content: content,
+            footer: { EmptyView() }
+        )
+    }
+}
+
+/// The assistant-menu section voice for the task menus (the habit composer's
+/// label register — never the gilt small-caps codex voice).
+private struct TaskMenuSectionLabel: View {
+    let title: String
+
+    init(_ title: String) {
+        self.title = title
+    }
+
+    var body: some View {
+        Text(title)
+            .font(DS.caption2.weight(.semibold))
+            .tracking(0.8)
+            .foregroundStyle(DS.textMuted)
+            .accessibilityAddTraits(.isHeader)
+    }
+}
+
+/// One selectable chip voice for the task menus (the habit composer's chip
+/// chassis): soft accent wash + hairline when selected, warm input fill
+/// otherwise, a hover lift on the pointer — never a solid fill (Law 11).
+private struct TaskMenuSelectableChip<Content: View>: View {
+    let isSelected: Bool
+    let help: String
+    let accessibilityLabel: String
+    let action: () -> Void
+    @ViewBuilder let content: () -> Content
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            content()
+                .background(isSelected ? DS.accentSoft : DS.glassInputFill, in: Capsule())
+                .overlay(
+                    Capsule()
+                        .stroke(isSelected ? DS.accent.opacity(0.42) : DS.glassBorder, lineWidth: 0.5)
+                )
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .scaleEffect(isHovered ? 1.04 : 1)
+        .animation(ProMotionSprings.hover, value: isHovered)
+        .onHover { isHovered = $0 }
+        .help(help)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+    }
+}
+
 struct CommandCenterScheduleComposer: View {
     let title: String
     let subtitle: String?
@@ -708,7 +883,7 @@ struct CommandCenterScheduleComposer: View {
     let onClose: () -> Void
 
     var body: some View {
-        CommandCenterComposerShell(title: title, subtitle: subtitle, chrome: .glass, onClose: onClose) {
+        CommandCenterMenuShell(icon: "calendar", title: title, subtitle: subtitle, onClose: onClose) {
             CommandCenterScheduleSection(
                 currentDate: currentDate,
                 includeNilActions: includeNilActions,
@@ -738,6 +913,11 @@ struct CommandCenterTaskActionComposer: View {
     let onDismiss: () -> Void
 
     @State private var activeTab: ActionTab = .schedule
+    /// The switcher's own selection. Split from `activeTab` so the thumb can
+    /// tween inside the switcher's animated transaction while the content
+    /// swap — which changes the glass panel's height — stays discrete (the
+    /// glass-layer latch: see the habit composer's automation disclosure).
+    @State private var switcherTab: ActionTab = .schedule
     @State private var recurrenceRule: RecurrenceRule?
     @State private var recurrencePreset: CommandCenterRepeatPreset = .weekly
     @State private var selectedDays: Set<DayOfWeek> = []
@@ -756,20 +936,38 @@ struct CommandCenterTaskActionComposer: View {
             }
         }
 
-        var title: String {
-            label.uppercased()
+        var icon: String {
+            switch self {
+            case .schedule: return "calendar"
+            case .recurrence: return "repeat"
+            case .habit: return "target"
+            }
         }
     }
 
     var body: some View {
-        CommandCenterComposerShell(title: activeTab.title, subtitle: task.title, onClose: onDismiss) {
-            VStack(alignment: .leading, spacing: DS.space18) {
-                actionRail
-                metadataLine
-                tabStrip
-                tabContent
-            }
-        }
+        CommandCenterMenuShell(
+            icon: "checklist",
+            title: task.title,
+            onClose: onDismiss,
+            content: {
+                VStack(alignment: .leading, spacing: DS.space16) {
+                    if hasMetadata {
+                        metadataLine
+                    }
+
+                    CosmoSegmentedSwitcher(
+                        options: ActionTab.allCases,
+                        label: { $0.label },
+                        icon: { $0.icon },
+                        selection: tabBinding
+                    )
+
+                    tabContent
+                }
+            },
+            footer: { footerRow }
+        )
         .task {
             recurrenceRule = await loadRecurrenceRule()
             hydrateRepeatEditor()
@@ -777,74 +975,107 @@ struct CommandCenterTaskActionComposer: View {
         }
     }
 
-    private var actionRail: some View {
-        HStack(spacing: DS.space8) {
-            subtleActionButton(
-                title: task.isCompleted ? "Undo" : "Complete",
-                systemImage: task.isCompleted ? "arrow.uturn.backward" : "checkmark",
-                tint: task.isCompleted ? DS.textSecondary : DS.green,
-                action: onToggleCompletion
-            )
-
-            Spacer()
-
-            if let onDeleteSeries {
-                subtleActionButton(
-                    title: "Delete Series…",
-                    systemImage: "trash.slash",
-                    tint: DS.red.opacity(0.65),
-                    action: onDeleteSeries
-                )
+    /// Routes the switcher's animated write to the thumb only: the content
+    /// swap lands under a no-animation transaction so the panel height moves
+    /// in one invalidation.
+    private var tabBinding: Binding<ActionTab> {
+        Binding(
+            get: { switcherTab },
+            set: { newValue in
+                switcherTab = newValue
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction) { activeTab = newValue }
             }
+        )
+    }
 
-            subtleActionButton(
-                title: onDeleteSeries != nil ? "Remove Occurrence" : "Delete",
-                systemImage: "trash",
-                tint: DS.red.opacity(0.8),
-                action: onDelete
-            )
-        }
+    private var hasMetadata: Bool {
+        task.dueInfo(asOf: referenceDate) != nil
+            || recurrenceRule != nil
+            || task.isRecurring
+            || currentHabit != nil
     }
 
     private var metadataLine: some View {
         HStack(spacing: DS.space10) {
             if let dueInfo = task.dueInfo(asOf: referenceDate) {
-                metaGlyph(text: dueInfo, icon: "calendar", color: task.isOverdue(asOf: referenceDate) ? DS.red : DS.inkFaded)
+                metaGlyph(text: dueInfo, icon: "calendar", color: task.isOverdue(asOf: referenceDate) ? DS.red : DS.textSecondary)
             }
 
             if recurrenceRule != nil || task.isRecurring {
-                metaGlyph(text: recurrenceRule?.shortDisplayText ?? "Repeats", icon: "repeat", color: DS.accent.opacity(0.9))
+                metaGlyph(text: recurrenceRule?.shortDisplayText ?? "Repeats", icon: "repeat", color: DS.accent)
             }
 
             if let currentHabit {
-                metaGlyph(text: currentHabit.displayTitle, icon: currentHabit.icon, color: currentHabit.accent.opacity(0.9))
+                metaGlyph(text: currentHabit.displayTitle, icon: currentHabit.icon, color: currentHabit.accent)
             }
         }
     }
 
-    private var tabStrip: some View {
-        HStack(spacing: DS.space8) {
-            ForEach(ActionTab.allCases, id: \.self) { tab in
-                Button {
-                    withAnimation(ProMotionSprings.snappy) {
-                        activeTab = tab
-                    }
-                } label: {
-                    VStack(spacing: 6) {
-                        Text(tab.label)
-                            .font(DS.smallCaps)
-                            .foregroundStyle(activeTab == tab ? DS.text : DS.giltMuted)
-                            .tracking(1.2)
+    // MARK: Footer (pinned — the habit composer's register)
 
-                        Rectangle()
-                            .fill(activeTab == tab ? DS.gilt.opacity(0.8) : DS.sepiaSubtle.opacity(0.001))
-                            .frame(height: 1)
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.plain)
+    private var footerRow: some View {
+        HStack(spacing: DS.space10) {
+            if onDeleteSeries != nil {
+                seriesOverflowMenu
+            } else {
+                Button("Delete", action: onDelete)
+                    .buttonStyle(.plain)
+                    .font(DS.callout)
+                    .foregroundStyle(DS.red)
+                    .fixedSize()
+                    .help("Delete task")
             }
+
+            Spacer(minLength: 0)
+
+            completeButton
         }
+    }
+
+    /// Occurrence rows carry two destructive depths — this day vs the whole
+    /// series — so they fold behind the one overflow circle.
+    private var seriesOverflowMenu: some View {
+        Menu {
+            Button("Remove Occurrence", systemImage: "trash") { onDelete() }
+            Button("Delete Series…", systemImage: "trash.slash", role: .destructive) { onDeleteSeries?() }
+        } label: {
+            Image(systemName: "trash")
+                .font(DS.caption.weight(.semibold))
+                .foregroundStyle(DS.red)
+                .frame(width: 26, height: 26)
+                .background(DS.glassInputFill, in: Circle())
+                .overlay(Circle().stroke(DS.glassBorder, lineWidth: 0.5))
+        }
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Remove this occurrence or delete the series")
+        .accessibilityLabel("Delete options")
+    }
+
+    private var completeButton: some View {
+        Button(action: onToggleCompletion) {
+            HStack(spacing: DS.space6) {
+                Image(systemName: task.isCompleted ? "arrow.uturn.backward" : "checkmark")
+                    .font(DS.caption.weight(.semibold))
+                Text(task.isCompleted ? "Undo" : "Complete")
+                    .font(DS.callout.weight(.semibold))
+            }
+            .foregroundStyle(task.isCompleted ? DS.text : DS.textOnAccent)
+            .padding(.horizontal, DS.space16)
+            .frame(height: 30)
+            .background(task.isCompleted ? DS.glassInputFill : DS.accent, in: Capsule())
+            .overlay(
+                Capsule()
+                    .strokeBorder(task.isCompleted ? DS.glassBorder : Color.clear, lineWidth: 0.5)
+            )
+            .fixedSize()
+        }
+        .buttonStyle(.plain)
+        .keyboardShortcut(.return, modifiers: .command)
+        .help(task.isCompleted ? "Mark incomplete (⌘↩)" : "Complete task (⌘↩)")
     }
 
     @ViewBuilder
@@ -885,8 +1116,8 @@ struct CommandCenterTaskActionComposer: View {
                 .padding(.vertical, DS.space16)
             } else {
                 VStack(alignment: .leading, spacing: DS.space8) {
-                    composerSectionLabel("Cadence")
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 84), spacing: 8)], spacing: 8) {
+                    TaskMenuSectionLabel("CADENCE")
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 84), spacing: DS.space6)], spacing: DS.space6) {
                         ForEach(CommandCenterRepeatPreset.allCases, id: \.self) { preset in
                             repeatPresetButton(preset)
                         }
@@ -895,7 +1126,7 @@ struct CommandCenterTaskActionComposer: View {
 
                 if recurrencePreset.requiresDaySelection {
                     VStack(alignment: .leading, spacing: DS.space8) {
-                        composerSectionLabel("Days")
+                        TaskMenuSectionLabel("DAYS")
                         HStack(spacing: DS.space6) {
                             ForEach(DayOfWeek.allCases, id: \.self) { day in
                                 repeatDayButton(day)
@@ -913,67 +1144,68 @@ struct CommandCenterTaskActionComposer: View {
                         .buttonStyle(.plain)
                         .font(DS.callout)
                         .foregroundStyle(DS.red)
+                        .help("Remove the repeat rule")
                     }
 
                     Spacer()
 
-                    subtleActionButton(
-                        title: "Apply",
-                        systemImage: "checkmark",
-                        tint: DS.accent,
-                        action: {
-                            onApplyRecurrence(buildRule())
-                            onDismiss()
-                        }
-                    )
+                    Button {
+                        onApplyRecurrence(buildRule())
+                        onDismiss()
+                    } label: {
+                        Text("Apply")
+                            .font(DS.callout.weight(.semibold))
+                            .foregroundStyle(DS.textOnAccent)
+                            .padding(.horizontal, DS.space16)
+                            .frame(height: 30)
+                            .background(DS.accent, in: Capsule())
+                            .fixedSize()
+                    }
+                    .buttonStyle(.plain)
+                    .help("Apply the repeat rule")
                 }
             }
         }
     }
 
     private func repeatPresetButton(_ preset: CommandCenterRepeatPreset) -> some View {
-        let isActive = recurrencePreset == preset
-        return Button {
+        TaskMenuSelectableChip(
+            isSelected: recurrencePreset == preset,
+            help: "Repeat \(preset.label.lowercased())",
+            accessibilityLabel: "Repeat \(preset.label)"
+        ) {
             recurrencePreset = preset
             if selectedDays.isEmpty {
                 selectedDays = defaultDays(for: preset)
             }
-        } label: {
+        } content: {
             Text(preset.label)
-                .font(DS.callout)
-                .foregroundStyle(isActive ? DS.text : DS.inkFaded)
+                .font(DS.caption)
+                .foregroundStyle(recurrencePreset == preset ? DS.text : DS.textSecondary)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, DS.space8)
-                .background(isActive ? DS.giltSoft.opacity(0.85) : DS.vellumDeep, in: .rect(cornerRadius: 10))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(isActive ? DS.gilt.opacity(0.7) : DS.sepiaBorder, lineWidth: 0.5)
-                )
+                .frame(height: 26)
         }
-        .buttonStyle(.plain)
     }
 
     private func repeatDayButton(_ day: DayOfWeek) -> some View {
         let isSelected = selectedDays.contains(day)
-        return Button {
+        return TaskMenuSelectableChip(
+            isSelected: isSelected,
+            help: isSelected ? "Skip \(day.shortName)" : "Repeat on \(day.shortName)",
+            accessibilityLabel: day.shortName
+        ) {
             if isSelected {
                 selectedDays.remove(day)
             } else {
                 selectedDays.insert(day)
             }
-        } label: {
+        } content: {
             Text(day.shortName)
                 .font(DS.caption)
-                .foregroundStyle(isSelected ? DS.text : DS.inkFaded)
+                .foregroundStyle(isSelected ? DS.text : DS.textSecondary)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, DS.space8)
-                .background(isSelected ? DS.accentSoft.opacity(0.75) : DS.vellumDeep, in: .rect(cornerRadius: 8))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(isSelected ? DS.accent.opacity(0.45) : DS.sepiaBorder, lineWidth: 0.5)
-                )
+                .frame(height: 26)
         }
-        .buttonStyle(.plain)
     }
 
     private func hydrateRepeatEditor() {
@@ -1379,7 +1611,7 @@ struct CommandCenterHabitPickerComposer: View {
     let onClose: () -> Void
 
     var body: some View {
-        CommandCenterComposerShell(title: "HABIT", subtitle: taskTitle, onClose: onClose) {
+        CommandCenterMenuShell(icon: "target", title: "Habit", subtitle: taskTitle, onClose: onClose) {
             CommandCenterHabitPickerSection(
                 currentHabitUUID: currentHabitUUID,
                 availableHabits: availableHabits,
@@ -1395,91 +1627,111 @@ struct CommandCenterHabitPickerSection: View {
     let onSelect: (String?) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DS.space10) {
-            Text("Tie the task to a rhythm so completions feed the right orbit.")
-                .font(DS.callout)
-                .foregroundStyle(DS.inkFaded)
+        VStack(alignment: .leading, spacing: DS.space2) {
+            Text("Completions feed the linked habit's ring.")
+                .font(DS.caption)
+                .foregroundStyle(DS.textSecondary)
+                .padding(.bottom, DS.space6)
 
-            habitRow(
+            TaskMenuHabitRow(
                 title: "No habit",
-                subtitle: "Keep this task independent.",
                 icon: "slash.circle",
                 tint: DS.textSecondary,
                 isSelected: currentHabitUUID == nil,
+                help: "Keep this task independent",
                 action: { onSelect(nil) }
             )
 
             ForEach(availableHabits, id: \.id) { habit in
-                habitRow(
+                TaskMenuHabitRow(
                     title: habit.displayTitle,
-                    subtitle: habit.taskIntents.map(\.displayName).joined(separator: " · "),
                     icon: habit.icon,
                     mark: habit.identityMark,
                     tint: habit.accent,
+                    cadenceHint: cadenceHint(for: habit),
                     isSelected: currentHabitUUID == habit.id,
+                    help: "Link to \(habit.displayTitle)",
                     action: { onSelect(habit.id) }
                 )
             }
         }
     }
 
-    private func habitRow(
-        title: String,
-        subtitle: String,
-        icon: String,
-        mark: String? = nil,
-        tint: Color,
-        isSelected: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
+    private func cadenceHint(for habit: HabitDefinition) -> String {
+        if habit.isTimeBased { return "\(habit.dailyTargetMinutes ?? 30)m/day" }
+        return "\(habit.dailyTargetCount)×/day"
+    }
+}
+
+/// One dense picker row in the assistant-menu grammar: the 20pt identity slot
+/// (typed/keyword emoji first, picked SF icon in the habit's accent as
+/// fallback — the HabitLibraryRow contract), medium title, mono cadence hint,
+/// accent checkmark when linked, soft accent wash on hover.
+private struct TaskMenuHabitRow: View {
+    let title: String
+    let icon: String
+    var mark: String? = nil
+    let tint: Color
+    var cadenceHint: String? = nil
+    let isSelected: Bool
+    let help: String
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
         Button(action: action) {
             HStack(spacing: DS.space10) {
-                Circle()
-                    .fill(tint.opacity(isSelected ? 0.16 : 0.08))
-                    .frame(width: 32, height: 32)
-                    .overlay {
-                        // Habit identity, the App Store register: typed or
-                        // keyword emoji first, picked SF icon as fallback.
-                        if let mark {
-                            Text(mark)
-                                .font(.system(size: 14))
-                        } else {
-                            Image(systemName: icon)
-                                .font(DS.subheadline).fontWeight(.medium)
-                                .foregroundStyle(tint)
-                        }
-                    }
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(DS.callout)
-                        .foregroundStyle(DS.text)
-
-                    if !subtitle.isEmpty {
-                        Text(subtitle)
-                            .font(DS.caption2)
-                            .foregroundStyle(DS.inkFaded)
-                            .lineLimit(1)
+                Group {
+                    if let mark {
+                        Text(mark)
+                            .font(.system(size: 13))
+                    } else {
+                        Image(systemName: icon)
+                            .font(DS.caption.weight(.semibold))
+                            .foregroundStyle(tint)
                     }
                 }
+                .frame(width: 20, alignment: .center)
+                .accessibilityHidden(true)
 
-                Spacer()
+                Text(title)
+                    .font(DS.callout.weight(.medium))
+                    .foregroundStyle(DS.text)
+                    .lineLimit(1)
+
+                Spacer(minLength: 0)
+
+                if let cadenceHint {
+                    Text(cadenceHint)
+                        .font(DS.caption.monospaced())
+                        .foregroundStyle(DS.textMuted.opacity(0.8))
+                }
 
                 if isSelected {
                     Image(systemName: "checkmark")
-                        .font(DS.caption2)
-                        .foregroundStyle(tint)
+                        .font(DS.caption.weight(.semibold))
+                        .foregroundStyle(DS.accent)
+                        .accessibilityHidden(true)
                 }
             }
             .padding(.horizontal, DS.space10)
-            .padding(.vertical, DS.space8)
-            .background(isSelected ? tint.opacity(0.06) : Color.clear, in: .rect(cornerRadius: 10))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(isSelected ? tint.opacity(0.24) : Color.clear, lineWidth: 1)
+            .frame(height: 34)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(isHovered ? DS.accentSoft : Color.clear)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(isHovered ? DS.accent.opacity(0.22) : Color.clear, lineWidth: 1)
+                    )
             )
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .help(help)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : [.isButton])
     }
 }
 
@@ -1527,7 +1779,7 @@ struct CommandCenterScheduleSection: View {
 
     private var quickActions: some View {
         VStack(alignment: .leading, spacing: DS.space8) {
-            glassSectionLabel("Quick")
+            TaskMenuSectionLabel("QUICK")
 
             CosmoFlowLayout(spacing: DS.space8) {
                 ForEach(quickChipModels) { model in
@@ -1574,19 +1826,16 @@ struct CommandCenterScheduleSection: View {
 
     private var naturalLanguageField: some View {
         VStack(alignment: .leading, spacing: DS.space8) {
-            glassSectionLabel("When")
+            TaskMenuSectionLabel("WHEN")
 
             TextField("tomorrow, next monday, apr 24", text: $manualInput)
                 .textFieldStyle(.plain)
                 .font(DS.callout)
                 .foregroundStyle(DS.text)
-                .padding(.horizontal, DS.space12)
-                .padding(.vertical, DS.space10)
-                .background(DS.glassInputFill, in: .rect(cornerRadius: 10))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(DS.glassBorder, lineWidth: 0.5)
-                )
+                .padding(.horizontal, DS.space10)
+                .frame(height: 30)
+                .dsGlassInput(cornerRadius: 8)
+                .help("Type a date in plain words and press Return")
                 .onSubmit {
                     guard let parsed = CommandCenterScheduleUtilities.parseDateInput(manualInput) else { return }
                     displayedMonth = CommandCenterScheduleUtilities.startOfMonth(for: parsed)
@@ -1596,26 +1845,11 @@ struct CommandCenterScheduleSection: View {
     }
 
     private var calendarSection: some View {
-        VStack(alignment: .leading, spacing: DS.space10) {
-            CommandCenterMonthGrid(
-                displayedMonth: $displayedMonth,
-                selectedDate: currentDate,
-                onSelectDate: { onSelect(.date($0)) }
-            )
-        }
-    }
-
-    private func glassSectionLabel(_ text: String) -> some View {
-        HStack(spacing: DS.space8) {
-            Text(text.uppercased())
-                .font(DS.smallCaps)
-                .foregroundStyle(DS.textSecondary)
-                .tracking(1.4)
-            Rectangle()
-                .fill(DS.glassBorder)
-                .frame(height: 0.5)
-                .opacity(0.7)
-        }
+        CommandCenterMonthGrid(
+            displayedMonth: $displayedMonth,
+            selectedDate: currentDate,
+            onSelectDate: { onSelect(.date($0)) }
+        )
     }
 }
 
@@ -1640,16 +1874,16 @@ private struct CommandCenterScheduleQuickChip: View {
         Button(action: action) {
             HStack(spacing: DS.space6) {
                 Image(systemName: model.systemImage)
-                    .font(DS.footnote.weight(.semibold))
+                    .font(DS.caption2.weight(.semibold))
                     .foregroundStyle(model.tint)
                 Text(model.title)
-                    .font(DS.subheadline.weight(.medium))
+                    .font(DS.caption.weight(.medium))
                     .foregroundStyle(DS.text)
                     .lineLimit(1)
             }
             .fixedSize(horizontal: true, vertical: false)
-            .padding(.horizontal, DS.space12)
-            .frame(height: 32)
+            .padding(.horizontal, DS.space10)
+            .frame(height: 28)
             .background(isHovered ? DS.glassInputFillFocused : DS.glassInputFill, in: Capsule())
             .overlay(
                 Capsule()
@@ -1659,6 +1893,7 @@ private struct CommandCenterScheduleQuickChip: View {
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
         .animation(ProMotionSprings.hover, value: isHovered)
+        .help(model.title)
         .accessibilityLabel(model.title)
         .accessibilityAddTraits(.isButton)
     }
@@ -1674,89 +1909,109 @@ struct CommandCenterMonthGrid: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space10) {
             HStack(spacing: DS.space10) {
-                Button {
+                monthNavButton(systemImage: "chevron.left", help: "Previous month") {
                     displayedMonth = CommandCenterScheduleUtilities.month(byAdding: -1, to: displayedMonth)
-                } label: {
-                    Image(systemName: "chevron.left")
-                        .font(DS.caption2)
-                        .foregroundStyle(DS.inkFaded)
-                        .frame(width: 28, height: 28)
                 }
-                .buttonStyle(.plain)
 
                 Text(displayedMonth.formatted(.dateTime.month(.wide).year()))
-                    .font(DS.headline)
+                    .font(DS.callout.weight(.semibold))
                     .foregroundStyle(DS.text)
+                    .frame(maxWidth: .infinity)
 
-                Spacer()
-
-                Button {
+                monthNavButton(systemImage: "chevron.right", help: "Next month") {
                     displayedMonth = CommandCenterScheduleUtilities.month(byAdding: 1, to: displayedMonth)
-                } label: {
-                    Image(systemName: "chevron.right")
-                        .font(DS.caption2)
-                        .foregroundStyle(DS.inkFaded)
-                        .frame(width: 28, height: 28)
                 }
-                .buttonStyle(.plain)
             }
 
-            LazyVGrid(columns: columns, spacing: DS.space8) {
+            LazyVGrid(columns: columns, spacing: DS.space6) {
                 ForEach(CommandCenterScheduleUtilities.weekdaySymbols, id: \.self) { symbol in
-                    Text(symbol)
-                        .font(DS.smallCaps)
-                        .foregroundStyle(DS.textSecondary)
+                    Text(symbol.uppercased())
+                        .font(DS.caption2.weight(.semibold))
+                        .tracking(0.8)
+                        .foregroundStyle(DS.textMuted)
                         .frame(maxWidth: .infinity)
                 }
 
                 ForEach(CommandCenterScheduleUtilities.days(for: displayedMonth), id: \.id) { day in
                     if let date = day.date {
-                        dayButton(date, isCurrentMonth: day.isCurrentMonth)
+                        TaskMenuDayCell(
+                            date: date,
+                            isCurrentMonth: day.isCurrentMonth,
+                            isSelected: CommandCenterScheduleUtilities.matches(selectedDate, date),
+                            action: { onSelectDate(date) }
+                        )
                     } else {
                         Color.clear
-                            .frame(height: 30)
+                            .frame(height: 28)
                     }
                 }
             }
         }
     }
 
-    private func dayButton(_ date: Date, isCurrentMonth: Bool) -> some View {
-        let isSelected = CommandCenterScheduleUtilities.matches(selectedDate, date)
-        let isToday = Calendar.current.isDateInToday(date)
-
-        return Button {
-            onSelectDate(date)
-        } label: {
-            Text("\(Calendar.current.component(.day, from: date))")
-                .font(DS.callout).fontWeight(isSelected ? .semibold : .regular).monospacedDigit()
-                .foregroundStyle(dayColor(isSelected: isSelected, isToday: isToday, isCurrentMonth: isCurrentMonth))
-                .frame(maxWidth: .infinity)
-                .frame(height: 30)
-                .background(dayBackground(isSelected: isSelected, isToday: isToday), in: .rect(cornerRadius: 8))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(dayBorder(isSelected: isSelected, isToday: isToday), lineWidth: 0.5)
-                )
+    private func monthNavButton(
+        systemImage: String,
+        help: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(DS.caption.weight(.semibold))
+                .foregroundStyle(DS.textSecondary)
+                .frame(width: 24, height: 24)
+                .background(DS.glassInputFill, in: Circle())
+                .overlay(Circle().stroke(DS.glassBorder, lineWidth: 0.5))
         }
         .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(help)
+    }
+}
+
+/// One calendar day in the menu chip voice: soft accent wash + hairline when
+/// selected, accent ink for today, a quiet fill on hover.
+private struct TaskMenuDayCell: View {
+    let date: Date
+    let isCurrentMonth: Bool
+    let isSelected: Bool
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        let isToday = Calendar.current.isDateInToday(date)
+
+        Button(action: action) {
+            Text("\(Calendar.current.component(.day, from: date))")
+                .font(DS.caption)
+                .fontWeight(isSelected || isToday ? .semibold : .regular)
+                .monospacedDigit()
+                .foregroundStyle(textColor(isToday: isToday))
+                .frame(maxWidth: .infinity)
+                .frame(height: 28)
+                .background(fillColor, in: .rect(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(isSelected ? DS.accent.opacity(0.42) : Color.clear, lineWidth: 0.5)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .help("Schedule for \(date.formatted(date: .abbreviated, time: .omitted))")
+        .accessibilityLabel(date.formatted(date: .complete, time: .omitted))
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : [.isButton])
     }
 
-    private func dayColor(isSelected: Bool, isToday: Bool, isCurrentMonth: Bool) -> Color {
+    private func textColor(isToday: Bool) -> Color {
         if isSelected { return DS.text }
         if isToday { return DS.accent }
-        return isCurrentMonth ? DS.text : DS.inkFaded.opacity(0.45)
+        return isCurrentMonth ? DS.text : DS.textMuted.opacity(0.5)
     }
 
-    private func dayBackground(isSelected: Bool, isToday: Bool) -> Color {
-        if isSelected { return DS.giltSoft.opacity(0.92) }
-        if isToday { return DS.accentSoft.opacity(0.55) }
-        return Color.clear
-    }
-
-    private func dayBorder(isSelected: Bool, isToday: Bool) -> Color {
-        if isSelected { return DS.gilt.opacity(0.85) }
-        if isToday { return DS.accent.opacity(0.25) }
+    private var fillColor: Color {
+        if isSelected { return DS.accentSoft }
+        if isHovered { return DS.glassInputFill }
         return Color.clear
     }
 }
@@ -1941,31 +2196,6 @@ private enum CommandCenterRepeatPreset: CaseIterable {
     }
 }
 
-private func subtleActionButton(
-    title: String,
-    systemImage: String,
-    tint: Color,
-    action: @escaping () -> Void
-) -> some View {
-    Button(action: action) {
-        HStack(spacing: DS.space6) {
-            Image(systemName: systemImage)
-                .font(DS.caption2)
-            Text(title)
-                .font(DS.callout)
-        }
-        .foregroundStyle(tint)
-        .padding(.horizontal, DS.space10)
-        .padding(.vertical, DS.space8)
-        .background(tint.opacity(0.08), in: Capsule())
-        .overlay(
-            Capsule()
-                .stroke(tint.opacity(0.18), lineWidth: 1)
-        )
-    }
-    .buttonStyle(.plain)
-}
-
 func composerSectionLabel(_ text: String) -> some View {
     HStack(spacing: DS.space8) {
         Text(text.uppercased())
@@ -1991,7 +2221,7 @@ private func metaGlyph(text: String, icon: String, color: Color) -> some View {
 
 #Preview("Schedule Composer") {
     CommandCenterScheduleComposer(
-        title: "SCHEDULE",
+        title: "Schedule",
         subtitle: "Refine command center menus",
         currentDate: Date(),
         showSomedayAction: true,

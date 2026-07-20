@@ -57,9 +57,26 @@ enum ContentFocusLayoutPolicy {
         // manuscript can never be wider than the scroll column between the
         // ghost margin and the rail.
         let effectiveWidth = min(availableWidth, scriptoriumBandMaxWidth + DS.space48)
-        let sideAllowance: CGFloat = zenMode
-            ? DS.space48
-            : 2 * (marginaliaRailWidth + DS.space24) + DS.space48
+
+        let showsRails = showsMarginaliaRails(
+            isPaneContext: isPaneContext,
+            zenMode: zenMode,
+            layoutMode: layoutMode,
+            availableWidth: availableWidth
+        )
+        guard showsRails else {
+            // Rails hidden means the surface is squeezed — a side pane is open,
+            // zen is on, or the window is narrow. Charging the rail allowance
+            // here left ~360pt regardless of preset, collapsing the width
+            // setting into a no-op (the same failure the pane branch guards
+            // against), so scale by the same per-mode fraction instead. Presets
+            // still cap the column, so a wide zen window seats them exactly.
+            let usable = max(320, effectiveWidth - DS.space48)
+            let scaled = usable * max(0, min(1, paneWidthFraction))
+            return max(300, min(preferredWritingWidth, scaled))
+        }
+
+        let sideAllowance: CGFloat = 2 * (marginaliaRailWidth + DS.space24) + DS.space48
         let available = max(360, effectiveWidth - sideAllowance)
         return min(preferredWritingWidth, available)
     }
@@ -563,6 +580,13 @@ struct ContentFocusModeView: View {
             typingActivityTask?.cancel()
             polishDebounceTask?.cancel()
             persistCurrentEditorSnapshot(reason: "onDisappear")
+            // Assistant scope and window context follow presence: leaving the
+            // doc releases both.
+            if let owned = ownedContextProvider {
+                CosmoEditableSurfaceRegistry.shared.unregister(surfaceID: owned.surfaceID)
+                CosmoWindowViewModel.shared.releaseContext(provider: owned)
+                ownedContextProvider = nil
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .unifiedEngineDraftUpdate)) { notification in
             // Require an exact UUID match — an unscoped notification (nil UUID) from

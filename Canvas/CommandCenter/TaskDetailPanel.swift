@@ -351,7 +351,7 @@ struct TaskDetailPanel: View {
                 }
             }
         } label: {
-            HStack(spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
                 if let selected = availableBlocks.first(where: { $0.id == editedScheduleBlockUUID }) {
                     RoundedRectangle(cornerRadius: 1.5, style: .continuous)
                         .fill(selected.colorHex.map(Color.init(hex:)) ?? DS.accent)
@@ -359,7 +359,8 @@ struct TaskDetailPanel: View {
                     Text(selected.title)
                         .font(DS.buttonText)
                         .foregroundStyle(DS.text)
-                        .lineLimit(1)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
                 } else {
                     Text("Add to block")
                         .font(DS.cardMeta)
@@ -373,7 +374,7 @@ struct TaskDetailPanel: View {
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
-        .fixedSize()
+        .fixedSize(horizontal: false, vertical: true)
         .help("Nest this task inside a time block — the block keeps its own hours.")
     }
 
@@ -759,14 +760,61 @@ struct TaskDetailPanel: View {
     }
 
     private func saveTitle() {
-        guard editedTitle != task.title else { return }
+        // Same brain as capture: scheduling tokens typed into the title
+        // ("tomorrow", "deadline: friday", "/evening", "every monday", "p1")
+        // are stripped out of the text and applied to their detail fields.
+        // Habit keywords ("for Ben") stay in the title — the title-save path
+        // re-resolves the habit from them downstream.
+        let edit = TaskInputParser.parseDetailEdit(editedTitle, mentions: editedTitleMentions)
+        let newTitle = edit.title.isEmpty ? task.title : edit.title
+        editedTitle = newTitle
+
+        let titleChanged = newTitle != task.title
+        guard titleChanged || edit.hasSchedulingChanges else { return }
+
+        // Mirror the field states so the panel reflects the edit immediately.
+        if let when = edit.whenDate { editedWhenDate = when }
+        if let deadline = edit.deadline { editedDeadline = deadline }
+        if let timeOfDay = edit.timeOfDay { editedTimeOfDay = timeOfDay }
+        if let state = edit.schedulingState { editedSchedulingState = state }
+        if let priority = edit.priority { editedPriority = priority }
+        if let rule = edit.recurrenceRule {
+            recurrenceRule = rule
+            hydrateRecurrenceEditor()
+        }
+
+        let scope = titleEditScope
+        let occurrenceDay = task.occurrenceDay
+        let taskUUID = task.uuid
         Task {
-            await viewModel.updateRecurringTaskTitle(
-                uuid: task.uuid,
-                title: editedTitle,
-                scope: titleEditScope,
-                occurrenceDay: task.occurrenceDay
-            )
+            // Sequential on purpose — each call is a read-modify-write of the
+            // same atom; interleaving them could drop a field.
+            if titleChanged {
+                await viewModel.updateRecurringTaskTitle(
+                    uuid: taskUUID,
+                    title: newTitle,
+                    scope: scope,
+                    occurrenceDay: occurrenceDay
+                )
+            }
+            if let when = edit.whenDate {
+                await viewModel.setWhenDate(taskUUID: taskUUID, date: when)
+            }
+            if let deadline = edit.deadline {
+                await viewModel.setDeadline(taskUUID: taskUUID, date: deadline)
+            }
+            if let timeOfDay = edit.timeOfDay {
+                await viewModel.setTimeOfDay(taskUUID: taskUUID, value: timeOfDay)
+            }
+            if let state = edit.schedulingState {
+                await viewModel.setSchedulingState(taskUUID: taskUUID, state: state)
+            }
+            if let priority = edit.priority {
+                await viewModel.updateTask(uuid: taskUUID, priority: priority)
+            }
+            if let rule = edit.recurrenceRule {
+                await viewModel.setTaskRecurrence(uuid: taskUUID, rule: rule)
+            }
         }
     }
 

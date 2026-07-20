@@ -134,6 +134,10 @@ struct ConnectionWorkspaceView: View {
     private func centerColumn(breakpoint: ConnectionWorkspaceBreakpoint) -> some View {
         centerContent
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            // Select→mint on the user's own bullets, in EVERY center mode:
+            // Outline rows and the pushed section detail both report
+            // selections via ConnectionLinkedProseView — one host serves all.
+            .conceptMintPillHost()
     }
 
     @ViewBuilder

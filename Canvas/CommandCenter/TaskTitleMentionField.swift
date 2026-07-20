@@ -14,20 +14,26 @@ struct TaskTitleMentionField: View {
     @State private var mentionQuery = ""
     @State private var mentionResults: [MentionSearchResult] = []
     @State private var mentionInsertionPoint: String.Index?
-    @FocusState private var isFocused: Bool
+    @State private var isFocused = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            // Title with colored mentions rendered inline
-            TextField("Task title", text: $title)
-                .textFieldStyle(.plain)
-                .font(DS.body)
-                .foregroundStyle(DS.text)
-                .focused($isFocused)
-                .onSubmit { onSubmit() }
-                .onChange(of: title) {
-                    detectMentionTrigger()
-                }
+            // Title with recognized runs washed in place — the ⌥C capture
+            // treatment: mentions in their entity tint, habit keywords in the
+            // habit's tint, scheduling tokens in the tint of the detail row
+            // they'll set on Enter.
+            TokenWashTextView(
+                text: $title,
+                placeholder: "Task title",
+                font: .systemFont(ofSize: 15),
+                ink: NSColor(DS.text),
+                segments: washSegments,
+                isFocused: $isFocused,
+                onSubmit: { onSubmit() }
+            )
+            .onChange(of: title) {
+                detectMentionTrigger()
+            }
 
             // Mention search popup
             if showMentionSearch {
@@ -36,6 +42,50 @@ struct TaskTitleMentionField: View {
             }
         }
         .animation(.easeInOut(duration: 0.15), value: showMentionSearch)
+    }
+
+    // MARK: - Wash Segments
+
+    /// One pass shared with the commit path: `parseDetailEdit` reports the
+    /// exact ranges Enter will strip-and-apply, so the wash never promises
+    /// something the save won't do.
+    private var washSegments: [TextWashSegment] {
+        var segments: [TextWashSegment] = []
+        let ns = title as NSString
+
+        // Mentions read as links — each in its entity's tint.
+        for mention in mentions {
+            let range = ns.range(of: "@\(mention.titleSnapshot)")
+            guard range.location != NSNotFound else { continue }
+            segments.append(TextWashSegment(
+                utf16Range: range.location..<(range.location + range.length),
+                ink: NSColor(CosmoMentionColors.color(for: mention.entityType))
+            ))
+        }
+
+        // Habit keyword ("for Ben") in that habit's tint.
+        if let match = CommandCenterHabitEngine.shared.keywordTriggerMatch(in: title),
+           !segments.contains(where: { $0.utf16Range.overlaps(match.utf16Range) }) {
+            segments.append(TextWashSegment(
+                utf16Range: match.utf16Range,
+                ink: NSColor(match.definition.accent)
+            ))
+        }
+
+        // Scheduling tokens — When in accent, Deadline in its orange,
+        // priority in the priority's own color.
+        let edit = TaskInputParser.parseDetailEdit(title, mentions: mentions)
+        for token in edit.tokens {
+            guard !segments.contains(where: { $0.utf16Range.overlaps(token.utf16Range) }) else { continue }
+            let ink: Color
+            switch token.kind {
+            case .deadline: ink = DS.orange
+            case .priority(let priority): ink = priority.color
+            case .when, .timeOfDay, .schedulingState, .recurrence: ink = DS.accent
+            }
+            segments.append(TextWashSegment(utf16Range: token.utf16Range, ink: NSColor(ink)))
+        }
+        return segments
     }
 
     // MARK: - Mention Search Overlay

@@ -31,6 +31,10 @@ final class IdeasPageModel {
     /// mirror can 400 when the upload never ran — the CDN original still
     /// serves; the card walks the list and collapses if every one fails).
     var inspirationThumbs: [String: [String]] = [:]
+    /// idea uuid → the next OPEN development session's day (the focus-mode
+    /// scheduled chip, card-sized): earliest planned day among the idea's
+    /// non-completed linked tasks.
+    var scheduledDays: [String: Date] = [:]
     var isLoaded = false
     var toastMessage: String?
     /// A deleted idea waiting out its undo window.
@@ -63,11 +67,14 @@ final class IdeasPageModel {
     /// Any idea-table write re-queries — local edits, sync applies, drops.
     private func startObserving() {
         guard observation == nil, let db = CosmoDatabase.shared.dbPool else { return }
+        // Tasks ride the same trigger: scheduling an idea writes only a task
+        // atom (the link lives ON the task), and the cards' scheduled chips
+        // must follow it live.
         let tracked = ValueObservation
             .tracking { db in
                 try String.fetchOne(
                     db,
-                    sql: "SELECT COUNT(*) || ':' || COALESCE(MAX(updated_at), '') FROM atoms WHERE type = 'idea' AND is_deleted = 0"
+                    sql: "SELECT COUNT(*) || ':' || COALESCE(MAX(updated_at), '') FROM atoms WHERE type IN ('idea', 'task') AND is_deleted = 0"
                 ) ?? ""
             }
             .removeDuplicates()
@@ -94,12 +101,31 @@ final class IdeasPageModel {
             atom.toIdeaGalleryItem(clientName: atom.ideaMetadata?.clientUUID.flatMap { clientNames[$0] })
         }
         let thumbs = await Self.resolveInspiration(for: live)
+        let scheduled = await Self.resolveScheduledDays()
 
         withAnimation(ProMotionSprings.gentle) {
             ideas = items
             inspirationThumbs = thumbs
+            scheduledDays = scheduled
             isLoaded = true
         }
+    }
+
+    /// The cards' scheduled chips: walk the task table once and keep, per
+    /// linked idea, the earliest open session day (the reverse of
+    /// `IdeaTaskLinkService.scheduledTasks`, batched for the whole page).
+    private static func resolveScheduledDays() async -> [String: Date] {
+        let tasks = (try? await AtomRepository.shared.fetchAll(type: .task)) ?? []
+        var days: [String: Date] = [:]
+        for task in tasks {
+            guard task.metadataValue(as: TaskMetadata.self)?.isCompleted != true,
+                  let day = IdeaTaskLinkService.plannedDay(task) else { continue }
+            for link in IdeaTaskLinkService.linkedAtoms(of: task) where link.atomType == AtomType.idea.rawValue {
+                if let existing = days[link.atomUUID], existing <= day { continue }
+                days[link.atomUUID] = day
+            }
+        }
+        return days
     }
 
     /// The card's anchor: the linked swipe's thumbnail, cheapest source first.
@@ -402,10 +428,13 @@ struct IdeasHomePage: View {
                 .ideasCascade(hasAppeared, index: 0)
         }
 
+        // Shelves carry the client's FULL list (the swipe shelves' uncapped
+        // rule): the scroller is lazy, so arrows/cursor can walk every idea
+        // without detouring through the board.
         ForEach(Array(model.clientGroups.enumerated()), id: \.element.id) { index, group in
             shelf(
                 title: group.name,
-                ideas: Array(group.ideas.prefix(6)),
+                ideas: group.ideas,
                 surface: "shelf-\(group.id)",
                 detail: "\(group.ideas.count)",
                 onTap: { openBoard(group.id) }
@@ -532,6 +561,7 @@ struct IdeasHomePage: View {
             // Shelf-width cards drop the format/platform WORDS — the emoji
             // mark and the drawn glyph carry identity alone.
             compactMeta: surface == "motion" || surface.hasPrefix("shelf-"),
+            scheduledDay: model.scheduledDays[idea.atomUUID],
             fixedHeight: fixedHeight,
             isCursor: cursorID == idea.atomUUID,
             onOpen: { open(idea) },
@@ -663,7 +693,7 @@ struct IdeasHomePage: View {
         let motion = model.ideas.count >= 10 && model.inMotion.count >= 2
             ? model.inMotion.prefix(5).map(\.atomUUID)
             : []
-        return motion + model.clientGroups.flatMap { $0.ideas.prefix(6).map(\.atomUUID) }
+        return motion + model.clientGroups.flatMap { $0.ideas.map(\.atomUUID) }
     }
 
     private func moveCursor(_ direction: MoveCommandDirection) {
@@ -786,6 +816,9 @@ private struct IdeaCardView: View {
     /// Shelf-width cards drop the format/platform WORDS — the emoji mark and
     /// the drawn glyph carry identity alone.
     var compactMeta = false
+    /// The next open development session's day — renders the focus-mode
+    /// scheduled chip (calendar glyph + idea-accent day) on the meta line.
+    var scheduledDay: Date? = nil
     /// Shelf cards share one height (uniform rows scroll clean); the meta
     /// line drops to the bottom edge and shorter hooks breathe.
     var fixedHeight: CGFloat? = nil
@@ -936,9 +969,28 @@ private struct IdeaCardView: View {
             }
             Text(age)
                 .monospacedDigit()
+            if let scheduledLabel {
+                Text("·")
+                HStack(spacing: 3) {
+                    Image(systemName: "calendar")
+                        .accessibilityHidden(true)
+                    Text(scheduledLabel)
+                        .lineLimit(1)
+                }
+                .foregroundStyle(DS.entityIdea.opacity(0.9))
+            }
         }
         .font(DS.caption2)
         .foregroundStyle(DS.textMuted)
+    }
+
+    /// The scheduled chip's day, in the focus-mode chip's own words.
+    private var scheduledLabel: String? {
+        guard let scheduledDay else { return nil }
+        let calendar = Calendar.current
+        if calendar.isDateInToday(scheduledDay) { return "Today" }
+        if calendar.isDateInTomorrow(scheduledDay) { return "Tomorrow" }
+        return scheduledDay.formatted(.dateTime.weekday(.abbreviated).day())
     }
 
     private var cardAccessibilityLabel: String {
@@ -946,6 +998,7 @@ private struct IdeaCardView: View {
         if let format = idea.contentFormat { parts.append(format.displayName) }
         if let platform = idea.platform { parts.append(platform.displayName) }
         if showsClient, let client = idea.clientName { parts.append(client) }
+        if let scheduledLabel { parts.append("Scheduled \(scheduledLabel)") }
         return parts.joined(separator: ", ")
     }
 }

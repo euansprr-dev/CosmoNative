@@ -136,17 +136,56 @@ enum ContentPublishStore {
     /// Mark a content atom published on a platform: appends a publish record
     /// (idempotent per platform — republishing updates the record), stamps
     /// status, then recomputes the owning client's aggregates.
-    static func markPublished(atomUuid: String, platform: String, url: String? = nil) async {
+    /// `at` overrides "now" for retroactive records; `preservingExistingDate`
+    /// keeps an existing platform record's date untouched (perf logging must
+    /// never move a post on the calendar — only dragging moves dates).
+    static func markPublished(
+        atomUuid: String,
+        platform: String,
+        url: String? = nil,
+        at date: Date? = nil,
+        preservingExistingDate: Bool = false
+    ) async {
         guard let atom = try? await AtomRepository.shared.fetch(uuid: atomUuid) else { return }
-        var records = records(for: atom).filter { $0.platform != platform }
+        let existing = records(for: atom)
+        let prior = existing.first { $0.platform == platform }
+        var records = existing.filter { $0.platform != platform }
+        let publishedAt = (preservingExistingDate ? prior?.publishedAt : nil)
+            ?? ISO8601.string(from: date ?? Date())
         records.append(ContentPublishRecord(
             platform: platform,
-            url: url?.isEmpty == true ? nil : url,
-            publishedAt: ISO8601.string(from: Date())
+            url: url?.isEmpty == false ? url : prior?.url,
+            publishedAt: publishedAt
         ))
         let updated = atom.mergingMetadataKeys(Overlay(publishRecords: records, status: "published"))
         _ = try? await AtomRepository.shared.update(updated)
         await ClientPerfAggregator.recomputeForContent(atom)
+    }
+
+    /// Dragging is the only gesture that moves a published post: rewrite every
+    /// publish record onto the target day (clock time preserved). The calendar
+    /// plots published chips from these records. Returns false when the atom
+    /// has no publish history — the caller falls back to rescheduling.
+    @discardableResult
+    static func moveRecords(atomUuid: String, to day: Date, calendar: Calendar = .current) async -> Bool {
+        guard let atom = try? await AtomRepository.shared.fetch(uuid: atomUuid) else { return false }
+        let existing = records(for: atom)
+        guard !existing.isEmpty else { return false }
+        let moved = existing.map { record -> ContentPublishRecord in
+            var record = record
+            let time = calendar.dateComponents([.hour, .minute, .second], from: record.publishedAtDate)
+            let target = calendar.date(
+                bySettingHour: time.hour ?? 12,
+                minute: time.minute ?? 0,
+                second: time.second ?? 0,
+                of: day
+            ) ?? day
+            record.publishedAt = ISO8601.string(from: target)
+            return record
+        }
+        let updated = atom.mergingMetadataKeys(Overlay(publishRecords: moved, status: "published"))
+        _ = try? await AtomRepository.shared.update(updated)
+        return true
     }
 }
 

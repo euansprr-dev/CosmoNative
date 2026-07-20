@@ -14,6 +14,10 @@ struct PaneContentView: View {
     @State private var loadedAtom: Atom?
     @State private var swipeLibraryViewModel = SwipeLibraryViewModel()
 
+    /// Matches ConnectionWorkspaceView.sheetCorner — the one rounded surface
+    /// every windowed pane content shares.
+    private static let canvasSheetCorner: CGFloat = 14
+
     var body: some View {
         VStack(spacing: 0) {
             // Shell-owned tab row, STACKED above content (never overlaid), for
@@ -61,7 +65,19 @@ struct PaneContentView: View {
                 .environment(\.isPaneContextOwner, isContextOwner)
 
         case .thinkspace(let thinkspaceId):
+            // Study-shell anatomy (same as Connection/Swipe focus modes): the
+            // tab row lives in its own band above, and the canvas is ONE
+            // rounded sheet inset on DS.bg — not an edge-to-edge void the
+            // chrome floats over.
             PaneCanvasView(thinkspaceId: thinkspaceId)
+                .clipShape(RoundedRectangle(cornerRadius: Self.canvasSheetCorner, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: Self.canvasSheetCorner, style: .continuous)
+                        .stroke(DS.borderSubtle, lineWidth: 1)
+                )
+                .padding(.top, DS.space4)
+                .padding(.horizontal, DS.space10)
+                .padding(.bottom, DS.space10)
                 .environment(\.isPaneContext, true)
                 .environment(\.isPaneActive, isActive)
                 .environment(\.isPaneContextOwner, isContextOwner)

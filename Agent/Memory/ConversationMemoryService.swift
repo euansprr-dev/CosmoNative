@@ -90,6 +90,23 @@ class ConversationMemoryService {
         return decodeConversation(from: atom)
     }
 
+    // MARK: - Rollback
+
+    /// Drops every message stamped at or after `cutoff` — the agent-memory half
+    /// of the pane's rollback control. The cut lands at a run boundary by
+    /// construction (the cutoff is the rolled-back run's first pane message,
+    /// stamped before the agent appended anything for that run), so
+    /// tool_use/tool_result pairs are never split. The summary is left alone:
+    /// it only ever holds turns folded long before a rollback point.
+    func truncateConversation(id: String, after cutoff: Date) async {
+        guard var conversation = await loadConversation(id: id) else { return }
+        let kept = conversation.messages.filter { $0.timestamp < cutoff }
+        guard kept.count != conversation.messages.count else { return }
+        conversation.messages = kept
+        await saveConversation(conversation)
+        print("[ConversationMemory] Rolled back \(id) to \(cutoff) — \(kept.count) messages kept")
+    }
+
     // MARK: - History Folding
 
     private static let maxStoredMessages = 60

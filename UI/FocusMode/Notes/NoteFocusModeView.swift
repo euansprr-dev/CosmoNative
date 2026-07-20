@@ -504,6 +504,13 @@ struct NoteFocusModeView: View {
             stopEditingLockRefresh()
             CanvasAtomObservationHub.shared.unsubscribe(atomSubscription)
             atomSubscription = nil
+            // Assistant scope and window context follow presence: leaving the
+            // note releases both.
+            if let owned = ownedContextProvider {
+                CosmoEditableSurfaceRegistry.shared.unregister(surfaceID: owned.surfaceID)
+                CosmoWindowViewModel.shared.releaseContext(provider: owned)
+                ownedContextProvider = nil
+            }
             // Defer save by one frame so CosmoDocumentEditor's flushPendingSync()
             // can propagate the latest text via onDocumentChange first.
             DispatchQueue.main.async {

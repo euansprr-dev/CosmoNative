@@ -115,6 +115,7 @@ struct ConnectionOutlineView: View {
                 ConnectionItemEditRow(
                     item: item,
                     accent: section.type.accentColor,
+                    sectionType: section.type,
                     isSelected: workspace.selection == .item(section.type, item.id),
                     onSelect: { workspace.selection = .item(section.type, item.id) },
                     onEdit: { updated in viewModel.editItem(updated, inSection: section.type) },

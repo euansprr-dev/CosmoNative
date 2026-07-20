@@ -684,6 +684,134 @@ final class CosmoInlineAssistantRoutingTests: XCTestCase {
         XCTAssertEqual(store.paneMessages.map(\.content), ["Hello there"])
     }
 
+    // MARK: - Rollback
+
+    func testRollbackRewindsPaneLedgerAndRestoresAskToComposer() async {
+        let persistence = CosmoInlineAssistantSessionPersistence.inMemory()
+        let store = CosmoInlineAssistantStore(agentBridge: .mock, sessionPersistence: persistence)
+        let surface = RegisteringTestSurface(surfaceID: "note:rollback")
+        CosmoEditableSurfaceRegistry.shared.register(surface)
+        defer { CosmoEditableSurfaceRegistry.shared.unregister(surfaceID: "note:rollback") }
+        store.activateSession(surfaceID: "note:rollback")
+
+        store.composerText = "First question"
+        await store.submit()
+        store.composerText = "Now give me feedback on the draft"
+        await store.submit()
+
+        XCTAssertEqual(store.paneMessages.count, 2)
+        XCTAssertEqual(store.sessionLedger.count, 2)
+        guard let contaminatedMessage = store.paneMessages.last else {
+            return XCTFail("Expected a second pane message")
+        }
+
+        await store.rollback(fromMessageID: contaminatedMessage.id)
+
+        XCTAssertEqual(store.paneMessages.map(\.content), ["First question"])
+        XCTAssertEqual(store.sessionLedger.count, 1)
+        // The rolled-back ask returns to the composer for editing/resending.
+        XCTAssertEqual(store.composerText, "Now give me feedback on the draft")
+        // Persisted session mirrors the truncation.
+        XCTAssertEqual(
+            persistence.load(surfaceID: "note:rollback")?.paneMessages.map(\.content),
+            ["First question"]
+        )
+    }
+
+    func testRollbackOnAnswerMessageRemovesItsWholeRun() async {
+        let persistence = CosmoInlineAssistantSessionPersistence.inMemory()
+        let store = CosmoInlineAssistantStore(agentBridge: .mock, sessionPersistence: persistence)
+        let surface = RegisteringTestSurface(surfaceID: "note:rollback-run")
+        CosmoEditableSurfaceRegistry.shared.register(surface)
+        defer { CosmoEditableSurfaceRegistry.shared.unregister(surfaceID: "note:rollback-run") }
+        store.activateSession(surfaceID: "note:rollback-run")
+
+        store.composerText = "Keep this run"
+        await store.submit()
+
+        // A grouped run: ask + answer share one runID.
+        let runID = UUID()
+        store.paneMessages.append(.init(role: .user, content: "Bad ask", runID: runID))
+        store.paneMessages.append(.init(role: .assistant, content: "Bad answer", runID: runID))
+
+        guard let answer = store.paneMessages.last else {
+            return XCTFail("Expected the appended answer")
+        }
+        await store.rollback(fromMessageID: answer.id)
+
+        // Rolling back the ANSWER removes the whole exchange, never leaving a
+        // dangling ask.
+        XCTAssertEqual(store.paneMessages.map(\.content), ["Keep this run"])
+    }
+
+    // MARK: - Resident skill (concept board pinning)
+
+    func testResidentSkillSurfacePinsEveryNonExplicitTurnToThatSkill() async {
+        // Regression: on the "Feedback Loop of Awareness" concept board, a
+        // message containing the word "feedback" keyword-matched the
+        // contentReview writing skill and ran the swipe-library review.
+        // A resident-skill surface must keep every non-explicit turn in its
+        // own skill.
+        let persistence = CosmoInlineAssistantSessionPersistence.inMemory()
+        let store = CosmoInlineAssistantStore(agentBridge: .mock, sessionPersistence: persistence)
+
+        let concept = RegisteringTestSurface(
+            surfaceID: "connection:feedback-loop",
+            title: "Feedback Loop of Awareness",
+            residentSkillID: "concept"
+        )
+        CosmoEditableSurfaceRegistry.shared.register(concept)
+        defer { CosmoEditableSurfaceRegistry.shared.unregister(surfaceID: "connection:feedback-loop") }
+
+        store.composerText = "the feedback loop of your awareness is fully focused — can you research this too and hyperlink this concept?"
+        await store.submit()
+
+        XCTAssertEqual(store.paneMessages.first?.skillID, "concept")
+    }
+
+    func testResidentSkillBeatsPendingAutoRoutedSuggestion() async {
+        let persistence = CosmoInlineAssistantSessionPersistence.inMemory()
+        let store = CosmoInlineAssistantStore(agentBridge: .mock, sessionPersistence: persistence)
+
+        let concept = RegisteringTestSurface(
+            surfaceID: "connection:pinned",
+            title: "Pinned Concept",
+            residentSkillID: "concept"
+        )
+        CosmoEditableSurfaceRegistry.shared.register(concept)
+        defer { CosmoEditableSurfaceRegistry.shared.unregister(surfaceID: "connection:pinned") }
+
+        // A stale ghost suggestion must not hijack the resident surface.
+        store.skillSuggestion = .init(
+            skillID: "contentReview",
+            skillName: "Content Review",
+            icon: "sparkle",
+            score: 0.9
+        )
+        store.composerText = "give me feedback on the claims here"
+        await store.submit()
+
+        XCTAssertEqual(store.paneMessages.first?.skillID, "concept")
+    }
+
+    func testExplicitSlashCommandOverridesResidentSkill() async {
+        let persistence = CosmoInlineAssistantSessionPersistence.inMemory()
+        let store = CosmoInlineAssistantStore(agentBridge: .mock, sessionPersistence: persistence)
+
+        let concept = RegisteringTestSurface(
+            surfaceID: "connection:slash-escape",
+            title: "Concept",
+            residentSkillID: "concept"
+        )
+        CosmoEditableSurfaceRegistry.shared.register(concept)
+        defer { CosmoEditableSurfaceRegistry.shared.unregister(surfaceID: "connection:slash-escape") }
+
+        store.composerText = "/contentReview Begin."
+        await store.submit()
+
+        XCTAssertEqual(store.paneMessages.first?.skillID, "contentReview")
+    }
+
     func testActiveEditableSnapshotPrefersScopedSessionSurfaceOverLatestRegisteredSurface() {
         let persistence = CosmoInlineAssistantSessionPersistence.inMemory()
         let store = CosmoInlineAssistantStore(agentBridge: .mock, sessionPersistence: persistence)
@@ -743,6 +871,36 @@ final class CosmoInlineAssistantRoutingTests: XCTestCase {
 
         XCTAssertEqual(store.activeConversationID, "cosmo-inline-assistant:note:first")
         XCTAssertEqual(store.paneMessages.map(\.content), ["Working answer"])
+    }
+
+    func testClosingScopedSurfaceReleasesSessionToNextLiveSurfaceThenGlobal() {
+        let persistence = CosmoInlineAssistantSessionPersistence.inMemory()
+        let store = CosmoInlineAssistantStore(agentBridge: .mock, sessionPersistence: persistence)
+
+        let stillOpen = RegisteringTestSurface(surfaceID: "note:still-open")
+        CosmoEditableSurfaceRegistry.shared.register(stillOpen)
+        defer { CosmoEditableSurfaceRegistry.shared.unregister(surfaceID: "note:still-open") }
+
+        // Closing the scoped document falls back to the next live surface.
+        store.activateSession(surfaceID: "connection:closed-concept")
+        store.releaseSessionIfScoped(toSurfaceID: "connection:closed-concept")
+        XCTAssertEqual(store.activeConversationID, "cosmo-inline-assistant:note:still-open")
+
+        // ...and to global when nothing else is open.
+        CosmoEditableSurfaceRegistry.shared.unregister(surfaceID: "note:still-open")
+        store.releaseSessionIfScoped(toSurfaceID: "note:still-open")
+        XCTAssertEqual(store.activeConversationID, "cosmo-inline-assistant:global")
+
+        // Closing an unrelated surface never moves someone else's session.
+        store.activateSession(surfaceID: "note:elsewhere")
+        store.releaseSessionIfScoped(toSurfaceID: "note:unrelated")
+        XCTAssertEqual(store.activeConversationID, "cosmo-inline-assistant:note:elsewhere")
+
+        // Mid-run the release is deferred — a live run must not be retargeted.
+        store.isProcessing = true
+        store.releaseSessionIfScoped(toSurfaceID: "note:elsewhere")
+        XCTAssertEqual(store.activeConversationID, "cosmo-inline-assistant:note:elsewhere")
+        store.isProcessing = false
     }
 
     func testSlashClearResetsOnlyActiveInlineSurfaceSession() async {
@@ -1491,12 +1649,19 @@ private final class RegisteringTestSurface: CosmoEditableSurfaceProvider {
     let targetID: String
     let title: String
     let text: String
+    let residentSkillID: String?
 
-    init(surfaceID: String, title: String = "Test Surface", text: String = "Body") {
+    init(
+        surfaceID: String,
+        title: String = "Test Surface",
+        text: String = "Body",
+        residentSkillID: String? = nil
+    ) {
         self.surfaceID = surfaceID
         self.targetID = "\(surfaceID):body"
         self.title = title
         self.text = text
+        self.residentSkillID = residentSkillID
     }
 
     func editableSnapshot() -> CosmoEditableSourceSnapshot {
@@ -1507,7 +1672,8 @@ private final class RegisteringTestSurface: CosmoEditableSurfaceProvider {
             title: title,
             text: text,
             sourceHash: CosmoEditableSurfaceHasher.hash(text),
-            anchors: []
+            anchors: [],
+            residentSkillID: residentSkillID
         )
     }
 

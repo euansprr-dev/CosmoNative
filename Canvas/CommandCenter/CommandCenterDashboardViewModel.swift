@@ -2269,8 +2269,8 @@ final class CommandCenterDashboardViewModel {
         let title = newTaskTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return }
         newTaskTitle = ""
-        // Parse and create with metadata
-        let parsed = TaskInputParser.parse(title)
+        // Parse and create with metadata (seed implicit dates from the viewed day)
+        let parsed = TaskInputParser.parse(title, referenceDate: selectedDate)
         let created = await smartAddTask(parsed)
         if !created {
             // Creation failed — restore the input so the capture isn't silently lost.
@@ -2306,8 +2306,25 @@ final class CommandCenterDashboardViewModel {
                     let dateStr = PlannerumFormatters.iso8601.string(from: dueDate)
                     metadata.dueDate = dateStr
                     metadata.focusDate = dateStr  // Keep focusDate in sync so task appears on the correct day
-                } else if viewMode == .today {
-                    metadata.schedulingState = "anytime"
+                } else {
+                    // No explicit date typed. Where the task lands is decided by WHICH list
+                    // you're capturing from — you only get "anytime"/"someday" by actually
+                    // being in those lists. On the Today page a plain task pins to the day
+                    // you're LOOKING at (today, tomorrow, or any paged day via selectedDate),
+                    // never the real "today" and never the anytime bucket.
+                    switch viewMode {
+                    case .today, .upcoming:
+                        let day = Calendar.current.startOfDay(for: selectedDate)
+                        let dateStr = PlannerumFormatters.iso8601.string(from: day)
+                        metadata.dueDate = dateStr
+                        metadata.focusDate = dateStr
+                    case .anytime:
+                        metadata.schedulingState = "anytime"
+                    case .someday:
+                        metadata.schedulingState = "someday"
+                    default:
+                        break
+                    }
                 }
                 if let time = parsed.scheduledTime {
                     let date = parsed.dueDate ?? pendingTaskDate ?? Date()

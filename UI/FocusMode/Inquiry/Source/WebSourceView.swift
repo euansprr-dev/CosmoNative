@@ -56,13 +56,13 @@ struct WebSourceView: NSViewRepresentable {
         )
         userContentController.addUserScript(script)
         config.userContentController = userContentController
+        // Academic publishers (doi.org redirect targets) often refuse the
+        // default embedded-WebKit user agent — present as Safari.
+        config.applicationNameForUserAgent = CosmoBrowserUserAgent.applicationName
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
-        // Academic publishers (doi.org redirect targets) often refuse the
-        // default embedded-WebKit user agent — present as Safari.
-        webView.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15"
         webView.load(URLRequest(url: url))
         return webView
     }

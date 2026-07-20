@@ -592,21 +592,29 @@ struct CosmoInlineAssistantPaneMessages: View {
 
     @ViewBuilder
     private func runView(_ run: PaneRun) -> some View {
-        if run.isGrouped {
-            CosmoInlineAssistantRunCard(
-                store: store,
-                runID: run.id,
-                messages: run.messages,
-                skill: skillResolver.skill(id: run.messages.first(where: { $0.role == .user })?.skillID),
-                content: { message in
-                    AnyView(messageRow(message))
+        Group {
+            if run.isGrouped {
+                CosmoInlineAssistantRunCard(
+                    store: store,
+                    runID: run.id,
+                    messages: run.messages,
+                    skill: skillResolver.skill(id: run.messages.first(where: { $0.role == .user })?.skillID),
+                    content: { message in
+                        AnyView(messageRow(message))
+                    }
+                )
+            } else {
+                // Ungrouped legacy runs hold exactly one message each, so the
+                // hover rollback anchors correctly on the wrapper either way.
+                ForEach(run.messages) { message in
+                    messageRow(message)
                 }
-            )
-        } else {
-            ForEach(run.messages) { message in
-                messageRow(message)
             }
         }
+        .modifier(CosmoInlineAssistantRollbackHover(
+            store: store,
+            anchorMessageID: run.messages.first?.id
+        ))
     }
 
     private var shouldShowProgress: Bool {
@@ -653,6 +661,52 @@ struct CosmoInlineAssistantPaneMessages: View {
                 CosmoInlineAssistantPaneSectionLabel(text: message.content)
             }
         }
+    }
+}
+
+// MARK: - Rollback hover
+
+/// Hovering a run (or a legacy ungrouped message) reveals a small rollback
+/// button at its bottom-right. Clicking rewinds the session to just before
+/// that exchange: the pane, staged proposals, session ledger, agent
+/// transcript, and working memory all forget it — the escape hatch for a run
+/// that went down the wrong path and would otherwise poison every later turn.
+private struct CosmoInlineAssistantRollbackHover: ViewModifier {
+    @ObservedObject var store: CosmoInlineAssistantStore
+    let anchorMessageID: UUID?
+
+    @State private var isHovered = false
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(alignment: .bottomTrailing) {
+                if isHovered, !store.isProcessing, let anchorMessageID {
+                    rollbackButton(anchorMessageID)
+                }
+            }
+            .onHover { hovering in
+                withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+            }
+    }
+
+    private func rollbackButton(_ messageID: UUID) -> some View {
+        Button {
+            Task { await store.rollback(fromMessageID: messageID) }
+        } label: {
+            Image(systemName: "arrow.uturn.backward")
+                .font(DS.caption2.weight(.semibold))
+                .foregroundStyle(DS.textSecondary)
+                .frame(width: 22, height: 22)
+                .background(DS.surfaceElevated, in: Circle())
+                .overlay(Circle().strokeBorder(DS.borderSubtle, lineWidth: 1))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .cosmoClickCursor()
+        .help("Roll back to before this exchange — removes it and everything after from the conversation and Cosmo's memory")
+        .accessibilityLabel("Roll back conversation to before this exchange")
+        .padding(DS.space4)
+        .transition(.opacity.combined(with: .scale(scale: 0.9)))
     }
 }
 

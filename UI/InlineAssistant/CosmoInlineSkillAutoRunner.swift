@@ -56,6 +56,9 @@ final class CosmoInlineSkillAutoRunner {
             guard let trigger = definition.autoTrigger,
                   trigger.event == event else { continue }
             if let kinds = trigger.surfaceKinds, !kinds.contains(snapshot.kind) { continue }
+            // A resident-skill surface (concept board) only ever auto-fires its
+            // own skill — other skills need an explicit slash/picker choice.
+            if let resident = snapshot.residentSkillID, definition.id != resident { continue }
 
             let cooldownKey = "\(definition.id)|\(snapshot.surfaceID)"
             if let last = lastFired[cooldownKey],

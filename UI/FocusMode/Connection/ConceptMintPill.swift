@@ -98,13 +98,24 @@ private struct ConceptMintPillHost: ViewModifier {
     func body(content: Content) -> some View {
         content
             .environment(\.conceptMintReporter) { newReport in
+                // A mint in flight re-renders the row, which collapses the
+                // NSTextView selection and re-reports — that churn must not
+                // reset the working/✓ beats (perform() clears state itself).
+                guard phase == .idle else { return }
                 if let newReport, ConceptMintPolicy.isPlausibleConceptName(newReport.text) {
+                    if newReport.text == report?.text {
+                        // Same text re-reported (duplicate selection
+                        // notification): keep the resolved verb — clearing it
+                        // here would strand the pill, since `.task(id:)` only
+                        // re-resolves when the text changes.
+                        report = newReport
+                        return
+                    }
                     report = newReport
                 } else {
                     report = nil
                 }
                 resolution = nil
-                phase = .idle
             }
             .overlay { pillOverlay }
             .task(id: report?.text) {
@@ -154,6 +165,14 @@ private struct ConceptMintPillHost: ViewModifier {
             originSection: report.originSection
         ) {
             resolution.provider.addReferenceRow(uuid: minted.connectionUUID, title: name)
+            // The mint service posted referencesChanged BEFORE the live
+            // References row above existed — re-post now so the origin's
+            // link targets and Sources rail refresh against the row.
+            NotificationCenter.default.post(
+                name: CosmoNotification.Connection.referencesChanged,
+                object: nil,
+                userInfo: ["originUUID": resolution.origin.uuid, "connectionUUID": minted.connectionUUID]
+            )
         } else {
             phase = .idle
             return
@@ -185,7 +204,7 @@ struct ConceptMintPill: View {
     @State private var isHovered = false
 
     private var effectivePillSize: CGSize {
-        pillSize == .zero ? CGSize(width: 160, height: 36) : pillSize
+        pillSize == .zero ? CGSize(width: 140, height: 28) : pillSize
     }
 
     private var resolvedPosition: CGPoint {
@@ -216,14 +235,14 @@ struct ConceptMintPill: View {
                     .lineLimit(1)
             }
             .foregroundStyle(phase == .done ? DS.green : (isHovered ? CosmoMentionColors.connection : DS.textSecondary))
-            .padding(.horizontal, DS.space12)
-            .frame(height: 36)
+            .padding(.horizontal, DS.space10)
+            .frame(height: 28)
             .frame(maxWidth: 320)
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .disabled(phase != .idle)
-        .cosmoMenuChrome(cornerRadius: 18)
+        .cosmoMenuChrome(cornerRadius: 14)
         .onHover { hovering in
             withAnimation(ProMotionSprings.hover) { isHovered = hovering }
         }

@@ -487,13 +487,15 @@ struct CosmoInlineAssistantContextMenu: View {
     let selectedAtoms: [Atom]
     let onCommit: (CosmoInlineContextMenuModel.Entry) -> Void
     let onClear: () -> Void
+    /// nil lets the host size the menu (inline hosts like the concept
+    /// quick-add fields); the default matches the composer overlays.
+    var menuWidth: CGFloat? = 340
 
     /// Bumped by the model's onApply after every async rebuild. A @State write
     /// always marks this view dirty, so applied results repaint even though
     /// @Observable invalidation doesn't fire in this overlay hierarchy.
     @State private var appliedRevision = 0
 
-    private let menuWidth: CGFloat = 340
     private let listMaxHeight: CGFloat = 296
 
     var body: some View {

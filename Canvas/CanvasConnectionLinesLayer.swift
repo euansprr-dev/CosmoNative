@@ -735,10 +735,16 @@ private struct ConnectionLineShape: View {
         let lineWidth = (baseWidth + modulation) * effectiveScale * selectionMul
 
         // Opacity envelope: selected brightens, dimmed recedes, otherwise neutral.
+        // The neutral/dimmed opacities were tuned for the light canvas, where a
+        // faint line still reads as dark ink on paper. On the near-black dark
+        // canvas the same opacity washes the typed color out to a dim grey, so
+        // lift unselected lines there to read as clearly lighter ink. Selected
+        // edges are already bright and stay put.
+        let darkLift: Double = DS.palette.isDark ? 2.0 : 1.0
         let selectionOpacity: Double = {
             if isSelected { return 0.75 }
-            if isDimmed   { return 0.08 }
-            return 0.15 + weight * 0.20
+            if isDimmed   { return 0.08 * darkLift }
+            return (0.15 + weight * 0.20) * darkLift
         }()
 
         let pulseProgress = CGFloat((animationPhase * 0.192).truncatingRemainder(dividingBy: 1.0))

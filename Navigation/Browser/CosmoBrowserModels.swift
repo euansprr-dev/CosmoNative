@@ -5,6 +5,34 @@
 import Foundation
 import WebKit
 
+// MARK: - User Agent
+
+/// The Safari token embedded WebKit presents to sites.
+///
+/// WKWebView's default user agent omits the `Version/… Safari/…` token
+/// entirely, and large sites gate their modern bundle on a minimum Safari
+/// major version — Instagram, for one, serves a stripped legacy bundle whose
+/// image pipeline never paints to anything claiming less than Safari 18.
+/// A frozen literal rots the moment a site raises that floor, so the version
+/// tracks the running OS rather than a number someone typed once.
+enum CosmoBrowserUserAgent {
+    /// Value for `WKWebViewConfiguration.applicationNameForUserAgent`.
+    ///
+    /// Prefer this over `customUserAgent`: WebKit supplies the
+    /// `Mozilla/5.0 … AppleWebKit/…` prefix itself, so the engine build stays
+    /// truthful and only the Safari token is ours to state.
+    static var applicationName: String {
+        "Version/\(safariMarketingVersion) Safari/605.1.15"
+    }
+
+    /// Safari's marketing version tracks the macOS major version from macOS 26
+    /// onward; macOS 15 — the deployment floor — shipped Safari 18.
+    static var safariMarketingVersion: String {
+        let major = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
+        return major >= 26 ? "\(major).0" : "18.5"
+    }
+}
+
 // MARK: - Browser Core
 
 enum CosmoBrowserWebsiteDataMode: Codable, Equatable {

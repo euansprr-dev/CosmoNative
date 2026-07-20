@@ -91,10 +91,13 @@ final class WebsiteCapture: NSObject {
                 prefs.allowsContentJavaScript = true
                 config.defaultWebpagePreferences = prefs
 
+                // Captures are of the same page the browser pane would show, so
+                // they must ask for it as the same browser.
+                config.applicationNameForUserAgent = CosmoBrowserUserAgent.applicationName
+
                 // Create web view
                 let webView = WKWebView(frame: CGRect(origin: .zero, size: size), configuration: config)
                 webView.navigationDelegate = self
-                webView.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
 
                 // Set up timeout
                 let timeoutTask = Task {

@@ -58,13 +58,13 @@ struct CosmoBrowserWebView: NSViewRepresentable {
         config.websiteDataStore = state.profile.websiteDataMode.makeDataStore()
         config.mediaTypesRequiringUserActionForPlayback = []
         config.userContentController = context.coordinator.userContentController
+        config.applicationNameForUserAgent = CosmoBrowserUserAgent.applicationName
 
         let webView = CosmoBrowserWKWebView(frame: .zero, configuration: config)
         webView.allowsBackForwardNavigationGestures = true
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
         webView.setValue(false, forKey: "drawsBackground")
-        webView.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
         context.coordinator.webView = webView
         context.coordinator.installDeleteKeyMonitor(for: webView)
         context.coordinator.installWebViewObservers(for: webView)

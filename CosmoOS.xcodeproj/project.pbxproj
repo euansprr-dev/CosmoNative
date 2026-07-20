@@ -557,6 +557,7 @@
 		972920396FD03BC6AC181616 /* AreaSidebarSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9878ED45CAF6B5A5F4D2EDE6 /* AreaSidebarSection.swift */; };
 		97680E91571D2E467A191657 /* SocialDiscoveryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43774A5C04B3A58C98DDDD8C /* SocialDiscoveryStore.swift */; };
 		98268F25950EFAF68D6151F1 /* ScheduleBlockEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40E01DD636072EE06F937FDD /* ScheduleBlockEngine.swift */; };
+		985246FB31191CFF64F6708A /* ConceptMentionToken.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B9E58963BC6AAF00B2CD668 /* ConceptMentionToken.swift */; };
 		9863F2C63CA3E562FAE25FFA /* NoteFocusModeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEE5E024773299E98155B565 /* NoteFocusModeView.swift */; };
 		987FB302E1F6FC0AF8148ABA /* AgentTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB1F0A7FA3DAD48895385B41 /* AgentTypes.swift */; };
 		9899EE441E13A338A518526D /* AXContextService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B0B95E0B133CB086B40E1BA /* AXContextService.swift */; };
@@ -1202,6 +1203,7 @@
 		3A0FD758181BC833C5421F5C /* InquiryWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InquiryWorkspaceView.swift; sourceTree = "<group>"; };
 		3A55C99DDF4F05E70E71F756 /* CapturedItemRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CapturedItemRepository.swift; sourceTree = "<group>"; };
 		3B56B7A084E8240A260CF920 /* IdeaInsight.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdeaInsight.swift; sourceTree = "<group>"; };
+		3B9E58963BC6AAF00B2CD668 /* ConceptMentionToken.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ConceptMentionToken.swift; sourceTree = "<group>"; };
 		3BD1908CF8EE21808C2C8EC5 /* BlockDropController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockDropController.swift; sourceTree = "<group>"; };
 		3C50E6B5F60AB761009F6153 /* MentionSearchProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MentionSearchProvider.swift; sourceTree = "<group>"; };
 		3CFC7FDEB605D173EFA4C750 /* CommandKViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandKViewModel.swift; sourceTree = "<group>"; };
@@ -3430,6 +3432,7 @@
 				562A4221B54FE0D17BE1C105 /* MaturityCrystalView.swift */,
 				9D791E520C054E12473B9D6C /* ConceptMintPill.swift */,
 				EAF2A7737B54A3DFBB91C271 /* ConnectionLinkedProseView.swift */,
+				3B9E58963BC6AAF00B2CD668 /* ConceptMentionToken.swift */,
 			);
 			path = Connection;
 			sourceTree = "<group>";
@@ -5098,6 +5101,7 @@
 				E340BAC0A968B63A3482501A /* FilePortalEditEngine.swift in Sources */,
 				80B21A89ADACE6A1D2D00F26 /* IdeaTaskLinkService.swift in Sources */,
 				9CCAB8BED88F74C7591B80F9 /* IdeaSchedulePopover.swift in Sources */,
+				985246FB31191CFF64F6708A /* ConceptMentionToken.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

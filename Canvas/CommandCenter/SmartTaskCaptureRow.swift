@@ -373,7 +373,7 @@ struct SmartTaskCaptureRow: View {
             .delay(for: .milliseconds(200), scheduler: DispatchQueue.main)
             .sink { value in
                 if !value.isEmpty {
-                    parsedInput = TaskInputParser.parse(value)
+                    parsedInput = TaskInputParser.parse(value, referenceDate: viewModel.selectedDate)
                 } else {
                     parsedInput = ParsedTaskInput(title: "")
                 }
@@ -384,7 +384,7 @@ struct SmartTaskCaptureRow: View {
         let title = viewModel.newTaskTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return }
 
-        var parsed = TaskInputParser.parse(title)
+        var parsed = TaskInputParser.parse(title, referenceDate: viewModel.selectedDate)
         // Inject context from the current view (project/heading)
         parsed.contextProjectUUID = contextProjectUUID
         parsed.contextHeadingUUID = contextHeadingUUID

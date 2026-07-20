@@ -74,6 +74,53 @@ final class ContentFocusPaneLayoutPolicyTests: XCTestCase {
         XCTAssertEqual(width, ContentFocusModeView.WritingWidthMode.narrow.width)
     }
 
+    /// The owner-side twin of the pane bug: when a side pane squeezes the main
+    /// Content Focus surface below the rail threshold (980), the rails hide but
+    /// the old math still charged their 576pt allowance, flooring every preset
+    /// at the same 360pt column — the Aa width setting did nothing. Rails-hidden
+    /// must spread the modes fractionally, exactly like pane mode.
+    func testSqueezedOwnerSurfaceWithHiddenRailsProducesDistinctIncreasingWidths() {
+        let squeezedWidth: CGFloat = 760
+        func columnWidth(for mode: ContentFocusModeView.WritingWidthMode) -> CGFloat {
+            ContentFocusLayoutPolicy.manuscriptWidth(
+                availableWidth: squeezedWidth,
+                preferredWritingWidth: mode.width,
+                isPaneContext: false,
+                zenMode: false,
+                layoutMode: .regular,
+                paneWidthFraction: mode.paneWidthFraction
+            )
+        }
+
+        let narrow = columnWidth(for: .narrow)
+        let comfort = columnWidth(for: .comfort)
+        let wide = columnWidth(for: .wide)
+        let immersive = columnWidth(for: .immersive)
+
+        XCTAssertLessThan(narrow, comfort)
+        XCTAssertLessThan(comfort, wide)
+        XCTAssertLessThan(wide, immersive)
+        // Immersive fills the usable width between the outer spacers.
+        XCTAssertEqual(immersive, squeezedWidth - 48)
+    }
+
+    /// A wide zen window still seats every absolute preset exactly — the
+    /// fractional spread only bites when the usable band is narrower than the
+    /// preset.
+    func testWideZenWindowSeatsAbsolutePresets() {
+        for mode in ContentFocusModeView.WritingWidthMode.allCases {
+            let width = ContentFocusLayoutPolicy.manuscriptWidth(
+                availableWidth: 1_600,
+                preferredWritingWidth: mode.width,
+                isPaneContext: false,
+                zenMode: true,
+                layoutMode: .full,
+                paneWidthFraction: mode.paneWidthFraction
+            )
+            XCTAssertEqual(width, mode.width)
+        }
+    }
+
     func testFullWindowKeepsSideRailAllowance() {
         let width = ContentFocusLayoutPolicy.manuscriptWidth(
             availableWidth: 1_200,

@@ -221,7 +221,9 @@ enum ConnectionSurfaceSerializer {
               !bullets.isEmpty else {
             return nil
         }
-        return (type, bullets)
+        // Ghost rows preview mention tokens as their "@Title" projection —
+        // the raw @[Title](connection:<uuid>) form is an apply-time detail.
+        return (type, bullets.map { ConceptMentionToken.displayText($0) })
     }
 
     /// The section an operation anchors to: prefer the verbatim `originalText`
@@ -313,6 +315,10 @@ final class ConnectionContextProvider: CosmoContextProvider, CosmoEditableSurfac
 
     var surfaceID: String { "connection:\(atom.uuid)" }
 
+    /// Concept boards live in the concept skill: no writing/review skill may
+    /// auto-route here — only an explicit slash/picker choice can.
+    var residentSkillID: String? { CosmoInlineAssistantSkillID.concept.rawValue }
+
     static func targetID(for atomUUID: String) -> String {
         "connection:\(atomUUID):sections"
     }
@@ -373,7 +379,10 @@ final class ConnectionContextProvider: CosmoContextProvider, CosmoEditableSurfac
             title: titleProvider(),
             text: model.text,
             sourceHash: CosmoEditableSurfaceHasher.hash(model.text),
-            anchors: model.anchors
+            anchors: model.anchors,
+            // Concept boards live in the concept skill: no writing/review skill
+            // may auto-route here — only an explicit slash/picker choice can.
+            residentSkillID: CosmoInlineAssistantSkillID.concept.rawValue
         )
     }
 
@@ -470,11 +479,16 @@ final class ConnectionContextProvider: CosmoContextProvider, CosmoEditableSurfac
 
         var previousID = afterItemID
         for itemText in items {
+            // Staged @[Title](connection:<uuid>) tokens resolve into mention
+            // inlines; an item that IS one connection mention lands as a
+            // first-class link row.
+            let parsed = ConceptMentionToken.parse(itemText)
             let inserted = viewModel.insertItem(
-                document: RichDocument.migrateLegacy(itemText),
-                plainText: itemText,
+                document: parsed.document,
+                plainText: parsed.plainText,
                 inSection: type,
-                afterItemID: previousID
+                afterItemID: previousID,
+                linkedConnectionUUID: parsed.soleConnectionLink?.entityUUID
             )
             previousID = inserted?.id ?? previousID
         }
@@ -599,11 +613,13 @@ final class ConnectionContextProvider: CosmoContextProvider, CosmoEditableSurfac
             }
             var previousID: UUID? = nil
             for itemText in items {
+                let parsed = ConceptMentionToken.parse(itemText)
                 let inserted = viewModel.insertItem(
-                    document: RichDocument.migrateLegacy(itemText),
-                    plainText: itemText,
+                    document: parsed.document,
+                    plainText: parsed.plainText,
                     inSection: type,
-                    afterItemID: previousID
+                    afterItemID: previousID,
+                    linkedConnectionUUID: parsed.soleConnectionLink?.entityUUID
                 )
                 previousID = inserted?.id ?? previousID
             }
@@ -624,18 +640,20 @@ final class ConnectionContextProvider: CosmoContextProvider, CosmoEditableSurfac
                 viewModel.deleteItem(itemID, fromSection: type)
             } else {
                 let newText = remainingItems.removeFirst()
-                existing.applyDocument(RichDocument.migrateLegacy(newText))
+                existing.applyDocument(ConceptMentionToken.parse(newText).document)
                 viewModel.editItem(existing, inSection: type)
                 editedCount += 1
                 previousID = itemID
             }
         }
         for itemText in remainingItems {
+            let parsed = ConceptMentionToken.parse(itemText)
             let inserted = viewModel.insertItem(
-                document: RichDocument.migrateLegacy(itemText),
-                plainText: itemText,
+                document: parsed.document,
+                plainText: parsed.plainText,
                 inSection: type,
-                afterItemID: previousID
+                afterItemID: previousID,
+                linkedConnectionUUID: parsed.soleConnectionLink?.entityUUID
             )
             previousID = inserted?.id ?? previousID
         }

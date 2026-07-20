@@ -480,6 +480,22 @@ final class CosmoWindowViewModel: ObservableObject {
         activeContext = .none
     }
 
+    /// Leaving a focus mode releases its window context — identity-guarded so
+    /// a departing view can never clobber a context another surface already
+    /// took over. The next live editable surface (a document still open in
+    /// another window) becomes the context; with none, the window goes global.
+    /// Callers unregister their editable surface BEFORE releasing, so the
+    /// fallback lookup cannot resurrect the departing provider.
+    func releaseContext(provider: any CosmoContextProvider) {
+        guard contextProvider === provider else { return }
+        if let fallback = CosmoEditableSurfaceRegistry.shared.activeSurface as? any CosmoContextProvider,
+           fallback !== provider {
+            updateContext(provider: fallback)
+        } else {
+            clearContext()
+        }
+    }
+
     /// Lightweight context update from MainView (no full CosmoContextProvider needed).
     /// Used when the window opens or the user navigates between top-level views.
     func updateContextManually(type: CosmoContextType) {

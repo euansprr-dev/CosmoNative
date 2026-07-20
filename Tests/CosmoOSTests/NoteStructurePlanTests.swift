@@ -217,6 +217,30 @@ final class NoteStructurePlanTests: XCTestCase {
     }
 
     @MainActor
+    func testReleaseContextClearsOnlyTheDepartingProvidersContext() {
+        let viewModel = CosmoWindowViewModel.shared
+        defer { viewModel.clearContext() }
+
+        let spatialEngine = SpatialEngine()
+        let thinkspaceID = UUID().uuidString
+        spatialEngine.currentThinkspaceId = thinkspaceID
+        let departing = CanvasContextProvider(spatialEngine: spatialEngine, thinkspaceId: thinkspaceID)
+        let successor = CanvasContextProvider(spatialEngine: spatialEngine, thinkspaceId: thinkspaceID)
+
+        viewModel.updateContext(provider: departing)
+        viewModel.updateContext(provider: successor)
+
+        // A stale disappear from a provider that no longer owns the window
+        // context must not clobber its successor.
+        viewModel.releaseContext(provider: departing)
+        XCTAssertNotEqual(viewModel.activeContext.type, .none)
+
+        // The owning provider's release clears the window back to global.
+        viewModel.releaseContext(provider: successor)
+        XCTAssertEqual(viewModel.activeContext.type, .none)
+    }
+
+    @MainActor
     func testActiveNoteStructureSnapshotUsesMentionedNoteInsideThinkspace() {
         let viewModel = CosmoWindowViewModel.shared
         viewModel.clearMentions()

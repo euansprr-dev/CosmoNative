@@ -677,6 +677,32 @@ final class CommandCenterHabitEngine: ObservableObject {
         return nil
     }
 
+    /// The keyword span that keyword-derived habit resolution would match in
+    /// this title — for highlight rendering only. Mirrors `resolveHabit`'s
+    /// keyword loop (same definition order, same matching rules) but reports
+    /// WHERE the trigger sits so an editor can wash it in the habit's tint.
+    func keywordTriggerMatch(in title: String) -> (definition: HabitDefinition, utf16Range: Range<Int>)? {
+        for habit in activeDefinitions {
+            for keyword in habit.normalizedKeywordTriggers where keyword.count > 1 {
+                let escaped = NSRegularExpression.escapedPattern(for: keyword)
+                let range = title.range(of: "\\b\(escaped)\\b", options: [.regularExpression, .caseInsensitive])
+                    ?? title.range(of: keyword, options: .caseInsensitive)
+                guard let range else { continue }
+                let lower = title.utf16.distance(
+                    from: title.utf16.startIndex,
+                    to: range.lowerBound.samePosition(in: title.utf16) ?? title.utf16.startIndex
+                )
+                let upper = title.utf16.distance(
+                    from: title.utf16.startIndex,
+                    to: range.upperBound.samePosition(in: title.utf16) ?? title.utf16.startIndex
+                )
+                guard upper > lower else { continue }
+                return (habit, lower..<upper)
+            }
+        }
+        return nil
+    }
+
     func resolvedHabit(for task: TaskViewModel) -> HabitResolution? {
         if task.habitAssignmentSource == HabitAssignmentSource.manual.rawValue, task.habitUUID == nil {
             return nil

@@ -222,12 +222,20 @@ class SpatialEngine {
             // Record→block conversion decodes atom metadata JSON per rich block —
             // too heavy for the main actor during a switch animation.
             return await Task.detached(priority: .userInitiated) {
-                Self.buildBlocks(
+                let blocks = Self.buildBlocks(
                     records: savedBlocks,
                     metadataJSONByBlockId: metadataJSONByBlockId,
                     fetchedAtomsByID: fetchedAtomsByID,
                     fetchedAtomsByUUID: fetchedAtomsByUUID
                 )
+                // Pre-warm the shared document decode caches while still
+                // off-main: the block views run these exact loads
+                // synchronously at mount, and a switch mounts every visible
+                // card in one frame — cold decodes of multi-hundred-KB
+                // metadata columns belong here, not in the swap frame.
+                // (Both caches are lock-guarded and Sendable.)
+                Self.prewarmDocumentDecodeCaches(atoms: fetchedAtomsByID + fetchedAtomsByUUID)
+                return blocks
             }.value
         } catch {
             print("❌ Failed to load canvas blocks: \(error)")
@@ -245,6 +253,34 @@ class SpatialEngine {
         blocks = fetched
         isLoading = false
         print("✅ Loaded \(fetched.count) canvas blocks for \(documentType)/\(documentId)")
+    }
+
+    /// Runs the same cache-backed document loads the block views perform at
+    /// mount, so their mount-frame calls become cache hits. Safe off-main:
+    /// RichDocumentDecodeCache and Atom.DecodedColumnCache are lock-guarded.
+    nonisolated private static func prewarmDocumentDecodeCaches(atoms: [Atom]) {
+        for atom in atoms {
+            switch atom.type {
+            case .note:
+                _ = RichDocumentPersistence.loadAtomDocument(
+                    field: .title, metadata: atom.metadata, fallbackPlainText: atom.title
+                )
+                _ = RichDocumentPersistence.loadAtomDocument(
+                    field: .body, metadata: atom.metadata, fallbackPlainText: atom.body
+                )
+            case .content:
+                _ = RichDocumentMetadataStorage.readDocument(
+                    from: atom.metadata, key: RichDocumentMetadataKeys.contentDraftDocument
+                )
+                _ = atom.metadataValue(as: ContentAtomMetadata.self)
+            case .connection:
+                _ = RichDocumentPersistence.loadAtomDocument(
+                    field: .title, metadata: atom.metadata, fallbackPlainText: atom.title
+                )
+            default:
+                break
+            }
+        }
     }
 
     nonisolated private static func buildBlocks(

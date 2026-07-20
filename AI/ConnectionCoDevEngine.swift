@@ -32,7 +32,9 @@ enum ConnectionMaturityLevel: String, Codable, CaseIterable {
     }
 }
 
-private extension Atom {
+extension Atom {
+    /// Atom types that can appear in a connection's Sources rail (The Well).
+    /// Shared with the focus mode's live-refresh path.
     var isEligibleWellSource: Bool {
         switch type {
         case .research, .idea, .note, .content, .connection:

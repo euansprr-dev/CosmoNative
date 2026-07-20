@@ -41,12 +41,27 @@ extension EnvironmentValues {
 
 enum ConnectionLinkOpener {
     /// Opens the linked Connection page as a pane beside the current one.
+    /// (The handler fetches by uuid and routes by type, so any mentioned atom
+    /// — note, idea, research — opens the same way.)
     static func open(uuid: String) {
         NotificationCenter.default.post(
             name: CosmoNotification.Navigation.openBlockInFocusMode,
             object: nil,
             userInfo: ["atomUUID": uuid, "asPane": true]
         )
+    }
+
+    /// True for the URLs the concept views mint for links they own.
+    static func uuid(from url: URL) -> String? {
+        guard url.scheme == "cosmo",
+              url.host == "connection" || url.host == "atom" else { return nil }
+        let uuid = url.lastPathComponent
+        return uuid.isEmpty ? nil : uuid
+    }
+
+    static func url(for mention: RichMention) -> URL? {
+        let host = mention.entityType == .connection ? "connection" : "atom"
+        return URL(string: "cosmo://\(host)/\(mention.entityUUID)")
     }
 }
 
@@ -97,6 +112,11 @@ struct ConnectionLinkedText: View {
     let text: String
     var font: Font = DS.body
     var color: Color = DS.text
+    /// Explicit mentions persisted on the item (@ menu picks, collaborator
+    /// tokens) — their "@Title" runs link in the entity's tint, regardless of
+    /// whether the target is a sibling of this deep dive.
+    var mentions: [RichMention] = []
+    var lineLimit: Int? = nil
 
     @Environment(\.connectionLinkTargets) private var linkTargets
 
@@ -104,11 +124,10 @@ struct ConnectionLinkedText: View {
         Text(attributed)
             .font(font)
             .textSelection(.enabled)
-            .fixedSize(horizontal: false, vertical: true)
+            .lineLimit(lineLimit)
+            .fixedSize(horizontal: false, vertical: lineLimit == nil)
             .environment(\.openURL, OpenURLAction { url in
-                guard url.scheme == "cosmo", url.host == "connection" else { return .systemAction }
-                let uuid = url.lastPathComponent
-                guard !uuid.isEmpty else { return .discarded }
+                guard let uuid = ConnectionLinkOpener.uuid(from: url) else { return .systemAction }
                 ConnectionLinkOpener.open(uuid: uuid)
                 return .handled
             })
@@ -117,8 +136,21 @@ struct ConnectionLinkedText: View {
     private var attributed: AttributedString {
         var result = AttributedString(text)
         result.foregroundColor = color
-        guard !linkTargets.isEmpty else { return result }
         var claimed: [Range<AttributedString.Index>] = []
+
+        // Explicit mentions claim first — they are stored facts, not
+        // render-time title guesses.
+        for mention in mentions {
+            guard let range = result.range(of: mention.displayText),
+                  !claimed.contains(where: { $0.overlaps(range) }),
+                  let url = ConnectionLinkOpener.url(for: mention) else { continue }
+            result[range].link = url
+            result[range].foregroundColor = CosmoMentionColors.color(for: mention.entityType)
+            result[range].underlineStyle = .single
+            claimed.append(range)
+        }
+
+        guard !linkTargets.isEmpty else { return result }
         for target in linkTargets.targets {
             guard let range = result.range(of: target.title, options: [.caseInsensitive]),
                   !claimed.contains(where: { $0.overlaps(range) }),

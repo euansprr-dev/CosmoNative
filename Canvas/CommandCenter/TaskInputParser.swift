@@ -34,11 +34,54 @@ struct ParsedTaskInput {
     var mentions: [RichMention] = []
 }
 
+/// Result of parsing an EXISTING task's title edit in the detail panel.
+/// Unlike full capture parsing this touches only scheduling — project/heading
+/// tags, intents, durations and clock times pass through untouched — and it
+/// reports the utf16 range of every recognized token so the editor can
+/// wash-highlight exactly what a commit will apply.
+struct DetailTitleEdit {
+    enum TokenKind: Equatable {
+        case when
+        case deadline
+        case timeOfDay
+        case schedulingState
+        case priority(TaskPriority)
+        case recurrence
+    }
+
+    struct Token: Equatable {
+        let utf16Range: Range<Int>
+        let kind: TokenKind
+    }
+
+    /// The title with recognized scheduling tokens stripped out.
+    var title: String
+    var whenDate: Date?
+    var deadline: Date?
+    var timeOfDay: String?
+    var schedulingState: String?
+    var priority: TaskPriority?
+    var recurrenceRule: RecurrenceRule?
+    /// Ranges into the ORIGINAL (unstripped) input, for highlighting.
+    var tokens: [Token] = []
+
+    var hasSchedulingChanges: Bool {
+        whenDate != nil || deadline != nil || timeOfDay != nil
+            || schedulingState != nil || priority != nil || recurrenceRule != nil
+    }
+}
+
 @MainActor
 enum TaskInputParser {
 
-    /// Parse a natural language task input string into structured metadata
-    static func parse(_ input: String) -> ParsedTaskInput {
+    /// Parse a natural language task input string into structured metadata.
+    ///
+    /// `referenceDate` is the day the capture is happening on — the day the user
+    /// is currently viewing on the Today page (today, tomorrow, or any paged day).
+    /// It only seeds the IMPLICIT day for a bare time ("at 6pm") or a bare
+    /// recurrence ("every Tue") — explicit date words ("today"/"tomorrow"/"mon")
+    /// stay relative to the real now inside `extractDate`.
+    static func parse(_ input: String, referenceDate: Date = Date()) -> ParsedTaskInput {
         var remaining = input
         var result = ParsedTaskInput(title: "")
 
@@ -68,14 +111,14 @@ enum TaskInputParser {
         // Extract date (today, tomorrow, monday, next week, mar 15)
         result.dueDate = extractDate(&remaining)
 
-        // If we got a time but no date, assume today
+        // If we got a time but no date, assume the day being viewed (not always today).
         if result.scheduledTime != nil && result.dueDate == nil {
-            result.dueDate = Date()
+            result.dueDate = referenceDate
         }
 
-        // If recurrence is present but no explicit date was provided, seed from the next occurrence.
+        // If recurrence is present but no explicit date was provided, seed from the next occurrence on/after the viewed day.
         if result.recurrenceRule != nil && result.dueDate == nil {
-            result.dueDate = nextOccurrenceDate(for: result.recurrenceRule!, from: Date())
+            result.dueDate = nextOccurrenceDate(for: result.recurrenceRule!, from: referenceDate)
         }
 
         // Clean up title
@@ -95,6 +138,171 @@ enum TaskInputParser {
         }
 
         return result
+    }
+
+    // MARK: - Detail-panel title edits (highlight + commit share one pass)
+
+    /// Parse a title edit from the task detail panel. Every recognized token's
+    /// range is reported against the ORIGINAL input so the field can wash it;
+    /// `title` comes back with those same tokens stripped. Text inside an
+    /// `@mention` is opaque — a weekday in "@Monday plan" never schedules.
+    static func parseDetailEdit(_ input: String, mentions: [RichMention] = []) -> DetailTitleEdit {
+        var edit = DetailTitleEdit(title: input)
+
+        // Two aligned buffers: `detect` is scanned (mention spans blanked with
+        // a non-word placeholder), `output` becomes the stripped title. Every
+        // replacement preserves utf16 length, so ranges stay valid throughout.
+        var detect = input as NSString
+        var output = input as NSString
+
+        for mention in mentions {
+            let span = detect.range(of: "@\(mention.titleSnapshot)")
+            guard span.location != NSNotFound else { continue }
+            detect = detect.replacingCharacters(
+                in: span, with: String(repeating: "\u{FFFC}", count: span.length)
+            ) as NSString
+        }
+
+        func firstMatch(
+            _ pattern: String,
+            options: NSRegularExpression.Options = [.caseInsensitive]
+        ) -> NSTextCheckingResult? {
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: options) else { return nil }
+            return regex.firstMatch(in: detect as String, range: NSRange(location: 0, length: detect.length))
+        }
+
+        func consume(_ range: NSRange, kind: DetailTitleEdit.TokenKind) {
+            let blank = String(repeating: " ", count: range.length)
+            detect = detect.replacingCharacters(in: range, with: blank) as NSString
+            output = output.replacingCharacters(in: range, with: blank) as NSString
+            edit.tokens.append(.init(utf16Range: range.location..<(range.location + range.length), kind: kind))
+        }
+
+        // /someday, /anytime
+        for (pattern, state) in [("\\/someday\\b", "someday"), ("\\/anytime\\b", "anytime")] {
+            guard let match = firstMatch(pattern) else { continue }
+            edit.schedulingState = state
+            consume(match.range, kind: .schedulingState)
+            break
+        }
+
+        // /morning, /am, /evening, /eve
+        let timeOfDayPatterns = [
+            ("\\/morning\\b", "morning"), ("\\/am\\b", "morning"),
+            ("\\/evening\\b", "evening"), ("\\/eve\\b", "evening"),
+        ]
+        for (pattern, timeOfDay) in timeOfDayPatterns {
+            guard let match = firstMatch(pattern) else { continue }
+            edit.timeOfDay = timeOfDay
+            consume(match.range, kind: .timeOfDay)
+            break
+        }
+
+        // "deadline: friday" — consumed before the bare date scan so the date
+        // word inside lands on Deadline, not When.
+        if let match = firstMatch("\\bdeadline:\\s*(\\S+(?:\\s+\\d{1,2})?)") {
+            var dateStr = detect.substring(with: match.range(at: 1))
+            if let date = extractDate(&dateStr) {
+                edit.deadline = date
+                consume(match.range, kind: .deadline)
+            }
+        }
+
+        // Priority codes — case-sensitive, same as capture parsing.
+        let priorityPatterns: [(String, TaskPriority)] = [
+            ("\\bp1\\b", .critical), ("\\bp2\\b", .high), ("\\bp3\\b", .medium), ("\\bp4\\b", .low),
+            ("\\b!1\\b", .critical), ("\\b!!\\b", .high), ("\\b!\\b", .medium),
+        ]
+        for (pattern, priority) in priorityPatterns {
+            guard let match = firstMatch(pattern, options: []) else { continue }
+            edit.priority = priority
+            consume(match.range, kind: .priority(priority))
+            break
+        }
+
+        // Recurrence phrases before weekday/date parsing consumes them.
+        let recurrencePatterns: [(String, RecurrenceRule)] = [
+            ("\\bevery\\s+day\\b", .daily()),
+            ("\\bdaily\\b", .daily()),
+            ("\\bevery\\s+weekday(?:s)?\\b", .weekdays()),
+            ("\\bweekday(?:s)?\\b", .weekdays()),
+            ("\\bevery\\s+month\\b", .monthly(onDay: Calendar.current.component(.day, from: Date()))),
+        ]
+        for (pattern, rule) in recurrencePatterns {
+            guard let match = firstMatch(pattern) else { continue }
+            edit.recurrenceRule = rule
+            consume(match.range, kind: .recurrence)
+            break
+        }
+        if edit.recurrenceRule == nil,
+           let match = firstMatch("\\bevery\\s+((?:(?:mon(?:day)?|tue(?:s|sday)?|wed(?:nesday)?|thu(?:r|rs|rsday)?|thur(?:s|sday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)(?:\\s*(?:,|and)\\s*|\\s+)?)+)") {
+            let days = parseWeekdayList(detect.substring(with: match.range(at: 1)))
+            if !days.isEmpty {
+                edit.recurrenceRule = .weekly(on: days)
+                consume(match.range, kind: .recurrence)
+            }
+        }
+
+        // Dates → When
+        let cal = Calendar.current
+        let today = Date()
+        let namedDates: [(String, Date?)] = [
+            ("\\btoday\\b", today),
+            ("\\btomorrow\\b", cal.date(byAdding: .day, value: 1, to: today)),
+            ("\\bnext week\\b", cal.date(byAdding: .weekOfYear, value: 1, to: today)),
+            ("\\bmonday\\b", nextWeekday(.monday, from: today)),
+            ("\\btuesday\\b", nextWeekday(.tuesday, from: today)),
+            ("\\bwednesday\\b", nextWeekday(.wednesday, from: today)),
+            ("\\bthursday\\b", nextWeekday(.thursday, from: today)),
+            ("\\bfriday\\b", nextWeekday(.friday, from: today)),
+            ("\\bsaturday\\b", nextWeekday(.saturday, from: today)),
+            ("\\bsunday\\b", nextWeekday(.sunday, from: today)),
+        ]
+        for (pattern, date) in namedDates {
+            guard let match = firstMatch(pattern), let date else { continue }
+            edit.whenDate = date
+            consume(match.range, kind: .when)
+            break
+        }
+        if edit.whenDate == nil, let match = firstMatch("\\bin\\s+(\\d+)\\s+days?\\b"),
+           let days = Int(detect.substring(with: match.range(at: 1))) {
+            edit.whenDate = cal.date(byAdding: .day, value: days, to: today)
+            consume(match.range, kind: .when)
+        }
+        if edit.whenDate == nil,
+           let match = firstMatch("\\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\\w*\\s+(\\d{1,2})\\b"),
+           let month = monthFromAbbreviation(detect.substring(with: match.range(at: 1)).lowercased()),
+           let day = Int(detect.substring(with: match.range(at: 2))) {
+            var components = cal.dateComponents([.year], from: today)
+            components.month = month
+            components.day = day
+            if let date = cal.date(from: components) {
+                edit.whenDate = date < today ? cal.date(byAdding: .year, value: 1, to: date) : date
+                consume(match.range, kind: .when)
+            }
+        }
+        if edit.whenDate == nil,
+           let match = firstMatch("\\b(\\d{1,2})/(\\d{1,2})\\b"),
+           let month = Int(detect.substring(with: match.range(at: 1))),
+           let day = Int(detect.substring(with: match.range(at: 2))) {
+            var components = cal.dateComponents([.year], from: today)
+            components.month = month
+            components.day = day
+            if let date = cal.date(from: components) {
+                edit.whenDate = date < today ? cal.date(byAdding: .year, value: 1, to: date) : date
+                consume(match.range, kind: .when)
+            }
+        }
+
+        // A recurrence without an explicit date seeds from its next occurrence.
+        if let rule = edit.recurrenceRule, edit.whenDate == nil {
+            edit.whenDate = nextOccurrenceDate(for: rule, from: today)
+        }
+
+        edit.title = (output as String)
+            .replacingOccurrences(of: "\\s{2,}", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return edit
     }
 
     // MARK: - Things 3 Scheduling Extractions

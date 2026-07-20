@@ -136,7 +136,10 @@ struct ContentBlockView: View {
                     .foregroundStyle(DS.documentTextMuted)
                     .italic()
             } else {
-                Text(documentBodyText)
+                // Excerpted: Text typesets the whole string it is given even
+                // when clipped — unbounded drafts froze the thinkspace-switch
+                // mount frame. The footer keeps the REAL counts.
+                Text(CanvasCardTextExcerpt.excerpt(documentBodyText))
                     .font(.system(size: 20))
                     .lineSpacing(8)
                     .foregroundStyle(DS.documentText)

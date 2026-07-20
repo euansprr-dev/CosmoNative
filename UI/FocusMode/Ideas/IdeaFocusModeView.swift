@@ -113,6 +113,13 @@ struct IdeaFocusModeView: View {
             AtomRepository.shared.releaseEditingLock(uuid: atom.uuid)
             typingActivityTask?.cancel()
             viewModel.saveOnClose()
+            // Assistant scope and window context follow presence: leaving the
+            // idea releases both.
+            if let owned = ownedContextProvider {
+                CosmoEditableSurfaceRegistry.shared.unregister(surfaceID: owned.surfaceID)
+                CosmoWindowViewModel.shared.releaseContext(provider: owned)
+                ownedContextProvider = nil
+            }
         }
         .onKeyPress(.escape) { handleEscape() }
         .onKeyPress { handleKeyCommand($0) }

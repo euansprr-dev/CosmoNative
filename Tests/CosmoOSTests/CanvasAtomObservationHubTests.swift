@@ -118,6 +118,19 @@ final class CanvasAtomObservationHubTests: XCTestCase {
         XCTAssertTrue(steadyDeliveries.isEmpty, "initial delivery must not echo to steady-state subscribers")
     }
 
+    // MARK: - Card text excerpt
+
+    func testCanvasCardExcerptBoundsLongTextAtWordBoundary() {
+        let short = "A short draft."
+        XCTAssertEqual(CanvasCardTextExcerpt.excerpt(short), short, "under-cap text passes through untouched")
+
+        let long = Array(repeating: "word", count: 3_000).joined(separator: " ")
+        let excerpt = CanvasCardTextExcerpt.excerpt(long)
+        XCTAssertLessThanOrEqual(excerpt.count, CanvasCardTextExcerpt.maxCharacters + 1)
+        XCTAssertTrue(excerpt.hasSuffix("…"))
+        XCTAssertFalse(excerpt.dropLast().hasSuffix(" "), "cut lands on a word boundary, not mid-word whitespace")
+    }
+
     // MARK: - Targeted resync payload
 
     func testChangedCanvasBlockIdsFlagsExactlyTheChangedBlocks() {

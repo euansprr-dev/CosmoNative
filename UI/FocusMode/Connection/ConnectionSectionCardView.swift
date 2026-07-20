@@ -265,11 +265,14 @@ struct ConnectionItemPreviewRow: View {
                     .padding(.top, 6)
                     .accessibilityHidden(true)
             }
-            Text(item.resolvedPlainText)
-                .font(DS.callout)
-                .foregroundStyle(item.isConnectionLink ? CosmoMentionColors.connection : DS.text)
-                .lineLimit(lineLimit)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            ConnectionLinkedText(
+                text: item.resolvedPlainText,
+                font: DS.callout,
+                color: item.isConnectionLink ? CosmoMentionColors.connection : DS.text,
+                mentions: item.explicitMentions,
+                lineLimit: lineLimit
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, isMatch ? DS.space4 : 0)
         .background(isMatch ? accent.opacity(0.10) : .clear, in: .rect(cornerRadius: 4))
@@ -284,9 +287,26 @@ struct ConnectionQuickAddField: View {
     let onSubmit: (RichDocument, String) -> Void
 
     @State private var text = ""
+    @State private var mentions: [RichMention] = []
+    /// Non-nil while the user is typing an @-query; drives the same context
+    /// menu the inline assistant's composer uses.
+    @State private var mentionQuery: String? = nil
+    @State private var mentionInsertionPoint: String.Index? = nil
+    @State private var menuModel = CosmoInlineContextMenuModel()
     @FocusState private var isFocused: Bool
 
     var body: some View {
+        VStack(alignment: .leading, spacing: DS.space6) {
+            fieldRow
+            if let query = mentionQuery {
+                mentionMenu(query: query)
+            }
+        }
+        .animation(ProMotionSprings.hover, value: mentionQuery == nil)
+        .accessibilityLabel("Add item to \(sectionName)")
+    }
+
+    private var fieldRow: some View {
         HStack(spacing: DS.space6) {
             Image(systemName: "plus")
                 .font(.system(size: 9, weight: .semibold))
@@ -299,11 +319,12 @@ struct ConnectionQuickAddField: View {
                 .lineLimit(1...4)
                 .focused($isFocused)
                 .onSubmit(submit)
-                .onKeyPress(.escape) {
-                    text = ""
-                    isFocused = false
-                    return .handled
-                }
+                .onChange(of: text) { detectMentionTrigger() }
+                .onKeyPress(.escape) { handleEscape() }
+                .onKeyPress(.upArrow) { routeMenuKey { menuModel.moveHighlight(-1) } }
+                .onKeyPress(.downArrow) { routeMenuKey { menuModel.moveHighlight(1) } }
+                .onKeyPress(.tab) { commitHighlightedMention() }
+                .onKeyPress(.return) { commitHighlightedMention() }
         }
         .padding(.horizontal, DS.space8)
         .padding(.vertical, DS.space6)
@@ -313,13 +334,100 @@ struct ConnectionQuickAddField: View {
                 .stroke(isFocused ? accent.opacity(0.4) : DS.borderSubtle.opacity(0.6), lineWidth: 1)
         )
         .animation(ProMotionSprings.hover, value: isFocused)
-        .accessibilityLabel("Add item to \(sectionName)")
+    }
+
+    /// The inline assistant's own @ menu, hosted inline so the card grows
+    /// beneath the field instead of clipping an overlay.
+    private func mentionMenu(query: String) -> some View {
+        CosmoInlineAssistantContextMenu(
+            model: menuModel,
+            searchText: query,
+            selectedAtoms: [],
+            onCommit: { entry in insertMention(entry.atom) },
+            onClear: {},
+            menuWidth: nil
+        )
+        .frame(maxWidth: .infinity)
+        .transition(.opacity.combined(with: .move(edge: .top)))
+    }
+
+    // MARK: - Mention trigger (same contract as TaskTitleMentionField)
+
+    private func detectMentionTrigger() {
+        guard let atIndex = text.lastIndex(of: "@") else {
+            dismissMention()
+            return
+        }
+        let afterAt = String(text[text.index(after: atIndex)...])
+        // Skip "@" runs that are already committed mentions.
+        guard !mentions.contains(where: { afterAt.hasPrefix($0.titleSnapshot) }),
+              !afterAt.contains("\n"), afterAt.count <= 30 else {
+            dismissMention()
+            return
+        }
+        mentionInsertionPoint = atIndex
+        mentionQuery = afterAt
+    }
+
+    private func insertMention(_ atom: Atom) {
+        guard let atIndex = mentionInsertionPoint else { return }
+        let title = atom.title ?? "Untitled"
+        text.replaceSubrange(atIndex..<text.endIndex, with: "@\(title) ")
+        let mention = RichMention(
+            entityUUID: atom.uuid,
+            entityID: atom.id,
+            entityType: EntityType(rawValue: atom.type.rawValue) ?? .note,
+            titleSnapshot: title
+        )
+        if !mentions.contains(where: { $0.entityUUID == mention.entityUUID }) {
+            mentions.append(mention)
+        }
+        dismissMention()
+    }
+
+    private func dismissMention() {
+        mentionQuery = nil
+        mentionInsertionPoint = nil
+    }
+
+    // MARK: - Keys
+
+    private func handleEscape() -> KeyPress.Result {
+        if mentionQuery != nil {
+            dismissMention()
+            return .handled
+        }
+        text = ""
+        mentions = []
+        isFocused = false
+        return .handled
+    }
+
+    private func routeMenuKey(_ action: () -> Void) -> KeyPress.Result {
+        guard mentionQuery != nil else { return .ignored }
+        action()
+        return .handled
+    }
+
+    private func commitHighlightedMention() -> KeyPress.Result {
+        guard mentionQuery != nil else { return .ignored }
+        guard let entry = menuModel.highlightedEntry else {
+            dismissMention()
+            return .handled
+        }
+        insertMention(entry.atom)
+        return .handled
     }
 
     private func submit() {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        onSubmit(RichDocument.migrateLegacy(trimmed), trimmed)
+        // Mentions whose "@Title" run survived editing become mention inlines.
+        let live = mentions.filter { trimmed.contains($0.displayText) }
+        let parsed = ConceptMentionToken.document(text: trimmed, mentions: live)
+        onSubmit(parsed.document, parsed.plainText)
         text = ""
+        mentions = []
+        dismissMention()
     }
 }

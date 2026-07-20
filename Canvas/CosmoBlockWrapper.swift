@@ -31,6 +31,25 @@ enum BlockSurfaceStyle: Equatable {
     case crisp
 }
 
+/// Bounds the text a canvas card preview hands to `Text` — SwiftUI typesets
+/// the ENTIRE string regardless of clipping or lineLimit, and a thinkspace
+/// switch mounts every visible card in one frame. A 70KB draft typeset ×40
+/// cards was the multi-second freeze at the world swap. The cap is generous
+/// (several screens of in-card scrolling); the focus mode is the full
+/// reading surface.
+enum CanvasCardTextExcerpt {
+    static let maxCharacters = 4_000
+
+    static func excerpt(_ text: String) -> String {
+        guard text.count > maxCharacters else { return text }
+        let cutoff = text.index(text.startIndex, offsetBy: maxCharacters)
+        // Break on a word boundary so the truncation reads naturally.
+        let hardSlice = text[..<cutoff]
+        let sliced = hardSlice.lastIndex(where: { $0 == " " || $0 == "\n" }).map { text[..<$0] } ?? hardSlice
+        return String(sliced) + "…"
+    }
+}
+
 /// Akashic canvas wrapper — vellum surface, gilt corner ornament, tiered shadow
 /// and accent-glow selection. Shared chrome for all floating block types.
 struct CosmoBlockWrapper<Content: View>: View {

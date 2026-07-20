@@ -638,10 +638,18 @@ final class CosmoInlineAssistantStore: ObservableObject {
             registry: skillRegistry
         )
         let explicitSelectedSkillID = selectedSkillIsExplicit ? selectedSkillID : nil
-        let autoRoutedSkillID = (slashCommand == nil && explicitSelectedSkillID == nil)
+        // A surface with a resident skill (concept boards) owns every
+        // non-explicit turn: passive auto-routing is disabled there so a stray
+        // keyword ("feedback", "review") can never hijack the session into a
+        // writing skill. Only a slash command or the picker overrides it.
+        let residentSkillID = activeResidentSkillID()
+        let autoRoutedSkillID = (slashCommand == nil && explicitSelectedSkillID == nil && residentSkillID == nil)
             ? skillSuggestion?.skillID
             : nil
-        let effectiveSkillID = slashCommand?.skillID ?? explicitSelectedSkillID ?? autoRoutedSkillID
+        let effectiveSkillID = slashCommand?.skillID
+            ?? explicitSelectedSkillID
+            ?? residentSkillID
+            ?? autoRoutedSkillID
         let shouldKeepSkillSelected = slashCommand?.skillID != nil || explicitSelectedSkillID != nil
         var prompt = slashCommand?.remainingPrompt ?? rawPrompt
         if prompt.isEmpty {
@@ -756,6 +764,13 @@ final class CosmoInlineAssistantStore: ObservableObject {
         streamingPaneMessageID = nil
         currentRunSteps = []
         phase = activePendingProposal != nil ? .reviewing : .idle
+
+        // Next main-actor turn: `submit`'s defers (sticky-skill selection,
+        // session persist) must land on THIS session before any scope release
+        // swaps the session out from under them.
+        Task { @MainActor [weak self] in
+            self?.releaseSessionIfScopedSurfaceClosed()
+        }
     }
 
     /// Stop the in-flight run. Cancellation propagates through the agent loop's
@@ -1070,7 +1085,8 @@ final class CosmoInlineAssistantStore: ObservableObject {
         skillSuggestionTask?.cancel()
 
         let prompt = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard selectedSkillID == nil, !prompt.isEmpty, !prompt.hasPrefix("/") else {
+        guard selectedSkillID == nil, !prompt.isEmpty, !prompt.hasPrefix("/"),
+              activeResidentSkillID() == nil else {
             skillSuggestion = nil
             return
         }
@@ -1418,6 +1434,18 @@ final class CosmoInlineAssistantStore: ObservableObject {
         proposals.last { $0.hasReviewableOperations }
     }
 
+    /// The resident skill of the surface a submission would bind to — read off
+    /// the provider directly (no snapshot render, safe per keystroke).
+    func activeResidentSkillID(
+        registry: CosmoEditableSurfaceRegistry = .shared
+    ) -> String? {
+        if activeSessionSurfaceID != CosmoInlineAssistantSessionScope.globalSurfaceID,
+           let scoped = registry.provider(surfaceID: activeSessionSurfaceID) {
+            return scoped.residentSkillID
+        }
+        return registry.activeSurface?.residentSkillID
+    }
+
     func activeEditableSnapshot(
         registry: CosmoEditableSurfaceRegistry = .shared
     ) -> CosmoEditableSourceSnapshot? {
@@ -1530,6 +1558,26 @@ final class CosmoInlineAssistantStore: ObservableObject {
         activateSession(surfaceID: rawSurfaceID)
     }
 
+    /// The user left a document (its surface unregistered). If the session is
+    /// scoped to it, fall back to the next live surface — or global when none —
+    /// so the pane never stays scoped to a document that is no longer open.
+    /// Mid-run the release is skipped (retargeting a live run is unsafe);
+    /// `submit` re-settles the scope once the run ends.
+    func releaseSessionIfScoped(toSurfaceID rawSurfaceID: String) {
+        guard activeSessionSurfaceID == CosmoInlineAssistantSessionScope.surfaceID(for: rawSurfaceID) else { return }
+        guard !isProcessing, activeRunTask == nil else { return }
+        activateSession(surfaceID: CosmoEditableSurfaceRegistry.shared.activeSurface?.surfaceID)
+    }
+
+    /// The scoped document may have closed while a run was in flight — the
+    /// unregister path rightly refuses to retarget a live run, so the scope
+    /// is settled here instead, after the run (and `submit`'s defers) finish.
+    func releaseSessionIfScopedSurfaceClosed() {
+        guard activeSessionSurfaceID != CosmoInlineAssistantSessionScope.globalSurfaceID,
+              CosmoEditableSurfaceRegistry.shared.provider(surfaceID: activeSessionSurfaceID) == nil else { return }
+        activateSession(surfaceID: CosmoEditableSurfaceRegistry.shared.activeSurface?.surfaceID)
+    }
+
     private func bindToLiveSurfaceBeforeSubmission() {
         guard let liveSurfaceID = CosmoEditableSurfaceRegistry.shared.activeSurface?.surfaceID else { return }
 
@@ -1582,6 +1630,87 @@ final class CosmoInlineAssistantStore: ObservableObject {
         CosmoInlineAssistantSessionScope.conversationID(for: activeSessionSurfaceID)
     }
 
+    /// Rewinds the session to just before the given message's run. Everything
+    /// from that run onward is removed from the pane, its staged proposals are
+    /// discarded (with surface-side ghost cleanup, but no accept/reject
+    /// learning — a rollback is not a review verdict), the session ledger
+    /// forgets those turns, and the agent's conversation transcript, distilled
+    /// working memory, and working-context frame are truncated/cleared so no
+    /// rolled-back turn can contaminate future requests. The rolled-back ask
+    /// returns to the composer for editing.
+    func rollback(
+        fromMessageID messageID: UUID,
+        registry: CosmoEditableSurfaceRegistry = .shared
+    ) async {
+        guard !isProcessing,
+              let messageIndex = paneMessages.firstIndex(where: { $0.id == messageID }) else { return }
+        let anchor = paneMessages[messageIndex]
+        // Anchor on the whole run: rolling back an answer also removes the ask
+        // that produced it, so the transcript never dangles half an exchange.
+        let cutIndex = anchor.runID.flatMap { runID in
+            paneMessages.firstIndex { $0.runID == runID }
+        } ?? messageIndex
+
+        let removed = Array(paneMessages[cutIndex...])
+        guard let cutoff = removed.first?.createdAt else { return }
+        let removedRunIDs = Set(removed.compactMap(\.runID))
+
+        if composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           let ask = removed.first(where: { $0.role == .user })?.content,
+           ask != "Begin." {
+            composerText = ask
+        }
+
+        paneMessages.removeSubrange(cutIndex...)
+        followUpSuggestions = []
+        errorText = nil
+
+        await discardProposals(linkedTo: removed, createdAfter: cutoff, registry: registry)
+        let removedInquiryIDs = Set(removed.compactMap(\.inquiryProposalID))
+        inquiryQuestionProposals.removeAll { removedInquiryIDs.contains($0.id) }
+        let removedPlanIDs = Set(removed.compactMap(\.canvasPlanID))
+        canvasPlanProposals.removeAll { removedPlanIDs.contains($0.id) }
+        sessionLedger.removeAll { record in
+            record.runID.map { removedRunIDs.contains($0) } ?? (record.createdAt >= cutoff)
+        }
+        persistActiveSession()
+
+        let conversationID = activeConversationID
+        CosmoInlineAssistantWorkingContextCache.shared.clear(
+            conversationID: conversationID,
+            surfaceID: activeSessionSurfaceID
+        )
+        await ConversationMemoryService.shared.truncateConversation(id: conversationID, after: cutoff)
+        await CosmoMemoryService.shared.clearWorkingMemory(conversationID: conversationID)
+    }
+
+    /// Rollback's proposal cleanup: pending operations get the surface-side
+    /// reject (so ghost rows and staged state clear), then the proposals
+    /// vanish from the timeline. Deliberately no `recordSkillOutcome` — the
+    /// user is rewinding, not judging the edit.
+    private func discardProposals(
+        linkedTo removedMessages: [CosmoInlineAssistantPaneMessage],
+        createdAfter cutoff: Date,
+        registry: CosmoEditableSurfaceRegistry
+    ) async {
+        let linkedIDs = Set(removedMessages.compactMap(\.proposalID))
+        let dropped = proposals.filter { linkedIDs.contains($0.id) || $0.createdAt >= cutoff }
+        guard !dropped.isEmpty else { return }
+
+        for proposal in dropped {
+            let pending = proposal.operations.filter {
+                $0.status == .pending || $0.status == .conflicted
+            }
+            guard !pending.isEmpty,
+                  let provider = registry.provider(surfaceID: proposal.surfaceID) else { continue }
+            for operation in pending {
+                _ = await provider.reject(operation: operation)
+            }
+        }
+        let droppedIDs = Set(dropped.map(\.id))
+        proposals.removeAll { droppedIDs.contains($0.id) }
+    }
+
     func clearActiveSession() async {
         let surfaceID = activeSessionSurfaceID
         let conversationID = activeConversationID
@@ -1594,6 +1723,103 @@ final class CosmoInlineAssistantStore: ObservableObject {
         )
         await ConversationMemoryService.shared.deleteConversation(id: conversationID)
         await CosmoMemoryService.shared.clearWorkingMemory(conversationID: conversationID)
+    }
+
+    // MARK: - Promotion carry-over (Begin Writing)
+
+    /// Begin Writing promotes an idea into a fresh content atom — the
+    /// assistant's brainstorm memory follows it. The idea surface's transcript,
+    /// resolved receipts, ledger, and @ context picks are copied to the content
+    /// surface with a phase divider the pane renders as a section label. The
+    /// idea session itself stays intact (the idea lives on as a source), and
+    /// proposals still awaiting review stay behind — they target the idea
+    /// document, not the new draft.
+    /// Returns true when a session was carried (gates the conversation clone).
+    @discardableResult
+    func carrySessionIntoPromotedContent(
+        fromSurfaceID rawSourceSurfaceID: String,
+        toSurfaceID rawDestinationSurfaceID: String,
+        paneNote: String
+    ) -> Bool {
+        let sourceSurfaceID = CosmoInlineAssistantSessionScope.surfaceID(for: rawSourceSurfaceID)
+        let destinationSurfaceID = CosmoInlineAssistantSessionScope.surfaceID(for: rawDestinationSurfaceID)
+        guard sourceSurfaceID != destinationSurfaceID,
+              sourceSurfaceID != CosmoInlineAssistantSessionScope.globalSurfaceID,
+              destinationSurfaceID != CosmoInlineAssistantSessionScope.globalSurfaceID else {
+            return false
+        }
+
+        // The idea session is usually still the live one when Begin Writing
+        // fires — capture it before reading the persisted copy.
+        if activeSessionSurfaceID == sourceSurfaceID {
+            persistActiveSession()
+        }
+
+        guard let source = sessionPersistence.load(surfaceID: sourceSurfaceID), !source.isEmpty else {
+            return false
+        }
+
+        // Resolved proposals travel as receipts (revert still reaches the idea
+        // document through the atom-backed fallback surface); reviewable ones
+        // stay with the idea session, along with their receipt messages —
+        // a pending accept/reject bar for idea edits must not follow the user
+        // into the writing bench.
+        let carriedProposals = source.proposals.filter { !$0.hasReviewableOperations }
+        let carriedProposalIDs = Set(carriedProposals.map(\.id))
+        var carriedMessages = source.paneMessages.filter { message in
+            if let proposalID = message.proposalID {
+                return carriedProposalIDs.contains(proposalID)
+            }
+            // Inquiry cards stage questions against the idea's inquiry flow.
+            return message.inquiryProposalID == nil
+        }
+        let carriedLedger = source.ledger ?? []
+        guard !carriedMessages.isEmpty || !carriedLedger.isEmpty else { return false }
+        carriedMessages.append(CosmoInlineAssistantPaneMessage(role: .system, content: paneNote))
+
+        sessionPersistence.save(CosmoInlineAssistantPersistedSession(
+            surfaceID: destinationSurfaceID,
+            paneMessages: carriedMessages,
+            proposals: carriedProposals,
+            selectedContextAtoms: source.selectedContextAtoms,
+            // Skills and route stickiness are phase-scoped — writing routes fresh.
+            selectedSkillID: nil,
+            selectedSkillIsExplicit: nil,
+            lastSubmissionRoute: nil,
+            inquiryQuestionProposals: nil,
+            ledger: carriedLedger.isEmpty ? nil : carriedLedger
+        ))
+        return true
+    }
+
+    /// The model-side half of the promotion carry: clones the idea's agent
+    /// conversation and working memory under the content conversation id and
+    /// appends a phase-transition note, so the first question asked in the
+    /// writing bench already knows the brainstorm that led here. Await this
+    /// before opening the content focus mode.
+    func carryConversationMemoryIntoPromotedContent(
+        fromSurfaceID rawSourceSurfaceID: String,
+        toSurfaceID rawDestinationSurfaceID: String,
+        transitionNote: String
+    ) async {
+        let sourceConversationID = CosmoInlineAssistantSessionScope.conversationID(for: rawSourceSurfaceID)
+        let destinationConversationID = CosmoInlineAssistantSessionScope.conversationID(for: rawDestinationSurfaceID)
+        guard sourceConversationID != destinationConversationID else { return }
+
+        if var conversation = await ConversationMemoryService.shared.loadConversation(id: sourceConversationID) {
+            conversation.id = destinationConversationID
+            // Assistant role, not system: mid-history system messages are
+            // dropped at serialization (system rides the top-level field), and
+            // the note must actually reach the model on the next turn.
+            conversation.append(.assistant(transitionNote))
+            await ConversationMemoryService.shared.saveConversation(conversation)
+        }
+
+        if let working = try? await CosmoMemoryService.shared.workingMemory(conversationID: sourceConversationID) {
+            for value in working {
+                try? await CosmoMemoryService.shared.upsertWorkingMemory(destinationConversationID, value: value)
+            }
+        }
     }
 
     private func operationLocation(for operationID: UUID) -> (proposalIndex: Int, operationIndex: Int)? {

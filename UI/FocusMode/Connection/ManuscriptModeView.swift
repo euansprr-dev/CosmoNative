@@ -117,7 +117,8 @@ struct ManuscriptModeView: View {
                             ConnectionLinkedText(
                                 text: item.resolvedPlainText,
                                 font: .system(size: 16, weight: .regular, design: .serif),
-                                color: ink
+                                color: ink,
+                                mentions: item.explicitMentions
                             )
                             .lineSpacing(4)
                         }

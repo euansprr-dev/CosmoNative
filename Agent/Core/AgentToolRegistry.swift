@@ -775,13 +775,14 @@ class AgentToolRegistry {
             ),
             LLMToolDefinition(
                 name: "get_atom_detail",
-                description: "Get full details of any atom by UUID. Returns parsed metadata, structured data, link count, and thinkspace membership. Use this when you need the complete picture of a single atom.",
+                description: "Get full details of atoms by UUID. Returns parsed metadata, structured data, link count, and thinkspace membership. To read several atoms, pass them together via `uuids` in ONE call instead of one call per atom.",
                 parametersSchema: [
                     "type": "object",
                     "properties": [
-                        "uuid": ["type": "string", "description": "The atom UUID to retrieve"] as [String: Any]
+                        "uuid": ["type": "string", "description": "A single atom UUID to retrieve"] as [String: Any],
+                        "uuids": ["type": "array", "items": ["type": "string"] as [String: Any], "description": "Batch mode: up to 8 atom UUIDs fetched in one call"] as [String: Any]
                     ] as [String: Any],
-                    "required": ["uuid"]
+                    "required": [] as [String]
                 ]
             ),
             LLMToolDefinition(
@@ -1174,14 +1175,16 @@ class AgentToolRegistry {
         [
             LLMToolDefinition(
                 name: "web_search",
-                description: "Search the web for current information. Use when the user asks about recent events, needs facts, or wants info not in their database.",
+                description: "Search the web. The primary instrument for outside facts, statistics, news, and perspectives — for research asks, run several differently-angled queries (pass them together via `queries` for one concurrent batch) instead of settling for a single pass. searchType picks the lens: 'web' (default, general facts), 'news' (recent developments), 'reddit' (audience sentiment, real user opinions), 'academic' (studies, peer-reviewed research).",
                 parametersSchema: [
                     "type": "object",
                     "properties": [
-                        "query": ["type": "string", "description": "Search query"] as [String: Any],
-                        "maxResults": ["type": "integer", "description": "Max results (default 5)"] as [String: Any]
+                        "query": ["type": "string", "description": "A single search query (use `queries` instead to batch several angles in one call)"] as [String: Any],
+                        "queries": ["type": "array", "items": ["type": "string"] as [String: Any], "description": "Batch mode: up to 6 angle-distinct queries executed concurrently, one result block per query"] as [String: Any],
+                        "searchType": ["type": "string", "description": "'web' (default), 'news', 'reddit', or 'academic' — applies to every query in the call"] as [String: Any],
+                        "maxResults": ["type": "integer", "description": "Max results per query (default 5)"] as [String: Any]
                     ] as [String: Any],
-                    "required": ["query"]
+                    "required": [] as [String]
                 ]
             ),
         ]

@@ -1005,24 +1005,16 @@ class CanvasClusterEngine {
         userClusters = loaded
     }
 
-    /// Load user clusters and publish ONLY when they differ from the applied
-    /// set. A thinkspace switch that already mounted identical clusters from
-    /// the snapshot cache must not rebuild the cluster layer mid-animation
-    /// (`userClusters` assignment bumps the data revision unconditionally).
-    func refreshUserClustersIfChanged(thinkspaceId: String?, blocks: [CanvasBlock]) async {
-        guard let loaded = await computeUserClusters(thinkspaceId: thinkspaceId, blocks: blocks) else {
-            return
-        }
-        if loaded != userClusters {
-            userClusters = loaded
-        }
-    }
-
     /// Pure load: fetch + map + fit, no engine mutation. Returns nil on a
     /// read error so callers preserve existing state (matching the old
     /// loadUserClusters error behavior); returns [] when the thinkspace has
     /// no clusters.
-    private func computeUserClusters(thinkspaceId: String?, blocks: [CanvasBlock]) async -> [CanvasCluster]? {
+    ///
+    /// Internal on purpose: the thinkspace-switch path computes here, then
+    /// re-checks it is still on the same thinkspace BEFORE assigning
+    /// `userClusters` — an unguarded assignment after the await let a
+    /// superseded switch stamp ANOTHER space's clusters onto the current one.
+    func computeUserClusters(thinkspaceId: String?, blocks: [CanvasBlock]) async -> [CanvasCluster]? {
         guard let tsId = thinkspaceId else {
             return []
         }

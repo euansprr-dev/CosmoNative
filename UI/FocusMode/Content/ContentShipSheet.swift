@@ -489,11 +489,18 @@ struct ContentPerfEntrySheet: View {
             try? await ContentPerfStore.record(snapshot)
             // A pulled URL is proof of publish — stamp the record (platform +
             // URL + time) in the same gesture instead of a second chore.
+            // Logging performance never moves the post on the calendar: an
+            // existing record keeps its date, a fresh one lands on the
+            // scheduled day (the day the calendar already shows), never "now".
             if let pulledPostURL {
+                let scheduled = atom.metadataValue(as: ContentMetadata.self)?
+                    .scheduledAt.flatMap { ISO8601.date(from: $0) }
                 await ContentPublishStore.markPublished(
                     atomUuid: atom.uuid,
                     platform: platform.rawValue,
-                    url: pulledPostURL
+                    url: pulledPostURL,
+                    at: scheduled,
+                    preservingExistingDate: true
                 )
             }
             // Real numbers are taste signals: what the audience rewarded.

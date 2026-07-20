@@ -42,7 +42,8 @@ struct CosmoInlineAssistantAgentBridge {
            let craftSkillID = CosmoCraftSkillRunner.resolveCraftSkillID(
                selectedSkillID: store.activeSubmissionSkillID,
                prompt: prompt,
-               surfaceKind: snapshot?.kind
+               surfaceKind: snapshot?.kind,
+               residentSkillID: snapshot?.residentSkillID
            ) {
             try await CosmoCraftSkillRunner.shared.run(
                 prompt: prompt,

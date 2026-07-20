@@ -1068,6 +1068,7 @@ class AgentContextAssembler {
         lines.append("- For simple lookups (\"show me X\"): use query_atoms or get_atom_detail")
         lines.append("- For relationship exploration: use graph_traverse or explore_graph")
         lines.append("- For knowledge questions (\"what do I know about X\"): use synthesize_knowledge — it searches atoms and returns source content")
+        lines.append("- For explicit research asks (\"research this\", \"find stats/angles/data\"): web_search is the primary instrument — plan several angle-distinct queries, batch them via `queries`, and pick searchType per angle (web/news/reddit/academic); the local knowledge base complements the web, it never substitutes for it")
         lines.append("- For pattern analysis (\"what patterns in my swipes\"): use synthesize_learning")
         lines.append("- For analytical questions (\"how many X per week\"): use execute_sql for precise counts and grouping")
         lines.append("- For workspace changes: use manage_thinkspace, move_blocks, bulk_update, organize_space")

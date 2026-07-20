@@ -1225,6 +1225,30 @@ enum CosmoInlineAssistantResearchIntent {
         return containsResearchVerb(lower) && containsResearchSubject(lower)
     }
 
+    /// A broad, multi-angle research ask about the active piece — "do a ton of
+    /// research on this topic", "think of different angles and data points".
+    /// Routes to the Deep Research skill (plan → search → synthesize) instead
+    /// of the generic Q&A answerer.
+    static func isDeepResearchRequest(_ text: String) -> Bool {
+        let lower = text.lowercased()
+
+        if containsAny(lower, [
+            "deep research", "deep-dive research", "really deep research",
+            "ton of research", "lot of research", "bunch of research",
+            "research this topic", "research on this topic", "research the topic",
+            "research this idea", "research deeper", "research deeply",
+            "angles and data points", "different angles", "research pass"
+        ]) {
+            return true
+        }
+
+        // "research" as a whole word plus an explicit breadth/depth cue.
+        return containsWholeWord("research", in: lower) && containsAny(lower, [
+            "angles", "deeper", "deeply", "thorough", "extensive",
+            "everything you can find", "as much as you can"
+        ])
+    }
+
     static func shouldOpenPaneForActionExplanation(_ prompt: String) -> Bool {
         let lower = prompt.lowercased()
         return isWebResearchRequest(lower) || containsAny(lower, [
@@ -1249,7 +1273,7 @@ enum CosmoInlineAssistantResearchIntent {
             " for slide", " for the slide", "slide ", "slides", "fill",
             "number", "numbers", "stat", "stats", "statistics", "cost",
             "costs", "rate", "rates", "market", "benchmark", "examples",
-            "information", "details", "data"
+            "information", "details", "data", "angle", "angles", "topic"
         ])
     }
 
@@ -1323,6 +1347,17 @@ enum CosmoInlineAssistantSkillRuntime {
             skill = builtInSkill(.contentReview)
         } else if containsAny(lower, ["canvas", "thinkspace", "organize", "reorganize", "arrange", "cluster", "spatial"]) || surfaceKind == .canvas {
             skill = builtInSkill(.canvasOrganize)
+        } else if CosmoInlineAssistantResearchIntent.isDeepResearchRequest(lower), !isEditLike(lower) {
+            // Broad multi-angle research on the active piece runs the Deep
+            // Research skill as a plan → search → synthesize pipeline, so the
+            // web sweep can't collapse into a couple of searches plus local
+            // recall inside one crowded turn.
+            skill = builtInSkill(.ideaResearch)
+            return CosmoInlineAssistantSkillPlan(
+                primarySkill: skill,
+                definitionID: skill.id.rawValue,
+                pipelineSteps: deepResearchPipelineSteps()
+            )
         } else if containsAny(lower, [
             "find stats", "find data", "supporting evidence", "proof points",
             "research this idea", "back this up", "stats for this", "evidence for this"
@@ -1354,6 +1389,50 @@ enum CosmoInlineAssistantSkillRuntime {
         }
 
         return CosmoInlineAssistantSkillPlan(primarySkill: skill, definitionID: skill.id.rawValue)
+    }
+
+    /// The Deep Research pipeline: plan the angles, execute EVERY search, then
+    /// synthesize a dossier. Each step is its own scoped agent turn, so the
+    /// web sweep gets a full tool budget instead of competing with local
+    /// recall and synthesis inside one turn.
+    static func deepResearchPipelineSteps() -> [CosmoInlineSkillStep] {
+        [
+            CosmoInlineSkillStep(
+                name: "Map the angles",
+                instructions: [
+                    "Read the ACTIVE surface first — for an idea that means its title, angle/body, hooks, and outline; for a draft, the draft text. The user's own material defines the research target; never ask what to research when the surface has content.",
+                    "Restate the research target in one line, then design 6-8 angle-distinct web search queries that together would surprise the user: hard statistics and data, current news and policy developments, contrarian or counter-intuitive data, historical precedents, expert commentary, and audience sentiment. Fold in the client's niche as an angle when a client profile is present.",
+                    "Each query gets one line: the exact query text, the searchType you will use for it (web, news, reddit, or academic), and a half-line on what that angle could unlock for the piece.",
+                    "Do NOT run any web searches in this step — the next step executes the plan. Deliver the numbered plan via answer_in_assistant_pane."
+                ],
+                toolBundles: [.contentSearch],
+                preferredModelTier: .strategist,
+                outputContract: "pane_research_plan"
+            ),
+            CosmoInlineSkillStep(
+                name: "Run the searches",
+                instructions: [
+                    "Execute EVERY query from the step-1 plan with web_search — batch them by passing several angle-distinct queries in one call via the `queries` array, using the searchType each angle calls for. Never skip planned angles because early results feel sufficient; the whole point of this run is breadth.",
+                    "After the web sweep, do ONE pass over the user's own corpus (synthesize_knowledge or recall) to pull saved material that connects to the findings. The knowledge base complements the web sweep — it never substitutes for it.",
+                    "Deliver a compact digest via answer_in_assistant_pane: for each angle, the strongest 1-2 findings with their source names and URLs. Flag any angle that came back empty so the synthesis step knows."
+                ],
+                toolBundles: [.webResearch, .contentSearch],
+                preferredModelTier: .strategist,
+                outputContract: "per_angle_findings_digest"
+            ),
+            CosmoInlineSkillStep(
+                name: "Synthesize the dossier",
+                instructions: [
+                    "Work only from the findings already in this conversation — do not run new searches unless a planned angle failed and one retry with a sharper query could fill it.",
+                    "Deliver 8-12 deduplicated findings via answer_in_assistant_pane, each tagged with its proof type: Statistic, Case Study, Expert Quote, Social Proof, Analogy, Contrarian Data, Historical Precedent, or Scientific Study. Each finding: short title, a 2-3 sentence summary carrying the key data point, the source name, and the URL when known. Never invent statistics, sources, or URLs — a finding you cannot source does not ship.",
+                    "Prefer contrarian and surprising data when the evidence supports it — those make hooks. Name the single strongest finding for this piece and say why in one line.",
+                    "End by offering to stage any finding into the surface via propose_workspace_edit (a supporting line under the angle, or a stat-led hook); stage only after the user picks one."
+                ],
+                toolBundles: [.workspaceEditing, .contentSearch],
+                preferredModelTier: .strategist,
+                outputContract: "pane_evidence_findings_then_optional_reviewed_insertion"
+            )
+        ]
     }
 
     private static func profileBackedSlideExpansionSkill() -> CosmoInlineAssistantSkill {
@@ -1535,7 +1614,7 @@ enum CosmoInlineAssistantSkillRuntime {
         case .researchAnswer:
             return CosmoInlineAssistantSkill(
                 id: .researchAnswer,
-                name: "Research Answer",
+                name: "Answer",
                 description: "Answers questions with workspace, memory, profile, or external research context.",
                 route: .answer,
                 requiredContext: [.activeSurface, .currentFocus, .workspaceMemory, .researchEvidence],
@@ -1543,6 +1622,7 @@ enum CosmoInlineAssistantSkillRuntime {
                 outputContract: "pane_answer_card",
                 instructions: [
                     "Use workspace/profile/search tools when the answer depends on Cosmo data or current facts.",
+                    "When the user explicitly asks you to research, look something up, or wants current outside facts, web_search is the primary instrument: run at least two differently-angled queries (pick searchType per angle — web, news, reddit, academic; batch them via the `queries` array) before answering. Workspace knowledge complements the web on an explicit research ask — it never substitutes for it.",
                     "Show the actual answer in answer_in_assistant_pane, even if the pane is opened later.",
                     "Distinguish known facts from inference and cite retrieved titles or source names naturally.",
                     "If you cannot find enough evidence, say exactly what you checked."
@@ -1624,6 +1704,7 @@ enum CosmoInlineAssistantSkillRuntime {
                     "If the connection is blank or barely started, invite the messy core idea — one sentence, a link, a half-formed question, doesn't matter. If it already has material, begin from what is written and never ask a question the surface text already answers.",
                     "ORGANIZE THEIR THINKING, DON'T AUTHOR IT. The user's thoughts are often scattered; your real value is turning them into clean, well-formed bullets they instantly recognize as THEIR idea, just sharper and better organized. So you SHOULD reword for clarity, tighten rambling into a crisp sentence, fix grammar, keep their vivid phrasing, and pick the right section. The one hard line is SUBSTANCE: capture only the point they actually made. Do NOT add a claim, mechanism, cause, contrast, or example of your own, and don't dress it up with rhetorical flourishes (the 'not X, it's Y' reframe, dramatic asides) that make it read as authored-by-AI rather than said-by-them. Polish the phrasing; never invent the content. NEVER use em dashes anywhere: not in a bullet, and not in your chat replies. Use a comma, a period, or a semicolon instead. If a section needs substance the user hasn't given, do NOT fabricate it — ask a question that pulls it out of them. WORKED EXAMPLE — the user says, scattered: 'yeah like doing one thing at a time, when I actually do that I feel way calmer, less all over the place'. GOOD (organized, their point, tightened): 'Doing one thing at a time makes me feel calmer and less scattered.' TOO FAR (invented a thesis + mechanism they never stated): 'Doing one thing at a time isn't a productivity trick — it's the mechanism behind feeling calm and present.' The GOOD version reorganizes and cleans up; the TOO FAR version adds an argument they didn't make. Self-check before staging: is this their own point, just clearer? Or did I slip in an idea, a contrast, or a flourish they didn't offer? If I added substance, cut it back to what they said.",
                     "Stage the capture as a reviewed diff via propose_workspace_edit: exactly ONE operation for the ONE section you're capturing into, kind textInsertion, originalText set to the exact section header line (e.g. `## Claims`) copied verbatim from the surface text, proposedText as `- ` bullet lines (one bullet per item). To append after an existing entry instead, set originalText to that exact bullet line. Never claim an insertion happened without staging it, never restate a whole section, and never mix sections in one operation.",
+                    "HYPERLINK OTHER PAGES WITH MENTION TOKENS. When a staged bullet references another concept, note, or idea the user named (or one you found via search), write the reference as a mention token inside the bullet text: @[Exact Title](connection:<uuid>) — the uuid comes from the attached context or your search results, and the type prefix matches the atom (connection, note, idea, research). The token renders as a tappable @Title link once accepted. To add a pure link row (e.g. the user says 'hyperlink this concept'), stage a bullet that is ONLY the token — it lands as a first-class link row in References or the section they named. Never invent a uuid: if you don't have the target's uuid, search for it first, and if it can't be found, write the plain title and say the link target wasn't found.",
                     "EVIDENCE IS A PROBE, NEVER A DUMP. The user's research corpus is available via pull_evidence: call it when the concept grew out of research, when the user makes a claim their captures could support or contradict, or when they ask what they have. Use what comes back as conversation instruments in their own words: 'you captured X from the Huberman video — does that support this claim, or complicate it?'. When the user affirms a piece belongs on the page, stage ONE bullet into the Evidence section via propose_workspace_edit, quoting the capture with its source name. Never insert evidence they did not accept, and never bulk-file the whole corpus.",
                     "Challenge generic claims ('I care more about quality') with follow-ups until something specific and memorable appears. Don't compliment — observe, challenge, or dig deeper. When something is genuinely original, name what makes it original.",
                     "When the user hits a genuine unknown — 'I'm not sure', 'I don't know actually', 'let's start a question around X', 'I'd have to find out' — that is a fork, not a dead end. Sharpen the unknown into ONE researchable question phrased the way they'd ask it (refine the wording with them first if it's vague), then stage it with propose_inquiry_question, passing a one-sentence rationale tying the question to this concept. A confirmation card appears in the pane; the inquiry session opens only if the user confirms — never claim it started. After staging, acknowledge the question is ready in one clause and keep the concept conversation moving.",
@@ -1697,25 +1778,31 @@ enum CosmoInlineAssistantSkillRuntime {
             // surface-aware, and able to stage findings as reviewed edits.
             return CosmoInlineAssistantSkill(
                 id: .ideaResearch,
-                name: "Research",
-                description: "Finds real statistics, studies, and evidence that support or inform the active idea or draft, tagged by proof type.",
+                name: "Deep Research",
+                description: "Runs a multi-angle web research sweep for the active idea or draft — sourced statistics, studies, news, and contrarian data, tagged by proof type.",
                 route: .answer,
                 requiredContext: [.activeSurface, .currentFocus, .clientProfile],
                 toolBundles: [.workspaceEditing, .contentSearch, .webResearch],
                 outputContract: "pane_evidence_findings_then_optional_reviewed_insertion",
                 instructions: [
                     "You are a research assistant for content creators. Read the ACTIVE surface first — for an idea that means its title, angle/body, hooks, and outline; for a draft, the draft text. The user's own material defines the research target; never ask what to research when the surface has content.",
-                    "Find 5-8 relevant statistics, studies, and data points that support or inform the piece, using web_search plus the user's saved research when relevant. Fold in the client's niche as an angle when a client profile is present.",
+                    "PLAN BEFORE SEARCHING: design 4-8 angle-distinct web search queries that together cover hard statistics, current news and policy developments, contrarian or counter-intuitive data, historical precedents, expert commentary, and audience sentiment. Fold in the client's niche as an angle when a client profile is present.",
+                    "Execute the plan with web_search — batch several angle-distinct queries in one call via the `queries` array, and pick the searchType each angle calls for: web (default facts), news (recent developments), reddit (audience sentiment), academic (studies). A research run with fewer than 4 distinct web queries is incomplete; never stop early because the first results feel sufficient.",
+                    "The user's saved research and knowledge base COMPLEMENT the web sweep — pull them in to connect findings to what the user already captured, never as a substitute for actually searching.",
                     "Tag each finding with the most appropriate proof type: Statistic (hard numbers, percentages, data), Case Study (real-world example, brand story), Expert Quote (authority figure, researcher), Social Proof (user testimonials, reviews, crowd behavior), Analogy (comparison to a known concept), Contrarian Data (surprising or counter-intuitive stat), Historical Precedent (past event that mirrors the idea), or Scientific Study (peer-reviewed research).",
                     "Deliver the findings via answer_in_assistant_pane as a compact list: short finding title, a 2-3 sentence summary carrying the key data point, the source name, and the URL when known. Never invent statistics, sources, or URLs — a finding you cannot source does not ship.",
                     "Prefer contrarian and surprising data when the evidence supports it — those make hooks. Name the single strongest finding for this piece and say why in one line.",
                     "End by offering to stage any finding into the surface via propose_workspace_edit (a supporting line under the angle, or a stat-led hook); stage only after the user picks one."
                 ],
-                tokenBudget: 2200,
+                tokenBudget: 3000,
                 requiresReviewedDiff: false,
                 icon: "doc.text.magnifyingglass",
-                summary: "Pulls 5-8 sourced stats, studies, and proof points for the active idea — tagged by proof type, ready to stage.",
-                triggerPhrases: ["find stats", "supporting evidence", "research this idea", "back this up", "find data", "proof points"],
+                summary: "Sweeps the web across 4-8 distinct angles for the active idea — sourced stats, news, and contrarian data tagged by proof type, ready to stage.",
+                triggerPhrases: [
+                    "find stats", "supporting evidence", "research this idea", "back this up",
+                    "find data", "proof points", "deep research", "research this topic",
+                    "research angles", "ton of research", "data points"
+                ],
                 preferredModelTier: .strategist,
                 panePolicy: .alwaysOpenWithResult
             )
@@ -2005,6 +2092,12 @@ struct CosmoEditableSourceSnapshot: Codable, Equatable, Sendable {
     /// The user's current selection, when the surface tracks one — decodes nil
     /// from older payloads.
     var selection: CosmoEditableSelection? = nil
+    /// The skill this surface is permanently in (e.g. concept boards live in the
+    /// concept skill). While set, every non-explicit turn runs this skill:
+    /// passive auto-routing and keyword skill heuristics are disabled — only a
+    /// slash command or the skill picker can run something else. Decodes nil
+    /// from older payloads.
+    var residentSkillID: String? = nil
 
     func withSourceHash(_ nextHash: String) -> CosmoEditableSourceSnapshot {
         var copy = self

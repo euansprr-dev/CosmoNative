@@ -33,9 +33,14 @@ final class CosmoCraftSkillRunner {
     nonisolated static func resolveCraftSkillID(
         selectedSkillID: String?,
         prompt: String,
-        surfaceKind: CosmoEditableSurfaceKind?
+        surfaceKind: CosmoEditableSurfaceKind?,
+        residentSkillID: String? = nil
     ) -> CosmoInlineAssistantSkillID? {
         guard let surfaceKind, surfaceKind != .canvas else { return nil }
+        // Surfaces that live in a skill (concept boards) never keyword-route
+        // into /review or /riff — an explicit slash pick arrives as
+        // selectedSkillID and still wins below.
+        guard residentSkillID == nil || selectedSkillID != nil else { return nil }
         let plan = CosmoInlineAssistantSkillRuntime.plan(
             for: prompt,
             surfaceKind: surfaceKind,

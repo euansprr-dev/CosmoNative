@@ -210,7 +210,11 @@ struct ConnectionInspectorItemDetail: View {
                         actions.onSourceTap(linkedUUID)
                     }
                 } else {
-                    ConnectionLinkedText(text: item.resolvedPlainText, font: DS.callout)
+                    ConnectionLinkedText(
+                        text: item.resolvedPlainText,
+                        font: DS.callout,
+                        mentions: item.explicitMentions
+                    )
                 }
 
                 if let snippet = item.sourceSnippet, !snippet.isEmpty {

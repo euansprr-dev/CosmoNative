@@ -13,6 +13,9 @@ struct ConnectionLinkedProseView: NSViewRepresentable {
     /// Where this item lives — rides selection reports so a minted page can
     /// carry the bullet as its first claim with provenance.
     var originSection: ConnectionSectionType?
+    /// Explicit mentions persisted on the item — linked in their entity tint
+    /// even when the target isn't a sibling page of this deep dive.
+    var mentions: [RichMention] = []
 
     @Environment(\.connectionLinkTargets) private var linkTargets
     @Environment(\.conceptMintReporter) private var mintReporter
@@ -34,9 +37,9 @@ struct ConnectionLinkedProseView: NSViewRepresentable {
         textView.textContainer?.heightTracksTextView = false
         textView.textContainer?.lineBreakMode = .byWordWrapping
         textView.textContainer?.lineFragmentPadding = 0
+        // Cursor only — foreground and underline are stamped per-range so
+        // each mention keeps its own entity tint.
         textView.linkTextAttributes = [
-            .foregroundColor: NSColor(CosmoMentionColors.connection),
-            .underlineStyle: NSUnderlineStyle.single.rawValue,
             .cursor: NSCursor.pointingHand
         ]
         _ = textView.layoutManager   // Pin to TextKit 1 (matches the prose view).
@@ -45,11 +48,13 @@ struct ConnectionLinkedProseView: NSViewRepresentable {
 
     func updateNSView(_ textView: NSTextView, context: Context) {
         context.coordinator.parent = self
-        guard context.coordinator.shouldUpdate(text: text, targets: linkTargets) else { return }
+        guard context.coordinator.shouldUpdate(text: text, targets: linkTargets, mentions: mentions) else { return }
         textView.textStorage?.beginEditing()
-        textView.textStorage?.setAttributedString(Self.attributedString(text: text, targets: linkTargets))
+        textView.textStorage?.setAttributedString(
+            Self.attributedString(text: text, targets: linkTargets, mentions: mentions)
+        )
         textView.textStorage?.endEditing()
-        context.coordinator.record(text: text, targets: linkTargets)
+        context.coordinator.record(text: text, targets: linkTargets, mentions: mentions)
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSTextView, context: Context) -> CGSize? {
@@ -78,7 +83,11 @@ struct ConnectionLinkedProseView: NSViewRepresentable {
 
     // MARK: - Attributed content (mirror of ConnectionLinkedText.attributed)
 
-    static func attributedString(text: String, targets: ConnectionLinkTargets) -> NSAttributedString {
+    static func attributedString(
+        text: String,
+        targets: ConnectionLinkTargets,
+        mentions: [RichMention] = []
+    ) -> NSAttributedString {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineSpacing = 2
         let result = NSMutableAttributedString(string: text, attributes: [
@@ -86,16 +95,33 @@ struct ConnectionLinkedProseView: NSViewRepresentable {
             .font: bodyFont,
             .paragraphStyle: paragraph
         ])
-        guard !targets.isEmpty else { return result }
         let nsText = text as NSString
         var claimed: [NSRange] = []
+
+        func stampLink(_ url: URL, tint: NSColor, range: NSRange) {
+            result.addAttributes([
+                .link: url,
+                .foregroundColor: tint,
+                .underlineStyle: NSUnderlineStyle.single.rawValue
+            ], range: range)
+            claimed.append(range)
+        }
+
+        // Explicit mentions claim first — stored facts beat title guesses.
+        for mention in mentions {
+            let range = nsText.range(of: mention.displayText)
+            guard range.location != NSNotFound,
+                  !claimed.contains(where: { NSIntersectionRange($0, range).length > 0 }),
+                  let url = ConnectionLinkOpener.url(for: mention) else { continue }
+            stampLink(url, tint: NSColor(CosmoMentionColors.color(for: mention.entityType)), range: range)
+        }
+
         for target in targets.targets {
             let range = nsText.range(of: target.title, options: [.caseInsensitive])
             guard range.location != NSNotFound,
                   !claimed.contains(where: { NSIntersectionRange($0, range).length > 0 }),
                   let url = URL(string: "cosmo://connection/\(target.uuid)") else { continue }
-            result.addAttribute(.link, value: url, range: range)
-            claimed.append(range)
+            stampLink(url, tint: NSColor(CosmoMentionColors.connection), range: range)
         }
         return result
     }
@@ -106,19 +132,21 @@ struct ConnectionLinkedProseView: NSViewRepresentable {
         var parent: ConnectionLinkedProseView
         private var lastText: String = ""
         private var lastTargets = ConnectionLinkTargets.empty
+        private var lastMentions: [RichMention] = []
         private var sizeCache: [CGFloat: CGSize] = [:]
 
         init(parent: ConnectionLinkedProseView) {
             self.parent = parent
         }
 
-        func shouldUpdate(text: String, targets: ConnectionLinkTargets) -> Bool {
-            text != lastText || targets != lastTargets
+        func shouldUpdate(text: String, targets: ConnectionLinkTargets, mentions: [RichMention]) -> Bool {
+            text != lastText || targets != lastTargets || mentions != lastMentions
         }
 
-        func record(text: String, targets: ConnectionLinkTargets) {
+        func record(text: String, targets: ConnectionLinkTargets, mentions: [RichMention]) {
             lastText = text
             lastTargets = targets
+            lastMentions = mentions
             sizeCache.removeAll()
         }
 
@@ -126,9 +154,8 @@ struct ConnectionLinkedProseView: NSViewRepresentable {
         func cacheSize(_ size: CGSize, forWidth width: CGFloat) { sizeCache[width] = size }
 
         func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
-            guard let url = link as? URL, url.scheme == "cosmo", url.host == "connection" else { return false }
-            let uuid = url.lastPathComponent
-            guard !uuid.isEmpty else { return false }
+            guard let url = link as? URL,
+                  let uuid = ConnectionLinkOpener.uuid(from: url) else { return false }
             ConnectionLinkOpener.open(uuid: uuid)
             return true
         }

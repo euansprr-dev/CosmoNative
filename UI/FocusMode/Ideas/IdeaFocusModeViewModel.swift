@@ -558,6 +558,32 @@ final class IdeaFocusModeViewModel {
                 userInfo: ["uuid": idea.uuid]
             )
 
+            // The inline assistant's ideation memory follows the idea into
+            // writing: the pane transcript + ledger move onto the content
+            // surface, and the model-side conversation is cloned with a phase
+            // note — awaited BEFORE navigation so the writing bench opens with
+            // the brainstorm already in place.
+            let ideaSurfaceID = "idea:\(idea.uuid)"
+            let contentSurfaceID = "content:\(contentAtom.uuid)"
+            let carriedAssistantSession = CosmoInlineAssistantStore.shared.carrySessionIntoPromotedContent(
+                fromSurfaceID: ideaSurfaceID,
+                toSurfaceID: contentSurfaceID,
+                paneNote: "Begin Writing — continued from the idea “\(editableTitle)”"
+            )
+            if carriedAssistantSession {
+                await CosmoInlineAssistantStore.shared.carryConversationMemoryIntoPromotedContent(
+                    fromSurfaceID: ideaSurfaceID,
+                    toSurfaceID: contentSurfaceID,
+                    transitionNote: """
+                    [Phase transition] The user pressed Begin Writing: the idea "\(editableTitle)" \
+                    was promoted into a new content piece (content atom \(contentAtom.uuid)), and the \
+                    two atoms are linked. Ideation is finished — this conversation now continues on \
+                    the content atom, where the user is drafting the actual piece. Treat the earlier \
+                    messages as the brainstorm and research that led here.
+                    """
+                )
+            }
+
             // Leave a breadcrumb so Content Focus Mode recognizes this mount as a
             // continuation of the Atelier and uses a cross-fade instead of a stagger.
             FocusTransitionCoordinator.shared.markPromotion(contentAtomUUID: contentAtom.uuid)

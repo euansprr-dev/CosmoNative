@@ -961,8 +961,14 @@ struct DashboardTaskList: View {
             // repeating it is chrome noise (Things shows nothing). Overdue
             // keeps its chip; other lists keep due dates. Overdue is judged
             // from the VIEWED day, so scrolling back to a task's due day drops
-            // the "Overdue" chip — it's a normal item that day.
+            // the "Overdue" chip — it's a normal item that day. Browsing AHEAD
+            // must never brand today's still-live tasks overdue either: the day
+            // sections anchor overdue to the REAL today, so this row does too.
+            // (Otherwise, in the frame between the day cursor advancing and the
+            // sections reloading, today's tasks flash the overdue chip while
+            // momentarily judged against tomorrow.)
             let overdue = task.isOverdue(asOf: viewModel.selectedDate)
+                && (viewModel.viewMode != .today || viewModel.isViewingToday)
             if let dueInfo = task.dueInfo(asOf: viewModel.selectedDate), !task.isCompleted,
                viewModel.viewMode != .today || overdue {
                 dueDateChip(dueInfo, isOverdue: overdue)

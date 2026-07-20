@@ -10,9 +10,18 @@ struct CosmoEditableOperationResult: Equatable, Sendable {
 protocol CosmoEditableSurfaceProvider: AnyObject {
     var surfaceID: String { get }
 
+    /// The skill this surface permanently lives in (concept boards → concept).
+    /// While non-nil, non-explicit turns always run this skill and passive
+    /// skill auto-routing is disabled. Cheap to read — no snapshot render.
+    var residentSkillID: String? { get }
+
     func editableSnapshot() -> CosmoEditableSourceSnapshot
     func apply(operation: CosmoAssistantProposalOperation) async throws -> CosmoEditableOperationResult
     func reject(operation: CosmoAssistantProposalOperation) async -> CosmoEditableOperationResult
+}
+
+extension CosmoEditableSurfaceProvider {
+    var residentSkillID: String? { nil }
 }
 
 enum CosmoEditableSurfaceHasher {

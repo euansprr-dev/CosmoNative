@@ -223,7 +223,7 @@ struct CanvasDrawing: Identifiable, Codable {
     }
 
     static func themeResolvedColorFromHex(_ hex: String) -> Color {
-        if !DS.palette.isDark, isAdaptiveCanvasWhite(hex) {
+        if isAdaptiveCanvasInk(hex) {
             return DS.text
         }
         return colorFromHex(hex)
@@ -241,11 +241,21 @@ struct CanvasDrawing: Identifiable, Codable {
         return (r, g, b)
     }
 
-    private static func isAdaptiveCanvasWhite(_ hex: String) -> Bool {
+    /// The default drawing ink is a theme-neutral black or white — new text is
+    /// authored in near-black "#1A1A1A" (DrawingStateManager default) or a
+    /// near-white swatch. Neither reads as ink against both canvases, so a
+    /// neutral resolves to the adaptive text color: dark on the light canvas,
+    /// white on the dark canvas. Colored ink (red, blue, the "#9CA3AF" chosen
+    /// gray, …) is authored intent and passes through untouched.
+    private static func isAdaptiveCanvasInk(_ hex: String) -> Bool {
         guard let components = rgbComponents(from: hex) else { return false }
-        return components.red >= 0.94 &&
+        let nearWhite = components.red >= 0.94 &&
             components.green >= 0.94 &&
             components.blue >= 0.94
+        let nearBlack = components.red <= 0.16 &&
+            components.green <= 0.16 &&
+            components.blue <= 0.16
+        return nearWhite || nearBlack
     }
 
     var strokeSwiftUIColor: Color {

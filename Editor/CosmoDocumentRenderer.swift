@@ -11,7 +11,13 @@ enum CosmoDocumentRendererStackMode: Equatable {
 }
 
 enum CosmoDocumentRendererStackPolicy {
-    static let canvasPreviewLazyBlockThreshold = 24
+    /// Above this block count a canvas card preview renders lazily, so only
+    /// rows near the card's visible band typeset. Kept low: a thinkspace
+    /// switch mounts every visible note card in one frame, and eager
+    /// typesetting of long documents was a measurable slice of the swap
+    /// freeze. (Lazy rendering is visually identical — the card shows the
+    /// same top-of-document content.)
+    static let canvasPreviewLazyBlockThreshold = 8
 
     static func mode(
         for surface: CosmoDocumentRendererSurface,

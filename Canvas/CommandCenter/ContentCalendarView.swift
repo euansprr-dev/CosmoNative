@@ -203,7 +203,16 @@ enum ContentCalendarActions {
             case .content(let uuid):
                 // A published item dragged to a future day becomes a planned
                 // repost: scheduledAt moves, publish history stays put.
-                await ContentQueueLoader.setSchedule(day, status: nil, for: uuid)
+                // Dragged to today or the past, the drag IS the correction:
+                // the publish records move to that day so the chip follows.
+                let calendar = Calendar.current
+                let targetDay = calendar.startOfDay(for: day)
+                if targetDay <= calendar.startOfDay(for: Date()),
+                   await ContentPublishStore.moveRecords(atomUuid: uuid, to: targetDay, calendar: calendar) {
+                    await ContentQueueLoader.setSchedule(targetDay, status: nil, for: uuid)
+                } else {
+                    await ContentQueueLoader.setSchedule(day, status: nil, for: uuid)
+                }
                 handled = true
             }
         }

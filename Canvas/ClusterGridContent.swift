@@ -75,6 +75,47 @@ struct ClusterMasonryLayout: Layout {
     }
 }
 
+// MARK: - Grid Hydration Policy
+
+/// Cluster grids used to mount EVERY member card eagerly — a 30-document
+/// cluster sized to show two cards still typeset all 30 inside the
+/// thinkspace-swap frame (the masonry `Layout` + ScrollView pair has no
+/// laziness). Hydration renders real cards only near the visible band and
+/// fills the rest in background waves shortly after mount, so scrolling
+/// never reveals a placeholder and the fully-loaded steady state still
+/// arrives within ~a second.
+///
+/// This is safe against layout shift by construction: masonry cell sizes are
+/// CANONICAL (pure functions of block type — see `canonicalCellHeight`), so
+/// a placeholder occupies exactly the frame its card will.
+enum ClusterGridHydrationPolicy {
+    /// Cells within this distance of the visible band render real content.
+    static let preloadMargin: CGFloat = 900
+    /// Scroll updates are bucketed to this granularity so tracking the band
+    /// costs a handful of state writes per viewport of scrolling, never one
+    /// per frame (the cortex-scroll law).
+    static let bandQuantum: CGFloat = 240
+    /// Before the first scroll geometry arrives, hydrate this many leading
+    /// cells — covers any plausible visible arrangement at mount.
+    static let initialHydrationCount = 8
+    /// Background waves: let the switch entry animation settle, then mount
+    /// the remainder a few cards per beat, top-to-bottom.
+    static let waveDelay: Duration = .milliseconds(600)
+    static let waveInterval: Duration = .milliseconds(120)
+    static let waveSize = 5
+
+    static func quantizedBand(minY: CGFloat, maxY: CGFloat) -> ClosedRange<CGFloat> {
+        let lower = (minY / bandQuantum).rounded(.down) * bandQuantum
+        let upper = (maxY / bandQuantum).rounded(.up) * bandQuantum
+        return lower...max(lower, upper)
+    }
+
+    static func isNearBand(cellFrame: CGRect, band: ClosedRange<CGFloat>) -> Bool {
+        cellFrame.maxY > band.lowerBound - preloadMargin
+            && cellFrame.minY < band.upperBound + preloadMargin
+    }
+}
+
 // MARK: - Grid Content
 
 struct ClusterGridContent: View {
@@ -92,25 +133,105 @@ struct ClusterGridContent: View {
     /// Minimum cell height to ensure readability
     private static let minCellHeight: CGFloat = 120
 
-    var body: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            ClusterMasonryLayout(columnWidth: Self.masonryColumnWidth, spacing: Self.masonrySpacing) {
-                ForEach(memberBlocks, id: \.id) { block in
-                    gridBlockView(for: block)
-                        .onTapGesture(count: 2) {
-                            onOpenFocusMode(block.entityUuid)
-                        }
-                        .onDrag { dragProvider(for: block) }
-                }
+    private struct ScrollBand: Equatable {
+        let band: ClosedRange<CGFloat>
+        let contentWidth: CGFloat
+    }
 
-                // Drop placeholder
-                if isDropTargeted {
-                    dropPlaceholder
-                }
-            }
-            .padding(Self.masonrySpacing)
+    /// Monotonic: cells hydrate (scroll proximity or background wave) and
+    /// never de-hydrate — scrolling back up must not churn view teardown.
+    @State private var hydratedBlockIds: Set<String> = []
+    @State private var visibleBand: ClosedRange<CGFloat> = 0...0
+    @State private var contentWidth: CGFloat = 0
+
+    var body: some View {
+        let members = memberBlocks
+        let cellFrames = Self.cellFrames(
+            blocks: members,
+            availableWidth: max(contentWidth - Self.masonrySpacing * 2, Self.masonryColumnWidth)
+        )
+        ScrollView(.vertical, showsIndicators: false) {
+            masonryGrid(members: members, cellFrames: cellFrames)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .onScrollGeometryChange(for: ScrollBand.self, of: { geometry in
+            // Quantized INSIDE the transform: identical buckets mean the
+            // action (and its state writes) never runs per scroll frame.
+            ScrollBand(
+                band: ClusterGridHydrationPolicy.quantizedBand(
+                    minY: geometry.visibleRect.minY,
+                    maxY: geometry.visibleRect.maxY
+                ),
+                contentWidth: geometry.containerSize.width
+            )
+        }) { _, newValue in
+            visibleBand = newValue.band
+            contentWidth = newValue.contentWidth
+            hydrateCellsNearBand()
+        }
+        .task(id: cluster.blockUUIDs) {
+            await runHydrationWaves()
+        }
+    }
+
+    private func masonryGrid(members: [CanvasBlock], cellFrames: [CGRect]) -> some View {
+        ClusterMasonryLayout(columnWidth: Self.masonryColumnWidth, spacing: Self.masonrySpacing) {
+            ForEach(Array(members.enumerated()), id: \.element.id) { index, block in
+                gridBlockView(
+                    for: block,
+                    hydrated: isHydrated(block: block, index: index, cellFrames: cellFrames)
+                )
+                .onTapGesture(count: 2) {
+                    onOpenFocusMode(block.entityUuid)
+                }
+                .onDrag { dragProvider(for: block) }
+            }
+
+            // Drop placeholder
+            if isDropTargeted {
+                dropPlaceholder
+            }
+        }
+        .padding(Self.masonrySpacing)
+    }
+
+    // MARK: - Hydration
+
+    private func isHydrated(block: CanvasBlock, index: Int, cellFrames: [CGRect]) -> Bool {
+        if hydratedBlockIds.contains(block.id) { return true }
+        // Before the first scroll geometry lands, frames are width-guessed —
+        // hydrate by position in the masonry order instead.
+        guard contentWidth > 0 else { return index < ClusterGridHydrationPolicy.initialHydrationCount }
+        guard index < cellFrames.count else { return true }
+        return ClusterGridHydrationPolicy.isNearBand(cellFrame: cellFrames[index], band: visibleBand)
+    }
+
+    /// Fold band-covered cells into the monotonic hydrated set so scrolling
+    /// away never unmounts them.
+    private func hydrateCellsNearBand() {
+        let members = memberBlocks
+        let cellFrames = Self.cellFrames(
+            blocks: members,
+            availableWidth: max(contentWidth - Self.masonrySpacing * 2, Self.masonryColumnWidth)
+        )
+        for (index, block) in members.enumerated() where index < cellFrames.count {
+            if ClusterGridHydrationPolicy.isNearBand(cellFrame: cellFrames[index], band: visibleBand) {
+                hydratedBlockIds.insert(block.id)
+            }
+        }
+    }
+
+    /// Background hydration: after the switch/cluster entry settles, mount
+    /// the remaining cards a few per beat in masonry order, so the cluster
+    /// reaches its fully-loaded steady state without a single-frame burst.
+    private func runHydrationWaves() async {
+        try? await Task.sleep(for: ClusterGridHydrationPolicy.waveDelay)
+        while !Task.isCancelled {
+            let pending = memberBlocks.map(\.id).filter { !hydratedBlockIds.contains($0) }
+            guard !pending.isEmpty else { return }
+            hydratedBlockIds.formUnion(pending.prefix(ClusterGridHydrationPolicy.waveSize))
+            try? await Task.sleep(for: ClusterGridHydrationPolicy.waveInterval)
+        }
     }
 
     // MARK: - Drop Placeholder
@@ -183,6 +304,19 @@ struct ClusterGridContent: View {
     /// Estimate the total masonry layout height for a set of blocks without rendering.
     /// Used by `CanvasClusterEngine.fitClusterRectForMode` for accurate adaptive sizing.
     static func estimatedGridHeight(blocks: [CanvasBlock], availableWidth: CGFloat) -> CGFloat {
+        cellFrames(blocks: blocks, availableWidth: availableWidth)
+            .map(\.maxY)
+            .max() ?? 0
+    }
+
+    /// Deterministic masonry cell frames from CANONICAL sizes — the same
+    /// greedy row-packing `ClusterMasonryLayout` performs, but computable
+    /// without a view (hydration decides per-cell visibility from these, and
+    /// they match the real layout because every grid cell is framed to its
+    /// canonical size before measurement).
+    static func cellFrames(blocks: [CanvasBlock], availableWidth: CGFloat) -> [CGRect] {
+        var frames: [CGRect] = []
+        frames.reserveCapacity(blocks.count)
         var cursorX: CGFloat = 0
         var cursorY: CGFloat = 0
         var rowHeight: CGFloat = 0
@@ -199,11 +333,12 @@ struct ClusterGridContent: View {
                 rowHeight = 0
             }
 
+            frames.append(CGRect(x: cursorX, y: cursorY, width: cellWidth, height: cellHeight))
             cursorX += cellWidth + masonrySpacing
             rowHeight = max(rowHeight, cellHeight)
         }
 
-        return blocks.isEmpty ? 0 : cursorY + rowHeight
+        return frames
     }
 
     static func orderedMemberBlocks(for cluster: CanvasCluster, blocks: [CanvasBlock]) -> [CanvasBlock] {
@@ -212,7 +347,7 @@ struct ClusterGridContent: View {
     }
 
     @ViewBuilder
-    private func gridBlockView(for block: CanvasBlock) -> some View {
+    private func gridBlockView(for block: CanvasBlock, hydrated: Bool) -> some View {
         let cellHeight = gridCellHeight(for: block)
         let cellWidth = Self.canonicalCellWidth(for: block)
 
@@ -226,9 +361,23 @@ struct ClusterGridContent: View {
             return b
         }()
 
-        blockContent(for: gridBlock)
-            .frame(width: cellWidth, height: cellHeight)
-            .clipShape(.rect(cornerRadius: DS.radiusMedium))
+        Group {
+            if hydrated {
+                blockContent(for: gridBlock)
+            } else {
+                // Layout-identical stand-in for cells far below the fold —
+                // a quiet card back, replaced by the real card before the
+                // user can scroll to it (proximity margin + hydration waves).
+                RoundedRectangle(cornerRadius: DS.radiusMedium)
+                    .fill(DS.surfaceElevated)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DS.radiusMedium)
+                            .strokeBorder(clusterColor.opacity(0.10), lineWidth: 1)
+                    )
+            }
+        }
+        .frame(width: cellWidth, height: cellHeight)
+        .clipShape(.rect(cornerRadius: DS.radiusMedium))
     }
 
     @ViewBuilder

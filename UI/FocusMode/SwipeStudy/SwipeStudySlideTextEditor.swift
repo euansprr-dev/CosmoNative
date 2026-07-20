@@ -30,6 +30,33 @@ enum SwipeTranscriptCardPalette {
     }
 }
 
+/// First-paint stand-in for `SlideTextEditor`: renders the slide text as plain
+/// SwiftUI Text, pixel-matched to the NSTextView (13pt system font, 4pt
+/// insets, 60pt floor) so the later swap is invisible. Mounting one AppKit
+/// text stack per slide during the study's entrance frame was the open hitch;
+/// stand-ins cost nothing. A click promotes to the real editors immediately.
+struct SlideTextStandIn: View {
+    let text: String
+    let onActivate: () -> Void
+
+    var body: some View {
+        Text(text)
+            // Font.system(size:) is deliberate here despite the DS convention:
+            // parity with the NSTextView's systemFont(ofSize: 13) is the whole
+            // point — a DS token that drifts would make the swap visibly reflow.
+            .font(Font.system(size: 13))
+            .foregroundStyle(SwipeTranscriptCardPalette.text)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 6)
+            .frame(minHeight: 60, alignment: .topLeading)
+            .contentShape(Rectangle())
+            .onTapGesture(perform: onActivate)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityHint("Tap to edit")
+    }
+}
+
 /// A text editor for a single transcript slide.
 /// Command-Return creates a new slide; Return inserts a newline.
 struct SlideTextEditor: NSViewRepresentable {

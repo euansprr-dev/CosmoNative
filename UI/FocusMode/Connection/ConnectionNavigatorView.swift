@@ -172,6 +172,9 @@ struct ConnectionNavigatorSourcesGroup: View {
                     onTap: { workspace.selection = .source(source.uuid) },
                     onOpen: { actions.onSourceTap(source.uuid) }
                 )
+                // A source linked mid-session (e.g. a freshly minted concept)
+                // slides into the rail instead of teleporting.
+                .transition(.opacity.combined(with: .move(edge: .leading)))
             }
             if sources.linked.isEmpty {
                 Text("Link notes, research, or ideas that feed this concept.")

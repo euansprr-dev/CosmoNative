@@ -316,12 +316,18 @@ struct SwipeStudySlideCard: View {
         VStack(alignment: .leading, spacing: DS.space8) {
             cardHeader(commentCount: slideComments.count, composerOpen: composerOpen)
 
-            SlideTextEditor(
-                slideID: slide.id,
-                text: model.bindingForSlideText(slide.id),
-                focusRequestID: $model.slideFocusRequestID,
-                onNewSlide: { model.insertSlide(after: slide.id) }
-            )
+            if model.slideEditorsActive {
+                SlideTextEditor(
+                    slideID: slide.id,
+                    text: model.bindingForSlideText(slide.id),
+                    focusRequestID: $model.slideFocusRequestID,
+                    onNewSlide: { model.insertSlide(after: slide.id) }
+                )
+            } else {
+                SlideTextStandIn(text: slide.text) {
+                    model.activateSlideEditors(focusing: slide.id)
+                }
+            }
 
             if composerOpen {
                 commentComposer

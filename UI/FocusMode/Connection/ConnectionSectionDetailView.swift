@@ -41,10 +41,8 @@ struct ConnectionSectionDetailView: View {
                 .frame(maxWidth: .infinity, alignment: .center)
             }
         }
-        // Select→mint on the user's own bullets: highlight a phrase in an
-        // item and mint or link it (the pill reads selections the rows
-        // report via ConnectionLinkedProseView).
-        .conceptMintPillHost()
+        // Select→mint is hosted by the workspace center column (one host
+        // covers Board, Outline, and this pushed detail alike).
     }
 
     // MARK: - Header
@@ -187,8 +185,12 @@ struct ConnectionItemEditRow: View {
             } else {
                 // NSTextView-backed twin of ConnectionLinkedText: same mention
                 // links, plus a readable selection so the mint pill works here.
-                ConnectionLinkedProseView(text: item.resolvedPlainText, originSection: sectionType)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                ConnectionLinkedProseView(
+                    text: item.resolvedPlainText,
+                    originSection: sectionType,
+                    mentions: item.explicitMentions
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             if let sourceUUID = item.sourceAtomUUID, !item.isConnectionLink {
                 Button(action: { onSourceTap(sourceUUID) }) {

@@ -393,6 +393,35 @@ final class CraftEngineTests: XCTestCase {
         )
     }
 
+    func testCraftRouterNeverKeywordRoutesOnResidentSkillSurfaces() {
+        // Regression: on the "Feedback Loop of Awareness" concept board, the
+        // word "feedback" in the user's message keyword-routed into the
+        // /review swipe-library skill. Resident-skill surfaces (concept
+        // boards) must never keyword-route into craft skills.
+        XCTAssertNil(
+            CosmoCraftSkillRunner.resolveCraftSkillID(
+                selectedSkillID: nil,
+                prompt: "the feedback loop of your awareness is fully focused — research this and hyperlink the concept",
+                surfaceKind: .structured,
+                residentSkillID: "concept"
+            )
+        )
+    }
+
+    func testCraftRouterStillHonorsExplicitSelectionOnResidentSkillSurfaces() {
+        // /review explicitly picked on a concept board is the manual escape
+        // hatch — explicit selection always wins.
+        XCTAssertEqual(
+            CosmoCraftSkillRunner.resolveCraftSkillID(
+                selectedSkillID: "contentReview",
+                prompt: "Begin.",
+                surfaceKind: .structured,
+                residentSkillID: "concept"
+            ),
+            .contentReview
+        )
+    }
+
     func testCraftRouterLeavesAutomaticVoicePromptAloneWithoutActiveSurface() {
         let prompt = """
         I found this hook I want to replicate for Josh, then go into sober living. Explain the DSCR loan in Josh's voice and give me a few variations we can do.

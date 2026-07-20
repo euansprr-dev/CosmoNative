@@ -31,6 +31,7 @@ struct ResearchFocusModeView: View {
     @State private var sidebarLocked = false
     @State private var showSettings = false
     @State private var rightClickMonitor: Any?
+    @State private var ownedContextProvider: ResearchContextProvider?
     @State private var canvasFrameSize: CGSize = CGSize(width: 1440, height: 900)
     @State private var viewFrameInWindow: CGRect = .zero
 
@@ -138,12 +139,14 @@ struct ResearchFocusModeView: View {
             // Register context provider for global Cosmo window
             let provider = ResearchContextProvider(atom: atom, viewModel: viewModel)
             if !isPaneContext || isPaneActive {
+                ownedContextProvider = provider
                 CosmoWindowViewModel.shared.updateContext(provider: provider)
             }
         }
         .onChange(of: isPaneActive) { _, isActive in
             if isActive {
                 let provider = ResearchContextProvider(atom: atom, viewModel: viewModel)
+                ownedContextProvider = provider
                 CosmoWindowViewModel.shared.updateContext(provider: provider)
             }
         }
@@ -152,6 +155,11 @@ struct ResearchFocusModeView: View {
             saveState()
             floatingBlocksManager.saveImmediately()
             removeRightClickMonitor()
+            // Window context follows presence: leaving research releases it.
+            if let owned = ownedContextProvider {
+                CosmoWindowViewModel.shared.releaseContext(provider: owned)
+                ownedContextProvider = nil
+            }
         }
         // Deselect panels on background click
         .onTapGesture(count: 1) {

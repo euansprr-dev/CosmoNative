@@ -95,6 +95,11 @@ final class StudyConceptDeskController {
         connectionVM.saveToAtom()
         connectionVM.saveState()
         CosmoEditableSurfaceRegistry.shared.unregister(surfaceID: surfaceID)
+        // Window context follows presence: leaving the Desk releases it.
+        if let provider {
+            CosmoWindowViewModel.shared.releaseContext(provider: provider)
+            self.provider = nil
+        }
 
         let hasContent = connectionVM.state.sections.contains { !$0.items.isEmpty }
         if !hasContent, createdFreshPage {

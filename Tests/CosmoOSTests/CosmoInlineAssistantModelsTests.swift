@@ -683,3 +683,62 @@ final class CosmoInlineAssistantPaneEmptyStatePolicyTests: XCTestCase {
         XCTAssertEqual(CosmoMentionPillTint.entityType(forSourceKind: "unknown_kind"), .note)
     }
 }
+
+final class CosmoInlineAssistantDeepResearchRoutingTests: XCTestCase {
+    func testBroadResearchAskRoutesToDeepResearchPipeline() {
+        // The exact shape of ask that used to fall through to the generic Q&A
+        // fallback and answer from local context without a real web sweep.
+        let plan = CosmoInlineAssistantSkillRuntime.plan(
+            for: "Can you do a ton of research on this topic? Think of different angles and data points that could be interesting to mention in this post.",
+            surfaceKind: .text
+        )
+        XCTAssertEqual(plan.primarySkill.id, .ideaResearch)
+        XCTAssertEqual(plan.pipelineSteps?.count, 3)
+        XCTAssertTrue(plan.toolBundles.contains(.webResearch))
+    }
+
+    func testDeepResearchIntentDetection() {
+        XCTAssertTrue(CosmoInlineAssistantResearchIntent.isDeepResearchRequest(
+            "do really deep research on foreclosures"
+        ))
+        XCTAssertTrue(CosmoInlineAssistantResearchIntent.isDeepResearchRequest(
+            "research this topic from a bunch of different angles"
+        ))
+        // A direct question is NOT a deep-research sweep.
+        XCTAssertFalse(CosmoInlineAssistantResearchIntent.isDeepResearchRequest(
+            "what are typical airbnb cleaning costs?"
+        ))
+        // Research wording inside an edit instruction stays with the edit path.
+        XCTAssertFalse(CosmoInlineAssistantResearchIntent.isDeepResearchRequest(
+            "look up the current FHA rate"
+        ))
+    }
+
+    func testDirectQuestionStillRoutesToAnswerSkill() {
+        let plan = CosmoInlineAssistantSkillRuntime.plan(
+            for: "what are typical airbnb cleaning costs?",
+            surfaceKind: .text
+        )
+        XCTAssertEqual(plan.primarySkill.id, .researchAnswer)
+        XCTAssertNil(plan.pipelineSteps)
+    }
+
+    func testEvidencePhrasesStillRouteToSingleTurnResearch() {
+        let plan = CosmoInlineAssistantSkillRuntime.plan(
+            for: "find stats to back this up",
+            surfaceKind: .text
+        )
+        XCTAssertEqual(plan.primarySkill.id, .ideaResearch)
+        XCTAssertNil(plan.pipelineSteps)
+    }
+
+    func testDeepResearchPipelineStepShape() {
+        let steps = CosmoInlineAssistantSkillRuntime.deepResearchPipelineSteps()
+        XCTAssertEqual(steps.map(\.name), ["Map the angles", "Run the searches", "Synthesize the dossier"])
+        // The search step must actually carry the web bundle.
+        XCTAssertTrue(steps[1].toolBundles?.contains(.webResearch) == true)
+        // Only the plan and search steps run before synthesis; synthesis must
+        // not re-open the web by default.
+        XCTAssertFalse(steps[2].toolBundles?.contains(.webResearch) == true)
+    }
+}

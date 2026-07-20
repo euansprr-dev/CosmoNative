@@ -390,6 +390,42 @@ final class PaneManagerBrowserPaneTests: XCTestCase {
         )
     }
 
+    func testEmbeddedBrowserPresentsCurrentSafariUserAgent() throws {
+        let token = CosmoBrowserUserAgent.applicationName
+
+        XCTAssertTrue(
+            token.hasSuffix(" Safari/605.1.15"),
+            "The Safari token must stay well-formed or sites fall back to their legacy bundle: \(token)"
+        )
+
+        let versionField = try XCTUnwrap(token.split(separator: " ").first)
+        let majorField = try XCTUnwrap(versionField.dropFirst("Version/".count).split(separator: ".").first)
+        let major = try XCTUnwrap(Int(majorField))
+
+        XCTAssertGreaterThanOrEqual(
+            major, 18,
+            "Instagram — and others — serve a stripped legacy bundle whose images never paint to anything claiming less than Safari 18."
+        )
+    }
+
+    func testEmbeddedWebViewsNeverFreezeAUserAgentVersion() throws {
+        for relativePath in [
+            "Navigation/Browser/CosmoBrowserWebView.swift",
+            "UI/FocusMode/Inquiry/Source/WebSourceView.swift",
+            "Cosmo/WebsiteCapture.swift"
+        ] {
+            let source = try String(
+                contentsOf: repositoryRoot.appendingPathComponent(relativePath),
+                encoding: .utf8
+            )
+
+            XCTAssertFalse(
+                source.contains("customUserAgent"),
+                "\(relativePath) must take its Safari token from CosmoBrowserUserAgent — a version literal typed once silently rots the day a site raises its floor."
+            )
+        }
+    }
+
     func testBrowserStartPageKeepsFavoriteManagementLanguage() throws {
         let source = try String(
             contentsOf: repositoryRoot.appendingPathComponent("Navigation/Browser/CosmoBrowserStartPage.swift"),

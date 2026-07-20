@@ -81,9 +81,16 @@ struct ConnectionFocusModeView: View {
             // A concept was minted or linked from this page (or a sibling):
             // refresh link targets so the new page's mentions light up now.
             // Sections stay untouched — the origin's References row was added
-            // through the live VM and may not be in the DB yet.
-            .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Connection.referencesChanged)) { _ in
+            // through the live VM and may not be in the DB yet. When this page
+            // is an endpoint of the new link, the Sources rail refreshes too —
+            // the minted page slides in without leaving and re-entering.
+            .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Connection.referencesChanged)) { notification in
                 Task { await loadLinkTargets() }
+                let originUUID = notification.userInfo?["originUUID"] as? String
+                let connectionUUID = notification.userInfo?["connectionUUID"] as? String
+                guard originUUID == atom.uuid || connectionUUID == atom.uuid else { return }
+                let counterpart = originUUID == atom.uuid ? connectionUUID : originUUID
+                Task { await refreshSources(ensuring: counterpart) }
             }
             // Material staged onto this page while it's open (an inbox feed,
             // a seedling develop) appears as ghost rows immediately.
@@ -127,7 +134,7 @@ struct ConnectionFocusModeView: View {
                 proposalID: Self.stableUUID(for: entry.id),
                 operationID: Self.stableUUID(for: entry.id),
                 section: section,
-                bullets: [entry.text],
+                bullets: [ConceptMentionToken.displayText(entry.text)],
                 stagedEntryId: entry.id
             ))
         }
@@ -222,7 +229,16 @@ struct ConnectionFocusModeView: View {
         // originals re-own onto the page, and the staged entry is consumed.
         if let entryId = insert.stagedEntryId {
             guard let entry = persistedInserts.first(where: { $0.id == entryId }) else { return }
-            viewModel.attachItem(ConnectionItem(content: entry.text), toSection: insert.section)
+            let parsed = ConceptMentionToken.parse(entry.text)
+            viewModel.attachItem(
+                ConnectionItem(
+                    content: parsed.plainText,
+                    document: parsed.document,
+                    plainText: parsed.plainText,
+                    linkedConnectionUUID: parsed.soleConnectionLink?.entityUUID
+                ),
+                toSection: insert.section
+            )
             persistedInserts.removeAll { $0.id == entryId }
             Task {
                 _ = try? await ConnectionStagingStore.remove(insertId: entryId, fromConnection: atom.uuid)
@@ -283,6 +299,13 @@ struct ConnectionFocusModeView: View {
         viewModel.flushTitleSave()
         viewModel.saveToAtom()
         viewModel.saveState()
+        // Assistant scope and window context follow presence: leaving the
+        // concept releases both.
+        if let owned = ownedContextProvider {
+            CosmoEditableSurfaceRegistry.shared.unregister(surfaceID: owned.surfaceID)
+            CosmoWindowViewModel.shared.releaseContext(provider: owned)
+            ownedContextProvider = nil
+        }
     }
 
     private func registerContextProvider() {
@@ -427,20 +450,73 @@ struct ConnectionFocusModeView: View {
 
     /// Sibling Connection pages of the same deep dive become inline link
     /// targets — mentions of their titles in item text open them as panes.
+    /// Works from a FRESH fetch (the open-time snapshot may predate the deep
+    /// dive link) and merges the live References rows, so a page minted
+    /// seconds ago hyperlinks its mention immediately — even when this page
+    /// belongs to no deep dive at all.
     @MainActor
     private func loadLinkTargets() async {
-        guard let deepDiveUUID = atom.linksOfType(.deepDiveConnection).first?.uuid,
-              let deepDive = try? await AtomRepository.shared.fetch(uuid: deepDiveUUID),
-              let siblings = try? await InquiryRepository.shared.fetchConnections(forDeepDive: deepDive) else { return }
-        linkTargets = ConnectionLinkTargets(targets: siblings.compactMap { sibling in
-            guard sibling.uuid != atom.uuid, let title = sibling.title, !title.isEmpty else { return nil }
-            return .init(uuid: sibling.uuid, title: title)
-        })
+        var targets: [ConnectionLinkTargets.Target] = []
+        var seen = Set<String>()
+
+        let fresh = (try? await AtomRepository.shared.fetch(uuid: atom.uuid)) ?? atom
+        var deepDive: Atom?
+        if let deepDiveUUID = fresh.linksOfType(.deepDiveConnection).first?.uuid {
+            deepDive = try? await AtomRepository.shared.fetch(uuid: deepDiveUUID)
+        }
+        if deepDive == nil {
+            deepDive = await CosmoInlineInquiryQuestionResolver.resolveDeepDive(for: fresh)
+        }
+        if let deepDive,
+           let siblings = try? await InquiryRepository.shared.fetchConnections(forDeepDive: deepDive) {
+            for sibling in siblings {
+                guard sibling.uuid != atom.uuid, let title = sibling.title, !title.isEmpty,
+                      seen.insert(sibling.uuid).inserted else { continue }
+                targets.append(.init(uuid: sibling.uuid, title: title))
+            }
+        }
+
+        // Live References rows: pages this one links by hand or by minting.
+        // The VM is the truth mid-session — a freshly minted page is here
+        // before any deep-dive round trip settles.
+        for section in viewModel.state.sections where section.type == .references {
+            for item in section.items {
+                guard let uuid = item.linkedConnectionUUID, uuid != atom.uuid,
+                      seen.insert(uuid).inserted else { continue }
+                let title = item.resolvedPlainText.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !title.isEmpty else { continue }
+                targets.append(.init(uuid: uuid, title: title))
+            }
+        }
+
+        linkTargets = ConnectionLinkTargets(targets: targets)
     }
 
     @MainActor
     private func loadSources() async {
         wellSources = await coDevEngine.findLinkedSourceMaterials(for: atom.uuid, limit: 20)
+        if isShowingSuggestedSources {
+            let linkedIDs = Set(wellSources.map(\.uuid))
+            suggestedWellSources.removeAll { linkedIDs.contains($0.uuid) }
+        }
+    }
+
+    /// Mid-session refresh after a reference was added: re-queries linked
+    /// sources, and — because the graph index that backs the query can lag a
+    /// just-written link — guarantees the named counterpart appears by
+    /// fetching it directly. Animated so the new row slides into the rail.
+    @MainActor
+    private func refreshSources(ensuring counterpartUUID: String?) async {
+        var fetched = await coDevEngine.findLinkedSourceMaterials(for: atom.uuid, limit: 20)
+        if let counterpartUUID, counterpartUUID != atom.uuid,
+           !fetched.contains(where: { $0.uuid == counterpartUUID }),
+           let counterpart = try? await AtomRepository.shared.fetch(uuid: counterpartUUID),
+           !counterpart.isDeleted, counterpart.isEligibleWellSource {
+            fetched.insert(counterpart, at: 0)
+        }
+        withAnimation(ProMotionSprings.gentle) {
+            wellSources = fetched
+        }
         if isShowingSuggestedSources {
             let linkedIDs = Set(wellSources.map(\.uuid))
             suggestedWellSources.removeAll { linkedIDs.contains($0.uuid) }
@@ -865,11 +941,17 @@ final class ConnectionFocusModeViewModel {
         document: RichDocument,
         plainText: String,
         inSection type: ConnectionSectionType,
-        afterItemID: UUID?
+        afterItemID: UUID?,
+        linkedConnectionUUID: String? = nil
     ) -> ConnectionItem? {
         guard let sectionIndex = state.sections.firstIndex(where: { $0.type == type }) else { return nil }
         sectionsModifiedInFocusMode = true
-        let item = ConnectionItem(content: plainText, document: document, plainText: plainText)
+        let item = ConnectionItem(
+            content: plainText,
+            document: document,
+            plainText: plainText,
+            linkedConnectionUUID: linkedConnectionUUID
+        )
         if let afterItemID,
            let itemIndex = state.sections[sectionIndex].items.firstIndex(where: { $0.id == afterItemID }) {
             state.sections[sectionIndex].items.insert(item, at: itemIndex + 1)

@@ -377,6 +377,11 @@ struct CanvasView: View {
                         transform: liveTransform
                     )
                 }
+                // These layers render WORLD content (ink, connection lines) in
+                // screen space — they must exit/enter with the world fade. Left
+                // at full opacity, the outgoing space's drawings visibly hung
+                // over the incoming one until its own drawings loaded.
+                .opacity(canvasContentOpacity)
                 .allowsHitTesting(thinkspaceMode == .canvas)
 
                 if thinkspaceMode == .library {
@@ -1638,11 +1643,21 @@ struct CanvasView: View {
                     // restore the viewport remembered in this session.
                     applySessionThinkspaceViewport(for: thinkspaceId)
 
-                    // Load user-created clusters
-                    await clusterEngine.loadUserClusters(
+                    // Load user-created clusters — compute, then re-verify this
+                    // initial load still owns the canvas before assigning. This
+                    // task has NO cancellation link to thinkspace switches: a
+                    // user who clicks another space during the initial load
+                    // otherwise gets this space's clusters stamped onto it, and
+                    // the snapshot store below would poison the cache with
+                    // mixed state under the wrong key.
+                    let initialClusters = await clusterEngine.computeUserClusters(
                         thinkspaceId: thinkspaceId,
                         blocks: spatialEngine.blocks
                     )
+                    guard spatialEngine.currentThinkspaceId == thinkspaceId else { return }
+                    if let initialClusters {
+                        clusterEngine.userClusters = initialClusters
+                    }
                     ThinkspaceCanvasSnapshotCache.shared.store(
                         blocks: spatialEngine.blocks,
                         zoomLevel: canvasScale,
@@ -1658,9 +1673,12 @@ struct CanvasView: View {
                     if !canvasIsActive {
                         try? await Task.sleep(for: .seconds(1))
                     }
-                    if await repairLegacyBlocksIfNeeded() > 0 {
+                    if await repairLegacyBlocksIfNeeded() > 0,
+                       spatialEngine.currentThinkspaceId == thinkspaceId {
                         // Repairs rewrote entity ids — don't leave a stale
-                        // snapshot for the next visit.
+                        // snapshot for the next visit. Same ownership guard:
+                        // the launch prewarm slept 1s above, plenty of time
+                        // for a real visit to have moved the canvas elsewhere.
                         ThinkspaceCanvasSnapshotCache.shared.store(
                             blocks: spatialEngine.blocks,
                             zoomLevel: canvasScale,
@@ -2450,6 +2468,10 @@ struct CanvasView: View {
                     try? await Task.sleep(for: .milliseconds(reduceMotion ? 100 : 180))
                     guard !Task.isCancelled else { return }
 
+                    // Signpost the swap moment — the world remount that follows
+                    // this state change is where any switch hitch lives; this
+                    // event lines Instruments traces up with it.
+                    AppPerformanceInstrumentation.event("thinkspace-swap-apply")
                     let cachedThinkspaceSnapshotApplied = applyCachedThinkspaceSnapshot(for: newId)
                     if cachedThinkspaceSnapshotApplied {
                         drawingState.drawings = []
@@ -2500,11 +2522,20 @@ struct CanvasView: View {
                         CosmoUndoManager.shared.clearHistory()
                     }
 
-                    await clusterEngine.refreshUserClustersIfChanged(
+                    // Compute clusters, then re-verify this switch still owns
+                    // the canvas before assigning — a superseding switch can
+                    // apply ANOTHER space's world during the await, and an
+                    // unguarded assignment here stamped stale clusters onto
+                    // it. Publish only on change (an identical set must not
+                    // rebuild the cluster layer mid-entry-spring).
+                    let refreshedClusters = await clusterEngine.computeUserClusters(
                         thinkspaceId: newId,
                         blocks: spatialEngine.blocks
                     )
-                    guard !Task.isCancelled else { return }
+                    guard !Task.isCancelled, spatialEngine.currentThinkspaceId == newId else { return }
+                    if let refreshedClusters, refreshedClusters != clusterEngine.userClusters {
+                        clusterEngine.userClusters = refreshedClusters
+                    }
 
                     rebuildMediaContentCache()
                     refreshLibraryInventoryForThinkspaceSwitch()
@@ -4653,10 +4684,16 @@ struct CanvasView: View {
 
         Task { @MainActor in
             await spatialEngine.loadBlocks(for: "home", documentId: 0, thinkspaceId: thinkspaceId)
-            await clusterEngine.loadUserClusters(
+            // Ownership guard: a thinkspace switch during the load must not
+            // get this space's clusters stamped onto it.
+            let refreshed = await clusterEngine.computeUserClusters(
                 thinkspaceId: thinkspaceId,
                 blocks: spatialEngine.blocks
             )
+            guard spatialEngine.currentThinkspaceId == thinkspaceId else { return }
+            if let refreshed {
+                clusterEngine.userClusters = refreshed
+            }
         }
     }
 

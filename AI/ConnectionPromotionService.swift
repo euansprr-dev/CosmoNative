@@ -321,8 +321,8 @@ final class ConnectionPromotionService {
         guard (try? await existingCanvasBlockId(atomUUID: connection.uuid, thinkspaceUUID: thinkspaceUUID)) == nil else { return }
 
         if let frame = try? await blockFrame(atomUUID: originUUID, thinkspaceUUID: thinkspaceUUID) {
-            let cascade = (try? await mintCascadeCount(originFrame: frame, thinkspaceUUID: thinkspaceUUID)) ?? 0
-            let point = Self.mintPlacementPoint(originFrame: frame, cascadeIndex: cascade)
+            let occupied = (try? await allBlockFrames(thinkspaceUUID: thinkspaceUUID)) ?? []
+            let point = Self.mintPlacementPoint(originFrame: frame, existingFrames: occupied)
             try? await insertBlock(for: connection, at: point, thinkspaceUUID: thinkspaceUUID, sessionUUID: "concept-mint")
         } else {
             _ = try? await placeConnectionIfNeeded(connection, thinkspaceUUID: thinkspaceUUID, index: 0, sessionUUID: "concept-mint")
@@ -335,10 +335,33 @@ final class ConnectionPromotionService {
         NotificationCenter.default.post(name: CosmoNotification.Canvas.blocksChanged, object: nil)
     }
 
-    /// Pure placement math (unit-tested): right of the origin, one row down
-    /// per already-minted sibling in the strip.
-    nonisolated static func mintPlacementPoint(originFrame: CGRect, cascadeIndex: Int) -> CGPoint {
-        CGPoint(x: originFrame.maxX + 120, y: originFrame.minY + CGFloat(cascadeIndex) * 64)
+    /// Pure placement math (unit-tested): the minted page wants the slot just
+    /// right of its origin. Any existing block already occupying that spot
+    /// pushes the candidate straight down past its bottom edge (nearest
+    /// blocker first, so gaps between blocks are found), repeating until the
+    /// slot is clear — a minted block must NEVER land on top of an existing
+    /// one. Each cleared blocker sits entirely above every later candidate,
+    /// so the scan finishes in at most `existingFrames.count` steps.
+    nonisolated static func mintPlacementPoint(
+        originFrame: CGRect,
+        existingFrames: [CGRect],
+        blockSize: CGSize = CGSize(width: 320, height: 220),
+        gap: CGFloat = 28
+    ) -> CGPoint {
+        var candidate = CGRect(
+            origin: CGPoint(x: originFrame.maxX + 120, y: originFrame.minY),
+            size: blockSize
+        )
+        for _ in 0...existingFrames.count {
+            let padded = candidate.insetBy(dx: -gap, dy: -gap)
+            guard let blocker = existingFrames
+                .filter({ $0.intersects(padded) })
+                .min(by: { $0.maxY < $1.maxY }) else {
+                return candidate.origin
+            }
+            candidate.origin.y = blocker.maxY + gap
+        }
+        return candidate.origin
     }
 
     private func blockFrame(atomUUID: String, thinkspaceUUID: String) async throws -> CGRect? {
@@ -361,21 +384,24 @@ final class ConnectionPromotionService {
         }
     }
 
-    /// How many blocks already occupy the mint strip right of the origin —
-    /// the next minted sibling stacks one row below them.
-    private func mintCascadeCount(originFrame: CGRect, thinkspaceUUID: String) async throws -> Int {
-        let stripMinX = originFrame.maxX + 60
-        let stripMaxX = originFrame.maxX + 180
-        return try await database.asyncRead { db in
-            try Int.fetchOne(
+    /// Every live block frame on the thinkspace's home canvas — the free-slot
+    /// scan checks the minted block against all of them.
+    private func allBlockFrames(thinkspaceUUID: String) async throws -> [CGRect] {
+        try await database.asyncRead { db in
+            try Row.fetchAll(
                 db,
                 sql: """
-                    SELECT COUNT(*) FROM canvas_blocks
+                    SELECT position_x, position_y, width, height FROM canvas_blocks
                     WHERE thinkspace_id = ? AND document_type = 'home' AND document_id = 0 AND is_deleted = 0
-                      AND position_x BETWEEN ? AND ?
                 """,
-                arguments: [thinkspaceUUID, stripMinX, stripMaxX]
-            ) ?? 0
+                arguments: [thinkspaceUUID]
+            ).map { row in
+                let x: Double = row["position_x"] ?? 0
+                let y: Double = row["position_y"] ?? 0
+                let width: Double = row["width"] ?? 320
+                let height: Double = row["height"] ?? 220
+                return CGRect(x: x, y: y, width: width, height: height)
+            }
         }
     }
 

@@ -177,7 +177,13 @@ class CosmoAgentService: ObservableObject {
 
     /// Returns the max tool iterations for a given intent.
     /// All intents get the same ceiling; model quality is controlled separately.
-    private func maxToolIterations(for intent: AgentIntent) -> Int {
+    /// Research-flavored runs (webResearch bundle forced) get extra headroom —
+    /// a multi-angle web sweep plus local recall plus synthesis starves at 12.
+    private func maxToolIterations(
+        for intent: AgentIntent,
+        forcedBundles: Set<AgentToolBundle> = []
+    ) -> Int {
+        if forcedBundles.contains(.webResearch) { return 20 }
         return baseMaxToolIterations  // 12 for all intents
     }
 
@@ -661,6 +667,7 @@ class CosmoAgentService: ObservableObject {
                 responseMode: responseMode,
                 conversation: &conversation,
                 contextTrace: &contextTrace,
+                forcedToolBundles: forcedToolBundles,
                 onToolActivity: onToolActivity,
                 onPaneAnswerDelta: onPaneAnswerDelta
             )
@@ -676,6 +683,7 @@ class CosmoAgentService: ObservableObject {
             responseMode: responseMode,
             conversation: &conversation,
             contextTrace: &contextTrace,
+            forcedToolBundles: forcedToolBundles,
             onToolActivity: onToolActivity,
             onPaneAnswerDelta: onPaneAnswerDelta
         )
@@ -765,11 +773,12 @@ class CosmoAgentService: ObservableObject {
         responseMode: AgentResponseMode,
         conversation: inout AgentConversation,
         contextTrace: inout AgentContextTrace,
+        forcedToolBundles: Set<AgentToolBundle> = [],
         onToolActivity: (@Sendable (ToolActivityEvent) -> Void)? = nil,
         onPaneAnswerDelta: (@Sendable (String) -> Void)? = nil
     ) async -> (String, AgentContextTrace) {
         // Tool loop — iterate until the LLM returns a text-only response
-        let iterationLimit = maxToolIterations(for: intent)
+        let iterationLimit = maxToolIterations(for: intent, forcedBundles: forcedToolBundles)
         var iterations = 0
         var finalResponse = ""
         var activeTools = tools

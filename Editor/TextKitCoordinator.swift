@@ -1908,8 +1908,10 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 applyStorageOverrides(textView.textStorage)
             }
         }
-        context.coordinator.applyPolishHighlights(to: textView)
-        context.coordinator.applyFocusBand(to: textView)
+        // A replaced storage lost its painted backgrounds and temporary
+        // attributes — force both passes to restamp onto the fresh buffer.
+        context.coordinator.applyPolishHighlights(to: textView, force: storageWasReplaced)
+        context.coordinator.applyFocusBand(to: textView, force: storageWasReplaced)
         context.coordinator.normalizeSingleLineViewport(for: textView)
         // Re-measure height whenever fresh external content lands, even if the
         // string itself is unchanged. A newly-split EMPTY block has empty
@@ -2132,58 +2134,16 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     /// across all ranges. The RichDocument serializer bakes theme colors into the
     /// attributed string, so passing overrideTextColor to the text view is not
     /// enough — stored per-character attributes win. This reapplies the overrides
-    /// after each setAttributedString call.
+    /// after each setAttributedString call. Diff-aware: a storage that already
+    /// carries the overrides is left untouched (see EditorStorageOverridePass).
     func applyStorageOverrides(_ storage: NSTextStorage?) {
-        guard let storage, storage.length > 0 else { return }
-        let fullRange = NSRange(location: 0, length: storage.length)
-        var headingParagraphUpdates: [(range: NSRange, style: NSMutableParagraphStyle)] = []
-        let headingFlag: (NSAttributedString.Key, Int) -> Bool = { key, location in
-            let value = storage.attribute(key, at: location, effectiveRange: nil)
-            if let number = value as? NSNumber { return number.boolValue }
-            return (value as? Bool) ?? false
-        }
-        if !singleLine, titleConfiguration == nil {
-            storage.enumerateAttribute(RichDocumentAttributeKeys.headingLevel, in: fullRange, options: []) { value, range, _ in
-                guard value != nil else { return }
-                // Only collapsible (or still-collapsed) headings own the
-                // chevron gutter — plain headings sit flush with body text
-                // and must not have the indent re-imposed here.
-                let isCollapsible = headingFlag(RichDocumentAttributeKeys.headingCollapsible, range.location)
-                let isCollapsed = headingFlag(RichDocumentAttributeKeys.headingCollapsed, range.location)
-                guard isCollapsible || isCollapsed else { return }
-                let existingStyle = storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle
-                let currentFirstLineIndent = existingStyle?.firstLineHeadIndent ?? 0
-                let currentHeadIndent = existingStyle?.headIndent ?? 0
-                guard currentFirstLineIndent < 34 || currentHeadIndent < 34 else { return }
-
-                let headingStyle = (existingStyle?.mutableCopy() as? NSMutableParagraphStyle) ?? NSMutableParagraphStyle()
-                headingStyle.firstLineHeadIndent = max(currentFirstLineIndent, 34)
-                headingStyle.headIndent = max(currentHeadIndent, 34)
-                headingParagraphUpdates.append((range, headingStyle))
-            }
-        }
-
-        guard overrideTextColor != nil || overrideFont != nil || !headingParagraphUpdates.isEmpty else {
-            Self.reclearChecklistGlyphs(in: storage)
-            return
-        }
-
-        storage.beginEditing()
-        if let color = overrideTextColor {
-            storage.enumerateAttribute(RichDocumentAttributeKeys.entityType, in: fullRange, options: []) { value, range, _ in
-                // Preserve mention colors (entities carry their own color).
-                guard value == nil else { return }
-                storage.addAttribute(.foregroundColor, value: color, range: range)
-            }
-        }
-        if let font = overrideFont {
-            storage.addAttribute(.font, value: font, range: fullRange)
-        }
-        for update in headingParagraphUpdates {
-            storage.addAttribute(.paragraphStyle, value: update.style, range: update.range)
-        }
-        Self.reclearChecklistGlyphs(in: storage)
-        storage.endEditing()
+        guard let storage else { return }
+        EditorStorageOverridePass.apply(
+            to: storage,
+            overrideTextColor: overrideTextColor,
+            overrideFont: overrideFont,
+            appliesHeadingIndents: !singleLine && titleConfiguration == nil
+        )
     }
 
     /// The stored ☐/☑ checklist characters must never ink — the visible
@@ -2193,20 +2153,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     /// raw ballot-box character bleeds through under the painted circle, so
     /// every such pass must route back through here.
     static func reclearChecklistGlyphs(in storage: NSTextStorage, range: NSRange? = nil) {
-        let nsText = storage.string as NSString
-        guard nsText.length > 0 else { return }
-        let scanRange = range.map { nsText.lineRange(for: $0) } ?? NSRange(location: 0, length: nsText.length)
-        var location = scanRange.location
-        let end = NSMaxRange(scanRange)
-        while location < end {
-            let lineRange = nsText.lineRange(for: NSRange(location: location, length: 0))
-            defer { location = max(NSMaxRange(lineRange), location + 1) }
-            guard lineRange.length >= 1 else { continue }
-            let glyph = nsText.substring(with: NSRange(location: lineRange.location, length: 1))
-            guard glyph == "☐" || glyph == "☑" else { continue }
-            let glyphRange = NSRange(location: lineRange.location, length: 1)
-            let current = storage.attribute(.foregroundColor, at: glyphRange.location, effectiveRange: nil) as? NSColor
-            guard current != NSColor.clear else { continue }
+        for glyphRange in EditorStorageOverridePass.checklistGlyphReclearRanges(in: storage, range: range) {
             storage.addAttribute(.foregroundColor, value: NSColor.clear, range: glyphRange)
         }
     }
@@ -2309,6 +2256,10 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         /// skip its full-range temporary-attribute clear when there is
         /// provably nothing to clear.
         var hasAppliedFocusBand = false
+        /// The active range last painted by applyFocusBand — an unchanged band
+        /// must not be cleared + restamped (full-document display invalidation)
+        /// on every selection change.
+        var lastAppliedFocusBandRange: NSRange?
         /// Content applied at makeNSView before the binding was populated —
         /// consumed by the first binding reconcile (see updateNSView).
         var mountSeedContent: NSAttributedString?
@@ -2525,10 +2476,15 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             updateImageResizeOverlay(in: textView)
         }
 
-        func applyPolishHighlights(to textView: NSTextView) {
+        /// `force` — the storage was just replaced, so painted backgrounds are
+        /// gone and must restamp even when the analysis is unchanged. Ordinary
+        /// re-renders with the same analysis touch nothing (each stamp dirties
+        /// the storage and invalidates the full document's display).
+        func applyPolishHighlights(to textView: NSTextView, force: Bool = false) {
             guard let storage = textView.textStorage else { return }
 
-            if parent.polishHighlights == nil {
+            guard let analysis = parent.polishHighlights else {
+                lastAppliedPolishSignature = nil
                 guard hasAppliedHighlights else { return }
                 storage.beginEditing()
                 storage.removeAttribute(.backgroundColor, range: NSRange(location: 0, length: storage.length))
@@ -2537,28 +2493,59 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 return
             }
 
+            let signature = PolishHighlightSignature(analysis)
+            if !force, hasAppliedHighlights, signature == lastAppliedPolishSignature {
+                return
+            }
+
             let fullRange = NSRange(location: 0, length: storage.length)
             storage.beginEditing()
             storage.removeAttribute(.backgroundColor, range: fullRange)
 
-            if let analysis = parent.polishHighlights {
-                for range in analysis.complexSentenceRanges where NSMaxRange(range) <= storage.length {
-                    storage.addAttribute(.backgroundColor, value: PolishHighlightColors.complex, range: range)
-                }
-                for range in analysis.veryComplexSentenceRanges where NSMaxRange(range) <= storage.length {
-                    storage.addAttribute(.backgroundColor, value: PolishHighlightColors.veryComplex, range: range)
-                }
-                for range in analysis.passiveVoiceRanges where NSMaxRange(range) <= storage.length {
-                    storage.addAttribute(.backgroundColor, value: PolishHighlightColors.passive, range: range)
-                }
-                for range in analysis.adverbRanges where NSMaxRange(range) <= storage.length {
-                    storage.addAttribute(.backgroundColor, value: PolishHighlightColors.adverb, range: range)
-                }
+            for range in analysis.complexSentenceRanges where NSMaxRange(range) <= storage.length {
+                storage.addAttribute(.backgroundColor, value: PolishHighlightColors.complex, range: range)
+            }
+            for range in analysis.veryComplexSentenceRanges where NSMaxRange(range) <= storage.length {
+                storage.addAttribute(.backgroundColor, value: PolishHighlightColors.veryComplex, range: range)
+            }
+            for range in analysis.passiveVoiceRanges where NSMaxRange(range) <= storage.length {
+                storage.addAttribute(.backgroundColor, value: PolishHighlightColors.passive, range: range)
+            }
+            for range in analysis.adverbRanges where NSMaxRange(range) <= storage.length {
+                storage.addAttribute(.backgroundColor, value: PolishHighlightColors.adverb, range: range)
             }
 
             storage.endEditing()
             hasAppliedHighlights = true
+            lastAppliedPolishSignature = signature
         }
+
+        /// An out-of-band buffer swap (structural rebuild) wiped painted
+        /// temporary attributes and highlight backgrounds — the change-gates
+        /// must not believe the paint is still there.
+        func noteStorageWasReplacedOutOfBand() {
+            hasAppliedFocusBand = false
+            lastAppliedFocusBandRange = nil
+            hasAppliedHighlights = false
+            lastAppliedPolishSignature = nil
+        }
+
+        /// The range payload of the last analysis painted — the identity that
+        /// decides whether a polish re-stamp is actually needed.
+        private struct PolishHighlightSignature: Equatable {
+            let complex: [NSRange]
+            let veryComplex: [NSRange]
+            let passive: [NSRange]
+            let adverbs: [NSRange]
+
+            init(_ analysis: WritingAnalysis) {
+                complex = analysis.complexSentenceRanges
+                veryComplex = analysis.veryComplexSentenceRanges
+                passive = analysis.passiveVoiceRanges
+                adverbs = analysis.adverbRanges
+            }
+        }
+        private var lastAppliedPolishSignature: PolishHighlightSignature?
 
         /// Window-scoped config must land after the view joins a window —
         /// makeNSView runs before attachment, and config passes are now
@@ -2570,7 +2557,14 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             window.invalidateCursorRects(for: textView)
         }
 
-        func applyFocusBand(to textView: NSTextView) {
+        /// `force` — a content edit landed, so a painted band must restamp
+        /// even when its range happens to match (positions shifted under it).
+        /// Selection changes and plain updateNSView passes call without force:
+        /// an unchanged band (or none at all — band mode off) touches nothing,
+        /// because the full-range temporary-attribute clear invalidates the
+        /// entire document's display and was the engine behind the manuscript
+        /// blinking/blanking on every click.
+        func applyFocusBand(to textView: NSTextView, force: Bool = false) {
             // No band requested and none painted — skip the full-range
             // temporary-attribute clear (it is O(content) and invalidates
             // display for every row on every update in a block list).
@@ -2583,9 +2577,6 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             let fullRange = NSRange(location: 0, length: textView.string.utf16.count)
             guard fullRange.length > 0 else { return }
 
-            layoutManager.removeTemporaryAttribute(.foregroundColor, forCharacterRange: fullRange)
-            hasAppliedFocusBand = false
-
             let requestedRange: NSRange?
             if let provider = parent.focusBandRangeProvider {
                 requestedRange = provider(textView.string, textView.selectedRange())
@@ -2593,22 +2584,32 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 requestedRange = parent.focusBandRange
             }
 
-            guard let requestedRange,
-                  requestedRange.location != NSNotFound else {
+            switch FocusBandPlanner.plan(
+                requested: requestedRange,
+                fullLength: fullRange.length,
+                lastApplied: lastAppliedFocusBandRange,
+                hasApplied: hasAppliedFocusBand,
+                force: force
+            ) {
+            case .none:
                 return
+            case .clear:
+                layoutManager.removeTemporaryAttribute(.foregroundColor, forCharacterRange: fullRange)
+                hasAppliedFocusBand = false
+                lastAppliedFocusBandRange = nil
+            case .apply(let activeRange):
+                layoutManager.removeTemporaryAttribute(.foregroundColor, forCharacterRange: fullRange)
+                // The dim derives from the ACTIVE text color so it stays
+                // legible on both paper and the immersive dark scriptorium —
+                // DS.documentTextMuted is paper ink and rendered the dimmed
+                // text invisible on the dark surface.
+                let activeColor = parent.resolvedEditorTextColor
+                let mutedColor = activeColor.withAlphaComponent(0.35)
+                layoutManager.addTemporaryAttribute(.foregroundColor, value: mutedColor, forCharacterRange: fullRange)
+                layoutManager.addTemporaryAttribute(.foregroundColor, value: activeColor, forCharacterRange: activeRange)
+                hasAppliedFocusBand = true
+                lastAppliedFocusBandRange = activeRange
             }
-
-            let activeLocation = min(max(0, requestedRange.location), fullRange.length)
-            let activeLength = min(max(0, requestedRange.length), fullRange.length - activeLocation)
-            let activeRange = NSRange(location: activeLocation, length: max(activeLength, 1))
-            guard activeRange.location < fullRange.length else { return }
-
-            let mutedColor = NSColor(DS.documentTextMuted).withAlphaComponent(0.48)
-            let activeColor = parent.resolvedEditorTextColor
-
-            layoutManager.addTemporaryAttribute(.foregroundColor, value: mutedColor, forCharacterRange: fullRange)
-            layoutManager.addTemporaryAttribute(.foregroundColor, value: activeColor, forCharacterRange: activeRange)
-            hasAppliedFocusBand = true
         }
 
         func navigateIfNeeded(to headingID: UUID?, in textView: CosmoTextView) {
@@ -2693,7 +2694,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
             normalizeSingleLineViewport(for: textView)
             syncBindings(from: textView)
-            applyFocusBand(to: textView)
+            // Content edit: band positions shifted — restamp even if the
+            // provider resolves to the same range values.
+            applyFocusBand(to: textView, force: true)
 
             let text = textView.string
             let cursorLocation = textView.selectedRange().location
@@ -4814,6 +4817,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             // Structural rebuild swaps the whole buffer out-of-band; drop the
             // stale per-view undo stack so a later ⌘Z can't hit a freed target.
             replaceStorageDroppingUndo(textView, with: serialized)
+            // The swap wiped painted temporary attributes and backgrounds —
+            // reset the bookkeeping so the next band/polish pass restamps.
+            noteStorageWasReplacedOutOfBand()
             let safeLocation = min(selectedRange.location, storage.length)
             let safeLength = min(selectedRange.length, storage.length - safeLocation)
             textView.setSelectedRange(NSRange(location: safeLocation, length: safeLength))
@@ -5464,5 +5470,187 @@ fileprivate extension NSImage {
             return nil
         }
         return bitmap.representation(using: .png, properties: [:])
+    }
+}
+
+// MARK: - Redraw hygiene (full-document invalidation guards)
+
+/// What applyFocusBand should do for the current selection. Computed BEFORE
+/// touching the layout manager: the band used to clear + restamp temporary
+/// attributes across the whole document on every selection change (Content
+/// focus always supplies a provider, even with the band mode off), which
+/// invalidated the entire manuscript's display per click — the mechanism
+/// behind the draft blinking or staying blank until the next click.
+enum FocusBandPlan: Equatable {
+    /// Nothing changed — do not touch the layout manager at all.
+    case none
+    /// A painted band must go away — one full-range clear, then quiet.
+    case clear
+    /// Paint (or move) the band to this clamped active range.
+    case apply(NSRange)
+}
+
+enum FocusBandPlanner {
+    static func plan(
+        requested: NSRange?,
+        fullLength: Int,
+        lastApplied: NSRange?,
+        hasApplied: Bool,
+        force: Bool
+    ) -> FocusBandPlan {
+        guard fullLength > 0 else { return .none }
+
+        var resolved: NSRange?
+        if let requested, requested.location != NSNotFound {
+            let location = min(max(0, requested.location), fullLength)
+            let length = min(max(0, requested.length), fullLength - location)
+            let candidate = NSRange(location: location, length: max(length, 1))
+            if candidate.location < fullLength {
+                resolved = candidate
+            }
+        }
+
+        guard let resolved else {
+            return hasApplied ? .clear : .none
+        }
+        if !force, hasApplied, resolved == lastApplied {
+            return .none
+        }
+        return .apply(resolved)
+    }
+}
+
+/// Diff-aware storage override stamping. The stamp used to run unconditionally
+/// (full-range addAttribute inside beginEditing/endEditing) on every focused
+/// updateNSView — a full-document display invalidation per click/selection.
+/// This pass computes what actually differs first and only opens an editing
+/// transaction when a real change is needed. Returns whether the storage was
+/// edited.
+enum EditorStorageOverridePass {
+    @discardableResult
+    static func apply(
+        to storage: NSTextStorage,
+        overrideTextColor: NSColor?,
+        overrideFont: NSFont?,
+        appliesHeadingIndents: Bool
+    ) -> Bool {
+        guard storage.length > 0 else { return false }
+        let fullRange = NSRange(location: 0, length: storage.length)
+
+        var colorStamps: [NSRange] = []
+        if let color = overrideTextColor {
+            storage.enumerateAttribute(RichDocumentAttributeKeys.entityType, in: fullRange, options: []) { value, entityRange, _ in
+                // Preserve mention colors (entities carry their own color).
+                guard value == nil else { return }
+                storage.enumerateAttribute(.foregroundColor, in: entityRange, options: []) { current, runRange, _ in
+                    let currentColor = current as? NSColor
+                    guard currentColor != color else { return }
+                    // A line-leading checklist glyph is deliberately clear
+                    // (the circle checkbox is painted over its rect) — leave
+                    // it alone instead of re-inking + re-clearing each pass.
+                    if currentColor == NSColor.clear,
+                       isLineLeadingChecklistGlyph(runRange, in: storage.string as NSString) {
+                        return
+                    }
+                    colorStamps.append(runRange)
+                }
+            }
+        }
+
+        var fontStamps: [NSRange] = []
+        if let font = overrideFont {
+            storage.enumerateAttribute(.font, in: fullRange, options: []) { current, runRange, _ in
+                guard (current as? NSFont) != font else { return }
+                fontStamps.append(runRange)
+            }
+        }
+
+        var headingParagraphUpdates: [(range: NSRange, style: NSMutableParagraphStyle)] = []
+        if appliesHeadingIndents {
+            let headingFlag: (NSAttributedString.Key, Int) -> Bool = { key, location in
+                let value = storage.attribute(key, at: location, effectiveRange: nil)
+                if let number = value as? NSNumber { return number.boolValue }
+                return (value as? Bool) ?? false
+            }
+            storage.enumerateAttribute(RichDocumentAttributeKeys.headingLevel, in: fullRange, options: []) { value, range, _ in
+                guard value != nil else { return }
+                // Only collapsible (or still-collapsed) headings own the
+                // chevron gutter — plain headings sit flush with body text
+                // and must not have the indent re-imposed here.
+                let isCollapsible = headingFlag(RichDocumentAttributeKeys.headingCollapsible, range.location)
+                let isCollapsed = headingFlag(RichDocumentAttributeKeys.headingCollapsed, range.location)
+                guard isCollapsible || isCollapsed else { return }
+                let existingStyle = storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle
+                let currentFirstLineIndent = existingStyle?.firstLineHeadIndent ?? 0
+                let currentHeadIndent = existingStyle?.headIndent ?? 0
+                guard currentFirstLineIndent < 34 || currentHeadIndent < 34 else { return }
+
+                let headingStyle = (existingStyle?.mutableCopy() as? NSMutableParagraphStyle) ?? NSMutableParagraphStyle()
+                headingStyle.firstLineHeadIndent = max(currentFirstLineIndent, 34)
+                headingStyle.headIndent = max(currentHeadIndent, 34)
+                headingParagraphUpdates.append((range, headingStyle))
+            }
+        }
+
+        let glyphReclears = checklistGlyphReclearRanges(in: storage)
+
+        guard !colorStamps.isEmpty || !fontStamps.isEmpty
+                || !headingParagraphUpdates.isEmpty || !glyphReclears.isEmpty else {
+            return false
+        }
+
+        storage.beginEditing()
+        if let color = overrideTextColor {
+            for range in colorStamps {
+                storage.addAttribute(.foregroundColor, value: color, range: range)
+            }
+        }
+        if let font = overrideFont {
+            for range in fontStamps {
+                storage.addAttribute(.font, value: font, range: range)
+            }
+        }
+        for update in headingParagraphUpdates {
+            storage.addAttribute(.paragraphStyle, value: update.style, range: update.range)
+        }
+        for range in glyphReclears {
+            storage.addAttribute(.foregroundColor, value: NSColor.clear, range: range)
+        }
+        storage.endEditing()
+        return true
+    }
+
+    /// Line-leading ☐/☑ glyphs whose ink is not yet clear — the ranges
+    /// reclearChecklistGlyphs must stamp. Read-only; performs no edits.
+    static func checklistGlyphReclearRanges(
+        in storage: NSAttributedString,
+        range: NSRange? = nil
+    ) -> [NSRange] {
+        let nsText = storage.string as NSString
+        guard nsText.length > 0 else { return [] }
+        let scanRange = range.map { nsText.lineRange(for: $0) } ?? NSRange(location: 0, length: nsText.length)
+        var results: [NSRange] = []
+        var location = scanRange.location
+        let end = NSMaxRange(scanRange)
+        while location < end {
+            let lineRange = nsText.lineRange(for: NSRange(location: location, length: 0))
+            defer { location = max(NSMaxRange(lineRange), location + 1) }
+            guard lineRange.length >= 1 else { continue }
+            let glyph = nsText.substring(with: NSRange(location: lineRange.location, length: 1))
+            guard glyph == "☐" || glyph == "☑" else { continue }
+            let glyphRange = NSRange(location: lineRange.location, length: 1)
+            let current = storage.attribute(.foregroundColor, at: glyphRange.location, effectiveRange: nil) as? NSColor
+            guard current != NSColor.clear else { continue }
+            results.append(glyphRange)
+        }
+        return results
+    }
+
+    private static func isLineLeadingChecklistGlyph(_ range: NSRange, in text: NSString) -> Bool {
+        guard range.length == 1, range.location < text.length else { return false }
+        let lineRange = text.lineRange(for: NSRange(location: range.location, length: 0))
+        guard lineRange.location == range.location else { return false }
+        let glyph = text.substring(with: NSRange(location: range.location, length: 1))
+        return glyph == "☐" || glyph == "☑"
     }
 }

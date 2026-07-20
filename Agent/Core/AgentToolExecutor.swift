@@ -4821,41 +4821,86 @@ class AgentToolExecutor {
     // MARK: - Web Search
 
     private func webSearch(_ args: [String: Any]) async throws -> String {
-        guard let query = args["query"] as? String, !query.isEmpty else {
-            return jsonError("Missing required parameter: query")
+        // Single `query` or batch `queries` — the batch runs concurrently so a
+        // multi-angle research sweep costs one tool-loop iteration, not six.
+        var queries = (args["queries"] as? [String] ?? [])
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        if queries.isEmpty, let query = args["query"] as? String, !query.isEmpty {
+            queries = [query]
         }
+        guard !queries.isEmpty else {
+            return jsonError("Missing required parameter: query (or queries)")
+        }
+        queries = Array(queries.prefix(6))
+
         let maxResults = args["maxResults"] as? Int ?? 5
-
-        do {
-            let result = try await ResearchService.shared.performResearch(
-                query: query,
-                searchType: .web,
-                maxResults: maxResults
-            )
-
-            var findings: [[String: Any]] = []
-            for finding in result.findings {
-                findings.append([
-                    "title": finding.title,
-                    "snippet": finding.snippet ?? "",
-                    "url": finding.url ?? ""
-                ] as [String: Any])
-            }
-
-            return jsonEncode([
-                "success": true,
-                "query": query,
-                "summary": result.summary,
-                "findings": findings,
-                "count": findings.count
-            ] as [String: Any])
-        } catch {
-            return jsonEncode([
-                "success": false,
-                "error": "Web search failed: \(error.localizedDescription)",
-                "query": query
-            ] as [String: Any])
+        let searchType: ResearchSearchType
+        switch (args["searchType"] as? String)?.lowercased() {
+        case "news": searchType = .news
+        case "reddit": searchType = .reddit
+        case "academic": searchType = .academic
+        default: searchType = .web
         }
+
+        // Serialized inside each child task so only Sendable strings cross the
+        // task-group boundary.
+        @Sendable func resultBlockJSON(for query: String) async -> (json: String, succeeded: Bool) {
+            let block: [String: Any]
+            var succeeded = false
+            do {
+                let result = try await ResearchService.shared.performResearch(
+                    query: query,
+                    searchType: searchType,
+                    maxResults: maxResults
+                )
+                let findings: [[String: Any]] = result.findings.map { finding in
+                    [
+                        "title": finding.title,
+                        "snippet": finding.snippet ?? "",
+                        "url": finding.url ?? ""
+                    ]
+                }
+                block = [
+                    "success": true,
+                    "query": query,
+                    "summary": result.summary,
+                    "findings": findings,
+                    "count": findings.count
+                ]
+                succeeded = true
+            } catch {
+                block = [
+                    "success": false,
+                    "error": "Web search failed: \(error.localizedDescription)",
+                    "query": query
+                ]
+            }
+            let data = (try? JSONSerialization.data(withJSONObject: block)) ?? Data()
+            let json = String(data: data, encoding: .utf8) ?? "{\"success\": false, \"error\": \"Encoding failed\"}"
+            return (json, succeeded)
+        }
+
+        if queries.count == 1 {
+            return await resultBlockJSON(for: queries[0]).json
+        }
+
+        let blocks = await withTaskGroup(of: (Int, String, Bool).self) { group in
+            for (index, query) in queries.enumerated() {
+                group.addTask {
+                    let block = await resultBlockJSON(for: query)
+                    return (index, block.json, block.succeeded)
+                }
+            }
+            var ordered = [(json: String, succeeded: Bool)?](repeating: nil, count: queries.count)
+            for await (index, json, succeeded) in group {
+                ordered[index] = (json, succeeded)
+            }
+            return ordered.compactMap { $0 }
+        }
+
+        let anySucceeded = blocks.contains { $0.succeeded }
+        return "{\"success\": \(anySucceeded), \"searchType\": \"\(searchType.rawValue)\", \"queryCount\": \(blocks.count), \"results\": [\(blocks.map(\.json).joined(separator: ","))]}"
     }
 
     // MARK: - Automations
@@ -5111,11 +5156,30 @@ class AgentToolExecutor {
     }
 
     private func handleGetAtomDetail(_ args: [String: Any]) async -> String {
+        // Batch `uuids` reads several atoms in one tool-loop iteration; the
+        // single `uuid` form keeps its original response shape.
+        if let uuids = args["uuids"] as? [String], !uuids.isEmpty {
+            var atomBlocks: [String] = []
+            var missing: [String] = []
+            for uuid in uuids.prefix(8) {
+                if let atom = try? await atomRepo.fetch(uuid: uuid) {
+                    atomBlocks.append(Self.atomDetailJSON(atom))
+                } else {
+                    missing.append(uuid)
+                }
+            }
+            let missingJSON = missing.map { "\"\($0.replacingOccurrences(of: "\"", with: ""))\"" }.joined(separator: ",")
+            return "{\"count\": \(atomBlocks.count), \"atoms\": [\(atomBlocks.joined(separator: ","))], \"notFound\": [\(missingJSON)]}"
+        }
+
         let uuid = args["uuid"] as? String ?? ""
         guard let atom = try? await atomRepo.fetch(uuid: uuid) else {
             return "{\"error\": \"Atom not found\"}"
         }
+        return Self.atomDetailJSON(atom)
+    }
 
+    private static func atomDetailJSON(_ atom: Atom) -> String {
         let bodyPreview = String(atom.body?.prefix(500) ?? "").replacingOccurrences(of: "\"", with: "\\\"").replacingOccurrences(of: "\n", with: "\\n")
         let metadata = atom.metadata?.replacingOccurrences(of: "\"", with: "\\\"").replacingOccurrences(of: "\n", with: " ") ?? ""
 

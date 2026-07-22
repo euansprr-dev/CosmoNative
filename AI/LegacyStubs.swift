@@ -186,43 +186,6 @@ struct InstantParser {
     }
 }
 
-// MARK: - SafetyMonitor Stub
-
-/// Stub for deleted SafetyMonitor - safety checks now integrated into voice pipeline
-@MainActor
-public class SafetyMonitor: ObservableObject {
-    /// Shared singleton
-    public static let shared = SafetyMonitor()
-
-    @Published public var isEnabled: Bool = true
-
-    private init() {}
-
-    /// Check if memory can be allocated (stub returns true)
-    public func canAllocate(bytes: Int) -> Bool {
-        return true
-    }
-
-    /// Check if memory can be allocated in MB (stub returns true)
-    public func canAllocate(mb: Int) -> Bool {
-        return true
-    }
-
-    /// Check if content is safe (always returns true for stub)
-    public func checkSafety(_ content: String) async -> Bool {
-        return true
-    }
-
-    /// Deprecated - safety monitoring is now handled differently
-    public func startMonitoring() {
-        print("⚠️ SafetyMonitor.startMonitoring() is deprecated")
-    }
-
-    public func stopMonitoring() {
-        print("⚠️ SafetyMonitor.stopMonitoring() is deprecated")
-    }
-}
-
 // MARK: - Vector Search Result (legacy shape)
 
 /// Result shape of the retired VectorDatabase, kept for the legacy HotContext
@@ -723,14 +686,6 @@ enum SwipeEmotionTone: String, Codable, CaseIterable, Sendable {
     }
 }
 
-// MARK: - DaemonXPCClientProtocol
-
-/// Protocol for daemon XPC client communication (stub)
-@MainActor
-public protocol DaemonXPCClientProtocol: AnyObject {
-    var isConnected: Bool { get }
-}
-
 // MARK: - SwipeStructureType
 
 /// Structure type for swipe file content
@@ -908,22 +863,3 @@ public class ConnectionAutoLinker: ObservableObject {
     }
 }
 
-// MARK: - SmartRetrievalEngine Stub
-
-/// Stub for deleted SmartRetrievalEngine
-@MainActor
-public class SmartRetrievalEngine: ObservableObject {
-    public static let shared = SmartRetrievalEngine()
-
-    @Published public var isReady: Bool = false
-
-    public init() {}
-
-    func search(query: String, topK: Int = 5) async throws -> [Atom] {
-        return []
-    }
-
-    public func initialize() async {
-        isReady = true
-    }
-}

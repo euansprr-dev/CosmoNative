@@ -74,7 +74,7 @@ class CosmoDatabase: ObservableObject {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
             // Create/open database.
-            // busyMode: the file is shared with CosmoVoiceDaemon / the web app —
+            // busyMode: the file can be opened by other processes (e.g. tooling) —
             // without a busy timeout, cross-process write contention surfaces as
             // instant SQLITE_BUSY errors that the many `try?` call sites swallow
             // as silent save failures.

@@ -16,12 +16,6 @@ let package = Package(
         .package(url: "https://github.com/groue/GRDB.swift", from: "6.0.0"),
         // Supabase Swift SDK
         .package(url: "https://github.com/supabase-community/supabase-swift", from: "2.0.0"),
-        // MLX Swift - Apple's ML framework for Apple Silicon
-        .package(url: "https://github.com/ml-explore/mlx-swift", from: "0.21.0"),
-        // MLX Swift LM - LLM, VLM, and Embeddings (Qwen, etc.)
-        .package(url: "https://github.com/ml-explore/mlx-swift-lm", branch: "main"),
-        // WhisperKit - On-device ASR for Apple Silicon
-        .package(url: "https://github.com/argmaxinc/WhisperKit", from: "0.15.0"),
     ],
     targets: [
         .executableTarget(
@@ -29,22 +23,10 @@ let package = Package(
             dependencies: [
                 .product(name: "GRDB", package: "GRDB.swift"),
                 .product(name: "Supabase", package: "supabase-swift"),
-                // MLX for local ML inference
-                .product(name: "MLX", package: "mlx-swift"),
-                .product(name: "MLXNN", package: "mlx-swift"),
-                .product(name: "MLXRandom", package: "mlx-swift"),
-                // LLM and Embeddings support (Qwen, nomic, etc.)
-                .product(name: "MLXLLM", package: "mlx-swift-lm"),
-                .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
-                .product(name: "MLXEmbedders", package: "mlx-swift-lm"),
-                // WhisperKit for ASR
-                .product(name: "WhisperKit", package: "WhisperKit"),
             ],
             path: ".",
             exclude: [
                 "Tests",
-                "Daemon/main.swift",  // XPC service entry point (Xcode only)
-                "Daemon/Info.plist",  // XPC service Info.plist
                 "scripts",  // Python tooling (.venv contains C sources SPM chokes on)
                 "marketing",  // Video tooling (node_modules contains C sources)
                 "cosmo-cloud-agent",  // Railway worker (TS/JS + node_modules — breaks `swift test`)

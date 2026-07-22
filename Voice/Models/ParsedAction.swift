@@ -195,7 +195,7 @@ struct AtomLinkQuery: Codable, Sendable, Equatable {
 // MARK: - Voice Any Codable
 
 /// Type-erased Codable for flexible JSON handling in Voice/ParsedAction
-/// Named VoiceAnyCodable to avoid conflict with AnyCodable in CosmoVoiceDaemon
+/// Named VoiceAnyCodable to avoid conflict with other AnyCodable types
 /// @unchecked Sendable because we only store primitive Sendable types (Bool, Int, Double, String, Arrays, Dictionaries)
 struct VoiceAnyCodable: Codable, Equatable, @unchecked Sendable {
     let value: Any

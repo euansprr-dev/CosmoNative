@@ -434,38 +434,9 @@ public final class FloatingCardsController: ObservableObject {
     // MARK: - Notification Observers
 
     private func setupNotificationObservers() {
-        // Listen for ASR intent detection
-        NotificationCenter.default.publisher(for: .asrIntentDetected)
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] notification in
-                guard let text = notification.userInfo?["text"] as? String,
-                      let wordCount = notification.userInfo?["wordCount"] as? Int,
-                      let confidence = notification.userInfo?["confidence"] as? Double else {
-                    return
-                }
-
-                // Parse intent from text
-                let intent = self?.parseIntent(from: text, confidence: confidence, wordCount: wordCount)
-                if let intent = intent, intent.isActionable {
-                    self?.spawnGhostCard(intent: intent)
-                }
-            }
-            .store(in: &cancellables)
-
-        // Listen for L1 partial transcripts
-        NotificationCenter.default.publisher(for: .l1PartialTranscript)
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] notification in
-                guard let text = notification.userInfo?["text"] as? String else {
-                    return
-                }
-
-                // Update active card if we have one
-                if let activeId = self?.activeCardId {
-                    self?.updateStreaming(cardId: activeId, title: text)
-                }
-            }
-            .store(in: &cancellables)
+        // The streaming-ASR intent notifications this listened for
+        // (.asrIntentDetected, .l1PartialTranscript) were retired with the
+        // tiered-ASR daemon; ghost cards are now spawned directly.
     }
 
     // MARK: - Intent Parsing

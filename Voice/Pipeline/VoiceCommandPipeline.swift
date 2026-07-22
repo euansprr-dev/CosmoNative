@@ -1,6 +1,5 @@
 // CosmoOS/Voice/Pipeline/VoiceCommandPipeline.swift
 // THE unified voice command pipeline. There is no other.
-// Updated for Micro-Brain architecture: FunctionGemma 270M + Claude Sonnet 4.5
 
 import Foundation
 import os.log
@@ -8,28 +7,21 @@ import os.log
 // MARK: - Voice Command Pipeline
 
 /// THE voice command pipeline.
-/// Processes all voice commands through the Micro-Brain architecture.
+/// Processes all voice commands.
 ///
-/// Architecture (Micro-Brain):
-/// - Tier 0: Pattern Matching (<50ms) - Handles 60% of commands
-/// - Tier 1: FunctionGemma 270M (<300ms) - Handles 39% of commands (replaces Qwen + Hermes)
-/// - Tier 2: Claude Sonnet 4.5 (1-5s) - Handles 1% (generative/correlation only)
-///
-/// Benefits over old architecture:
-/// - 6x RAM reduction: ~550MB vs ~3.3GB
-/// - Consistent latency: <300ms for 99% of commands
-/// - Better accuracy: Fine-tuned for CosmoOS actions
+/// Architecture:
+/// - Tier 0: Pattern Matching (<50ms) - handles standard commands
+/// - Tier 2: Claude (1-5s) - generative/correlation only
 actor VoiceCommandPipeline {
     /// Shared singleton
     static let shared = VoiceCommandPipeline()
 
     private let logger = Logger(subsystem: "com.cosmo.voice", category: "Pipeline")
 
-    // Dependencies - Micro-Brain Architecture
+    // Dependencies
     private let patternMatcher = PatternMatcher.shared
     private let intentClassifier: IntentClassifier
-    private let microBrain: MicroBrainOrchestrator  // Replaces Qwen 0.5B + Hermes 1.5B
-    private let bigBrain: ClaudeAPIClient           // Replaces GeminiAPI
+    private let bigBrain: ClaudeAPIClient
     private var atomRepo: AtomRepository?
 
     // Metrics
@@ -41,11 +33,9 @@ actor VoiceCommandPipeline {
 
     init(
         intentClassifier: IntentClassifier = .shared,
-        microBrain: MicroBrainOrchestrator = .shared,
         bigBrain: ClaudeAPIClient = .shared
     ) {
         self.intentClassifier = intentClassifier
-        self.microBrain = microBrain
         self.bigBrain = bigBrain
         self.atomRepo = nil  // Lazy-loaded from MainActor when needed
     }
@@ -99,75 +89,20 @@ actor VoiceCommandPipeline {
         voiceAtom.confidence = confidence
         voiceAtom.classificationDurationMs = Int((CFAbsoluteTimeGetCurrent() - classifyStart) * 1000)
 
-        // Step 4: Select model tier (Micro-Brain simplified tiers)
-        voiceAtom.tier = selectTier(voiceAtom)
-        logger.info("Selected tier: \(voiceAtom.tier.rawValue) for intent: \(intent.rawValue)")
-
-        // Step 5: Generate action based on tier
-        let modelStart = CFAbsoluteTimeGetCurrent()
-
-        do {
-            switch voiceAtom.tier {
-            case .pattern:
-                // Already handled above
-                fatalError("Pattern tier should have been handled above")
-
-            case .functionGemma:
-                // Micro-Brain: FunctionGemma 270M handles all standard commands
-                let result = await microBrain.process(transcript, context: context)
-                if result.success, let action = result.parsedAction {
-                    voiceAtom.parsedAction = action
-                } else {
-                    throw VoicePipelineError.modelError(result.error ?? "FunctionGemma failed")
-                }
-
-            case .claude:
-                // Big Brain: Claude handles generative/correlation tasks
-                let result = await routeToClaudeForSynthesis(voiceAtom)
-                voiceAtom.modelDurationMs = Int((CFAbsoluteTimeGetCurrent() - modelStart) * 1000)
-                tierCounts[.claude, default: 0] += 1
-                return result
-
-            case .unknown:
-                return VoiceResult.failure("Could not determine processing tier")
-
-            // Legacy tiers - route to FunctionGemma
-            case .qwen0_5B, .hermes1_5B, .gemini:
-                logger.warning("Legacy tier \(voiceAtom.tier.rawValue) - routing to FunctionGemma")
-                let result = await microBrain.process(transcript, context: context)
-                if result.success, let action = result.parsedAction {
-                    voiceAtom.parsedAction = action
-                    voiceAtom.tier = .functionGemma
-                } else {
-                    throw VoicePipelineError.modelError(result.error ?? "FunctionGemma failed")
-                }
-            }
-
+        // Step 4: Generative/correlation intents go to Claude; everything else
+        // must have pattern-matched above (the on-device model tier was removed
+        // along with CosmoVoiceDaemon).
+        if intent.isGenerative {
+            voiceAtom.tier = .claude
+            let modelStart = CFAbsoluteTimeGetCurrent()
+            let result = await routeToClaudeForSynthesis(voiceAtom)
             voiceAtom.modelDurationMs = Int((CFAbsoluteTimeGetCurrent() - modelStart) * 1000)
-            tierCounts[voiceAtom.tier, default: 0] += 1
-
-        } catch {
-            logger.error("Model error: \(error.localizedDescription)")
-            return VoiceResult.failure("Model error: \(error.localizedDescription)", tier: voiceAtom.tier)
+            tierCounts[.claude, default: 0] += 1
+            return result
         }
 
-        // Step 6: Execute the parsed action
-        return await execute(voiceAtom, startTime: startTime)
-    }
-
-    // MARK: - Tier Selection
-
-    /// Select the appropriate model tier for a VoiceAtom.
-    /// Micro-Brain architecture: Pattern → FunctionGemma → Claude
-    private func selectTier(_ voiceAtom: VoiceAtom) -> ModelTier {
-        // Tier 2: Generative/correlation intents go to Claude (Big Brain)
-        if let intent = voiceAtom.intent, intent.isGenerative {
-            return .claude
-        }
-
-        // Tier 1: Everything else goes to FunctionGemma (Micro-Brain)
-        // FunctionGemma handles all command types: create, update, delete, query, etc.
-        return .functionGemma
+        logger.info("No pattern match for non-generative command: \(transcript)")
+        return VoiceResult.failure("Command not recognized", tier: .pattern)
     }
 
     // MARK: - Claude Synthesis
@@ -565,7 +500,8 @@ actor NavigationController {
     }
 }
 
-// Notification.Name.voiceNavigationRequested is defined in ToolExecutor.swift
-
-// Note: MicroBrainOrchestrator is defined in AI/MicroBrain/MicroBrainOrchestrator.swift
+public extension Notification.Name {
+    /// Posted when a voice/command-bar command requests navigation
+    static let voiceNavigationRequested = Notification.Name("voiceNavigationRequested")
+}
 

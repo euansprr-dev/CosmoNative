@@ -87,7 +87,6 @@ private struct SpeechPipelineResult: Sendable {
 private enum SpeechPipelineSource: Sendable {
     case none
     case whisperAPI
-    case daemonWhisper
     case appleSpeech
 }
 
@@ -1017,10 +1016,6 @@ final class InstagramAutoTranscriber: Sendable {
 
         progressHandler(.recognizingSpeech(0.55))
 
-        if let daemonResult = await runDaemonWhisperPipeline(audioURL: audioURL, progressHandler: progressHandler) {
-            return daemonResult
-        }
-
         if let apiFallbackWithoutTimestamps {
             progressHandler(.recognizingSpeech(1.0))
             return apiFallbackWithoutTimestamps
@@ -1033,8 +1028,7 @@ final class InstagramAutoTranscriber: Sendable {
         )
     }
 
-    /// Extract audio track from video file to a temporary M4A file so the same export can be reused
-    /// by Whisper API and local daemon fallback paths.
+    /// Extract audio track from video file to a temporary M4A file for the Whisper API.
     private func extractAudioToTemporaryM4A(from videoURL: URL) async -> URL? {
         let asset = AVURLAsset(url: videoURL)
         let outputURL = FileManager.default.temporaryDirectory
@@ -1056,42 +1050,6 @@ final class InstagramAutoTranscriber: Sendable {
         }
 
         return outputURL
-    }
-
-    private func runDaemonWhisperPipeline(
-        audioURL: URL,
-        progressHandler: @escaping @Sendable (TranscriptionProgress) -> Void
-    ) async -> SpeechPipelineResult? {
-        guard let audioSamples = extractWhisperSamples(from: audioURL) else {
-            print("InstagramAutoTranscriber: Could not extract 16kHz samples for daemon Whisper")
-            return nil
-        }
-
-        do {
-            progressHandler(.recognizingSpeech(0.75))
-            let whisper = try await L2WhisperASR().transcribe(audioSamples: audioSamples, language: "en")
-            let transcriptSegments = whisper.segments.map {
-                TranscriptSegment(
-                    start: $0.start,
-                    end: $0.end,
-                    text: $0.text.trimmingCharacters(in: .whitespacesAndNewlines),
-                    confidence: $0.confidence
-                )
-            }.filter { !$0.text.isEmpty }
-            let speech = speechSegments(from: transcriptSegments)
-            guard !speech.isEmpty else { return nil }
-            progressHandler(.recognizingSpeech(1.0))
-            return SpeechPipelineResult(
-                speech: speech,
-                transcriptSegments: transcriptSegments,
-                quality: .accurate,
-                warnings: [],
-                source: .daemonWhisper
-            )
-        } catch {
-            print("InstagramAutoTranscriber: Daemon Whisper fallback failed: \(error.localizedDescription)")
-            return nil
-        }
     }
 
     private func transcriptSegments(from verbose: WhisperVerboseTranscription) -> [TranscriptSegment] {
@@ -1123,71 +1081,6 @@ final class InstagramAutoTranscriber: Sendable {
                 duration: max(0, $0.end - $0.start)
             )
         }
-    }
-
-    private func extractWhisperSamples(from audioURL: URL) -> Data? {
-        guard let audioFile = try? AVAudioFile(forReading: audioURL) else {
-            return nil
-        }
-
-        guard let targetFormat = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
-            sampleRate: 16000,
-            channels: 1,
-            interleaved: false
-        ) else {
-            return nil
-        }
-
-        let sourceFormat = audioFile.processingFormat
-        guard let converter = AVAudioConverter(from: sourceFormat, to: targetFormat) else {
-            return nil
-        }
-
-        let frameCapacity = AVAudioFrameCount(audioFile.length)
-        guard let inputBuffer = AVAudioPCMBuffer(pcmFormat: sourceFormat, frameCapacity: max(frameCapacity, 1)) else {
-            return nil
-        }
-
-        do {
-            try audioFile.read(into: inputBuffer)
-        } catch {
-            print("InstagramAutoTranscriber: Failed reading audio file for Whisper fallback: \(error.localizedDescription)")
-            return nil
-        }
-
-        let outputCapacity = AVAudioFrameCount(
-            Double(inputBuffer.frameLength) * targetFormat.sampleRate / max(sourceFormat.sampleRate, 1)
-        ) + 1024
-        guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: max(outputCapacity, 1)) else {
-            return nil
-        }
-
-        // AVAudioConverterInputBlock executes synchronously within convert() —
-        // safe to capture mutable state and non-Sendable buffer.
-        nonisolated(unsafe) var didConsumeInput = false
-        nonisolated(unsafe) let capturedInput = inputBuffer
-        var conversionError: NSError?
-        let inputBlock: AVAudioConverterInputBlock = { _, outStatus in
-            if didConsumeInput {
-                outStatus.pointee = .endOfStream
-                return nil
-            }
-            didConsumeInput = true
-            outStatus.pointee = .haveData
-            return capturedInput
-        }
-
-        let status = converter.convert(to: outputBuffer, error: &conversionError, withInputFrom: inputBlock)
-        guard conversionError == nil, status == .haveData || status == .inputRanDry else {
-            print("InstagramAutoTranscriber: Audio conversion for Whisper fallback failed: \(conversionError?.localizedDescription ?? "unknown")")
-            return nil
-        }
-
-        guard let channelData = outputBuffer.floatChannelData?[0] else { return nil }
-        let samples = UnsafeBufferPointer(start: channelData, count: Int(outputBuffer.frameLength))
-        guard let baseAddress = samples.baseAddress else { return nil }
-        return Data(bytes: baseAddress, count: samples.count * MemoryLayout<Float>.size)
     }
 
     // MARK: - Speech Recognition Pipeline (Fallback)

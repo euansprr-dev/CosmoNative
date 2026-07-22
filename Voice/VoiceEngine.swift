@@ -1,6 +1,6 @@
 // CosmoOS/Voice/VoiceEngine.swift
-// JARVIS Voice Controller - WhisperKit ASR + Hermes 3 Llama 3.2 3B LLM
-// All processing via CosmoVoiceDaemon - models hot in RAM for instant response
+// Voice controller - Apple Speech (SFSpeechRecognizer) streaming ASR
+// Commands route through VoiceCommandPipeline (pattern matching + Claude)
 
 import Foundation
 import AVFoundation
@@ -18,11 +18,9 @@ class VoiceEngine: ObservableObject {
     @Published var audioLevels: [Float] = []
     @Published var error: String?
 
-    // MARK: - JARVIS Dependencies
-    // L1StreamingASR: Qwen3-ASR-Flash via daemon (~30ms chunks)
-    // WhisperEngine: L2 fallback for high-accuracy (lazy loaded)
-    private let l1ASR = L1StreamingASR()
-    nonisolated(unsafe) private let whisperEngine: WhisperEngine  // L2 fallback only
+    // MARK: - Dependencies
+    // WhisperEngine: Apple Speech Framework streaming ASR (lazy loaded)
+    nonisolated(unsafe) private let whisperEngine: WhisperEngine
     nonisolated(unsafe) private let audioCapture: AudioCapture
     private let hotkeyManager: HotkeyManager
     // Command pipeline - the REAL voice processing system
@@ -47,47 +45,17 @@ class VoiceEngine: ObservableObject {
     private var didInitialize = false
     private var didRegisterHotkey = false
     private var initializeTask: Task<Void, Never>?
-    private var useDaemonASR = false  // True when daemon is available for L1 ASR
 
     private init() {
-        self.whisperEngine = WhisperEngine()  // L2 fallback - lazy loaded
+        self.whisperEngine = WhisperEngine()
         self.audioCapture = AudioCapture()
         self.hotkeyManager = HotkeyManager.shared
 
         setupBindings()
-        setupL1Notifications()
 
         // Register hotkey immediately on init (doesn't require any permissions that crash)
         // This ensures the hotkey works even before full voice initialization
         registerHotkey()
-    }
-
-    // MARK: - L1 ASR Notification Handling
-    private func setupL1Notifications() {
-        // Listen for L1 partial transcripts
-        NotificationCenter.default.addObserver(
-            forName: .l1PartialTranscript,
-            object: nil,
-            queue: .main
-        ) { [weak self] notification in
-            guard let chunk = notification.userInfo?["chunk"] as? L1TranscriptChunk else { return }
-            Task { @MainActor in
-                self?.partialTranscript = chunk.text
-            }
-        }
-
-        // Listen for L1 final transcripts
-        NotificationCenter.default.addObserver(
-            forName: .l1FinalTranscript,
-            object: nil,
-            queue: .main
-        ) { [weak self] notification in
-            guard let transcript = notification.userInfo?["transcript"] as? String else { return }
-            Task { @MainActor in
-                self?.finalTranscript = transcript
-                self?.partialTranscript = nil
-            }
-        }
     }
 
     // MARK: - Setup
@@ -102,69 +70,15 @@ class VoiceEngine: ObservableObject {
             print("🎤 Initializing Voice Engine...")
 
             // Register global hotkey FIRST (in case it wasn't done in init)
-            // This ensures hotkey works even if speech/LLM init fails
+            // This ensures hotkey works even if speech init fails
             if !didRegisterHotkey {
                 registerHotkey()
             }
 
-            // ═══════════════════════════════════════════════════════════════════
-            // JARVIS ARCHITECTURE - All models hot in CosmoVoiceDaemon
-            // ═══════════════════════════════════════════════════════════════════
-            // L1 ASR: WhisperKit base model (~30ms chunks, streaming)
-            // L2 ASR: WhisperKit (on-demand, high accuracy - lazy loaded)
-            // LLM:    Hermes 3 Llama 3.2 3B (91% function calling, ~2GB RAM)
-            // Embed:  nomic-embed-text-v1.5 (shadow search)
-            // ═══════════════════════════════════════════════════════════════════
+            nonisolated(unsafe) let whisper = self.whisperEngine
+            await whisper.loadModel()
 
-            // Check daemon status - now has real MLX/WhisperKit models
-            // Wait up to 120 seconds for first-time model downloads (WhisperKit can be slow)
-            print("🔄 Waiting for daemon ML models to load (first run downloads ~5GB)...")
-            let daemonConnected = await DaemonXPCClient.shared.waitForReady(timeout: .seconds(120))
-            if daemonConnected {
-                print("✅ Daemon connected with REAL ML models:")
-                print("   LLM: Hermes 3 Llama 3.2 3B-4bit (91% function calling)")
-                print("   ASR: WhisperKit base model (streaming)")
-                print("   Embeddings: nomic-embed-text-v1.5 (256-dim)")
-
-                // Initialize voice intelligence components
-                print("🧠 Initializing voice intelligence components...")
-
-                // Initialize MicroBrainOrchestrator (loads FunctionGemma 270M for Tier 1)
-                do {
-                    try await MicroBrainOrchestrator.shared.initialize()
-                    print("   ✅ MicroBrain initialized (FunctionGemma 270M)")
-                } catch {
-                    print("   ⚠️ MicroBrain init failed: \(error.localizedDescription)")
-                    print("   ⚠️ Tier 1 (FunctionGemma) will be unavailable, using pattern matching only")
-                }
-
-                // Note: IntentClassifier, ConnectionAutoLinker, and SmartRetrievalEngine
-                // are now stubs after the Atom migration. The voice pipeline uses
-                // VoiceCommandPipeline instead.
-                print("   ✅ Voice pipeline initialized (Atom architecture)")
-                await SmartRetrievalEngine.shared.initialize()
-                print("   ✅ SmartRetrievalEngine ready")
-            } else {
-                print("⚠️ Daemon models not loaded in time - will retry on next voice command")
-            }
-
-            // Use daemon ASR when available (real WhisperKit now!)
-            self.useDaemonASR = daemonConnected
-
-            // Only load Apple Speech fallback if daemon is NOT connected
-            // This avoids TCC crashes when running from terminal
-            if !daemonConnected {
-                print("⚠️ Daemon not connected - loading Apple Speech fallback...")
-                nonisolated(unsafe) let whisper = self.whisperEngine
-                await whisper.loadModel()
-            }
-
-            print("✅ Voice Engine ready")
-            print("   ASR: \(daemonConnected ? "Daemon WhisperKit" : "Apple Speech Framework")")
-            print("   LLM: \(daemonConnected ? "Daemon Hermes 3 (tool calling)" : "Unavailable")")
-            print("   Latency: ~50-100ms (streaming)")
-
-            print("   Total perceived latency: ~100ms (imperceptible!)")
+            print("✅ Voice Engine ready (ASR: Apple Speech Framework)")
             didInitialize = true
             initializeTask = nil
         }
@@ -256,50 +170,12 @@ class VoiceEngine: ObservableObject {
         do {
             // Start capture with VAD for visualization only (no auto-stop)
             nonisolated(unsafe) let whisperEngine = self.whisperEngine
-            let l1 = self.l1ASR
-            let usesDaemon = self.useDaemonASR
-
-            // Use a class for atomic counter to avoid Sendable issues
-            final class ChunkCounter: @unchecked Sendable {
-                var count = 0
-            }
-            let chunkCounter = ChunkCounter()
 
             try await audioCapture.startCapture(
                 enableVAD: true,  // Keep VAD for waveform visualization
                 onSilenceDetected: nil,  // Disable auto-stop - only manual stop via hotkey release
                 onAudioBuffer: { @Sendable buffer in
-                    // Feed audio to the correct ASR engine
-                    if usesDaemon {
-                        // Convert AVAudioPCMBuffer to Float32 samples BEFORE Task to avoid Sendable issues
-                        guard let channelData = buffer.floatChannelData?[0] else {
-                            print("⚠️ Audio buffer has no float channel data")
-                            return
-                        }
-                        let floatSamples = Array(UnsafeBufferPointer(start: channelData, count: Int(buffer.frameLength)))
-
-                        // Send to daemon L1 ASR (now receiving 16kHz converted audio)
-                        Task { @MainActor in
-                            chunkCounter.count += 1
-                            let chunkCount = chunkCounter.count
-
-                            // Calculate RMS level to verify audio has content
-                            let rms = sqrt(floatSamples.reduce(0) { $0 + $1 * $1 } / Float(floatSamples.count))
-                            let maxSample = floatSamples.map { abs($0) }.max() ?? 0
-
-                            if chunkCount == 1 || chunkCount % 20 == 0 {
-                                print("🔊 Audio chunk #\(chunkCount): \(floatSamples.count) samples, RMS=\(String(format: "%.4f", rms)), max=\(String(format: "%.4f", maxSample))")
-                            }
-                            do {
-                                try await l1.sendAudio(floatSamples)
-                            } catch {
-                                print("❌ Failed to send audio to L1: \(error)")
-                            }
-                        }
-                    } else {
-                        // Feed to local Whisper fallback
-                        whisperEngine.feedAudioBuffer(buffer)
-                    }
+                    whisperEngine.feedAudioBuffer(buffer)
                 }
             )
             NSLog("🎬 startRecording: audioCapture.startCapture() returned successfully")
@@ -330,15 +206,7 @@ class VoiceEngine: ObservableObject {
             // Clean up ASR streams
             streamingTask?.cancel()
             streamingTask = nil
-            if useDaemonASR {
-                Task {
-                    await l1ASR.cancelStreaming()
-                    // Force reset XPC client state for error recovery
-                    DaemonXPCClient.shared.forceResetASRState()
-                }
-            } else {
-                whisperEngine.stopStreamingTranscription()
-            }
+            whisperEngine.stopStreamingTranscription()
 
             NotificationCenter.default.post(
                 name: .voiceRecordingStateChanged,
@@ -352,49 +220,17 @@ class VoiceEngine: ObservableObject {
     // MARK: - Streaming Transcription
     private func startStreamingTranscription() {
         // Cancel any existing streaming task
-        // Note: DaemonXPCClient now blocks duplicate XPC calls, so we don't need
-        // to explicitly cancel the ASR stream here (which caused race conditions)
         streamingTask?.cancel()
         streamingTask = nil
 
-        if useDaemonASR {
-            // Use L1 ASR via daemon (Qwen3-ASR-Flash)
-            streamingTask = Task { @MainActor in
-                do {
-                    try await l1ASR.startStreaming(
-                        onChunk: { [weak self] chunk in
-                            Task { @MainActor in
-                                if chunk.isFinal {
-                                    self?.finalTranscript = chunk.text
-                                    self?.partialTranscript = nil
-                                } else {
-                                    self?.partialTranscript = chunk.text
-                                }
-                            }
-                        },
-                        onSpeechStart: { print("🎙️ Speech detected") },
-                        onSpeechEnd: { print("🎙️ Speech ended") }
-                    )
-                } catch {
-                    print("❌ L1 ASR streaming error: \(error)")
-                    // Mark daemon ASR as unavailable so audio chunks don't keep failing
-                    self.useDaemonASR = false
-                    // Fall back to WhisperEngine if L1 fails
-                    await self.startWhisperStreamingWithLoad()
-                }
-            }
-        } else {
-            // Use WhisperEngine (Apple Speech Framework fallback)
-            Task {
-                await startWhisperStreamingWithLoad()
-            }
+        Task {
+            await startWhisperStreamingWithLoad()
         }
     }
 
     /// Load WhisperEngine if needed, then start streaming
     private func startWhisperStreamingWithLoad() async {
         // Ensure WhisperEngine is loaded before streaming
-        print("📦 Loading WhisperEngine for fallback...")
         await whisperEngine.loadModel()
         startWhisperStreaming()
     }
@@ -450,23 +286,12 @@ class VoiceEngine: ObservableObject {
         isProcessing = true
         print("🛑 stopRecording: isRecording set to false")
 
-        // Capture the last partial transcript before stopping (daemon may not send final)
+        // Capture the last partial transcript before stopping (streaming may not send final)
         let lastPartialTranscript = partialTranscript
 
-        // Stop streaming transcription and get final result from daemon
+        // Stop streaming transcription
         streamingTask?.cancel()
-        var daemonFinalTranscript: String?
-        if useDaemonASR {
-            do {
-                let result = try await l1ASR.stopStreaming()
-                daemonFinalTranscript = result.text
-                print("🛑 Daemon final transcript: \"\(result.text)\"")
-            } catch {
-                print("⚠️ Failed to get daemon final transcript: \(error)")
-            }
-        } else {
-            whisperEngine.stopStreamingTranscription()
-        }
+        whisperEngine.stopStreamingTranscription()
 
         // Notify UI
         NotificationCenter.default.post(
@@ -480,11 +305,9 @@ class VoiceEngine: ObservableObject {
             print("🎤 Recording stopped, processing...")
 
             // Determine the best transcript to use (in priority order):
-            // 1. Final transcript from streaming (if daemon sent one with isFinal: true)
-            // 2. Daemon's final result from stopStreaming()
-            // 3. Last partial transcript (the most recent streaming text)
+            // 1. Final transcript from streaming (isFinal: true)
+            // 2. Last partial transcript (the most recent streaming text)
             let transcriptToUse = finalTranscript.flatMap { $0.isEmpty ? nil : $0 }
-                ?? daemonFinalTranscript.flatMap { $0.isEmpty ? nil : $0 }
                 ?? lastPartialTranscript.flatMap { $0.isEmpty ? nil : $0 }
 
             if let transcript = transcriptToUse {
@@ -728,14 +551,7 @@ class VoiceEngine: ObservableObject {
         safetyTimeoutTask = nil
 
         // Reset ASR state
-        if useDaemonASR {
-            Task {
-                await l1ASR.cancelStreaming()
-                DaemonXPCClient.shared.forceResetASRState()
-            }
-        } else {
-            whisperEngine.stopStreamingTranscription()
-        }
+        whisperEngine.stopStreamingTranscription()
 
         // Stop audio capture (ignore errors)
         Task {

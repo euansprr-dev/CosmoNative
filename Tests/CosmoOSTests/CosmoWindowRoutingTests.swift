@@ -89,21 +89,6 @@ final class CosmoWindowRoutingTests: XCTestCase {
         XCTAssertTrue(craftSource.contains("Anthropic Agent LLM Key"))
     }
 
-    func testVoiceDaemonArchiveBuildsWithHardenedRuntime() throws {
-        let projectSource = try source("CosmoOS.xcodeproj/project.pbxproj")
-        let daemonConfigTails = projectSource
-            .components(separatedBy: "CODE_SIGN_ENTITLEMENTS = Daemon/CosmoVoiceDaemon.entitlements;")
-            .dropFirst()
-
-        XCTAssertEqual(daemonConfigTails.count, 2)
-        for configTail in daemonConfigTails {
-            XCTAssertTrue(
-                configTail.prefix(600).contains("ENABLE_HARDENED_RUNTIME = YES;"),
-                "CosmoVoiceDaemon Debug and Release configs must enable Hardened Runtime for Direct Distribution."
-            )
-        }
-    }
-
     func testGPT55ThinkingUsesOpenRouterReasoningParameter() {
         XCTAssertEqual(OpenAIProvider.reasoningEffort(for: AgentModelTier.gpt55Thinking.modelId), "high")
         XCTAssertNil(OpenAIProvider.reasoningEffort(for: AgentModelTier.gptChatLatest.modelId))

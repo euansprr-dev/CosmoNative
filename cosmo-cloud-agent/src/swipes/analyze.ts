@@ -302,7 +302,15 @@ export async function classify(ctx: AnalyzeContext): Promise<InsightResponse | n
     body: JSON.stringify({
       model: INSIGHT_MODEL,
       messages: [{ role: 'user', content: buildInsightPrompt(ctx) }],
-      max_tokens: 4000,
+      // Claude Sonnet 5 runs adaptive thinking BY DEFAULT when no reasoning
+      // config is sent, and max_tokens caps thinking + text COMBINED (with the
+      // thinking text omitted from the response). On long transcripts the
+      // model burned the entire budget thinking and returned EMPTY content
+      // with finish_reason "length" — every 8+-slide swipe classified as
+      // 'partial' forever. This is a structured-extraction prompt tuned for
+      // no-thinking models; keep reasoning off.
+      reasoning: { enabled: false },
+      max_tokens: 8000,
     }),
     signal: AbortSignal.timeout(180_000),
   });
@@ -310,9 +318,21 @@ export async function classify(ctx: AnalyzeContext): Promise<InsightResponse | n
     console.warn(`⚠️ insight call failed: ${response.status}`);
     return null;
   }
-  const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
-  const content = payload.choices?.[0]?.message?.content ?? '';
-  return parseResponse(content);
+  const payload = await response.json() as {
+    choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
+  };
+  const choice = payload.choices?.[0];
+  const content = choice?.message?.content ?? '';
+  const parsed = parseResponse(content);
+  if (!parsed) {
+    // Surface WHY — an empty-content "length" finish is invisible without this
+    // (the July 22 partial-swipe pileup hid behind a generic failure log).
+    console.warn(
+      `⚠️ insight response unparseable: finish=${choice?.finish_reason ?? '?'} ` +
+      `contentChars=${content.length} head=${JSON.stringify(content.slice(0, 120))}`
+    );
+  }
+  return parsed;
 }
 
 export function parseResponse(response: string): InsightResponse | null {
@@ -326,6 +346,15 @@ export function parseResponse(response: string): InsightResponse | null {
   try {
     return JSON.parse(jsonStr) as InsightResponse;
   } catch {
+    // Model wrapped the JSON in prose ("Here is the analysis: {...}") —
+    // recover the outermost object rather than failing the whole pass.
+    const start = jsonStr.indexOf('{');
+    const end = jsonStr.lastIndexOf('}');
+    if (start >= 0 && end > start) {
+      try {
+        return JSON.parse(jsonStr.slice(start, end + 1)) as InsightResponse;
+      } catch { /* fall through */ }
+    }
     return null;
   }
 }

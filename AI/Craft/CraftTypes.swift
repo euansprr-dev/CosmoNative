@@ -252,6 +252,12 @@ extension CraftReviewResult: CraftRenderableStructuredOutput {
         if formatRead.isBlankForCraft { return "missing format read" }
         if performanceRead.reasoning.isBlankForCraft { return "missing performance reasoning" }
         if verdict.isBlankForCraft { return "missing verdict" }
+        // A review with no notes and no moves is a schema-shaped shell, not a
+        // review. The structured-output API enforces `required` (key present)
+        // and `enum`, but NOT `minLength`/`minItems` — so every free string can
+        // legally come back "" and every array []. This is the substance gate
+        // the schema cannot give us.
+        if slideNotes.isEmpty && topMoves.isEmpty { return "no slide notes and no top moves" }
         return nil
     }
 }

@@ -1,18 +1,5 @@
 import SwiftUI
 
-// MARK: - Quick look target
-
-private enum SwipeHomeQuickLookTarget: Equatable {
-    case library(String)
-    case post(String)
-
-    var itemID: String {
-        switch self {
-        case .library(let id), .post(let id): return id
-        }
-    }
-}
-
 // MARK: - Swipe File (the one page)
 
 /// The swipe file, whole, on one surface: one hero (Up Next), the date shelves
@@ -25,7 +12,10 @@ struct SwipeHomePage: View {
     let onNavigate: (SidebarDestination) -> Void
 
     @State private var frameStore = SwipeFrameStore()
-    @State private var quickLook: SwipeHomeQuickLookTarget?
+    /// Saved swipes preview in the trailing rail; unsaved Discover posts keep
+    /// the centered quick look (no transcript exists until they're saved).
+    @State private var previewItemID: String?
+    @State private var postQuickLookID: String?
     @State private var quickLookExpanded = false
     @State private var quickLookSource: CGRect?
     @State private var studyHero: SwipeStudyHero?
@@ -33,7 +23,7 @@ struct SwipeHomePage: View {
     @State private var studyHeroArrived = false
     @State private var contextPillVisible = false
     @State private var scrollPosition = ScrollPosition()
-    @State private var pageSize: CGSize = .zero
+    @State private var containerWidth: CGFloat = 0
     @State private var showFilters = false
     @State private var filterAnchor: CGRect = .zero
     @State private var revealDate = Date()
@@ -41,19 +31,27 @@ struct SwipeHomePage: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            SwipePageBackground()
-            scrollContent
-            if showFilters {
-                filterDropdown.zIndex(2)
+        HStack(spacing: 0) {
+            ZStack(alignment: .topLeading) {
+                SwipePageBackground()
+                scrollContent
+                if showFilters {
+                    filterDropdown.zIndex(2)
+                }
+                postQuickLookLayer
+                if let studyHero {
+                    SwipeStudyHeroOverlay(hero: studyHero, expanded: studyHeroExpanded).zIndex(4)
+                }
             }
-            quickLookLayer
-            if let studyHero {
-                SwipeStudyHeroOverlay(hero: studyHero, expanded: studyHeroExpanded).zIndex(4)
+            .coordinateSpace(name: "swipePage")
+
+            if let item = previewItem {
+                previewSidebar(item)
+                    .frame(width: SwipePreviewSidebar.width(forContainerWidth: containerWidth))
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
-        .coordinateSpace(name: "swipePage")
-        .onGeometryChange(for: CGSize.self, of: { $0.size }) { pageSize = $0 }
+        .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { containerWidth = $0 }
         .onPreferenceChange(SwipeFilterAnchorKey.self) { filterAnchor = $0 }
         .task {
             await SwipeBoardStore.shared.loadIfNeeded()
@@ -116,7 +114,7 @@ struct SwipeHomePage: View {
                 kicker: item.isStudied ? "LATEST SAVE" : "UP NEXT",
                 model: model,
                 ctaLabel: "Open Study",
-                onPreview: { openQuickLook(.library(item.id)) },
+                onPreview: { openPreview(itemID: item.id) },
                 frameStore: frameStore
             ) {
                 openStudy(item: item, model: model)
@@ -149,8 +147,8 @@ struct SwipeHomePage: View {
                 viewModel: viewModel,
                 frameStore: frameStore,
                 revealDate: revealDate,
-                hiddenItemID: quickLook?.itemID,
-                onOpen: { openQuickLook(.library($0)) },
+                hiddenItemID: postQuickLookID,
+                onOpen: { openPreview(itemID: $0) },
                 onStudy: { openStudyByID($0) }
             )
         }
@@ -232,11 +230,11 @@ struct SwipeHomePage: View {
             count: count,
             onSeeAll: nil,
             models: models,
-            hiddenItemID: quickLook?.itemID,
+            hiddenItemID: postQuickLookID,
             frameStore: frameStore
         ) { model in
             SwipeCardActions(
-                onOpen: { openQuickLook(.library(model.id)) },
+                onOpen: { openPreview(itemID: model.id) },
                 onStudy: { openStudyByID(model.id) },
                 boardMenu: SwipeCardBoardMenu(
                     boards: SwipeBoardStore.shared.boards,
@@ -338,11 +336,11 @@ struct SwipeHomePage: View {
                 count: topOutliers.count,
                 onSeeAll: { onNavigate(.discover(section: .discover)) },
                 models: topOutliers,
-                hiddenItemID: quickLook?.itemID,
+                hiddenItemID: postQuickLookID,
                 frameStore: frameStore
             ) { model in
                 SwipeCardActions(
-                    onOpen: { openQuickLook(.post(model.id)) },
+                    onOpen: { openPostQuickLook(postID: model.id) },
                     onStudy: { transcript(postID: model.id) },
                     onBookmark: { save(postID: model.id, boardID: nil) }
                 )
@@ -386,40 +384,47 @@ struct SwipeHomePage: View {
         )
     }
 
-    // MARK: - Quick look
+    // MARK: - Preview rail (saved swipes)
 
-    @ViewBuilder
-    private var quickLookLayer: some View {
-        if let quickLook {
-            switch quickLook {
-            case .library(let id):
-                if let index = viewModel.visibleItems.firstIndex(where: { $0.id == id }) {
-                    libraryQuickLook(viewModel.visibleItems[index]).zIndex(3)
-                }
-            case .post(let id):
-                if let post = discoverModel.visiblePosts.first(where: { $0.id == id }) {
-                    postQuickLook(post).zIndex(3)
-                }
-            }
+    private var previewItem: SwipeGalleryItem? {
+        guard let previewItemID else { return nil }
+        return viewModel.visibleItems.first(where: { $0.id == previewItemID })
+    }
+
+    private func previewSidebar(_ item: SwipeGalleryItem) -> some View {
+        let model = viewModel.cardModelsByID[item.id] ?? SwipeCardModel(item: item)
+        return SwipePreviewSidebar(
+            item: item,
+            model: model,
+            onStudy: { openStudy(item: item, model: model) },
+            onAddToCanvas: { viewModel.addToCanvas(item) },
+            onClose: closePreview
+        )
+    }
+
+    private func openPreview(itemID: String) {
+        guard viewModel.visibleItems.contains(where: { $0.id == itemID }) else { return }
+        // The catalog grid marks the previewed swipe with its selection ring.
+        viewModel.selectedItem = viewModel.visibleItems.first(where: { $0.id == itemID })
+        withAnimation(reduceMotion ? nil : ProMotionSprings.focusTransition) {
+            previewItemID = itemID
         }
     }
 
-    private func libraryQuickLook(_ item: SwipeGalleryItem) -> some View {
-        let model = viewModel.cardModelsByID[item.id] ?? SwipeCardModel(item: item)
-        return SwipeQuickLook(
-            expanded: $quickLookExpanded,
-            sourceFrame: quickLookSource,
-            heroModel: model,
-            panelAspect: model.aspect,
-            onRequestClose: closeQuickLook
-        ) {
-            SwipeQuickLookLibraryContent(
-                item: item,
-                model: model,
-                onStudy: { openStudy(item: item, model: model) },
-                onAddToCanvas: { viewModel.addToCanvas(item) },
-                onClose: closeQuickLook
-            )
+    private func closePreview() {
+        guard previewItemID != nil else { return }
+        withAnimation(reduceMotion ? nil : ProMotionSprings.focusTransition) {
+            previewItemID = nil
+        }
+    }
+
+    // MARK: - Quick look (unsaved Discover posts)
+
+    @ViewBuilder
+    private var postQuickLookLayer: some View {
+        if let postQuickLookID,
+           let post = discoverModel.visiblePosts.first(where: { $0.id == postQuickLookID }) {
+            postQuickLook(post).zIndex(3)
         }
     }
 
@@ -428,7 +433,7 @@ struct SwipeHomePage: View {
             expanded: $quickLookExpanded,
             sourceFrame: quickLookSource,
             heroModel: SwipeCardModel(post: post),
-            onRequestClose: closeQuickLook
+            onRequestClose: closePostQuickLook
         ) {
             SwipeQuickLookDiscoverContent(
                 post: post,
@@ -437,40 +442,42 @@ struct SwipeHomePage: View {
                 onTranscript: { transcript(postID: post.id) },
                 onPrevious: {},
                 onNext: {},
-                onClose: closeQuickLook
+                onClose: closePostQuickLook
             )
         }
     }
 
-    private func openQuickLook(_ target: SwipeHomeQuickLookTarget) {
-        guard quickLook == nil else { return }
-        quickLookSource = frameStore.frames[target.itemID]
+    private func openPostQuickLook(postID: String) {
+        guard postQuickLookID == nil else { return }
+        quickLookSource = frameStore.frames[postID]
         quickLookExpanded = false
-        quickLook = target
+        postQuickLookID = postID
     }
 
-    private func closeQuickLook() {
-        guard quickLook != nil else { return }
-        if let id = quickLook?.itemID, let frame = frameStore.frames[id] {
+    private func closePostQuickLook() {
+        guard postQuickLookID != nil else { return }
+        if let id = postQuickLookID, let frame = frameStore.frames[id] {
             quickLookSource = frame
         }
         guard !reduceMotion else {
             quickLookExpanded = false
-            quickLook = nil
+            postQuickLookID = nil
             return
         }
         withAnimation(ProMotionSprings.modal, completionCriteria: .logicallyComplete) {
             quickLookExpanded = false
         } completion: {
-            quickLook = nil
+            postQuickLookID = nil
         }
     }
 
     private func handleEscape() {
         if showFilters {
             withAnimation(ProMotionSprings.bouncy) { showFilters = false }
-        } else if quickLook != nil {
-            closeQuickLook()
+        } else if postQuickLookID != nil {
+            closePostQuickLook()
+        } else if previewItemID != nil {
+            closePreview()
         } else if searchFocused {
             searchFocused = false
         } else if !viewModel.query.isEmpty {
@@ -510,18 +517,14 @@ struct SwipeHomePage: View {
     private func openStudy(item: SwipeGalleryItem, model: SwipeCardModel) {
         guard studyHero == nil else { return }
         guard !reduceMotion else {
-            quickLook = nil
-            quickLookExpanded = false
             viewModel.openStudy(item)
             return
         }
 
-        let source: CGRect? = quickLook != nil
-            ? SwipeQuickLookGeometry.panelFrame(in: pageSize, aspect: model.aspect)
-            : frameStore.frames[item.id]
+        // The preview rail stays open — the card is still visible on the
+        // page, so the hero flies from it and the rail is there on return.
+        let source: CGRect? = frameStore.frames[item.id]
 
-        quickLook = nil
-        quickLookExpanded = false
         studyHeroArrived = false
         studyHero = SwipeStudyHero(model: model, sourceFrame: source)
 
@@ -560,7 +563,7 @@ struct SwipeHomePage: View {
 
     private func transcript(postID: String) {
         guard let post = discoverModel.visiblePosts.first(where: { $0.id == postID }) else { return }
-        quickLook = nil
+        postQuickLookID = nil
         quickLookExpanded = false
         Task { await discoverModel.saveAndOpenForTranscription(post) }
     }

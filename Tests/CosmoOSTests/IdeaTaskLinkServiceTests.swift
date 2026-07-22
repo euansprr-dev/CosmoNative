@@ -140,4 +140,116 @@ final class IdeaTaskLinkServiceTests: XCTestCase {
         XCTAssertEqual(IdeaTaskLinkService.linkedAtoms(of: fresh).first?.atomUUID, idea.uuid)
         XCTAssertEqual(IdeaTaskLinkService.plannedDay(fresh), Calendar.current.startOfDay(for: newDay))
     }
+
+    // MARK: - Promotion retarget
+
+    private func makeContent(title: String = "Test promoted content") async throws -> Atom {
+        let content = try await AtomRepository.shared.createContent(title: title)
+        cleanupUUIDs.append(content.uuid)
+        return content
+    }
+
+    private func complete(_ task: Atom) async throws {
+        var meta = try XCTUnwrap(task.metadataValue(as: TaskMetadata.self))
+        meta.isCompleted = true
+        meta.status = "done"
+        let merged = try XCTUnwrap(task.mergingTaskMetadata(meta, context: "test.complete"))
+        _ = try await AtomRepository.shared.update(merged)
+    }
+
+    /// Begin Writing moves the step: the live link and the title pill aim at the
+    /// content piece, the pill's @span text is untouched (both renderers locate
+    /// it by literal string), and no second linked atom appears — a non-primary
+    /// entry would fan out as a side pane on play.
+    func testRetargetAimsUnfinishedSessionAtContent() async throws {
+        let idea = try await makeIdea()
+        let task = try await IdeaTaskLinkService.createScheduledTask(for: idea, on: day(offset: 1))
+        cleanupUUIDs.append(task.uuid)
+        let content = try await makeContent()
+
+        let moved = try await IdeaTaskLinkService.retargetToPromotedContent(
+            ideaUUID: idea.uuid, content: content
+        )
+        XCTAssertEqual(moved, 1)
+
+        let fetched = try await AtomRepository.shared.fetch(uuid: task.uuid)
+        let fresh = try XCTUnwrap(fetched)
+        let meta = try XCTUnwrap(fresh.metadataValue(as: TaskMetadata.self))
+
+        let linked = IdeaTaskLinkService.linkedAtoms(of: fresh)
+        XCTAssertEqual(linked.count, 1, "a second linked atom would open as a side pane on play")
+        XCTAssertEqual(linked.first?.atomUUID, content.uuid)
+        XCTAssertEqual(linked.first?.atomType, AtomType.content.rawValue)
+        XCTAssertEqual(linked.first?.isPrimary, true)
+
+        let mentions = try JSONDecoder().decode(
+            [RichMention].self, from: Data(try XCTUnwrap(meta.titleMentions).utf8)
+        )
+        XCTAssertEqual(mentions.first?.entityUUID, content.uuid)
+        XCTAssertEqual(mentions.first?.entityType, .content)
+        // The @span must still be findable in the unchanged title.
+        XCTAssertEqual(mentions.first?.titleSnapshot, "Test schedule idea")
+        XCTAssertEqual(fresh.title, "Develop @Test schedule idea")
+        XCTAssertTrue(fresh.title?.contains("@\(mentions.first!.titleSnapshot)") == true)
+
+        // Day pins and intent are untouched — only the target moved.
+        let iso = PlannerumFormatters.iso8601.string(from: Calendar.current.startOfDay(for: day(offset: 1)))
+        XCTAssertEqual(meta.whenDate, iso)
+        XCTAssertEqual(meta.intent, TaskIntent.deepThink.rawValue)
+    }
+
+    /// The idea keeps the session after promotion — it's reachable from the
+    /// content's sources, and reopening it must still show "Scheduled · day".
+    func testIdeaStillListsItsSessionAfterRetarget() async throws {
+        let idea = try await makeIdea()
+        let task = try await IdeaTaskLinkService.createScheduledTask(for: idea, on: day(offset: 2))
+        cleanupUUIDs.append(task.uuid)
+        let content = try await makeContent()
+
+        _ = try await IdeaTaskLinkService.retargetToPromotedContent(ideaUUID: idea.uuid, content: content)
+
+        let sessions = try await IdeaTaskLinkService.scheduledTasks(for: idea.uuid)
+        XCTAssertEqual(sessions.map(\.uuid), [task.uuid])
+        XCTAssertEqual(
+            sessions.first?.metadataValue(as: TaskMetadata.self)?.originIdeaUUID,
+            idea.uuid
+        )
+    }
+
+    /// A finished session is a record of what was worked on — never rewritten.
+    func testRetargetLeavesCompletedSessionsOnTheIdea() async throws {
+        let idea = try await makeIdea()
+        let task = try await IdeaTaskLinkService.createScheduledTask(for: idea, on: day(offset: 1))
+        cleanupUUIDs.append(task.uuid)
+        try await complete(task)
+        let content = try await makeContent()
+
+        let moved = try await IdeaTaskLinkService.retargetToPromotedContent(
+            ideaUUID: idea.uuid, content: content
+        )
+        XCTAssertEqual(moved, 0)
+
+        let fetched = try await AtomRepository.shared.fetch(uuid: task.uuid)
+        let fresh = try XCTUnwrap(fetched)
+        XCTAssertEqual(IdeaTaskLinkService.linkedAtoms(of: fresh).first?.atomUUID, idea.uuid)
+        XCTAssertNil(fresh.metadataValue(as: TaskMetadata.self)?.originIdeaUUID)
+    }
+
+    /// Promoting the same idea twice leaves already-moved sessions where they
+    /// are, rather than dragging them onto the newest content piece.
+    func testSecondPromotionDoesNotMoveAlreadyRetargetedSessions() async throws {
+        let idea = try await makeIdea()
+        let task = try await IdeaTaskLinkService.createScheduledTask(for: idea, on: day(offset: 1))
+        cleanupUUIDs.append(task.uuid)
+        let first = try await makeContent(title: "First piece")
+        let second = try await makeContent(title: "Second piece")
+
+        _ = try await IdeaTaskLinkService.retargetToPromotedContent(ideaUUID: idea.uuid, content: first)
+        let moved = try await IdeaTaskLinkService.retargetToPromotedContent(ideaUUID: idea.uuid, content: second)
+        XCTAssertEqual(moved, 0)
+
+        let fetched = try await AtomRepository.shared.fetch(uuid: task.uuid)
+        let fresh = try XCTUnwrap(fetched)
+        XCTAssertEqual(IdeaTaskLinkService.linkedAtoms(of: fresh).first?.atomUUID, first.uuid)
+    }
 }

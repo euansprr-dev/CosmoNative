@@ -483,6 +483,15 @@ enum CloudSwipeAPI {
         post(path: "/api/swipes/process", swipeUUID: swipeUUID)
     }
 
+    /// Awaitable kick for user-initiated retries: the caller needs to know
+    /// whether the worker accepted before deciding to fall back to the local
+    /// pipeline. POST /process bypasses fetchCandidates, so it also revives
+    /// swipes the worker retired (needs_manual_retry).
+    @discardableResult
+    static func kickProcessingAwaiting(swipeUUID: String) async -> Bool {
+        await postAwaiting(path: "/api/swipes/process", swipeUUID: swipeUUID)
+    }
+
     /// Re-fetch engagement stats for a swipe. Await-able: callers refresh UI after.
     @discardableResult
     static func refreshStats(swipeUUID: String) async -> Bool {

@@ -14,7 +14,6 @@ struct TaskDetailPanel: View {
     @State private var editedTitle: String = ""
     @State private var editedNotes: String = ""
     @State private var editedWhenDate: Date?
-    @State private var editedDeadline: Date?
     @State private var editedTimeOfDay: String?
     @State private var editedSchedulingState: String?
     @State private var editedChecklist: [ChecklistItem] = []
@@ -134,8 +133,9 @@ struct TaskDetailPanel: View {
     private func syncStateFromTask() {
         editedTitle = task.title
         editedNotes = task.body ?? ""
-        editedWhenDate = task.whenDate
-        editedDeadline = task.deadline
+        // The one date — read through plannedDate so legacy rows that only
+        // carry a dueDate pin still show their day.
+        editedWhenDate = task.plannedDate
         editedTimeOfDay = task.timeOfDay
         editedSchedulingState = task.schedulingState
         editedChecklist = task.checklist
@@ -238,8 +238,10 @@ struct TaskDetailPanel: View {
 
     private var schedulingSection: some View {
         VStack(alignment: .leading, spacing: DS.space10) {
-            // When date
-            detailRow(label: "When", icon: "calendar") {
+            // The task's ONE date (when/deadline were merged July 2026 — the
+            // split confused more than it helped, and both apps now speak the
+            // same single-date language).
+            detailRow(label: "Date", icon: "calendar") {
                 if let date = editedWhenDate {
                     CommandCenterComposerTrigger(composer: composer, alignment: .trailing) { anchor in
                         .taskDate(task: task, target: .whenDate, currentDate: editedWhenDate, anchor: anchor)
@@ -277,37 +279,6 @@ struct TaskDetailPanel: View {
                         timeOfDayChip("Evening", value: "evening", icon: "moon.stars")
                     }
                     .fixedSize()
-                }
-            }
-
-            // Deadline
-            detailRow(label: "Deadline", icon: "flag") {
-                if let date = editedDeadline {
-                    CommandCenterComposerTrigger(composer: composer, alignment: .trailing) { anchor in
-                        .taskDate(task: task, target: .deadline, currentDate: editedDeadline, anchor: anchor)
-                    } label: {
-                        Text(date.formatted(.dateTime.month(.abbreviated).day()))
-                    }
-                    .font(DS.buttonText)
-                    .foregroundStyle(DS.orange)
-
-                    Button {
-                        editedDeadline = nil
-                        Task { await viewModel.setDeadline(taskUUID: task.uuid, date: nil) }
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(DS.caption2)
-                            .foregroundStyle(DS.textMuted)
-                    }
-                    .buttonStyle(.plain)
-                } else {
-                    CommandCenterComposerTrigger(composer: composer, alignment: .trailing) { anchor in
-                        .taskDate(task: task, target: .deadline, currentDate: editedDeadline, anchor: anchor)
-                    } label: {
-                        Text("Set deadline")
-                    }
-                    .font(DS.cardMeta)
-                    .foregroundStyle(DS.textMuted)
                 }
             }
 
@@ -384,7 +355,7 @@ struct TaskDetailPanel: View {
     /// dangling link (block deleted) hides quietly — the repository never
     /// returns tombstones.
     private func loadAvailableBlocks() async {
-        let day = task.whenDate ?? task.deadline ?? Date()
+        let day = task.plannedDate ?? Date()
         var blocks = await ScheduleBlockEngine.blocks(on: day)
         if let linked = task.scheduleBlockUUID, !blocks.contains(where: { $0.id == linked }) {
             if let atom = try? await AtomRepository.shared.fetch(uuid: linked),
@@ -773,8 +744,8 @@ struct TaskDetailPanel: View {
         guard titleChanged || edit.hasSchedulingChanges else { return }
 
         // Mirror the field states so the panel reflects the edit immediately.
-        if let when = edit.whenDate { editedWhenDate = when }
-        if let deadline = edit.deadline { editedDeadline = deadline }
+        // "deadline: friday" is legacy grammar for the task's one date.
+        if let when = edit.whenDate ?? edit.deadline { editedWhenDate = when }
         if let timeOfDay = edit.timeOfDay { editedTimeOfDay = timeOfDay }
         if let state = edit.schedulingState { editedSchedulingState = state }
         if let priority = edit.priority { editedPriority = priority }
@@ -797,11 +768,8 @@ struct TaskDetailPanel: View {
                     occurrenceDay: occurrenceDay
                 )
             }
-            if let when = edit.whenDate {
+            if let when = edit.whenDate ?? edit.deadline {
                 await viewModel.setWhenDate(taskUUID: taskUUID, date: when)
-            }
-            if let deadline = edit.deadline {
-                await viewModel.setDeadline(taskUUID: taskUUID, date: deadline)
             }
             if let timeOfDay = edit.timeOfDay {
                 await viewModel.setTimeOfDay(taskUUID: taskUUID, value: timeOfDay)
@@ -1013,7 +981,7 @@ struct TaskDetailPanel: View {
         case .weekdays:
             return Set(DayOfWeek.weekdays)
         case .daily, .monthly, .weekly, .custom:
-            let weekday = Calendar.current.component(.weekday, from: task.dueDate ?? Date())
+            let weekday = Calendar.current.component(.weekday, from: task.plannedDate ?? Date())
             return Set(DayOfWeek.allCases.filter { $0.rawValue == weekday })
         }
     }
@@ -1028,7 +996,7 @@ struct TaskDetailPanel: View {
             let days = recurrenceDays.isEmpty ? Array(defaultDays(for: .weekly)) : Array(recurrenceDays)
             return .weekly(on: days.sorted { $0.rawValue < $1.rawValue })
         case .monthly:
-            let day = Calendar.current.component(.day, from: task.dueDate ?? Date())
+            let day = Calendar.current.component(.day, from: task.plannedDate ?? Date())
             return .monthly(onDay: day)
         case .custom:
             let days = recurrenceDays.isEmpty ? Array(defaultDays(for: .custom)) : Array(recurrenceDays)

@@ -487,6 +487,15 @@ class ConflictResolver {
                 }
             }
         } catch {
+            let description = String(describing: error)
+            if description.contains("no such column") {
+                // Systemic, not per-row: a cloud-side migration added a column
+                // the local schema lacks, so EVERY pulled row is being dropped
+                // while pushes keep working — the "device silently falls
+                // behind" failure. PersistenceHealth dedupes its note, so
+                // without this line the console looks deceptively quiet.
+                print("🚨 SCHEMA DRIFT on \(table): remote rows carry a column the local schema lacks — all pulls are being dropped until a local migration adds it. \(description)")
+            }
             print("❌ Remote insert failed: \(error)")
             PersistenceHealth.note(.writeFailure, context: "ConflictResolver.applyRemoteInsert(\((insertData["uuid"] as? String ?? "?").prefix(8)))", detail: String(describing: error))
         }

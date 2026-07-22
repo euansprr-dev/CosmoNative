@@ -1022,6 +1022,41 @@ final class DirtyEditorRegistry {
     }
 }
 
+/// Editors that can take a restored revision into their live state.
+///
+/// Version-history restore is normally refused while an atom is open in an
+/// editor: the editor holds its content in `@State` and its next save would
+/// write that straight back over the restore. An editor that registers here
+/// declares it will ADOPT the restored content instead, which lifts that block
+/// — so restore works from every history entry point (the atom window's clock,
+/// a focus mode's own button) without threading callbacks through the chrome.
+@MainActor
+final class AtomRestoreAdopterRegistry {
+    static let shared = AtomRestoreAdopterRegistry()
+
+    private var adopters: [String: (Atom) -> Void] = [:]
+
+    private init() {}
+
+    /// `uuid` is the atom the editor currently holds open.
+    func register(uuid: String, adopt: @escaping (Atom) -> Void) {
+        adopters[uuid] = adopt
+    }
+
+    func unregister(uuid: String) {
+        adopters.removeValue(forKey: uuid)
+    }
+
+    func canAdopt(uuid: String) -> Bool {
+        adopters[uuid] != nil
+    }
+
+    /// Hand the restored atom to the open editor, if one is listening.
+    func adopt(_ atom: Atom) {
+        adopters[atom.uuid]?(atom)
+    }
+}
+
 // MARK: - Legacy Compatibility Note
 // The CosmoNotification enum provides namespaced notification names (e.g., CosmoNotification.Canvas.blockExpanded).
 // Legacy notification names are scattered across the codebase in various extension Notification.Name blocks.

@@ -2,16 +2,14 @@ import SwiftUI
 
 /// The shared catalog surface: Library and board detail are the same page with
 /// different scopes — searchable, filterable, complete, inside a measure with
-/// uniform rows. Loop: scroll → click (quick look) → Return (study) → Esc → next.
+/// uniform rows. Loop: scroll → click (preview rail) → Return (study) → Esc → next.
 struct SwipeLibraryPage: View {
     @Bindable var viewModel: SwipeLibraryViewModel
     let section: SwipeLibrarySectionSelection
 
     @State private var showFilters = false
     @State private var filterAnchor: CGRect = .zero
-    @State private var isQuickLookOpen = false
-    @State private var quickLookExpanded = false
-    @State private var quickLookSource: CGRect?
+    @State private var isPreviewOpen = false
     @State private var hero: SwipeStudyHero?
     @State private var heroExpanded = false
     @State private var heroStudyArrived = false
@@ -20,27 +18,37 @@ struct SwipeLibraryPage: View {
     @State private var scrollPosition = ScrollPosition()
     @State private var revealDate = Date()
     @State private var pageSize: CGSize = .zero
+    @State private var containerWidth: CGFloat = 0
     @State private var resultsTop: CGFloat = 0
     @State private var contextPillVisible = false
     @FocusState private var searchFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            SwipePageBackground()
-            scrollContent
-            if showFilters {
-                filterDropdown.zIndex(2)
+        // Preview is a trailing rail (the Command Center grammar), not an
+        // overlay — the catalog keeps working beside it, and arrow keys
+        // retarget it in place.
+        HStack(spacing: 0) {
+            ZStack(alignment: .topLeading) {
+                SwipePageBackground()
+                scrollContent
+                if showFilters {
+                    filterDropdown.zIndex(2)
+                }
+                if let hero {
+                    SwipeStudyHeroOverlay(hero: hero, expanded: heroExpanded).zIndex(4)
+                }
             }
-            if isQuickLookOpen, let item = viewModel.selectedItem {
-                quickLook(item).zIndex(3)
-            }
-            if let hero {
-                SwipeStudyHeroOverlay(hero: hero, expanded: heroExpanded).zIndex(4)
+            .coordinateSpace(name: "swipePage")
+            .onGeometryChange(for: CGSize.self, of: { $0.size }) { pageSize = $0 }
+
+            if isPreviewOpen, let item = viewModel.selectedItem {
+                preview(item)
+                    .frame(width: SwipePreviewSidebar.width(forContainerWidth: containerWidth))
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
-        .coordinateSpace(name: "swipePage")
-        .onGeometryChange(for: CGSize.self, of: { $0.size }) { pageSize = $0 }
+        .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { containerWidth = $0 }
         .onPreferenceChange(SwipeFilterAnchorKey.self) { filterAnchor = $0 }
         .task(id: section) {
             await SwipeBoardStore.shared.loadIfNeeded()
@@ -74,8 +82,8 @@ struct SwipeLibraryPage: View {
                     viewModel: viewModel,
                     frameStore: frameStore,
                     revealDate: revealDate,
-                    hiddenItemID: isQuickLookOpen ? viewModel.selectedItem?.id : nil,
-                    onOpen: { openQuickLook(itemID: $0) },
+                    hiddenItemID: nil,
+                    onOpen: { openPreview(itemID: $0) },
                     onStudy: { openStudy(itemID: $0) }
                 )
                 .onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .named("swipeLibraryContent")).minY }) {
@@ -130,56 +138,33 @@ struct SwipeLibraryPage: View {
         }
     }
 
-    private func quickLook(_ item: SwipeGalleryItem) -> some View {
-        let model = viewModel.cardModelsByID[item.id] ?? SwipeCardModel(item: item)
-        return SwipeQuickLook(
-            expanded: $quickLookExpanded,
-            sourceFrame: quickLookSource,
-            heroModel: model,
-            panelAspect: model.aspect,
-            onRequestClose: closeQuickLook
-        ) {
-            // Arrow keys page the preview through the grid — the page-level
-            // keyboard layer owns that; the panel stays chrome-free.
-            SwipeQuickLookLibraryContent(
-                item: item,
-                model: model,
-                onStudy: { openStudy(itemID: item.id) },
-                onAddToCanvas: { viewModel.addToCanvas(item) },
-                onClose: closeQuickLook
-            )
-        }
+    private func preview(_ item: SwipeGalleryItem) -> some View {
+        // Arrow keys retarget the preview through the grid — the page-level
+        // keyboard layer owns that; the rail stays chrome-free.
+        SwipePreviewSidebar(
+            item: item,
+            model: viewModel.cardModelsByID[item.id] ?? SwipeCardModel(item: item),
+            onStudy: { openStudy(itemID: item.id) },
+            onAddToCanvas: { viewModel.addToCanvas(item) },
+            onClose: closePreview
+        )
     }
 
-    // MARK: - Quick look
+    // MARK: - Preview rail
 
-    private func openQuickLook(itemID: String) {
+    private func openPreview(itemID: String) {
         guard let item = viewModel.visibleItems.first(where: { $0.id == itemID }) else { return }
         viewModel.selectedItem = item
-        if isQuickLookOpen { return }
-        // Frames are only recorded by grid cells — in compact mode the stored
-        // frame is a stale grid position, so fall back to the centered fade.
-        quickLookSource = viewModel.displayMode == .grid ? frameStore.frames[itemID] : nil
-        isQuickLookOpen = true
+        guard !isPreviewOpen else { return }
+        withAnimation(reduceMotion ? nil : ProMotionSprings.focusTransition) {
+            isPreviewOpen = true
+        }
     }
 
-    private func closeQuickLook() {
-        guard isQuickLookOpen else { return }
-        if viewModel.displayMode == .grid,
-           let id = viewModel.selectedItem?.id, let frame = frameStore.frames[id] {
-            quickLookSource = frame
-        } else {
-            quickLookSource = nil
-        }
-        guard !reduceMotion else {
-            quickLookExpanded = false
-            isQuickLookOpen = false
-            return
-        }
-        withAnimation(ProMotionSprings.modal, completionCriteria: .logicallyComplete) {
-            quickLookExpanded = false
-        } completion: {
-            isQuickLookOpen = false
+    private func closePreview() {
+        guard isPreviewOpen else { return }
+        withAnimation(reduceMotion ? nil : ProMotionSprings.focusTransition) {
+            isPreviewOpen = false
         }
     }
 
@@ -189,19 +174,15 @@ struct SwipeLibraryPage: View {
         guard let item = viewModel.visibleItems.first(where: { $0.id == itemID }) else { return }
         guard hero == nil else { return }
         guard !reduceMotion else {
-            isQuickLookOpen = false
-            quickLookExpanded = false
             viewModel.openStudy(item)
             return
         }
 
+        // The preview rail stays open — the card is still visible in the
+        // grid, so the hero flies from it and the rail is there on return.
         let model = viewModel.cardModelsByID[item.id] ?? SwipeCardModel(item: item)
-        let source: CGRect? = isQuickLookOpen
-            ? SwipeQuickLookGeometry.panelFrame(in: pageSize, aspect: model.aspect)
-            : frameStore.frames[item.id]
+        let source: CGRect? = frameStore.frames[item.id]
 
-        isQuickLookOpen = false
-        quickLookExpanded = false
         heroStudyArrived = false
         hero = SwipeStudyHero(model: model, sourceFrame: source)
 
@@ -244,7 +225,7 @@ struct SwipeLibraryPage: View {
                 Button("") { moveSelection(by: -1) }.keyboardShortcut(.leftArrow, modifiers: [])
                 Button("") { moveSelection(by: columnCount) }.keyboardShortcut(.downArrow, modifiers: [])
                 Button("") { moveSelection(by: -columnCount) }.keyboardShortcut(.upArrow, modifiers: [])
-                Button("") { toggleQuickLook() }.keyboardShortcut(.space, modifiers: [])
+                Button("") { togglePreview() }.keyboardShortcut(.space, modifiers: [])
                 Button("") { openSelectedStudy() }.keyboardShortcut(.return, modifiers: [])
             }
             Button("") { searchFocused = true }.keyboardShortcut("f", modifiers: .command)
@@ -281,12 +262,12 @@ struct SwipeLibraryPage: View {
         scrollToSelection(index: target)
     }
 
-    private func toggleQuickLook() {
+    private func togglePreview() {
         guard !searchFocused else { return }
-        if isQuickLookOpen {
-            closeQuickLook()
+        if isPreviewOpen {
+            closePreview()
         } else if let selected = viewModel.selectedItem {
-            openQuickLook(itemID: selected.id)
+            openPreview(itemID: selected.id)
         }
     }
 
@@ -299,8 +280,8 @@ struct SwipeLibraryPage: View {
     private func handleEscape() {
         if showFilters {
             withAnimation(ProMotionSprings.bouncy) { showFilters = false }
-        } else if isQuickLookOpen {
-            closeQuickLook()
+        } else if isPreviewOpen {
+            closePreview()
         } else if searchFocused {
             searchFocused = false
         } else if !viewModel.query.isEmpty {
@@ -311,7 +292,7 @@ struct SwipeLibraryPage: View {
     /// Keeps the keyboard selection on-screen. Skipped for bucketed scopes whose
     /// layout doesn't match the single-grid math.
     private func scrollToSelection(index: Int) {
-        guard isQuickLookOpen == false, viewModel.dateSections.isEmpty,
+        guard viewModel.dateSections.isEmpty,
               viewModel.displayMode == .grid else { return }
         // Poster models — the grid renders posters, so the height math must too.
         let models = viewModel.visibleCardModels.map { $0.poster() }

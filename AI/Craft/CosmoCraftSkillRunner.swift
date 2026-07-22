@@ -187,29 +187,79 @@ final class CosmoCraftSkillRunner {
         session.messages.append((role: "assistant", content: completion.text))
         session.lastSourceHash = craftSourceHash
 
-        if skillID == .voiceVariations,
-           let riff = try? CraftStructuredOutputParser.decodeRenderable(CraftRiffResult.self, from: completion.text) {
-            session.lastRiff = riff
-            sessions[sessionKey] = session
-            store.receivePaneAnswer(
-                title: nil,
-                answer: CraftAnswerRenderer.markdown(for: riff, usage: completion.usage),
-                route: .answer
-            )
-        } else if skillID == .contentReview, !isFollowUp,
-                  let review = try? CraftStructuredOutputParser.decodeRenderable(CraftReviewResult.self, from: completion.text) {
-            sessions[sessionKey] = session
-            store.receivePaneAnswer(
-                title: nil,
-                answer: CraftAnswerRenderer.markdown(for: review, usage: completion.usage),
-                route: .answer
-            )
-        } else {
-            // Conversational follow-up (or a decode miss) — the text is the answer.
-            sessions[sessionKey] = session
+        sessions[sessionKey] = session
+
+        // `schema` is the contract, and it is the ONLY thing that decides how to
+        // read the reply. When we asked for structured output, prose is never a
+        // valid answer — a parse or validation failure is a real failure and has
+        // to surface as one. Collapsing "this was never JSON" and "this decoded
+        // but is semantically empty" into one `try?` is what once rendered a raw
+        // `{"topMoves":[],"verdict":"", ...}` skeleton into the pane.
+        guard schema != nil else {
+            // No schema requested (conversational follow-up) — prose is the deliverable.
             let footer = "\n\n_\(completion.usage.receiptLine)_"
             store.receivePaneAnswer(title: nil, answer: completion.text + footer, route: .answer)
+            return
         }
+
+        do {
+            if skillID == .voiceVariations {
+                let riff = try CraftStructuredOutputParser.decodeRenderable(
+                    CraftRiffResult.self,
+                    from: completion.text
+                )
+                session.lastRiff = riff
+                sessions[sessionKey] = session
+                store.receivePaneAnswer(
+                    title: nil,
+                    answer: CraftAnswerRenderer.markdown(for: riff, usage: completion.usage),
+                    route: .answer
+                )
+            } else {
+                let review = try CraftStructuredOutputParser.decodeRenderable(
+                    CraftReviewResult.self,
+                    from: completion.text
+                )
+                store.receivePaneAnswer(
+                    title: nil,
+                    answer: CraftAnswerRenderer.markdown(for: review, usage: completion.usage),
+                    route: .answer
+                )
+            }
+        } catch {
+            store.receivePaneAnswer(
+                title: skillID == .voiceVariations ? "Couldn't riff that beat" : "Couldn't review this draft",
+                answer: Self.structuredOutputFailureMessage(for: error, usage: completion.usage),
+                route: .answer
+            )
+        }
+    }
+
+    /// A structured-output turn that came back unparseable or semantically empty.
+    /// `decodeRenderable` already knows *why* (`craftValidationIssue`) — surface
+    /// that instead of dumping the raw payload into the pane.
+    private static func structuredOutputFailureMessage(
+        for error: Error,
+        usage: CraftUsage
+    ) -> String {
+        let reason: String
+        switch error {
+        case CraftStructuredOutputParser.ParseError.noRenderableJSONObject(let issue):
+            reason = "The model came back with \(issue)."
+        case CraftStructuredOutputParser.ParseError.noJSONObject:
+            reason = "The model didn't return a structured result."
+        default:
+            reason = "The model's response didn't match the expected shape."
+        }
+
+        return """
+        \(reason)
+
+        That usually means there wasn't a draft in scope worth studying. Select \
+        the draft you want looked at and try again, or just ask me directly.
+
+        _\(usage.receiptLine)_
+        """
     }
 
     // MARK: - Riff apply (zero LLM cost)

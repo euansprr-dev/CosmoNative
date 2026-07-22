@@ -255,10 +255,21 @@ struct AtomHistorySheet: View {
     /// the replaced current state (source .restore), so restores are undoable.
     /// Metadata and links stay current — history restores words, not wiring.
     private func restore(_ revision: AtomRevision) async {
-        guard !AtomRepository.shared.isBeingEdited(atom.uuid) else {
+        // The editing-lock guard exists because an open editor holds its content
+        // in @State and would write it straight back over the restore. An editor
+        // that registered as an adopter takes the restore into its live state
+        // instead, so it is safe to proceed.
+        let openEditorAdopts = AtomRestoreAdopterRegistry.shared.canAdopt(uuid: atom.uuid)
+        guard openEditorAdopts || !AtomRepository.shared.isBeingEdited(atom.uuid) else {
             restoreBlockedByEditor = true
             return
         }
+
+        // Commit anything the open editor hasn't written yet, so the pre-image
+        // this restore snapshots includes the user's latest work — restoring
+        // must never be the thing that loses it.
+        DirtyEditorRegistry.shared.flushAll()
+
         guard let current = try? await AtomRepository.shared.fetch(uuid: atom.uuid) else { return }
 
         var restored = current
@@ -266,9 +277,34 @@ struct AtomHistorySheet: View {
         restored.body = revision.body
         restored.structured = revision.structured
 
+        // Rich-text surfaces (notes) keep their REAL content in
+        // `metadata.richBodyDocument`; `body` is only a flattened mirror.
+        // Restoring the mirror alone left the blocks untouched, so a note
+        // restore appeared to do nothing. Carry the revision's documents over,
+        // merged into CURRENT metadata so style, floating blocks and other
+        // wiring stay put — history restores words, not wiring.
+        let revisionTitleDocument = RichDocumentMetadataStorage.readDocument(
+            from: revision.metadata, key: RichDocumentField.title.metadataKey
+        )
+        let revisionBodyDocument = RichDocumentMetadataStorage.readDocument(
+            from: revision.metadata, key: RichDocumentField.body.metadataKey
+        )
+        if revisionTitleDocument != nil || revisionBodyDocument != nil {
+            let merged = RichDocumentPersistence.writeAtomDocuments(
+                existingMetadata: current.metadata,
+                titleDocument: revisionTitleDocument,
+                bodyDocument: revisionBodyDocument
+            )
+            restored.metadata = merged.metadata
+            // Keep the plain-text mirrors in lockstep with the documents.
+            if let mergedTitle = merged.title { restored.title = mergedTitle }
+            if let mergedBody = merged.body { restored.body = mergedBody }
+        }
+
         do {
-            _ = try await AtomRepository.shared.update(restored, revisionSource: .restore)
+            let saved = try await AtomRepository.shared.update(restored, revisionSource: .restore)
             didRestore = true
+            AtomRestoreAdopterRegistry.shared.adopt(saved)
             NotificationCenter.default.post(name: .atomsDidChange, object: nil)
             await loadRevisions()
         } catch {

@@ -309,17 +309,19 @@ struct CommandCenterDashboard: View {
                 Task { await viewModel.toggleTaskCompletion(task) }
             }
 
-        case 17: // T — set selected task's whenDate to Today
+        case 17: // T — move selected task to Today
             if let idx = viewModel.selectedTaskIndex, tasks.indices.contains(idx) {
                 let task = tasks[idx]
-                Task { await viewModel.setWhenDate(taskUUID: task.uuid, date: Date()) }
+                // Occurrence-aware: an occurrence row moves via a per-day
+                // override, never a template rewrite.
+                Task { await viewModel.rescheduleTask(task, toDate: Date()) }
             }
 
         case 14: // E — set selected task to This Evening
             if let idx = viewModel.selectedTaskIndex, tasks.indices.contains(idx) {
                 let task = tasks[idx]
                 Task {
-                    await viewModel.setWhenDate(taskUUID: task.uuid, date: Date())
+                    await viewModel.rescheduleTask(task, toDate: Date())
                     await viewModel.setTimeOfDay(taskUUID: task.uuid, value: "evening")
                 }
             }

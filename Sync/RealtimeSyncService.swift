@@ -73,6 +73,30 @@ final class RealtimeSyncService {
         print("🔌 Realtime sync disconnected")
     }
 
+    /// Tear down and rebuild the websocket. The socket does not survive
+    /// sleep or a network-path change, and `isConnected` keeps reading true
+    /// for a dead socket — so `startListening()` alone can never recover it.
+    /// Old-channel removal is awaited BEFORE resubscribing so the fresh
+    /// channel never collides with the dying one on the same topic.
+    func reconnect() {
+        listenTask?.cancel()
+        listenTask = nil
+        reconcileTask?.cancel()
+        reconcileTask = nil
+        let oldChannel = atomsChannel
+        atomsChannel = nil
+        isConnected = false
+
+        Task { [weak self] in
+            guard let self else { return }
+            if let oldChannel {
+                await self.supabase.realtimeV2.removeChannel(oldChannel)
+            }
+            print("🔌 Realtime sync reconnecting after wake/network change")
+            self.startListening()
+        }
+    }
+
     /// Periodically retries UPDATEs that were skipped behind an editing lock.
     private func startReconcileTimer() {
         reconcileTask?.cancel()

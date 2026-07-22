@@ -2009,8 +2009,21 @@ public final class CommandKViewModel {
     private let userCommandComposer = CommandKUserCommandSearchComposer()
     private let systemCommandComposer = CommandKSystemCommandComposer()
 
-    /// Unfiltered results for computing filter counts
-    private var unfilteredResults: [RankedResult] = []
+    /// Unfiltered results for computing filter counts.
+    ///
+    /// Tasks are dropped on the way in. ⌘K searches the knowledge database;
+    /// tasks live on Today/Plannerum and are not part of it. Gating in the
+    /// setter rather than at each assignment site keeps every path task-free —
+    /// instant index, `QueryResultCache` replay (including entries written
+    /// before this gate existed), hybrid merge, graph fallback, and recents —
+    /// and every downstream reader (filter counts, the unified DATABASE
+    /// section, landing-excerpt lookup) inherits it.
+    private var unfilteredResults: [RankedResult] {
+        get { unfilteredResultsStorage }
+        set { unfilteredResultsStorage = newValue.filter { $0.atomType != .task } }
+    }
+
+    private var unfilteredResultsStorage: [RankedResult] = []
 
     /// Query that produced the current search state. A background refresh for
     /// the same query keeps the visible results and swaps them in place.
@@ -2232,7 +2245,6 @@ public final class CommandKViewModel {
         let trimmed = rawQuery.trimmingCharacters(in: .whitespaces)
         let prefixMap: [String: AtomType] = [
             "#idea": .idea,
-            "#task": .task,
             "#swipe": .research,
             "#content": .content,
             "#research": .research,
@@ -3757,22 +3769,15 @@ public final class CommandKViewModel {
             metadata.intentUUID = CommandCenterIntentEngine.shared.seedID(for: resolvedIntent)
         }
 
-        // Day pins move together. A separate planned-for day owns focus/when;
-        // the due day stays the deadline.
+        // One date. All three day pins move together — the separate
+        // planned-for facet is gone (July 2026 unification).
         let dueDate = ISO8601.date(from: form.value(for: .date)).map { Calendar.current.startOfDay(for: $0) }
-        let plannedDay = draft.focusDate.map { Calendar.current.startOfDay(for: $0) }
         if let dueDate {
             let iso = PlannerumFormatters.iso8601.string(from: dueDate)
             metadata.dueDate = iso
             metadata.focusDate = iso
             metadata.whenDate = iso
-        }
-        if let plannedDay {
-            let iso = PlannerumFormatters.iso8601.string(from: plannedDay)
-            metadata.focusDate = iso
-            metadata.whenDate = iso
-        }
-        if dueDate == nil, plannedDay == nil {
+        } else {
             metadata.isUnscheduled = true
         }
 
@@ -3796,7 +3801,7 @@ public final class CommandKViewModel {
             // no recurrenceParentUUID) — mirror createRecurringTemplate.
             metadata.recurrence = ruleJSON
             metadata.isUnscheduled = nil
-            let anchor = dueDate ?? plannedDay ?? Calendar.current.startOfDay(for: .now)
+            let anchor = dueDate ?? Calendar.current.startOfDay(for: .now)
             if metadata.dueDate == nil {
                 let iso = PlannerumFormatters.iso8601.string(from: anchor)
                 metadata.dueDate = iso
@@ -4251,7 +4256,7 @@ public final class CommandKViewModel {
 
     /// Available filter types with their display info
     public var filterTypes: [AtomType] {
-        [.idea, .task, .research, .content, .connection]
+        [.idea, .research, .content, .connection]
     }
 
     /// Get count for a specific filter type

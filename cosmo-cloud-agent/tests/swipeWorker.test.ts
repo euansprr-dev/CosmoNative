@@ -419,3 +419,82 @@ void (async () => {
   console.error(err);
   process.exit(1);
 });
+
+// ── Capture-window retry gating ─────────────────────────────────────────────
+// Retries are a capture-time affordance. These lock in that nothing reprocesses
+// hours later — the behaviour that spread five full vision passes across a night.
+import { withinCaptureWindow, retrySchedule, priorTranscript } from '../src/swipes/processor';
+
+const MINUTE = 60_000;
+const atomAt = (firstAttemptMinutesAgo: number | null, extra: Record<string, any> = {}) => ({
+  uuid: 'u', type: 'research', title: null, body: null,
+  structured: extra.structured ?? null,
+  metadata: {
+    ...(firstAttemptMinutesAgo === null
+      ? {}
+      : { processingFirstAttemptAt: new Date(Date.now() - firstAttemptMinutesAgo * MINUTE).toISOString() }),
+    ...(extra.metadata ?? {}),
+  },
+  links: null,
+  created_at: new Date(Date.now() - 365 * 24 * 60 * MINUTE).toISOString(),
+  updated_at: new Date().toISOString(),
+  is_deleted: false, user_id: 'test-user', _version: 1, _source: 'test',
+}) as any;
+
+const now = Date.now();
+// Fresh capture: inside the window.
+assert.equal(withinCaptureWindow(atomAt(2), now), true, 'a 2-minute-old attempt is in-window');
+// The overnight case: captured at 8pm, tick firing at 3am.
+assert.equal(withinCaptureWindow(atomAt(7 * 60), now), false, 'a 7-hour-old attempt is out of window');
+assert.equal(withinCaptureWindow(atomAt(16), now), false, 'past RETRY_WINDOW_MINUTES is out of window');
+// No stamp yet (rows predating processingFirstAttemptAt): fall back to
+// created_at. A freshly captured one stays in-window; a legacy row that has
+// been sitting for months is out, so the backlog retires instead of
+// re-running the pipeline on every deploy.
+const freshNoStamp = atomAt(null);
+freshNoStamp.created_at = new Date(now - 3 * MINUTE).toISOString();
+assert.equal(withinCaptureWindow(freshNoStamp, now), true, 'unstamped but fresh falls back to created_at, in-window');
+assert.equal(withinCaptureWindow(atomAt(null), now), false, 'unstamped legacy row is out of window');
+
+// Budget: two quick retries, then terminal.
+assert.equal(retrySchedule(atomAt(1), 1).processingStatus, 'partial', 'attempt 1 keeps retrying');
+assert.equal(retrySchedule(atomAt(1), 2).processingStatus, 'partial', 'attempt 2 keeps retrying');
+assert.equal(
+  retrySchedule(atomAt(1), 3).processingStatus, 'needs_manual_retry',
+  'attempt 3 exhausts the budget and goes terminal'
+);
+// Window closes even with budget left — this is the one that stops overnight spend.
+assert.equal(
+  retrySchedule(atomAt(7 * 60), 1).processingStatus, 'needs_manual_retry',
+  'budget left but window closed must still be terminal'
+);
+// Retried statuses stay distinguishable while budget remains.
+assert.equal(retrySchedule(atomAt(1), 1, 'extraction_failed').processingStatus, 'extraction_failed');
+// Delays are seconds, not the old 30/60/90-minute ladder.
+const firstDelay = Date.parse(retrySchedule(atomAt(1), 1).processingRetryAfter as string) - Date.now();
+assert.ok(firstDelay <= 90_000, `first retry delay should be ~60s, got ${Math.round(firstDelay / 1000)}s`);
+
+// Transcript checkpointing: content is required, an empty shell is not reusable.
+assert.equal(priorTranscript(atomAt(1)), null, 'no swipeAnalysis means no checkpoint');
+assert.equal(
+  priorTranscript(atomAt(1, { structured: { swipeAnalysis: { transcriptSlides: [] } } })), null,
+  'an empty slide array is not a reusable transcript'
+);
+assert.equal(
+  priorTranscript(atomAt(1, { structured: { swipeAnalysis: { transcriptSlides: [{ text: '   ' }] } } })), null,
+  'whitespace-only slides are not a reusable transcript'
+);
+const reusable = priorTranscript(atomAt(1, {
+  structured: { swipeAnalysis: { transcriptSlides: [{ text: 'Hook: buy the boring business' }] } },
+}));
+assert.ok(reusable, 'a slide with real text is reusable');
+assert.equal(reusable!.rawSlides.length, 1, 'rawSlides falls back to slides when absent');
+assert.equal(reusable!.quality, 'accurate', 'quality defaults when absent');
+// Speech-only reels (voiceover) checkpoint too — slides are legitimately empty.
+assert.ok(
+  priorTranscript(atomAt(1, {
+    structured: { swipeAnalysis: { transcriptSlides: [], transcriptSpeechSegments: [{ text: 'so here is the thing' }] } },
+  })),
+  'speech-only transcripts are reusable'
+);
+console.log('✅ capture-window retry gating tests passed');

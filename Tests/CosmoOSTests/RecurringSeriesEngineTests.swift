@@ -398,3 +398,85 @@ final class TaskDayPinRepairRuleTests: XCTestCase {
         ))
     }
 }
+
+/// The one-date unification rule (CommandCenterTaskScheduling.unifiedPinCorrection,
+/// July 2026): a task has ONE date, so any non-recurring row whose three day
+/// pins disagree collapses onto its planned day (whenDate ?? focusDate ??
+/// dueDate). Runs after the lag repair, so stranded-whenDate rows are already
+/// healed before this pass reads whenDate as the truth.
+final class TaskDayPinUnificationRuleTests: XCTestCase {
+
+    private let cal = Calendar.current
+
+    private func iso(daysAgo: Int) -> String {
+        let day = cal.startOfDay(for: cal.date(byAdding: .day, value: -daysAgo, to: Date())!)
+        return PlannerumFormatters.iso8601.string(from: day)
+    }
+
+    private func metadata(due: String?, focus: String?, when: String?, recurrence: String? = nil) -> TaskMetadata {
+        var m = TaskMetadata()
+        m.dueDate = due
+        m.focusDate = focus
+        m.whenDate = when
+        m.recurrence = recurrence
+        return m
+    }
+
+    func testDeadlineSplitCollapsesOntoPlannedDay() {
+        // Old Things-style split: planned Wednesday (when/focus), deadline Friday (due).
+        let meta = metadata(due: iso(daysAgo: 0), focus: iso(daysAgo: 2), when: iso(daysAgo: 2))
+        XCTAssertEqual(
+            CommandCenterTaskScheduling.unifiedPinCorrection(in: meta, calendar: cal),
+            iso(daysAgo: 2)
+        )
+    }
+
+    func testDueOnlyRowGainsTheMissingPins() {
+        // Old iOS creations wrote dueDate alone.
+        let meta = metadata(due: iso(daysAgo: 1), focus: nil, when: nil)
+        XCTAssertEqual(
+            CommandCenterTaskScheduling.unifiedPinCorrection(in: meta, calendar: cal),
+            iso(daysAgo: 1)
+        )
+    }
+
+    func testAlignedPinsAreHealthy() {
+        let meta = metadata(due: iso(daysAgo: 1), focus: iso(daysAgo: 1), when: iso(daysAgo: 1))
+        XCTAssertNil(CommandCenterTaskScheduling.unifiedPinCorrection(in: meta, calendar: cal))
+    }
+
+    func testSameDayDifferentTimesAreHealthy() {
+        // Pins on the same day with different times (Mac writes fractional
+        // seconds, iOS none; a timed dueDate) must not churn every row.
+        let day = cal.startOfDay(for: cal.date(byAdding: .day, value: -1, to: Date())!)
+        let fivePM = PlannerumFormatters.iso8601.string(from: day.addingTimeInterval(17 * 3600))
+        let meta = metadata(due: fivePM, focus: iso(daysAgo: 1), when: iso(daysAgo: 1))
+        XCTAssertNil(CommandCenterTaskScheduling.unifiedPinCorrection(in: meta, calendar: cal))
+    }
+
+    func testDatelessRowIsLeftAlone() {
+        XCTAssertNil(CommandCenterTaskScheduling.unifiedPinCorrection(
+            in: metadata(due: nil, focus: nil, when: nil), calendar: cal
+        ))
+    }
+
+    func testBucketedRowsAreLeftAlone() {
+        // Anytime/Someday tasks with a residual dueDate from the old deadline
+        // model must not be stamped with more pins.
+        var meta = metadata(due: iso(daysAgo: 1), focus: nil, when: nil)
+        meta.schedulingState = "anytime"
+        XCTAssertNil(CommandCenterTaskScheduling.unifiedPinCorrection(in: meta, calendar: cal))
+    }
+
+    func testRecurringTemplatesAndInstancesAreNeverTouched() {
+        let template = metadata(
+            due: iso(daysAgo: 0), focus: nil, when: nil,
+            recurrence: #"{"frequency":"daily","interval":1}"#
+        )
+        XCTAssertNil(CommandCenterTaskScheduling.unifiedPinCorrection(in: template, calendar: cal))
+
+        var instance = metadata(due: iso(daysAgo: 0), focus: nil, when: nil)
+        instance.recurrenceParentUUID = "parent-uuid"
+        XCTAssertNil(CommandCenterTaskScheduling.unifiedPinCorrection(in: instance, calendar: cal))
+    }
+}

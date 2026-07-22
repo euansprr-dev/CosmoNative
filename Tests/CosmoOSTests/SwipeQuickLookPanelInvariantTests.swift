@@ -11,8 +11,17 @@ import SwiftUI
 import AppKit
 @testable import CosmoOS
 
-/// Hosts the production SwipeQuickLook exactly as the library page does: the
-/// shell owns its expand-on-mount spring via the bound `expanded` state.
+/// Hosts the production SwipeQuickLook exactly as the pages do: the shell
+/// owns its expand-on-mount spring via the bound `expanded` state. The
+/// invariant under test is the SHELL's (layout size static through the
+/// spring), so the probe content is a plain stage — the library content
+/// moved into SwipePreviewSidebar (July 2026), outside this shell.
+///
+/// The ProgressView is load-bearing: NSHostingView only materializes an
+/// AppKit subview hierarchy when the SwiftUI tree bridges a platform view
+/// (NSProgressIndicator here — the old library content bridged one the same
+/// way). All-native SwiftUI content leaves `hosting.subviews` empty and the
+/// probe would sample nothing.
 private struct QuickLookProbeHost: View {
     let item: SwipeGalleryItem
     let model: SwipeCardModel
@@ -26,13 +35,10 @@ private struct QuickLookProbeHost: View {
             panelAspect: model.aspect,
             onRequestClose: {}
         ) {
-            SwipeQuickLookLibraryContent(
-                item: item,
-                model: model,
-                onStudy: {},
-                onAddToCanvas: {},
-                onClose: {}
-            )
+            ZStack {
+                Rectangle().fill(.black)
+                ProgressView().controlSize(.small)
+            }
         }
     }
 }

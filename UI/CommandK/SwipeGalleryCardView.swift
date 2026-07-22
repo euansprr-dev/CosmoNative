@@ -350,7 +350,8 @@ struct SwipeGalleryCardView: View {
         HStack {
             if let hookType = item.hookType {
                 hookTypeBadgeLabel(hookType)
-            } else if item.processingStatus == "extraction_failed" {
+            } else if item.processingStatus == "extraction_failed"
+                        || item.processingStatus == SwipeProcessingService.statusNeedsManualRetry {
                 extractionFailedBadge
             } else {
                 processingBadge

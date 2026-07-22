@@ -329,7 +329,6 @@ struct CommandKTaskComposerFields: View {
             CommandKComposerRowGroup {
                 quickChipsRow
                 dueDateRow
-                plannedForRow
                 repeatsRow
                 if needsDaySelection {
                     dayPickerRow
@@ -359,11 +358,11 @@ struct CommandKTaskComposerFields: View {
     }
 
     private var dueDateRow: some View {
-        CommandKComposerRow(icon: "calendar", label: "Due date", help: "When this is due") {
+        CommandKComposerRow(icon: "calendar", label: "Date", help: "The day this task is planned for") {
             if let dueDate {
                 HStack(spacing: DS.space6) {
                     DatePicker(
-                        "Due date",
+                        "Date",
                         selection: Binding(
                             get: { dueDate },
                             set: { setDue(calendar.startOfDay(for: $0)) }
@@ -373,7 +372,7 @@ struct CommandKTaskComposerFields: View {
                     .datePickerStyle(.compact)
                     .labelsHidden()
                     .font(DS.callout)
-                    CommandKComposerRemoveButton(label: "Clear due date") {
+                    CommandKComposerRemoveButton(label: "Clear date") {
                         markManual(.due)
                         pane.binding(.date, manualEdit: true).wrappedValue = ""
                     }
@@ -385,41 +384,7 @@ struct CommandKTaskComposerFields: View {
                     CommandKComposerRowValueLabel(text: "None", isSet: false, tint: DS.entityTask)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Set due date")
-            }
-        }
-    }
-
-    private var plannedForRow: some View {
-        CommandKComposerRow(icon: "star", label: "Planned for", help: "The day you plan to work on this") {
-            if let focusDate = draft?.focusDate {
-                HStack(spacing: DS.space6) {
-                    DatePicker(
-                        "Planned for",
-                        selection: Binding(
-                            get: { focusDate },
-                            set: { newValue in
-                                let day = calendar.startOfDay(for: newValue)
-                                pane.mutateDraft { $0.focusDate = day }
-                            }
-                        ),
-                        displayedComponents: [.date]
-                    )
-                    .datePickerStyle(.compact)
-                    .labelsHidden()
-                    .font(DS.callout)
-                    CommandKComposerRemoveButton(label: "Clear planned date") {
-                        pane.mutateDraft { $0.focusDate = nil }
-                    }
-                }
-            } else {
-                Button {
-                    pane.mutateDraft { $0.focusDate = today }
-                } label: {
-                    CommandKComposerRowValueLabel(text: "None", isSet: false, tint: DS.entityTask)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Set planned date")
+                .accessibilityLabel("Set date")
             }
         }
     }

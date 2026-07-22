@@ -82,13 +82,12 @@ public struct TaskViewModel: Identifiable, Equatable, Sendable {
     public let recommendationScore: Double
     public let recommendationReason: String?
 
-    // MARK: - Things 3 Scheduling
+    // MARK: - Scheduling pins
 
-    /// "When" date — when the user plans to work on this (distinct from deadline)
+    /// The task's day, stored redundantly as dueDate/focusDate/whenDate —
+    /// one user-facing date since July 2026; every writer moves the three
+    /// pins together and every reader plans by `plannedDate`.
     public let whenDate: Date?
-
-    /// Hard deadline (semantic rename of dueDate for clarity)
-    public let deadline: Date?
 
     /// Time of day preference: "morning", "evening", or nil
     public let timeOfDay: String?
@@ -153,50 +152,59 @@ public struct TaskViewModel: Identifiable, Equatable, Sendable {
 
     // MARK: - Computed Properties
 
-    /// Whether the task is due today
-    public var isDueToday: Bool {
-        guard let due = dueDate else { return false }
-        return Calendar.current.isDateInToday(due)
+    /// The task's day: whenDate ?? focusDate(scheduledDate) ?? dueDate.
+    /// THE reader law — every surface that places or judges a task by day
+    /// reads this, never dueDate alone (a legacy row can still carry an old
+    /// dueDate behind its planned day; planning by it resurrects the
+    /// "rescheduled but still overdue" bug).
+    public var plannedDate: Date? {
+        whenDate ?? scheduledDate ?? dueDate
     }
 
-    /// Whether the task is overdue (compares at day level — a task due today is NOT overdue)
+    /// Whether the task is planned for today
+    public var isDueToday: Bool {
+        guard let day = plannedDate else { return false }
+        return Calendar.current.isDateInToday(day)
+    }
+
+    /// Whether the task is overdue (compares at day level — a task planned today is NOT overdue)
     public var isOverdue: Bool {
-        guard let due = dueDate, !isCompleted else { return false }
-        return due < Calendar.current.startOfDay(for: Date())
+        guard let day = plannedDate, !isCompleted else { return false }
+        return day < Calendar.current.startOfDay(for: Date())
     }
 
     /// Overdue judged from an arbitrary reference day rather than wall-clock
-    /// today. On its own due day a task is NOT overdue; it only reads overdue
+    /// today. On its own day a task is NOT overdue; it only reads overdue
     /// from a later vantage. The Today surface passes its viewed day, so
-    /// navigating back to a task's due day shows it as a normal checkable row
+    /// navigating back to a task's day shows it as a normal checkable row
     /// you can still complete FOR that day — not a missed one.
     public func isOverdue(asOf referenceDay: Date) -> Bool {
-        guard let due = dueDate, !isCompleted else { return false }
-        return due < Calendar.current.startOfDay(for: referenceDay)
+        guard let day = plannedDate, !isCompleted else { return false }
+        return day < Calendar.current.startOfDay(for: referenceDay)
     }
 
     /// `dueInfo` with overdue judged from `referenceDay` (see `isOverdue(asOf:)`).
     public func dueInfo(asOf referenceDay: Date) -> String? {
-        guard let due = dueDate else { return nil }
+        guard let day = plannedDate else { return nil }
         if isOverdue(asOf: referenceDay) { return "Overdue" }
-        if Calendar.current.isDateInToday(due) { return "Due today" }
-        if Calendar.current.isDateInTomorrow(due) { return "Due tomorrow" }
-        return "Due \(due.formatted(.dateTime.month().day()))"
+        if Calendar.current.isDateInToday(day) { return "Due today" }
+        if Calendar.current.isDateInTomorrow(day) { return "Due tomorrow" }
+        return "Due \(day.formatted(.dateTime.month().day()))"
     }
 
-    /// Whether the task is due tomorrow
+    /// Whether the task is planned for tomorrow
     public var isDueTomorrow: Bool {
-        guard let due = dueDate else { return false }
-        return Calendar.current.isDateInTomorrow(due)
+        guard let day = plannedDate else { return false }
+        return Calendar.current.isDateInTomorrow(day)
     }
 
-    /// Human-readable due date info
+    /// Human-readable date info
     public var dueInfo: String? {
-        guard let due = dueDate else { return nil }
+        guard let day = plannedDate else { return nil }
         if isOverdue { return "Overdue" }
-        if Calendar.current.isDateInToday(due) { return "Due today" }
-        if Calendar.current.isDateInTomorrow(due) { return "Due tomorrow" }
-        return "Due \(due.formatted(.dateTime.month().day()))"
+        if Calendar.current.isDateInToday(day) { return "Due today" }
+        if Calendar.current.isDateInTomorrow(day) { return "Due tomorrow" }
+        return "Due \(day.formatted(.dateTime.month().day()))"
     }
 
     /// Human-readable scheduled time info
@@ -259,7 +267,7 @@ public struct TaskViewModel: Identifiable, Equatable, Sendable {
     }
 
     private var plannedCalendarDate: Date? {
-        whenDate ?? scheduledDate ?? dueDate
+        plannedDate
     }
 
     private static func merged(date: Date, time: Date, calendar: Calendar) -> Date? {
@@ -290,10 +298,10 @@ public struct TaskViewModel: Identifiable, Equatable, Sendable {
         return baseXP + durationBonus + priorityBonus
     }
 
-    /// Hours until due (negative if overdue)
+    /// Hours until the planned day (negative if overdue)
     public var hoursUntilDue: Double? {
-        guard let due = dueDate else { return nil }
-        return due.timeIntervalSinceNow / 3600
+        guard let day = plannedDate else { return nil }
+        return day.timeIntervalSinceNow / 3600
     }
 
     /// Whether the task is in the "Anytime" bucket
@@ -304,11 +312,6 @@ public struct TaskViewModel: Identifiable, Equatable, Sendable {
     /// Whether the task is in the "Someday" bucket
     public var isSomeday: Bool {
         schedulingState == "someday"
-    }
-
-    /// Whether the task has a hard deadline
-    public var hasDeadline: Bool {
-        deadline != nil
     }
 
     /// Checklist completion progress
@@ -390,7 +393,6 @@ public struct TaskViewModel: Identifiable, Equatable, Sendable {
         recommendationScore: Double = 0.0,
         recommendationReason: String? = nil,
         whenDate: Date? = nil,
-        deadline: Date? = nil,
         timeOfDay: String? = nil,
         schedulingState: String? = nil,
         headingUUID: String? = nil,
@@ -437,7 +439,6 @@ public struct TaskViewModel: Identifiable, Equatable, Sendable {
         self.recommendationScore = recommendationScore
         self.recommendationReason = recommendationReason
         self.whenDate = whenDate
-        self.deadline = deadline
         self.timeOfDay = timeOfDay
         self.schedulingState = schedulingState
         self.headingUUID = headingUUID
@@ -600,10 +601,8 @@ extension TaskViewModel {
         let scheduledStart = metadata?.scheduledStart.flatMap { PlannerumFormatters.iso8601.date(from: $0) }
         let scheduledEnd = metadata?.scheduledEnd.flatMap { PlannerumFormatters.iso8601.date(from: $0) }
 
-        // Parse Things 3 scheduling fields
+        // Parse the whenDate pin (plannedDate reads whenDate ?? focusDate ?? dueDate)
         let whenDate = metadata?.whenDate.flatMap { PlannerumFormatters.iso8601.date(from: $0) }
-        // dueDate doubles as deadline — also expose as `deadline` for semantic clarity
-        let deadline = dueDate
 
         // Parse checklist from JSON
         var checklistItems: [ChecklistItem] = []
@@ -673,7 +672,6 @@ extension TaskViewModel {
             recommendationScore: recommendationScore,
             recommendationReason: recommendationReason,
             whenDate: whenDate,
-            deadline: deadline,
             timeOfDay: metadata?.timeOfDay,
             schedulingState: metadata?.schedulingState,
             headingUUID: metadata?.headingUUID,
@@ -737,7 +735,6 @@ extension TaskViewModel {
             recommendationScore: recommendationScore,
             recommendationReason: recommendationReason,
             whenDate: occ.day,
-            deadline: nil,
             timeOfDay: timeOfDay,
             schedulingState: schedulingState,
             headingUUID: headingUUID,
@@ -834,7 +831,7 @@ public struct UpcomingDayViewModel: Identifiable, Equatable, Sendable {
     }
 
     public var hasDeadlines: Bool {
-        tasks.contains { $0.dueDate != nil }
+        tasks.contains { $0.plannedDate != nil }
     }
 
     public var isToday: Bool {

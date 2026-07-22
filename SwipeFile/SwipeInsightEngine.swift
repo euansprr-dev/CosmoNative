@@ -95,10 +95,14 @@ final class SwipeInsightEngine {
         )
 
         do {
+            // reasoning OFF: Sonnet 5's default adaptive thinking shares the
+            // max_tokens budget and on long transcripts consumed ALL of it —
+            // empty content, "Unparseable response", swipe stuck partial.
             let raw = try await ResearchService.shared.analyze(
                 prompt: prompt,
                 tier: Self.analysisTier,
-                maxTokens: 4000
+                maxTokens: 8000,
+                disableReasoning: true
             )
             guard let response = Self.parseResponse(raw) else {
                 print("SwipeInsightEngine: Unparseable response for \(atom.uuid.prefix(8))")

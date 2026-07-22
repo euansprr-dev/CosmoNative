@@ -132,7 +132,9 @@ struct CommandCenterSidebar: View {
             Task {
                 switch mode {
                 case .today:
-                    await viewModel.setWhenDate(taskUUID: uuid, date: Date())
+                    // Row-id aware: "uuid#day" occurrence rows move via a
+                    // per-day override, never a template rewrite.
+                    await viewModel.rescheduleTaskRow(id: uuid, toDate: Date())
                 case .someday:
                     await viewModel.setSchedulingState(taskUUID: uuid, state: "someday")
                 case .anytime:

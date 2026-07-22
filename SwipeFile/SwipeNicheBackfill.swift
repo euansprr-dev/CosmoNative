@@ -160,10 +160,13 @@ enum SwipeNicheBackfill {
         """
 
         do {
+            // reasoning OFF: structured JSON extraction — Sonnet 5's default
+            // adaptive thinking otherwise eats into the shared token budget.
             let raw = try await ResearchService.shared.analyze(
                 prompt: prompt,
                 tier: consolidationTier,
-                maxTokens: 8000
+                maxTokens: 8000,
+                disableReasoning: true
             )
             return parseClusterResponse(raw, validLabels: labels.map(\.label))
         } catch {

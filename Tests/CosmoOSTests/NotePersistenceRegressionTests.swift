@@ -759,3 +759,136 @@ final class DataSafetyRegressionTests: XCTestCase {
                       "A series ended by afterOccurrences must emit nothing in later windows")
     }
 }
+
+// MARK: - Note History (July 20 2026 data-loss follow-up)
+
+/// The note editor autosaves and close-saves with raw `UPDATE atoms SET …`
+/// instead of `AtomRepository.update()`, so it bypassed
+/// `AtomRevisionWriter.snapshotIfNeeded` entirely — notes accumulated NO
+/// version history, which is why the July 20 block-editor data loss had no
+/// recovery path. These pin the raw-write snapshot helper.
+final class NoteRawWriteRevisionTests: XCTestCase {
+
+    private var cleanupUUIDs: [String] = []
+
+    override func tearDown() async throws {
+        let uuids = cleanupUUIDs.reversed()
+        cleanupUUIDs.removeAll()
+        for uuid in uuids {
+            try? await AtomRepository.shared.hardDelete(uuid: uuid, confirmed: true)
+        }
+        try await super.tearDown()
+    }
+
+    private func makeNote(body: String) async throws -> Atom {
+        var atom = Atom.new(type: .note, title: "History fixture \(UUID().uuidString)")
+        atom.body = body
+        let created = try await AtomRepository.shared.create(atom)
+        cleanupUUIDs.append(created.uuid)
+        return created
+    }
+
+    private func revisionCount(_ uuid: String) async throws -> Int {
+        try await CosmoDatabase.shared.asyncRead { db in
+            try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM atom_revisions WHERE atom_uuid = ?",
+                arguments: [uuid]
+            ) ?? 0
+        }
+    }
+
+    /// A raw-SQL note save must snapshot the pre-image, exactly as the
+    /// repository path does.
+    func testRawWriteSnapshotsPreImage() async throws {
+        let note = try await makeNote(body: "the original body that must survive")
+        let before = try await revisionCount(note.uuid)
+
+        try await CosmoDatabase.shared.asyncWrite { [uuid = note.uuid] db in
+            AtomRevisionWriter.snapshotBeforeRawWrite(
+                db,
+                uuid: uuid,
+                incomingTitle: "History fixture",
+                incomingBody: "a completely different body, far more than 200 characters different "
+                    + String(repeating: "x", count: 250)
+            )
+        }
+
+        let after = try await revisionCount(note.uuid)
+        XCTAssertEqual(after, before + 1, "A raw-SQL note overwrite must leave a recoverable pre-image")
+
+        let storedBody: String? = try await CosmoDatabase.shared.asyncRead { [uuid = note.uuid] db in
+            try String.fetchOne(
+                db,
+                sql: "SELECT body FROM atom_revisions WHERE atom_uuid = ? ORDER BY created_at DESC LIMIT 1",
+                arguments: [uuid]
+            )
+        }
+        XCTAssertEqual(storedBody, "the original body that must survive",
+                       "The snapshot must hold the PRE-image, not the incoming write")
+    }
+
+    /// Restoring a NOTE must carry the rich body document, not just the
+    /// flattened `body` mirror: a note's real content lives in
+    /// `metadata.richBodyDocument`, so restoring the mirror alone left every
+    /// block untouched and the restore appeared to do nothing.
+    @MainActor
+    func testRestoreCarriesRichBodyDocumentAndKeepsWiring() async throws {
+        let oldDocument = RichDocument(blocks: [
+            RichBlock(kind: .bulletList, inlines: [.text("the original bullet")])
+        ])
+        let written = RichDocumentPersistence.writeAtomDocuments(
+            existingMetadata: #"{"note_document_style":{"keep":"me"}}"#,
+            bodyDocument: oldDocument
+        )
+
+        var revision = AtomRevision(
+            of: {
+                var a = Atom.new(type: .note, title: "Restore fixture")
+                a.body = written.body
+                a.metadata = written.metadata
+                return a
+            }(),
+            source: .userEdit
+        )
+        revision.atomUuid = "fixture"
+
+        // The revision must round-trip the document the editor actually reads.
+        let recovered = RichDocumentMetadataStorage.readDocument(
+            from: revision.metadata, key: RichDocumentField.body.metadataKey
+        )
+        XCTAssertEqual(recovered?.blocks.first?.plainInlineText, "the original bullet",
+                       "A revision must retain the rich body document, not only the plain-text mirror")
+
+        // Merging it into CURRENT metadata restores words while keeping wiring.
+        let merged = RichDocumentPersistence.writeAtomDocuments(
+            existingMetadata: #"{"note_document_style":{"keep":"me"},"focusFloatingBlocks":["x"]}"#,
+            bodyDocument: recovered
+        )
+        let mergedDict = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: XCTUnwrap(merged.metadata).data(using: .utf8)!) as? [String: Any]
+        )
+        XCTAssertNotNil(mergedDict["richBodyDocument"], "Restore must write the revision's document")
+        XCTAssertNotNil(mergedDict["focusFloatingBlocks"], "Restore must not drop wiring keys — words, not wiring")
+        XCTAssertNotNil(mergedDict["note_document_style"], "Restore must not drop the note's style")
+    }
+
+    /// Identical content is not a revision — otherwise every idle autosave
+    /// would spam history.
+    func testRawWriteSkipsWhenContentUnchanged() async throws {
+        let note = try await makeNote(body: "unchanged body")
+        let before = try await revisionCount(note.uuid)
+
+        try await CosmoDatabase.shared.asyncWrite { [uuid = note.uuid, title = note.title] db in
+            AtomRevisionWriter.snapshotBeforeRawWrite(
+                db,
+                uuid: uuid,
+                incomingTitle: title,
+                incomingBody: "unchanged body"
+            )
+        }
+
+        let after = try await revisionCount(note.uuid)
+        XCTAssertEqual(after, before, "An autosave that changes nothing must not create a revision")
+    }
+}

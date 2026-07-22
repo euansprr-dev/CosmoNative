@@ -1,9 +1,42 @@
 import Foundation
 import SwiftUI
+import Combine
 
 @MainActor
 @Observable
 final class SwipeLibraryViewModel {
+    @ObservationIgnored private var cancellables: Set<AnyCancellable> = []
+    @ObservationIgnored private var syncRefreshTask: Task<Void, Never>?
+
+    init() {
+        // Swipes captured on iPhone arrive via SYNC PULLS, not through any UI
+        // action on this Mac — without this listener the library rendered a
+        // launch-time snapshot until the next app restart (user-visible as
+        // "the Mac is days behind iOS/web" even though the local DB is
+        // fully up to date).
+        NotificationCenter.default.publisher(for: CosmoNotification.Sync.atomsPulled)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.scheduleSyncRefresh()
+                }
+            }
+            .store(in: &cancellables)
+    }
+
+    /// Debounced: batch pulls arrive in bursts (up to 100 atoms per page) —
+    /// one reload after the burst settles keeps shelves/catalog fresh without
+    /// hammering the decode path. Identity-gated downstream, so a reload that
+    /// changes nothing re-renders nothing.
+    private func scheduleSyncRefresh() {
+        guard hasLoaded else { return }
+        syncRefreshTask?.cancel()
+        syncRefreshTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1.5))
+            guard !Task.isCancelled else { return }
+            await self?.reload()
+        }
+    }
     private(set) var allItems: [SwipeGalleryItem] = []
     private(set) var visibleItems: [SwipeGalleryItem] = []
     /// Card display models aligned 1:1 with `visibleItems` — adapters (date parsing,

@@ -396,6 +396,32 @@ enum CommandCenterTaskScheduling {
         return PlannerumFormatters.iso8601.string(from: dueDay)
     }
 
+    /// One-date unification (July 2026): a task has a single day, so the three
+    /// storage pins must agree. Returns the ISO day every pin should hold —
+    /// the task's planned day, whenDate ?? focusDate ?? dueDate — or nil when
+    /// the pins already agree (or none is set). Recurring templates and
+    /// occurrences are excluded: their anchor semantics live in
+    /// seriesAnchorDay and must not be rewritten by a bulk repair.
+    static func unifiedPinCorrection(
+        in metadata: TaskMetadata,
+        calendar: Calendar = .current
+    ) -> String? {
+        guard metadata.recurrence == nil, metadata.recurrenceParentUUID == nil else { return nil }
+        // Anytime/Someday rows may carry a residual dueDate from the old
+        // deadline model — stamping the other pins would make them MORE
+        // dated, not less. Leave bucketed tasks alone.
+        guard metadata.schedulingState == nil else { return nil }
+        let pins = [metadata.whenDate, metadata.focusDate, metadata.dueDate]
+        let parsed = pins.map { $0.flatMap { PlannerumFormatters.iso8601.date(from: $0) } }
+        guard let planned = parsed.compactMap({ $0 }).first else { return nil }
+        let plannedDay = calendar.startOfDay(for: planned)
+        let unified = parsed.allSatisfy { date in
+            guard let date else { return false }
+            return calendar.isDate(date, inSameDayAs: plannedDay)
+        }
+        return unified ? nil : PlannerumFormatters.iso8601.string(from: plannedDay)
+    }
+
     private static func applyPlannedDate(_ day: Date, to metadata: inout TaskMetadata) {
         let dateString = PlannerumFormatters.iso8601.string(from: day)
         metadata.dueDate = dateString
@@ -929,6 +955,28 @@ final class CommandCenterDashboardViewModel {
         switch domain {
         case .tasks:
             await refreshTasks()
+            // The signature fires for EVERY task-table write, including sync
+            // pulls from the iPhone. Today always repaints above; the list the
+            // user is actually looking at must repaint too, or a phone-side
+            // reschedule sits stale on Upcoming/Anytime/Someday/Project until
+            // the next interaction.
+            switch viewMode {
+            case .upcoming:
+                await loadUpcomingTasks()
+                await loadCompletedTasks()
+            case .logbook:
+                await loadCompletedTasks()
+            case .anytime:
+                await loadAnytimeTasks()
+            case .someday:
+                await loadSomedayTasks()
+            case .project:
+                if let uuid = selectedProjectUUID {
+                    await loadProjectTasks(projectUUID: uuid)
+                }
+            case .today, .habits, .reports, .queue, .area:
+                break
+            }
         case .habits:
             await loadHabits()
         case .timeData:
@@ -1638,51 +1686,31 @@ final class CommandCenterDashboardViewModel {
         assignIfChanged(\.projects, to: [])
     }
 
-    // MARK: - Things 3 Scheduling Operations
+    // MARK: - Scheduling Operations
 
+    /// Set a task's ONE date. There is no separate when/deadline anymore —
+    /// a task has a single day, and all three storage pins
+    /// (dueDate/focusDate/whenDate) move together so every reader on every
+    /// device lands on the same day. Delegates to the canonical reschedule
+    /// contract, which also carries any time block onto the new day.
     func setWhenDate(taskUUID: String, date: Date?) async {
         do {
             guard let atom = try await AtomRepository.shared.fetch(uuid: taskUUID) else { return }
             guard var meta = taskMetadataForWrite(atom, context: "Dashboard.setWhenDate(\(taskUUID.prefix(8)))") else { return }
-            if let date = date {
-                let day = Calendar.current.startOfDay(for: date)
-                let dateString = PlannerumFormatters.iso8601.string(from: day)
-                let deadline = meta.dueDate
-                CommandCenterTaskScheduling.moveCalendarTime(in: &meta, toDate: day)
-                meta.whenDate = dateString
-                meta.focusDate = dateString  // Keep backward compat
-                meta.dueDate = deadline
-                meta.schedulingState = nil  // Scheduled tasks have no scheduling state
-                if meta.recurrence != nil, meta.recurrenceParentUUID == nil {
-                    meta.seriesAnchorDay = RecurringSeriesEngine.dayKey(for: day)
-                }
-            } else {
-                if meta.recurrence != nil, meta.recurrenceParentUUID == nil {
-                    // Clearing the when date of a recurring template can orphan the series.
-                    PersistenceHealth.note(.writeFailure, context: "Dashboard.setWhenDate(\(taskUUID.prefix(8)))", detail: "blocked clearing the when date of a recurring series")
-                    return
-                }
-                meta.whenDate = nil
-                meta.focusDate = nil
+            if date == nil, meta.recurrence != nil, meta.recurrenceParentUUID == nil {
+                // Clearing the date of a recurring template can orphan the series.
+                PersistenceHealth.note(.writeFailure, context: "Dashboard.setWhenDate(\(taskUUID.prefix(8)))", detail: "blocked clearing the date of a recurring series")
+                return
+            }
+            CommandCenterTaskScheduling.reschedule(&meta, toDate: date)
+            if let date, meta.recurrence != nil, meta.recurrenceParentUUID == nil {
+                meta.seriesAnchorDay = RecurringSeriesEngine.dayKey(for: date)
             }
             guard let merged = atom.mergingTaskMetadata(meta, context: "Dashboard.setWhenDate(\(taskUUID.prefix(8)))") else { return }
             try await AtomRepository.shared.update(merged)
             await refreshTasks()
         } catch {
             PersistenceHealth.note(.writeFailure, context: "Dashboard.setWhenDate(\(taskUUID.prefix(8)))", detail: error.localizedDescription)
-        }
-    }
-
-    func setDeadline(taskUUID: String, date: Date?) async {
-        do {
-            guard let atom = try await AtomRepository.shared.fetch(uuid: taskUUID) else { return }
-            guard var meta = taskMetadataForWrite(atom, context: "Dashboard.setDeadline(\(taskUUID.prefix(8)))") else { return }
-            meta.dueDate = date.map { PlannerumFormatters.iso8601.string(from: $0) }
-            guard let merged = atom.mergingTaskMetadata(meta, context: "Dashboard.setDeadline(\(taskUUID.prefix(8)))") else { return }
-            try await AtomRepository.shared.update(merged)
-            await refreshTasks()
-        } catch {
-            PersistenceHealth.note(.writeFailure, context: "Dashboard.setDeadline(\(taskUUID.prefix(8)))", detail: error.localizedDescription)
         }
     }
 
@@ -1711,9 +1739,12 @@ final class CommandCenterDashboardViewModel {
                     PersistenceHealth.note(.writeFailure, context: "Dashboard.setSchedulingState(\(taskUUID.prefix(8)))", detail: "blocked moving a recurring series to \(state ?? "")")
                     return
                 }
-                // Moving to anytime/someday clears the when date
+                // Moving to anytime/someday clears the date — all three pins
+                // (one-date model; a surviving dueDate would keep the task
+                // haunting its old day on every surface).
                 meta.whenDate = nil
                 meta.focusDate = nil
+                meta.dueDate = nil
             }
             guard let merged = atom.mergingTaskMetadata(meta, context: "Dashboard.setSchedulingState(\(taskUUID.prefix(8)))") else { return }
             try await AtomRepository.shared.update(merged)
@@ -2365,7 +2396,13 @@ final class CommandCenterDashboardViewModel {
                     metadata.whenDate = nil
                 }
                 if let deadline = parsed.deadline {
-                    metadata.dueDate = PlannerumFormatters.iso8601.string(from: deadline)
+                    // "deadline: friday" is legacy grammar for the task's one
+                    // date — all three pins move together, never due alone.
+                    let dateStr = PlannerumFormatters.iso8601.string(from: Calendar.current.startOfDay(for: deadline))
+                    metadata.dueDate = dateStr
+                    metadata.focusDate = dateStr
+                    metadata.whenDate = dateStr
+                    metadata.schedulingState = nil
                 }
 
                 // Set whenDate from dueDate if we have one (new semantic)
@@ -2450,9 +2487,8 @@ final class CommandCenterDashboardViewModel {
                     let dateString = PlannerumFormatters.iso8601.string(from: dueDate)
                     metadata.dueDate = dateString
                     metadata.focusDate = dateString
-                    // Day pins move together (deadline-only edits go through
-                    // setDeadline) — a stranded whenDate keeps the task on its
-                    // old day everywhere that plans by whenDate first.
+                    // Day pins move together — a stranded whenDate keeps the
+                    // task on its old day everywhere that plans by whenDate first.
                     metadata.whenDate = dateString
                     if metadata.recurrence != nil, metadata.recurrenceParentUUID == nil {
                         metadata.seriesAnchorDay = RecurringSeriesEngine.dayKey(for: dueDate)
@@ -2955,6 +2991,7 @@ final class CommandCenterDashboardViewModel {
             let today = PlannerumFormatters.iso8601.string(from: Date())
             metadata.dueDate = today
             metadata.focusDate = today
+            metadata.whenDate = today
         }
 
         // Timezone-safe anchor day, derived from the anchor date being persisted.

@@ -362,11 +362,15 @@ final class SwipeStudyModel {
         withAnimation(ProMotionSprings.snappy) { hasAppeared = true }
         Task {
             await fetchYouTubeTranscriptIfMissing()
-            // Railway-first on the OPEN path too: while the cloud worker owns
-            // this swipe (fresh claim, pending inside the grace window, or a
-            // scheduled retry), the Mac must not fire a duplicate model call —
-            // it waits for the worker's result to sync down instead.
-            if cloudOwnsProcessing(displayAtom) {
+            // Railway-first on the OPEN path too: while the cloud worker is
+            // ACTIVELY on this swipe (fresh claim, pending inside the grace
+            // window, or a scheduled retry), the Mac must not fire a duplicate
+            // model call — it waits for the worker's result to sync down.
+            // A swipe the cloud ABANDONED (needs_manual_retry, exhausted
+            // partial) must not be polled — nothing is coming. If it banked a
+            // transcript, a cheap local insight pass finishes the job here;
+            // vision is never re-bought on this path.
+            if cloudActivelyProcessing(displayAtom) {
                 pollForBackgroundCompletion()
             } else {
                 let hasText = !slidesTranscriptText.isEmpty || !transcriptText.isEmpty
@@ -386,6 +390,15 @@ final class SwipeStudyModel {
             metadataJSON: atom.metadata,
             updatedAt: ISO8601.date(from: atom.updatedAt)
         )
+    }
+
+    /// "Owns" vs "is actively working": macMayProcess returns false BOTH for
+    /// swipes the cloud is actively processing AND for swipes it retired
+    /// (needs_manual_retry / exhausted retries). Conflating the two made the
+    /// Study open path poll a dead swipe for 8 minutes while the local
+    /// self-heal never fired. Active = owned AND a result is still coming.
+    private func cloudActivelyProcessing(_ atom: Atom) -> Bool {
+        cloudOwnsProcessing(atom) && !Self.awaitsManualRetry(atom)
     }
 
     private func markStudiedIfNeeded() {
@@ -604,6 +617,13 @@ final class SwipeStudyModel {
         guard let fresh = try? await AtomRepository.shared.fetch(uuid: uuid) else { return }
         let merged = result.preservingCuratedFields(from: fresh.swipeAnalysis)
         var updated = fresh.withSwipeAnalysis(merged)
+        // Same complete-stamp as persistAnalysis — a healed swipe must not
+        // keep advertising a terminal failure status.
+        if merged.isFullyAnalyzed,
+           Self.hasTranscriptContent(merged),
+           updated.processingStatus != "complete" {
+            updated.processingStatus = "complete"
+        }
         if let title = merged.displayTitle, !title.isEmpty, updated.title != title,
            !AtomRepository.shared.isBeingEdited(uuid) {
             updated.title = title
@@ -699,7 +719,16 @@ final class SwipeStudyModel {
             )
             return
         }
-        let updated = base.withSwipeAnalysis(analysisToSave)
+        var updated = base.withSwipeAnalysis(analysisToSave)
+        // A fully-analyzed swipe with real transcript content IS complete —
+        // clear any leftover terminal status (partial / extraction_failed /
+        // needs_manual_retry) or "Couldn't fetch this post" keeps rendering
+        // over a healthy, fully-processed swipe forever.
+        if analysisToSave.isFullyAnalyzed,
+           Self.hasTranscriptContent(analysisToSave),
+           updated.processingStatus != "complete" {
+            updated.processingStatus = "complete"
+        }
         do {
             let saved = try await AtomRepository.shared.update(updated)
             if isViewingAtom(uuid: uuid) {
@@ -712,6 +741,19 @@ final class SwipeStudyModel {
                 detail: error.localizedDescription
             )
         }
+    }
+
+    /// Real transcript content: at least one slide with text, or a speech
+    /// segment. (Empty arrays mean a prior pass produced nothing.)
+    static func hasTranscriptContent(_ analysis: SwipeAnalysis) -> Bool {
+        if let slides = analysis.transcriptSlides,
+           slides.contains(where: { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+            return true
+        }
+        if let segments = analysis.transcriptSpeechSegments, !segments.isEmpty {
+            return true
+        }
+        return false
     }
 
     // MARK: - YouTube transcript
@@ -1640,7 +1682,10 @@ final class SwipeStudyModel {
     /// Show the best media we currently have and upgrade toward the full
     /// carousel in the background. Never downgrades; never dead-ends when ≥1
     /// slide exists.
-    private func showPartialAndUpgrade(liveMedia: InstagramMediaData) async {
+    /// - Parameter userInitiated: true when this came from an explicit Retry.
+    ///   A retired swipe (`needs_manual_retry`) is deliberately inert on the
+    ///   automatic path, so the Retry control must say so or it is a no-op.
+    private func showPartialAndUpgrade(liveMedia: InstagramMediaData, userInitiated: Bool = false) async {
         let liveItems = liveMedia.carouselItems ?? []
         let shownItems = igMediaData?.carouselItems ?? []
         let shownIsDisplayable = igMediaData.map { InstagramMediaResolution.isDisplayablePostMedia(mediaData: $0) } ?? false
@@ -1660,7 +1705,12 @@ final class SwipeStudyModel {
         }
 
         let currentUUID = displayAtom.uuid
-        if !SwipeProcessingService.shared.isProcessing(uuid: currentUUID) {
+        // Merely LOOKING at a half-loaded carousel must not buy a full extraction
+        // pass. Once a swipe has been retired to needs_manual_retry, the upgrade
+        // is the Retry control's job — otherwise browsing the swipe file
+        // re-triggers the exact spend the capture-window bound was added to stop.
+        if !SwipeProcessingService.shared.isProcessing(uuid: currentUUID),
+           userInitiated || !Self.awaitsManualRetry(displayAtom) {
             SwipeProcessingService.shared.processSwipeInBackground(
                 uuid: currentUUID,
                 forceExtractionRetry: true
@@ -1701,7 +1751,10 @@ final class SwipeStudyModel {
                    self.currentAtom?.processingStatus != row.processingStatus {
                     self.currentAtom = row
                 }
-                guard self.cloudOwnsProcessing(row),
+                // Exit as soon as the cloud stops ACTIVELY working — including
+                // when it retires the swipe mid-poll (needs_manual_retry).
+                // Polling a retired swipe burned the full 8 minutes for nothing.
+                guard self.cloudActivelyProcessing(row),
                       row.processingStatus != "complete" else { break }
                 try? await Task.sleep(for: .seconds(3))
             }
@@ -1769,7 +1822,7 @@ final class SwipeStudyModel {
             if hasText,
                self.analysis?.isFullyAnalyzed != true,
                self.isViewingAtom(uuid: uuid),
-               !self.cloudOwnsProcessing(self.displayAtom) {
+               !self.cloudActivelyProcessing(self.displayAtom) {
                 await self.runInsightPass(context: "cloudFallback")
             }
         }
@@ -1887,6 +1940,39 @@ final class SwipeStudyModel {
         guard !isAutoTranscribing else { return }
         let atom = displayAtom
 
+        // Railway-first Retry (iOS parity): the worker holds every key, does
+        // fresh Apify extraction, and priorTranscript banking makes a re-kick
+        // cheap (analysis-only when a transcript is already stored). The local
+        // paths below remain the offline / worker-down fallback — they need a
+        // live media URL the CDN has usually expired.
+        Task {
+            let expectedUUID = atom.uuid
+            if await kickCloudRetranscribe(for: atom) { return }
+            guard isViewingAtom(uuid: expectedUUID) else { return }
+            retranscribeLocally(atom)
+        }
+    }
+
+    /// Cloud leg of the Retry control. True when the worker accepted the kick
+    /// (processing + polling now underway); false → caller falls back local.
+    private func kickCloudRetranscribe(for atom: Atom) async -> Bool {
+        guard let urlString = atom.url,
+              SwipeProcessingService.isCloudWorkerScoped(url: urlString, contentSource: nil) else {
+            return false
+        }
+        guard await CloudSwipeAPI.kickProcessingAwaiting(swipeUUID: atom.uuid) else {
+            print("SwipeStudy: cloud retry kick failed for \(atom.uuid.prefix(8)) — falling back to local pipeline")
+            return false
+        }
+        guard isViewingAtom(uuid: atom.uuid) else { return true }
+        // Pull the worker's fresh 'extracting' stamp down so the poll sees an
+        // ACTIVE cloud claim instead of the stale retired status.
+        await SyncEngine.shared.forceSync()
+        pollForBackgroundCompletion()
+        return true
+    }
+
+    private func retranscribeLocally(_ atom: Atom) {
         if isCarouselContent {
             Task {
                 let expectedUUID = atom.uuid
@@ -1902,7 +1988,8 @@ final class SwipeStudyModel {
                         mediaData: mediaData,
                         sourceURL: url
                     ) {
-                        await showPartialAndUpgrade(liveMedia: mediaData)
+                        // Reached only from retranscribeInstagram — the user asked.
+                        await showPartialAndUpgrade(liveMedia: mediaData, userInitiated: true)
                         return
                     }
 
@@ -2168,9 +2255,37 @@ final class SwipeStudyModel {
         case "pending", "extracting": return "Getting this post…"
         case "transcribing": return "This post is transcribing…"
         case "analyzing": return "Analyzing…"
-        case "extraction_failed": return "Couldn't fetch this post — it retries automatically"
+        case "extraction_failed", "partial", SwipeProcessingService.statusNeedsManualRetry:
+            return "Couldn't fetch this post"
         default: return nil
         }
+    }
+
+    /// True when a swipe has stopped trying and is waiting on the user.
+    ///
+    /// Derived from whether a retry is actually still scheduled, not from the
+    /// status string alone. Retries live inside a short capture window now, so
+    /// a `partial` / `extraction_failed` row whose `processingRetryAfter` has
+    /// passed is finished even though its status still reads mid-flight — which
+    /// is exactly the state every swipe that failed under the old backoff-ladder
+    /// policy is sitting in. Claiming "retrying" there would be a lie, and the
+    /// surface would show no Retry control, stranding the swipe.
+    ///
+    /// Any surface showing this MUST offer a Retry control.
+    static func awaitsManualRetry(_ atom: Atom) -> Bool {
+        let status = atom.processingStatus
+        if status == SwipeProcessingService.statusNeedsManualRetry { return true }
+        guard status == "extraction_failed" || status == "partial" else { return false }
+        let meta = atom.metadataDict
+        // A scheduled retry the budget can no longer honour is not a retry. This
+        // is the state swipes land in the moment they spend their last attempt.
+        let attempts = (meta?["cloudRetryCount"] as? NSNumber)?.intValue ?? 0
+        if attempts >= SwipeProcessingService.cloudMaxRetries { return true }
+        guard let retryAfter = meta?["processingRetryAfter"] as? String,
+              let retryAt = ISO8601.date(from: retryAfter) else {
+            return true  // no retry scheduled at all — nothing is coming
+        }
+        return retryAt <= Date()
     }
 
     static func isProcessingStale(_ atom: Atom) -> Bool {

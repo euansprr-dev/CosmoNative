@@ -154,8 +154,9 @@ public final class TaskRecommendationEngine: ObservableObject {
         var score = 0.0
         var primaryReason: RecommendationReason = .userPrioritized
 
-        // 1. Deadline pressure (0-1, higher = more urgent)
-        let deadlineScore = calculateDeadlineScore(dueDate: task.dueDate)
+        // 1. Deadline pressure (0-1, higher = more urgent) — judged from the
+        // planned day (the task's one date), never a stale dueDate twin.
+        let deadlineScore = calculateDeadlineScore(dueDate: task.plannedDate)
         score += deadlineScore * Weights.deadline
 
         if let hours = task.hoursUntilDue, hours <= 48 {

@@ -161,10 +161,14 @@ enum SwipePatternWeaver {
         let prompt = buildPrompt(cards: cards, patterns: store.patterns)
 
         do {
+            // reasoning OFF: Sonnet 5's default adaptive thinking shares the
+            // max_tokens budget — at 3000 a big weave batch returned empty
+            // content (all budget spent thinking). Structured JSON out only.
             let raw = try await ResearchService.shared.analyze(
                 prompt: prompt,
                 tier: weaveTier,
-                maxTokens: 3000
+                maxTokens: 3000,
+                disableReasoning: true
             )
             guard let response = parseResponse(raw) else {
                 print("SwipePatternWeaver: Unparseable weave response")

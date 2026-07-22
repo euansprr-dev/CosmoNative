@@ -36,16 +36,6 @@ final class SwipeProcessingService {
     /// UUIDs currently being processed — prevents duplicate work
     private var inFlightUUIDs: Set<String> = []
 
-    /// Last time we force-retried a stale "partial"/"extraction_failed" swipe, keyed by
-    /// UUID. Throttles re-attempts so a permanently-unresolvable post (e.g. deleted upstream,
-    /// or a private account) can't be hammered on every launch / foreground / sync tick.
-    /// In-memory only: a fresh launch is allowed exactly one retry per stale swipe, which is
-    /// precisely the behavior we want — it self-heals the common "worked the next day" case.
-    private var recentExtractionAttempts: [String: Date] = [:]
-
-    /// Minimum gap between forced extraction retries of the same swipe (30 minutes).
-    private static let extractionRetryThrottle: TimeInterval = 1800
-
     private init() {}
 
     nonisolated static func isLikelyCarouselPostURL(_ url: URL) -> Bool {
@@ -95,62 +85,40 @@ final class SwipeProcessingService {
 
     // MARK: - Pending Swipe Scanner
 
-    /// A swipe awaiting processing, tagged with whether it represents a stale prior
-    /// failure (`partial` / `extraction_failed`) that warrants a forced extraction retry,
-    /// versus a fresh item that just needs its first normal pass.
+    /// A swipe that has never had a completed pass and needs its first one.
     private struct PendingSwipeCandidate: Sendable {
         let uuid: String
-        let needsForcedRetry: Bool
     }
 
     /// Scan for swipes that still need processing and route them appropriately.
     /// Safe to call multiple times — `inFlightUUIDs` prevents double-processing and the
-    /// `recentExtractionAttempts` throttle prevents hammering unresolvable posts.
     ///
-    /// Fresh items go through the bounded-parallelism batch path. Stale prior failures
-    /// (`partial`/`extraction_failed`) get a throttled `forceExtractionRetry` so a swipe
-    /// that failed once — e.g. a Telegram save that hit a transient Instagram rate limit —
-    /// is automatically re-attempted later instead of staying permanently stuck.
+    /// FIRST PASSES ONLY. This scan fires on launch, on wake from sleep, and on every
+    /// sync cycle, so anything it retries runs unattended and unbounded in time. It used
+    /// to force-retry stale `partial`/`extraction_failed` swipes on each of those
+    /// triggers, which meant a swipe that failed in the evening was still buying full
+    /// transcription passes hours later. Failures are now terminal until the user asks
+    /// for a retry — see `processSwipeInBackground(uuid:forceExtractionRetry:)`, which
+    /// the Study view calls from an explicit Retry control.
     func scanForPendingSwipes() {
         Task {
             let candidates = await fetchPendingSwipeCandidates()
             guard !candidates.isEmpty else { return }
 
-            let now = Date()
-            // Drop throttle entries that have aged out so the map can't grow unbounded.
-            recentExtractionAttempts = recentExtractionAttempts.filter {
-                now.timeIntervalSince($0.value) < Self.extractionRetryThrottle
-            }
-
-            var freshUUIDs: [String] = []
-            var retryUUIDs: [String] = []
-            for candidate in candidates {
-                guard candidate.needsForcedRetry else {
-                    freshUUIDs.append(candidate.uuid)
-                    continue
-                }
-                if let last = recentExtractionAttempts[candidate.uuid],
-                   now.timeIntervalSince(last) < Self.extractionRetryThrottle {
-                    continue  // attempted within the throttle window — skip this pass
-                }
-                recentExtractionAttempts[candidate.uuid] = now
-                retryUUIDs.append(candidate.uuid)
-            }
-
-            if !freshUUIDs.isEmpty {
-                print("SwipeProcessingService: Found \(freshUUIDs.count) pending swipes from cloud sync")
-                processBatch(uuids: freshUUIDs)
-            }
-            for uuid in retryUUIDs {
-                print("SwipeProcessingService: Re-attempting stale swipe \(uuid) with forced extraction retry")
-                processSwipeInBackground(uuid: uuid, forceExtractionRetry: true)
-            }
+            let uuids = candidates.map(\.uuid)
+            print("SwipeProcessingService: Found \(uuids.count) unprocessed swipes from cloud sync")
+            processBatch(uuids: uuids)
         }
     }
 
     private nonisolated func fetchPendingSwipeCandidates() async -> [PendingSwipeCandidate] {
         do {
             return try await CosmoDatabase.shared.asyncRead { db in
+                // Prior failures are excluded outright, not ranked lower: a swipe that
+                // already burned a pass costs the same to re-run as a fresh one, and this
+                // query runs on every launch, wake and sync. `needs_manual_retry` is the
+                // cloud worker's terminal state; `partial` / `extraction_failed` are its
+                // in-window states, which are the worker's to finish, not the Mac's.
                 let rows = try Row.fetchAll(db, sql: """
                     SELECT uuid, metadata, updated_at FROM atoms
                     WHERE type = 'research'
@@ -158,6 +126,9 @@ final class SwipeProcessingService {
                     AND metadata LIKE '%"isSwipeFile":true%'
                     AND metadata NOT LIKE '%"processingStatus":"complete"%'
                     AND metadata NOT LIKE '%"processingStatus":"error"%'
+                    AND metadata NOT LIKE '%"processingStatus":"needs_manual_retry"%'
+                    AND metadata NOT LIKE '%"processingStatus":"partial"%'
+                    AND metadata NOT LIKE '%"processingStatus":"extraction_failed"%'
                     LIMIT 50
                     """)
                 return rows.compactMap { row in
@@ -165,14 +136,16 @@ final class SwipeProcessingService {
                     let metadata = (row["metadata"] as? String) ?? ""
                     // Railway-first: the cloud worker owns instagram/youtube/
                     // twitter swipes. The Mac is strictly the fallback tier —
-                    // it steps in only when the worker's claim went stale, its
-                    // retry budget ran out, or it never showed up at all.
+                    // it steps in only when the worker's claim went stale or it
+                    // never showed up at all.
                     let updatedAt = (row["updated_at"] as? String).flatMap(ISO8601.date(from:))
                     if !Self.macMayProcess(metadataJSON: metadata, updatedAt: updatedAt) { return nil }
-                    let needsForcedRetry =
-                        metadata.contains("\"processingStatus\":\"partial\"") ||
-                        metadata.contains("\"processingStatus\":\"extraction_failed\"")
-                    return PendingSwipeCandidate(uuid: uuid, needsForcedRetry: needsForcedRetry)
+                    // Already had its pass. A swipe that never reaches a terminal
+                    // status would otherwise be re-run by every launch, wake and
+                    // sync, forever — the state six February clipboard captures
+                    // were still in five months later.
+                    if !Self.withinCaptureWindow(metadataJSON: metadata) { return nil }
+                    return PendingSwipeCandidate(uuid: uuid)
                 }
             }
         } catch {
@@ -204,17 +177,71 @@ final class SwipeProcessingService {
         return now.timeIntervalSince(claimedAt) < 15 * 60
     }
 
+    // MARK: - Capture window
+
+    /// Mirror of the worker's RETRY_WINDOW_MINUTES. Processing is a capture-time
+    /// affordance on both tiers: past this, only an explicit user retry runs.
+    nonisolated static let captureWindow: TimeInterval = 15 * 60
+
+    /// Shared with the cloud worker (`processingFirstAttemptAt`) — whichever tier
+    /// touches a swipe first sets it, and both measure their window from it.
+    nonisolated static let firstAttemptKey = "processingFirstAttemptAt"
+
+    /// True while a swipe is still eligible for automatic processing.
+    ///
+    /// No stamp means it has never been attempted, so a genuine first pass is
+    /// always allowed — including for the whole pre-existing library, which has
+    /// no stamp. Those get exactly one pass, then settle.
+    nonisolated static func withinCaptureWindow(
+        metadataJSON: String?,
+        now: Date = Date()
+    ) -> Bool {
+        guard let metadataJSON,
+              let data = metadataJSON.data(using: .utf8),
+              let meta = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let stamped = meta[firstAttemptKey] as? String,
+              let firstAttempt = ISO8601.date(from: stamped) else {
+            return true
+        }
+        return now.timeIntervalSince(firstAttempt) <= captureWindow
+    }
+
+    /// Record that a pass has been attempted, once. Without this a swipe that
+    /// never reaches a terminal status stays `pending` forever and is re-run by
+    /// every launch, wake and sync — six February clipboard captures were still
+    /// being reprocessed in July, each costing an analysis call per scan.
+    private func stampFirstAttemptIfNeeded(uuid: String) {
+        Task {
+            guard var atom = try? await AtomRepository.shared.fetch(uuid: uuid) else { return }
+            var meta = atom.metadataDict ?? [:]
+            // Once only — a later manual retry must not reopen the window.
+            guard meta[Self.firstAttemptKey] == nil else { return }
+            meta[Self.firstAttemptKey] = ISO8601.string(from: Date())
+            // Merge through the full existing dict rather than a typed setter:
+            // ResearchMetadata has no field for this key (nor for the worker's
+            // cloudRetryCount / processingRetryAfter), and re-encoding the typed
+            // struct alone would drop every key it doesn't model.
+            guard let data = try? JSONSerialization.data(withJSONObject: meta),
+                  let json = String(data: data, encoding: .utf8) else { return }
+            atom.metadata = json
+            _ = try? await AtomRepository.shared.update(atom)
+        }
+    }
+
     // MARK: - Railway-First Policy
 
     /// Grace the Railway worker gets to claim a fresh pending swipe before the
     /// Mac steps in. The worker ticks every 15 seconds and finishes a swipe in
     /// one to two minutes — minutes of silence means it is down or unreachable.
     nonisolated static let cloudPendingGrace: TimeInterval = 10 * 60
-    /// Slack past the worker's own scheduled retry (`processingRetryAfter`)
-    /// before the Mac concludes the worker missed its window and takes over.
-    nonisolated static let cloudRetryGrace: TimeInterval = 5 * 60
     /// Mirror of the worker's MAX_CLOUD_RETRIES — at this count it has given up.
+    /// Kept at the old 5 rather than the worker's new 2: swipes already carrying
+    /// counts of 3–5 from the previous policy must still read as exhausted.
     nonisolated static let cloudMaxRetries = 5
+
+    /// Mirror of the worker's STATUS_NEEDS_RETRY — terminal, awaiting a human.
+    /// See cosmo-cloud-agent/src/swipes/processor.ts.
+    nonisolated static let statusNeedsManualRetry = "needs_manual_retry"
 
     /// The Railway worker owns instagram / youtube / twitter swipes — the same
     /// scope check as `inWorkerScope` in cosmo-cloud-agent/src/swipes/types.ts.
@@ -233,14 +260,20 @@ final class SwipeProcessingService {
         return false
     }
 
-    /// Railway-first: may the Mac process this swipe right now, or does the
-    /// cloud worker still own it? The worker is the primary pipeline for its
-    /// scope; the Mac is strictly the fallback tier and only steps in when the
-    /// worker has demonstrably failed or gone quiet:
+    /// Railway-first: may the Mac AUTOMATICALLY process this swipe right now?
+    /// The worker is the primary pipeline for its scope; the Mac is strictly the
+    /// fallback tier and only steps in when the worker has gone quiet:
     ///   • in-flight claim gone stale (worker died mid-swipe)
     ///   • pending with no worker activity past the grace window (worker down)
-    ///   • failed/partial with the worker's retry budget exhausted, or its
-    ///     scheduled retry missed by more than the grace window
+    ///
+    /// A worker that ran out of retry budget is NOT a reason to step in. It used
+    /// to be, which meant a swipe the cloud had already spent five full passes on
+    /// earned a sixth one locally — on every launch, wake and sync. Exhausted is
+    /// now terminal for automatic paths; only an explicit user retry revives it.
+    ///
+    /// This governs automatic processing only. `processSwipeInBackground(
+    /// uuid:forceExtractionRetry:)` deliberately does not consult it, so the
+    /// Study view's Retry control still works on a swipe parked here.
     nonisolated static func macMayProcess(
         metadataJSON: String?,
         updatedAt: Date?,
@@ -265,12 +298,17 @@ final class SwipeProcessingService {
         case "pending":
             guard let updatedAt else { return false }
             return now.timeIntervalSince(updatedAt) > cloudPendingGrace
+        case statusNeedsManualRetry:
+            // The worker retired it. Nothing automatic revives it, ever.
+            return false
         case "partial", "extraction_failed":
             let attempts = (meta["cloudRetryCount"] as? NSNumber)?.intValue ?? 0
-            if attempts >= cloudMaxRetries { return true }
-            if let retryStr = meta["processingRetryAfter"] as? String,
-               let retryAt = ISO8601.date(from: retryStr) {
-                return now.timeIntervalSince(retryAt) > cloudRetryGrace
+            // Budget spent — the cloud is done trying and so is the Mac.
+            if attempts >= cloudMaxRetries { return false }
+            if meta["processingRetryAfter"] != nil {
+                // The worker has a retry scheduled inside its capture window.
+                // Let it finish; a parallel Mac pass just duplicates the spend.
+                return false
             }
             // No cloud bookkeeping at all — the worker has never touched it.
             guard let updatedAt else { return false }
@@ -302,7 +340,6 @@ final class SwipeProcessingService {
     /// Fire-and-forget background processing for a single swipe (clipboard capture path)
     func processSwipeInBackground(
         uuid: String,
-        skipAutoAdaptation: Bool = false,
         forceExtractionRetry: Bool = false
     ) {
         guard !inFlightUUIDs.contains(uuid) else {
@@ -310,16 +347,11 @@ final class SwipeProcessingService {
             return
         }
         inFlightUUIDs.insert(uuid)
+        stampFirstAttemptIfNeeded(uuid: uuid)
 
         Task.detached { [weak self] in
             if let output = await self?.transcribe(uuid: uuid, forceExtractionRetry: forceExtractionRetry) {
                 await self?.persistAndAnalyze(output: output)
-
-                // Auto-generate hook adaptations for each client profile
-                if !skipAutoAdaptation {
-                    if let atom = try? await AtomRepository.shared.fetch(uuid: uuid) {
-                    }
-                }
             }
             await MainActor.run { self?.inFlightUUIDs.remove(uuid) }
         }
@@ -382,9 +414,18 @@ final class SwipeProcessingService {
         // (scanner, realtime push, UI actions) — if the cloud worker still owns
         // this swipe, the Mac stays out of its way entirely: no status writes,
         // no racing transcription that would overwrite the worker's result.
+        // A user-initiated Retry (forceExtractionRetry) overrides the RETIRED
+        // states — needs_manual_retry / exhausted partial — which macMayProcess
+        // deliberately refuses for automatic paths; without this override the
+        // Study Retry button was a silent no-op. It still never races a LIVE
+        // cloud claim.
         if !Self.macMayProcess(metadataJSON: atom.metadata, updatedAt: ISO8601.date(from: atom.updatedAt)) {
-            print("SwipeProcessingService: \(uuid.prefix(8)) belongs to the cloud worker — deferring (Railway-first)")
-            return nil
+            let liveClaim = atom.metadata.map { Self.hasLiveCloudClaim(metadataJSON: $0) } ?? false
+            if !forceExtractionRetry || liveClaim {
+                print("SwipeProcessingService: \(uuid.prefix(8)) belongs to the cloud worker — deferring (Railway-first)")
+                return nil
+            }
+            print("SwipeProcessingService: \(uuid.prefix(8)) user-forced retry overrides retired cloud state")
         }
         let cloudCompleteAtStart = Self.isCloudComplete(metadataJSON: atom.metadata)
 

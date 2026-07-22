@@ -259,9 +259,9 @@ struct ProjectDetailView: View {
                     .foregroundStyle(progress.completed == progress.total ? DS.green : DS.textMuted)
             }
 
-            // Deadline
-            if let deadline = task.deadline {
-                deadlineBadge(deadline)
+            // The task's day
+            if let day = task.plannedDate {
+                deadlineBadge(day)
             }
         }
         .padding(.horizontal, DS.space16)

@@ -2957,7 +2957,14 @@ class AgentToolExecutor {
             "isUnscheduled": true
         ]
         if let intent = intent { metaDict["intent"] = intent }
-        if let dueDate = dueDate { metaDict["dueDate"] = dueDate }
+        if let dueDate = dueDate {
+            // Day-pin contract: the three pins are born together (a due-only
+            // task strands on one device once any other pin is written).
+            metaDict["dueDate"] = dueDate
+            metaDict["focusDate"] = dueDate
+            metaDict["whenDate"] = dueDate
+            metaDict["isUnscheduled"] = false
+        }
 
         let metaJSON: String?
         if let data = try? JSONSerialization.data(withJSONObject: metaDict),

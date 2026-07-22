@@ -117,7 +117,11 @@ struct CosmoApp: App {
             await AtomRevisionPruner.pruneIfDue()
         }
 
-        // Observe system wake to process swipes captured while asleep
+        // Observe system wake: rebuild the realtime socket, force a pull, then
+        // process swipes captured while asleep. The websocket rarely survives
+        // sleep and previously had NO reconnect path anywhere — after wake the
+        // only pull channel left was the 5-minute poll timer, so iPhone
+        // captures appeared hours (or days) late on this Mac.
         NotificationCenter.default.addObserver(
             forName: NSWorkspace.didWakeNotification,
             object: nil,
@@ -125,6 +129,10 @@ struct CosmoApp: App {
         ) { _ in
             Task { @MainActor in
                 try? await Task.sleep(for: .seconds(10))
+                if SupabaseAuthService.shared.isSignedIn {
+                    RealtimeSyncService.shared.reconnect()
+                    await SyncEngine.shared.forceSync()
+                }
                 SwipeProcessingService.shared.scanForPendingSwipes()
             }
         }

@@ -71,7 +71,12 @@ IGNORE:
 - Text in background images (not overlaid by creator)
 - Author attribution on a screenshotted post: many slides are screenshots of a tweet, thread, or other social post. The attribution header/footer of that embedded post — profile photo, display name, @username handle, verified badge, timestamp, and like/reply/retweet counts — is attribution, NOT content. Skip it entirely and read ONLY the post's body text, verbatim. Example: for a tweet screenshot reading "Brennan Schlagbaum, CPA @Budgetdog_ / How To Retire Early…", output starts at "How To Retire Early" — the name and handle are never included.
 
-Return ONLY the text content as a single string. PRESERVE the line breaks from the original slide — if text appears on separate lines in the image, keep them on separate lines in your output. Do not merge lines into one flowing sentence.
+Return ONLY the text content as a single string.
+FORMATTING RULES:
+- JOIN wrapped lines: text that wraps across multiple lines INSIDE one text block is one flowing sentence — never keep the image's visual line wrapping. A card reading "My stockmarket portfolio / made a gain of almost $700k / in 12 months" is ONE line: "My stockmarket portfolio made a gain of almost $700k in 12 months".
+- One line per sentence: when a block contains several sentences, each sentence goes on its own line.
+- One line per distinct element: separate text blocks/cards, headings, and standalone labels or big stats each get their own line (a card showing "RETURN" above "$695,613.43" is two lines).
+- List items keep their bullet/number/arrow markers, one item per line. Never merge two list items into one line.
 If no readable text is found, return an empty string.`;
 
 /**

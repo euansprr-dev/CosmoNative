@@ -706,6 +706,17 @@ class SyncEngine: ObservableObject {
             if let maxPulled = maxPulledUpdatedAt {
                 var newCursor = maxPulled.addingTimeInterval(-pullCursorOverlap)
                 if let lastSync, newCursor < lastSync { newCursor = lastSync }
+                // Clamp against the future: ONE remote row with a skewed
+                // updated_at (bad writer clock, server default gone wrong)
+                // would otherwise park the watermark days ahead — and every
+                // normal row after it fails `updated_at > cursor` until
+                // wall-clock catches up. That is a silent multi-day pull
+                // freeze with pushes still working.
+                let now = Date()
+                if newCursor > now {
+                    print("⚠️ Pull cursor for \(table) clamped: future updated_at \(ISO8601.string(from: newCursor)) → now")
+                    newCursor = now
+                }
                 await updateLastPullTime(for: table, to: newCursor)
             }
         }

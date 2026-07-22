@@ -22,8 +22,6 @@ struct CommandKComposerDraft: Equatable {
 
     // MARK: Task facets (typed — the iOS TaskComposerView contract)
 
-    /// Planned-for day (focusDate) when set independently of the due date.
-    var focusDate: Date?
     /// Scheduling estimate in minutes (None/15/25/45/60/120 presets).
     var durationMinutes: Int?
     /// Timed-task goal — tracking this much time prompts completion.

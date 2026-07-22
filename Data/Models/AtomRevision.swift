@@ -248,6 +248,50 @@ enum AtomRevisionWriter {
             print("AtomRevisionWriter: pre-sync snapshot failed for \(uuid.prefix(8)): \(error)")
         }
     }
+
+    /// Snapshot the current local row before a raw-SQL content overwrite.
+    ///
+    /// For editor write paths that issue `UPDATE atoms SET …` directly instead
+    /// of going through `AtomRepository.update()` — the note editor's autosave
+    /// and close save. Those bypassed the repository, so notes silently
+    /// accumulated NO history at all: the gap that made the July 20 2026 note
+    /// data loss unrecoverable (see the editor live-textStorage bug).
+    ///
+    /// Runs inside the caller's transaction so the snapshot and the overwrite
+    /// are atomic, applies the same policy as `snapshotIfNeeded` (so `.userEdit`
+    /// stays debounced rather than snapshotting every autosave), and never
+    /// throws upward — losing a snapshot must never block a save.
+    static func snapshotBeforeRawWrite(
+        _ db: Database,
+        uuid: String,
+        incomingTitle: String?,
+        incomingBody: String?,
+        source: RevisionSource = .userEdit
+    ) {
+        guard tableExists(db) else { return }
+        do {
+            guard let previous = try Atom
+                .filter(Atom.CodingKeys.uuid == uuid)
+                .filter(Atom.CodingKeys.isDeleted == false)
+                .fetchOne(db),
+                AtomRevisionPolicy.isEligible(previous)
+            else { return }
+
+            var incoming = previous
+            incoming.title = incomingTitle
+            incoming.body = incomingBody
+
+            let last = try lastRevisionDate(db, atomUuid: uuid)
+            guard AtomRevisionPolicy.shouldSnapshot(
+                previous: previous, incoming: incoming, source: source, lastRevisionAt: last
+            ) else { return }
+
+            var revision = AtomRevision(of: previous, source: source)
+            try revision.insert(db)
+        } catch {
+            print("AtomRevisionWriter: raw-write snapshot failed for \(uuid.prefix(8)): \(error)")
+        }
+    }
 }
 
 // MARK: - Pruning Policy

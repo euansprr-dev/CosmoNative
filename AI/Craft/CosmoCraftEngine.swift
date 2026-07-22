@@ -55,6 +55,7 @@ enum CraftEngineError: LocalizedError {
     case noAPIKey
     case apiError(String)
     case emptyResponse
+    case truncated
 
     var errorDescription: String? {
         switch self {
@@ -64,6 +65,8 @@ enum CraftEngineError: LocalizedError {
             return "Craft engine call failed: \(detail)"
         case .emptyResponse:
             return "The model returned no usable text."
+        case .truncated:
+            return "The model hit its output ceiling before finishing — the result was cut off."
         }
     }
 }
@@ -161,10 +164,25 @@ enum CosmoCraftEngine {
             throw CraftEngineError.apiError("unparseable response body")
         }
 
-        // Adaptive thinking can prepend thinking blocks — the deliverable is
-        // the first text block.
-        guard let text = content.first(where: { $0["type"] as? String == "text" })?["text"] as? String,
-              !text.isEmpty else {
+        // A ceiling hit truncates the payload mid-structure; failing here names
+        // the real cause instead of surfacing a confusing downstream parse error.
+        if json["stop_reason"] as? String == "max_tokens" {
+            throw CraftEngineError.truncated
+        }
+        if json["stop_reason"] as? String == "refusal" {
+            let category = (json["stop_details"] as? [String: Any])?["category"] as? String
+            throw CraftEngineError.apiError("the model declined this request\(category.map { " (\($0))" } ?? "")")
+        }
+
+        // Adaptive thinking can prepend thinking blocks, and the model
+        // occasionally emits a short false-start block before the real answer —
+        // taking `.first` silently picked the false start. The deliverable is the
+        // longest text block; `candidatePayloads` handles JSON inside it.
+        let textBlocks = content
+            .filter { $0["type"] as? String == "text" }
+            .compactMap { $0["text"] as? String }
+            .filter { !$0.isEmpty }
+        guard let text = textBlocks.max(by: { $0.count < $1.count }) else {
             throw CraftEngineError.emptyResponse
         }
 
@@ -267,20 +285,21 @@ enum CosmoCraftEngine {
         ]
     }
 
+    /// `minLength` and `minItems` are NOT supported by structured outputs.
+    /// Constrained decoding enforces `type`, `enum`, `required` (key present) and
+    /// `additionalProperties` — string-length and array-count assertions are
+    /// silently ignored. The Python/TS SDKs strip unsupported constraints and
+    /// validate client-side; this is raw HTTP, so emitting them bought nothing
+    /// but false confidence (and would invite a 400 if validation ever tightens).
+    ///
+    /// The parameters stay because the call sites use them to document which
+    /// fields may legitimately be empty. Real enforcement is `craftValidationIssue`.
     private static func string(_ description: String, minLength: Int = 1) -> [String: Any] {
-        var schema: [String: Any] = ["type": "string", "description": description]
-        if minLength > 0 {
-            schema["minLength"] = minLength
-        }
-        return schema
+        ["type": "string", "description": description]
     }
 
     private static func array(_ items: [String: Any], minItems: Int = 0) -> [String: Any] {
-        var schema: [String: Any] = ["type": "array", "items": items]
-        if minItems > 0 {
-            schema["minItems"] = minItems
-        }
-        return schema
+        ["type": "array", "items": items]
     }
 }
 

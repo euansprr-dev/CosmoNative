@@ -391,23 +391,20 @@ export async function getTasks(args: Record<string, any>): Promise<string> {
       const scheduled: Atom[] = [];
       const unscheduled: Atom[] = [];
 
-      // Match Mac app's EXACT Today logic (CommandCenterDashboardViewModel):
-      // Include task if: isDue || isScheduled || isWhen || isOverdue
-      // isOverdue = dueDate < today (ONLY dueDate, not whenDate/focusDate)
+      // Match Mac app's Today logic (CommandCenterDashboardViewModel), one-date
+      // rules (July 2026): a task lives on its PLANNED day (whenDate ??
+      // focusDate ?? dueDate) and is overdue only when that planned day is in
+      // the past — never from a stale dueDate twin sitting behind the planned
+      // day (matches Swift TaskViewModel.isOverdue / plannedDate).
       for (const task of incomplete) {
         const meta = task.metadata || {};
-        const whenDate = extractDate(meta.whenDate);
-        const focusDate = extractDate(meta.focusDate);
-        const dueDate = extractDate(meta.dueDate);
+        const plannedDay = getTaskDate(meta);
 
-        const isWhen = whenDate === today;
-        const isFocus = focusDate === today;
-        const isDue = dueDate === today;
-        // isOverdue: ONLY from dueDate (matching Swift TaskViewModel.isOverdue)
-        const isOverdue = dueDate !== null && dueDate < today;
+        const isPlannedToday = plannedDay === today;
+        const isOverdue = plannedDay !== null && plannedDay < today;
 
-        // Include if ANY date matches today OR task is overdue
-        if (!isWhen && !isFocus && !isDue && !isOverdue) continue;
+        // Include if planned today OR overdue (overdue rides along on today)
+        if (!isPlannedToday && !isOverdue) continue;
 
         // Section assignment:
         // Mac app shows ALL qualifying tasks as "Due today" — no separate OVERDUE section.

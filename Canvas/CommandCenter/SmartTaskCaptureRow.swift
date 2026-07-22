@@ -318,11 +318,13 @@ struct SmartTaskCaptureRow: View {
                     )
                 }
 
+                // "deadline:" is legacy capture grammar — it now sets the
+                // task's one date, so the chip speaks the unified language.
                 if let deadline = parsedInput.deadline {
                     metadataChip(
-                        icon: "flag.fill",
-                        label: "Deadline: \(formatChipDate(deadline))",
-                        color: DS.orange
+                        icon: "calendar",
+                        label: formatChipDate(deadline),
+                        color: DS.accent
                     )
                 }
             }

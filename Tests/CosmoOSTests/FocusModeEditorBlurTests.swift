@@ -123,6 +123,43 @@ final class FocusModeEditorBlurTests: XCTestCase {
         XCTAssertEqual(textView.string, "body paste")
     }
 
+    func testBystanderContentEditorDoesNotCollapseFocusedSelectionOnCopy() {
+        // Two Content Focus panes = two CosmoTextViews in ONE window. The
+        // window's key-equivalent traversal reaches every text view, so a
+        // bystander pane must not steal/collapse the focused pane's selection
+        // when ⌘C is pressed — otherwise copy writes an empty pasteboard and the
+        // later paste inserts nothing.
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 360, height: 120),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 120))
+        // The bystander is added first so it is the one a real traversal would
+        // reach ahead of the focused editor.
+        let bystander = CosmoTextView(frame: NSRect(x: 0, y: 0, width: 160, height: 100))
+        let focused = CosmoTextView(frame: NSRect(x: 180, y: 0, width: 160, height: 100))
+        bystander.isEditable = true
+        focused.isEditable = true
+        contentView.addSubview(bystander)
+        contentView.addSubview(focused)
+        window.contentView = contentView
+
+        focused.string = "hello world"
+        focused.setSelectedRange(NSRange(location: 0, length: 5))
+        XCTAssertTrue(window.makeFirstResponder(focused))
+        FocusModeTextClipboardTarget.activate(focused)
+
+        NSPasteboard.general.clearContents()
+
+        // Simulate the traversal reaching the bystander first.
+        XCTAssertTrue(bystander.performKeyEquivalent(with: commandKeyEvent("c")))
+
+        XCTAssertEqual(focused.selectedRange(), NSRange(location: 0, length: 5))
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), "hello")
+    }
+
     func testFocusModeClipboardPrefersCurrentFieldEditorOverStaleActiveTarget() {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 360, height: 120),

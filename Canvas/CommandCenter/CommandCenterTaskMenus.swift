@@ -21,13 +21,11 @@ struct CommandCenterComposerAnchor: Equatable {
 enum CommandCenterTaskDateTarget: Equatable {
     case dueDate
     case whenDate
-    case deadline
 
     var title: String {
         switch self {
         case .dueDate: return "Schedule"
-        case .whenDate: return "When"
-        case .deadline: return "Deadline"
+        case .whenDate: return "Date"
         }
     }
 }
@@ -396,9 +394,6 @@ struct CommandCenterComposerHost: View {
             } else {
                 Task { await viewModel.setWhenDate(taskUUID: task.uuid, date: date) }
             }
-        case .deadline:
-            guard case let .date(date) = selection else { return }
-            Task { await viewModel.setDeadline(taskUUID: task.uuid, date: date) }
         }
     }
 
@@ -1083,7 +1078,7 @@ struct CommandCenterTaskActionComposer: View {
         switch activeTab {
         case .schedule:
             CommandCenterScheduleSection(
-                currentDate: task.dueDate ?? task.whenDate,
+                currentDate: task.plannedDate,
                 includeNilActions: true,
                 showSomedayAction: true,
                 onSelect: { selection in
@@ -1235,7 +1230,7 @@ struct CommandCenterTaskActionComposer: View {
         case .weekdays:
             return Set(DayOfWeek.weekdays)
         case .daily, .monthly, .weekly, .custom:
-            let weekday = Calendar.current.component(.weekday, from: task.dueDate ?? Date())
+            let weekday = Calendar.current.component(.weekday, from: task.plannedDate ?? Date())
             return Set(DayOfWeek.allCases.filter { $0.rawValue == weekday })
         }
     }
@@ -1250,7 +1245,7 @@ struct CommandCenterTaskActionComposer: View {
             let orderedDays = selectedDays.isEmpty ? Array(defaultDays(for: .weekly)) : Array(selectedDays)
             return .weekly(on: orderedDays.sorted { $0.rawValue < $1.rawValue })
         case .monthly:
-            let day = Calendar.current.component(.day, from: task.dueDate ?? Date())
+            let day = Calendar.current.component(.day, from: task.plannedDate ?? Date())
             return .monthly(onDay: day)
         case .custom:
             let orderedDays = selectedDays.isEmpty ? Array(defaultDays(for: .custom)) : Array(selectedDays)
@@ -2319,7 +2314,6 @@ extension TaskViewModel {
             recommendationScore: 0,
             recommendationReason: nil,
             whenDate: Date(),
-            deadline: Calendar.current.date(byAdding: .day, value: 3, to: Date()),
             timeOfDay: "morning",
             schedulingState: nil,
             headingUUID: nil,

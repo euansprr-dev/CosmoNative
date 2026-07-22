@@ -599,7 +599,13 @@ final class ComposerNSTextView: NSTextView {
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        FocusModeTextClipboardTarget.activate(self)
+        // Only claim the clipboard target when focused. The window delivers key
+        // equivalents to every text view during traversal, and activating a
+        // bystander collapses the real first responder's selection (see the
+        // matching note in CosmoTextView.performKeyEquivalent).
+        if window?.firstResponder === self {
+            FocusModeTextClipboardTarget.activate(self)
+        }
         if FocusModeTextClipboardTarget.performKeyEquivalent(event, fallback: self) {
             return true
         }

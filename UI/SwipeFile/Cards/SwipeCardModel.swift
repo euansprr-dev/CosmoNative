@@ -121,7 +121,9 @@ extension SwipeCardModel {
         let processing: SwipeCardProcessing
         switch item.processingStatus {
         case nil, "complete": processing = .ready
-        case "extraction_failed": processing = .failed
+        // Retired swipes read as failed, not pending — nothing is coming, so a
+        // pending spinner would promise work that will never happen.
+        case "extraction_failed", SwipeProcessingService.statusNeedsManualRetry: processing = .failed
         default: processing = .pending
         }
 

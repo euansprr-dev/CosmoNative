@@ -32,57 +32,79 @@ struct TokenWashTextView: NSViewRepresentable {
     @Binding var isFocused: Bool
     var onSubmit: () -> Void = {}
 
-    func makeNSView(context: Context) -> WashTextView {
+    func makeNSView(context: Context) -> NSScrollView {
         // Explicit TextKit 2 stack — never touch .layoutManager, which downgrades.
-        let view = WashTextView(usingTextLayoutManager: true)
-        view.configureWashField()
-        view.delegate = context.coordinator
-        return view
+        let textView = WashTextView(usingTextLayoutManager: true)
+        textView.configureWashField()
+        textView.delegate = context.coordinator
+
+        // An NSTextView belongs inside an NSScrollView: the scroll view is the
+        // pane that CLIPS overflow and scrolls it. Without it the field —
+        // vertically resizable — grows its own frame past the capped box and
+        // the text spills out. We keep the scroller hidden so the input stays
+        // a calm glass box; the scroll wheel and caret-follow still work, so a
+        // long capture scrolls within its four lines instead of falling out.
+        let scrollView = NSScrollView()
+        scrollView.documentView = textView
+        scrollView.drawsBackground = false
+        scrollView.contentView.drawsBackground = false
+        scrollView.borderType = .noBorder
+        scrollView.hasVerticalScroller = false
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.verticalScrollElasticity = .allowed
+        scrollView.horizontalScrollElasticity = .none
+        return scrollView
     }
 
-    func updateNSView(_ nsView: WashTextView, context: Context) {
+    func updateNSView(_ nsView: NSScrollView, context: Context) {
+        guard let textView = nsView.documentView as? WashTextView else { return }
         context.coordinator.parent = self
 
-        nsView.font = font
-        nsView.insertionPointColor = caretTint
+        textView.font = font
+        textView.insertionPointColor = caretTint
 
-        if nsView.string != text {
-            nsView.string = text
+        if textView.string != text {
+            textView.string = text
             // External rewrites (suggestion acceptance) land the caret at the end.
-            nsView.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
+            textView.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
+            textView.scrollCaretToVisible()
         }
 
-        nsView.placeholderLabel.stringValue = placeholder
-        nsView.placeholderLabel.font = font
-        nsView.placeholderLabel.textColor = NSColor(DS.textMuted)
-        nsView.placeholderLabel.isHidden = !text.isEmpty
+        textView.placeholderLabel.stringValue = placeholder
+        textView.placeholderLabel.font = font
+        textView.placeholderLabel.textColor = NSColor(DS.textMuted)
+        textView.placeholderLabel.isHidden = !text.isEmpty
 
-        nsView.applyInk(ink, font: font, segments: segments)
-        nsView.ghost = ghostText.map { ($0, ghostColor) }
+        textView.applyInk(ink, font: font, segments: segments)
+        textView.ghost = ghostText.map { ($0, ghostColor) }
 
         // Focus sync — deferred so first-responder moves never happen inside
         // a SwiftUI update pass. The block re-reads the CURRENT desire at
         // execution time so a stale capture can't fight a dismissal.
         let coordinator = context.coordinator
-        DispatchQueue.main.async { [weak nsView] in
-            guard let nsView, let window = nsView.window else { return }
+        DispatchQueue.main.async { [weak textView] in
+            guard let textView, let window = textView.window else { return }
             let wantsFocus = coordinator.parent.isFocused
-            let isFirstResponder = window.firstResponder === nsView
+            let isFirstResponder = window.firstResponder === textView
             if wantsFocus, !isFirstResponder {
-                window.makeFirstResponder(nsView)
+                window.makeFirstResponder(textView)
             }
         }
 
-        nsView.needsLayout = true
-        nsView.needsDisplay = true
+        textView.needsLayout = true
+        textView.needsDisplay = true
     }
 
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView: WashTextView, context: Context) -> CGSize? {
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSScrollView, context: Context) -> CGSize? {
+        guard let textView = nsView.documentView as? WashTextView else { return nil }
         let width = proposal.width ?? 400
-        nsView.textContainer?.size = NSSize(width: width, height: .greatestFiniteMagnitude)
-        var height = ceil(nsView.measuredTextHeight())
+        textView.textContainer?.size = NSSize(width: width, height: .greatestFiniteMagnitude)
+        var height = ceil(textView.measuredTextHeight())
         let lineHeight = ceil(font.ascender + abs(font.descender) + font.leading)
         height = max(height, lineHeight)
+        // The cap turns the box from "grows forever" into "scrolls past N lines":
+        // we report the capped height, and the taller text view scrolls inside it.
         if let maxLines {
             height = min(height, ceil(lineHeight * CGFloat(maxLines)) + 1)
         }
@@ -103,6 +125,7 @@ struct TokenWashTextView: NSViewRepresentable {
             guard let view = notification.object as? WashTextView else { return }
             parent.text = view.string
             view.placeholderLabel.isHidden = !view.string.isEmpty
+            view.scrollCaretToVisible()
             view.needsLayout = true
             view.needsDisplay = true
         }
@@ -149,9 +172,16 @@ final class WashTextView: NSTextView {
         drawsBackground = false
         isRichText = false
         allowsUndo = true
+        // The canonical NSTextView-in-NSScrollView geometry: the view grows
+        // vertically with its content and lets the scroll view clip it, while
+        // its width tracks the clip view so wrapping matches what's measured.
         isVerticallyResizable = true
         isHorizontallyResizable = false
+        autoresizingMask = [.width]
+        minSize = NSSize(width: 0, height: 0)
+        maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textContainer?.widthTracksTextView = true
+        textContainer?.size = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         textContainer?.lineFragmentPadding = 0
         textContainerInset = .zero
 
@@ -191,6 +221,12 @@ final class WashTextView: NSTextView {
         guard let textLayoutManager else { return 0 }
         textLayoutManager.ensureLayout(for: textLayoutManager.documentRange)
         return textLayoutManager.usageBoundsForTextContainer.height
+    }
+
+    /// Keep the insertion point inside the visible band as the capture grows
+    /// past the cap — so typing scrolls the field instead of hiding the caret.
+    func scrollCaretToVisible() {
+        scrollRangeToVisible(selectedRange())
     }
 
     override func layout() {

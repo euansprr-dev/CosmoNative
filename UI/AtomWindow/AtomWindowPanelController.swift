@@ -194,6 +194,7 @@ final class AtomWindowPanelController: NSWindowController {
 
     func show() {
         isShown = true
+        panel.alphaValue = 1 // a hide() mid-teardown may have dropped it
         panel.orderFrontRegardless()
         panel.makeKey()
         contentLoadTask?.cancel()
@@ -206,14 +207,34 @@ final class AtomWindowPanelController: NSWindowController {
         isShown = false
         contentLoadTask?.cancel()
         contentLoadTask = nil
+
+        // Commit every surface holding unsaved edits, synchronously, BEFORE the
+        // session is torn down and the editing lock released.
+        DirtyEditorRegistry.shared.flushAll()
+
+        // Then let SwiftUI actually process the teardown. The hosted focus
+        // view's `onDisappear` owns the close-save (and defers one turn so the
+        // editor's pending text sync lands first) — but it only runs if SwiftUI
+        // commits the transaction. Ordering the panel out in the SAME turn as
+        // the unload put the window off-screen first, and AppKit defers
+        // layout/display for an ordered-out window, so that save could never
+        // run. Drop alpha for an instant visual close, order out once the
+        // teardown has been processed.
+        panel.alphaValue = 0
         viewModel.unloadCurrentSession()
-        panel.orderOut(nil)
+        DispatchQueue.main.async { [weak self] in
+            // A show() may have raced in behind us — never yank it back out.
+            guard let self, !self.isShown else { return }
+            self.panel.orderOut(nil)
+            self.panel.alphaValue = 1
+        }
     }
 
     /// Open the panel and navigate to a specific atom
     func show(atomUUID: String) {
         isShown = true
         contentLoadTask?.cancel()
+        panel.alphaValue = 1 // a hide() mid-teardown may have dropped it
         panel.orderFrontRegardless()
         panel.makeKey()
         contentLoadTask = Task { @MainActor in

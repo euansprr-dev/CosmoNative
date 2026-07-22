@@ -917,7 +917,18 @@ final class CosmoTextView: NSTextView {
            BlockSelectionClipboardTarget.send(blockAction) {
             return true
         }
-        FocusModeTextClipboardTarget.activate(self)
+        // Only claim the clipboard target when we are actually the focused
+        // editor. The window's key-equivalent traversal delivers this event to
+        // EVERY CosmoTextView in the window (same reason the block-copy note
+        // above exists), so activating a bystander here would collapse the real
+        // first responder's live selection — which silently emptied ⌘C/⌘X when
+        // two editors share one window (e.g. side-by-side Content Focus panes,
+        // where copy produced an empty pasteboard so paste inserted nothing).
+        // send() already routes the action to the focused view via
+        // currentTextView, so bystanders can defer without losing the action.
+        if window?.firstResponder === self {
+            FocusModeTextClipboardTarget.activate(self)
+        }
         if FocusModeTextClipboardTarget.performKeyEquivalent(event, fallback: self) {
             return true
         }
@@ -1607,6 +1618,29 @@ private func replaceStorageDroppingUndo(_ textView: NSTextView, with attributed:
     textView.undoManager?.removeAllActions()
 }
 
+/// An immutable snapshot of the text view's current content, for handing to
+/// SwiftUI state.
+///
+/// INVARIANT: `NSTextView.attributedString()` returns the LIVE `NSTextStorage`,
+/// not a copy. Assigning it straight into the `attributedText` binding stores
+/// the SAME object SwiftUI already holds, so `onChange(of: attributedText)`
+/// compares a value against itself, reports no change, and never fires — and
+/// `syncDocumentFromEditor()`, the only path that turns typed text into a
+/// `RichDocument`, never runs. The text view keeps accepting keystrokes while
+/// the document silently freezes at whatever it last held, and the next save
+/// persists that stale document. That is the July 20 2026 note data-loss bug:
+/// only the first keystroke after an external content write changed the object
+/// identity, so blocks kept exactly one character unless a Return-split (which
+/// carries `livePlainText` explicitly) happened to rescue them.
+///
+/// Every write of view content into SwiftUI state MUST go through this. Set
+/// `lastReconciledBindingText` to the same snapshot so the update-pass identity
+/// fast path still recognises the binding as already-applied.
+@MainActor
+private func viewContentSnapshot(_ textView: NSTextView) -> NSAttributedString {
+    NSAttributedString(attributedString: textView.attributedString())
+}
+
 struct TextKitEditorRepresentable: NSViewRepresentable {
     @Binding var attributedText: NSAttributedString
     @Binding var plainText: String
@@ -1971,7 +2005,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             if let coordinator, let tv = coordinator.textViewReference,
                !coordinator.awaitingExternalContent {
                 coordinator.deferredSyncWorkItem?.cancel()
-                let flushed = tv.attributedString()
+                let flushed = viewContentSnapshot(tv)
                 coordinator.parent.attributedText = flushed
                 // Binding now mirrors the view — no compare/replace needed.
                 coordinator.lastReconciledBindingText = flushed
@@ -5129,7 +5163,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                     DispatchQueue.main.async { self.isUpdatingFromTextView = false }
                     return
                 }
-                let synced = textView.attributedString()
+                let synced = viewContentSnapshot(textView)
                 self.parent.attributedText = synced
                 // Binding now mirrors the view — no compare/replace needed.
                 self.lastReconciledBindingText = synced
@@ -5143,7 +5177,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         private func syncStructuralEditBindings(from textView: NSTextView) {
             deferredSyncWorkItem?.cancel()
 
-            let currentAttributedText = textView.attributedString()
+            let currentAttributedText = viewContentSnapshot(textView)
             let currentString = plainTextForBinding(from: textView, attributedText: currentAttributedText)
 
             isUpdatingFromTextView = true

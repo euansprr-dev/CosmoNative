@@ -924,6 +924,9 @@ final class RecurringSeriesEngine {
 /// to the phone like any other edit.
 enum TaskDayPinRepair {
     static let flagKey = "taskDayPinWhenDateRepair.v1"
+    /// One-date unification (see run() below) — collapses any disagreeing
+    /// day pins onto the planned day, one shot.
+    static let unificationFlagKey = "taskDayPinUnification.v1"
 
     /// Serializes callers the same way the clean-slate migration does.
     @MainActor private static var repairTask: Task<Void, Never>?
@@ -941,6 +944,39 @@ enum TaskDayPinRepair {
 
     @MainActor
     private static func run() async {
+        await runPass(
+            flagKey: flagKey,
+            context: "TaskDayPinRepair",
+            correction: { CommandCenterTaskScheduling.laggingWhenDateCorrection(in: $0) },
+            apply: { meta, corrected in
+                meta.whenDate = corrected
+            }
+        )
+        // Unification pass (v2, July 2026): the deliberate deadline split is
+        // retired — a task has ONE date. Any non-recurring row whose three
+        // pins disagree (old deadline-behind-planned shapes, due-only iOS
+        // creations) collapses onto its planned day, so every consumer on
+        // every device reads the same date. Repaired rows sync to the phone
+        // like any other edit.
+        await runPass(
+            flagKey: unificationFlagKey,
+            context: "TaskDayPinUnification",
+            correction: { CommandCenterTaskScheduling.unifiedPinCorrection(in: $0) },
+            apply: { meta, corrected in
+                meta.dueDate = corrected
+                meta.focusDate = corrected
+                meta.whenDate = corrected
+            }
+        )
+    }
+
+    @MainActor
+    private static func runPass(
+        flagKey: String,
+        context: String,
+        correction: (TaskMetadata) -> String?,
+        apply: (inout TaskMetadata, String) -> Void
+    ) async {
         let database = CosmoDatabase.shared
         let flagIsSet = (try? await database.asyncRead { db in
             try Row.fetchOne(db, sql: "SELECT value FROM app_flags WHERE key = ?", arguments: [flagKey]) != nil
@@ -951,7 +987,7 @@ enum TaskDayPinRepair {
         do {
             tasks = try await AtomRepository.shared.fetchAll(type: .task)
         } catch {
-            PersistenceHealth.note(.writeFailure, context: "TaskDayPinRepair", detail: "task fetch failed: \(error.localizedDescription) — retrying next launch")
+            PersistenceHealth.note(.writeFailure, context: context, detail: "task fetch failed: \(error.localizedDescription) — retrying next launch")
             return
         }
 
@@ -959,20 +995,20 @@ enum TaskDayPinRepair {
         var failures = 0
         for atom in tasks {
             guard case .value(let meta) = atom.decodedMetadata(as: TaskMetadata.self),
-                  CommandCenterTaskScheduling.laggingWhenDateCorrection(in: meta) != nil else { continue }
+                  correction(meta) != nil else { continue }
             do {
                 _ = try await AtomRepository.shared.update(uuid: atom.uuid) { mutable in
                     guard var m = mutable.metadataValue(as: TaskMetadata.self),
-                          let corrected = CommandCenterTaskScheduling.laggingWhenDateCorrection(in: m) else { return }
-                    m.whenDate = corrected
-                    if let merged = mutable.mergingTaskMetadata(m, context: "TaskDayPinRepair(\(mutable.uuid.prefix(8)))") {
+                          let corrected = correction(m) else { return }
+                    apply(&m, corrected)
+                    if let merged = mutable.mergingTaskMetadata(m, context: "\(context)(\(mutable.uuid.prefix(8)))") {
                         mutable = merged
                     }
                 }
                 repaired += 1
             } catch {
                 failures += 1
-                PersistenceHealth.note(.writeFailure, context: "TaskDayPinRepair(\(atom.uuid.prefix(8)))", detail: error.localizedDescription)
+                PersistenceHealth.note(.writeFailure, context: "\(context)(\(atom.uuid.prefix(8)))", detail: error.localizedDescription)
             }
         }
 
@@ -985,15 +1021,15 @@ enum TaskDayPinRepair {
                     )
                 }
             } catch {
-                PersistenceHealth.note(.writeFailure, context: "TaskDayPinRepair.flag", detail: "failed to persist app_flags row: \(error.localizedDescription)")
+                PersistenceHealth.note(.writeFailure, context: "\(context).flag", detail: "failed to persist app_flags row: \(error.localizedDescription)")
             }
             if repaired > 0 {
-                print("🩹 TaskDayPinRepair: aligned whenDate on \(repaired) task(s)")
+                print("🩹 \(context): aligned day pins on \(repaired) task(s)")
             }
         } else {
             PersistenceHealth.note(
                 .writeFailure,
-                context: "TaskDayPinRepair",
+                context: context,
                 detail: "\(failures) atom(s) failed; flag not set — remaining work retries next launch"
             )
         }

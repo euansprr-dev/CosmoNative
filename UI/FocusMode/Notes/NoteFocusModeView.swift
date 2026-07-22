@@ -319,6 +319,7 @@ struct NoteFocusModeView: View {
     // V2 block editor + per-document style
     @State private var noteStyle: NoteDocumentStyle = .default
     @State private var styleMenuPresented = false
+    @State private var historySheetPresented = false
     /// Increments on every paper-tone pick; restarts the bloom pulse via .id.
     @State private var paperBloomTrigger = 0
     @State private var bodyFocusCoordinator = BlockFocusCoordinator()
@@ -442,6 +443,21 @@ struct NoteFocusModeView: View {
         .onAppear {
             AtomRepository.shared.acquireEditingLock(uuid: atom.uuid)
             startEditingLockRefresh()
+            // Session-long synchronous escort. `onDisappear` owns the normal
+            // close-save, but it is not guaranteed to run when the host tears
+            // the view down out-of-band (the atom panel ordering out, the
+            // hosting view being rebuilt on a theme change). Any such path can
+            // now commit this note synchronously via DirtyEditorRegistry.
+            // Dirty-gated inside saveAtomImmediately(), so a redundant flush
+            // (e.g. quit, which also posts .cosmoAppWillTerminate) is a no-op.
+            DirtyEditorRegistry.shared.register(id: "note-\(atom.uuid)") {
+                saveAtomImmediately()
+            }
+            // Declare that this editor takes version-history restores into its
+            // live state, so restore isn't refused just because the note is open.
+            AtomRestoreAdopterRegistry.shared.register(uuid: atom.uuid) { restored in
+                adoptRestoredAtom(restored)
+            }
             restoreDeadLetterIfNeeded()
             startObservingAtom()
             loadLinkedAtoms()
@@ -502,6 +518,8 @@ struct NoteFocusModeView: View {
             autoSaveTask?.cancel()
             textAnalysisTask?.cancel()
             stopEditingLockRefresh()
+            DirtyEditorRegistry.shared.unregister(id: "note-\(atom.uuid)")
+            AtomRestoreAdopterRegistry.shared.unregister(uuid: atom.uuid)
             CanvasAtomObservationHub.shared.unsubscribe(atomSubscription)
             atomSubscription = nil
             // Assistant scope and window context follow presence: leaving the
@@ -545,6 +563,9 @@ struct NoteFocusModeView: View {
         }
         .sheet(isPresented: $showTagEditor) {
             TagEditorSheet(tags: $tags)
+        }
+        .sheet(isPresented: $historySheetPresented) {
+            AtomHistorySheet(atom: atom) { historySheetPresented = false }
         }
         .onChange(of: noteStyle) { _, _ in
             guard !isInitialLoad else { return }
@@ -773,8 +794,22 @@ struct NoteFocusModeView: View {
         // Pane close lives in the deck tab (the strip's ✕) — no mode-owned
         // xmark in pane context anymore.
         HStack(spacing: DS.space8) {
+            historyButton
             styleMenuButton
         }
+    }
+
+    /// Version history for this note — every save snapshots the pre-image, so
+    /// this is the recovery path when content goes missing.
+    private var historyButton: some View {
+        chromeIconButton(
+            systemName: "clock.arrow.circlepath",
+            isActive: historySheetPresented,
+            tint: DS.accent,
+            help: "Version history",
+            accessibilityLabel: "Version history",
+            action: { historySheetPresented = true }
+        )
     }
 
     /// "Aa" — the page's whole personality: text voice (font, size, width,
@@ -2194,6 +2229,14 @@ struct NoteFocusModeView: View {
         }
         let metadataString = Self.metadataString(for: snapshot, tags: closeSnapshot.tags, style: closeSnapshot.noteStyle)
 
+        // History before the overwrite, in the same transaction (never blocks the save).
+        AtomRevisionWriter.snapshotBeforeRawWrite(
+            db,
+            uuid: closeSnapshot.uuid,
+            incomingTitle: snapshot.atomTitle,
+            incomingBody: snapshot.bodyPlainText
+        )
+
         try db.execute(
             sql: """
             UPDATE atoms
@@ -2445,6 +2488,14 @@ struct NoteFocusModeView: View {
                         }
                         let metadataString = Self.metadataString(for: snapshot, tags: tagsCopy, style: noteStyleCopy)
 
+                        // History before the overwrite, in the same transaction (never blocks the save).
+                        AtomRevisionWriter.snapshotBeforeRawWrite(
+                            db,
+                            uuid: uuid,
+                            incomingTitle: snapshot.atomTitle,
+                            incomingBody: snapshot.bodyPlainText
+                        )
+
                         try db.execute(
                             sql: """
                             UPDATE atoms
@@ -2513,6 +2564,14 @@ struct NoteFocusModeView: View {
                         }
                         let metadataString = Self.metadataString(for: snapshot, tags: tagsCopy, style: noteStyleCopy)
 
+                        // History before the overwrite, in the same transaction (never blocks the save).
+                        AtomRevisionWriter.snapshotBeforeRawWrite(
+                            db,
+                            uuid: uuid,
+                            incomingTitle: snapshot.atomTitle,
+                            incomingBody: snapshot.bodyPlainText
+                        )
+
                         try db.execute(
                             sql: """
                             UPDATE atoms
@@ -2574,6 +2633,42 @@ struct NoteFocusModeView: View {
         titlePlainText = RichDocumentPersistence.titlePlainText(from: document)
         titleUnderlineProgress = titlePlainText.isEmpty ? 0.28 : 1
         refreshCosmoContextIfActive()
+    }
+
+    /// The history sheet restored an older revision while this editor is open.
+    ///
+    /// The GRDB observation deliberately ignores external BODY writes after the
+    /// initial load (an autosave echo would otherwise revert text typed since
+    /// the save started — see `startObservingAtom`), so a restore would be
+    /// invisible here and the next save would put the stale editor state
+    /// straight back over it. Adopt it explicitly instead.
+    private func adoptRestoredAtom(_ restored: Atom) {
+        let restoredTitleDocument = RichDocumentPersistence.loadAtomDocument(
+            field: .title,
+            metadata: restored.metadata,
+            fallbackPlainText: restored.title
+        )
+        let restoredBodyDocument = RichDocumentPersistence.loadAtomDocument(
+            field: .body,
+            metadata: restored.metadata,
+            fallbackPlainText: restored.content
+        )
+
+        applyObservedTitleDocument(restoredTitleDocument)
+        bodyDocument = restoredBodyDocument
+        plainContent = restoredBodyDocument.plainText
+        updateBodyHeadingOutline(from: restoredBodyDocument)
+        updateTextAnalysisImmediately(for: plainContent)
+
+        // Those writes cascade through handleBodyDocumentChange and mark the
+        // editor dirty. The restore is ALREADY persisted, so clear that (and
+        // the autosave it queued) once the cascade has settled — otherwise the
+        // editor immediately rewrites what it just adopted.
+        DispatchQueue.main.async {
+            autoSaveTask?.cancel()
+            hasLocalBodyEdits = false
+            hasLocalMetaEdits = false
+        }
     }
 
     nonisolated private static func metadataString(

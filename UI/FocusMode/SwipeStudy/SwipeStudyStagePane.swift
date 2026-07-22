@@ -332,16 +332,22 @@ struct SwipeStudyStagePane: View {
 
     // MARK: - Processing status
 
-    /// Status-specific processing copy; a stale swipe (>30 min) gets a Retry.
+    /// Status-specific processing copy. A retired swipe gets a Retry immediately
+    /// and no spinner — nothing is running, and nothing will start on its own.
+    /// A still-working swipe that has gone quiet (>30 min) gets one too.
     @ViewBuilder
     private var processingStatusLine: some View {
         if let copy = SwipeStudyModel.processingCopy(for: atom.processingStatus) {
+            let retired = SwipeStudyModel.awaitsManualRetry(atom)
+            let stale = SwipeStudyModel.isProcessingStale(atom)
             HStack(spacing: DS.space8) {
-                ProgressView().controlSize(.small)
-                Text(SwipeStudyModel.isProcessingStale(atom) ? "Taking longer than usual" : copy)
+                if !retired {
+                    ProgressView().controlSize(.small)
+                }
+                Text(retired ? copy : (stale ? "Taking longer than usual" : copy))
                     .font(DS.footnote)
                     .foregroundStyle(DS.textMuted)
-                if SwipeStudyModel.isProcessingStale(atom) {
+                if retired || stale {
                     Button("Retry") { model.retranscribeInstagram() }
                         .buttonStyle(.plain)
                         .font(DS.footnote.weight(.medium))

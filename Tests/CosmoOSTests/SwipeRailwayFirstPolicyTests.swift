@@ -111,7 +111,7 @@ final class SwipeRailwayFirstPolicyTests: XCTestCase {
             "the worker scheduled its own retry — the Mac must not preempt it")
     }
 
-    func testWorkerMissingItsRetryWindowReleasesToTheMac() {
+    func testWorkerMissingItsRetryWindowStillDoesNotReleaseToTheMac() {
         let now = Date()
         let json = metaJSON([
             "url": "https://youtu.be/abc123def",
@@ -121,11 +121,14 @@ final class SwipeRailwayFirstPolicyTests: XCTestCase {
             "cloudRetryCount": 2,
             "processingRetryAfter": iso(now.addingTimeInterval(-10 * 60)),
         ])
-        XCTAssertTrue(SwipeProcessingService.macMayProcess(metadataJSON: json, updatedAt: now, now: now),
-            "retryAfter passed by more than the grace window: the worker is down")
+        XCTAssertFalse(SwipeProcessingService.macMayProcess(metadataJSON: json, updatedAt: now, now: now),
+            "a missed retry window is not an invitation — the Mac picking this up is a duplicate paid pass")
     }
 
-    func testExhaustedCloudRetryBudgetReleasesToTheMac() {
+    /// Regression: this asserted `true` under the old policy, which is how a
+    /// swipe the cloud had already spent five full pipeline passes on earned a
+    /// sixth one locally, on every launch, wake and sync.
+    func testExhaustedCloudRetryBudgetIsTerminalNotAHandoff() {
         let now = Date()
         let json = metaJSON([
             "url": "https://youtu.be/abc123def",
@@ -135,7 +138,24 @@ final class SwipeRailwayFirstPolicyTests: XCTestCase {
             "cloudRetryCount": 5,
             "processingRetryAfter": iso(now.addingTimeInterval(24 * 3600)),
         ])
-        XCTAssertTrue(SwipeProcessingService.macMayProcess(metadataJSON: json, updatedAt: now, now: now))
+        XCTAssertFalse(SwipeProcessingService.macMayProcess(metadataJSON: json, updatedAt: now, now: now),
+            "exhausted means nobody retries automatically — it waits for a manual retry")
+    }
+
+    func testNeedsManualRetryIsNeverPickedUpAutomatically() {
+        let now = Date()
+        let json = metaJSON([
+            "url": "https://www.instagram.com/p/ABC/",
+            "contentSource": "instagram_post",
+            "processingStatus": SwipeProcessingService.statusNeedsManualRetry,
+            "processingWorker": "cloud",
+            "cloudRetryCount": 2,
+        ])
+        // Age must not matter: the whole point is that time passing never revives it.
+        XCTAssertFalse(SwipeProcessingService.macMayProcess(metadataJSON: json, updatedAt: now, now: now))
+        XCTAssertFalse(SwipeProcessingService.macMayProcess(
+            metadataJSON: json, updatedAt: now.addingTimeInterval(-48 * 3600), now: now),
+            "a two-day-old retired swipe is still retired")
     }
 
     // MARK: - Complete detection (the discard-local-result guard)
@@ -198,5 +218,124 @@ final class SwipeRailwayFirstPolicyTests: XCTestCase {
         let meta = try! JSONSerialization.jsonObject(with: data) as! [String: Any]
         XCTAssertNil(meta["summary"], "explicitly nilled fields must actually clear")
         XCTAssertEqual(meta["processingWorker"] as? String, "cloud")
+    }
+}
+
+// MARK: - Manual-retry surfacing
+//
+// Retries are bounded to a short capture window, so the UI can no longer infer
+// "still retrying" from the status string. These pin the derivation that decides
+// whether a swipe shows a Retry control — get it wrong and a failed swipe is
+// stranded with a spinner and no way forward.
+@MainActor
+extension SwipeRailwayFirstPolicyTests {
+
+    private func swipeAtom(status: String, retryAfter: Date?) -> Atom {
+        var atom = Atom.new(type: .research, title: "Swipe")
+        var meta: [String: Any] = ["isSwipeFile": true, "processingStatus": status]
+        if let retryAfter { meta["processingRetryAfter"] = iso(retryAfter) }
+        atom.metadata = metaJSON(meta)
+        return atom
+    }
+
+    func testRetiredSwipeAwaitsManualRetry() {
+        let atom = swipeAtom(status: SwipeProcessingService.statusNeedsManualRetry, retryAfter: nil)
+        XCTAssertTrue(SwipeStudyModel.awaitsManualRetry(atom))
+    }
+
+    func testFailedSwipeWithAFutureRetryIsStillWorking() {
+        let atom = swipeAtom(status: "extraction_failed", retryAfter: Date().addingTimeInterval(90))
+        XCTAssertFalse(SwipeStudyModel.awaitsManualRetry(atom),
+            "a retry is genuinely scheduled inside the window — don't offer a manual one yet")
+    }
+
+    /// Every swipe that failed under the old 30/60/90-minute ladder is sitting in
+    /// this exact state: a stale status with a retryAfter that has long passed and
+    /// nothing left to honour it.
+    func testFailedSwipeWithAPassedRetryAwaitsManualRetry() {
+        let atom = swipeAtom(status: "extraction_failed", retryAfter: Date().addingTimeInterval(-2 * 3600))
+        XCTAssertTrue(SwipeStudyModel.awaitsManualRetry(atom),
+            "legacy backlog must surface a Retry rather than claiming it is still retrying")
+    }
+
+    func testPartialSwipeWithNoBookkeepingAwaitsManualRetry() {
+        let atom = swipeAtom(status: "partial", retryAfter: nil)
+        XCTAssertTrue(SwipeStudyModel.awaitsManualRetry(atom),
+            "no scheduled retry at all means nothing is coming")
+    }
+
+    func testHealthySwipesNeverAwaitManualRetry() {
+        for status in ["complete", "pending", "extracting", "transcribing", "analyzing"] {
+            XCTAssertFalse(SwipeStudyModel.awaitsManualRetry(swipeAtom(status: status, retryAfter: nil)),
+                "\(status) must not offer a manual retry")
+        }
+    }
+
+    /// The copy and the control have to agree: anything that awaits a manual
+    /// retry must also render a status line, or the Retry button has nowhere to live.
+    func testAwaitingManualRetryAlwaysHasStatusCopy() {
+        for status in ["extraction_failed", "partial", SwipeProcessingService.statusNeedsManualRetry] {
+            XCTAssertNotNil(SwipeStudyModel.processingCopy(for: status),
+                "\(status) awaits a retry but renders no status line to host the button")
+        }
+    }
+}
+
+// MARK: - Mac capture window
+//
+// The Mac scan runs on launch, wake and every sync. Anything it re-selects runs
+// unattended, so a swipe that never reaches a terminal status must not stay
+// eligible forever — six February clipboard captures were still being
+// reprocessed in July, one analysis call each, every scan.
+extension SwipeRailwayFirstPolicyTests {
+
+    func testUnstampedSwipeIsAlwaysEligibleForItsFirstPass() {
+        XCTAssertTrue(SwipeProcessingService.withinCaptureWindow(metadataJSON: metaJSON([
+            "isSwipeFile": true, "processingStatus": "pending",
+        ])), "the whole pre-existing library is unstamped — it must still get one pass")
+        XCTAssertTrue(SwipeProcessingService.withinCaptureWindow(metadataJSON: nil))
+    }
+
+    func testFreshlyStampedSwipeIsStillEligible() {
+        let now = Date()
+        XCTAssertTrue(SwipeProcessingService.withinCaptureWindow(metadataJSON: metaJSON([
+            "processingStatus": "pending",
+            SwipeProcessingService.firstAttemptKey: iso(now.addingTimeInterval(-60)),
+        ]), now: now))
+    }
+
+    func testStampedSwipeFallsOutOfTheWindow() {
+        let now = Date()
+        XCTAssertFalse(SwipeProcessingService.withinCaptureWindow(metadataJSON: metaJSON([
+            "processingStatus": "pending",
+            SwipeProcessingService.firstAttemptKey: iso(now.addingTimeInterval(-20 * 60)),
+        ]), now: now), "past the window, only an explicit retry runs it")
+        XCTAssertFalse(SwipeProcessingService.withinCaptureWindow(metadataJSON: metaJSON([
+            "processingStatus": "pending",
+            SwipeProcessingService.firstAttemptKey: iso(now.addingTimeInterval(-150 * 24 * 3600)),
+        ]), now: now), "a five-month-old pending swipe must stop being rescanned")
+    }
+
+    func testUnparseableStampDoesNotStrandTheSwipe() {
+        XCTAssertTrue(SwipeProcessingService.withinCaptureWindow(metadataJSON: metaJSON([
+            "processingStatus": "pending",
+            SwipeProcessingService.firstAttemptKey: "not-a-date",
+        ])), "a corrupt stamp should fall back to allowing a pass, not silently drop the swipe")
+    }
+}
+
+@MainActor
+extension SwipeRailwayFirstPolicyTests {
+    /// The moment the last attempt is spent, a Retry must appear — even though
+    /// the worker left a future retryAfter behind that nothing will honour.
+    func testExhaustedBudgetAwaitsManualRetryDespiteFutureRetryAfter() {
+        var atom = Atom.new(type: .research, title: "Swipe")
+        atom.metadata = metaJSON([
+            "isSwipeFile": true,
+            "processingStatus": "partial",
+            "cloudRetryCount": SwipeProcessingService.cloudMaxRetries,
+            "processingRetryAfter": iso(Date().addingTimeInterval(45 * 60)),
+        ])
+        XCTAssertTrue(SwipeStudyModel.awaitsManualRetry(atom))
     }
 }

@@ -79,8 +79,10 @@ enum CosmoInlineInquiryQuestionResolver {
     }
 
     /// The deep dive that owns this Connection: crystallization provenance
-    /// first, then any deep dive that links the connection, newest activity
-    /// winning. Nil means the confirm step will create one.
+    /// first, then any deep dive that links the connection, then the profile
+    /// dive of the thinkspace whose canvas hosts it (manually created concept
+    /// blocks have no link — residency is their ownership signal). Newest
+    /// activity wins within each tier. Nil means the confirm step will create one.
     static func resolveDeepDive(for connection: Atom) async -> Atom? {
         if let originUUID = connection.metadataValue(as: PromotedConnectionOrigin.self)?.originDeepDiveUUID,
            let origin = try? await AtomRepository.shared.fetch(uuid: originUUID),
@@ -88,11 +90,22 @@ enum CosmoInlineInquiryQuestionResolver {
             return origin
         }
         guard let deepDives = try? await AtomRepository.shared.fetchAll(type: .deepDive) else { return nil }
-        return deepDives
-            .filter { dd in dd.linksOfType(.deepDiveConnection).contains { $0.uuid == connection.uuid } }
-            .max { lhs, rhs in
-                (lhs.deepDiveMetadata?.lastInquiryAt ?? "") < (rhs.deepDiveMetadata?.lastInquiryAt ?? "")
+        func newestByActivity(_ candidates: [Atom]) -> Atom? {
+            candidates.max { lhs, rhs in
+                (lhs.deepDiveMetadata?.lastInquiryAt ?? "", lhs.uuid)
+                    < (rhs.deepDiveMetadata?.lastInquiryAt ?? "", rhs.uuid)
             }
+        }
+        if let linked = newestByActivity(deepDives.filter { dd in
+            dd.linksOfType(.deepDiveConnection).contains { $0.uuid == connection.uuid }
+        }) {
+            return linked
+        }
+        let hosts = Set((try? await InquiryRepository.shared.thinkspaceUUIDs(hostingAtom: connection.uuid)) ?? [])
+        guard !hosts.isEmpty else { return nil }
+        return newestByActivity(deepDives.filter { dd in
+            !hosts.isDisjoint(with: InquiryRepository.thinkspaceScopeUUIDs(for: dd))
+        })
     }
 
     private static func resolveParentQuestion(question: String, deepDive: Atom) async -> Atom? {

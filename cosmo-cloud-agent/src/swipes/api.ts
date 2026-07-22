@@ -12,8 +12,16 @@ import { config } from '../config';
 import { pendingHealth, processSwipe, refreshEngagement, swipeWorkerStats } from './processor';
 import { apifyRunsThisMonth } from './instagram';
 import { getProgress } from './progress';
+import { createAtom } from '../db/queries';
 
 export const swipesRouter = Router();
+
+/** Supported capture platforms → (contentSource, placeholder title). v1 = IG + YouTube. */
+function captureTarget(url: string): { contentSource: string; title: string } | null {
+  if (/instagram\.com/i.test(url)) return { contentSource: 'instagram', title: 'Instagram' };
+  if (/youtube\.com|youtu\.be/i.test(url)) return { contentSource: 'youtube', title: 'YouTube video' };
+  return null;
+}
 
 async function authenticate(req: Request, res: Response): Promise<boolean> {
   const authHeader = req.headers.authorization;
@@ -72,6 +80,64 @@ swipesRouter.post('/refresh-stats', async (req: Request, res: Response) => {
   } catch (error) {
     res.status(502).json({ error: error instanceof Error ? error.message : 'refresh failed' });
   }
+});
+
+// Create a swipe from an external source (the Slack relay). Additive only: it
+// inserts a NEW pending swipe atom exactly like an iPhone capture, then kicks
+// processing. Never touches existing atoms. Dedups by URL.
+swipesRouter.post('/capture', async (req: Request, res: Response) => {
+  if (!(await authenticate(req, res))) return;
+  const rawUrl = typeof req.body?.url === 'string' ? req.body.url.trim() : '';
+  const savedBy = typeof req.body?.savedBy === 'string' ? req.body.savedBy.trim() : '';
+  if (!rawUrl) {
+    res.status(400).json({ error: 'url is required' });
+    return;
+  }
+  const target = captureTarget(rawUrl);
+  if (!target) {
+    res.status(422).json({ error: 'unsupported platform (Instagram / YouTube only)' });
+    return;
+  }
+
+  // Dedup: if this URL is already a swipe, return it instead of creating a twin.
+  const { data: existing } = await supabase
+    .from('atoms')
+    .select('uuid')
+    .eq('user_id', userId)
+    .eq('type', 'research')
+    .eq('is_deleted', false)
+    .eq('metadata->>isSwipeFile', 'true')
+    .eq('metadata->>url', rawUrl)
+    .limit(1)
+    .maybeSingle();
+  if (existing?.uuid) {
+    res.json({ status: 'exists', swipeUUID: existing.uuid });
+    return;
+  }
+
+  const atom = await createAtom({
+    type: 'research',
+    title: target.title,
+    structured: { sourceUrl: rawUrl },
+    metadata: {
+      isSwipeFile: true,
+      url: rawUrl,
+      contentSource: target.contentSource,
+      processingStatus: 'pending',
+      captureSource: 'slack',
+      ...(savedBy ? { savedBy } : {}),
+    },
+  });
+  if (!atom) {
+    res.status(500).json({ error: 'failed to create swipe' });
+    return;
+  }
+
+  console.log(`🔖 [API] slack capture ${atom.uuid.slice(0, 8)} (${target.contentSource}) by ${savedBy || 'unknown'}`);
+  res.json({ status: 'queued', swipeUUID: atom.uuid });
+  void processSwipe(atom.uuid).catch(error => {
+    console.error(`❌ slack-captured swipe ${atom.uuid.slice(0, 8)} failed:`, error);
+  });
 });
 
 // Live pipeline progress for the clients' progress bars. `known:false` when

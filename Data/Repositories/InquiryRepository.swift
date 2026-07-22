@@ -3,6 +3,7 @@
 // Deep Dive, Inquiry Session, Question, Extract, Lexicon Entry.
 
 import Foundation
+import GRDB
 
 enum InquiryRepositoryError: Error, LocalizedError {
     case thinkspaceNotFound(String)
@@ -370,11 +371,89 @@ final class InquiryRepository {
         return components.string ?? withScheme
     }
 
-    /// Connections crystallized within this Deep Dive.
-    /// One batched query in link order (was a serial per-uuid await loop).
+    /// The full concept population of a Deep Dive: every Connection the dive
+    /// links via `deepDiveConnection` (crystallized/minted within it) UNIONED
+    /// with every live Connection atom placed on the dive's own Thinkspace
+    /// canvas — manually created concept blocks belong to the topic even
+    /// though nothing ever wrote a link for them. Scope is strictly the
+    /// dive's thinkspaces (primary + parents): concepts living on other
+    /// thinkspaces never leak in. Linked pages keep link order; adopted
+    /// canvas residents follow in placement order (oldest block first).
     func fetchConnections(forDeepDive deepDive: Atom) async throws -> [Atom] {
-        let uuids = deepDive.linksOfType(.deepDiveConnection).compactMap { $0.uuid }
-        return try await fetchInLinkOrder(uuids: uuids)
+        let linked = deepDive.linksOfType(.deepDiveConnection).compactMap { $0.uuid }
+        let resident = (try? await connectionUUIDs(onThinkspaces: Self.thinkspaceScopeUUIDs(for: deepDive))) ?? []
+        let ordered = Self.mergedConnectionUUIDs(linked: linked, thinkspaceResident: resident)
+        // Type filter is a shield: a stale link or a mislabeled block row must
+        // never surface a non-Connection atom as a concept page.
+        return try await fetchInLinkOrder(uuids: ordered).filter { $0.type == .connection }
+    }
+
+    /// The thinkspaces a Deep Dive draws canvas concepts from: its primary
+    /// home first, then any additional parents — deduped, order-stable.
+    nonisolated static func thinkspaceScopeUUIDs(for deepDive: Atom) -> [String] {
+        let metadata = deepDive.deepDiveMetadata
+        var scopes: [String] = []
+        for uuid in [metadata?.primaryThinkspaceUUID].compactMap({ $0 }) + (metadata?.parentThinkspaceUUIDs ?? [])
+        where !uuid.isEmpty && !scopes.contains(uuid) {
+            scopes.append(uuid)
+        }
+        return scopes
+    }
+
+    /// Deterministic union of a dive's linked concept pages and the concepts
+    /// resident on its thinkspace canvas: linked first (link order), adopted
+    /// residents appended (placement order), duplicates collapse to their
+    /// first appearance. Pure — unit-tested.
+    nonisolated static func mergedConnectionUUIDs(linked: [String], thinkspaceResident: [String]) -> [String] {
+        var seen = Set<String>()
+        var ordered: [String] = []
+        for uuid in linked + thinkspaceResident where !uuid.isEmpty && seen.insert(uuid).inserted {
+            ordered.append(uuid)
+        }
+        return ordered
+    }
+
+    /// Entity uuids of live Connection blocks on the given thinkspaces' home
+    /// canvases, oldest placement first (deterministic map ordering). Deleted
+    /// blocks drop out — removing a concept from the canvas removes it from
+    /// the topic's adopted set (a `deepDiveConnection` link still keeps it).
+    private func connectionUUIDs(onThinkspaces thinkspaceUUIDs: [String]) async throws -> [String] {
+        guard !thinkspaceUUIDs.isEmpty else { return [] }
+        let marks = thinkspaceUUIDs.map { _ in "?" }.joined(separator: ",")
+        return try await CosmoDatabase.shared.asyncRead { db in
+            try String.fetchAll(
+                db,
+                sql: """
+                    SELECT entity_uuid FROM canvas_blocks
+                    WHERE thinkspace_id IN (\(marks))
+                      AND entity_type = 'connection'
+                      AND document_type = 'home' AND document_id = 0
+                      AND is_deleted = 0
+                      AND entity_uuid IS NOT NULL AND entity_uuid != ''
+                    GROUP BY entity_uuid
+                    ORDER BY MIN(created_at) ASC, entity_uuid ASC
+                """,
+                arguments: StatementArguments(thinkspaceUUIDs)
+            )
+        }
+    }
+
+    /// Thinkspaces whose home canvas holds a live block for this atom —
+    /// how a manually created concept resolves the Deep Dive it belongs to.
+    func thinkspaceUUIDs(hostingAtom uuid: String) async throws -> [String] {
+        try await CosmoDatabase.shared.asyncRead { db in
+            try String.fetchAll(
+                db,
+                sql: """
+                    SELECT DISTINCT thinkspace_id FROM canvas_blocks
+                    WHERE entity_uuid = ?
+                      AND document_type = 'home' AND document_id = 0
+                      AND is_deleted = 0
+                      AND thinkspace_id IS NOT NULL AND thinkspace_id != ''
+                """,
+                arguments: [uuid]
+            )
+        }
     }
 
     // MARK: - Inquiry Session

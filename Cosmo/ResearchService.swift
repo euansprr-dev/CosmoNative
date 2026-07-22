@@ -183,7 +183,8 @@ final class ResearchService {
         prompt: String,
         systemPrompt: String? = nil,
         tier: AgentModelTier = .geminiFlashLatest,
-        maxTokens: Int? = nil
+        maxTokens: Int? = nil,
+        disableReasoning: Bool = false
     ) async throws -> String {
         guard let apiKey = apiKey, !apiKey.isEmpty else {
             throw ResearchError.noAPIKey
@@ -196,7 +197,8 @@ final class ResearchService {
             systemPrompt: systemPrompt,
             model: tier.modelId,
             maxTokens: resolvedMaxTokens,
-            temperature: 0.3
+            temperature: 0.3,
+            disableReasoning: disableReasoning
         )
     }
 
@@ -631,7 +633,7 @@ final class ResearchService {
     }
 
     // MARK: - Call OpenRouter API
-    private func callOpenRouter(prompt: String, systemPrompt: String? = nil, model: String, maxTokens: Int = 2000, temperature: Double = 0.3) async throws -> String {
+    private func callOpenRouter(prompt: String, systemPrompt: String? = nil, model: String, maxTokens: Int = 2000, temperature: Double = 0.3, disableReasoning: Bool = false) async throws -> String {
         guard let apiKey = apiKey else {
             throw ResearchError.noAPIKey
         }
@@ -650,12 +652,19 @@ final class ResearchService {
         }
         messages.append(["role": "user", "content": prompt])
 
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "model": model,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": maxTokens
         ]
+        // Claude Sonnet 5 defaults to adaptive thinking, and max_tokens caps
+        // thinking + visible text COMBINED. Structured-extraction prompts must
+        // opt out or long inputs return EMPTY content (the whole budget goes
+        // to omitted thinking, finish_reason "length").
+        if disableReasoning {
+            body["reasoning"] = ["enabled": false]
+        }
 
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 

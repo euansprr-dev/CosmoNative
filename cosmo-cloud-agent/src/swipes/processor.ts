@@ -21,6 +21,7 @@ import { Atom, fetchAtom, updateAtom } from '../db/queries';
 import { apifyBudgetAvailable, extractInstagramPost, instagramShortcode } from './instagram';
 import { ensureBuckets, mirrorCarousel, mirrorThumbnail, mirrorVideoBuffer, resolveInstantThumbnailURL, downloadBinary } from './media';
 import { transcribeSlides, transcribeSpeech, whisperConfigured } from './transcribe';
+import { postProcessSlidesJSON, sanitizeSlideText } from './slideText';
 import { annotateSlidesWithVoiceover, deduplicateSlidesJSON, extractAudioTrack, transcribeReel } from './reelPipeline';
 import { clearProgress, setProgress } from './progress';
 import { shouldEscalateToFrames, understandReelVideo } from './reelVideoUnderstanding';
@@ -37,8 +38,25 @@ import {
 import { randomUUID } from 'crypto';
 
 const CLAIM_STALE_MINUTES = 15;
-const MAX_CLOUD_RETRIES = 5;
+const MAX_CLOUD_RETRIES = 2;
 const CONCURRENCY = 3;
+
+/// Retries are a CAPTURE-TIME affordance, not a background job. A swipe gets
+/// its first pass plus MAX_CLOUD_RETRIES quick re-attempts, all inside
+/// RETRY_WINDOW_MINUTES of capture — long enough to ride out a transient
+/// Instagram rate-limit while the user is still at the keyboard, short enough
+/// that nothing fires once they've walked away.
+///
+/// This replaced a `30 * attempts`-minute ladder (30/60/90/120/150) which
+/// deliberately spread five full pipeline passes across ~8 hours. Every pass
+/// re-ran vision from scratch — one saved reel could reach ~120 Gemini calls
+/// overnight. Past the window a swipe goes terminal and waits for a human.
+const RETRY_DELAYS_SECONDS = [60, 180];
+const RETRY_WINDOW_MINUTES = 15;
+
+/// Terminal: fetchCandidates never selects this, so no tick can resurrect it.
+/// Only an explicit kick (POST /api/swipes/process) processes it again.
+const STATUS_NEEDS_RETRY = 'needs_manual_retry';
 
 /// UUIDs this process is currently working on. The API kick and the cron tick
 /// both call processSwipe — without this, a swipe kicked at capture time gets
@@ -71,6 +89,11 @@ export function startSwipeWorker(): void {
   cron.schedule('0 * * * * *', () => {
     void backfillTick();
   });
+  // Transcript repair: cloud-processed carousels stored raw vision output
+  // with visual line-wraps (no post-processing). Pure text transform over
+  // stored slides — zero model calls; idempotent (only writes when the
+  // normalized text differs), so repeat boots converge to no-ops.
+  void normalizeStoredTranscripts();
   console.log('🌀 Swipe worker started (every 15s, concurrency 3; video backfill 1/min)');
 }
 
@@ -114,7 +137,7 @@ async function reclaimOrphanedClaims(): Promise<void> {
   try {
     const { data } = await supabase
       .from('atoms')
-      .select('uuid, metadata')
+      .select('uuid, metadata, created_at')
       .eq('user_id', userId)
       .eq('type', 'research')
       .eq('is_deleted', false)
@@ -122,14 +145,24 @@ async function reclaimOrphanedClaims(): Promise<void> {
       .eq('metadata->>processingWorker', 'cloud')
       .in('metadata->>processingStatus', ['extracting', 'transcribing', 'analyzing'])
       .limit(25);
+    const now = Date.now();
     for (const atom of (data ?? []) as Atom[]) {
-      // Back to 'pending' outright — the next tick processes it immediately.
-      // (Setting only an ancient claimedAt failed: epoch 0 parses falsy and
-      // the staleness check fell through to the just-bumped updated_at.)
+      // A claim orphaned INSIDE the capture window goes back to 'pending' and
+      // the next tick picks it up. Outside it, resetting to 'pending' would
+      // hand it a fresh unbudgeted first pass — every redeploy would silently
+      // re-run the full pipeline on old swipes — so it retires instead.
+      const reopen = withinCaptureWindow(atom, now);
       await updateAtom(atom.uuid, {
-        metadata: { processingStatus: 'pending', processingClaimedAt: null },
+        metadata: {
+          processingStatus: reopen ? 'pending' : STATUS_NEEDS_RETRY,
+          processingClaimedAt: null,
+        },
       });
-      console.log(`♻️ released orphaned claim on ${atom.uuid.slice(0, 8)}`);
+      console.log(
+        reopen
+          ? `♻️ released orphaned claim on ${atom.uuid.slice(0, 8)}`
+          : `🛑 retired stale claim on ${atom.uuid.slice(0, 8)} — awaiting manual retry`
+      );
     }
   } catch (error) {
     console.warn('⚠️ reclaimOrphanedClaims failed:', error instanceof Error ? error.message : error);
@@ -139,11 +172,13 @@ async function reclaimOrphanedClaims(): Promise<void> {
 export async function fetchCandidates(): Promise<Atom[]> {
   const { data, error } = await supabase
     .from('atoms')
-    .select('uuid, metadata, updated_at')
+    .select('uuid, metadata, updated_at, created_at')
     .eq('user_id', userId)
     .eq('type', 'research')
     .eq('is_deleted', false)
     .eq('metadata->>isSwipeFile', 'true')
+    // STATUS_NEEDS_RETRY is deliberately absent — a swipe that exhausted its
+    // capture-window budget must never re-enter the tick.
     .in('metadata->>processingStatus', ['pending', 'partial', 'extraction_failed', 'extracting', 'transcribing', 'analyzing'])
     .order('updated_at', { ascending: true })
     .limit(25);
@@ -164,24 +199,52 @@ export async function fetchCandidates(): Promise<Atom[]> {
     // Already being worked on by this process (API kick in flight).
     if (inFlightUUIDs.has(atom.uuid)) return false;
 
-    // In-flight statuses: only reclaim stale claims (crashed worker / dead Mac run).
+    // In-flight statuses: only reclaim stale claims (crashed worker / dead Mac
+    // run), and only while the capture window is still open. A claim stranded
+    // by a deploy an hour ago is not worth a fresh pipeline pass —
+    // reclaimOrphanedClaims retires it to STATUS_NEEDS_RETRY at boot instead.
     if (status === 'extracting' || status === 'transcribing' || status === 'analyzing') {
       // NaN-checked, not truthiness — epoch 0 is a VALID (very stale) claim.
       const claimParsed = Date.parse(meta.processingClaimedAt ?? '');
       const claimedAt = Number.isFinite(claimParsed) ? claimParsed : (Date.parse(atom.updated_at) || 0);
-      return now - claimedAt > CLAIM_STALE_MINUTES * 60_000;
+      if (now - claimedAt <= CLAIM_STALE_MINUTES * 60_000) return false;
+      return withinCaptureWindow(atom, now);
     }
-    // Failed AND partial: exponential-ish backoff via processingRetryAfter,
-    // capped attempts (an unthrottled partial reprocesses every 15s tick —
-    // an Apify run each time).
+    // Failed AND partial: a couple of quick re-attempts inside the capture
+    // window, then terminal. Both the attempt cap and the window must hold —
+    // the cap alone let a swipe that failed at 8pm still be burning passes at
+    // 3am, which is exactly the overnight spend this replaced.
     if (status === 'extraction_failed' || status === 'partial') {
       const attempts = Number(meta.cloudRetryCount ?? 0);
       if (attempts >= MAX_CLOUD_RETRIES) return false;
+      if (!withinCaptureWindow(atom, now)) return false;
       const retryAfter = Date.parse(meta.processingRetryAfter ?? '') || 0;
       return now >= retryAfter;
     }
-    return true; // pending
+    // pending: always allow a genuine first pass. If it has been attempted
+    // before, it is only still 'pending' because a pass bailed early without
+    // reaching a terminal write — respect the window so it can't spin on the
+    // 15s tick forever.
+    return meta.processingFirstAttemptAt ? withinCaptureWindow(atom, now) : true;
   });
+}
+
+/// True while a swipe is still inside its capture-time retry window.
+///
+/// Anchored to the FIRST processing attempt, not created_at: an iPhone capture
+/// can sync down long after it was saved, and the window should measure from
+/// when this worker first touched it, not from when the user hit share. Falls
+/// back to created_at for rows predating the stamp.
+export function withinCaptureWindow(atom: Atom, now: number): boolean {
+  const meta = atom.metadata ?? {};
+  const firstAttempt = Date.parse(meta.processingFirstAttemptAt ?? '');
+  const anchor = Number.isFinite(firstAttempt)
+    ? firstAttempt
+    : (Date.parse(atom.created_at ?? '') || 0);
+  // No anchor at all (unparseable both ways) — treat as never attempted rather
+  // than as infinitely old, so a genuine first pass isn't refused.
+  if (!anchor) return true;
+  return now - anchor <= RETRY_WINDOW_MINUTES * 60_000;
 }
 
 export async function processSwipe(uuid: string): Promise<void> {
@@ -214,6 +277,11 @@ async function processSwipeInner(uuid: string): Promise<void> {
 
   console.log(`🌀 processing swipe ${uuid.slice(0, 8)} (${source || 'url'})`);
   setProgress(uuid, 'extracting', 0.04);
+  // Stamp the retry-window anchor on the first pass only — a manual kick days
+  // later must not reopen the window and let the tick take over again.
+  if (!meta.processingFirstAttemptAt) {
+    await updateAtom(uuid, { metadata: { processingFirstAttemptAt: new Date().toISOString() } });
+  }
   await setStatus(uuid, 'extracting');
 
   try {
@@ -238,6 +306,40 @@ async function processSwipeInner(uuid: string): Promise<void> {
 
 // ── Instagram pipeline ──────────────────────────────────────────────────────
 
+/// A usable transcript persisted by an earlier pass, or null.
+///
+/// persistAndAnalyze writes the transcript into structured.swipeAnalysis
+/// BEFORE the insight call, so a swipe that reached 'partial' via a failed
+/// classification already has its expensive vision work banked on disk.
+/// Requires actual content — an empty-but-present key means the prior pass
+/// produced nothing and the work genuinely has to be redone.
+export function priorTranscript(atom: Atom): {
+  slides: TranscriptSlideJSON[];
+  rawSlides: TranscriptSlideJSON[];
+  speech: SpeechSegmentJSON[];
+  quality: string;
+  warnings: string[];
+} | null {
+  const analysis = atom.structured?.swipeAnalysis ?? {};
+  const slides: TranscriptSlideJSON[] = Array.isArray(analysis.transcriptSlides) ? analysis.transcriptSlides : [];
+  const speech: SpeechSegmentJSON[] = Array.isArray(analysis.transcriptSpeechSegments)
+    ? analysis.transcriptSpeechSegments
+    : [];
+  const hasContent = slides.some(s => s?.text?.trim()) || speech.some(s => s?.text?.trim());
+  if (!hasContent) return null;
+
+  const rawSlides: TranscriptSlideJSON[] = Array.isArray(analysis.rawTranscriptSlides)
+    ? analysis.rawTranscriptSlides
+    : slides;
+  return {
+    slides,
+    rawSlides,
+    speech,
+    quality: typeof analysis.transcriptionQuality === 'string' ? analysis.transcriptionQuality : 'accurate',
+    warnings: Array.isArray(analysis.transcriptionWarnings) ? analysis.transcriptionWarnings : [],
+  };
+}
+
 async function processInstagram(uuid: string, url: string): Promise<void> {
   // Quick stage: permanent thumbnail within seconds, before Apify returns.
   await quickThumbnailStage(uuid, url);
@@ -248,11 +350,18 @@ async function processInstagram(uuid: string, url: string): Promise<void> {
   const atom = await fetchAtom(uuid);
   if (!atom || atom.is_deleted) return;
 
+  // A transcript banked by an earlier pass makes this run analysis-only.
+  const prior = priorTranscript(atom);
+
   // Media mirroring (before transcription — CDN URLs expire). The video is
   // downloaded ONCE and the buffer reused for mirror + Whisper + frames.
   const metadataUpdates: Record<string, unknown> = {};
   let videoData: Buffer | null = null;
-  if (media.videoUrl) {
+  // Only pull the video down if something still needs the bytes: transcription
+  // (no banked transcript) or the storage mirror. On an analysis-only retry of
+  // an already-mirrored reel that is a pointless multi-MB download.
+  const needsVideoBytes = !prior || !atom.metadata?.videoStorageURL;
+  if (media.videoUrl && needsVideoBytes) {
     try {
       videoData = await downloadBinary(media.videoUrl, 'video');
     } catch (error) {
@@ -293,14 +402,32 @@ async function processInstagram(uuid: string, url: string): Promise<void> {
   const warnings: string[] = [];
   let quality = 'accurate';
 
-  if (!editedByUser) {
+  // CHECKPOINT: vision is by far the most expensive step in this pipeline —
+  // one Gemini call per carousel slide, or up to 24 per reel (240 frames in
+  // batches of 20, each batch retried once). A retry almost always exists
+  // because the CHEAP tail failed (a classification call), so re-running
+  // vision to get back there re-bought the whole thing. Reuse it instead.
+  if (prior) {
+    slides = prior.slides;
+    rawSlides = prior.rawSlides;
+    speech = prior.speech;
+    quality = prior.quality;
+    warnings.push(...prior.warnings);
+    console.log(
+      `♻️ swipe ${uuid.slice(0, 8)}: reusing transcript from a previous pass ` +
+      `(${slides.length} slide(s), ${speech.length} segment(s)) — skipping vision`
+    );
+  } else if (!editedByUser) {
     if (media.contentType === 'carousel' && media.slides.length > 0) {
       const slideImageUrls = media.slides.map(s => (s.isVideo ? s.thumbnailUrl ?? s.mediaUrl : s.mediaUrl));
-      slides = await transcribeSlides(slideImageUrls);
-      rawSlides = slides;
+      rawSlides = await transcribeSlides(slideImageUrls);
+      // Mac-parity repair pass (postProcessSlides port): merge visual
+      // line-wraps into sentences, one idea per line, drop artifacts/dupes.
+      // Without this, cloud carousels rendered mid-sentence line breaks.
+      slides = postProcessSlidesJSON(rawSlides, { isCarousel: true });
     } else if (media.contentType === 'image' && media.thumbnailUrl) {
-      slides = await transcribeSlides([media.thumbnailUrl]);
-      rawSlides = slides;
+      rawSlides = await transcribeSlides([media.thumbnailUrl]);
+      slides = postProcessSlidesJSON(rawSlides, { isCarousel: false });
     } else if (videoData) {
       // Reels V3: Whisper (precision timestamps) runs IN PARALLEL with one
       // native-video understanding call — the model sees the frames AND hears
@@ -592,18 +719,24 @@ async function persistAndAnalyze(
   //   • a transcript exists but the insight/classification call failed —
   //     without this, the swipe synced down "complete" with an empty
   //     analysis and the Mac had to re-run the pass locally on open
+  //
+  // "Incomplete" no longer implies "will be retried": retrySchedule decides
+  // whether there is capture-window budget left, and retires the swipe to
+  // STATUS_NEEDS_RETRY when there isn't. The transcript is written either way
+  // (below), so a later manual retry resumes at analysis instead of re-running
+  // vision.
   const isVideoReel = Boolean(media?.videoUrl);
   const missingTranscript = !result.editedByUser && !slideText && !speechText && isVideoReel;
   const missingAnalysis = Boolean(analysisText.trim()) && !classification
     && existingAnalysis.isFullyAnalyzed !== true;
   const isPartial = missingTranscript || missingAnalysis;
-  metadataUpdates.processingStatus = isPartial ? 'partial' : 'complete';
   metadataUpdates.processingWorker = 'cloud';
   if (isPartial) {
     const attempts = Number(atom.metadata?.cloudRetryCount ?? 0) + 1;
     metadataUpdates.cloudRetryCount = attempts;
-    metadataUpdates.processingRetryAfter = new Date(Date.now() + 30 * attempts * 60_000).toISOString();
+    Object.assign(metadataUpdates, retrySchedule(atom, attempts));
   } else {
+    metadataUpdates.processingStatus = 'complete';
     metadataUpdates.cloudRetryCount = 0;
     metadataUpdates.processingRetryAfter = null;
   }
@@ -682,6 +815,70 @@ async function backfillTick(): Promise<void> {
   }
 }
 
+// ── One-shot transcript normalization (boot) ────────────────────────────────
+
+/// Re-runs the Mac-parity sanitize pass over STORED carousel/image slide
+/// texts. Scope guards:
+///   • never touches user-edited transcripts (transcriptEditedByUser terminal)
+///   • never touches reel slides (any slide carrying a timestamp) — those went
+///     through the reel pipeline's own arbitration and carry seek anchors
+///   • rawTranscriptSlides stay untouched (raw is raw)
+///   • bounded writes per boot; only writes when the text actually changes
+export async function normalizeStoredTranscripts(): Promise<number> {
+  const MAX_WRITES = 150;
+  let repaired = 0;
+  try {
+    const { data } = await supabase
+      .from('atoms')
+      .select('uuid, structured')
+      .eq('user_id', userId)
+      .eq('type', 'research')
+      .eq('is_deleted', false)
+      .eq('metadata->>isSwipeFile', 'true')
+      .not('structured->swipeAnalysis->transcriptSlides', 'is', null)
+      .order('updated_at', { ascending: false })
+      .limit(1000);
+
+    for (const atom of (data ?? []) as Atom[]) {
+      if (repaired >= MAX_WRITES) break;
+      const analysis = atom.structured?.swipeAnalysis ?? {};
+      if (analysis.transcriptEditedByUser === true) continue;
+      const slides: TranscriptSlideJSON[] = Array.isArray(analysis.transcriptSlides)
+        ? analysis.transcriptSlides
+        : [];
+      if (slides.length === 0) continue;
+      if (slides.some(s => typeof s?.timestamp === 'number')) continue; // reel slides
+      if (!slides.some(s => (s?.text ?? '').trim())) continue;
+
+      const isCarousel = slides.length > 1;
+      let changed = false;
+      const normalized = slides.map(slide => {
+        const original = slide?.text ?? '';
+        if (!original.trim()) return slide;
+        const cleaned = sanitizeSlideText(original, isCarousel);
+        if (cleaned.length === 0 || cleaned === original) return slide;
+        changed = true;
+        return { ...slide, text: cleaned };
+      });
+      if (!changed) continue;
+
+      const structured: Record<string, any> = { ...(atom.structured ?? {}) };
+      structured.swipeAnalysis = { ...analysis, transcriptSlides: normalized };
+      const updated = await updateAtom(atom.uuid, { structured });
+      if (updated) {
+        repaired += 1;
+        console.log(`🧹 transcript normalized: ${atom.uuid.slice(0, 8)}`);
+      }
+    }
+    if (repaired > 0) {
+      console.log(`🧹 transcript normalization: repaired ${repaired} swipe(s)`);
+    }
+  } catch (error) {
+    console.warn('⚠️ transcript normalization failed:', error instanceof Error ? error.message : error);
+  }
+  return repaired;
+}
+
 // ── Engagement refresh (manual, from the apps) ──────────────────────────────
 
 export async function refreshEngagement(uuid: string): Promise<boolean> {
@@ -711,16 +908,42 @@ async function setStatus(uuid: string, status: string): Promise<void> {
   });
 }
 
+/// Decide what happens after a failed pass: one more quick attempt inside the
+/// capture window, or retirement to STATUS_NEEDS_RETRY.
+///
+/// `failedStatus` is what the swipe should read as while it still has budget
+/// ('partial' or 'extraction_failed'); once budget is gone the status becomes
+/// terminal regardless, so no tick can pick it up again.
+export function retrySchedule(
+  atom: Atom | null,
+  attempts: number,
+  failedStatus: string = 'partial'
+): Record<string, unknown> {
+  const budgetLeft = attempts <= MAX_CLOUD_RETRIES;
+  const inWindow = atom ? withinCaptureWindow(atom, Date.now()) : false;
+  if (!budgetLeft || !inWindow) {
+    return { processingStatus: STATUS_NEEDS_RETRY, processingRetryAfter: null };
+  }
+  const delaySeconds = RETRY_DELAYS_SECONDS[attempts - 1] ?? RETRY_DELAYS_SECONDS[RETRY_DELAYS_SECONDS.length - 1];
+  return {
+    processingStatus: failedStatus,
+    processingRetryAfter: new Date(Date.now() + delaySeconds * 1_000).toISOString(),
+  };
+}
+
 async function markFailed(uuid: string, permanent: boolean): Promise<void> {
   const atom = await fetchAtom(uuid);
   const attempts = Number(atom?.metadata?.cloudRetryCount ?? 0) + 1;
-  const retryDelayMinutes = permanent ? 24 * 60 : 30 * attempts;
+  // A permanent error (deleted post, private account) never earns a retry —
+  // re-fetching it tomorrow costs an Apify run to learn the same thing.
+  const schedule = permanent
+    ? { processingStatus: STATUS_NEEDS_RETRY, processingRetryAfter: null }
+    : retrySchedule(atom, attempts, 'extraction_failed');
   await updateAtom(uuid, {
     metadata: {
-      processingStatus: 'extraction_failed',
       processingWorker: 'cloud',
-      cloudRetryCount: permanent ? MAX_CLOUD_RETRIES : attempts,
-      processingRetryAfter: new Date(Date.now() + retryDelayMinutes * 60_000).toISOString(),
+      cloudRetryCount: attempts,
+      ...schedule,
     },
   });
 }

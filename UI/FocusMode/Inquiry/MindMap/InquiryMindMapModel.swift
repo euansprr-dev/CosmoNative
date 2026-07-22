@@ -115,6 +115,18 @@ enum MindMapBuilder {
             return own + anchored + children + 1
         }
 
+        // Weight ties break on title then uuid so the map never reshuffles
+        // between identical rebuilds (Swift's sort is not stable).
+        func orderedByWeight(_ list: [Atom]) -> [Atom] {
+            list.sorted { lhs, rhs in
+                let lhsWeight = subtreeWeight(lhs.uuid)
+                let rhsWeight = subtreeWeight(rhs.uuid)
+                if lhsWeight != rhsWeight { return lhsWeight > rhsWeight }
+                if lhs.title != rhs.title { return (lhs.title ?? "") < (rhs.title ?? "") }
+                return lhs.uuid < rhs.uuid
+            }
+        }
+
         var budget = nodeCap
 
         func questionNode(_ question: Atom, depth: Int) -> MindMapNode? {
@@ -139,8 +151,7 @@ enum MindMapBuilder {
             budget -= 1
             var children: [MindMapNode] = []
             // Child concepts first — they ARE the structure.
-            for child in (childConceptsByParent[connection.uuid] ?? [])
-                .sorted(by: { subtreeWeight($0.uuid) > subtreeWeight($1.uuid) }) {
+            for child in orderedByWeight(childConceptsByParent[connection.uuid] ?? []) {
                 if let node = conceptNode(child, depth: depth + 1) { children.append(node) }
             }
             // Then the questions this concept is being interrogated through.
@@ -148,7 +159,8 @@ enum MindMapBuilder {
                 .sorted { lhs, rhs in
                     let lhsCount = extracts.filter { $0.extractMetadata?.parentQuestionUUID == lhs.uuid }.count
                     let rhsCount = extracts.filter { $0.extractMetadata?.parentQuestionUUID == rhs.uuid }.count
-                    return lhsCount > rhsCount
+                    if lhsCount != rhsCount { return lhsCount > rhsCount }
+                    return lhs.uuid < rhs.uuid
                 }
             for question in anchored.prefix(questionsPerConcept) {
                 if let node = questionNode(question, depth: 0) { children.append(node) }
@@ -177,9 +189,7 @@ enum MindMapBuilder {
         }
 
         // Core concepts (no parent) are the map's primary branches.
-        var branches = connections
-            .filter { parentByUUID[$0.uuid] == nil }
-            .sorted { subtreeWeight($0.uuid) > subtreeWeight($1.uuid) }
+        var branches = orderedByWeight(connections.filter { parentByUUID[$0.uuid] == nil })
             .compactMap { conceptNode($0, depth: 0) }
 
         // Seedlings: incubating concept mass orbits its parent concept (merge
@@ -337,8 +347,13 @@ enum MindMapBuilder {
                       !otherTokens.isEmpty, otherTokens != ownTokens else { return false }
                 return otherTokens.isSubset(of: ownTokens)
             }
-            if let best = candidates.max(by: {
-                (tokensByUUID[$0.uuid]?.count ?? 0) < (tokensByUUID[$1.uuid]?.count ?? 0)
+            // Most specific parent (largest token overlap) wins; ties break
+            // on uuid so the hierarchy is identical across rebuilds.
+            if let best = candidates.min(by: { lhs, rhs in
+                let lhsCount = tokensByUUID[lhs.uuid]?.count ?? 0
+                let rhsCount = tokensByUUID[rhs.uuid]?.count ?? 0
+                if lhsCount != rhsCount { return lhsCount > rhsCount }
+                return lhs.uuid < rhs.uuid
             }) {
                 parentByUUID[connection.uuid] = best.uuid
             }
@@ -371,13 +386,22 @@ enum MindMapBuilder {
     ) -> String? {
         let questionExtracts = extracts.filter { $0.extractMetadata?.parentQuestionUUID == question.uuid }
 
+        // Tally ties break on uuid — Dictionary iteration order is unordered,
+        // so a bare `.max`/`.first` made anchoring flip between rebuilds.
+        func dominant(in tally: [String: Int]) -> String? {
+            tally.min { lhs, rhs in
+                if lhs.value != rhs.value { return lhs.value > rhs.value }
+                return lhs.key < rhs.key
+            }?.key
+        }
+
         var promotedTally: [String: Int] = [:]
         for extract in questionExtracts {
             if let target = extract.extractMetadata?.promotedToUUID, connectionsByUUID[target] != nil {
                 promotedTally[target, default: 0] += 1
             }
         }
-        if let dominant = promotedTally.max(by: { $0.value < $1.value })?.key { return dominant }
+        if let anchor = dominant(in: promotedTally) { return anchor }
 
         let connectionByKey = Dictionary(
             connections.compactMap { connection -> (String, String)? in
@@ -394,15 +418,20 @@ enum MindMapBuilder {
                 }
             }
         }
-        if let dominant = tagTally.max(by: { $0.value < $1.value })?.key { return dominant }
+        if let anchor = dominant(in: tagTally) { return anchor }
 
         let questionKey = ConceptResolver.conceptKey(
             ConceptResolver.conceptName(fromQuestion: question.title ?? "")
         )
         guard questionKey.count >= 4 else { return nil }
-        return connectionByKey.first { key, _ in
-            key.count >= 4 && (questionKey.contains(key) || key.contains(questionKey))
-        }?.value
+        // Most specific (longest) matching key wins; ties break on key.
+        return connectionByKey
+            .filter { key, _ in key.count >= 4 && (questionKey.contains(key) || key.contains(questionKey)) }
+            .min { lhs, rhs in
+                if lhs.key.count != rhs.key.count { return lhs.key.count > rhs.key.count }
+                return lhs.key < rhs.key
+            }?
+            .value
     }
 
     // MARK: - Cross-link edges

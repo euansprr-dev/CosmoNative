@@ -30,7 +30,9 @@ struct TaskDetailInlineEditor: View {
         let resolvedHabitUUID = viewModel.resolvedHabit(for: task)?.id
         _editTitle = State(initialValue: task.title)
         _editPriority = State(initialValue: task.priority)
-        _editDueDate = State(initialValue: task.dueDate)
+        // The one date — plannedDate, so legacy split-pin rows show the day
+        // the task actually lives on.
+        _editDueDate = State(initialValue: task.plannedDate)
         _editIntentUUID = State(initialValue: task.intentUUID)
         _editNotes = State(initialValue: task.body ?? "")
         _selectedHabitUUID = State(initialValue: resolvedHabitUUID)
@@ -339,7 +341,7 @@ struct TaskDetailInlineEditor: View {
             // Only pass a changed due date — occurrence rows carry the series template's
             // uuid, and an unchanged passthrough would re-anchor the whole series.
             let dueDateChanged = editDueDate.map { Calendar.current.startOfDay(for: $0) }
-                != task.dueDate.map { Calendar.current.startOfDay(for: $0) }
+                != task.plannedDate.map { Calendar.current.startOfDay(for: $0) }
             await viewModel.updateTask(
                 uuid: task.uuid,
                 title: editTitle.isEmpty ? nil : editTitle,

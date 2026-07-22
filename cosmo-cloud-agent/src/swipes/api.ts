@@ -23,6 +23,21 @@ function captureTarget(url: string): { contentSource: string; title: string } | 
   return null;
 }
 
+/** Stable post id used for dedup, so a re-share with a fresh ?igsh=/tracking
+ *  token still matches the swipe already saved. IG shortcode / YouTube video id. */
+function stableDedupKey(url: string): string | null {
+  const ig = url.match(/instagram\.com\/(?:p|reel|reels|tv)\/([A-Za-z0-9_-]+)/i);
+  if (ig) return ig[1];
+  const yt = url.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/)|youtu\.be\/)([A-Za-z0-9_-]{6,})/i);
+  if (yt) return yt[1];
+  return null;
+}
+
+/** Escape LIKE metacharacters (%, _, \) so the id is matched literally. */
+function escapeLike(s: string): string {
+  return s.replace(/[\\%_]/g, (c) => `\\${c}`);
+}
+
 async function authenticate(req: Request, res: Response): Promise<boolean> {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -99,17 +114,21 @@ swipesRouter.post('/capture', async (req: Request, res: Response) => {
     return;
   }
 
-  // Dedup: if this URL is already a swipe, return it instead of creating a twin.
-  const { data: existing } = await supabase
+  // Dedup: if this post is already a swipe, return it instead of creating a twin.
+  // Match on the stable post id (IG shortcode / YT video id) so a re-share with a
+  // different ?igsh= tracking token still dedups; fall back to the exact URL.
+  const dedupKey = stableDedupKey(rawUrl);
+  let dedupQuery = supabase
     .from('atoms')
     .select('uuid')
     .eq('user_id', userId)
     .eq('type', 'research')
     .eq('is_deleted', false)
-    .eq('metadata->>isSwipeFile', 'true')
-    .eq('metadata->>url', rawUrl)
-    .limit(1)
-    .maybeSingle();
+    .eq('metadata->>isSwipeFile', 'true');
+  dedupQuery = dedupKey
+    ? dedupQuery.ilike('metadata->>url', `%${escapeLike(dedupKey)}%`)
+    : dedupQuery.eq('metadata->>url', rawUrl);
+  const { data: existing } = await dedupQuery.limit(1).maybeSingle();
   if (existing?.uuid) {
     res.json({ status: 'exists', swipeUUID: existing.uuid });
     return;

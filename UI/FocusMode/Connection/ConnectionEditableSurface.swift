@@ -73,7 +73,9 @@ enum ConnectionSurfaceSerializer {
     static func serialize(
         title: String,
         conceptType: ConceptFrameworkType,
-        sections: [ConnectionSection]
+        sections: [ConnectionSection],
+        media: [ConnectionMediaItem] = [],
+        mediaAtoms: [String: Atom] = [:]
     ) -> ConnectionSurfaceModel {
         var rendered: [(text: String, kind: ConnectionSurfaceModel.LineKind)] = []
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -98,7 +100,26 @@ enum ConnectionSurfaceSerializer {
                             rendered.append(("  \(piece)", .itemContinuation(section.type, item.id)))
                         }
                     }
+                    // A handled objection's response rides along as a
+                    // READ-ONLY meta line (`↳` is never a bullet marker, so
+                    // parse/apply paths can't stage or edit it). The model
+                    // sees which objections are resolved and with what.
+                    if item.isHandled, let handling = item.handling {
+                        rendered.append((handlingLine(handling, sections: sections), .meta))
+                    }
                 }
+            }
+        }
+
+        // READ-ONLY media block: the skill SEES the board's visuals but can
+        // never insert into them — lines render as `.meta` (no anchor, no
+        // section), and the `▸` glyph keeps parseItems from ever treating
+        // one as a bullet. Media enters only through the attach flows.
+        if !media.isEmpty {
+            rendered.append(("", .blank))
+            rendered.append(("## Gallery (read-only media on this board)", .meta))
+            for item in media.sorted(by: { ($0.sortOrder, $0.createdAt) < ($1.sortOrder, $1.createdAt) }) {
+                rendered.append((mediaLine(for: item, atom: item.atomUUID.flatMap { mediaAtoms[$0] }), .meta))
             }
         }
 
@@ -126,6 +147,59 @@ enum ConnectionSurfaceSerializer {
         }
 
         return ConnectionSurfaceModel(text: text, lines: lines, anchors: anchors)
+    }
+
+    /// The handled-objection meta line, e.g.
+    /// `  ↳ handled: We measure it weekly (answered by Examples: "The IKEA study…")`
+    static func handlingLine(_ handling: ObjectionHandling, sections: [ConnectionSection]) -> String {
+        var line = "  ↳ handled"
+        let text = handling.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !text.isEmpty {
+            line += ": \(text.replacingOccurrences(of: "\n", with: " "))"
+        }
+        let resolvedLinks: [String] = handling.linkedRefs.compactMap { ref in
+            guard let sectionType = ref.section else { return nil }
+            let linked = sections.first { $0.type == sectionType }?
+                .items.first { $0.id == ref.itemID }
+            guard let linked else { return "\(sectionType.displayName) (missing entry)" }
+            let snippet = String(linked.resolvedPlainText.prefix(48))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return "\(sectionType.displayName): \"\(snippet)\""
+        }
+        if !resolvedLinks.isEmpty {
+            line += " (answered by \(resolvedLinks.joined(separator: "; ")))"
+        }
+        return line
+    }
+
+    /// One legible line per media ref, e.g.
+    /// `▸ [video] "Hormozi hook breakdown" (Instagram Reel · 0:42 · shown on Examples) — caption`
+    static func mediaLine(for item: ConnectionMediaItem, atom: Atom?) -> String {
+        var pieces: [String] = []
+        if let sourceType = atom?.richContent?.sourceType {
+            pieces.append(sourceType.displayName.replacingOccurrences(of: "_", with: " "))
+        } else if item.atomUUID == nil {
+            pieces.append(item.ownsVideoAsset ? "video file" : "image file")
+        }
+        if let moment = item.timestampSeconds, moment > 0 {
+            let total = Int(moment.rounded())
+            pieces.append(String(format: "moment %d:%02d", total / 60, total % 60))
+        }
+        if let anchor = item.anchorSection {
+            pieces.append("shown on \(anchor.displayName)")
+        }
+        if item.isCover {
+            pieces.append("cover")
+        }
+        let title = atom?.title ?? item.assetTitle ?? "Untitled media"
+        var line = "▸ [\(item.kind.rawValue)] \"\(title)\""
+        if !pieces.isEmpty {
+            line += " (\(pieces.joined(separator: " · ")))"
+        }
+        if let caption = item.caption, !caption.isEmpty {
+            line += ", caption: \(caption)"
+        }
+        return line
     }
 
     private static func anchor(
@@ -672,7 +746,9 @@ final class ConnectionContextProvider: CosmoContextProvider, CosmoEditableSurfac
         return ConnectionSurfaceSerializer.serialize(
             title: titleProvider(),
             conceptType: state?.conceptType ?? .mentalModel,
-            sections: state?.sections ?? []
+            sections: state?.sections ?? [],
+            media: state?.media ?? [],
+            mediaAtoms: viewModel?.mediaAtoms ?? [:]
         )
     }
 

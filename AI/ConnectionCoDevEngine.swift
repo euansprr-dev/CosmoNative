@@ -276,6 +276,27 @@ class ConnectionCoDevEngine: ObservableObject {
         }
     }
 
+    /// SECTION pages develop FROM their parts: every member concept the
+    /// section links (written when the grouping was accepted) joins the rail
+    /// directly — no graph-index lag, no semantic guessing. The members'
+    /// pages carry their promoted notes, so each row is a door into the
+    /// material the umbrella must explain.
+    func findSectionMemberMaterials(for connection: Atom) async -> [Atom] {
+        guard connection.metadataValue(as: ConnectionHierarchyMetadata.self)?.isSection == true else { return [] }
+        var seen = Set<String>()
+        var members: [Atom] = []
+        for link in connection.linksList
+        where link.type == AtomLinkType.connection.rawValue
+            && link.entityType == AtomType.connection.rawValue {
+            guard link.uuid != connection.uuid,
+                  seen.insert(link.uuid).inserted,
+                  let member = try? await AtomRepository.shared.fetch(uuid: link.uuid),
+                  !member.isDeleted, member.isEligibleWellSource else { continue }
+            members.append(member)
+        }
+        return members.sorted { ($0.title ?? "") < ($1.title ?? "") }
+    }
+
     /// Finds source materials relevant to this connection via semantic search.
     func findSourceMaterials(for connection: Atom, limit: Int = 10) async -> [Atom] {
         let query = connection.title ?? ""

@@ -23,6 +23,15 @@ struct MindMapNode: Identifiable, Hashable {
     var subtitle: String?
     var isActive: Bool = false
     var isRipe: Bool = false   // Seedlings only: ready for development
+    /// Cartographer scaffolding: a grouping page with no notes of its own yet.
+    /// Styled as a chapter header until research makes it a real concept.
+    var isSection: Bool = false
+    /// A PROPOSED section — not yet real. Rendered dashed with accept/✕
+    /// controls; `proposalKey` routes the ruling.
+    var isGhost: Bool = false
+    var proposalKey: String? = nil
+    /// Set by `pruned(root:collapsed:)`: how many descendants are folded away.
+    var collapsedCount: Int = 0
     var atomUUID: String?
     var branchNodeId: String?
     var children: [MindMapNode] = []
@@ -47,6 +56,8 @@ struct MindMapConceptLink: Identifiable, Hashable {
 struct MindMapGraph {
     var root: MindMapNode
     var conceptLinks: [MindMapConceptLink] = []
+    /// Ghost-proposal edges: proposed section → each member it would gather.
+    var ghostLinks: [MindMapConceptLink] = []
 }
 
 enum MindMapBuilder {
@@ -139,7 +150,7 @@ enum MindMapBuilder {
                 id: "question-\(question.uuid)",
                 kind: depth == 0 ? .question : .subQuestion,
                 title: question.title ?? "Untitled question",
-                subtitle: noteCount > 0 ? "\(noteCount) notes" : nil,
+                subtitle: noteCount > 0 ? notesLabel(noteCount) : nil,
                 isActive: question.uuid == activeQuestionUUID,
                 atomUUID: question.uuid,
                 children: children
@@ -175,14 +186,23 @@ enum MindMapBuilder {
             }
             let noteCount = promotedCounts[connection.uuid] ?? 0
             let branchCount = (childConceptsByParent[connection.uuid] ?? []).count
+            // Scaffolding stays a "section" only until research reaches it —
+            // its own promoted notes graduate it into a normal concept card.
+            let isSection = connection.metadataValue(as: ConnectionHierarchyMetadata.self)?.isSection == true
+                && noteCount == 0
             var subtitleParts: [String] = []
-            if noteCount > 0 { subtitleParts.append("\(noteCount) notes") }
-            if branchCount > 0 { subtitleParts.append("\(branchCount) branch\(branchCount == 1 ? "" : "es")") }
+            if isSection, branchCount > 0 {
+                subtitleParts.append("\(branchCount) concept\(branchCount == 1 ? "" : "s")")
+            } else {
+                if noteCount > 0 { subtitleParts.append(notesLabel(noteCount)) }
+                if branchCount > 0 { subtitleParts.append("\(branchCount) branch\(branchCount == 1 ? "" : "es")") }
+            }
             return MindMapNode(
                 id: "concept-\(connection.uuid)",
                 kind: depth == 0 ? .coreConcept : .childConcept,
                 title: connection.title ?? "Concept",
                 subtitle: subtitleParts.isEmpty ? nil : subtitleParts.joined(separator: " · "),
+                isSection: isSection,
                 atomUUID: connection.uuid,
                 children: children
             )
@@ -296,6 +316,66 @@ enum MindMapBuilder {
             title: rootTitle,
             children: branches
         )
+    }
+
+    /// "1 note" / "3 notes" — the map's one count voice.
+    static func notesLabel(_ count: Int) -> String {
+        count == 1 ? "1 note" : "\(count) notes"
+    }
+
+    // MARK: - Ghost proposals
+
+    /// Layers the Cartographer's GROUP proposals onto the map as ghost
+    /// section nodes: each ghost lands beside its first member branch with
+    /// dashed edges to every member. Nest proposals stay off the tree (they
+    /// render as tending rows) — only groups earn a ghost.
+    static func addingGhostProposals(
+        _ graph: MindMapGraph,
+        proposals: [ConceptCartographerProposal]
+    ) -> MindMapGraph {
+        var graph = graph
+        for proposal in proposals {
+            guard case .group(let name, let memberUUIDs) = proposal.kind else { continue }
+            let presentIds = Set(collectNodeIds(graph.root))
+            let memberNodeIds = memberUUIDs.map { "concept-\($0)" }.filter { presentIds.contains($0) }
+            guard memberNodeIds.count >= 2 else { continue }
+            let ghost = MindMapNode(
+                id: "ghost-\(proposal.key)",
+                kind: .coreConcept,
+                title: name,
+                subtitle: "Proposed · \(memberNodeIds.count) concepts",
+                isSection: true,
+                isGhost: true,
+                proposalKey: proposal.key
+            )
+            // Beside its first member, so the dashed edges stay short.
+            let insertIndex = graph.root.children.firstIndex { memberNodeIds.contains($0.id) }
+                ?? graph.root.children.count
+            graph.root.children.insert(ghost, at: insertIndex)
+            graph.ghostLinks += memberNodeIds.map {
+                MindMapConceptLink(fromNodeId: ghost.id, toNodeId: $0)
+            }
+        }
+        return graph
+    }
+
+    private static func collectNodeIds(_ node: MindMapNode) -> [String] {
+        [node.id] + node.children.flatMap(collectNodeIds)
+    }
+
+    // MARK: - Collapse
+
+    /// Pure fold: children of collapsed nodes are removed before layout, and
+    /// the folded node remembers how many descendants it hides ("+N" badge).
+    static func pruned(root: MindMapNode, collapsed: Set<String>) -> MindMapNode {
+        var copy = root
+        if collapsed.contains(copy.id), !copy.children.isEmpty {
+            copy.collapsedCount = copy.totalCount - 1
+            copy.children = []
+            return copy
+        }
+        copy.children = copy.children.map { pruned(root: $0, collapsed: collapsed) }
+        return copy
     }
 
     /// Recursively appends `child` to the node with `toNodeId` inside a value

@@ -14,12 +14,24 @@ struct ConnectionSectionCardView: View {
     /// rows with inline ✓/✗ below the real items.
     var pendingInserts: [ConnectionPendingInsert] = []
 
+    /// Media refs anchored to this section — a thumbnail strip between the
+    /// item previews and the quick-add.
+    var anchoredMedia: [ConnectionMediaItem] = []
+    var mediaAtoms: [String: Atom] = [:]
+    /// Collaborator-staged rebuttals for THIS card's objections (Beliefs &
+    /// Objections only) — ghost threads with ✓/✗.
+    var stagedHandlings: [StagedObjectionHandling] = []
+    /// Resolves a board ref for staged-handling link labels.
+    var resolveBoardRef: (ConnectionBoardItemRef) -> (section: ConnectionSectionType, item: ConnectionItem)? = { _ in nil }
+
     var onOpen: () -> Void = {}
     var onSelect: () -> Void = {}
     var onAddItem: (RichDocument, String) -> Void = { _, _ in }
     var onSourceTap: (String) -> Void = { _ in }
     var onAcceptInsert: (ConnectionPendingInsert) -> Void = { _ in }
     var onRejectInsert: (ConnectionPendingInsert) -> Void = { _ in }
+    /// Media tile actions (open lightbox, context menu) — the workspace's.
+    var mediaActions: ConnectionWorkspaceActions = ConnectionWorkspaceActions()
 
     @State private var isHovered = false
 
@@ -36,6 +48,12 @@ struct ConnectionSectionCardView: View {
             }
             if !pendingInserts.isEmpty {
                 pendingList
+            }
+            if !stagedHandlings.isEmpty {
+                stagedHandlingList
+            }
+            if !anchoredMedia.isEmpty {
+                mediaStrip
             }
             ConnectionQuickAddField(accent: accent, sectionName: section.type.displayName, onSubmit: onAddItem)
         }
@@ -110,6 +128,50 @@ struct ConnectionSectionCardView: View {
         }
     }
 
+    // MARK: - Staged handlings
+
+    /// Ghost rebuttal threads on the board card — each names its objection
+    /// so the card reads standalone.
+    private var stagedHandlingList: some View {
+        VStack(alignment: .leading, spacing: DS.space6) {
+            ForEach(stagedHandlings) { staged in
+                StagedObjectionHandlingRow(
+                    staged: staged,
+                    showsObjectionSnippet: true,
+                    resolveRef: resolveBoardRef,
+                    onAccept: { mediaActions.onAcceptStagedHandling(staged.id) },
+                    onReject: { mediaActions.onRejectStagedHandling(staged.id) }
+                )
+            }
+        }
+    }
+
+    // MARK: - Media strip
+
+    /// Up to three anchored thumbnails in a row; the overflow count opens the
+    /// section detail where the full set lives.
+    private var mediaStrip: some View {
+        HStack(spacing: DS.space6) {
+            ForEach(anchoredMedia.prefix(3)) { item in
+                ConceptMediaTile(
+                    item: item,
+                    atom: item.atomUUID.flatMap { mediaAtoms[$0] },
+                    actions: mediaActions,
+                    tileAspect: 1.4
+                )
+                .frame(maxWidth: 96)
+            }
+            if anchoredMedia.count > 3 {
+                Text("+\(anchoredMedia.count - 3)")
+                    .font(DS.caption.weight(.medium))
+                    .foregroundStyle(DS.textSecondary)
+                    .frame(width: 34, height: 34)
+                    .background(DS.glassSectionFill, in: .rect(cornerRadius: 8))
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
     // MARK: - Body content
 
     private var emptyPrompt: some View {
@@ -125,7 +187,12 @@ struct ConnectionSectionCardView: View {
     private var previewList: some View {
         VStack(alignment: .leading, spacing: DS.space8) {
             ForEach(previewItems) { item in
-                ConnectionItemPreviewRow(item: item, accent: accent, highlightQuery: highlightQuery)
+                ConnectionItemPreviewRow(
+                    item: item,
+                    accent: accent,
+                    highlightQuery: highlightQuery,
+                    objectionBadge: section.type == .beliefsObjections
+                )
             }
             if section.itemCount > previewItems.count {
                 Button(action: onOpen) {
@@ -244,6 +311,8 @@ struct ConnectionItemPreviewRow: View {
     let accent: Color
     var highlightQuery: String = ""
     var lineLimit: Int = 2
+    /// Beliefs & Objections rows wear their handled/open shield.
+    var objectionBadge: Bool = false
 
     private var isMatch: Bool {
         !highlightQuery.isEmpty &&
@@ -273,6 +342,10 @@ struct ConnectionItemPreviewRow: View {
                 lineLimit: lineLimit
             )
             .frame(maxWidth: .infinity, alignment: .leading)
+            if objectionBadge {
+                ObjectionStatusBadge(isHandled: item.isHandled)
+                    .padding(.top, 3)
+            }
         }
         .padding(.horizontal, isMatch ? DS.space4 : 0)
         .background(isMatch ? accent.opacity(0.10) : .clear, in: .rect(cornerRadius: 4))

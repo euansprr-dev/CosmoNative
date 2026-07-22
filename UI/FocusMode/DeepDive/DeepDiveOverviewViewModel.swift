@@ -26,6 +26,18 @@ final class DeepDiveOverviewViewModel {
     var extracts: [Atom] = []
     /// The Gardener's structure proposals for this topic (promote/merge/graduate).
     var gardenerProposals: [InquiryGardenerProposal] = []
+    /// The Cartographer's concept-map proposals (group into a section / nest).
+    var cartographerProposals: [ConceptCartographerProposal] = []
+    /// A freshly minted section awaiting the "Develop now?" verdict on the map.
+    var pendingSectionDevelopment: PendingSectionDevelopment?
+    /// True while a forced Tidy pass runs (the Map chrome button disables).
+    var isTidyingMap = false
+
+    struct PendingSectionDevelopment: Equatable {
+        var uuid: String
+        var title: String
+        var memberCount: Int
+    }
     /// This dive's seedbed, read through the unified seedlings store.
     var seedbed: [IncubatingConcept] = []
     /// Cross-dive collisions: conceptKey → where else that concept is
@@ -149,6 +161,60 @@ final class DeepDiveOverviewViewModel {
             preloadedQuestions: loadedQs,
             preloadedExtracts: loadedExt
         )
+        // nil = throttle skipped the pass — keep whatever is already showing.
+        if let mapped = await ConceptCartographer.shared.review(
+            deepDive: atom,
+            preloadedConnections: loadedCons,
+            preloadedExtracts: loadedExt
+        ) {
+            cartographerProposals = mapped
+        }
+    }
+
+    // MARK: - Cartographer (concept-map structure)
+
+    /// Accepts a proposal: the structure applies (section page, pinned
+    /// parents, canvas cluster) and a fresh group opens the "Develop now?"
+    /// moment beside its new node.
+    func acceptCartographerProposal(_ proposal: ConceptCartographerProposal) async {
+        let sectionUUID = await ConceptCartographer.shared.accept(proposal, deepDive: atom)
+        cartographerProposals.removeAll { $0.key == proposal.key }
+        if case .group(let name, let members) = proposal.kind, let sectionUUID {
+            pendingSectionDevelopment = PendingSectionDevelopment(
+                uuid: sectionUUID, title: name, memberCount: members.count
+            )
+        }
+        await load()
+    }
+
+    func dismissCartographerProposal(_ proposal: ConceptCartographerProposal) async {
+        await ConceptCartographer.shared.dismiss(proposal, deepDiveUUID: atom.uuid)
+        cartographerProposals.removeAll { $0.key == proposal.key }
+    }
+
+    func acceptCartographerProposal(key: String) async {
+        guard let proposal = cartographerProposals.first(where: { $0.key == key }) else { return }
+        await acceptCartographerProposal(proposal)
+    }
+
+    func dismissCartographerProposal(key: String) async {
+        guard let proposal = cartographerProposals.first(where: { $0.key == key }) else { return }
+        await dismissCartographerProposal(proposal)
+    }
+
+    /// The Tidy button: a forced Cartographer pass, throttle bypassed.
+    func runTidyMapPass() async {
+        guard !isTidyingMap else { return }
+        isTidyingMap = true
+        if let mapped = await ConceptCartographer.shared.review(
+            deepDive: atom,
+            force: true,
+            preloadedConnections: connections,
+            preloadedExtracts: extracts
+        ) {
+            cartographerProposals = mapped
+        }
+        isTidyingMap = false
     }
 
     // MARK: - Tending (the Gardener's proposals)

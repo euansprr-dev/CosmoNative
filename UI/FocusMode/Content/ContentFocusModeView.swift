@@ -154,6 +154,8 @@ struct ContentFocusModeView: View {
     /// Non-nil while the inline assistant has staged reviewable changes for this draft —
     /// drives the in-document diff that temporarily replaces the editor.
     @State private var draftReviewProposal: CosmoAssistantProposal?
+    /// Keeps the manuscript scroll anchored across the review → editor swap.
+    @State private var inlineReviewScrollKeeper = CosmoInlineReviewScrollPositionKeeper()
     @State private var draftHeadingOutline: [RichHeadingOutlineEntry] = []
     @State private var draftNavigationTargetID: UUID?
     @StateObject private var writingEngine = UnifiedWritingEngine()
@@ -556,13 +558,13 @@ struct ContentFocusModeView: View {
             }
         }
         .onReceive(CosmoInlineAssistantStore.shared.$proposals) { proposals in
-            draftReviewProposal = proposals.last { proposal in
+            updateDraftReviewProposal(proposals.last { proposal in
                 proposal.hasReviewableOperations && proposal.matches(
                     surfaceID: inlineAssistantContentSurfaceID,
                     targetID: inlineAssistantContentTargetID,
                     activeAtomUUID: atom.uuid
                 )
-            }
+            })
         }
         .task {
             // Initialize engine with persisted conversation (only when legacy AI Collaborator is active)
@@ -791,6 +793,7 @@ struct ContentFocusModeView: View {
                                     .padding(.bottom, DS.space20)
                                     .background(ScrollViewIntrospector { scrollView in
                                         manuscriptScrollView = scrollView
+                                        inlineReviewScrollKeeper.attach(to: scrollView)
                                     } onMetricsChange: { metrics in
                                         manuscriptScrollMetrics = metrics
                                     })
@@ -2551,11 +2554,23 @@ struct ContentFocusModeView: View {
     }
 
     private func refreshInlineAssistantDraftReview() {
-        draftReviewProposal = CosmoInlineAssistantStore.shared.pendingProposal(
+        updateDraftReviewProposal(CosmoInlineAssistantStore.shared.pendingProposal(
             forSurfaceID: inlineAssistantContentSurfaceID,
             targetID: inlineAssistantContentTargetID,
             activeAtomUUID: atom.uuid
-        )
+        ))
+    }
+
+    /// Single write path for `draftReviewProposal`. Resolving the last
+    /// operation swaps the diff view back for the editor, whose async first
+    /// layout would clamp the manuscript scroll to the top — the offset is
+    /// captured before the branch flips and re-asserted until it sticks, so
+    /// accepting an edit leaves the user anchored where they reviewed it.
+    private func updateDraftReviewProposal(_ proposal: CosmoAssistantProposal?) {
+        let isClosingReview = draftReviewProposal != nil && proposal == nil
+        if isClosingReview { inlineReviewScrollKeeper.captureBeforeSwap() }
+        draftReviewProposal = proposal
+        if isClosingReview { inlineReviewScrollKeeper.restoreAfterSwap() }
     }
 
     private var inlineAssistantContentSurfaceID: String {
@@ -3454,7 +3469,7 @@ class ContentFocusModeViewModel: ObservableObject {
 
         // Async close save: the focus-exit animation must never block on the
         // DB write lock (the cross-process busy timeout is 5s — a lock held by
-        // CosmoVoiceDaemon could freeze the UI that long). The registry escort
+        // another process could freeze the UI that long). The registry escort
         // preserves the quit guarantee: terminating mid-write flushes the same
         // state synchronously; once the async write commits it unregisters.
         // (The VM's own cosmoAppWillTerminate handler skips after isClosed.)

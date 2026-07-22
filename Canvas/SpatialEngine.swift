@@ -731,6 +731,75 @@ class SpatialEngine {
         }
     }
 
+    // MARK: - Detach Atom From A Thinkspace (remove from thinkspace)
+
+    /// Soft-delete EVERY placement of an atom WITHIN one thinkspace, leaving the
+    /// atom alive in the Library and untouched in any OTHER thinkspaces. This is
+    /// the "remove from thinkspace" tier — one step heavier than `removeBlock`
+    /// (which drops a single placement) and one step lighter than deleting the
+    /// atom. Scoped to `thinkspaceId` so it never reaches into spaces the user
+    /// isn't looking at.
+    ///
+    /// ISO8601 (not CURRENT_TIMESTAMP) because the block observer pushes this
+    /// `updated_at` to the cloud and SQLite's space-separated format breaks the
+    /// LWW cursor comparison (same reason AtomRepository.delete uses ISO8601).
+    func removeAtomFromThinkspace(entityUuid: String, thinkspaceId: String) async {
+        guard !entityUuid.isEmpty, !thinkspaceId.isEmpty else { return }
+
+        // Remove from memory FIRST (instant UI update). `blocks` only holds the
+        // current thinkspace, so matching on entityUuid is already space-scoped.
+        withAnimation(.easeOut(duration: 0.15)) {
+            blocks.removeAll { $0.entityUuid == entityUuid }
+        }
+
+        let db = database
+        let now = ISO8601.string(from: Date())
+        do {
+            try await db.asyncWrite { database in
+                try database.execute(
+                    sql: "UPDATE canvas_blocks SET is_deleted = 1, updated_at = ? WHERE entity_uuid = ? AND thinkspace_id = ?",
+                    arguments: [now, entityUuid, thinkspaceId]
+                )
+            }
+        } catch {
+            PersistenceHealth.note(.writeFailure, context: "spatialEngine.removeAtomFromThinkspace", detail: "atom \(entityUuid.prefix(8)) in \(thinkspaceId.prefix(8)): \(error)")
+        }
+
+        NotificationCenter.default.post(
+            name: Notification.Name("com.cosmo.canvasBlocksChanged"),
+            object: nil
+        )
+    }
+
+    /// Undo of `removeAtomFromThinkspace`: un-soft-delete the atom's placements
+    /// in that one thinkspace and reload the current canvas if it's the one that
+    /// changed, so the restored blocks reappear in memory.
+    func reattachAtomToThinkspace(entityUuid: String, thinkspaceId: String) async {
+        guard !entityUuid.isEmpty, !thinkspaceId.isEmpty else { return }
+
+        let db = database
+        let now = ISO8601.string(from: Date())
+        do {
+            try await db.asyncWrite { database in
+                try database.execute(
+                    sql: "UPDATE canvas_blocks SET is_deleted = 0, updated_at = ? WHERE entity_uuid = ? AND thinkspace_id = ?",
+                    arguments: [now, entityUuid, thinkspaceId]
+                )
+            }
+        } catch {
+            PersistenceHealth.note(.writeFailure, context: "spatialEngine.reattachAtomToThinkspace", detail: "atom \(entityUuid.prefix(8)) in \(thinkspaceId.prefix(8)): \(error)")
+        }
+
+        if currentThinkspaceId == thinkspaceId {
+            await loadBlocks(for: "home", documentId: 0, thinkspaceId: thinkspaceId)
+        }
+
+        NotificationCenter.default.post(
+            name: Notification.Name("com.cosmo.canvasBlocksChanged"),
+            object: nil
+        )
+    }
+
     // MARK: - Add Block (with persistence)
     func addBlock(_ block: CanvasBlock, persist: Bool = true) async {
         // Prevent duplicate blocks for the same entity (in-memory check)

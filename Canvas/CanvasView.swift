@@ -205,6 +205,8 @@ struct CanvasView: View {
     @State private var canvasFlows: [CanvasFlow] = []
     @State private var selectedFlowId: String?
     @State private var flowVerbPickerClusterId: String?
+    /// A note/sticky was dropped on a concept block — the merge drop card.
+    @State private var conceptMergeDrop: ConceptMergeDropCandidate?
     @State private var runningFlowIds: Set<String> = []
     @State private var firingFlowIds: Set<String> = []
     private let minScale: CGFloat = 0.25
@@ -727,9 +729,17 @@ struct CanvasView: View {
                         userInfo: ["blockId": selectedBlock.id]
                     )
                 },
+                onRemoveFromThinkspace: {
+                    NotificationCenter.default.post(
+                        name: .removeAtomFromThinkspace,
+                        object: nil,
+                        userInfo: ["blockId": selectedBlock.id]
+                    )
+                    clearSelectedBlock()
+                },
                 onDelete: {
                     NotificationCenter.default.post(
-                        name: .removeBlock,
+                        name: .deleteAtomEntirely,
                         object: nil,
                         userInfo: ["blockId": selectedBlock.id]
                     )
@@ -1811,6 +1821,28 @@ struct CanvasView: View {
                     handleRemoveBlock(notification: notification)
                 }
 
+                // Listen for "remove from thinkspace" (detach all placements)
+                addCanvasObserver(
+                    forName: .removeAtomFromThinkspace,
+                    object: nil,
+                    queue: .main,
+                    activeOnly: true
+                ) { [self] notification in
+                    nonisolated(unsafe) let notification = notification
+                    handleRemoveAtomFromThinkspace(notification: notification)
+                }
+
+                // Listen for full atom delete (→ Recently Deleted)
+                addCanvasObserver(
+                    forName: .deleteAtomEntirely,
+                    object: nil,
+                    queue: .main,
+                    activeOnly: true
+                ) { [self] notification in
+                    nonisolated(unsafe) let notification = notification
+                    handleDeleteAtomEntirely(notification: notification)
+                }
+
                 // Listen for generic entity creation (from radial menu)
                 addCanvasObserver(
                     forName: CosmoNotification.Canvas.createEntityAtPosition,
@@ -2679,6 +2711,25 @@ struct CanvasView: View {
                     .padding(.top, 64)
                     .transition(.opacity)
                     .zIndex(300)
+                }
+            }
+            // Concept merge drop card — anchored on the concept block a
+            // note/sticky was just dropped onto
+            .overlay {
+                if let candidate = conceptMergeDrop {
+                    ConceptMergeDropCard(
+                        candidate: candidate,
+                        onMerge: { beginConceptMerge(candidate) },
+                        onCancel: {
+                            withAnimation(ProMotionSprings.snappy) { conceptMergeDrop = nil }
+                        }
+                    )
+                    .position(clampedScreenPosition(
+                        forCanvasPoint: candidate.anchorPoint,
+                        size: CGSize(width: 340, height: 170)
+                    ))
+                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                    .zIndex(320)
                 }
             }
             // Flow verb picker — blooms beside the source cluster
@@ -4012,6 +4063,60 @@ struct CanvasView: View {
         if let block = spatialEngine.blocks.first(where: { $0.id == blockId }) {
             updateClusterMembership(for: block, resolvedTargetClusterId: finalResolvedTargetClusterId)
         }
+
+        // A note/sticky released on a concept block offers the merge flow.
+        detectConceptMergeDrop(blockId: blockId)
+    }
+
+    // MARK: - Concept merge drop (note/sticky → connection)
+
+    /// A note or sticky dropped so its center sits on a connection block
+    /// offers to merge its content into the concept via the collaborator.
+    /// Detection runs ONCE at drag end (never per gesture frame) and the
+    /// block's position commit above stands either way — cancel just leaves
+    /// the note where it was dropped.
+    private func detectConceptMergeDrop(blockId: String) {
+        guard let dropped = spatialEngine.blocks.first(where: { $0.id == blockId }),
+              dropped.entityType == .note || dropped.entityType == .stickyNote,
+              !dropped.entityUuid.isEmpty else { return }
+        let center = dropped.position
+        guard let target = spatialEngine.blocks.first(where: { block in
+            guard block.entityType == .connection, block.id != blockId,
+                  !block.entityUuid.isEmpty else { return false }
+            let frame = CGRect(
+                x: block.position.x - block.size.width / 2,
+                y: block.position.y - block.size.height / 2,
+                width: block.size.width,
+                height: block.size.height
+            ).insetBy(dx: -12, dy: -12)
+            return frame.contains(center)
+        }) else { return }
+
+        let noteTitle = dropped.title.isEmpty
+            ? (dropped.entityType == .stickyNote ? "Sticky note" : "Untitled note")
+            : dropped.title
+        let conceptTitle = target.title.isEmpty ? "this concept" : target.title
+        withAnimation(ProMotionSprings.snappy) {
+            conceptMergeDrop = ConceptMergeDropCandidate(
+                noteUUID: dropped.entityUuid,
+                noteTitle: noteTitle,
+                noteType: dropped.entityType == .stickyNote ? .stickyNote : .note,
+                conceptBlockID: target.id,
+                conceptUUID: target.entityUuid,
+                conceptTitle: conceptTitle,
+                anchorPoint: target.position
+            )
+        }
+    }
+
+    /// Confirm on the drop card: stash the handoff (the focus mode consumes
+    /// it after its surface registers) and open the concept.
+    private func beginConceptMerge(_ candidate: ConceptMergeDropCandidate) {
+        withAnimation(ProMotionSprings.snappy) { conceptMergeDrop = nil }
+        ConceptMergeHandoff.stash(conceptUUID: candidate.conceptUUID, noteUUID: candidate.noteUUID)
+        if let conceptBlock = spatialEngine.blocks.first(where: { $0.id == candidate.conceptBlockID }) {
+            openBlockInFocusMode(conceptBlock)
+        }
     }
 
     /// Update cluster membership when a block is dragged into/out of a user cluster zone.
@@ -4586,15 +4691,22 @@ struct CanvasView: View {
     /// canvas_blocks.note_content — soft-deleting the row would strand it.
     /// Create a backing atom first (same flow StickyNoteBlockView uses when
     /// opening focus mode) so the content remains reachable in the library.
-    private func materializeBackingAtomIfNeeded(for block: CanvasBlock) async {
+    ///
+    /// Returns the resolved backing atom's UUID (existing, freshly created, or
+    /// the block's own uuid for already-backed blocks) so a delete path can
+    /// tombstone it — or nil when there is nothing to back (empty atomless note).
+    @discardableResult
+    private func materializeBackingAtomIfNeeded(for block: CanvasBlock) async -> String? {
         guard block.entityType == .note || block.entityType == .stickyNote,
-              block.entityId <= 0 else { return }
+              block.entityId <= 0 else { return block.entityUuid.isEmpty ? nil : block.entityUuid }
         let content = block.metadata["content"] ?? ""
-        guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return block.entityUuid.isEmpty ? nil : block.entityUuid
+        }
         // A backing atom may already exist under this uuid (e.g. created on close)
         if !block.entityUuid.isEmpty,
            (try? await AtomRepository.shared.fetch(uuid: block.entityUuid)) != nil {
-            return
+            return block.entityUuid
         }
 
         do {
@@ -4627,9 +4739,11 @@ struct CanvasView: View {
                 return insertedAtomId
             }
             print("🗂️ Materialized backing atom \(atomId) before deleting block \(block.id)")
+            return newAtom.uuid
         } catch {
             PersistenceHealth.note(.writeFailure, context: "canvas.deleteMaterialize", detail: "block \(block.id): \(error)")
             print("❌ Failed to materialize backing atom before delete: \(error)")
+            return block.entityUuid.isEmpty ? nil : block.entityUuid
         }
     }
 
@@ -4640,6 +4754,59 @@ struct CanvasView: View {
         }
 
         removeBlockSafely(blockId)
+    }
+
+    /// "Remove from thinkspace" tier: detach the atom from the CURRENT thinkspace
+    /// (every placement of it in this space) but keep the atom alive in the
+    /// Library and untouched in any other thinkspaces. Undoable — the atom is
+    /// never tombstoned, so re-attaching can't strand a ghost block. Falls back
+    /// to plain block removal for an atomless block, or when there's no thinkspace
+    /// context (the home canvas) to scope to.
+    private func handleRemoveAtomFromThinkspace(notification: Notification) {
+        guard let blockId = notification.userInfo?["blockId"] as? String else { return }
+        guard let block = spatialEngine.blocks.first(where: { $0.id == blockId }),
+              !block.entityUuid.isEmpty,
+              let thinkspaceId = spatialEngine.currentThinkspaceId ?? self.thinkspaceId else {
+            removeBlockSafely(blockId)
+            return
+        }
+
+        CosmoUndoManager.shared.register(
+            DetachAtomAction(entityUuid: block.entityUuid, thinkspaceId: thinkspaceId, spatialEngine: spatialEngine)
+        )
+        let entityUuid = block.entityUuid
+        Task { @MainActor in
+            await spatialEngine.removeAtomFromThinkspace(entityUuid: entityUuid, thinkspaceId: thinkspaceId)
+            refreshLibraryInventory()
+        }
+    }
+
+    /// "Delete" tier: tombstone the atom (→ Recently Deleted) and drop its
+    /// blocks everywhere. Mirrors `deleteLibraryItem` — the block leaves memory
+    /// immediately, then the atom is soft-deleted (its cascade removes canvas
+    /// placements on every device). An atomless note/sticky is materialized
+    /// first so its typed text still lands in Recently Deleted (recoverable)
+    /// instead of vanishing. Recovery is via Recently Deleted rather than ⌘Z
+    /// (restoring the block alone would strand a ghost — tombstone-cascade law).
+    private func handleDeleteAtomEntirely(notification: Notification) {
+        guard let blockId = notification.userInfo?["blockId"] as? String else { return }
+        guard let block = spatialEngine.blocks.first(where: { $0.id == blockId }) else {
+            Task { await spatialEngine.removeBlock(blockId) }
+            return
+        }
+
+        Task { @MainActor in
+            let backingUuid = await materializeBackingAtomIfNeeded(for: block)
+            await spatialEngine.removeBlock(blockId)
+            if let backingUuid, !backingUuid.isEmpty {
+                do {
+                    try await AtomRepository.shared.delete(uuid: backingUuid)
+                } catch {
+                    PersistenceHealth.note(.writeFailure, context: "canvas.deleteAtomEntirely", detail: "atom \(backingUuid.prefix(8)): \(error)")
+                }
+            }
+            refreshLibraryInventory()
+        }
     }
 
     // MARK: - Inbox Block Handlers
@@ -6359,6 +6526,12 @@ extension Notification.Name {
     static let toggleBlockPin = Notification.Name("toggleBlockPin")
     static let duplicateBlock = Notification.Name("duplicateBlock")
     static let removeBlock = Notification.Name("removeBlock")
+    /// Detach an atom from every canvas/thinkspace (all its placements) while
+    /// keeping the atom alive in the Library. userInfo: ["blockId": String].
+    static let removeAtomFromThinkspace = Notification.Name("removeAtomFromThinkspace")
+    /// Tombstone an atom (→ Recently Deleted) and drop its blocks everywhere.
+    /// userInfo: ["blockId": String].
+    static let deleteAtomEntirely = Notification.Name("deleteAtomEntirely")
     static let arrangeCanvasBlocks = Notification.Name("arrangeCanvasBlocks")
     static let createNoteBlock = Notification.Name("createNoteBlock")
     static let addSwipeToCanvas = Notification.Name("addSwipeToCanvas")

@@ -13,6 +13,8 @@ struct CanvasSelectionInspector: View {
     var onAIAssist: (() -> Void)?
     var onSave: (() -> Void)?
     var onDuplicate: (() -> Void)?
+    // Two-tier removal: out of this thinkspace, or delete outright.
+    var onRemoveFromThinkspace: (() -> Void)?
     var onDelete: (() -> Void)?
 
     @State private var atom: Atom?
@@ -24,6 +26,7 @@ struct CanvasSelectionInspector: View {
     @State private var addReferenceCandidates: [Atom] = []
     @State private var isSaving = false
     @State private var hoveredAction: String?
+    @State private var deleteArmed = false
     @State private var hoveredColor: StickyNoteColor?
     @State private var appeared = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -53,6 +56,7 @@ struct CanvasSelectionInspector: View {
                     stickyNoteHeader
                     stickyColorPalette
                     stickyActionsGrid
+                    removalZone()
                 }
                 .padding(18)
             } else {
@@ -61,6 +65,7 @@ struct CanvasSelectionInspector: View {
                         if let atom {
                             header(atom)
                             actionsGrid(atom)
+                            removalZone()
                             provenanceSection
                             outlineSection(atom)
                             backlinksSection
@@ -281,9 +286,7 @@ struct CanvasSelectionInspector: View {
         if let onDuplicate {
             actions.append(InspectorAction(id: "duplicate", icon: "plus.square.on.square", label: "Duplicate", tint: DS.text, handler: onDuplicate))
         }
-        if let onDelete {
-            actions.append(InspectorAction(id: "delete", icon: "trash", label: "Delete", tint: DS.red, handler: onDelete))
-        }
+        // Removal/delete live in their own dedicated zone below the grid.
         return actions
     }
 
@@ -349,10 +352,7 @@ struct CanvasSelectionInspector: View {
             actions.append(InspectorAction(id: "duplicate", icon: "plus.square.on.square", label: "Duplicate", tint: DS.text, handler: onDuplicate))
         }
 
-        if let onDelete {
-            actions.append(InspectorAction(id: "delete", icon: "trash", label: "Delete", tint: DS.red, handler: onDelete))
-        }
-
+        // Removal/delete live in their own dedicated zone below the grid.
         return actions
     }
 
@@ -372,6 +372,107 @@ struct CanvasSelectionInspector: View {
             }
         }
         .buttonStyle(CortexChipStyle(isDestructive: isDelete))
+    }
+
+    // MARK: - Removal Zone (remove from thinkspace · delete)
+
+    @ViewBuilder
+    private func removalZone() -> some View {
+        VStack(spacing: 8) {
+            if currentThinkspaceId != nil, onRemoveFromThinkspace != nil {
+                removeFromThinkspaceButton
+            }
+            if onDelete != nil {
+                deleteButton
+            }
+        }
+    }
+
+    private var removeFromThinkspaceButton: some View {
+        let isHovered = hoveredAction == "removeFromThinkspace"
+        return Button {
+            onRemoveFromThinkspace?()
+            onClose()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "square.stack.3d.up.slash")
+                    .font(.system(size: 11, weight: .medium))
+                Text("Remove from thinkspace")
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(isHovered ? DS.text : DS.text.opacity(0.78))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .fill(isHovered ? DS.glassInputFillFocused : DS.glassInputFill)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .strokeBorder(DS.glassBorder, lineWidth: 0.5)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .help("Remove from this thinkspace. Stays in the database and any other thinkspaces.")
+        .accessibilityLabel("Remove from thinkspace")
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.12)) {
+                hoveredAction = hovering ? "removeFromThinkspace" : nil
+            }
+        }
+    }
+
+    /// The prominent, full-width destructive action. First tap arms a warning
+    /// state ("Tap again to delete"); the second tap commits. Auto-disarms after
+    /// a few seconds so a stray first tap never lingers.
+    private var deleteButton: some View {
+        let isHovered = hoveredAction == "delete"
+        return Button {
+            if deleteArmed {
+                onDelete?()
+                onClose()
+            } else {
+                withAnimation(ProMotionSprings.snappy) { deleteArmed = true }
+            }
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: deleteArmed ? "exclamationmark.triangle.fill" : "trash")
+                    .font(.system(size: 12, weight: .semibold))
+                Text(deleteArmed ? "Tap again to delete" : "Delete")
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(deleteArmed ? .white : DS.red)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(deleteArmed ? DS.red : DS.red.opacity(isHovered ? 0.16 : 0.10))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(deleteArmed ? .clear : DS.red.opacity(isHovered ? 0.42 : 0.26), lineWidth: 0.5)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .help(deleteArmed ? "Tap again to move to Recently Deleted" : "Delete — moves to Recently Deleted")
+        .accessibilityLabel(deleteArmed ? "Confirm delete" : "Delete")
+        .accessibilityHint(deleteArmed ? "Removes it everywhere. Recoverable from Recently Deleted." : "")
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.12)) {
+                hoveredAction = hovering ? "delete" : nil
+            }
+        }
+        .task(id: deleteArmed) {
+            guard deleteArmed else { return }
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            if !Task.isCancelled {
+                withAnimation(.easeOut(duration: 0.18)) { deleteArmed = false }
+            }
+        }
     }
 
     @ViewBuilder

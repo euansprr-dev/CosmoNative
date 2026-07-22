@@ -14,7 +14,7 @@ struct ConnectionWorkspaceView: View {
     var workspace: ConnectionWorkspaceModel
     @Binding var title: String
     let sources: ConnectionWorkspaceSources
-    let isRefreshingInsights: Bool
+    var recommendations: ConceptRecommendationModel
     let reviewProposal: CosmoAssistantProposal?
     let reviewSourceText: String
     /// Staged inserts grouped by the section they target — rendered as in-place
@@ -124,7 +124,7 @@ struct ConnectionWorkspaceView: View {
             workspace: workspace,
             sources: sources,
             attachmentUUIDs: atom.attachmentUUIDs,
-            isRefreshingInsights: isRefreshingInsights,
+            recommendations: recommendations,
             actions: actions
         )
     }
@@ -179,6 +179,9 @@ struct ConnectionWorkspaceView: View {
                         title: title,
                         conceptType: viewModel.state.conceptType,
                         sections: viewModel.state.sections,
+                        media: viewModel.state.orderedMedia,
+                        mediaAtoms: viewModel.mediaAtoms,
+                        onOpenMedia: actions.onOpenMedia,
                         onDismiss: {
                             withAnimation(ProMotionSprings.focusTransition) {
                                 workspace.viewMode = .board

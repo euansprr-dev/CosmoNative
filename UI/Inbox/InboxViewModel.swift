@@ -906,6 +906,12 @@ final class InboxViewModel {
         presentToast(message: message, isError: false)
     }
 
+    /// Lane surfaces borrow the queue's toast lane for their own outcomes
+    /// (archive, edit failures) — one notification voice for the whole inbox.
+    func presentLaneToast(_ message: String, isError: Bool = false) {
+        presentToast(message: message, isError: isError)
+    }
+
     /// Failure variant — no Undo button, warning styling. Nil results and
     /// caught write errors must never masquerade as success.
     private func presentErrorToast(_ message: String) {
@@ -979,3 +985,8 @@ final class InboxViewModel {
         }
     }
 }
+
+// MARK: - Inspector host
+
+/// The queue model already speaks the inspector's whole grammar.
+extension InboxViewModel: InboxInspectorHost {}

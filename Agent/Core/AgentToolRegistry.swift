@@ -1383,6 +1383,33 @@ class AgentToolRegistry {
                 ]
             ),
             LLMToolDefinition(
+                name: "attach_media",
+                description: "Search the user's swipe library for saved posts/videos relevant to the concept being developed and STAGE the best matches as ghost tiles on the concept board's Gallery — the user accepts or dismisses each tile, so say the media is 'waiting in your gallery', never that it was added. Use when the user asks for visual examples ('find reels about X', 'add that Hormozi video') or when a section clearly wants a real-world post. Returns the staged candidates (title, platform, hook line) so you can say WHY each earns its place. An empty result means the library has nothing relevant — say so plainly; never invent a post. MEDIA IS A REFERENCE, NEVER A DUMP: stage at most a handful, each with a reason.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "query": ["type": "string", "description": "Search words matched against swipe titles, hooks, and analysis vocabulary (e.g. 'pattern interrupt hook', 'hormozi pricing')."] as [String: Any],
+                        "limit": ["type": "integer", "description": "Max candidates to stage. Default 4, cap 6."] as [String: Any],
+                        "surfaceID": ["type": "string", "description": "Editable surface id of the working Connection ('connection:<uuid>'). Omit to use the active surface."] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["query"]
+                ]
+            ),
+            LLMToolDefinition(
+                name: "handle_objection",
+                description: "STAGE a rebuttal on one of the concept board's Beliefs & Objections entries — a ghost thread appears under that objection with ✓/✗, so say the handling is 'waiting under the objection for your review', never that the objection was handled. Call this ONLY after the user asked you to handle an objection or agreed to a rebuttal you drafted in conversation ('yes, use that', 'handle it with that response') — never handle objections unprompted. Quote the objection VERBATIM from the surface text's Beliefs & Objections section; to cite board entries that answer it (an example, a piece of evidence), quote their bullet text in linked_entries. The response should be the agreed wording in the user's voice: tightened is fine, invented substance is not.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "objection": ["type": "string", "description": "The objection's bullet text, quoted verbatim from the Beliefs & Objections section of the surface."] as [String: Any],
+                        "response": ["type": "string", "description": "The rebuttal to stage — the wording the user agreed to. No em dashes."] as [String: Any],
+                        "linked_entries": ["type": "array", "items": ["type": "string"] as [String: Any], "description": "Optional: bullet text (quoted from the surface) of board entries that answer the objection, e.g. an Examples or Evidence bullet."] as [String: Any],
+                        "surfaceID": ["type": "string", "description": "Editable surface id of the working Connection ('connection:<uuid>'). Omit to use the active surface."] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["objection", "response"]
+                ]
+            ),
+            LLMToolDefinition(
                 name: "append_to_note",
                 description: "Stage a reviewed addition to a note that is NOT the active surface — call this when the user says to add/append/save something 'to my X note' from anywhere in the app. Resolves the note by UUID or by title (fuzzy), and stages the text as a reviewed insertion the user accepts in the diff UI. The note does not need to be open; accepted text persists straight to the note. For edits to the ACTIVE surface, use propose_workspace_edit instead.",
                 parametersSchema: [

@@ -69,6 +69,9 @@ struct ConnectionBlockView: View {
         .onReceive(NotificationCenter.default.publisher(for: .blurAllBlocks)) { _ in
             isEditingTitle = false
         }
+        // Cover media banner follows the structured column (recomputed only
+        // when the JSON actually changes — never per body pass).
+        .task(id: atom?.structured) { await refreshCoverMedia() }
         .onChange(of: block.entityId) { _, newId in
             if newId > 0 {
                 observationCancellable?.cancel()
@@ -113,6 +116,11 @@ struct ConnectionBlockView: View {
 
             Rectangle().fill(DS.sepiaSubtle).frame(height: 0.5)
 
+            if coverMediaItem != nil {
+                coverBanner
+                Rectangle().fill(DS.sepiaSubtle).frame(height: 0.5)
+            }
+
             sectionPreviewList
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
@@ -122,6 +130,58 @@ struct ConnectionBlockView: View {
                 .padding(.bottom, 10)
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    // MARK: - Cover media banner
+
+    /// The concept's cover ref + its resolved source atom (for thumbnails).
+    @State private var coverMediaItem: ConnectionMediaItem?
+    @State private var coverSourceAtom: Atom?
+
+    private func refreshCoverMedia() async {
+        guard let json = atom?.structured,
+              let data = ConnectionStructuredData.fromJSON(json),
+              let cover = data.media?.first(where: { $0.isCover }) else {
+            coverMediaItem = nil
+            coverSourceAtom = nil
+            return
+        }
+        coverMediaItem = cover
+        if let sourceUUID = cover.atomUUID, coverSourceAtom?.uuid != sourceUUID {
+            coverSourceAtom = try? await AtomRepository.shared.fetch(uuid: sourceUUID)
+        }
+    }
+
+    /// A quiet wide banner under the masthead — the concept wears its cover.
+    @ViewBuilder
+    private var coverBanner: some View {
+        if let cover = coverMediaItem {
+            Group {
+                if let poster = cover.thumbnailAssetPath {
+                    ConceptLocalThumbnail(path: poster)
+                } else if let path = cover.assetPath, !MediaAssetStore.isVideoPath(path) {
+                    ConceptLocalThumbnail(path: path)
+                } else if let source = coverSourceAtom,
+                          let url = ConceptMediaThumbnailResolver.thumbnailURL(for: source) {
+                    CachedAsyncImage(url: url, stableKey: "block-cover-\(cover.id.uuidString)") { phase in
+                        switch phase {
+                        case .success(let image):
+                            image.resizable().aspectRatio(contentMode: .fill)
+                        case .failure, .empty:
+                            Rectangle().fill(DS.sepiaSubtle)
+                        @unknown default:
+                            Rectangle().fill(DS.sepiaSubtle)
+                        }
+                    }
+                } else {
+                    Rectangle().fill(DS.sepiaSubtle)
+                }
+            }
+            .frame(height: 64)
+            .frame(maxWidth: .infinity)
+            .clipped()
+            .accessibilityLabel("Cover image")
+        }
     }
 
     /// Populated sections in sortOrder, capped for the block preview.

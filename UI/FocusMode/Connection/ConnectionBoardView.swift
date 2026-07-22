@@ -21,8 +21,28 @@ struct ConnectionBoardView: View {
     /// Repack the masonry whenever the set of cards or their content volume
     /// changes — filtering, adding/editing items, or staged inserts arriving.
     private var layoutFingerprint: [String] {
-        visibleSections.map {
+        var prints = visibleSections.map {
             "\($0.type.rawValue):\($0.items.count):\(pendingInsertsBySection[$0.type]?.count ?? 0)"
+        }
+        prints.append("handlings:\(workspace.stagedObjectionHandlings.count)")
+        prints.append("gallery:\(showsGallery ? viewModel.state.media.count : -1):\(workspace.pendingMediaCaptures):\(workspace.stagedMediaAtoms.count)")
+        return prints
+    }
+
+    /// The Gallery card shows whenever media exists (or a drag could land) and
+    /// the search isn't filtering it out. Query matches against captions and
+    /// source titles so gallery media is findable like item text.
+    private var showsGallery: Bool {
+        let query = workspace.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return true }
+        if "gallery".localizedCaseInsensitiveContains(query) { return true }
+        return viewModel.state.media.contains { item in
+            if let caption = item.caption, caption.localizedCaseInsensitiveContains(query) { return true }
+            if let uuid = item.atomUUID,
+               let title = viewModel.mediaAtoms[uuid]?.title,
+               title.localizedCaseInsensitiveContains(query) { return true }
+            if let title = item.assetTitle, title.localizedCaseInsensitiveContains(query) { return true }
+            return false
         }
     }
 
@@ -35,6 +55,18 @@ struct ConnectionBoardView: View {
                     .padding(.bottom, DS.space48)
             }
             .scrollIndicators(.automatic)
+            // Finder files and browser URLs dropped anywhere on the board:
+            // media files become owned assets, http(s) URLs run the capture
+            // pipeline. Atom-ref drags hit the gallery/section targets instead
+            // (different payload type — no conflict).
+            .dropDestination(for: URL.self) { urls, _ in
+                let files = urls.filter { $0.isFileURL && MediaAssetStore.isSupportedMediaExtension($0.pathExtension) }
+                let webURLs = urls.filter { !$0.isFileURL }
+                guard !files.isEmpty || !webURLs.isEmpty else { return false }
+                if !files.isEmpty { actions.onDropMediaFiles(files, nil) }
+                for web in webURLs { actions.onPasteMediaURL(web.absoluteString, nil) }
+                return true
+            }
             .onChange(of: workspace.scrollTarget) { _, target in
                 guard let target else { return }
                 withAnimation(ProMotionSprings.gentle) {
@@ -58,10 +90,30 @@ struct ConnectionBoardView: View {
         ConnectionMasonryLayout(spacing: DS.space16) {
             ForEach(visibleSections) { section in
                 sectionCard(section)
+                    .opacity(isDimmed(section) ? 0.3 : 1)
                     .id(section.type.rawValue)
+            }
+            if showsGallery {
+                ConnectionGalleryCard(
+                    media: viewModel.state.orderedMedia,
+                    atoms: viewModel.mediaAtoms,
+                    pendingCaptureCount: workspace.pendingMediaCaptures,
+                    stagedAtoms: workspace.stagedMediaAtoms,
+                    compareSelection: workspace.compareSelection,
+                    actions: actions
+                )
+                .opacity(workspace.focusedSection == nil ? 1 : 0.3)
+                .id("gallery")
             }
         }
         .animation(ProMotionSprings.gentle, value: layoutFingerprint)
+        .animation(ProMotionSprings.gentle, value: workspace.focusedSection)
+    }
+
+    /// True while another section is spotlighted from the navigator.
+    private func isDimmed(_ section: ConnectionSection) -> Bool {
+        guard let focused = workspace.focusedSection else { return false }
+        return focused != section.type
     }
 
     private func sectionCard(_ section: ConnectionSection) -> some View {
@@ -70,6 +122,10 @@ struct ConnectionBoardView: View {
             isSelected: workspace.selection == .section(section.type),
             highlightQuery: workspace.searchQuery,
             pendingInserts: pendingInsertsBySection[section.type] ?? [],
+            anchoredMedia: viewModel.state.media(anchoredTo: section.type),
+            mediaAtoms: viewModel.mediaAtoms,
+            stagedHandlings: section.type == .beliefsObjections ? workspace.stagedObjectionHandlings : [],
+            resolveBoardRef: { viewModel.resolveBoardRef($0) },
             onOpen: { workspace.openSection(section.type) },
             onSelect: { workspace.selection = .section(section.type) },
             onAddItem: { document, text in
@@ -77,8 +133,14 @@ struct ConnectionBoardView: View {
             },
             onSourceTap: actions.onSourceTap,
             onAcceptInsert: actions.onAcceptInsert,
-            onRejectInsert: actions.onRejectInsert
+            onRejectInsert: actions.onRejectInsert,
+            mediaActions: actions
         )
+        .dropDestination(for: AtomDragPayload.self) { payloads, _ in
+            guard !payloads.isEmpty else { return false }
+            actions.onDropMediaAtoms(payloads.map(\.atomUUID), section.type)
+            return true
+        }
     }
 
     private var noResults: some View {

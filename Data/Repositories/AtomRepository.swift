@@ -887,12 +887,17 @@ class AtomRepository: ObservableObject {
             print("AtomRepository: NodeGraph sync failed for deleted atom \(uuid): \(error)")
         }
 
-        // Notify canvas to remove blocks for this atom
+        // Notify canvas to remove blocks for this atom, AND every atom-list
+        // surface (Command-K, library, sidebars) that observes .atomsDidChange
+        // so the deleted row disappears instantly. `restore()` posts both — a
+        // delete that only fired canvasBlocksChanged left ⌘K showing the row
+        // until the user re-typed the query (the "doesn't update instantly" bug).
         await MainActor.run {
             NotificationCenter.default.post(
                 name: Notification.Name("com.cosmo.canvasBlocksChanged"),
                 object: nil
             )
+            NotificationCenter.default.post(name: .atomsDidChange, object: nil)
         }
     }
 

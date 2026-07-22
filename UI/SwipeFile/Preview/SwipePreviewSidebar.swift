@@ -12,14 +12,20 @@ enum SwipePreviewTranscript: Equatable {
     case prose(String)
     case empty
 
+    /// A slide list "counts" only when at least one slide carries text —
+    /// voiceover-only reels ship a placeholder blank slide, never content.
+    /// Shared with Swipe Study's speech-tier decision.
+    static func slidesCarryText(_ slides: [TranscriptSlide]) -> Bool {
+        slides.contains { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
     static func resolve(
         analysis: SwipeAnalysis?,
         richTranscript: String?,
         richSegments: [TranscriptSegment]?,
         body: String?
     ) -> SwipePreviewTranscript {
-        if let slides = analysis?.transcriptSlides,
-           slides.contains(where: { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+        if let slides = analysis?.transcriptSlides, slidesCarryText(slides) {
             return .slides(slides)
         }
         if let speech = analysis?.transcriptSpeechSegments, !speech.isEmpty {
@@ -88,6 +94,9 @@ struct SwipePreviewSidebar: View {
                     mediaStage(in: geo.size)
                 }
                 detailScroll
+                SwipeConceptBacklinks(atomUUID: item.atomUUID)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, DS.space6)
                 footer
             }
             .id(item.id)
@@ -122,10 +131,13 @@ struct SwipePreviewSidebar: View {
         .clipped()
     }
 
+    /// The stage is the medium's honest aspect at FULL rail width — edge to
+    /// edge, no letterbox gutters. A tall reel earns a tall stage; the
+    /// transcript below simply gets the rest and scrolls.
     private func stageHeight(in size: CGSize) -> CGFloat {
         switch model.aspect {
-        case .vertical: return min(size.width * 16 / 9, size.height * 0.52).rounded()
-        case .portrait: return min(size.width, size.height * 0.5).rounded()
+        case .vertical: return (size.width * 16 / 9).rounded()
+        case .portrait: return (size.width * 5 / 4).rounded()
         case .wide: return (size.width * 9 / 16).rounded()
         case .paper: return 0
         }
@@ -275,20 +287,10 @@ struct SwipePreviewSidebar: View {
     }
 
     private func speechRows(_ segments: [TranscriptSegment]) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            ForEach(segments) { segment in
-                SwipePreviewSpeechRow(
-                    segment: segment,
-                    canSeek: model.aspect == .vertical,
-                    onSeek: { seekRequest = SwipePreviewSeekRequest(time: segment.start) }
-                )
-            }
-        }
-        .padding(.vertical, DS.space4)
-        .background(SwipeTranscriptCardPalette.fill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(SwipeTranscriptCardPalette.border, lineWidth: 0.5)
+        SwipeSpeechTranscriptCard(
+            segments: segments,
+            canSeek: model.aspect == .vertical,
+            onSeek: { seekRequest = SwipePreviewSeekRequest(time: $0.start) }
         )
     }
 
@@ -379,6 +381,7 @@ struct SwipePreviewSidebar: View {
                 help: "Add to Canvas",
                 action: onAddToCanvas
             )
+            AddToConceptMenu(atomUUID: item.atomUUID)
             if let originalURL {
                 SwipeQuickLookIconButton(systemImage: "safari", help: "Open original post") {
                     NSWorkspace.shared.open(originalURL)
@@ -417,6 +420,10 @@ struct SwipePreviewSidebar: View {
     /// Read-only — the preview never touches the editing lock, the dirty
     /// registry, or any persist path (those belong to Study).
     private func loadWords() async {
+        // Belt-and-braces: card onAppear normally prewarmed this swipe's
+        // media already; entry points that skip the grid (hero Preview,
+        // shelf clicks) kick it here so the stage finds warm caches.
+        SwipeStudyPrewarmer.shared.prewarm(uuid: item.id)
         words = .empty
         isLoadingWords = true
         defer { isLoadingWords = false }
@@ -465,6 +472,35 @@ private struct SwipePreviewSlideCard: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(DS.space12)
+        .background(SwipeTranscriptCardPalette.fill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(SwipeTranscriptCardPalette.border, lineWidth: 0.5)
+        )
+    }
+}
+
+// MARK: - Speech transcript card (shared: preview rail + Swipe Study)
+
+/// Timestamped speech rows in one transcript-palette card — the voice of a
+/// voiceover-only reel, whose transcript has no slides. Shared by the
+/// preview rail and the Study manuscript so the two surfaces read as one.
+struct SwipeSpeechTranscriptCard: View {
+    let segments: [TranscriptSegment]
+    let canSeek: Bool
+    let onSeek: (TranscriptSegment) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(segments) { segment in
+                SwipePreviewSpeechRow(
+                    segment: segment,
+                    canSeek: canSeek,
+                    onSeek: { onSeek(segment) }
+                )
+            }
+        }
+        .padding(.vertical, DS.space4)
         .background(SwipeTranscriptCardPalette.fill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -554,6 +590,7 @@ private struct SwipePreviewReelStage: View {
 
     var body: some View {
         ZStack {
+            Color.black
             if let player {
                 // CosmoVideoPlayerView (AVPlayerView), never SwiftUI VideoPlayer.
                 // Floating controls: always discoverable in a preview.
@@ -584,24 +621,42 @@ private struct SwipePreviewReelStage: View {
         teardown()
         resolveFailed = false
 
-        // Fast path: the reel is already on disk.
+        // Fast path: the reel is already on disk (the prewarmer fills this
+        // from the durable mirror as cards scroll by).
         if let shortcode = item.instagramId,
            let localURL = InstagramVideoLocalCache.localVideoURL(forShortcode: shortcode) {
             start(with: localURL)
             return
         }
 
-        // Slow path: stored media URL → resolve through the local cache.
+        // Slow path — same source order as SwipeStudyPrewarmer: durable
+        // Supabase mirror first, the stored CDN URL (expires in days) as the
+        // fallback for freshly captured swipes.
         isResolving = true
         defer { isResolving = false }
-        guard let atom = try? await AtomRepository.shared.fetch(uuid: item.id),
-              let mediaURL = atom.richContent?.instagramData?.extractedMediaURL else {
+        guard let atom = try? await AtomRepository.shared.fetch(uuid: item.id) else {
+            resolveFailed = true
+            return
+        }
+        let shortcode = item.instagramId
+            ?? atom.richContent?.instagramId
+            ?? atom.url.flatMap(URL.init(string:)).flatMap {
+                InstagramExtractor.shared.extractShortcode(from: $0)
+            }
+        if let shortcode,
+           let localURL = InstagramVideoLocalCache.localVideoURL(forShortcode: shortcode) {
+            start(with: localURL)
+            return
+        }
+        let source = SwipeStudyPrewarmer.videoStorageURL(from: atom.metadata)
+            ?? atom.richContent?.instagramData?.extractedMediaURL
+        guard let source else {
             resolveFailed = true
             return
         }
         let playable = await InstagramVideoLocalCache.resolvePlayableURL(
-            from: mediaURL,
-            shortcode: item.instagramId
+            from: source,
+            shortcode: shortcode
         )
         start(with: playable)
     }
@@ -660,7 +715,14 @@ private struct SwipePreviewCarouselStage: View {
         }
         .task(id: item.id) {
             let atom = try? await AtomRepository.shared.fetch(uuid: item.id)
-            slides = atom?.richContent?.instagramData?.carouselItems ?? []
+            var items = atom?.richContent?.instagramData?.carouselItems ?? []
+            if items.isEmpty,
+               let mirrored = SwipeCarouselCloudMirror.mirroredCarouselItems(from: atom?.metadata) {
+                // Phone-captured swipes may only have the worker's durable
+                // Supabase copies — same fallback the Study stage uses.
+                items = mirrored
+            }
+            slides = items
             index = 0
         }
         .onHover { isHovered = $0 }
@@ -669,16 +731,16 @@ private struct SwipePreviewCarouselStage: View {
     private func slideImage(_ slide: CarouselItem) -> some View {
         let displayURL = InstagramCarouselImageCache.displayURL(for: slide, shortcode: item.instagramId)
         let cacheKey = InstagramCarouselImageCache.stableKey(for: slide, shortcode: item.instagramId)
-        // Letterboxed on the warm fill, never cropped — a preview shows the
-        // whole slide. The ZStack takes exactly the stage's explicit frame.
+        // Never crop a slide (they carry text) — off-aspect slides letterbox
+        // on the media's honest black, which reads as cinema, not white gaps.
         return ZStack {
-            DS.glassSectionFill
+            Color.black
             CachedAsyncImage(url: displayURL, stableKey: cacheKey) { phase in
                 switch phase {
                 case .success(let image):
                     image.resizable().scaledToFit()
                 case .empty, .failure:
-                    ProgressView().controlSize(.small)
+                    ProgressView().controlSize(.small).tint(.white)
                 }
             }
         }
@@ -735,22 +797,23 @@ private struct SwipePreviewCarouselStage: View {
 
 // MARK: - Still stage (thumbnail fill)
 
-/// The medium's thumbnail on the stage — letterboxed on the warm fill, never
-/// cropped: a preview must show the whole post.
+/// The medium's thumbnail filling the stage edge to edge. The stage already
+/// carries the medium's honest aspect, so the fill crops at most a sliver;
+/// residual mismatch sits on media black, never a white gutter.
 private struct SwipePreviewStillStage: View {
     let model: SwipeCardModel
 
     var body: some View {
         ZStack {
-            DS.glassSectionFill
+            Color.black
             CachedAsyncImage(url: model.mediaURL, stableKey: model.mediaStableKey) { phase in
                 switch phase {
                 case .success(let image):
-                    image.resizable().scaledToFit()
+                    image.resizable().scaledToFill()
                 case .empty, .failure:
                     SwipePlatformGlyph(source: model.platformKey)
                         .frame(width: 24, height: 24)
-                        .foregroundStyle(DS.textMuted)
+                        .foregroundStyle(.white.opacity(0.5))
                 }
             }
         }

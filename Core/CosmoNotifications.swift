@@ -612,6 +612,23 @@ enum CosmoNotification {
         /// workspaces refresh their ghost rows.
         /// userInfo: ["connectionUUID": String]
         static let stagedInsertsChanged = Notification.Name("com.cosmo.connection.stagedInsertsChanged")
+        /// Media was attached to a concept from OUTSIDE its open workspace
+        /// (quick look "Add to concept", agent tool, iOS) — open hosts merge
+        /// the fresh media list into live state so the gallery updates and a
+        /// later in-session save can't clobber the new ref.
+        /// userInfo: ["connectionUUID": String]
+        static let mediaChanged = Notification.Name("com.cosmo.connection.mediaChanged")
+        /// The attach_media agent tool staged swipe candidates as ghost tiles
+        /// on a concept's Gallery — the open workspace renders them with
+        /// per-tile ✓/✗. In-memory only (a live-conversation surface).
+        /// userInfo: ["connectionUUID": String, "atomUUIDs": [String]]
+        static let mediaStagingChanged = Notification.Name("com.cosmo.connection.mediaStagingChanged")
+        /// The handle_objection agent tool staged a rebuttal for an objection
+        /// — the open workspace renders it as a ghost thread with ✓/✗.
+        /// In-memory only. userInfo: ["connectionUUID": String,
+        /// "objectionItemID": String, "objectionSnippet": String,
+        /// "text": String, "linkedRefs": [[String]] (sectionRaw, itemID)]
+        static let objectionHandlingStaged = Notification.Name("com.cosmo.connection.objectionHandlingStaged")
     }
 }
 

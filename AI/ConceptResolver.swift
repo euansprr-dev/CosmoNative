@@ -115,7 +115,9 @@ actor ConceptResolver {
     - parentConcept: every assignment ALSO names the ONE broader concept page it sits inside, chosen from \
     this plan, EXISTING pages, or the HOME CONCEPT. This builds the knowledge map's hierarchy: "Flow \
     state" sits inside "Peak human experience"; "Box breathing" sits inside "Breathwork". Use null ONLY \
-    when the concept is itself a top-level pillar of the Deep Dive. A concept is never its own parent.
+    when the concept is itself a top-level pillar of the Deep Dive. A concept is never its own parent. \
+    Top-level pillars are RARE: once a dive already has several pillars, a new concept almost always \
+    belongs inside one of the existing pages — null means "genuinely new territory", never "didn't look".
     - If an extract is too vague, personal, or session-specific to belong to any durable concept, OMIT it \
     entirely. Do not force assignments.
     - Never invent UUIDs. Only use extract UUIDs and connection UUIDs that appear in the input.

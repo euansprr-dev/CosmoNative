@@ -273,6 +273,139 @@ struct ConnectionSection: Identifiable, Codable, Equatable {
     }
 }
 
+// MARK: - Objection handling
+
+/// A pointer to another item on the board — "this Examples entry answers the
+/// objection". Decoded tolerantly: an unknown section rawValue keeps the ref
+/// but renders it unresolved instead of throwing the board away.
+struct ConnectionBoardItemRef: Codable, Equatable, Sendable {
+    var section: ConnectionSectionType?
+    var itemID: UUID
+
+    init(section: ConnectionSectionType, itemID: UUID) {
+        self.section = section
+        self.itemID = itemID
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case section, itemID
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.itemID = try c.decode(UUID.self, forKey: .itemID)
+        if let raw = try c.decodeIfPresent(String.self, forKey: .section) {
+            self.section = ConnectionSectionType(rawValue: raw)
+        } else {
+            self.section = nil
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(section?.rawValue, forKey: .section)
+        try c.encode(itemID, forKey: .itemID)
+    }
+}
+
+/// The comment-thread response that resolves an objection: the user's
+/// rebuttal text plus optional links to board entries (evidence, examples)
+/// that answer it. Lives ON the objection item so it rides the existing
+/// sections sync/merge paths.
+struct ObjectionHandling: Codable, Equatable, Sendable {
+    var text: String
+    var linkedRefs: [ConnectionBoardItemRef]
+    let handledAt: Date
+    var updatedAt: Date
+
+    init(
+        text: String,
+        linkedRefs: [ConnectionBoardItemRef] = [],
+        handledAt: Date = Date(),
+        updatedAt: Date = Date()
+    ) {
+        self.text = text
+        self.linkedRefs = linkedRefs
+        self.handledAt = handledAt
+        self.updatedAt = updatedAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case text, linkedRefs, handledAt, updatedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.text = try c.decodeIfPresent(String.self, forKey: .text) ?? ""
+        self.linkedRefs = try c.decodeIfPresent([ConnectionBoardItemRef].self, forKey: .linkedRefs) ?? []
+        self.handledAt = try c.decodeIfPresent(Date.self, forKey: .handledAt) ?? Date()
+        self.updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
+    }
+
+    /// A handling with no text and no links is empty — saving one clears the
+    /// objection back to open.
+    var isEmpty: Bool {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && linkedRefs.isEmpty
+    }
+}
+
+/// Pure matching for the collaborator's handle_objection tool: the model
+/// names board entries by quoting their text; these resolve those quotes to
+/// live items deterministically (and testably).
+enum ObjectionStagingResolver {
+
+    private static func normalized(_ text: String) -> String {
+        text.lowercased()
+            .replacingOccurrences(of: "\u{201C}", with: "\"")
+            .replacingOccurrences(of: "\u{201D}", with: "\"")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// The objection whose text contains (or is contained by) the quote.
+    /// Longest-text match wins on ties so a short quote lands on the most
+    /// specific objection; nil means the model must re-quote verbatim.
+    static func matchObjection(quote: String, in items: [ConnectionItem]) -> ConnectionItem? {
+        let query = normalized(quote)
+        guard query.count >= 4 else { return nil }
+        let candidates = items.filter { item in
+            let text = normalized(item.resolvedPlainText)
+            return text.contains(query) || query.contains(text)
+        }
+        return candidates.max { normalized($0.resolvedPlainText).count < normalized($1.resolvedPlainText).count }
+    }
+
+    /// Resolve quoted board entries to refs (any section but the objections'
+    /// own and the meta conceptName). Unmatched quotes come back so the
+    /// caller can tell the model what didn't resolve.
+    static func resolveLinkedEntries(
+        _ quotes: [String],
+        sections: [ConnectionSection]
+    ) -> (refs: [ConnectionBoardItemRef], unmatched: [String]) {
+        var refs: [ConnectionBoardItemRef] = []
+        var unmatched: [String] = []
+        for quote in quotes {
+            let query = normalized(quote)
+            guard query.count >= 4 else {
+                unmatched.append(quote)
+                continue
+            }
+            var found: ConnectionBoardItemRef?
+            for section in sections where section.type != .beliefsObjections && section.type != .conceptName {
+                if let item = section.items.first(where: { normalized($0.resolvedPlainText).contains(query) }) {
+                    found = ConnectionBoardItemRef(section: section.type, itemID: item.id)
+                    break
+                }
+            }
+            if let found, !refs.contains(where: { $0.itemID == found.itemID }) {
+                refs.append(found)
+            } else if found == nil {
+                unmatched.append(quote)
+            }
+        }
+        return (refs, unmatched)
+    }
+}
+
 // MARK: - Connection Item
 
 /// An individual item within a Connection section
@@ -284,6 +417,10 @@ struct ConnectionItem: Identifiable, Codable, Equatable {
     var sourceAtomUUID: String?     // If pulled from another atom
     var sourceSnippet: String?      // Original text from source
     var linkedConnectionUUID: String?   // First-class link to another Connection page
+    /// The comment-thread response resolving this item when it's an objection
+    /// (Beliefs & Objections). nil = open. Optional decode: legacy items and
+    /// other sections simply lack the key.
+    var handling: ObjectionHandling?
     let createdAt: Date
     var updatedAt: Date
 
@@ -294,7 +431,8 @@ struct ConnectionItem: Identifiable, Codable, Equatable {
         plainText: String? = nil,
         sourceAtomUUID: String? = nil,
         sourceSnippet: String? = nil,
-        linkedConnectionUUID: String? = nil
+        linkedConnectionUUID: String? = nil,
+        handling: ObjectionHandling? = nil
     ) {
         self.id = id
         self.content = content
@@ -303,8 +441,15 @@ struct ConnectionItem: Identifiable, Codable, Equatable {
         self.sourceAtomUUID = sourceAtomUUID
         self.sourceSnippet = sourceSnippet
         self.linkedConnectionUUID = linkedConnectionUUID
+        self.handling = handling
         self.createdAt = Date()
         self.updatedAt = Date()
+    }
+
+    /// True for a handled objection (non-empty response or evidence link).
+    var isHandled: Bool {
+        guard let handling else { return false }
+        return !handling.isEmpty
     }
 
     var hasSource: Bool {
@@ -404,6 +549,11 @@ struct ConnectionFocusModeState: Codable {
     /// Rolling AI observations. Capped at 20 most recent.
     var liveInsights: [LiveInsight] = []
 
+    /// Media references on this concept's board (gallery + section anchors).
+    /// DB-owned like sections: the UserDefaults blob never resurrects them
+    /// (see ConnectionFocusModeViewModel.loadState).
+    var media: [ConnectionMediaItem] = []
+
     init(atomUUID: String) {
         self.atomUUID = atomUUID
         // Initialize with all current sections.
@@ -421,6 +571,7 @@ struct ConnectionFocusModeState: Codable {
         self.layoutVersion = Self.currentLayoutVersion
         self.viewMode = .board
         self.liveInsights = []
+        self.media = []
     }
 
     // MARK: - V2 accessors
@@ -554,6 +705,61 @@ struct ConnectionFocusModeState: Codable {
         lastModified = Date()
     }
 
+    // MARK: - Media
+
+    /// Ordered gallery view of the media list.
+    var orderedMedia: [ConnectionMediaItem] {
+        media.sorted { ($0.sortOrder, $0.createdAt) < ($1.sortOrder, $1.createdAt) }
+    }
+
+    /// The concept's cover media, if one is marked.
+    var coverMedia: ConnectionMediaItem? {
+        media.first { $0.isCover }
+    }
+
+    func mediaItem(id: UUID) -> ConnectionMediaItem? {
+        media.first { $0.id == id }
+    }
+
+    /// Media anchored to a section (shown as a strip on its card).
+    func media(anchoredTo type: ConnectionSectionType) -> [ConnectionMediaItem] {
+        orderedMedia.filter { $0.anchorSection == type }
+    }
+
+    /// An existing ref for the same source atom, if any — attach is idempotent.
+    func mediaItem(forAtomUUID uuid: String) -> ConnectionMediaItem? {
+        media.first { $0.atomUUID == uuid }
+    }
+
+    mutating func addMedia(_ item: ConnectionMediaItem) {
+        var stamped = item
+        stamped.sortOrder = (media.map(\.sortOrder).max() ?? -1) + 1
+        media.append(stamped)
+        lastModified = Date()
+    }
+
+    mutating func removeMedia(id: UUID) {
+        media.removeAll { $0.id == id }
+        lastModified = Date()
+    }
+
+    mutating func updateMedia(_ item: ConnectionMediaItem) {
+        if let index = media.firstIndex(where: { $0.id == item.id }) {
+            media[index] = item
+            lastModified = Date()
+        }
+    }
+
+    /// Marks one ref as the cover, clearing any previous cover. Passing the
+    /// current cover's id clears it entirely (toggle).
+    mutating func setCoverMedia(id: UUID?) {
+        for index in media.indices {
+            let shouldBeCover = media[index].id == id && !media[index].isCover
+            media[index].isCover = shouldBeCover
+        }
+        lastModified = Date()
+    }
+
     // MARK: - Codable (explicit to accept V1/V2 JSON without newer keys —
     // legacy collaborator keys in old blobs are simply ignored)
 
@@ -561,6 +767,7 @@ struct ConnectionFocusModeState: Codable {
         case atomUUID, sections, viewportState, floatingPanelIDs, lastModified
         case conceptType, stationPositionsRaw, forgeMode, liveInsights
         case canvasPositionsRaw, canvasSizesRaw, hiddenPanelsRaw, layoutVersion
+        case media
     }
 
     init(from decoder: Decoder) throws {
@@ -578,6 +785,7 @@ struct ConnectionFocusModeState: Codable {
         let storedMode = try c.decodeIfPresent(String.self, forKey: .forgeMode) ?? ""
         self.viewMode = ConnectionViewMode(legacyRawValue: storedMode)
         self.liveInsights = try c.decodeIfPresent([LiveInsight].self, forKey: .liveInsights) ?? []
+        self.media = try c.decodeIfPresent([ConnectionMediaItem].self, forKey: .media) ?? []
         self.layoutVersion = try c.decodeIfPresent(Int.self, forKey: .layoutVersion) ?? 0
         // V3 fields — migrate from V2 stationPositionsRaw when canvasPositionsRaw is empty.
         let decodedCanvasPositions = try c.decodeIfPresent([String: CodablePoint].self, forKey: .canvasPositionsRaw) ?? [:]
@@ -612,6 +820,7 @@ struct ConnectionFocusModeState: Codable {
         try c.encode(stationPositionsRaw, forKey: .stationPositionsRaw)
         try c.encode(viewMode.rawValue, forKey: .forgeMode)
         try c.encode(liveInsights, forKey: .liveInsights)
+        try c.encode(media, forKey: .media)
         try c.encode(canvasPositionsRaw, forKey: .canvasPositionsRaw)
         try c.encode(canvasSizesRaw, forKey: .canvasSizesRaw)
         try c.encode(hiddenPanelsRaw, forKey: .hiddenPanelsRaw)
@@ -746,14 +955,33 @@ extension ConnectionFocusModeState {
 struct ConnectionStructuredData: Codable {
     var sections: [ConnectionSection]
 
-    init(sections: [ConnectionSection]) {
+    /// Media refs on the board. OPTIONAL BY DESIGN: nil means "this writer
+    /// doesn't own media — leave the stored key untouched". Writers that pass
+    /// only sections (promotion service, migrations) encode no `media` key,
+    /// so `mergingStructuredKeys` preserves what's there. The focus-mode save
+    /// path always passes a non-nil array (empty = deliberately cleared).
+    var media: [ConnectionMediaItem]?
+
+    init(sections: [ConnectionSection], media: [ConnectionMediaItem]? = nil) {
         self.sections = ConnectionFocusModeState.backfillingMissingSections(sections)
+        self.media = media
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let decodedSections = try c.decodeIfPresent([ConnectionSection].self, forKey: .sections) ?? []
         self.sections = ConnectionFocusModeState.backfillingMissingSections(decodedSections)
+        self.media = try c.decodeIfPresent([ConnectionMediaItem].self, forKey: .media)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(sections, forKey: .sections)
+        try c.encodeIfPresent(media, forKey: .media)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case sections, media
     }
 
     func toJSON() -> String? {

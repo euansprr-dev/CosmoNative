@@ -446,4 +446,69 @@ struct ConnectionEditableSurfaceTests {
         #expect(after.kind == .structured)
         #expect(after.surfaceID.hasPrefix("connection:"))
     }
+
+    // MARK: - Media block (read-only)
+
+    private func mediaRef(caption: String? = nil, anchor: ConnectionSectionType? = nil) -> ConnectionMediaItem {
+        ConnectionMediaItem(
+            kind: .video,
+            atomUUID: "media-atom-1",
+            caption: caption,
+            anchorSection: anchor,
+            timestampSeconds: 62
+        )
+    }
+
+    @Test func serializationRendersMediaBlockAfterSections() {
+        let model = ConnectionSurfaceSerializer.serialize(
+            title: "Trust Loops",
+            conceptType: .framework,
+            sections: makeSections(),
+            media: [mediaRef(caption: "the hook pattern", anchor: .examples)]
+        )
+        #expect(model.text.contains("## Gallery (read-only media on this board)"))
+        #expect(model.text.contains("▸ [video]"))
+        #expect(model.text.contains("moment 1:02"))
+        #expect(model.text.contains("shown on Examples"))
+        #expect(model.text.contains("caption: the hook pattern"))
+        // The gallery must render after the last real section.
+        let referencesPos = model.text.range(of: "## References")!.lowerBound
+        let galleryPos = model.text.range(of: "## Gallery")!.lowerBound
+        #expect(referencesPos < galleryPos)
+    }
+
+    @Test func mediaBlockEmitsNoAnchorsAndNoItemLines() {
+        let withMedia = ConnectionSurfaceSerializer.serialize(
+            title: "Trust Loops",
+            conceptType: .framework,
+            sections: makeSections(),
+            media: [mediaRef()]
+        )
+        let without = ConnectionSurfaceSerializer.serialize(
+            title: "Trust Loops",
+            conceptType: .framework,
+            sections: makeSections()
+        )
+        // Same anchors: the media block can never be an insertion target.
+        #expect(withMedia.anchors.map(\.id) == without.anchors.map(\.id))
+        // Media lines are meta, never section items.
+        for line in withMedia.lines {
+            if case .item = line.kind {
+                let text = String(withMedia.text[line.range])
+                #expect(!text.contains("▸"))
+            }
+        }
+    }
+
+    @Test func parseItemsIgnoresMediaGlyphLines() {
+        // A model echoing gallery lines back must not create bullets from them.
+        let parsed = ConnectionSurfaceSerializer.parseItems(
+            from: "- A real claim\n▸ [video] \"Some reel\" (Instagram Reel)",
+            targetSection: .claims
+        )
+        // The ▸ glyph is not a bullet marker: the line can only ride along as
+        // continuation text, never become its own staged item.
+        #expect(parsed?.count == 1)
+        #expect(parsed?.first?.hasPrefix("A real claim") == true)
+    }
 }

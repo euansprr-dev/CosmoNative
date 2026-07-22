@@ -71,6 +71,29 @@ struct DetailTitleEdit {
     }
 }
 
+/// A capture-grammar token with its utf16 range in the ORIGINAL input — the
+/// highlight mirror of `parse`, which strips tokens and reports values only.
+/// The scan blanks consumed text in `parse`'s exact order, so the wash shows
+/// what a submit will apply without promising anything it won't.
+struct CaptureWashToken: Equatable {
+    enum Kind: Equatable {
+        case schedulingState(String)
+        case timeOfDay(String)
+        case projectTag
+        case headingTag
+        case deadline
+        case priority(TaskPriority)
+        case intent(TaskIntent)
+        case recurrence
+        case duration
+        case time
+        case date
+    }
+
+    let utf16Range: Range<Int>
+    let kind: Kind
+}
+
 @MainActor
 enum TaskInputParser {
 
@@ -179,7 +202,7 @@ enum TaskInputParser {
         }
 
         // /someday, /anytime
-        for (pattern, state) in [("\\/someday\\b", "someday"), ("\\/anytime\\b", "anytime")] {
+        for (pattern, state) in schedulingStatePatterns {
             guard let match = firstMatch(pattern) else { continue }
             edit.schedulingState = state
             consume(match.range, kind: .schedulingState)
@@ -187,10 +210,6 @@ enum TaskInputParser {
         }
 
         // /morning, /am, /evening, /eve
-        let timeOfDayPatterns = [
-            ("\\/morning\\b", "morning"), ("\\/am\\b", "morning"),
-            ("\\/evening\\b", "evening"), ("\\/eve\\b", "evening"),
-        ]
         for (pattern, timeOfDay) in timeOfDayPatterns {
             guard let match = firstMatch(pattern) else { continue }
             edit.timeOfDay = timeOfDay
@@ -200,7 +219,7 @@ enum TaskInputParser {
 
         // "deadline: friday" — consumed before the bare date scan so the date
         // word inside lands on Deadline, not When.
-        if let match = firstMatch("\\bdeadline:\\s*(\\S+(?:\\s+\\d{1,2})?)") {
+        if let match = firstMatch(deadlinePattern) {
             var dateStr = detect.substring(with: match.range(at: 1))
             if let date = extractDate(&dateStr) {
                 edit.deadline = date
@@ -209,10 +228,6 @@ enum TaskInputParser {
         }
 
         // Priority codes — case-sensitive, same as capture parsing.
-        let priorityPatterns: [(String, TaskPriority)] = [
-            ("\\bp1\\b", .critical), ("\\bp2\\b", .high), ("\\bp3\\b", .medium), ("\\bp4\\b", .low),
-            ("\\b!1\\b", .critical), ("\\b!!\\b", .high), ("\\b!\\b", .medium),
-        ]
         for (pattern, priority) in priorityPatterns {
             guard let match = firstMatch(pattern, options: []) else { continue }
             edit.priority = priority
@@ -221,21 +236,14 @@ enum TaskInputParser {
         }
 
         // Recurrence phrases before weekday/date parsing consumes them.
-        let recurrencePatterns: [(String, RecurrenceRule)] = [
-            ("\\bevery\\s+day\\b", .daily()),
-            ("\\bdaily\\b", .daily()),
-            ("\\bevery\\s+weekday(?:s)?\\b", .weekdays()),
-            ("\\bweekday(?:s)?\\b", .weekdays()),
-            ("\\bevery\\s+month\\b", .monthly(onDay: Calendar.current.component(.day, from: Date()))),
-        ]
-        for (pattern, rule) in recurrencePatterns {
+        for (pattern, rule) in recurrencePhrasePatterns {
             guard let match = firstMatch(pattern) else { continue }
             edit.recurrenceRule = rule
             consume(match.range, kind: .recurrence)
             break
         }
         if edit.recurrenceRule == nil,
-           let match = firstMatch("\\bevery\\s+((?:(?:mon(?:day)?|tue(?:s|sday)?|wed(?:nesday)?|thu(?:r|rs|rsday)?|thur(?:s|sday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)(?:\\s*(?:,|and)\\s*|\\s+)?)+)") {
+           let match = firstMatch(weekdayListRecurrencePattern) {
             let days = parseWeekdayList(detect.substring(with: match.range(at: 1)))
             if !days.isEmpty {
                 edit.recurrenceRule = .weekly(on: days)
@@ -246,19 +254,7 @@ enum TaskInputParser {
         // Dates → When
         let cal = Calendar.current
         let today = Date()
-        let namedDates: [(String, Date?)] = [
-            ("\\btoday\\b", today),
-            ("\\btomorrow\\b", cal.date(byAdding: .day, value: 1, to: today)),
-            ("\\bnext week\\b", cal.date(byAdding: .weekOfYear, value: 1, to: today)),
-            ("\\bmonday\\b", nextWeekday(.monday, from: today)),
-            ("\\btuesday\\b", nextWeekday(.tuesday, from: today)),
-            ("\\bwednesday\\b", nextWeekday(.wednesday, from: today)),
-            ("\\bthursday\\b", nextWeekday(.thursday, from: today)),
-            ("\\bfriday\\b", nextWeekday(.friday, from: today)),
-            ("\\bsaturday\\b", nextWeekday(.saturday, from: today)),
-            ("\\bsunday\\b", nextWeekday(.sunday, from: today)),
-        ]
-        for (pattern, date) in namedDates {
+        for (pattern, date) in namedDatePatterns(calendar: cal, today: today) {
             guard let match = firstMatch(pattern), let date else { continue }
             edit.whenDate = date
             consume(match.range, kind: .when)
@@ -270,7 +266,7 @@ enum TaskInputParser {
             consume(match.range, kind: .when)
         }
         if edit.whenDate == nil,
-           let match = firstMatch("\\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\\w*\\s+(\\d{1,2})\\b"),
+           let match = firstMatch(namedMonthDayPattern),
            let month = monthFromAbbreviation(detect.substring(with: match.range(at: 1)).lowercased()),
            let day = Int(detect.substring(with: match.range(at: 2))) {
             var components = cal.dateComponents([.year], from: today)
@@ -282,7 +278,7 @@ enum TaskInputParser {
             }
         }
         if edit.whenDate == nil,
-           let match = firstMatch("\\b(\\d{1,2})/(\\d{1,2})\\b"),
+           let match = firstMatch(numericMonthDayPattern),
            let month = Int(detect.substring(with: match.range(at: 1))),
            let day = Int(detect.substring(with: match.range(at: 2))) {
             var components = cal.dateComponents([.year], from: today)
@@ -305,16 +301,271 @@ enum TaskInputParser {
         return edit
     }
 
+    // MARK: - Capture wash tokens (highlight mirror of `parse`)
+
+    /// Scan a capture input for every token `parse` would consume, reporting
+    /// ranges against the ORIGINAL text so a creation field can wash them in
+    /// place — the ⌥C treatment. Text inside an `@mention` is opaque, same as
+    /// `parseDetailEdit`. Intent keywords are reported but never stripped by
+    /// `parse`, so they wash while staying part of the title.
+    static func captureWashTokens(_ input: String, mentions: [RichMention] = []) -> [CaptureWashToken] {
+        var tokens: [CaptureWashToken] = []
+        var detect = input as NSString
+
+        for mention in mentions {
+            let span = detect.range(of: "@\(mention.titleSnapshot)")
+            guard span.location != NSNotFound else { continue }
+            detect = detect.replacingCharacters(
+                in: span, with: String(repeating: "\u{FFFC}", count: span.length)
+            ) as NSString
+        }
+
+        func firstMatch(
+            _ pattern: String,
+            options: NSRegularExpression.Options = [.caseInsensitive]
+        ) -> NSTextCheckingResult? {
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: options) else { return nil }
+            return regex.firstMatch(in: detect as String, range: NSRange(location: 0, length: detect.length))
+        }
+
+        func blank(_ range: NSRange) {
+            detect = detect.replacingCharacters(
+                in: range, with: String(repeating: " ", count: range.length)
+            ) as NSString
+        }
+
+        func consume(_ range: NSRange, kind: CaptureWashToken.Kind) {
+            blank(range)
+            tokens.append(.init(utf16Range: range.location..<(range.location + range.length), kind: kind))
+        }
+
+        // Same order as `parse` — earlier passes consume before later ones scan.
+        for (pattern, state) in schedulingStatePatterns {
+            guard let match = firstMatch(pattern) else { continue }
+            consume(match.range, kind: .schedulingState(state))
+            break
+        }
+
+        for (pattern, timeOfDay) in timeOfDayPatterns {
+            guard let match = firstMatch(pattern) else { continue }
+            consume(match.range, kind: .timeOfDay(timeOfDay))
+            break
+        }
+
+        if let match = firstMatch("#(\\S+)", options: []) {
+            consume(match.range, kind: .projectTag)
+        }
+        if let match = firstMatch("\\+(\\S+)", options: []) {
+            consume(match.range, kind: .headingTag)
+        }
+
+        // `parse` strips the deadline phrase whether or not the date inside it
+        // parses — so blank it either way, but only wash a real deadline.
+        if let match = firstMatch(deadlinePattern) {
+            var dateStr = detect.substring(with: match.range(at: 1))
+            if extractDate(&dateStr) != nil {
+                consume(match.range, kind: .deadline)
+            } else {
+                blank(match.range)
+            }
+        }
+
+        for (pattern, priority) in priorityPatterns {
+            guard let match = firstMatch(pattern, options: []) else { continue }
+            consume(match.range, kind: .priority(priority))
+            break
+        }
+
+        for (pattern, intent) in intentKeywords {
+            guard let match = firstMatch(pattern) else { continue }
+            let location = match.range.location
+            let isAtStart = location == 0
+            let isAfterSpace = location > 0 && detect.character(at: location - 1) == 0x20
+            if isAtStart || isAfterSpace {
+                // Reported without blanking — `parse` keeps the word in the title.
+                tokens.append(.init(
+                    utf16Range: location..<(location + match.range.length),
+                    kind: .intent(intent)
+                ))
+                break
+            }
+        }
+
+        var matchedRecurrence = false
+        for (pattern, _) in recurrencePhrasePatterns {
+            guard let match = firstMatch(pattern) else { continue }
+            consume(match.range, kind: .recurrence)
+            matchedRecurrence = true
+            break
+        }
+        if !matchedRecurrence, let match = firstMatch(weekdayListRecurrencePattern) {
+            let days = parseWeekdayList(detect.substring(with: match.range(at: 1)))
+            if !days.isEmpty {
+                consume(match.range, kind: .recurrence)
+            }
+        }
+
+        for (pattern, minutes) in durationPatterns {
+            guard let match = firstMatch(pattern),
+                  let value = minutes(match, detect as String), value > 0 else { continue }
+            consume(match.range, kind: .duration)
+            break
+        }
+
+        for pattern in timePatterns {
+            guard let match = firstMatch(pattern) else { continue }
+            let timeStr = detect.substring(with: match.range(at: 1))
+            if parseTimeString(timeStr) != nil {
+                consume(match.range, kind: .time)
+                break
+            }
+        }
+
+        let cal = Calendar.current
+        let today = Date()
+        var matchedDate = false
+        for (pattern, date) in namedDatePatterns(calendar: cal, today: today) {
+            guard let match = firstMatch(pattern), date != nil else { continue }
+            consume(match.range, kind: .date)
+            matchedDate = true
+            break
+        }
+        if !matchedDate, let match = firstMatch("\\bin\\s+(\\d+)\\s+days?\\b"),
+           Int(detect.substring(with: match.range(at: 1))) != nil {
+            consume(match.range, kind: .date)
+            matchedDate = true
+        }
+        if !matchedDate,
+           let match = firstMatch(namedMonthDayPattern),
+           let month = monthFromAbbreviation(detect.substring(with: match.range(at: 1)).lowercased()),
+           let day = Int(detect.substring(with: match.range(at: 2))) {
+            var components = cal.dateComponents([.year], from: today)
+            components.month = month
+            components.day = day
+            if cal.date(from: components) != nil {
+                consume(match.range, kind: .date)
+                matchedDate = true
+            }
+        }
+        if !matchedDate,
+           let match = firstMatch(numericMonthDayPattern),
+           let month = Int(detect.substring(with: match.range(at: 1))),
+           let day = Int(detect.substring(with: match.range(at: 2))) {
+            var components = cal.dateComponents([.year], from: today)
+            components.month = month
+            components.day = day
+            if cal.date(from: components) != nil {
+                consume(match.range, kind: .date)
+            }
+        }
+
+        return tokens
+    }
+
+    // MARK: - Shared token grammar (parse / parseDetailEdit / captureWashTokens)
+
+    private static let schedulingStatePatterns: [(String, String)] = [
+        ("\\/someday\\b", "someday"),
+        ("\\/anytime\\b", "anytime"),
+    ]
+
+    private static let timeOfDayPatterns: [(String, String)] = [
+        ("\\/morning\\b", "morning"),
+        ("\\/am\\b", "morning"),
+        ("\\/evening\\b", "evening"),
+        ("\\/eve\\b", "evening"),
+    ]
+
+    private static let deadlinePattern = "\\bdeadline:\\s*(\\S+(?:\\s+\\d{1,2})?)"
+
+    private static let priorityPatterns: [(String, TaskPriority)] = [
+        ("\\bp1\\b", .critical),
+        ("\\bp2\\b", .high),
+        ("\\bp3\\b", .medium),
+        ("\\bp4\\b", .low),
+        ("\\b!1\\b", .critical),
+        ("\\b!!\\b", .high),
+        ("\\b!\\b", .medium),
+    ]
+
+    private static let intentKeywords: [(String, TaskIntent)] = [
+        ("\\bwrite\\b", .writeContent),
+        ("\\bwriting\\b", .writeContent),
+        ("\\bdraft\\b", .writeContent),
+        ("\\bresearch\\b", .research),
+        ("\\bstudy\\b", .studySwipes),
+        ("\\bswipe\\b", .studySwipes),
+        ("\\bthink\\b", .deepThink),
+        ("\\breview\\b", .review),
+    ]
+
+    /// Computed fresh per call — the monthly rule anchors to today's day.
+    private static var recurrencePhrasePatterns: [(String, RecurrenceRule)] {
+        [
+            ("\\bevery\\s+day\\b", .daily()),
+            ("\\bdaily\\b", .daily()),
+            ("\\bevery\\s+weekday(?:s)?\\b", .weekdays()),
+            ("\\bweekday(?:s)?\\b", .weekdays()),
+            ("\\bevery\\s+month\\b", .monthly(onDay: Calendar.current.component(.day, from: Date()))),
+        ]
+    }
+
+    private static let weekdayListRecurrencePattern =
+        "\\bevery\\s+((?:(?:mon(?:day)?|tue(?:s|sday)?|wed(?:nesday)?|thu(?:r|rs|rsday)?|thur(?:s|sday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)(?:\\s*(?:,|and)\\s*|\\s+)?)+)"
+
+    private static let durationPatterns: [(pattern: String, minutes: (NSTextCheckingResult, String) -> Int?)] = [
+        // "for 1h30m" / "for 1h 30m"
+        ("\\bfor\\s+(\\d{1,2})\\s*h(?:ours?)?\\s*(\\d{1,2})\\s*m(?:in(?:ute)?s?)?\\b", { match, text in
+            guard let hoursRange = Range(match.range(at: 1), in: text),
+                  let minutesRange = Range(match.range(at: 2), in: text),
+                  let hours = Int(text[hoursRange]),
+                  let minutes = Int(text[minutesRange]) else { return nil }
+            return hours * 60 + minutes
+        }),
+        // "for 1.5 hours" / "for 2 hours" / "for 2h"
+        ("\\bfor\\s+(\\d{1,2}(?:\\.\\d)?)\\s*h(?:ours?|rs?)?\\b", { match, text in
+            guard let valueRange = Range(match.range(at: 1), in: text),
+                  let hours = Double(text[valueRange]) else { return nil }
+            return Int((hours * 60).rounded())
+        }),
+        // "for 90 minutes" / "for 45 min" / "for 30m"
+        ("\\bfor\\s+(\\d{1,3})\\s*m(?:in(?:ute)?s?)?\\b", { match, text in
+            guard let valueRange = Range(match.range(at: 1), in: text) else { return nil }
+            return Int(text[valueRange])
+        }),
+    ]
+
+    private static let timePatterns = [
+        "\\bat\\s+(\\d{1,2}:\\d{2}\\s*(?:am|pm))\\b",
+        "\\bat\\s+(\\d{1,2}\\s*(?:am|pm))\\b",
+        "\\bat\\s+(\\d{1,2}:\\d{2})\\b",
+        "\\b(\\d{1,2}:\\d{2}\\s*(?:am|pm))\\b",
+        "\\b(\\d{1,2}(?:am|pm))\\b",
+    ]
+
+    private static let namedMonthDayPattern = "\\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\\w*\\s+(\\d{1,2})\\b"
+    private static let numericMonthDayPattern = "\\b(\\d{1,2})/(\\d{1,2})\\b"
+
+    private static func namedDatePatterns(calendar cal: Calendar, today: Date) -> [(String, Date?)] {
+        [
+            ("\\btoday\\b", today),
+            ("\\btomorrow\\b", cal.date(byAdding: .day, value: 1, to: today)),
+            ("\\bnext week\\b", cal.date(byAdding: .weekOfYear, value: 1, to: today)),
+            ("\\bmonday\\b", nextWeekday(.monday, from: today)),
+            ("\\btuesday\\b", nextWeekday(.tuesday, from: today)),
+            ("\\bwednesday\\b", nextWeekday(.wednesday, from: today)),
+            ("\\bthursday\\b", nextWeekday(.thursday, from: today)),
+            ("\\bfriday\\b", nextWeekday(.friday, from: today)),
+            ("\\bsaturday\\b", nextWeekday(.saturday, from: today)),
+            ("\\bsunday\\b", nextWeekday(.sunday, from: today)),
+        ]
+    }
+
     // MARK: - Things 3 Scheduling Extractions
 
     /// Extract /someday or /anytime from input
     private static func extractSchedulingState(_ input: inout String) -> String? {
-        let patterns: [(String, String)] = [
-            ("\\/someday\\b", "someday"),
-            ("\\/anytime\\b", "anytime"),
-        ]
-
-        for (pattern, state) in patterns {
+        for (pattern, state) in schedulingStatePatterns {
             if let range = input.range(of: pattern, options: [.regularExpression, .caseInsensitive]) {
                 input.removeSubrange(range)
                 return state
@@ -325,14 +576,7 @@ enum TaskInputParser {
 
     /// Extract /morning, /am, /evening, /eve from input
     private static func extractTimeOfDay(_ input: inout String) -> String? {
-        let patterns: [(String, String)] = [
-            ("\\/morning\\b", "morning"),
-            ("\\/am\\b", "morning"),
-            ("\\/evening\\b", "evening"),
-            ("\\/eve\\b", "evening"),
-        ]
-
-        for (pattern, timeOfDay) in patterns {
+        for (pattern, timeOfDay) in timeOfDayPatterns {
             if let range = input.range(of: pattern, options: [.regularExpression, .caseInsensitive]) {
                 input.removeSubrange(range)
                 return timeOfDay
@@ -370,7 +614,7 @@ enum TaskInputParser {
     /// Extract "deadline: friday" or "deadline: mar 15" from input
     private static func extractDeadline(_ input: inout String) -> Date? {
         guard let regex = try? NSRegularExpression(
-            pattern: "\\bdeadline:\\s*(\\S+(?:\\s+\\d{1,2})?)",
+            pattern: deadlinePattern,
             options: .caseInsensitive
         ) else { return nil }
 
@@ -390,17 +634,7 @@ enum TaskInputParser {
     // MARK: - Priority
 
     private static func extractPriority(_ input: inout String) -> TaskPriority? {
-        let patterns: [(String, TaskPriority)] = [
-            ("\\bp1\\b", .critical),
-            ("\\bp2\\b", .high),
-            ("\\bp3\\b", .medium),
-            ("\\bp4\\b", .low),
-            ("\\b!1\\b", .critical),
-            ("\\b!!\\b", .high),
-            ("\\b!\\b", .medium),
-        ]
-
-        for (pattern, priority) in patterns {
+        for (pattern, priority) in priorityPatterns {
             if let range = input.range(of: pattern, options: .regularExpression, range: input.startIndex..<input.endIndex) {
                 input.removeSubrange(range)
                 return priority
@@ -412,18 +646,7 @@ enum TaskInputParser {
     // MARK: - Intent
 
     private static func extractIntent(_ input: inout String) -> TaskIntent? {
-        let keywords: [(String, TaskIntent)] = [
-            ("\\bwrite\\b", .writeContent),
-            ("\\bwriting\\b", .writeContent),
-            ("\\bdraft\\b", .writeContent),
-            ("\\bresearch\\b", .research),
-            ("\\bstudy\\b", .studySwipes),
-            ("\\bswipe\\b", .studySwipes),
-            ("\\bthink\\b", .deepThink),
-            ("\\breview\\b", .review),
-        ]
-
-        for (pattern, intent) in keywords {
+        for (pattern, intent) in intentKeywords {
             if let range = input.range(of: pattern, options: [.regularExpression, .caseInsensitive]) {
                 // Only extract if it appears to be a keyword, not part of a title
                 // Check if it's at the start or preceded by space
@@ -443,15 +666,7 @@ enum TaskInputParser {
     // MARK: - Time
 
     private static func extractRecurrence(_ input: inout String) -> RecurrenceRule? {
-        let patterns: [(String, RecurrenceRule)] = [
-            ("\\bevery\\s+day\\b", .daily()),
-            ("\\bdaily\\b", .daily()),
-            ("\\bevery\\s+weekday(?:s)?\\b", .weekdays()),
-            ("\\bweekday(?:s)?\\b", .weekdays()),
-            ("\\bevery\\s+month\\b", .monthly(onDay: Calendar.current.component(.day, from: Date()))),
-        ]
-
-        for (pattern, rule) in patterns {
+        for (pattern, rule) in recurrencePhrasePatterns {
             if let range = input.range(of: pattern, options: [.regularExpression, .caseInsensitive]) {
                 input.removeSubrange(range)
                 return rule
@@ -459,7 +674,7 @@ enum TaskInputParser {
         }
 
         guard let regex = try? NSRegularExpression(
-            pattern: "\\bevery\\s+((?:(?:mon(?:day)?|tue(?:s|sday)?|wed(?:nesday)?|thu(?:r|rs|rsday)?|thur(?:s|sday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)(?:\\s*(?:,|and)\\s*|\\s+)?)+)",
+            pattern: weekdayListRecurrencePattern,
             options: .caseInsensitive
         ) else {
             return nil
@@ -484,29 +699,7 @@ enum TaskInputParser {
     /// Extract "for 2 hours", "for 1.5h", "for 90 minutes", "for 45m",
     /// "for 1h30m" — a scheduling-estimate duration in minutes.
     private static func extractDuration(_ input: inout String) -> Int? {
-        let patterns: [(pattern: String, minutes: (NSTextCheckingResult, String) -> Int?)] = [
-            // "for 1h30m" / "for 1h 30m"
-            ("\\bfor\\s+(\\d{1,2})\\s*h(?:ours?)?\\s*(\\d{1,2})\\s*m(?:in(?:ute)?s?)?\\b", { match, text in
-                guard let hoursRange = Range(match.range(at: 1), in: text),
-                      let minutesRange = Range(match.range(at: 2), in: text),
-                      let hours = Int(text[hoursRange]),
-                      let minutes = Int(text[minutesRange]) else { return nil }
-                return hours * 60 + minutes
-            }),
-            // "for 1.5 hours" / "for 2 hours" / "for 2h"
-            ("\\bfor\\s+(\\d{1,2}(?:\\.\\d)?)\\s*h(?:ours?|rs?)?\\b", { match, text in
-                guard let valueRange = Range(match.range(at: 1), in: text),
-                      let hours = Double(text[valueRange]) else { return nil }
-                return Int((hours * 60).rounded())
-            }),
-            // "for 90 minutes" / "for 45 min" / "for 30m"
-            ("\\bfor\\s+(\\d{1,3})\\s*m(?:in(?:ute)?s?)?\\b", { match, text in
-                guard let valueRange = Range(match.range(at: 1), in: text) else { return nil }
-                return Int(text[valueRange])
-            }),
-        ]
-
-        for (pattern, minutes) in patterns {
+        for (pattern, minutes) in durationPatterns {
             guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { continue }
             let nsRange = NSRange(input.startIndex..<input.endIndex, in: input)
             guard let match = regex.firstMatch(in: input, range: nsRange),
@@ -520,15 +713,7 @@ enum TaskInputParser {
 
     private static func extractTime(_ input: inout String) -> Date? {
         // Match "at 2pm", "at 14:00", "2pm", "2:30pm", "14:00"
-        let patterns = [
-            "\\bat\\s+(\\d{1,2}:\\d{2}\\s*(?:am|pm))\\b",
-            "\\bat\\s+(\\d{1,2}\\s*(?:am|pm))\\b",
-            "\\bat\\s+(\\d{1,2}:\\d{2})\\b",
-            "\\b(\\d{1,2}:\\d{2}\\s*(?:am|pm))\\b",
-            "\\b(\\d{1,2}(?:am|pm))\\b",
-        ]
-
-        for pattern in patterns {
+        for pattern in timePatterns {
             guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { continue }
             let nsRange = NSRange(input.startIndex..<input.endIndex, in: input)
 
@@ -574,20 +759,7 @@ enum TaskInputParser {
         let today = Date()
 
         // Named dates
-        let namedDates: [(String, Date?)] = [
-            ("\\btoday\\b", today),
-            ("\\btomorrow\\b", cal.date(byAdding: .day, value: 1, to: today)),
-            ("\\bnext week\\b", cal.date(byAdding: .weekOfYear, value: 1, to: today)),
-            ("\\bmonday\\b", nextWeekday(.monday, from: today)),
-            ("\\btuesday\\b", nextWeekday(.tuesday, from: today)),
-            ("\\bwednesday\\b", nextWeekday(.wednesday, from: today)),
-            ("\\bthursday\\b", nextWeekday(.thursday, from: today)),
-            ("\\bfriday\\b", nextWeekday(.friday, from: today)),
-            ("\\bsaturday\\b", nextWeekday(.saturday, from: today)),
-            ("\\bsunday\\b", nextWeekday(.sunday, from: today)),
-        ]
-
-        for (pattern, date) in namedDates {
+        for (pattern, date) in namedDatePatterns(calendar: cal, today: today) {
             if let range = input.range(of: pattern, options: [.regularExpression, .caseInsensitive]) {
                 input.removeSubrange(range)
                 return date
@@ -608,8 +780,8 @@ enum TaskInputParser {
 
         // Month day: "mar 15", "march 15", "3/15"
         let monthPatterns = [
-            ("\\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\\w*\\s+(\\d{1,2})\\b", true),
-            ("\\b(\\d{1,2})/(\\d{1,2})\\b", false),
+            (namedMonthDayPattern, true),
+            (numericMonthDayPattern, false),
         ]
 
         for (pattern, isNamedMonth) in monthPatterns {

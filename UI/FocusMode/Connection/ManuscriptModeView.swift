@@ -14,6 +14,11 @@ struct ManuscriptModeView: View {
     let title: String
     let conceptType: ConceptFrameworkType
     let sections: [ConnectionSection]
+    /// Media refs render as plates: anchored ones under their chapter,
+    /// the rest gathered in a closing Plates block before the colophon.
+    var media: [ConnectionMediaItem] = []
+    var mediaAtoms: [String: Atom] = [:]
+    var onOpenMedia: (UUID) -> Void = { _ in }
     let onDismiss: () -> Void
 
     private var populatedSections: [ConnectionSection] {
@@ -55,6 +60,9 @@ struct ManuscriptModeView: View {
                 masthead
                 ForEach(populatedSections) { section in
                     chapter(for: section)
+                }
+                if !unanchoredMedia.isEmpty {
+                    platesBlock
                 }
                 colophon
             }
@@ -99,6 +107,16 @@ struct ManuscriptModeView: View {
 
     // MARK: - Chapter
 
+    private var unanchoredMedia: [ConnectionMediaItem] {
+        media.filter { $0.anchorSection == nil }
+            .sorted { ($0.sortOrder, $0.createdAt) < ($1.sortOrder, $1.createdAt) }
+    }
+
+    private func anchoredMedia(for type: ConnectionSectionType) -> [ConnectionMediaItem] {
+        media.filter { $0.anchorSection == type }
+            .sorted { ($0.sortOrder, $0.createdAt) < ($1.sortOrder, $1.createdAt) }
+    }
+
     private func chapter(for section: ConnectionSection) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             chapterHeader(section)
@@ -124,6 +142,96 @@ struct ManuscriptModeView: View {
                         }
                     }
                 }
+            }
+            let plates = anchoredMedia(for: section.type)
+            if !plates.isEmpty {
+                VStack(alignment: .leading, spacing: 18) {
+                    ForEach(plates) { item in
+                        plate(item)
+                    }
+                }
+                .padding(.top, 6)
+            }
+        }
+    }
+
+    // MARK: - Plates (media figures)
+
+    /// A media ref as a book plate: hairline-framed image, small-caps
+    /// caption underneath. Click opens the Stage lightbox.
+    private func plate(_ item: ConnectionMediaItem) -> some View {
+        let atom = item.atomUUID.flatMap { mediaAtoms[$0] }
+        return Button {
+            onOpenMedia(item.id)
+        } label: {
+            VStack(alignment: .leading, spacing: 8) {
+                plateImage(item, atom: atom)
+                    .aspectRatio(16 / 10, contentMode: .fill)
+                    .frame(maxWidth: 420)
+                    .clipShape(Rectangle())
+                    .overlay(Rectangle().stroke(hairline, lineWidth: 0.5))
+                    .overlay(alignment: .center) {
+                        if item.kind == .video {
+                            Image(systemName: "play.circle")
+                                .font(DS.title1.weight(.thin))
+                                .foregroundStyle(.white.opacity(0.9))
+                                .shadow(color: .black.opacity(0.4), radius: 6)
+                                .accessibilityHidden(true)
+                        }
+                    }
+                Text(plateCaption(item, atom: atom).uppercased())
+                    .font(DS.smallCaps)
+                    .tracking(1.6)
+                    .foregroundStyle(inkSecondary)
+                    .lineLimit(2)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Open in the Stage")
+        .accessibilityLabel("Plate: \(plateCaption(item, atom: atom))")
+    }
+
+    private func plateCaption(_ item: ConnectionMediaItem, atom: Atom?) -> String {
+        if let caption = item.caption, !caption.isEmpty { return caption }
+        if let title = atom?.title, !title.isEmpty { return title }
+        return item.assetTitle ?? "Untitled plate"
+    }
+
+    @ViewBuilder
+    private func plateImage(_ item: ConnectionMediaItem, atom: Atom?) -> some View {
+        if let poster = item.thumbnailAssetPath {
+            ConceptLocalThumbnail(path: poster, maxPixel: 840)
+        } else if let path = item.assetPath, !MediaAssetStore.isVideoPath(path) {
+            ConceptLocalThumbnail(path: path, maxPixel: 840)
+        } else if let atom, let url = ConceptMediaThumbnailResolver.thumbnailURL(for: atom) {
+            CachedAsyncImage(url: url, stableKey: "manuscript-\(ConceptMediaThumbnailResolver.stableKey(for: item))") { phase in
+                switch phase {
+                case .success(let image):
+                    image.resizable().aspectRatio(contentMode: .fill)
+                case .failure, .empty:
+                    Rectangle().fill(hairline.opacity(0.2))
+                @unknown default:
+                    Rectangle().fill(hairline.opacity(0.2))
+                }
+            }
+        } else {
+            Rectangle().fill(hairline.opacity(0.2))
+        }
+    }
+
+    private var platesBlock: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(spacing: 10) {
+                Circle().fill(DS.gilt).frame(width: 6, height: 6)
+                Text("PLATES")
+                    .font(DS.smallCaps)
+                    .tracking(2.0)
+                    .foregroundStyle(DS.giltMuted)
+                Rectangle().fill(DS.gilt.opacity(0.3)).frame(height: 0.5)
+            }
+            ForEach(unanchoredMedia) { item in
+                plate(item)
             }
         }
     }

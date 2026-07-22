@@ -248,6 +248,8 @@ struct NoteFocusModeView: View {
     /// Non-nil while the inline assistant has staged reviewable changes for this note —
     /// drives the in-document diff that temporarily replaces the body editor.
     @State private var bodyReviewProposal: CosmoAssistantProposal?
+    /// Keeps the center scroll anchored across the review → editor swap.
+    @State private var inlineReviewScrollKeeper = CosmoInlineReviewScrollPositionKeeper()
     @State private var titlePlainText: String = ""
     @State private var plainContent: String = ""
     @State private var selectedText: String = ""
@@ -509,9 +511,9 @@ struct NoteFocusModeView: View {
         }
         .onReceive(CosmoInlineAssistantStore.shared.$proposals) { proposals in
             let surfaceID = "note:\(atom.uuid)"
-            bodyReviewProposal = proposals.last { proposal in
+            updateBodyReviewProposal(proposals.last { proposal in
                 proposal.surfaceID == surfaceID && proposal.hasReviewableOperations
-            }
+            })
         }
         .onDisappear {
             NoteFocusLog.debug("[FOCUS-NOTE] onDisappear — uuid=\(atom.uuid) titleLen=\(titlePlainText.count) bodyLen=\(plainContent.count) bodyPreview=\"\(String(plainContent.prefix(80)))\"")
@@ -1046,6 +1048,9 @@ struct NoteFocusModeView: View {
             .padding(.leading, manuscriptMargin)
             .padding(.trailing, manuscriptMargin + BlockInteractionPolicy.gutterWidth)
             .background(FocusModeEditorBlurTapLayer())
+            .background(CosmoInlineReviewScrollResolver { scrollView in
+                inlineReviewScrollKeeper.attach(to: scrollView)
+            })
             .animation(reduceMotion ? nil : ProMotionSprings.gentle, value: headerFocusOpacity)
         }
         .background(FocusModeEditorBlurTapLayer())
@@ -2036,6 +2041,19 @@ struct NoteFocusModeView: View {
                 // Cancelled
             }
         }
+    }
+
+    /// Single write path for `bodyReviewProposal`. Resolving the last
+    /// operation swaps the diff view back for the block editor, whose first
+    /// layout (progressive hydration) would clamp the scroll to the top — the
+    /// offset is captured before the branch flips and re-asserted until it
+    /// sticks, so accepting an edit leaves the user anchored where they
+    /// reviewed it.
+    private func updateBodyReviewProposal(_ proposal: CosmoAssistantProposal?) {
+        let isClosingReview = bodyReviewProposal != nil && proposal == nil
+        if isClosingReview { inlineReviewScrollKeeper.captureBeforeSwap() }
+        bodyReviewProposal = proposal
+        if isClosingReview { inlineReviewScrollKeeper.restoreAfterSwap() }
     }
 
     private func applyInlineAssistantBodyEdit(

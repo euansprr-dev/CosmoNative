@@ -13,7 +13,7 @@ struct SmartTaskCaptureRow: View {
     var placeholderText: String = "Add task... (try \"Write at 6pm every Tue\")"
     @State private var parsedInput = ParsedTaskInput(title: "")
     @State private var parseDebounce: AnyCancellable?
-    @FocusState private var isFocused: Bool
+    @State private var isFocused = false
 
     // Mention state
     @State private var capturedMentions: [RichMention] = []
@@ -54,25 +54,22 @@ struct SmartTaskCaptureRow: View {
                 .font(DS.cardMeta)
                 .foregroundStyle(isFocused ? DS.accent : DS.textMuted)
 
-            ZStack(alignment: .leading) {
-                if viewModel.newTaskTitle.isEmpty {
-                    Text(placeholderText)
-                        .font(DS.callout)
-                        .foregroundStyle(DS.textMuted)
-                        .allowsHitTesting(false)
-                }
-                TextField("", text: $viewModel.newTaskTitle)
-                    .textFieldStyle(.plain)
-                    .font(DS.callout)
-                    .foregroundStyle(DS.text)
-                    .focused($isFocused)
-                    .onSubmit {
-                        Task { await submitTask() }
-                    }
-                    .onChange(of: viewModel.newTaskTitle) { _, newValue in
-                        debounceParseInput(newValue)
-                        detectMentionTrigger(in: newValue)
-                    }
+            // The ⌥C capture treatment: recognized qualifiers (habit keywords,
+            // intent, dates, times, durations, recurrence, priority, tags)
+            // wash in place as they're typed — same component as the overlay.
+            TokenWashTextView(
+                text: $viewModel.newTaskTitle,
+                placeholder: placeholderText,
+                font: .systemFont(ofSize: 13),
+                ink: NSColor(DS.text),
+                segments: TaskCaptureWash.segments(for: viewModel.newTaskTitle, mentions: capturedMentions),
+                maxLines: 1,
+                isFocused: $isFocused,
+                onSubmit: { Task { await submitTask() } }
+            )
+            .onChange(of: viewModel.newTaskTitle) { _, newValue in
+                debounceParseInput(newValue)
+                detectMentionTrigger(in: newValue)
             }
 
             if !viewModel.newTaskTitle.isEmpty {

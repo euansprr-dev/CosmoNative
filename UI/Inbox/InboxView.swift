@@ -43,17 +43,17 @@ struct InboxView: View {
         case .captureLanes:
             VStack(spacing: 0) {
                 masthead
-                CaptureLanesView(showsLaneSidebar: false)
+                CaptureLanesView(showsLaneSidebar: false, triageModel: viewModel)
             }
         case .captureLane(let id):
             VStack(spacing: 0) {
                 masthead
-                CaptureLanesView(showsLaneSidebar: false, selectedDestinationId: id)
+                CaptureLanesView(showsLaneSidebar: false, selectedDestinationId: id, triageModel: viewModel)
             }
         case .manageCommands:
             VStack(spacing: 0) {
                 masthead
-                CaptureLanesView(showsLaneSidebar: false, showsCommandRegistryOnly: true)
+                CaptureLanesView(showsLaneSidebar: false, showsCommandRegistryOnly: true, triageModel: viewModel)
             }
         }
     }

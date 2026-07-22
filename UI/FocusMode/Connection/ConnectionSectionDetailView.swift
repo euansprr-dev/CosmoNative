@@ -18,6 +18,9 @@ struct ConnectionSectionDetailView: View {
 
     private var accent: Color { sectionType.accentColor }
 
+    /// The objection whose handling composer is open, if any.
+    @State private var handlingComposerItemID: UUID?
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
@@ -93,20 +96,82 @@ struct ConnectionSectionDetailView: View {
     private func itemList(_ section: ConnectionSection) -> some View {
         VStack(alignment: .leading, spacing: DS.space6) {
             ForEach(section.items) { item in
-                ConnectionItemEditRow(
-                    item: item,
-                    accent: accent,
-                    sectionType: sectionType,
-                    isSelected: workspace.selection == .item(sectionType, item.id),
-                    onSelect: { workspace.selection = .item(sectionType, item.id) },
-                    onEdit: { updated in viewModel.editItem(updated, inSection: sectionType) },
-                    onDelete: { viewModel.deleteItem(item.id, fromSection: sectionType) },
-                    onSourceTap: actions.onSourceTap
+                VStack(alignment: .leading, spacing: DS.space6) {
+                    ConnectionItemEditRow(
+                        item: item,
+                        accent: accent,
+                        sectionType: sectionType,
+                        isSelected: workspace.selection == .item(sectionType, item.id),
+                        onSelect: { workspace.selection = .item(sectionType, item.id) },
+                        onEdit: { updated in viewModel.editItem(updated, inSection: sectionType) },
+                        onDelete: { viewModel.deleteItem(item.id, fromSection: sectionType) },
+                        onSourceTap: actions.onSourceTap,
+                        onHandleObjection: sectionType == .beliefsObjections
+                            ? { openComposer(for: item) }
+                            : nil
+                    )
+                    objectionThread(for: item)
+                }
+            }
+        }
+        .animation(ProMotionSprings.gentle, value: handlingComposerItemID)
+    }
+
+    // MARK: - Objection handling
+
+    private func openComposer(for item: ConnectionItem) {
+        withAnimation(ProMotionSprings.gentle) {
+            handlingComposerItemID = item.id
+        }
+    }
+
+    /// The comment thread / composer beneath an objection row.
+    @ViewBuilder
+    private func objectionThread(for item: ConnectionItem) -> some View {
+        if sectionType == .beliefsObjections {
+            if let staged = workspace.stagedObjectionHandlings.first(where: { $0.objectionItemID == item.id }),
+               handlingComposerItemID != item.id {
+                StagedObjectionHandlingRow(
+                    staged: staged,
+                    resolveRef: { viewModel.resolveBoardRef($0) },
+                    onAccept: { actions.onAcceptStagedHandling(staged.id) },
+                    onReject: { actions.onRejectStagedHandling(staged.id) }
+                )
+            } else if handlingComposerItemID == item.id {
+                ObjectionHandlingComposer(
+                    sections: viewModel.state.sections,
+                    objectionItemID: item.id,
+                    initial: item.handling,
+                    onSave: { text, refs in
+                        viewModel.setObjectionHandling(
+                            itemID: item.id,
+                            inSection: sectionType,
+                            text: text,
+                            linkedRefs: refs
+                        )
+                        handlingComposerItemID = nil
+                    },
+                    onCancel: { handlingComposerItemID = nil }
+                )
+            } else if item.isHandled, let handling = item.handling {
+                ObjectionHandlingThread(
+                    handling: handling,
+                    resolveRef: { viewModel.resolveBoardRef($0) },
+                    onJump: { ref in
+                        guard let section = ref.section else { return }
+                        workspace.selection = .item(section, ref.itemID)
+                        workspace.jump(to: section)
+                    },
+                    onEdit: { openComposer(for: item) },
+                    onReopen: {
+                        withAnimation(ProMotionSprings.gentle) {
+                            viewModel.clearObjectionHandling(itemID: item.id, inSection: sectionType)
+                        }
+                    }
                 )
             }
         }
     }
-
 }
 
 // MARK: - Editable item row
@@ -120,6 +185,8 @@ struct ConnectionItemEditRow: View {
     let onEdit: (ConnectionItem) -> Void
     let onDelete: () -> Void
     let onSourceTap: (String) -> Void
+    /// Present for Beliefs & Objections rows: opens the handling composer.
+    var onHandleObjection: (() -> Void)? = nil
 
     @State private var isHovered = false
     @State private var isEditing = false
@@ -144,6 +211,9 @@ struct ConnectionItemEditRow: View {
         .simultaneousGesture(TapGesture().onEnded { onSelect() })
         .contextMenu {
             Button(isEditing ? "Done Editing" : "Edit") { toggleEditing() }
+            if let onHandleObjection {
+                Button(item.isHandled ? "Edit Handling" : "Handle Objection", action: onHandleObjection)
+            }
             Button("Delete", role: .destructive, action: onDelete)
         }
         .onHover { hovering in
@@ -212,8 +282,22 @@ struct ConnectionItemEditRow: View {
                 .font(DS.caption)
                 .foregroundStyle(accent)
         } else {
+            if let onHandleObjection, !item.isHandled {
+                Button(action: onHandleObjection) {
+                    Label("Handle", systemImage: "checkmark.shield")
+                        .font(DS.caption.weight(.medium))
+                        .foregroundStyle(Color(hex: "#22C55E"))
+                }
+                .buttonStyle(.plain)
+                .opacity(isHovered || isSelected ? 1 : 0)
+                .help("Write a response that resolves this objection")
+                .accessibilityLabel("Handle objection")
+            }
             Menu {
                 Button("Edit") { toggleEditing() }
+                if let onHandleObjection {
+                    Button(item.isHandled ? "Edit Handling" : "Handle Objection", action: onHandleObjection)
+                }
                 Button("Delete", role: .destructive, action: onDelete)
             } label: {
                 Image(systemName: "ellipsis.circle")

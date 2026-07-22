@@ -1216,7 +1216,17 @@ struct MainView: View {
             cornerRadius: cornerRadius,
             sidebarButtonTitle: sidebarButtonTitle,
             sidebarButtonHelp: sidebarButtonHelp,
-            onClose: { handleSidebarButtonPress() }
+            onClose: { handleSidebarButtonPress() },
+            // Rows guard same-destination writes (e.g. Today clicked while
+            // Today already sits under a focus overlay), so the binding
+            // wrapper above never fires for them — every row action still
+            // reports here, making this the one place that guarantees
+            // sidebar navigation always leaves focus mode.
+            onNavigate: {
+                if isFocusModeActive {
+                    FocusNavigationCoordinator.shared.close()
+                }
+            }
         )
         .environmentObject(crossDragManager)
     }

@@ -19,6 +19,10 @@ struct DeepDiveStudyBar: View {
     /// True while the user is down in the content — islands recede to 60%.
     var recede: Bool = false
     @Binding var mapShowsQuestions: Bool
+    /// True while a forced Cartographer pass runs — the Tidy control waits.
+    var isTidyingMap: Bool = false
+    /// The Tidy button: asks the Cartographer to look at the map now.
+    var onTidyMap: (() -> Void)? = nil
     let onTitleTap: () -> Void
     let onStartInquiry: () -> Void
 
@@ -125,9 +129,37 @@ struct DeepDiveStudyBar: View {
             selection: $mapShowsQuestions
         )
         .transition(.opacity)
+        if let onTidyMap {
+            tidyMapButton(onTidyMap)
+        }
         Divider()
             .frame(height: 18)
             .overlay(DS.borderSubtle)
+    }
+
+    /// The Cartographer on demand: propose sections for a crowded map.
+    private func tidyMapButton(_ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Group {
+                if isTidyingMap {
+                    ProgressView()
+                        .controlSize(.small)
+                        .scaleEffect(0.6)
+                } else {
+                    Image(systemName: "rectangle.3.group")
+                        .font(.system(size: 11, weight: .medium))
+                }
+            }
+            .foregroundStyle(CosmoColors.textSecondary)
+            .frame(width: 26, height: 24)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(isTidyingMap)
+        .keyboardShortcut("t", modifiers: [.command, .shift])
+        .help("Tidy the map — suggest sections (⇧⌘T)")
+        .accessibilityLabel(isTidyingMap ? "Tidying the map" : "Tidy the map")
+        .transition(.opacity)
     }
 
     private var startInquiryButton: some View {

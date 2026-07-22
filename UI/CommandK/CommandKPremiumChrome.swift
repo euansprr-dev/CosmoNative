@@ -626,8 +626,21 @@ extension View {
 
                 // Soft delete (atoms land in Recently Deleted) — the label
                 // says so, Finder-style, instead of a bare "Delete".
+                // Never swallow the write with `try?`: a silently-failed delete
+                // looked exactly like "sometimes it doesn't move it". Surface it
+                // through PersistenceHealth so a real failure is visible.
                 Button(role: .destructive) {
-                    Task { try? await AtomRepository.shared.delete(uuid: uuid) }
+                    Task {
+                        do {
+                            try await AtomRepository.shared.delete(uuid: uuid)
+                        } catch {
+                            PersistenceHealth.note(
+                                .writeFailure,
+                                context: "commandK.moveToRecentlyDeleted",
+                                detail: "\(uuid.prefix(8)): \(error)"
+                            )
+                        }
+                    }
                 } label: {
                     Label("Move to Recently Deleted", systemImage: "trash")
                 }

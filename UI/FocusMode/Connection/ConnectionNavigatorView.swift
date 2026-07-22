@@ -72,7 +72,8 @@ struct ConnectionNavigatorView: View {
                     section: section,
                     isSelected: isSelected(section.type),
                     isSearchMatch: workspace.isSearching && workspace.sectionMatches(section),
-                    onTap: { workspace.jump(to: section.type) },
+                    isDimmed: workspace.focusedSection.map { $0 != section.type } ?? false,
+                    onTap: { workspace.toggleFocus(on: section.type) },
                     onOpen: { workspace.openSection(section.type) }
                 )
             }
@@ -91,6 +92,7 @@ struct ConnectionNavigatorSectionRow: View {
     let section: ConnectionSection
     let isSelected: Bool
     var isSearchMatch: Bool = false
+    var isDimmed: Bool = false
     let onTap: () -> Void
     let onOpen: () -> Void
 
@@ -136,6 +138,8 @@ struct ConnectionNavigatorSectionRow: View {
         .padding(.vertical, DS.space6)
         .frame(minHeight: 28)
         .background(rowFill, in: .rect(cornerRadius: 7))
+        .opacity(isDimmed && !isHovered ? 0.35 : 1)
+        .animation(ProMotionSprings.gentle, value: isDimmed)
         .contentShape(.rect(cornerRadius: 7))
         .onTapGesture(count: 2) { onOpen() }
         .simultaneousGesture(TapGesture().onEnded { onTap() })

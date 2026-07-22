@@ -35,7 +35,8 @@ struct ConnectionFocusModeView: View {
     @State private var suggestedWellSources: [Atom] = []
     @State private var isLoadingSuggestedSources = false
     @State private var isShowingSuggestedSources = false
-    @State private var isRefreshingInsights = false
+    /// The Material rail — library recommendations in the inspector.
+    @State private var recommendations = ConceptRecommendationModel()
     /// Sibling pages of the same deep dive — powers inline mention links.
     @State private var linkTargets: ConnectionLinkTargets = .empty
     /// Pending inline-assistant proposal targeting this connection's sections.
@@ -49,6 +50,9 @@ struct ConnectionFocusModeView: View {
     /// Persisted pending material (inbox feeds, seedling develops) — loaded
     /// from the atom's metadata; renders through the same ghost-row grammar.
     @State private var persistedInserts: [ConnectionStagedInsert] = []
+    /// Gallery "+" armed the shared ⌘K picker: the next atom pick attaches
+    /// as gallery media instead of a Sources-rail link.
+    @State private var mediaPickerArmed = false
 
     @Environment(\.isPaneContext) private var isPaneContext
     @Environment(\.isPeekContext) private var isPeekContext
@@ -98,11 +102,90 @@ struct ConnectionFocusModeView: View {
                 guard notification.userInfo?["connectionUUID"] as? String == atom.uuid else { return }
                 Task { await loadPersistedInserts() }
             }
+            // Media attached from outside this workspace (quick look, agent
+            // tool, iOS): fold the fresh refs into live state by id-union so
+            // the gallery updates AND a later in-session save keeps them.
+            .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Connection.mediaChanged)) { notification in
+                guard notification.userInfo?["connectionUUID"] as? String == atom.uuid else { return }
+                Task { await mergeExternalMedia() }
+            }
+            // attach_media staged ghost tiles for this concept's gallery.
+            .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Connection.mediaStagingChanged)) { notification in
+                guard notification.userInfo?["connectionUUID"] as? String == atom.uuid,
+                      let uuids = notification.userInfo?["atomUUIDs"] as? [String] else { return }
+                Task { await loadStagedMediaSuggestions(uuids) }
+            }
+            // handle_objection staged a rebuttal — ghost thread with ✓/✗.
+            .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Connection.objectionHandlingStaged)) { notification in
+                receiveStagedObjectionHandling(notification)
+            }
+            // The Material rail follows the page: any section/title mutation
+            // pokes a debounced re-query, so recommendations evolve with the
+            // concept instead of freezing at open-time.
+            .onChange(of: viewModel.state.lastModified) { _, _ in
+                recommendations.poke()
+            }
+            .onChange(of: viewModel.editableTitle) { _, _ in
+                recommendations.poke()
+            }
             .onKeyPress(.escape) { handleEscape() }
             .onKeyPress { handleKeyCommand($0) }
             .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.NodeGraph.addItemToCurrentCanvas)) { notification in
                 handleAtomPicked(notification)
             }
+            .overlay { lightboxOverlay }
+    }
+
+    /// The Stage lightbox — mounted over the whole workspace while a media
+    /// ref is presented. First stop in the Esc chain (after Compare).
+    @ViewBuilder
+    private var lightboxOverlay: some View {
+        if workspace.isComparePresented {
+            ConceptMediaCompareStrip(
+                items: viewModel.state.orderedMedia.filter { workspace.compareSelection.contains($0.id) },
+                atoms: viewModel.mediaAtoms,
+                onOpen: { id in
+                    withAnimation(ProMotionSprings.focusTransition) {
+                        workspace.isComparePresented = false
+                        workspace.presentedMediaID = id
+                    }
+                },
+                onClose: {
+                    withAnimation(ProMotionSprings.focusTransition) {
+                        workspace.isComparePresented = false
+                    }
+                }
+            )
+        } else if let presentedID = workspace.presentedMediaID {
+            ConceptMediaLightbox(
+                media: viewModel.state.orderedMedia,
+                atoms: viewModel.mediaAtoms,
+                presentedID: presentedID,
+                actions: workspaceActions,
+                onCaptionCommit: { id, caption in
+                    viewModel.setMediaCaption(id: id, caption: caption)
+                },
+                onPinMoment: { id, seconds in
+                    viewModel.pinMediaMoment(id: id, seconds: seconds)
+                },
+                onCaptureQuote: { item, section, text in
+                    viewModel.attachItem(
+                        ConnectionItem(
+                            content: text,
+                            sourceAtomUUID: item.atomUUID,
+                            sourceSnippet: text
+                        ),
+                        toSection: section
+                    )
+                },
+                onPresent: { id in workspace.presentedMediaID = id },
+                onClose: {
+                    withAnimation(ProMotionSprings.focusTransition) {
+                        workspace.presentedMediaID = nil
+                    }
+                }
+            )
+        }
     }
 
     private var workspaceView: some View {
@@ -112,7 +195,7 @@ struct ConnectionFocusModeView: View {
             workspace: workspace,
             title: titleBinding,
             sources: workspaceSources,
-            isRefreshingInsights: isRefreshingInsights,
+            recommendations: recommendations,
             reviewProposal: reviewProposal,
             reviewSourceText: reviewSourceText,
             pendingInsertsBySection: combinedInsertsBySection,
@@ -187,15 +270,200 @@ struct ConnectionFocusModeView: View {
             onAddSource: { presentSharedCommandK() },
             onRequestSuggestions: { Task { await requestSuggestedSources() } },
             onLinkSuggestedSource: { source in Task { await linkSourceToConnection(source) } },
-            onRefreshInsights: { refreshInsights() },
-            onDismissInsight: { id in
-                viewModel.state.liveInsights.removeAll { $0.id == id }
-                viewModel.saveState()
-            },
             onTitleCommit: { viewModel.flushTitleSave() },
             onClose: onClose,
             onAcceptInsert: { acceptInsert($0) },
-            onRejectInsert: { rejectInsert($0) }
+            onRejectInsert: { rejectInsert($0) },
+            onOpenMedia: { id in
+                withAnimation(ProMotionSprings.focusTransition) {
+                    workspace.presentedMediaID = id
+                }
+            },
+            onOpenMediaAsPane: { atomUUID in openMediaSourceAsPane(atomUUID) },
+            onDropMediaAtoms: { uuids, anchor in
+                Task { await attachDroppedAtoms(uuids, anchor: anchor) }
+            },
+            onDropMediaFiles: { urls, anchor in
+                Task { await attachDroppedFiles(urls, anchor: anchor) }
+            },
+            onPasteMediaURL: { urlString, anchor in
+                Task { await captureAndAttachURL(urlString, anchor: anchor) }
+            },
+            onAddMediaTapped: {
+                mediaPickerArmed = true
+                presentSharedCommandK()
+            },
+            onDetachMedia: { id in
+                if workspace.presentedMediaID == id {
+                    workspace.presentedMediaID = nil
+                }
+                withAnimation(ProMotionSprings.gentle) {
+                    viewModel.detachMedia(id: id)
+                }
+            },
+            onToggleMediaCover: { id in viewModel.toggleMediaCover(id: id) },
+            onAnchorMedia: { id, section in
+                withAnimation(ProMotionSprings.gentle) {
+                    viewModel.setMediaAnchor(id: id, section: section)
+                }
+            },
+            onToggleCompareSelection: { id in
+                withAnimation(ProMotionSprings.hover) {
+                    workspace.toggleCompareSelection(id)
+                }
+            },
+            onPresentCompare: {
+                withAnimation(ProMotionSprings.focusTransition) {
+                    workspace.isComparePresented = true
+                }
+            },
+            onAcceptStagedHandling: { stagedID in
+                guard let staged = workspace.stagedObjectionHandlings.first(where: { $0.id == stagedID }) else { return }
+                withAnimation(ProMotionSprings.gentle) {
+                    viewModel.setObjectionHandling(
+                        itemID: staged.objectionItemID,
+                        inSection: .beliefsObjections,
+                        text: staged.text,
+                        linkedRefs: staged.linkedRefs
+                    )
+                    workspace.stagedObjectionHandlings.removeAll { $0.id == stagedID }
+                }
+            },
+            onRejectStagedHandling: { stagedID in
+                withAnimation(ProMotionSprings.gentle) {
+                    workspace.stagedObjectionHandlings.removeAll { $0.id == stagedID }
+                }
+            },
+            onAcceptStagedMedia: { atomUUID in
+                guard let staged = workspace.stagedMediaAtoms.first(where: { $0.uuid == atomUUID }) else { return }
+                withAnimation(ProMotionSprings.gentle) {
+                    viewModel.attachMediaAtom(staged)
+                    workspace.stagedMediaAtoms.removeAll { $0.uuid == atomUUID }
+                }
+            },
+            onRejectStagedMedia: { atomUUID in
+                withAnimation(ProMotionSprings.gentle) {
+                    workspace.stagedMediaAtoms.removeAll { $0.uuid == atomUUID }
+                }
+            }
+        )
+    }
+
+    /// A handle_objection staging arrived for this concept: fold it into the
+    /// workspace as a ghost thread. One staged rebuttal per objection — a
+    /// newer proposal replaces the old ghost, never stacks.
+    private func receiveStagedObjectionHandling(_ notification: Notification) {
+        guard notification.userInfo?["connectionUUID"] as? String == atom.uuid,
+              let itemIDRaw = notification.userInfo?["objectionItemID"] as? String,
+              let itemID = UUID(uuidString: itemIDRaw),
+              let text = notification.userInfo?["text"] as? String else { return }
+        let snippet = notification.userInfo?["objectionSnippet"] as? String ?? ""
+        let refPairs = notification.userInfo?["linkedRefs"] as? [[String]] ?? []
+        let refs: [ConnectionBoardItemRef] = refPairs.compactMap { pair in
+            guard pair.count == 2,
+                  let section = ConnectionSectionType(rawValue: pair[0]),
+                  let refItemID = UUID(uuidString: pair[1]) else { return nil }
+            return ConnectionBoardItemRef(section: section, itemID: refItemID)
+        }
+        withAnimation(ProMotionSprings.gentle) {
+            workspace.stagedObjectionHandlings.removeAll { $0.objectionItemID == itemID }
+            workspace.stagedObjectionHandlings.append(StagedObjectionHandling(
+                objectionItemID: itemID,
+                objectionSnippet: snippet,
+                text: text,
+                linkedRefs: refs
+            ))
+        }
+    }
+
+    /// Resolve attach_media staged candidates to atoms, excluding anything
+    /// already on the board.
+    @MainActor
+    private func loadStagedMediaSuggestions(_ uuids: [String]) async {
+        let attached = Set(viewModel.state.media.compactMap(\.atomUUID))
+        let known = Set(workspace.stagedMediaAtoms.map(\.uuid))
+        for uuid in uuids where !attached.contains(uuid) && !known.contains(uuid) {
+            guard let fetched = try? await AtomRepository.shared.fetch(uuid: uuid), !fetched.isDeleted else { continue }
+            withAnimation(ProMotionSprings.gentle) {
+                workspace.stagedMediaAtoms.append(fetched)
+            }
+        }
+    }
+
+    // MARK: - Media attach / open
+
+    /// Dropped atom refs (swipe cards, ⌘K results) land as gallery tiles —
+    /// or anchored to the section card they were dropped on.
+    @MainActor
+    private func attachDroppedAtoms(_ uuids: [String], anchor: ConnectionSectionType?) async {
+        for uuid in uuids {
+            guard uuid != atom.uuid,
+                  let source = try? await AtomRepository.shared.fetch(uuid: uuid),
+                  !source.isDeleted else { continue }
+            // A note/sticky dropped on the open board starts the collaborator
+            // merge directly — the drop IS the intent, and every bullet still
+            // goes through staged review.
+            if ConceptNoteMergeComposer.isMergeableSource(source.type) {
+                await ConceptNoteMergeLauncher.begin(noteUUID: source.uuid, conceptUUID: atom.uuid)
+                continue
+            }
+            // Anything with renderable media qualifies; plain text atoms
+            // stay in the Sources rail flow instead.
+            guard source.type == .research || ConceptMediaThumbnailResolver.thumbnailURL(for: source) != nil else {
+                continue
+            }
+            withAnimation(ProMotionSprings.gentle) {
+                viewModel.attachMediaAtom(source, anchorSection: anchor)
+            }
+            // Fire-and-forget: the graph edge feeds the Sources rail and the
+            // swipe side's "in concepts" back-links.
+            Task { await ConceptMediaAttachService.writeGraphEdge(source: source, conceptUUID: atom.uuid) }
+        }
+    }
+
+    /// Finder file drops / pasted images become owned assets.
+    @MainActor
+    private func attachDroppedFiles(_ urls: [URL], anchor: ConnectionSectionType?) async {
+        for url in urls {
+            guard MediaAssetStore.isSupportedMediaExtension(url.pathExtension) else { continue }
+            guard let saved = try? await MediaAssetStore.importFile(at: url) else { continue }
+            withAnimation(ProMotionSprings.gentle) {
+                viewModel.attachMediaAsset(saved, title: url.lastPathComponent, anchorSection: anchor)
+            }
+        }
+    }
+
+    /// Refs written to the DB by an external attach (quick look, agent tool)
+    /// union into live state by id — never replace, the session may hold
+    /// unsaved refs of its own.
+    @MainActor
+    private func mergeExternalMedia() async {
+        guard let fresh = try? await AtomRepository.shared.fetch(uuid: atom.uuid),
+              let data = fresh.structured.flatMap(ConnectionStructuredData.fromJSON),
+              let freshMedia = data.media else { return }
+        let knownIDs = Set(viewModel.state.media.map(\.id))
+        let knownAtomUUIDs = Set(viewModel.state.media.compactMap(\.atomUUID))
+        var appended = false
+        for ref in freshMedia where !knownIDs.contains(ref.id) {
+            if let uuid = ref.atomUUID, knownAtomUUIDs.contains(uuid) { continue }
+            withAnimation(ProMotionSprings.gentle) {
+                viewModel.state.addMedia(ref)
+            }
+            appended = true
+        }
+        if appended {
+            await viewModel.loadMediaAtoms()
+        }
+    }
+
+    /// "Open as pane": the source atom's own focus mode (Swipe Study for
+    /// swipes, Research otherwise) opens beside the concept through the
+    /// panes-as-tabs registry.
+    private func openMediaSourceAsPane(_ atomUUID: String) {
+        NotificationCenter.default.post(
+            name: CosmoNotification.Navigation.openBlockInFocusMode,
+            object: nil,
+            userInfo: ["atomUUID": atomUUID, "asPane": true]
         )
     }
 
@@ -287,9 +555,31 @@ struct ConnectionFocusModeView: View {
             // blob or the (possibly stale) open-time atom snapshot.
             await viewModel.refreshSectionsFromDatabase()
             await loadPersistedInserts()
+            await viewModel.loadMediaAtoms()
             await loadSources()
             await loadLinkTargets()
-            await refreshInsightsIfStale()
+            bindRecommendations()
+            await recommendations.refresh()
+            // A note was dropped onto this concept on the canvas: the
+            // collaborator opens in the pane already intaking it — AFTER the
+            // fresh section load, so it stages against current content.
+            if let noteUUID = ConceptMergeHandoff.consume(for: atom.uuid) {
+                await ConceptNoteMergeLauncher.begin(noteUUID: noteUUID, conceptUUID: atom.uuid)
+            }
+        }
+    }
+
+    /// The Material rail reads the page through this snapshot — live values
+    /// at query time, never open-time copies.
+    private func bindRecommendations() {
+        recommendations.bind(atomUUID: atom.uuid) {
+            ConceptRecommendationSnapshot(
+                atomUUID: atom.uuid,
+                title: viewModel.editableTitle,
+                conceptType: viewModel.state.conceptType,
+                state: viewModel.state,
+                linkedUUIDs: Set(wellSources.map(\.uuid))
+            )
         }
     }
 
@@ -324,6 +614,18 @@ struct ConnectionFocusModeView: View {
     // MARK: - Keyboard
 
     private func handleEscape() -> KeyPress.Result {
+        if workspace.isComparePresented {
+            withAnimation(ProMotionSprings.focusTransition) {
+                workspace.isComparePresented = false
+            }
+            return .handled
+        }
+        if workspace.presentedMediaID != nil {
+            withAnimation(ProMotionSprings.focusTransition) {
+                workspace.presentedMediaID = nil
+            }
+            return .handled
+        }
         if workspace.isNavigatorOverlayPresented {
             withAnimation(ProMotionSprings.focusTransition) {
                 workspace.isNavigatorOverlayPresented = false
@@ -357,6 +659,17 @@ struct ConnectionFocusModeView: View {
     }
 
     private func handleKeyCommand(_ keyPress: KeyPress) -> KeyPress.Result {
+        // Lightbox paging — arrows walk the gallery while the Stage is up.
+        if workspace.presentedMediaID != nil {
+            if keyPress.key == .leftArrow {
+                presentAdjacentMedia(offset: -1)
+                return .handled
+            }
+            if keyPress.key == .rightArrow {
+                presentAdjacentMedia(offset: 1)
+                return .handled
+            }
+        }
         guard keyPress.modifiers.contains(.command) else { return .ignored }
 
         if keyPress.modifiers.contains(.option), keyPress.key == KeyEquivalent("i") {
@@ -367,6 +680,7 @@ struct ConnectionFocusModeView: View {
         }
 
         switch keyPress.characters {
+        case "v": return handleBoardPaste()
         case "1": return setViewMode(.board)
         case "2": return setViewMode(.outline)
         case "3", "m": return setViewMode(workspace.viewMode == .manuscript ? .board : .manuscript)
@@ -384,6 +698,71 @@ struct ConnectionFocusModeView: View {
         default:
             return .ignored
         }
+    }
+
+    /// ⌘V on the board: media files and platform URLs land in the gallery.
+    /// STATE-GATED — a focused text editor keeps its own paste (never steal
+    /// ⌘V from NSTextView; see the block-shortcut precedent).
+    private func handleBoardPaste() -> KeyPress.Result {
+        if NSApp.keyWindow?.firstResponder is NSTextView { return .ignored }
+        let pasteboard = NSPasteboard.general
+
+        // 1. Files on the pasteboard (copied in Finder).
+        if let urls = pasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) as? [URL] {
+            let mediaFiles = urls.filter { MediaAssetStore.isSupportedMediaExtension($0.pathExtension) }
+            if !mediaFiles.isEmpty {
+                Task { await attachDroppedFiles(mediaFiles, anchor: nil) }
+                return .handled
+            }
+        }
+
+        // 2. Raw image data (screenshot, copied image).
+        if let imageData = pasteboard.data(forType: .png) ?? pasteboard.data(forType: .tiff) {
+            let ext = pasteboard.data(forType: .png) != nil ? "png" : "tiff"
+            Task {
+                guard let saved = try? await MediaAssetStore.save(imageData, originalFilename: "pasted.\(ext)") else { return }
+                withAnimation(ProMotionSprings.gentle) {
+                    viewModel.attachMediaAsset(saved, title: "Pasted image", anchorSection: nil)
+                }
+            }
+            return .handled
+        }
+
+        // 3. A platform URL (YouTube, Instagram, TikTok, X…) — capture
+        // through the swipe pipeline (stable-post-id dedup included), then
+        // attach. `?t=` becomes the ref's start moment.
+        if let text = pasteboard.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines),
+           QuickCaptureProcessor.shared.isURL(text) {
+            Task { await captureAndAttachURL(text, anchor: nil) }
+            return .handled
+        }
+        return .ignored
+    }
+
+    /// Capture a pasted/dropped URL into a research atom, then attach it.
+    /// The gallery shows a skeleton tile while the pipeline runs.
+    @MainActor
+    private func captureAndAttachURL(_ urlString: String, anchor: ConnectionSectionType?) async {
+        workspace.pendingMediaCaptures += 1
+        defer { workspace.pendingMediaCaptures = max(0, workspace.pendingMediaCaptures - 1) }
+        let timestamp = ConnectionMediaItem.parseTimestamp(fromURL: urlString)
+        guard let uuid = await QuickCaptureProcessor.shared.captureURLReturningUUID(urlString),
+              let source = try? await AtomRepository.shared.fetch(uuid: uuid) else { return }
+        withAnimation(ProMotionSprings.gentle) {
+            viewModel.attachMediaAtom(source, anchorSection: anchor, timestampSeconds: timestamp)
+        }
+    }
+
+    private func presentAdjacentMedia(offset: Int) {
+        let ordered = viewModel.state.orderedMedia
+        guard let presentedID = workspace.presentedMediaID,
+              let index = ordered.firstIndex(where: { $0.id == presentedID }) else { return }
+        let target = index + offset
+        guard ordered.indices.contains(target) else { return }
+        workspace.presentedMediaID = ordered[target].id
     }
 
     private func setViewMode(_ mode: ConnectionViewMode) -> KeyPress.Result {
@@ -408,6 +787,12 @@ struct ConnectionFocusModeView: View {
     /// after posting the pick.
     private func handleAtomPicked(_ notification: Notification) {
         guard let uuid = notification.userInfo?["atomUUID"] as? String else { return }
+        // Gallery "+" armed the picker: this pick is a media attach.
+        if mediaPickerArmed {
+            mediaPickerArmed = false
+            Task { await attachDroppedAtoms([uuid], anchor: nil) }
+            return
+        }
         let typeRaw = notification.userInfo?["atomType"] as? String ?? AtomType.idea.rawValue
         let atomType = AtomType(rawValue: typeRaw) ?? .idea
         guard isEligibleSourceType(atomType) else { return }
@@ -494,7 +879,15 @@ struct ConnectionFocusModeView: View {
 
     @MainActor
     private func loadSources() async {
-        wellSources = await coDevEngine.findLinkedSourceMaterials(for: atom.uuid, limit: 20)
+        var fetched = await coDevEngine.findLinkedSourceMaterials(for: atom.uuid, limit: 20)
+        // A section page develops FROM its parts — member concepts lead the rail.
+        let members = await coDevEngine.findSectionMemberMaterials(for: atom)
+        if !members.isEmpty {
+            let memberIDs = Set(members.map(\.uuid))
+            fetched.removeAll { memberIDs.contains($0.uuid) }
+            fetched = members + fetched
+        }
+        wellSources = fetched
         if isShowingSuggestedSources {
             let linkedIDs = Set(wellSources.map(\.uuid))
             suggestedWellSources.removeAll { linkedIDs.contains($0.uuid) }
@@ -627,32 +1020,8 @@ struct ConnectionFocusModeView: View {
 
         suggestedWellSources.removeAll { $0.uuid == source.uuid }
         await loadSources()
-    }
-
-    // MARK: - Insights
-
-    private func refreshInsights() {
-        guard !isRefreshingInsights else { return }
-        isRefreshingInsights = true
-        Task { @MainActor in
-            let insights = await coDevEngine.generateLiveInsights(
-                state: viewModel.state,
-                conceptType: viewModel.state.conceptType,
-                frameworkTitle: viewModel.editableTitle
-            )
-            if !insights.isEmpty {
-                viewModel.state.setLiveInsights(insights)
-                viewModel.saveState()
-            }
-            isRefreshingInsights = false
-        }
-    }
-
-    @MainActor
-    private func refreshInsightsIfStale() async {
-        guard viewModel.state.liveInsights.isEmpty,
-              viewModel.state.completedSectionCount >= 2 else { return }
-        refreshInsights()
+        // A freshly linked source must stop being recommended material.
+        recommendations.poke()
     }
 }
 
@@ -715,8 +1084,10 @@ final class ConnectionFocusModeViewModel {
         // snapshot, and the next save persisted the regression (RC6).
         if let savedState = ConnectionFocusModeState.load(atomUUID: atom.uuid) {
             let liveSections = state.sections
+            let liveMedia = state.media
             state = savedState
             state.sections = liveSections
+            state.media = liveMedia
         }
     }
 
@@ -878,6 +1249,9 @@ final class ConnectionFocusModeViewModel {
                 state.sections[index] = savedSection
             }
         }
+
+        // Media rides the same structured column; absent key = no media yet.
+        state.media = data.media ?? []
     }
 
     func saveToAtom() {
@@ -885,7 +1259,7 @@ final class ConnectionFocusModeViewModel {
         // in this focus mode session. Otherwise, skip to avoid overwriting
         // sections that were edited in the canvas block view.
         guard sectionsModifiedInFocusMode else { return }
-        let structuredData = ConnectionStructuredData(sections: state.sections)
+        let structuredData = ConnectionStructuredData(sections: state.sections, media: state.media)
         let atomUUID = atom.uuid
         do {
             // Re-fetch the live row (synchronously — this also runs from the
@@ -976,6 +1350,177 @@ final class ConnectionFocusModeViewModel {
         saveState()
     }
 
+    // MARK: - Objection handling
+
+    /// Upsert the handling thread on an item. An empty handling (no text, no
+    /// links) clears it — the objection reopens.
+    func setObjectionHandling(
+        itemID: UUID,
+        inSection type: ConnectionSectionType,
+        text: String,
+        linkedRefs: [ConnectionBoardItemRef]
+    ) {
+        guard let sectionIndex = state.sections.firstIndex(where: { $0.type == type }),
+              let itemIndex = state.sections[sectionIndex].items.firstIndex(where: { $0.id == itemID }) else { return }
+        sectionsModifiedInFocusMode = true
+        var item = state.sections[sectionIndex].items[itemIndex]
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty && linkedRefs.isEmpty {
+            item.handling = nil
+        } else if var existing = item.handling {
+            existing.text = trimmed
+            existing.linkedRefs = linkedRefs
+            existing.updatedAt = Date()
+            item.handling = existing
+        } else {
+            item.handling = ObjectionHandling(text: trimmed, linkedRefs: linkedRefs)
+        }
+        item.updatedAt = Date()
+        state.sections[sectionIndex].items[itemIndex] = item
+        state.lastModified = Date()
+        saveState()
+    }
+
+    func clearObjectionHandling(itemID: UUID, inSection type: ConnectionSectionType) {
+        setObjectionHandling(itemID: itemID, inSection: type, text: "", linkedRefs: [])
+    }
+
+    /// Resolve a board ref to its live item (for link chips + jump).
+    func resolveBoardRef(_ ref: ConnectionBoardItemRef) -> (section: ConnectionSectionType, item: ConnectionItem)? {
+        guard let section = ref.section,
+              let item = state.section(for: section)?.items.first(where: { $0.id == ref.itemID }) else { return nil }
+        return (section, item)
+    }
+
+    // MARK: - Media
+
+    /// Source atoms for atom-backed media refs, keyed by uuid. Populated on
+    /// appear and on attach so gallery tiles render without per-tile fetches.
+    var mediaAtoms: [String: Atom] = [:]
+
+    /// Fetch source atoms for every atom-backed ref not already cached.
+    func loadMediaAtoms() async {
+        let missing = state.media.compactMap(\.atomUUID).filter { mediaAtoms[$0] == nil }
+        guard !missing.isEmpty else { return }
+        for uuid in missing {
+            if let fetched = try? await AtomRepository.shared.fetch(uuid: uuid), !fetched.isDeleted {
+                mediaAtoms[uuid] = fetched
+            }
+        }
+    }
+
+    /// Attach an atom's media to the board. Idempotent per source atom: a
+    /// second attach re-anchors/re-stamps the existing ref instead of
+    /// duplicating the tile.
+    @discardableResult
+    func attachMediaAtom(
+        _ source: Atom,
+        anchorSection: ConnectionSectionType? = nil,
+        timestampSeconds: Double? = nil
+    ) -> ConnectionMediaItem {
+        mediaAtoms[source.uuid] = source
+        if var existing = state.mediaItem(forAtomUUID: source.uuid) {
+            var changed = false
+            if let anchorSection, existing.anchorSection != anchorSection {
+                existing.anchorSection = anchorSection
+                changed = true
+            }
+            if let timestampSeconds, existing.timestampSeconds != timestampSeconds {
+                existing.timestampSeconds = timestampSeconds
+                changed = true
+            }
+            if changed {
+                sectionsModifiedInFocusMode = true
+                state.updateMedia(existing)
+                saveState()
+            }
+            return existing
+        }
+        let ref = ConnectionMediaItem.ref(
+            for: source,
+            anchorSection: anchorSection,
+            timestampSeconds: timestampSeconds
+        )
+        sectionsModifiedInFocusMode = true
+        state.addMedia(ref)
+        saveState()
+        return ref
+    }
+
+    /// Attach an owned asset (file drop / paste) already persisted by
+    /// MediaAssetStore.
+    @discardableResult
+    func attachMediaAsset(
+        _ saved: MediaAssetStore.SavedAsset,
+        title: String?,
+        anchorSection: ConnectionSectionType? = nil
+    ) -> ConnectionMediaItem {
+        let ref = ConnectionMediaItem(
+            kind: saved.isVideo ? .video : .image,
+            assetPath: saved.path,
+            thumbnailAssetPath: saved.thumbnailPath,
+            assetTitle: title,
+            anchorSection: anchorSection
+        )
+        sectionsModifiedInFocusMode = true
+        state.addMedia(ref)
+        saveState()
+        // Mirror in the background so other devices can render the asset;
+        // stamp the URL back onto the ref when the upload lands.
+        Task { [weak self] in
+            guard let self else { return }
+            guard let url = await MediaAssetStore.mirrorToCloud(ref) else { return }
+            if var current = self.state.mediaItem(id: ref.id) {
+                current.assetRemoteURL = url
+                self.state.updateMedia(current)
+                self.saveState()
+            }
+        }
+        return ref
+    }
+
+    /// Detach a ref. Owned-asset files are deleted only AFTER the ref is out
+    /// of the persisted blob (crash-safe order); source atoms are untouched.
+    func detachMedia(id: UUID) {
+        guard let item = state.mediaItem(id: id) else { return }
+        sectionsModifiedInFocusMode = true
+        state.removeMedia(id: id)
+        saveState()
+        if !item.isAtomBacked {
+            MediaAssetStore.deleteAsset(of: item)
+        }
+    }
+
+    func updateMediaRef(_ item: ConnectionMediaItem) {
+        sectionsModifiedInFocusMode = true
+        state.updateMedia(item)
+        saveState()
+    }
+
+    func setMediaCaption(id: UUID, caption: String) {
+        guard var item = state.mediaItem(id: id) else { return }
+        let trimmed = caption.trimmingCharacters(in: .whitespacesAndNewlines)
+        item.caption = trimmed.isEmpty ? nil : trimmed
+        updateMediaRef(item)
+    }
+
+    func setMediaAnchor(id: UUID, section: ConnectionSectionType?) {
+        guard var item = state.mediaItem(id: id) else { return }
+        item.anchorSection = section
+        updateMediaRef(item)
+    }
+
+    func toggleMediaCover(id: UUID) {
+        sectionsModifiedInFocusMode = true
+        state.setCoverMedia(id: id)
+        saveState()
+    }
+
+    func pinMediaMoment(id: UUID, seconds: Double) {
+        guard var item = state.mediaItem(id: id) else { return }
+        item.timestampSeconds = max(0, seconds)
+        updateMediaRef(item)
+    }
 }
 
 // MARK: - Preview

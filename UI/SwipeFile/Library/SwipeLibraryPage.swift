@@ -260,6 +260,11 @@ struct SwipeLibraryPage: View {
         guard target != current || viewModel.selectedItem == nil else { return }
         viewModel.selectedItem = items[target]
         scrollToSelection(index: target)
+        // Arrow browsing should never wait on media — warm the neighbors so
+        // the next retarget (preview rail or Study) lands on full caches.
+        for neighbor in [target - 1, target + 1] where items.indices.contains(neighbor) {
+            SwipeStudyPrewarmer.shared.prewarm(uuid: items[neighbor].id)
+        }
     }
 
     private func togglePreview() {

@@ -10,11 +10,17 @@ import GRDB
 
 struct InboxInspector: View {
     let item: InboxItem
-    @Bindable var viewModel: InboxViewModel
+    /// The surface behind the panel — the triage queue or a capture lane;
+    /// both speak the same verb grammar (InboxInspectorHost).
+    let viewModel: any InboxInspectorHost
+    /// Set when opened from a capture lane — reframes the suggestion
+    /// fallback copy, since a lane capture is already home.
+    let laneName: String?
 
-    init(item: InboxItem, viewModel: InboxViewModel) {
+    init(item: InboxItem, viewModel: any InboxInspectorHost, laneName: String? = nil) {
         self.item = item
-        _viewModel = Bindable(wrappedValue: viewModel)
+        self.viewModel = viewModel
+        self.laneName = laneName
         _displayText = State(initialValue: item.rawText)
     }
 
@@ -256,13 +262,20 @@ struct InboxInspector: View {
                     .strokeBorder(suggestionTint.opacity(0.18), lineWidth: 0.5)
             )
         } else {
-            Text(item.status == .pending
-                 ? "Cosmo is still reading this capture."
-                 : "Nothing in your system matched confidently — file it with a verb below, or leave it for the next taxonomy pass.")
+            Text(suggestionFallbackCopy)
                 .font(DS.subheadline)
                 .foregroundStyle(DS.textMuted)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    private var suggestionFallbackCopy: String {
+        if let laneName {
+            return "Filed in \(laneName) — it stays here unless a verb below moves it onward."
+        }
+        return item.status == .pending
+            ? "Cosmo is still reading this capture."
+            : "Nothing in your system matched confidently — file it with a verb below, or leave it for the next taxonomy pass."
     }
 
     private var suggestionWhy: String? {

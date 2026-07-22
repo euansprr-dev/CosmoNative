@@ -1,8 +1,9 @@
 // CosmoOS/UI/FocusMode/Connection/ConnectionInspectorView.swift
 // June 2026 — Connection workspace revamp.
 // Right inspector: selection-aware detail. Connection level shows maturity,
-// concept type, and live insights; section/item/source levels show their
-// provenance and actions — the macOS inspector idiom.
+// concept type, and the Material rail (library recommendations); section/
+// item/source levels show their provenance and actions — the macOS
+// inspector idiom.
 
 import SwiftUI
 
@@ -13,7 +14,7 @@ struct ConnectionInspectorView: View {
     /// Pages/photos the capture carried in when this concept was germinated or
     /// fed — the evidence, re-owned onto the atom by the router.
     var attachmentUUIDs: [String] = []
-    let isRefreshingInsights: Bool
+    var recommendations: ConceptRecommendationModel
     let actions: ConnectionWorkspaceActions
 
     var body: some View {
@@ -45,16 +46,11 @@ struct ConnectionInspectorView: View {
             typePicker
             statsBlock
             if !attachmentUUIDs.isEmpty { capturedBlock }
-            LiveInsightsPanel(
-                insights: viewModel.state.liveInsights,
-                isRefreshing: isRefreshingInsights,
-                onRefresh: actions.onRefreshInsights,
-                onDismiss: actions.onDismissInsight
-            )
-            .clipShape(.rect(cornerRadius: 10))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(DS.borderSubtle, lineWidth: 1)
+            ConceptRecommendationPanel(
+                model: recommendations,
+                viewModel: viewModel,
+                workspace: workspace,
+                actions: actions
             )
         }
     }

@@ -92,4 +92,12 @@ final class SwipePreviewTranscriptTests: XCTestCase {
         )
         XCTAssertEqual(resolved, .empty)
     }
+
+    /// The Study manuscript's speech-tier gate shares this predicate: the
+    /// default placeholder slide (blank text) must never count as a transcript.
+    func testSlidesCarryTextIgnoresBlankPlaceholders() {
+        XCTAssertFalse(SwipePreviewTranscript.slidesCarryText([]))
+        XCTAssertFalse(SwipePreviewTranscript.slidesCarryText([slide(""), slide(" \n ")]))
+        XCTAssertTrue(SwipePreviewTranscript.slidesCarryText([slide(""), slide("words")]))
+    }
 }

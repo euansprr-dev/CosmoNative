@@ -39,6 +39,10 @@ struct SwipeCard: View {
         .frame(width: width, height: model.height(forWidth: width), alignment: .topLeading)
         .swipeCardSurface(isHovered: isHovered, isSelected: isSelected)
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        // Library card ids ARE atom uuids — those cards drag as atom refs
+        // (droppable on a concept board's gallery/sections). Discover ids are
+        // platform post ids, so they don't offer the drag at all.
+        .modifier(SwipeCardAtomDrag(atomUUID: UUID(uuidString: model.id) != nil ? model.id : nil))
         .scaleEffect(isHovered ? 1.02 : 1)
         .animation(ProMotionSprings.hover, value: isHovered)
         .onHover { isHovered = $0 }
@@ -52,6 +56,22 @@ struct SwipeCard: View {
         .accessibilityLabel(model.hookText)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction(named: "Open study", actions.onStudy)
+    }
+}
+
+// MARK: - Atom drag
+
+/// Conditional `.draggable` — applied only when the card is atom-backed, so
+/// Discover cards keep an unmodified view tree.
+private struct SwipeCardAtomDrag: ViewModifier {
+    let atomUUID: String?
+
+    func body(content: Content) -> some View {
+        if let atomUUID {
+            content.draggable(AtomDragPayload(atomUUID: atomUUID))
+        } else {
+            content
+        }
     }
 }
 

@@ -132,6 +132,8 @@ struct DeepDiveOverviewView: View {
             showsTitle: selectedTab != .overview || !mastheadVisible,
             recede: selectedTab == .overview && !mastheadVisible,
             mapShowsQuestions: $mapShowsQuestions,
+            isTidyingMap: viewModel.isTidyingMap,
+            onTidyMap: { Task { await viewModel.runTidyMapPass() } },
             onTitleTap: { scrollHomeTick += 1 },
             onStartInquiry: { startInquiry() }
         )
@@ -228,7 +230,7 @@ struct DeepDiveOverviewView: View {
                 seedlingsSection
                     .studyCascade(hasAppeared, index: 4)
             }
-            if !viewModel.gardenerProposals.isEmpty {
+            if !viewModel.gardenerProposals.isEmpty || !viewModel.cartographerProposals.isEmpty {
                 StudyTendingSection(
                     proposals: viewModel.gardenerProposals,
                     onAccept: { proposal in
@@ -236,6 +238,13 @@ struct DeepDiveOverviewView: View {
                     },
                     onDismiss: { proposal in
                         Task { await viewModel.dismissGardenerProposal(proposal) }
+                    },
+                    cartographerProposals: viewModel.cartographerProposals,
+                    onAcceptCartographer: { proposal in
+                        Task { await viewModel.acceptCartographerProposal(proposal) }
+                    },
+                    onDismissCartographer: { proposal in
+                        Task { await viewModel.dismissCartographerProposal(proposal) }
                     }
                 )
                 .studyCascade(hasAppeared, index: 4)
@@ -931,13 +940,16 @@ struct DeepDiveOverviewView: View {
 
     @ViewBuilder
     private var mapTab: some View {
-        let graph = MindMapBuilder.buildDeepDive(
-            deepDive: viewModel.atom,
-            questions: viewModel.questions,
-            connections: viewModel.connections,
-            extracts: viewModel.extracts,
-            seedbed: viewModel.seedbed,
-            includeQuestions: mapShowsQuestions
+        let graph = MindMapBuilder.addingGhostProposals(
+            MindMapBuilder.buildDeepDive(
+                deepDive: viewModel.atom,
+                questions: viewModel.questions,
+                connections: viewModel.connections,
+                extracts: viewModel.extracts,
+                seedbed: viewModel.seedbed,
+                includeQuestions: mapShowsQuestions
+            ),
+            proposals: viewModel.cartographerProposals
         )
         if graph.root.children.isEmpty {
             mapEmptyState
@@ -945,15 +957,105 @@ struct DeepDiveOverviewView: View {
             InquiryMindMapView(
                 root: graph.root,
                 conceptLinks: graph.conceptLinks,
+                ghostLinks: graph.ghostLinks,
                 reparentTargets: mapReparentTargets,
                 onReparent: { child, parent in
                     Task { await reparentConnection(child, under: parent) }
+                },
+                onAcceptProposal: { key in
+                    Task { await viewModel.acceptCartographerProposal(key: key) }
+                },
+                onDismissProposal: { key in
+                    Task { await viewModel.dismissCartographerProposal(key: key) }
                 }
             ) { node in
                 handleMapSelection(node)
             }
             .filmGrain()
+            .overlay(alignment: .bottomLeading) { mapTendingStrip }
+            .overlay(alignment: .bottom) { developNowCard }
+            .animation(ProMotionSprings.modal, value: viewModel.pendingSectionDevelopment)
         }
+    }
+
+    /// The Cartographer's ledger: every open proposal (groups also live on
+    /// the map as ghosts — this strip is where nests are decided).
+    @ViewBuilder
+    private var mapTendingStrip: some View {
+        if !viewModel.cartographerProposals.isEmpty {
+            TendingMapStrip(
+                rows: viewModel.cartographerProposals.map(\.tendingRowModel),
+                onAccept: { key in
+                    Task { await viewModel.acceptCartographerProposal(key: key) }
+                },
+                onDismiss: { key in
+                    Task { await viewModel.dismissCartographerProposal(key: key) }
+                }
+            )
+            .frame(width: 400)
+            .background(DS.surfaceElevated.opacity(0.98), in: .rect(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(DS.borderSubtle, lineWidth: 1))
+            .dsFloatingShadow()
+            .padding(DS.space16)
+            .transition(.opacity.combined(with: .offset(y: 8)))
+        }
+    }
+
+    /// The moment after a section materializes: develop the umbrella from
+    /// its parts now, or later. The page already exists either way.
+    @ViewBuilder
+    private var developNowCard: some View {
+        if let pending = viewModel.pendingSectionDevelopment {
+            HStack(spacing: DS.space12) {
+                Image(systemName: "rectangle.3.group")
+                    .font(DS.body)
+                    .foregroundStyle(DS.accent)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("“\(pending.title)” holds \(pending.memberCount) concepts")
+                        .font(.system(.callout, design: .serif))
+                        .foregroundStyle(DS.text)
+                    Text("Develop it now, from their material?")
+                        .font(DS.caption)
+                        .foregroundStyle(DS.textMuted)
+                }
+                Spacer(minLength: DS.space12)
+                Button("Develop now") {
+                    developSection(pending)
+                }
+                .buttonStyle(.plain)
+                .font(DS.caption.weight(.semibold))
+                .foregroundStyle(DS.accent)
+                .help("Open the section page — its concepts' material waits on the rail")
+                .accessibilityLabel("Develop \(pending.title) now")
+                Button("Later") {
+                    viewModel.pendingSectionDevelopment = nil
+                }
+                .buttonStyle(.plain)
+                .font(DS.caption)
+                .foregroundStyle(DS.textSecondary)
+                .help("The page keeps — develop it any time")
+                .accessibilityLabel("Develop later")
+            }
+            .padding(.horizontal, DS.space16)
+            .padding(.vertical, DS.space12)
+            .frame(maxWidth: 480)
+            .cosmoGlassPanel(role: .floatingAssistant, cornerRadius: 18)
+            .padding(.bottom, DS.space24)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+    }
+
+    /// Develop = the page opens and the conversation fills it (the seedling
+    /// grammar) — member material surfaces on the evidence rail, the body is
+    /// never bulk-filled.
+    private func developSection(_ pending: DeepDiveOverviewViewModel.PendingSectionDevelopment) {
+        viewModel.pendingSectionDevelopment = nil
+        NotificationCenter.default.post(
+            name: CosmoNotification.Navigation.openBlockInFocusMode,
+            object: nil,
+            userInfo: ["atomUUID": pending.uuid]
+        )
     }
 
     private var mapReparentTargets: [(uuid: String, title: String)] {

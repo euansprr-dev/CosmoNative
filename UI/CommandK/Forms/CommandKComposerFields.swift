@@ -115,6 +115,48 @@ enum CommandKTaskQuickAddFacet: Hashable {
     case due, time, recurrence, duration, priority, intent, habit
 }
 
+/// The task hero — same boxless paper as CommandKComposerHeroTitleField, but
+/// backed by the ⌥C TokenWashTextView so the quick-add grammar washes in
+/// place as it's typed ("gym tomorrow at 6pm for 1h" colors its tokens).
+/// Bridges the composer's FocusState onto the wash field's Bool focus.
+private struct CommandKTaskWashTitleField: View {
+    let placeholder: String
+    @Binding var text: String
+    let accent: Color
+    var focus: FocusState<CommandKComposerField?>.Binding
+    var field: CommandKComposerField = .lead
+    var onSubmit: () -> Void = {}
+
+    @State private var isFieldFocused = false
+
+    var body: some View {
+        TokenWashTextView(
+            text: $text,
+            placeholder: placeholder,
+            font: .systemFont(ofSize: 18, weight: .semibold),
+            ink: NSColor(DS.text),
+            caretTint: NSColor(accent),
+            segments: TaskCaptureWash.segments(for: text),
+            maxLines: 3,
+            isFocused: $isFieldFocused,
+            onSubmit: onSubmit,
+            onTab: { focus.wrappedValue = .notes }
+        )
+        .onAppear { isFieldFocused = focus.wrappedValue == field }
+        .onChange(of: focus.wrappedValue) { _, newValue in
+            let wantsFocus = newValue == field
+            if isFieldFocused != wantsFocus { isFieldFocused = wantsFocus }
+        }
+        .onChange(of: isFieldFocused) { _, nowFocused in
+            if nowFocused {
+                if focus.wrappedValue != field { focus.wrappedValue = field }
+            } else if focus.wrappedValue == field {
+                focus.wrappedValue = nil
+            }
+        }
+    }
+}
+
 struct CommandKTaskComposerFields: View {
     let pane: CommandKComposerPane
 
@@ -133,7 +175,7 @@ struct CommandKTaskComposerFields: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space16) {
             VStack(alignment: .leading, spacing: DS.space8) {
-                CommandKComposerHeroTitleField(
+                CommandKTaskWashTitleField(
                     placeholder: "Task title — try \u{201C}gym tomorrow at 6pm for 1h\u{201D}",
                     text: pane.binding(.title),
                     accent: DS.entityTask,

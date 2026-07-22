@@ -945,6 +945,281 @@ final class ConnectionPromotionService {
     }
 }
 
+// MARK: - Cartographer apply
+
+extension ConnectionPromotionService {
+
+    /// Applies an accepted Cartographer proposal. Groups mint a SECTION page
+    /// (a real Connection atom), reparent the members under it (pinned — the
+    /// user chose this structure), link the family both ways, and mirror the
+    /// grouping onto the dive's thinkspace canvas as a named cluster. Nests
+    /// write the pinned parent link alone. Returns the section page's UUID
+    /// for groups (drives the "Develop now?" moment); nil for nests.
+    @discardableResult
+    func applyCartographerProposal(
+        _ proposal: ConceptCartographerProposal,
+        deepDive: Atom
+    ) async -> String? {
+        switch proposal.kind {
+        case .nest(let childUUID, let parentUUID):
+            await pinConceptParent(on: childUUID, parentUUID: parentUUID)
+            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.graphNodeUpdated, object: nil)
+            return nil
+
+        case .group(let name, let memberUUIDs):
+            // 1. Mint the section page — a real Connection, so crystallization
+            // can grow it and the canvas can host it.
+            let section = Atom.new(type: .connection, title: name, body: nil, metadata: nil)
+                .addingLink(AtomLink(
+                    type: AtomLinkType.deepDiveConnection.rawValue,
+                    uuid: deepDive.uuid,
+                    entityType: AtomType.deepDive.rawValue
+                ))
+                .mergingMetadataKeys(ConnectionHierarchyMetadata(isSection: true))
+            guard let created = try? await atoms.create(section) else { return nil }
+            _ = try? await ensureDeepDiveLinks(deepDive, connectionUUIDs: [created.uuid])
+
+            // 2. Members move under the section, pinned.
+            for member in memberUUIDs {
+                await pinConceptParent(on: member, parentUUID: created.uuid)
+            }
+
+            // 3. Family links both ways — backlinks, the map's cross-link
+            // layer, and the evidence rail all read these rows.
+            let sectionRef = ConnectionLinkRef(uuid: created.uuid, title: name)
+            for member in memberUUIDs {
+                guard let memberAtom = try? await atoms.fetch(uuid: member) else { continue }
+                let memberRef = ConnectionLinkRef(uuid: member, title: memberAtom.title ?? "Concept")
+                await ensureLinkRow(on: created.uuid, to: memberRef)
+                await ensureLinkRow(on: member, to: sectionRef)
+            }
+
+            // 4. Canvas mirror: gather the member blocks into a named cluster.
+            await mirrorSectionOntoCanvas(
+                section: created, name: name, memberUUIDs: memberUUIDs, deepDive: deepDive
+            )
+
+            NotificationCenter.default.post(name: CosmoNotification.Canvas.blocksChanged, object: nil)
+            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.graphNodeUpdated, object: nil)
+            return created.uuid
+        }
+    }
+
+    /// A user-consented parent write: pinned (crystallization never
+    /// overrides), cycle-checked, key-merged.
+    private func pinConceptParent(on connectionUUID: String, parentUUID: String) async {
+        guard parentUUID != connectionUUID,
+              var atom = try? await atoms.fetch(uuid: connectionUUID) else { return }
+        var parentByUUID: [String: String] = [:]
+        var cursor: String? = parentUUID
+        var depth = 0
+        while let current = cursor, depth < 10 {
+            guard let next = (try? await atoms.fetch(uuid: current))?
+                .metadataValue(as: ConnectionHierarchyMetadata.self)?.parentConnectionUUID else { break }
+            parentByUUID[current] = next
+            cursor = next
+            depth += 1
+        }
+        guard !Self.createsCycle(child: connectionUUID, parent: parentUUID, parentByUUID: parentByUUID) else { return }
+        atom = atom.mergingMetadataKeys(ConnectionHierarchyMetadata(
+            parentConnectionUUID: parentUUID,
+            parentPinnedByUser: true
+        ))
+        _ = try? await atoms.update(atom)
+    }
+
+    // MARK: Canvas mirror
+
+    /// Gathers the members' canvas blocks into a tight grid near their own
+    /// centroid, wraps them in a named persistent cluster, and seats the
+    /// section's block just above it. The grid's whole footprint goes through
+    /// the free-slot scan so nothing lands on unrelated blocks.
+    private func mirrorSectionOntoCanvas(
+        section: Atom,
+        name: String,
+        memberUUIDs: [String],
+        deepDive: Atom
+    ) async {
+        guard let thinkspaceUUID = await resolveThinkspaceUUID(for: deepDive) else { return }
+
+        // Every member needs a block before it can be gathered.
+        for (index, member) in memberUUIDs.enumerated() {
+            guard let memberAtom = try? await atoms.fetch(uuid: member) else { continue }
+            _ = try? await placeConnectionIfNeeded(
+                memberAtom, thinkspaceUUID: thinkspaceUUID, index: index, sessionUUID: "cartographer"
+            )
+        }
+        var memberFrames: [String: CGRect] = [:]
+        for member in memberUUIDs {
+            if let frame = try? await blockFrame(atomUUID: member, thinkspaceUUID: thinkspaceUUID) {
+                memberFrames[member] = frame
+            }
+        }
+        let placedMembers = memberUUIDs.filter { memberFrames[$0] != nil }
+        guard placedMembers.count >= 2 else { return }
+
+        // Centroid of where the members already sit — minimal displacement.
+        let centers = placedMembers.compactMap { memberFrames[$0] }.map { CGPoint(x: $0.midX, y: $0.midY) }
+        let centroid = CGPoint(
+            x: centers.map(\.x).reduce(0, +) / CGFloat(centers.count),
+            y: centers.map(\.y).reduce(0, +) / CGFloat(centers.count)
+        )
+
+        let layout = Self.sectionClusterLayout(memberCount: placedMembers.count, center: centroid)
+
+        // Clear-slot scan for the WHOLE footprint against non-member blocks
+        // (the members are moving, so their current frames don't blockade).
+        let otherFrames = (try? await blockFramesExcluding(
+            entityUUIDs: placedMembers + [section.uuid], thinkspaceUUID: thinkspaceUUID
+        )) ?? []
+        let clearedOrigin = Self.mintPlacementPoint(
+            originFrame: CGRect(
+                x: layout.footprint.minX - 120, y: layout.footprint.minY, width: 0, height: 0
+            ),
+            existingFrames: otherFrames,
+            blockSize: layout.footprint.size
+        )
+        let delta = CGSize(
+            width: clearedOrigin.x - layout.footprint.minX,
+            height: clearedOrigin.y - layout.footprint.minY
+        )
+
+        // Move members into the grid; seat (or insert) the section block.
+        for (index, member) in placedMembers.enumerated() where index < layout.memberFrames.count {
+            let frame = layout.memberFrames[index].offsetBy(dx: delta.width, dy: delta.height)
+            await moveBlock(entityUUID: member, thinkspaceUUID: thinkspaceUUID, to: frame.origin)
+        }
+        let sectionOrigin = CGPoint(
+            x: layout.sectionBlockOrigin.x + delta.width,
+            y: layout.sectionBlockOrigin.y + delta.height
+        )
+        if (try? await existingCanvasBlockId(atomUUID: section.uuid, thinkspaceUUID: thinkspaceUUID)) != nil {
+            await moveBlock(entityUUID: section.uuid, thinkspaceUUID: thinkspaceUUID, to: sectionOrigin)
+        } else {
+            try? await insertBlock(
+                for: section, at: sectionOrigin, thinkspaceUUID: thinkspaceUUID, sessionUUID: "cartographer"
+            )
+        }
+
+        // Persistent cluster: key-level merge into ThinkspaceMetadata.clusters
+        // — only our cluster is appended, siblings are never rewritten.
+        var memberBlockIds: [String] = []
+        for member in placedMembers {
+            if let blockId = try? await existingCanvasBlockId(atomUUID: member, thinkspaceUUID: thinkspaceUUID) {
+                memberBlockIds.append(blockId)
+            }
+        }
+        let clusterRect = layout.clusterRect.offsetBy(dx: delta.width, dy: delta.height)
+        if memberBlockIds.count >= 2,
+           var thinkspace = try? await atoms.fetch(uuid: thinkspaceUUID),
+           var metadata = thinkspace.metadataValue(as: ThinkspaceMetadata.self) {
+            let alreadyClustered = metadata.clusters.contains { cluster in
+                Set(cluster.blockUUIDs) == Set(memberBlockIds)
+            }
+            if !alreadyClustered {
+                metadata.clusters.append(CodableCluster(
+                    id: UUID().uuidString,
+                    name: name,
+                    blockUUIDs: memberBlockIds,
+                    colorIndex: metadata.clusters.count % CanvasCluster.paletteHexes.count,
+                    originX: clusterRect.minX,
+                    originY: clusterRect.minY,
+                    rectWidth: clusterRect.width,
+                    rectHeight: clusterRect.height
+                ))
+                thinkspace = thinkspace.withMetadata(metadata)
+                _ = try? await atoms.update(thinkspace)
+            }
+        }
+
+        // A live canvas re-reads blocks AND clusters on this notification —
+        // posting immediately also re-syncs any open cluster engine so its
+        // next persist can't clobber the cluster we just wrote.
+        NotificationCenter.default.post(
+            name: CosmoNotification.Canvas.refreshThinkspacePlacements,
+            object: nil,
+            userInfo: ["thinkspaceId": thinkspaceUUID]
+        )
+    }
+
+    /// Pure grid geometry for a gathered section: member frames row-major
+    /// around `center`, the wrapping cluster rect, and the section block's
+    /// seat above it. `footprint` is the full area the free-slot scan claims.
+    nonisolated static func sectionClusterLayout(
+        memberCount: Int,
+        center: CGPoint,
+        blockSize: CGSize = CGSize(width: 320, height: 220),
+        gap: CGFloat = 28,
+        padding: CGFloat = 40
+    ) -> (memberFrames: [CGRect], clusterRect: CGRect, sectionBlockOrigin: CGPoint, footprint: CGRect) {
+        let count = max(memberCount, 1)
+        let columns = Int(Double(count).squareRoot().rounded(.up))
+        let rows = Int((Double(count) / Double(columns)).rounded(.up))
+        let gridWidth = CGFloat(columns) * blockSize.width + CGFloat(columns - 1) * gap
+        let gridHeight = CGFloat(rows) * blockSize.height + CGFloat(rows - 1) * gap
+        let gridOrigin = CGPoint(x: center.x - gridWidth / 2, y: center.y - gridHeight / 2)
+
+        var frames: [CGRect] = []
+        for index in 0..<count {
+            let column = index % columns
+            let row = index / columns
+            frames.append(CGRect(
+                x: gridOrigin.x + CGFloat(column) * (blockSize.width + gap),
+                y: gridOrigin.y + CGFloat(row) * (blockSize.height + gap),
+                width: blockSize.width,
+                height: blockSize.height
+            ))
+        }
+        let clusterRect = CGRect(
+            x: gridOrigin.x - padding,
+            y: gridOrigin.y - padding,
+            width: gridWidth + padding * 2,
+            height: gridHeight + padding * 2
+        )
+        let sectionBlockOrigin = CGPoint(
+            x: clusterRect.minX,
+            y: clusterRect.minY - gap - blockSize.height
+        )
+        let footprint = clusterRect.union(CGRect(origin: sectionBlockOrigin, size: blockSize))
+        return (frames, clusterRect, sectionBlockOrigin, footprint)
+    }
+
+    private func moveBlock(entityUUID: String, thinkspaceUUID: String, to origin: CGPoint) async {
+        try? await database.asyncWrite { db in
+            try db.execute(
+                sql: """
+                    UPDATE canvas_blocks
+                    SET position_x = ?, position_y = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE entity_uuid = ? AND thinkspace_id = ? AND document_type = 'home' AND document_id = 0 AND is_deleted = 0
+                """,
+                arguments: [Int(origin.x), Int(origin.y), entityUUID, thinkspaceUUID]
+            )
+        }
+    }
+
+    private func blockFramesExcluding(entityUUIDs: [String], thinkspaceUUID: String) async throws -> [CGRect] {
+        let placeholders = Array(repeating: "?", count: max(entityUUIDs.count, 1)).joined(separator: ",")
+        let arguments = entityUUIDs.isEmpty ? [""] : entityUUIDs
+        return try await database.asyncRead { db in
+            try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT position_x, position_y, width, height FROM canvas_blocks
+                    WHERE thinkspace_id = ? AND document_type = 'home' AND document_id = 0 AND is_deleted = 0
+                      AND entity_uuid NOT IN (\(placeholders))
+                """,
+                arguments: StatementArguments([thinkspaceUUID] + arguments)
+            ).map { row in
+                let x: Double = row["position_x"] ?? 0
+                let y: Double = row["position_y"] ?? 0
+                let width: Double = row["width"] ?? 320
+                let height: Double = row["height"] ?? 220
+                return CGRect(x: x, y: y, width: width, height: height)
+            }
+        }
+    }
+}
+
 private struct InquiryPromotedConnectionMetadata: Codable, Sendable {
     var kind: String = "inquiry_v2_branch_connection"
     var originInquirySessionUUID: String

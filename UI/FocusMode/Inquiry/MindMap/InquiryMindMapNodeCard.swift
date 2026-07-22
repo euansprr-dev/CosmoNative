@@ -2,7 +2,8 @@
 // Node cards for the mind map. Concept-first visual hierarchy: concepts are
 // the substantial cards (core = large with a branch-color accent bar, child =
 // medium tinted), questions are small muted satellites, and question groups
-// read as quiet dashed buckets.
+// read as quiet dashed buckets. Sections are chapter headers (small caps,
+// quiet tint) and ghosts are PROPOSED sections — dashed, with inline ✓/✕.
 
 import SwiftUI
 
@@ -11,10 +12,17 @@ struct InquiryMindMapNodeCard: View {
     let node: MindMapNode
     let branchColor: Color
     let onSelect: (MindMapNode) -> Void
+    /// Wash applied to members while their ghost proposal is hovered.
+    var isGhostHighlighted: Bool = false
+    var onToggleCollapse: ((MindMapNode) -> Void)? = nil
+    var onAcceptProposal: ((String) -> Void)? = nil
+    var onDismissProposal: ((String) -> Void)? = nil
+    var onGhostHover: ((String?) -> Void)? = nil
 
     @State private var isHovered = false
 
     static func size(for node: MindMapNode) -> CGSize {
+        if node.isGhost { return CGSize(width: 248, height: 64) }
         switch node.kind {
         case .root: return CGSize(width: 230, height: 72)
         case .coreConcept: return CGSize(width: 220, height: 64)
@@ -27,19 +35,32 @@ struct InquiryMindMapNodeCard: View {
     }
 
     var body: some View {
-        Button {
-            onSelect(node)
-        } label: {
+        interactiveCard
+            .onHover { hovering in
+                withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+                if node.isGhost { onGhostHover?(hovering ? node.proposalKey : nil) }
+            }
+            .overlay(alignment: .topLeading) { hoverRevealCard }
+            .zIndex(isHovered ? 50 : 0)
+            .help(helpText)
+            .accessibilityLabel(accessibilityText)
+    }
+
+    /// Ghosts carry their own ✓/✕ buttons, so the card itself is not a
+    /// button; every other node opens on click. (Stable per node identity —
+    /// never a branch on animated state.)
+    @ViewBuilder
+    private var interactiveCard: some View {
+        if node.isGhost {
             cardLabel
+        } else {
+            Button {
+                onSelect(node)
+            } label: {
+                cardLabel
+            }
+            .buttonStyle(.plain)
         }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            withAnimation(ProMotionSprings.hover) { isHovered = hovering }
-        }
-        .overlay(alignment: .topLeading) { hoverRevealCard }
-        .zIndex(isHovered ? 50 : 0)
-        .help(node.title)
-        .accessibilityLabel(accessibilityText)
     }
 
     /// Question capsules truncate to one line — hovering reveals the full
@@ -71,7 +92,9 @@ struct InquiryMindMapNodeCard: View {
             leadingAccessory
             VStack(alignment: .leading, spacing: 2) {
                 Text(node.title)
+                    .tracking(node.isSection ? 0.6 : 0)
                     .font(titleFont)
+                    .textCase(node.isSection ? .uppercase : nil)
                     .foregroundStyle(titleColor)
                     .lineLimit(node.isConcept || node.kind == .root ? 2 : 1)
                     .multilineTextAlignment(.leading)
@@ -83,47 +106,140 @@ struct InquiryMindMapNodeCard: View {
                 }
             }
             Spacer(minLength: 0)
+            if node.isGhost {
+                ghostControls
+            }
         }
         .padding(.horizontal, DS.space10)
         .padding(.vertical, DS.space6)
         .frame(width: size.width, height: size.height, alignment: .leading)
         .background(background, in: shape)
         .overlay(borderOverlay)
+        .overlay(alignment: .trailing) { collapseControl }
         .shadow(color: .black.opacity(shadowOpacity), radius: isHovered ? 10 : 6, y: 3)
         .contentShape(shape)
         .scaleEffect(isHovered ? 1.02 : 1)
         .animation(ProMotionSprings.snappy, value: isHovered)
     }
 
+    /// The ghost's verdict: accept materializes the section, ✕ dismisses it
+    /// forever. Small circular targets with taught tooltips.
+    private var ghostControls: some View {
+        HStack(spacing: DS.space4) {
+            Button {
+                if let key = node.proposalKey { onAcceptProposal?(key) }
+            } label: {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(DS.accent)
+                    .frame(width: 24, height: 24)
+                    .background(DS.accent.opacity(0.12), in: .circle)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Group these concepts under “\(node.title)”")
+            .accessibilityLabel("Accept section \(node.title)")
+
+            Button {
+                if let key = node.proposalKey { onDismissProposal?(key) }
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(CosmoColors.textTertiary)
+                    .frame(width: 24, height: 24)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Not now — won't be suggested again")
+            .accessibilityLabel("Dismiss proposed section \(node.title)")
+        }
+    }
+
+    /// Fold affordance: collapsed nodes always show their "+N"; expanded
+    /// concept parents reveal a chevron on hover. Overlaid at the trailing
+    /// edge so hover never reflows the card.
+    @ViewBuilder
+    private var collapseControl: some View {
+        if let onToggleCollapse, !node.isGhost {
+            if node.collapsedCount > 0 {
+                Button {
+                    onToggleCollapse(node)
+                } label: {
+                    HStack(spacing: 2) {
+                        Text("+\(node.collapsedCount)")
+                            .font(CosmoTypography.caption.weight(.semibold))
+                            .monospacedDigit()
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 7, weight: .bold))
+                    }
+                    .foregroundStyle(branchColor)
+                    .padding(.horizontal, DS.space6)
+                    .padding(.vertical, 3)
+                    .background(branchColor.opacity(0.12), in: .capsule)
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, DS.space6)
+                .help("Show the \(node.collapsedCount) hidden")
+                .accessibilityLabel("Expand \(node.title), \(node.collapsedCount) hidden")
+            } else if isHovered, node.isConcept, !node.children.isEmpty {
+                Button {
+                    onToggleCollapse(node)
+                } label: {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(CosmoColors.textTertiary)
+                        .frame(width: 20, height: 20)
+                        .background(DS.surfaceElevated, in: .circle)
+                        .overlay(Circle().stroke(DS.borderSubtle, lineWidth: 1))
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, DS.space6)
+                .transition(.opacity)
+                .help("Fold this branch")
+                .accessibilityLabel("Collapse \(node.title)")
+            }
+        }
+    }
+
     @ViewBuilder
     private var leadingAccessory: some View {
-        switch node.kind {
-        case .coreConcept:
+        if node.isGhost {
             RoundedRectangle(cornerRadius: 2)
-                .fill(branchColor)
-                .frame(width: 3, height: 34)
+                .strokeBorder(branchColor.opacity(0.6), style: StrokeStyle(lineWidth: 1, dash: [3, 2]))
+                .frame(width: 3, height: 30)
                 .accessibilityHidden(true)
-        case .question, .subQuestion:
-            Image(systemName: "questionmark")
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(CosmoColors.textTertiary)
-                .accessibilityHidden(true)
-        case .questionGroup:
-            Image(systemName: "tray")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(CosmoColors.textTertiary)
-                .accessibilityHidden(true)
-        case .seedling:
-            Image(systemName: "leaf")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(node.isRipe ? branchColor : CosmoColors.textTertiary)
-                .accessibilityHidden(true)
-        case .root, .childConcept:
-            EmptyView()
+        } else {
+            switch node.kind {
+            case .coreConcept:
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(node.isSection ? branchColor.opacity(0.6) : branchColor)
+                    .frame(width: 3, height: node.isSection ? 24 : 34)
+                    .accessibilityHidden(true)
+            case .question, .subQuestion:
+                Image(systemName: "questionmark")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(CosmoColors.textTertiary)
+                    .accessibilityHidden(true)
+            case .questionGroup:
+                Image(systemName: "tray")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(CosmoColors.textTertiary)
+                    .accessibilityHidden(true)
+            case .seedling:
+                Image(systemName: "leaf")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(node.isRipe ? branchColor : CosmoColors.textTertiary)
+                    .accessibilityHidden(true)
+            case .root, .childConcept:
+                EmptyView()
+            }
         }
     }
 
     private var titleFont: Font {
+        if node.isSection { return CosmoTypography.label.weight(.semibold) }
         switch node.kind {
         case .root: return .system(.title3, design: .serif).weight(.semibold)
         case .coreConcept: return .system(.body, design: .serif).weight(.semibold)
@@ -134,6 +250,8 @@ struct InquiryMindMapNodeCard: View {
     }
 
     private var titleColor: Color {
+        if node.isGhost { return CosmoColors.textSecondary }
+        if node.isSection { return CosmoColors.textSecondary }
         switch node.kind {
         case .question, .subQuestion, .questionGroup: return CosmoColors.textSecondary
         case .seedling: return node.isRipe ? CosmoColors.textPrimary : CosmoColors.textSecondary
@@ -151,6 +269,9 @@ struct InquiryMindMapNodeCard: View {
     }
 
     private var background: Color {
+        if node.isGhost { return branchColor.opacity(isHovered ? 0.08 : 0.05) }
+        if isGhostHighlighted { return branchColor.opacity(0.10) }
+        if node.isSection { return branchColor.opacity(0.04) }
         switch node.kind {
         // surfaceElevated, not vellum: vellum on the parchment page differs
         // by a hair — the root card's right half dissolved into the
@@ -166,7 +287,13 @@ struct InquiryMindMapNodeCard: View {
 
     @ViewBuilder
     private var borderOverlay: some View {
-        if node.kind == .questionGroup {
+        if node.isGhost {
+            // Dashed = not yet real (the seedling register).
+            shape.strokeBorder(
+                branchColor.opacity(isHovered ? 0.65 : 0.5),
+                style: StrokeStyle(lineWidth: 1, dash: [4, 3])
+            )
+        } else if node.kind == .questionGroup {
             shape.strokeBorder(DS.borderSubtle, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
         } else if node.kind == .seedling {
             // Dashed = not yet a page; the ripe accent says "ready to develop".
@@ -175,12 +302,13 @@ struct InquiryMindMapNodeCard: View {
                 style: StrokeStyle(lineWidth: 1, dash: [4, 3])
             )
         } else {
-            shape.stroke(borderColor, lineWidth: node.isActive ? 1.5 : 0.5)
+            shape.stroke(borderColor, lineWidth: node.isActive || isGhostHighlighted ? 1.5 : 0.5)
         }
     }
 
     private var borderColor: Color {
-        if node.isActive { return branchColor }
+        if node.isActive || isGhostHighlighted { return branchColor }
+        if node.isSection { return branchColor.opacity(0.3) }
         switch node.kind {
         case .root: return DS.sepiaBorder
         case .coreConcept: return branchColor.opacity(0.45)
@@ -191,13 +319,19 @@ struct InquiryMindMapNodeCard: View {
     }
 
     private var shadowOpacity: Double {
+        if node.isGhost { return isHovered ? 0.06 : 0.02 }
         switch node.kind {
         case .question, .subQuestion, .questionGroup, .seedling: return isHovered ? 0.06 : 0.02
         default: return isHovered ? 0.10 : 0.05
         }
     }
 
+    private var helpText: String {
+        node.isGhost ? "Proposed section — accept to group, ✕ to dismiss" : node.title
+    }
+
     private var accessibilityText: String {
+        if node.isGhost { return "Proposed section \(node.title), grouping \(node.subtitle ?? "")" }
         switch node.kind {
         case .root: return "Topic: \(node.title)"
         case .coreConcept, .childConcept: return "Open concept page \(node.title)"

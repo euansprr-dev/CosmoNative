@@ -88,6 +88,24 @@ final class QuickCaptureProcessor: ObservableObject {
         }
     }
 
+    /// Concept-board paste path: capture a URL and return the research uuid
+    /// as soon as processing lands — no toast, no settle delay. Dedup by
+    /// stable post id happens inside the per-platform processors, so pasting
+    /// an already-captured post returns the existing atom.
+    func captureURLReturningUUID(_ input: String) async -> String? {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard classifier.isURL(trimmed) else { return nil }
+        let classification = classifier.classify(trimmed)
+        do {
+            let research = try await processClassifiedURL(trimmed, classification: classification)
+            lastCreatedResearchUUID = research.uuid
+            return research.uuid
+        } catch {
+            print("QuickCapture: concept paste capture failed: \(error)")
+            return nil
+        }
+    }
+
     // MARK: - URL Processing
 
     private func processClassifiedURL(_ url: String, classification: SwipeURLClassifier.Classification) async throws -> Research {

@@ -19,6 +19,75 @@ final class CaptureLanesViewModel {
     /// No other view displays these rows — without this section they are invisible.
     var needsReviewItems: [CapturedItem] = []
 
+    /// The single focused capture — drives the lane inspector, the same
+    /// focus/inspector pair the queue's InboxViewModel keeps.
+    var focusedCaptureId: String?
+    var isInspectorOpen = false
+    /// The queue's model, lent by InboxView — lane verbs delegate to it so
+    /// created atoms, toasts, undo, and the override sheet run through the
+    /// one existing pipeline.
+    weak var triageModel: InboxViewModel?
+
+    var focusedCapture: CapturedItem? {
+        guard let focusedCaptureId else { return nil }
+        return selectedItems.first { $0.uuid == focusedCaptureId }
+    }
+
+    func focusCapture(_ item: CapturedItem) {
+        focusedCaptureId = item.uuid
+        isInspectorOpen = true
+    }
+
+    /// A lane capture dressed as an InboxItem for the shared inspector. The
+    /// uuid carries over unchanged: every executor write against inbox_items
+    /// guard-fetches first and no-ops for a captured_items uuid, while the
+    /// atoms the verbs create come out real.
+    func inspectorItem(for capture: CapturedItem) -> InboxItem {
+        let attachmentUUIDs = (attachmentsByItemId[capture.uuid] ?? []).map(\.uuid)
+        var metadata: String?
+        if !attachmentUUIDs.isEmpty,
+           let data = try? JSONSerialization.data(withJSONObject: ["attachmentUUIDs": attachmentUUIDs]) {
+            metadata = String(data: data, encoding: .utf8)
+        }
+        return InboxItem(
+            id: nil,
+            uuid: capture.uuid,
+            source: capture.source == .telegram ? .telegramText : .quickCapture,
+            rawText: displayText(for: capture),
+            title: nil,
+            classification: nil,
+            confidence: 0,
+            mergeTargetUuid: nil,
+            mergeTargetTitle: nil,
+            mergeTargetType: nil,
+            mergePreview: nil,
+            placeThinkspaceId: nil,
+            placeThinkspaceName: nil,
+            placeAtomType: nil,
+            recommendations: nil,
+            primaryRouteKind: nil,
+            destinationPath: nil,
+            rationale: nil,
+            placementPlanSummary: nil,
+            status: .classified,
+            isRead: true,
+            createdAt: capture.createdAt,
+            classifiedAt: nil,
+            actionedAt: nil,
+            metadata: metadata,
+            isDeleted: false,
+            syncUpdatedAt: nil,
+            localVersion: 0,
+            serverVersion: 0,
+            syncVersion: 0
+        )
+    }
+
+    private func displayText(for capture: CapturedItem) -> String {
+        if let clean = capture.cleanText, !clean.isEmpty { return clean }
+        return capture.caption ?? capture.rawText ?? "Media capture"
+    }
+
     private let destinationRepo = CaptureDestinationRepository.shared
     private let capturedRepo = CapturedItemRepository.shared
     private let mediaRepo = MediaAttachmentRepository.shared
@@ -100,6 +169,8 @@ final class CaptureLanesViewModel {
         selectedDestinationId = nil
         selectedItems = []
         attachmentsByItemId = [:]
+        focusedCaptureId = nil
+        isInspectorOpen = false
     }
 
     func createLane() async {
@@ -146,6 +217,116 @@ final class CaptureLanesViewModel {
             map[item.uuid] = (try? await mediaRepo.fetch(capturedItemId: item.uuid)) ?? []
         }
         attachmentsByItemId = map
+        // The focused row left the lane (archived, or a reload landed) —
+        // an inspector must never linger over a capture that isn't there.
+        if let focusedCaptureId, !selectedItems.contains(where: { $0.uuid == focusedCaptureId }) {
+            self.focusedCaptureId = nil
+            isInspectorOpen = false
+        }
+    }
+}
+
+// MARK: - Inspector host (lane dialect)
+
+extension CaptureLanesViewModel: InboxInspectorHost {
+    private func capture(matching item: InboxItem) -> CapturedItem? {
+        selectedItems.first { $0.uuid == item.uuid }
+    }
+
+    func closeInspector() {
+        isInspectorOpen = false
+    }
+
+    func editCaptureText(_ item: InboxItem, to newText: String) async {
+        guard let capture = capture(matching: item) else { return }
+        await editCapture(capture, to: newText)
+    }
+
+    /// Dismiss in a lane archives the capture — the row leaves the ledger,
+    /// the durable record survives, and the toast's Undo puts it back.
+    func dismiss(item: InboxItem) async {
+        guard let capture = capture(matching: item) else { return }
+        do {
+            try await setStatus(of: capture, to: .archived, intent: "lane_inspector_dismiss")
+            isInspectorOpen = false
+            focusedCaptureId = nil
+            await refresh()
+            registerArchiveUndo(for: capture)
+            triageModel?.presentLaneToast("Archived \(String(displayText(for: capture).prefix(40)))")
+        } catch {
+            print("CaptureLanesViewModel.dismiss failed: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "CaptureLanesVM.dismiss", detail: "\(capture.uuid): \(error.localizedDescription)")
+            triageModel?.presentLaneToast("Couldn't archive that capture.", isError: true)
+        }
+    }
+
+    /// A status flip that keeps every other routing field as the capture has it.
+    private func setStatus(of capture: CapturedItem, to status: CapturedItemStatus, intent: String?) async throws {
+        try await capturedRepo.updateRouting(
+            uuid: capture.uuid,
+            destinationId: capture.captureDestinationId,
+            parsedCommand: capture.parsedCommand,
+            parsedIntent: intent,
+            confidence: capture.routingConfidence,
+            status: status,
+            createdObjectIds: capture.createdObjectIds,
+            parentDeepDiveId: capture.parentDeepDiveId,
+            parentInquirySessionId: capture.parentInquirySessionId,
+            parentQuestionId: capture.parentQuestionId,
+            parentProjectId: capture.parentProjectId
+        )
+    }
+
+    private func registerArchiveUndo(for original: CapturedItem) {
+        CosmoUndoManager.shared.register(
+            InlineUndoAction(actionDescription: "Archive Lane Capture") { [weak self] in
+                try? await self?.setStatus(of: original, to: original.status, intent: original.parsedIntent)
+                NotificationCenter.default.post(name: CosmoNotification.Inbox.captureLaneChanged, object: nil)
+            } redo: { [weak self] in
+                try? await self?.setStatus(of: original, to: .archived, intent: "lane_inspector_dismiss")
+                NotificationCenter.default.post(name: CosmoNotification.Inbox.captureLaneChanged, object: nil)
+            }
+        )
+    }
+
+    func place(_ item: InboxItem, adjustedPosition: CGPoint?) async {
+        await triageModel?.place(item, adjustedPosition: adjustedPosition)
+    }
+
+    func placeAndGo(_ item: InboxItem) async {
+        await triageModel?.placeAndGo(item)
+    }
+
+    func applyAlternate(_ item: InboxItem, recommendation: InboxRecommendation) async {
+        await triageModel?.applyAlternate(item, recommendation: recommendation)
+    }
+
+    func makeTask(_ item: InboxItem) async {
+        await triageModel?.makeTask(item)
+    }
+
+    func askInDeepDive(_ item: InboxItem) async {
+        await triageModel?.askInDeepDive(item)
+    }
+
+    func fileAsIdea(_ item: InboxItem) async {
+        await triageModel?.fileAsIdea(item)
+    }
+
+    func fileAsSwipe(_ item: InboxItem) async {
+        await triageModel?.fileAsSwipe(item)
+    }
+
+    func growSeedling(_ item: InboxItem) async {
+        await triageModel?.growSeedling(item)
+    }
+
+    func connectCapture(_ item: InboxItem) async {
+        await triageModel?.connectCapture(item)
+    }
+
+    func showOverride(for item: InboxItem) {
+        triageModel?.showOverride(for: item)
     }
 }
 
@@ -154,15 +335,20 @@ struct CaptureLanesView: View {
     let showsLaneSidebar: Bool
     let selectedDestinationId: String?
     let showsCommandRegistryOnly: Bool
+    /// The queue's model, lent by InboxView — the lane inspector's verbs,
+    /// toasts, and override sheet run through it.
+    let triageModel: InboxViewModel?
 
     init(
         showsLaneSidebar: Bool = true,
         selectedDestinationId: String? = nil,
-        showsCommandRegistryOnly: Bool = false
+        showsCommandRegistryOnly: Bool = false,
+        triageModel: InboxViewModel? = nil
     ) {
         self.showsLaneSidebar = showsLaneSidebar
         self.selectedDestinationId = selectedDestinationId
         self.showsCommandRegistryOnly = showsCommandRegistryOnly
+        self.triageModel = triageModel
     }
 
     var body: some View {
@@ -177,6 +363,7 @@ struct CaptureLanesView: View {
         }
         .background(DS.bg)
         .task(id: selectedDestinationId) {
+            viewModel.triageModel = triageModel
             if let selectedDestinationId {
                 viewModel.selectedDestinationId = selectedDestinationId
             }
@@ -370,15 +557,38 @@ struct CaptureLanesView: View {
     // MARK: - Lane detail (same queue grammar as the global inbox)
 
     private var laneDetail: some View {
-        VStack(spacing: 0) {
-            detailHeader
-            if viewModel.selectedItems.isEmpty {
-                emptyState
-            } else {
-                captureLedger
+        ZStack(alignment: .topTrailing) {
+            VStack(spacing: 0) {
+                detailHeader
+                if viewModel.selectedItems.isEmpty {
+                    emptyState
+                } else {
+                    captureLedger
+                }
             }
+            laneInspectorOverlay
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .animation(ProMotionSprings.gentle, value: viewModel.isInspectorOpen)
+    }
+
+    /// The queue's floating glass inspector, hosted by the lane model —
+    /// same panel, same verbs, opened by clicking a capture row.
+    @ViewBuilder
+    private var laneInspectorOverlay: some View {
+        if viewModel.isInspectorOpen, let capture = viewModel.focusedCapture {
+            InboxInspector(
+                item: viewModel.inspectorItem(for: capture),
+                viewModel: viewModel,
+                laneName: viewModel.selectedDestination.map {
+                    CollectionEmoji.resolve(name: $0.name, matchKeywords: false).label
+                }
+            )
+            .padding(.trailing, DS.space16)
+            .padding(.top, 72)
+            .padding(.bottom, DS.space16)
+            .transition(.move(edge: .trailing).combined(with: .opacity))
+        }
     }
 
     @ViewBuilder
@@ -388,7 +598,12 @@ struct CaptureLanesView: View {
             HStack(spacing: DS.space12) {
                 Button {
                     withAnimation(ProMotionSprings.snappy) {
-                        viewModel.clearSelection()
+                        // Esc peels back one layer: inspector first, then the lane.
+                        if viewModel.isInspectorOpen {
+                            viewModel.closeInspector()
+                        } else {
+                            viewModel.clearSelection()
+                        }
                     }
                 } label: {
                     Image(systemName: "chevron.left")
@@ -456,6 +671,8 @@ struct CaptureLanesView: View {
                             CaptureLaneQueueRow(
                                 item: item,
                                 attachments: viewModel.attachmentsByItemId[item.uuid] ?? [],
+                                isFocused: viewModel.focusedCaptureId == item.uuid && viewModel.isInspectorOpen,
+                                onOpen: { viewModel.focusCapture(item) },
                                 onSave: { text in Task { await viewModel.editCapture(item, to: text) } }
                             )
                         }
@@ -782,10 +999,12 @@ private struct NeedsReviewRow: View {
 
 /// One lane capture, one calm row — identical visual grammar to the global
 /// inbox queue. Lane captures already have a home, so the trailing area shows
-/// status/media instead of a suggestion pill. Click expands the full text.
+/// status/media instead of a suggestion pill. Click opens the inspector.
 private struct CaptureLaneQueueRow: View {
     let item: CapturedItem
     let attachments: [MediaAttachment]
+    let isFocused: Bool
+    let onOpen: () -> Void
     let onSave: (String) -> Void
 
     @State private var isHovered = false
@@ -806,9 +1025,7 @@ private struct CaptureLaneQueueRow: View {
                 // TextEditor would swallow the clicks meant for the field.
                 rowContent
             } else {
-                Button {
-                    withAnimation(ProMotionSprings.snappy) { isExpanded.toggle() }
-                } label: {
+                Button(action: onOpen) {
                     rowContent
                 }
                 .buttonStyle(.plain)
@@ -829,7 +1046,8 @@ private struct CaptureLaneQueueRow: View {
             if !isEditing { editedText = nil }
         }
         .accessibilityElement(children: isEditing ? .contain : .combine)
-        .help(isEditing ? "" : (isExpanded ? "Collapse" : "Show the full capture"))
+        .accessibilityAddTraits(isFocused ? [.isSelected] : [])
+        .help(isEditing ? "" : "Open this capture in the inspector")
     }
 
     private var rowContent: some View {
@@ -979,7 +1197,11 @@ private struct CaptureLaneQueueRow: View {
 
     @ViewBuilder
     private var rowBackground: some View {
-        if isHovered || isExpanded {
+        if isFocused {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(DS.accentSoft.opacity(0.45))
+                .padding(.horizontal, DS.space6)
+        } else if isHovered || isExpanded {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(DS.glassSectionFill)
                 .padding(.horizontal, DS.space6)

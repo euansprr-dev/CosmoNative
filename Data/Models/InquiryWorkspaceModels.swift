@@ -3116,6 +3116,10 @@ struct ExtractMetadata: Codable, Sendable {
 struct ConnectionHierarchyMetadata: Codable, Sendable {
     var parentConnectionUUID: String?
     var parentPinnedByUser: Bool?    // User chose it — crystallization must never overwrite.
+    /// Born as Cartographer scaffolding (a grouping section, not yet a
+    /// researched concept). Purely presentational: the map styles sections as
+    /// chapter headers until they accrue their own promoted notes.
+    var isSection: Bool?
 }
 
 /// Structured field for `.extract` atoms.

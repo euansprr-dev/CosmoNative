@@ -68,12 +68,18 @@ struct BlockContextMenu: View {
         return items
     }
 
+    /// Non-destructive removal — take the block out of this thinkspace without
+    /// trashing the atom (it stays in the database and any other thinkspaces).
+    private var removalItems: [MenuItem] {
+        [MenuItem("removeFromThinkspace", icon: "square.stack.3d.up.slash", label: "Remove from Thinkspace")]
+    }
+
     private var destructiveItems: [MenuItem] {
         [MenuItem("delete", icon: "trash", label: "Delete", shortcut: "⌫", isDestructive: true)]
     }
 
     private var allGroups: [[MenuItem]] {
-        [navigationItems, actionItems, destructiveItems].filter { !$0.isEmpty }
+        [navigationItems, actionItems, removalItems, destructiveItems].filter { !$0.isEmpty }
     }
 
     // MARK: - Body
@@ -330,9 +336,15 @@ struct BlockContextMenu: View {
                 object: nil,
                 userInfo: ["type": block.entityType, "id": block.entityId]
             )
+        case "removeFromThinkspace":
+            NotificationCenter.default.post(
+                name: .removeAtomFromThinkspace,
+                object: nil,
+                userInfo: ["blockId": blockId]
+            )
         case "delete":
             NotificationCenter.default.post(
-                name: .removeBlock,
+                name: .deleteAtomEntirely,
                 object: nil,
                 userInfo: ["blockId": blockId]
             )

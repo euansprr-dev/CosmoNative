@@ -5,6 +5,7 @@
 // July 2026
 
 import SwiftUI
+import AVKit
 
 struct SwipeStudyManuscript: View {
     @Bindable var model: SwipeStudyModel
@@ -154,7 +155,15 @@ struct SwipeStudySlideTranscript: View {
             }
             warningBanner
 
-            if model.showRawTranscript {
+            if model.showsSpeechTranscript {
+                // Voiceover-only reel: the speech IS the transcript — read-only
+                // timestamped rows that seek the reel, never blank slide editors.
+                SwipeSpeechTranscriptCard(
+                    segments: model.transcriptSpeechSegments,
+                    canSeek: !model.isCarouselContent,
+                    onSeek: seek(to:)
+                )
+            } else if model.showRawTranscript {
                 ForEach(model.displayedTranscriptSlides) { slide in
                     SwipeStudyRawSlideCard(slide: slide)
                 }
@@ -174,10 +183,31 @@ struct SwipeStudySlideTranscript: View {
         .transcriptScrollAnchor()
     }
 
+    /// Seek the reel to a spoken line. With the player mounted this seeks in
+    /// place; before first activation, setting `currentTimestamp` first means
+    /// the player resumes exactly there when it mounts.
+    private func seek(to segment: TranscriptSegment) {
+        model.currentTimestamp = segment.start
+        if let player = model.igPlayer {
+            player.seek(to: CMTime(seconds: segment.start, preferredTimescale: 600))
+        } else if !model.isPlayerActive {
+            model.isPlayerActive = true
+        }
+    }
+
     private var header: some View {
         HStack(spacing: DS.space10) {
-            SwipeSectionHeader(label: "TRANSCRIPT", count: model.displayedTranscriptSlides.count)
-            transcriptModeToggle
+            SwipeSectionHeader(
+                label: "TRANSCRIPT",
+                count: model.showsSpeechTranscript
+                    ? model.transcriptSpeechSegments.count
+                    : model.displayedTranscriptSlides.count
+            )
+            // Cleaned/Raw only toggles slide shapes — meaningless for the
+            // speech tier, where both slide lists are blank.
+            if !model.showsSpeechTranscript {
+                transcriptModeToggle
+            }
         }
     }
 

@@ -99,7 +99,7 @@ final class SwipeStudyPrewarmer {
 
         // Durable Supabase mirror first; the stored CDN URL (expires in days)
         // as the fallback for freshly captured swipes.
-        let source = videoStorageURL(from: atom.metadata)
+        let source = Self.videoStorageURL(from: atom.metadata)
             ?? richContentVideoURL(atom)
         guard let source else { return }
 
@@ -107,7 +107,9 @@ final class SwipeStudyPrewarmer {
         _ = await InstagramVideoLocalCache.resolvePlayableURL(from: source, shortcode: shortcode)
     }
 
-    private func videoStorageURL(from metadata: String?) -> URL? {
+    /// The worker's durable Supabase copy of a reel. Static so playback
+    /// surfaces (the preview rail's stage) share the exact source order.
+    static func videoStorageURL(from metadata: String?) -> URL? {
         guard let metadata, let data = metadata.data(using: .utf8),
               let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let stored = dict["videoStorageURL"] as? String else { return nil }

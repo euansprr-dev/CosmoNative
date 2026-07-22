@@ -78,6 +78,14 @@ final class SwipeStudyModel {
     var transcriptSlides: [TranscriptSlide] = [TranscriptSlide(text: "", slideNumber: 1)]
     var rawTranscriptSlides: [TranscriptSlide] = []
     var transcriptSpeechSegments: [TranscriptSegment] = []
+    /// Voiceover-only reels carry timestamped speech and NO slide text (the
+    /// worker clears slides on the voiceoverOnly verdict; the default slide
+    /// list is one blank placeholder). The manuscript renders the speech tier
+    /// then — same resolution order as the preview rail and iOS.
+    var showsSpeechTranscript: Bool {
+        !transcriptSpeechSegments.isEmpty
+            && !SwipePreviewTranscript.slidesCarryText(transcriptSlides)
+    }
     var transcriptionQuality: TranscriptionQuality?
     var transcriptionWarnings: [String] = []
     var showRawTranscript = false

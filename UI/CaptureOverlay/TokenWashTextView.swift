@@ -31,6 +31,9 @@ struct TokenWashTextView: NSViewRepresentable {
     var maxLines: Int? = nil
     @Binding var isFocused: Bool
     var onSubmit: () -> Void = {}
+    /// Optional Tab handler — hosts embedding the field in a form use this to
+    /// move focus onward. nil keeps NSTextView's default (inserts a tab).
+    var onTab: (() -> Void)? = nil
 
     func makeNSView(context: Context) -> NSScrollView {
         // Explicit TextKit 2 stack — never touch .layoutManager, which downgrades.
@@ -133,6 +136,10 @@ struct TokenWashTextView: NSViewRepresentable {
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
             if commandSelector == #selector(NSResponder.insertNewline(_:)) {
                 parent.onSubmit()
+                return true
+            }
+            if commandSelector == #selector(NSResponder.insertTab(_:)), let onTab = parent.onTab {
+                onTab()
                 return true
             }
             return false

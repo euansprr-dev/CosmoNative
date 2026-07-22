@@ -153,6 +153,114 @@ private struct CosmoInlineDiffChangeRow: View {
     }
 }
 
+// MARK: - Review swap scroll preservation
+
+/// Preserves a focus mode's scroll position across the review ⇄ editor swap.
+///
+/// While a proposal is under review the editor is replaced by
+/// `CosmoInlineDiffReviewView`; resolving the last operation swaps the editor
+/// back in. The fresh editor reports its height asynchronously, so for a few
+/// frames the scroll content collapses and AppKit clamps the offset to the
+/// top — the user lands at the start of the document instead of the edit they
+/// just accepted. The host captures the offset *before* flipping the branch,
+/// then this keeper re-asserts it while layout settles (the target may exceed
+/// the document height until hydration finishes). A user scroll during that
+/// window wins immediately.
+///
+/// Main-thread only, like the scroll views it drives.
+final class CosmoInlineReviewScrollPositionKeeper {
+    private weak var scrollView: NSScrollView?
+    private var targetOffsetY: CGFloat?
+    private var lastAppliedOffsetY: CGFloat?
+    private var restoreGeneration = 0
+
+    /// Delays (from the swap) at which the offset is re-asserted. Early
+    /// attempts catch the common single-frame relayout; later ones cover
+    /// progressive block hydration on long notes.
+    private static let attemptDelays: [TimeInterval] = [0, 0.03, 0.08, 0.16, 0.3, 0.6, 1.0]
+
+    func attach(to scrollView: NSScrollView) {
+        self.scrollView = scrollView
+    }
+
+    /// Call BEFORE the state change that swaps the review/editor branch, while
+    /// the outgoing branch still owns the scroll geometry.
+    func captureBeforeSwap() {
+        guard let scrollView else { return }
+        targetOffsetY = scrollView.documentVisibleRect.origin.y
+        lastAppliedOffsetY = nil
+    }
+
+    /// Call right after the state change; replays the captured offset until it
+    /// sticks or the user takes over.
+    func restoreAfterSwap() {
+        guard targetOffsetY != nil else { return }
+        restoreGeneration += 1
+        let generation = restoreGeneration
+        for delay in Self.attemptDelays {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.performRestoreAttempt(generation: generation)
+            }
+        }
+    }
+
+    private func performRestoreAttempt(generation: Int) {
+        guard generation == restoreGeneration,
+              let scrollView,
+              let target = targetOffsetY else { return }
+
+        let current = scrollView.documentVisibleRect.origin.y
+        let documentHeight = scrollView.documentView?.frame.height ?? 0
+        let maxOffsetY = max(0, documentHeight - scrollView.contentView.bounds.height)
+        let desired = min(target, maxOffsetY)
+
+        // The user scrolled between attempts — their position wins, stop.
+        // A drift that sits exactly at the clamp limit is layout (the document
+        // momentarily shrank and AppKit clamped), not the user; keep going.
+        if let lastApplied = lastAppliedOffsetY,
+           abs(current - lastApplied) > 1,
+           abs(current - maxOffsetY) > 1 {
+            targetOffsetY = nil
+            return
+        }
+
+        if abs(current - desired) > 0.5 {
+            scrollView.contentView.setBoundsOrigin(
+                NSPoint(x: scrollView.contentView.bounds.origin.x, y: desired)
+            )
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+        }
+        // Attempts past this point are no-ops while the offset holds — the
+        // window stays open (never ends early) because the first attempt can
+        // land BEFORE the swap renders, when everything still looks settled.
+        lastAppliedOffsetY = desired
+    }
+}
+
+/// Minimal enclosing-`NSScrollView` resolver for hosts that don't already
+/// introspect their scroll view. Place anywhere INSIDE the ScrollView content.
+struct CosmoInlineReviewScrollResolver: NSViewRepresentable {
+    var onResolve: (NSScrollView) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        DispatchQueue.main.async {
+            if let scrollView = view.enclosingScrollView {
+                onResolve(scrollView)
+            }
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            if let scrollView = nsView.enclosingScrollView {
+                onResolve(scrollView)
+            }
+        }
+    }
+}
+
 private struct CosmoInlineDiffLineView: View {
     enum Kind { case removed, added }
 

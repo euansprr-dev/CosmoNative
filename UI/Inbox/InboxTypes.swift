@@ -99,6 +99,29 @@ private func captureCountLine(for count: Int) -> String {
     count == 1 ? "1 capture" : "\(count) captures"
 }
 
+// MARK: - Inspector host
+
+/// Everything the floating capture inspector asks of its surface. The triage
+/// queue's InboxViewModel is the native speaker; CaptureLanesViewModel talks
+/// the same grammar for lane captures (delegating atom-creating verbs to the
+/// queue model so toasts, undo, and the override sheet stay one pipeline).
+@MainActor
+protocol InboxInspectorHost {
+    func closeInspector()
+    func editCaptureText(_ item: InboxItem, to newText: String) async
+    func place(_ item: InboxItem, adjustedPosition: CGPoint?) async
+    func placeAndGo(_ item: InboxItem) async
+    func applyAlternate(_ item: InboxItem, recommendation: InboxRecommendation) async
+    func makeTask(_ item: InboxItem) async
+    func askInDeepDive(_ item: InboxItem) async
+    func fileAsIdea(_ item: InboxItem) async
+    func fileAsSwipe(_ item: InboxItem) async
+    func growSeedling(_ item: InboxItem) async
+    func connectCapture(_ item: InboxItem) async
+    func showOverride(for item: InboxItem)
+    func dismiss(item: InboxItem) async
+}
+
 // MARK: - Display Helpers
 
 extension InboxItem {

@@ -2271,6 +2271,11 @@ final class InquiryWorkspaceViewModel {
             userInfo: ["sessionUUID": session.uuid]
         )
         await refreshGardener(force: true)
+        // The concept map's ground moved too — the next Map/dossier open
+        // re-runs the Cartographer regardless of its throttle.
+        if let deepDiveUUID = deepDive?.uuid {
+            ConceptCartographer.shared.invalidateThrottle(deepDiveUUID: deepDiveUUID)
+        }
         await reloadSeedbed()
         debrief = nil
         debriefSynthesis = nil

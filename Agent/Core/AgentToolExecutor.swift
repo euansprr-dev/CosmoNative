@@ -206,6 +206,8 @@ class AgentToolExecutor {
         case "answer_in_assistant_pane": return try await answerInAssistantPane(arguments)
         case "propose_inquiry_question": return try await proposeInquiryQuestion(arguments)
         case "pull_evidence": return try await pullEvidence(arguments)
+        case "attach_media": return try await attachMediaCandidates(arguments)
+        case "handle_objection": return try await stageObjectionHandling(arguments)
         case "append_to_note": return try await appendToNote(arguments)
         case "create_inline_skill": return try await createInlineSkill(arguments)
         // Recall + Navigation
@@ -2305,6 +2307,145 @@ class AgentToolExecutor {
 
     /// Surface ids for connections look like "connection:<uuid>" (target ids add
     /// a ":sections" suffix); accept either and verify the atom is a Connection.
+    // MARK: - attach_media (concept gallery staging)
+
+    /// Search the swipe library and STAGE matches as ghost tiles on the
+    /// working concept's Gallery. Nothing attaches silently: the workspace
+    /// renders the candidates with per-tile ✓/✗ and only an accept writes
+    /// the ref. Already-attached sources never re-stage.
+    private func attachMediaCandidates(_ args: [String: Any]) async throws -> String {
+        guard let query = trimmedString(args["query"]) else {
+            return jsonError("Missing required parameter: query")
+        }
+        let rawSurfaceID = trimmedString(args["surfaceID"])
+            ?? CosmoEditableSurfaceRegistry.shared.activeSurface?.editableSnapshot().surfaceID
+        guard let connection = await resolveConnection(fromSurfaceID: rawSurfaceID) else {
+            return jsonError("attach_media needs a Connection surface — the active surface is not a connection.")
+        }
+        let limit = min(max((args["limit"] as? Int) ?? 4, 1), 6)
+
+        let attachedUUIDs = Set(
+            (connection.structured.flatMap(ConnectionStructuredData.fromJSON)?.media ?? [])
+                .compactMap(\.atomUUID)
+        )
+
+        let tokens = query.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { $0.count >= 3 }
+        guard !tokens.isEmpty else {
+            return jsonError("Query too short — use the concept's own vocabulary.")
+        }
+
+        let candidates = (try? await atomRepo.fetchAll(type: .research)) ?? []
+        var scored: [(atom: Atom, score: Int)] = []
+        for atom in candidates {
+            guard atom.isSwipeFileAtom, !atom.isDeleted, !attachedUUIDs.contains(atom.uuid) else { continue }
+            let analysis = atom.swipeAnalysis
+            let title = (atom.title ?? "").lowercased()
+            let hook = (analysis?.hookText ?? "").lowercased()
+            let niche = (analysis?.niche ?? "").lowercased()
+            let summary = (atom.richContent?.summary ?? "").lowercased()
+            var score = 0
+            for token in tokens {
+                if title.contains(token) { score += 3 }
+                if hook.contains(token) { score += 2 }
+                if summary.contains(token) { score += 1 }
+                if niche.contains(token) { score += 1 }
+            }
+            if score > 0 { scored.append((atom, score)) }
+        }
+        let staged = scored.sorted { $0.score > $1.score }.prefix(limit).map(\.atom)
+
+        guard !staged.isEmpty else {
+            return jsonEncode(["staged": [] as [Any], "message": "No swipes in the library match that query. Say so plainly — do not invent posts."])
+        }
+
+        let conceptUUID = connection.uuid
+        let stagedUUIDs = staged.map(\.uuid)
+        await MainActor.run {
+            NotificationCenter.default.post(
+                name: CosmoNotification.Connection.mediaStagingChanged,
+                object: nil,
+                userInfo: ["connectionUUID": conceptUUID, "atomUUIDs": stagedUUIDs]
+            )
+        }
+
+        let rows: [[String: Any]] = staged.map { atom in
+            var row: [String: Any] = ["title": atom.title ?? "Untitled"]
+            if let platform = atom.richContent?.sourceType?.rawValue { row["platform"] = platform }
+            if let hook = atom.swipeAnalysis?.hookText, !hook.isEmpty { row["hook"] = String(hook.prefix(200)) }
+            return row
+        }
+        return jsonEncode([
+            "staged": rows,
+            "message": "Staged \(rows.count) ghost tile(s) in the concept's Gallery, WAITING for the user's per-tile review. Now answer in the pane: one line per tile on why it earns its place, then ONE deepening question."
+        ])
+    }
+
+    // MARK: - handle_objection (staged rebuttal review)
+
+    /// STAGE a rebuttal on a Beliefs & Objections entry. Nothing writes:
+    /// the workspace renders a ghost thread with ✓/✗ under the objection and
+    /// only an accept persists the handling. Quotes resolve against the LIVE
+    /// board via ObjectionStagingResolver (pure + tested).
+    private func stageObjectionHandling(_ args: [String: Any]) async throws -> String {
+        guard let objectionQuote = trimmedString(args["objection"]) else {
+            return jsonError("Missing required parameter: objection (quote the bullet verbatim).")
+        }
+        guard let response = trimmedString(args["response"]) else {
+            return jsonError("Missing required parameter: response.")
+        }
+        let rawSurfaceID = trimmedString(args["surfaceID"])
+            ?? CosmoEditableSurfaceRegistry.shared.activeSurface?.editableSnapshot().surfaceID
+        guard let connection = await resolveConnection(fromSurfaceID: rawSurfaceID) else {
+            return jsonError("handle_objection needs a Connection surface — the active surface is not a connection.")
+        }
+        let sections = connection.structured.flatMap(ConnectionStructuredData.fromJSON)?.sections ?? []
+        let objections = sections.first { $0.type == .beliefsObjections }?.items ?? []
+        guard let objection = ObjectionStagingResolver.matchObjection(quote: objectionQuote, in: objections) else {
+            return jsonError("No Beliefs & Objections entry matches that quote. Re-read the surface and quote the objection's bullet text verbatim.")
+        }
+
+        let linkedQuotes = stringArray(args["linked_entries"]) ?? []
+        let resolved = ObjectionStagingResolver.resolveLinkedEntries(linkedQuotes, sections: sections)
+
+        // The user's no-em-dash rule holds for staged rebuttals exactly like
+        // staged bullets.
+        let cleanedResponse = ConnectionSurfaceSerializer.removeEmDashes(response)
+
+        let conceptUUID = connection.uuid
+        let snippet = String(objection.resolvedPlainText.prefix(80))
+        let refPairs: [[String]] = resolved.refs.compactMap { ref in
+            guard let section = ref.section else { return nil }
+            return [section.rawValue, ref.itemID.uuidString]
+        }
+        await MainActor.run {
+            NotificationCenter.default.post(
+                name: CosmoNotification.Connection.objectionHandlingStaged,
+                object: nil,
+                userInfo: [
+                    "connectionUUID": conceptUUID,
+                    "objectionItemID": objection.id.uuidString,
+                    "objectionSnippet": snippet,
+                    "text": cleanedResponse,
+                    "linkedRefs": refPairs
+                ]
+            )
+        }
+
+        var result: [String: Any] = [
+            "staged": true,
+            "objection": snippet,
+            "linkedCount": resolved.refs.count,
+            "message": "Rebuttal staged as a ghost thread under the objection, WAITING for the user's ✓. Now answer in the pane: one line naming the objection you handled (and any cited entries), then ONE question."
+        ]
+        if !resolved.unmatched.isEmpty {
+            result["unmatchedLinks"] = resolved.unmatched
+            result["linkNote"] = "These quoted entries matched nothing on the board and were dropped — mention that only if the user asked for them specifically."
+        }
+        return jsonEncode(result)
+    }
+
     private func resolveConnection(fromSurfaceID surfaceID: String?) async -> Atom? {
         guard let surfaceID else { return nil }
         let parts = surfaceID.split(separator: ":").map(String.init)

@@ -1696,6 +1696,11 @@ public final class CommandKViewModel {
     /// Top fast action parsed from the current query, shown before search results.
     var primaryAction: CommandKAction? = nil
 
+    /// The other capture verb for a pasted URL (swipe ↔ research) — rendered
+    /// as a second COMMANDS row so the URL's source type only ever picks the
+    /// default, never removes an option.
+    var secondaryAction: CommandKAction? = nil
+
     /// Saved quicklinks and user commands that match the current query.
     var userCommandRows: [CommandKUserCommandRow] = []
 
@@ -1713,12 +1718,19 @@ public final class CommandKViewModel {
             return primaryAction
         }
         guard let selectedNodeId else { return nil }
+        if let secondaryAction, secondaryAction.id == selectedNodeId {
+            return secondaryAction
+        }
         return userCommandRows.first { $0.id == selectedNodeId }?.action
     }
 
     private func setPrimaryAction(_ action: CommandKAction?) {
         executablePrimaryAction = action
         if let action { syncComposerDraftPrefills(from: action) }
+        let alternate = CommandKActionParser.alternateAction(for: action)
+        if secondaryAction != alternate {
+            secondaryAction = alternate
+        }
         guard shouldPublishPrimaryActionUpdate(from: primaryAction, to: action) else {
             return
         }
@@ -1732,6 +1744,8 @@ public final class CommandKViewModel {
         let action: CommandKAction?
         if let primary = primaryAction, primary.id == id {
             action = primary
+        } else if let secondary = secondaryAction, secondary.id == id {
+            action = secondary
         } else if let row = userCommandRows.first(where: { $0.id == id }) {
             action = row.action
         } else {
@@ -3181,6 +3195,15 @@ public final class CommandKViewModel {
             )
         } else if result.resultKind == .thinkspace, let thinkspaceId = result.thinkspaceId {
             openThinkspaceAsPane(id: thinkspaceId)
+        } else if result.atomType == .research, result.source != .swipes,
+                  let atomUUID = result.atomUUID,
+                  let target = await Self.researchBrowserTarget(atomUUID: atomUUID) {
+            // A research link's pane IS the browser pane.
+            openBrowserPaneAfterCommandKDismissal(
+                url: target.url,
+                title: target.title,
+                disposition: .newPane
+            )
         } else if let atomUUID = result.atomUUID {
             try? await CommandKActionExecutor().execute(.openAsPane(uuid: atomUUID))
         }
@@ -3204,6 +3227,11 @@ public final class CommandKViewModel {
         if let primaryAction,
            selectedNodeId == nil || selectedNodeId == primaryAction.id {
             performPrimaryAction()
+            return
+        }
+
+        if let secondaryAction, selectedNodeId == secondaryAction.id {
+            performAction(secondaryAction)
             return
         }
 
@@ -3253,15 +3281,15 @@ public final class CommandKViewModel {
             CommandKSearchLandingStore.shared.stage(atomUUID: uuid, excerpt: excerpt, query: query)
         }
 
-        // Post notification to open
-        NotificationCenter.default.post(
-            name: CosmoNotification.NodeGraph.openAtomFromCommandK,
-            object: nil,
-            userInfo: ["atomUUID": uuid]
-        )
-
-        // Hide Command-K (keep alive behind focus mode)
-        NotificationCenter.default.post(name: CosmoNotification.NodeGraph.hideCommandK, object: nil)
+        // Research links divert to the browser pane; everything else opens
+        // its focus mode (Command-K stays alive behind it).
+        Task { @MainActor in
+            if let target = await Self.researchBrowserTarget(atomUUID: uuid) {
+                openBrowserPaneAfterCommandKDismissal(url: target.url, title: target.title)
+            } else {
+                postAtomOpenFromCommandK(uuid)
+            }
+        }
     }
 
     private func openUnifiedSearchResult(_ result: UnifiedSearchResult) {
@@ -3290,15 +3318,45 @@ public final class CommandKViewModel {
                     query: query
                 )
             }
-            NotificationCenter.default.post(
-                name: CosmoNotification.NodeGraph.openAtomFromCommandK,
-                object: nil,
-                userInfo: ["atomUUID": atomUUID]
-            )
-            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.hideCommandK, object: nil)
+            // A captured link lives on the web: non-swipe research with an
+            // http(s) URL opens the in-app browser pane, not a focus mode.
+            if result.atomType == .research, result.source != .swipes {
+                Task { @MainActor in
+                    if let target = await Self.researchBrowserTarget(atomUUID: atomUUID) {
+                        openBrowserPaneAfterCommandKDismissal(url: target.url, title: target.title)
+                    } else {
+                        postAtomOpenFromCommandK(atomUUID)
+                    }
+                }
+                return
+            }
+            postAtomOpenFromCommandK(atomUUID)
         } else if let bookId = result.readwiseBookId {
             selectedReadwiseBookId = bookId
         }
+    }
+
+    private func postAtomOpenFromCommandK(_ atomUUID: String) {
+        NotificationCenter.default.post(
+            name: CosmoNotification.NodeGraph.openAtomFromCommandK,
+            object: nil,
+            userInfo: ["atomUUID": atomUUID]
+        )
+        NotificationCenter.default.post(name: CosmoNotification.NodeGraph.hideCommandK, object: nil)
+    }
+
+    /// Where a research atom opens: its captured URL when it is a genuine
+    /// link capture (never a swipe, never a plain research note). Nil means
+    /// the caller falls back to focus mode.
+    static func researchBrowserTarget(atomUUID: String) async -> (url: URL, title: String)? {
+        guard let atom = try? await AtomRepository.shared.fetch(uuid: atomUUID),
+              atom.type == .research,
+              !atom.isSwipeFileAtom,
+              let urlString = atom.url
+                ?? atom.richContent?.videoId.map({ "https://www.youtube.com/watch?v=\($0)" }),
+              let url = URL(string: urlString),
+              url.scheme == "http" || url.scheme == "https" else { return nil }
+        return (url, atom.title ?? urlString)
     }
 
     private func openExpandedDomainTarget(_ target: CommandKDomainOpenTarget) {
@@ -3307,12 +3365,15 @@ public final class CommandKViewModel {
             Task {
                 try? await NodeGraphEngine.shared.recordAccess(atomUUID: uuid, type: .view)
             }
-            NotificationCenter.default.post(
-                name: CosmoNotification.NodeGraph.openAtomFromCommandK,
-                object: nil,
-                userInfo: ["atomUUID": uuid]
-            )
-            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.hideCommandK, object: nil)
+            // Research links divert to the browser pane; everything else
+            // (and any fetch miss) opens its focus mode as before.
+            Task { @MainActor in
+                if let target = await Self.researchBrowserTarget(atomUUID: uuid) {
+                    openBrowserPaneAfterCommandKDismissal(url: target.url, title: target.title)
+                } else {
+                    postAtomOpenFromCommandK(uuid)
+                }
+            }
         case .thinkspace(let id):
             NotificationCenter.default.post(
                 name: CosmoNotification.Navigation.navigateToThinkspaceById,
@@ -3418,11 +3479,20 @@ public final class CommandKViewModel {
             finishAction()
 
         case .captureResearch:
-            let title = action.payload.title ?? action.payload.body ?? action.payload.url ?? "Research"
-            var arguments: [String: Any] = ["title": title]
-            if let url = action.payload.url { arguments["url"] = url }
-            if let body = action.payload.body { arguments["body"] = body }
-            _ = try await AgentToolExecutor.shared.execute(toolName: "capture_research", arguments: arguments)
+            if let url = action.payload.url {
+                // A link captures instantly as a research atom (url +
+                // thumbnail + async title) — never through the transcript
+                // pipeline; any prose around the link rides as a note.
+                _ = try await CommandKInstantResearchCapture().capture(
+                    url: url,
+                    note: action.payload.rawText ?? action.payload.body
+                )
+            } else {
+                let title = action.payload.title ?? action.payload.body ?? "Research"
+                var arguments: [String: Any] = ["title": title]
+                if let body = action.payload.body { arguments["body"] = body }
+                _ = try await AgentToolExecutor.shared.execute(toolName: "capture_research", arguments: arguments)
+            }
             finishAction()
 
         case .createNote:
@@ -3969,12 +4039,17 @@ public final class CommandKViewModel {
         Task {
             try? await NodeGraphEngine.shared.recordAccess(atomUUID: item.id, type: .view)
         }
-        NotificationCenter.default.post(
-            name: CosmoNotification.NodeGraph.openAtomFromCommandK,
-            object: nil,
-            userInfo: ["atomUUID": item.id]
-        )
-        NotificationCenter.default.post(name: CosmoNotification.NodeGraph.hideCommandK, object: nil)
+        if item.type == .research, !item.isSwipeFile {
+            Task { @MainActor in
+                if let target = await Self.researchBrowserTarget(atomUUID: item.id) {
+                    openBrowserPaneAfterCommandKDismissal(url: target.url, title: target.title)
+                } else {
+                    postAtomOpenFromCommandK(item.id)
+                }
+            }
+            return
+        }
+        postAtomOpenFromCommandK(item.id)
     }
 
     public func deleteRecent(_ item: RecentDisplayItem) {
@@ -4194,7 +4269,10 @@ public final class CommandKViewModel {
     }
 
     private var activeSearchSelectionIDs: [String] {
-        (primaryAction.map { [$0.id] } ?? []) + userCommandRows.map(\.id) + unifiedFlatResults.map(\.selectionID)
+        (primaryAction.map { [$0.id] } ?? [])
+            + (secondaryAction.map { [$0.id] } ?? [])
+            + userCommandRows.map(\.id)
+            + unifiedFlatResults.map(\.selectionID)
     }
 
     func searchSelectionIndex(for selectionID: String) -> Int {

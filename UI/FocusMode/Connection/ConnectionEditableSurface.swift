@@ -284,20 +284,92 @@ enum ConnectionSurfaceSerializer {
     static func pendingInsert(
         for operation: CosmoAssistantProposalOperation,
         in model: ConnectionSurfaceModel
-    ) -> (section: ConnectionSectionType, bullets: [String])? {
-        guard operation.kind == .textInsertion,
-              let proposed = operation.proposedText,
+    ) -> (section: ConnectionSectionType, bullets: [String], revisesText: String?, afterText: String?)? {
+        guard let proposed = operation.proposedText,
               !proposed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return nil
         }
-        guard let type = targetSection(for: operation, in: model),
-              let bullets = parseItems(from: proposed, targetSection: type),
-              !bullets.isEmpty else {
+        switch operation.kind {
+        case .textInsertion:
+            guard let type = targetSection(for: operation, in: model),
+                  let bullets = parseItems(from: proposed, targetSection: type),
+                  !bullets.isEmpty else {
+                return nil
+            }
+            // Ghost rows preview mention tokens as their "@Title" projection —
+            // the raw @[Title](connection:<uuid>) form is an apply-time detail.
+            return (
+                type,
+                bullets.map { ConceptMentionToken.displayText($0) },
+                nil,
+                anchorBulletText(for: operation, in: model)
+            )
+        case .textReplacement, .structuredFieldReplacement:
+            // A revision of existing bullet line(s): locate the original the
+            // same way the apply path will, so the ghost row and the eventual
+            // replaceSectionLines can never disagree. Title/type edits keep
+            // their Manuscript-diff review — only bullet revisions render as
+            // section ghost rows.
+            let original = operation.originalText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !original.isEmpty,
+                  let range = CosmoInlineDiffLocator.range(of: operation.originalText ?? "", in: model.text) else {
+                return nil
+            }
+            let touched = model.lines(intersecting: range).filter {
+                if case .blank = $0.kind { return false }
+                return true
+            }
+            var section: ConnectionSectionType?
+            for line in touched {
+                switch line.kind {
+                case .item(let type, _), .itemContinuation(let type, _):
+                    if section == nil { section = type }
+                    guard section == type else { return nil }
+                default:
+                    return nil
+                }
+            }
+            guard let section,
+                  let bullets = parseItems(from: proposed, targetSection: section),
+                  !bullets.isEmpty else {
+                return nil
+            }
+            return (
+                section,
+                bullets.map { ConceptMentionToken.displayText($0) },
+                ConceptMentionToken.displayText(strippingBulletPrefix(original)),
+                nil
+            )
+        default:
             return nil
         }
-        // Ghost rows preview mention tokens as their "@Title" projection —
-        // the raw @[Title](connection:<uuid>) form is an apply-time detail.
-        return (type, bullets.map { ConceptMentionToken.displayText($0) })
+    }
+
+    /// The bullet an item-anchored insertion follows — display copy for the
+    /// ghost row's placement caption. Header/empty anchors return nil (the
+    /// bullets land at the top of the section; no caption needed).
+    private static func anchorBulletText(
+        for operation: CosmoAssistantProposalOperation,
+        in model: ConnectionSurfaceModel
+    ) -> String? {
+        let anchorText = operation.originalText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !anchorText.isEmpty,
+              let range = CosmoInlineDiffLocator.range(of: anchorText, in: model.text),
+              let line = model.line(at: range.upperBound) else {
+            return nil
+        }
+        switch line.kind {
+        case .item, .itemContinuation:
+            return ConceptMentionToken.displayText(strippingBulletPrefix(String(model.text[line.range])))
+        default:
+            return nil
+        }
+    }
+
+    private static func strippingBulletPrefix(_ text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("- ") else { return trimmed }
+        return String(trimmed.dropFirst(2))
     }
 
     /// The section an operation anchors to: prefer the verbatim `originalText`
@@ -358,7 +430,9 @@ enum ConnectionSurfaceSerializer {
                         proposalID: proposal.id,
                         operationID: operation.id,
                         section: resolved.section,
-                        bullets: resolved.bullets
+                        bullets: resolved.bullets,
+                        revisesText: resolved.revisesText,
+                        afterText: resolved.afterText
                     )
                 )
             }

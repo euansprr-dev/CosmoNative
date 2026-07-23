@@ -56,7 +56,20 @@ final class InboxClassificationEngine: Sendable {
             excludedAtomUUIDs: excludedAtomUUIDs,
             preferredTitle: preferredTitle
         )
+        return makeResult(from: routingResult)
+    }
 
+    /// The Atlas sweep for unsorted items, adapted to the same schema as
+    /// capture-time classification — one storage path, no second vocabulary.
+    /// Captures the sweep abstained on are simply absent from the result.
+    func sweepClassify(
+        items: [(uuid: String, title: String?, text: String)]
+    ) async -> [String: ClassificationResult] {
+        let routingResults = await InboxRoutingEngine.shared.atlasSweep(items: items)
+        return routingResults.mapValues(makeResult(from:))
+    }
+
+    private func makeResult(from routingResult: InboxRoutingEngine.RoutingResult) -> ClassificationResult {
         let bundle = routingResult.bundle
         let primary = bundle.primaryRecommendation
 

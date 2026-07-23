@@ -281,7 +281,8 @@ class AIWritingAssistant: ObservableObject {
             prompt: userPrompt,
             systemPrompt: systemPrompt,
             tier: modelTier,
-            maxTokens: 3000
+            maxTokens: 3000,
+            disableReasoning: true  // mechanical text transforms on Sonnet 5: thinking would share this budget
         )
     }
 }

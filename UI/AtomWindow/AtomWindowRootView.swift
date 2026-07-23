@@ -91,6 +91,8 @@ struct AtomWindowRootView: View {
             NoteFocusModeView(atom: atom, onClose: handleClose)
         case .cosmoAI:
             CosmoAIFocusModeView(atom: atom, onClose: handleClose)
+        case .extract:
+            ExtractPeekView(atom: atom, onClose: handleClose)
         default:
             AtomWindowGenericView(atom: atom)
         }

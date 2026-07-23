@@ -37,6 +37,7 @@ struct CaptureOverlayView: View {
         .scaleEffect(viewModel.isDropTargeted && !reduceMotion ? 1.01 : 1.0)
         .animation(ProMotionSprings.snappy, value: viewModel.isDropTargeted)
         .animation(ProMotionSprings.gentle, value: viewModel.sessionEntries.count)
+        .animation(ProMotionSprings.gentle, value: viewModel.stagedAttachments.count)
         .animation(ProMotionSprings.snappy, value: viewModel.errorLine)
         .background(CaptureDropTarget(viewModel: viewModel))
         .background(continuityCameraAnchor)
@@ -55,7 +56,7 @@ struct CaptureOverlayView: View {
                     let type = UTType(filenameExtension: url.pathExtension) ?? .data
                     return .data(data, type: type, suggestedName: url.lastPathComponent)
                 }
-                await viewModel.ingest(payloads)
+                await viewModel.receive(payloads, staging: true)
             }
         }
         .onChange(of: viewModel.captureFieldFocusTick) {
@@ -114,6 +115,9 @@ struct CaptureOverlayView: View {
         HStack(spacing: DS.space10) {
             LaneHighlightedCaptureField(
                 text: $viewModel.captureText,
+                placeholder: viewModel.stagedAttachments.isEmpty
+                    ? "Capture a thought…"
+                    : "Add a thought to send with them…",
                 maxLines: 4,
                 assist: viewModel.laneAssist,
                 isFocused: $isFieldFocused,
@@ -155,17 +159,25 @@ struct CaptureOverlayView: View {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .strokeBorder(
                     viewModel.isDropTargeted ? DS.accent.opacity(0.5) : DS.glassBorder,
-                    style: StrokeStyle(lineWidth: 1, dash: viewModel.isDropTargeted ? [] : [6, 4])
+                    style: StrokeStyle(lineWidth: 1, dash: wellDash)
                 )
 
             if let preview = viewModel.dragPreview, viewModel.isDropTargeted {
                 dragPreviewContent(preview)
+            } else if !viewModel.stagedAttachments.isEmpty {
+                stagedTray
             } else {
                 idleWellContent
             }
         }
         .frame(minHeight: 128)
         .animation(ProMotionSprings.snappy, value: viewModel.dragPreview)
+    }
+
+    /// Dashes invite the first drop; a well holding files is a tray and
+    /// wears a solid hairline.
+    private var wellDash: [CGFloat] {
+        viewModel.isDropTargeted || !viewModel.stagedAttachments.isEmpty ? [] : [6, 4]
     }
 
     private var idleWellContent: some View {
@@ -213,12 +225,95 @@ struct CaptureOverlayView: View {
                     .font(DS.caption)
                     .foregroundStyle(DS.textSecondary)
             }
-            Text(preview.totalCount == 1 ? "Release to capture" : "Release to capture \(preview.totalCount) items")
+            Text(releaseLine(for: preview))
                 .font(DS.caption.weight(.medium))
                 .foregroundStyle(DS.accent)
         }
         .padding(DS.space12)
         .frame(maxWidth: 420)
+    }
+
+    /// Files stage ("add") and leave with the send button; text and links
+    /// still capture the moment they land.
+    private func releaseLine(for preview: CaptureDragPreview) -> String {
+        let verb = preview.stagesOnDrop ? "add" : "capture"
+        return preview.totalCount == 1
+            ? "Release to \(verb)"
+            : "Release to \(verb) \(preview.totalCount) items"
+    }
+
+    // MARK: - Staged tray (files waiting for the send)
+
+    /// Dropped files hold in the well as tiles until the user sends them —
+    /// with a typed thought they leave as ONE linked capture.
+    private var stagedTray: some View {
+        VStack(alignment: .leading, spacing: DS.space10) {
+            stagedGrid
+            stagedFooter
+        }
+        .padding(DS.space12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var stagedGrid: some View {
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 72), spacing: DS.space8, alignment: .top)],
+            alignment: .leading,
+            spacing: DS.space8
+        ) {
+            ForEach(viewModel.stagedAttachments) { staged in
+                StagedAttachmentTile(staged: staged) {
+                    viewModel.removeStaged(staged.id)
+                }
+                .transition(.scale(scale: 0.9).combined(with: .opacity))
+            }
+        }
+    }
+
+    private var stagedFooter: some View {
+        HStack(spacing: DS.space12) {
+            Text(stagedCountLabel)
+                .font(DS.caption.monospacedDigit())
+                .foregroundStyle(DS.textSecondary)
+                .contentTransition(.numericText())
+
+            Spacer(minLength: DS.space8)
+
+            Button {
+                viewModel.clearStaged()
+            } label: {
+                Text("Clear")
+                    .font(DS.caption.weight(.medium))
+                    .foregroundStyle(DS.textSecondary)
+            }
+            .buttonStyle(.plain)
+            .help("Remove all without capturing")
+            .accessibilityLabel("Clear staged files")
+
+            Button {
+                Task { await viewModel.sendStaged() }
+            } label: {
+                HStack(spacing: DS.space6) {
+                    Image(systemName: "arrow.up")
+                        .accessibilityHidden(true)
+                    Text("Capture")
+                }
+            }
+            .buttonStyle(DSPrimaryButtonStyle())
+            .keyboardShortcut(.return, modifiers: .command)
+            .disabled(viewModel.isBusy)
+            .help("Capture — a typed thought and these files land together (⌘⏎)")
+        }
+    }
+
+    private var stagedCountLabel: String {
+        let images = viewModel.stagedAttachments.filter(\.isImage).count
+        let files = viewModel.stagedAttachments.count - images
+        switch (images, files) {
+        case (0, let f): return f == 1 ? "1 file" : "\(f) files"
+        case (let i, 0): return i == 1 ? "1 image" : "\(i) images"
+        default: return "\(images + files) items"
+        }
     }
 
     // MARK: - Drop glow (the cluster treatment)
@@ -483,6 +578,90 @@ private struct CaptureSourceButton: View {
             }
         }
         .accessibilityLabel(title)
+    }
+}
+
+// MARK: - Staged attachment tile
+
+/// One waiting file: a 64pt thumbnail (images) or kind-glyph tile (files)
+/// with its name beneath and a hover ✕ to pull it back out.
+private struct StagedAttachmentTile: View {
+    let staged: CaptureOverlayViewModel.StagedAttachment
+    let onRemove: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        VStack(spacing: DS.space4) {
+            art
+                .frame(width: 64, height: 64)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(DS.glassBorder, lineWidth: 1)
+                )
+                .overlay(alignment: .topTrailing) { removeBadge }
+
+            Text(staged.displayName)
+                .font(DS.caption2)
+                .foregroundStyle(DS.textMuted)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(width: 72)
+        }
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+        }
+    }
+
+    @ViewBuilder
+    private var art: some View {
+        if let thumbnail = staged.thumbnail {
+            Image(nsImage: thumbnail)
+                .resizable()
+                .scaledToFill()
+                .accessibilityLabel("\(staged.kind.displayName): \(staged.displayName)")
+        } else {
+            ZStack {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(DS.glassSectionFill)
+                Image(systemName: symbol)
+                    .font(DS.title3)
+                    .foregroundStyle(DS.textSecondary)
+                    .accessibilityHidden(true)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var removeBadge: some View {
+        if isHovered {
+            Button(action: onRemove) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(DS.caption)
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(DS.bg, DS.text)
+                    .padding(DS.space4)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Remove")
+            .accessibilityLabel("Remove \(staged.displayName)")
+            .transition(.opacity)
+        }
+    }
+
+    private var symbol: String {
+        switch staged.kind {
+        case .image, .screenshot, .pageScan: return "photo"
+        case .pdf: return "doc.richtext"
+        case .epub: return "book.closed"
+        case .markdown, .textFile: return "doc.text"
+        case .audio: return "waveform"
+        case .video: return "film"
+        case .spreadsheet: return "tablecells"
+        case .document, .unknown: return "doc"
+        }
     }
 }
 

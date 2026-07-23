@@ -112,6 +112,20 @@ struct LLMResponse: Sendable {
     var hasToolCalls: Bool { !toolCalls.isEmpty }
 }
 
+// MARK: - Effort Scope
+
+/// Task-scoped effort override for Sonnet 5 requests. Sonnet 5 thinks
+/// adaptively by default at `high` effort, and thinking bills as output;
+/// `medium` is roughly Sonnet 4.6 at `high` — the pre-upgrade daily-driver
+/// bar. Chatty answer routes (concept development, brainstorms) run at
+/// `medium` via this scope; action/edit routes and escalation retries never
+/// set it, so exact-match splicing keeps full effort. Providers read the
+/// value at request-build time; an unset scope means provider defaults
+/// (fail-safe: no change).
+enum LLMEffortScope {
+    @TaskLocal static var effort: String?
+}
+
 // MARK: - Cache Telemetry
 
 /// Rolling prompt-cache statistics so cache regressions are visible instead of silent.
@@ -450,6 +464,12 @@ final class AnthropicProvider: LLMProvider, @unchecked Sendable {
             "max_tokens": maxTokensOverride ?? resolvedMaxTokens(for: resolvedModel)
         ]
 
+        // Sonnet-5 only: Haiku rejects the effort parameter, and other tiers
+        // aren't the cost lever this scope exists for.
+        if let effort = LLMEffortScope.effort, resolvedModel.contains("sonnet-5") {
+            body["output_config"] = ["effort": effort]
+        }
+
         if let systemPrompt {
             if useCacheControl {
                 var systemBlocks: [[String: Any]] = [
@@ -512,29 +532,69 @@ final class AnthropicProvider: LLMProvider, @unchecked Sendable {
         return data
     }
 
-    /// Stamps `cache_control` on the last content block of the final message.
-    /// Uses the 4th breakpoint slot (tools + cached-system take two); the
-    /// breakpoint moves forward every request, so consecutive requests in a
-    /// loop or session match the longest previously-cached prefix.
+    /// Stamps `cache_control` on the last content block of the final message
+    /// (the moving breakpoint: each request in a loop or session extends the
+    /// longest previously-cached prefix) — PLUS, on long conversations, a
+    /// mid-tail anchor ~15 blocks before the end. Anthropic's cache walks back
+    /// at most 20 content blocks from a breakpoint to find a prior entry; a
+    /// turn that appends more than 20 blocks since the last cached position
+    /// (long tool loops) would otherwise miss every prior entry and re-write
+    /// the whole prefix at the 2× write rate instead of reading at 0.1×. The
+    /// anchor uses the 4th and final breakpoint slot (tools + cached-system +
+    /// final message take the other three).
+    static let cacheLookbackWindow = 20
+    static let midTailAnchorOffset = 15
+
     static func markingLastMessageForCache(_ messages: [[String: Any]]) -> [[String: Any]] {
-        guard var last = messages.last else { return messages }
+        var result = messages
+        guard markLastBlockForCache(&result, at: result.count - 1) else { return messages }
+
+        let blockCounts = result.map { contentBlockCount(of: $0) }
+        let totalBlocks = blockCounts.reduce(0, +)
+        guard totalBlocks > cacheLookbackWindow else { return result }
+
+        // The message whose last block sits at or just past (total − 15),
+        // never the final message (it already carries the moving breakpoint).
+        let target = totalBlocks - midTailAnchorOffset
+        var cumulative = 0
+        for index in 0..<(result.count - 1) {
+            cumulative += blockCounts[index]
+            if cumulative >= target {
+                _ = markLastBlockForCache(&result, at: index)
+                break
+            }
+        }
+        return result
+    }
+
+    private static func contentBlockCount(of message: [String: Any]) -> Int {
+        if let blocks = message["content"] as? [[String: Any]] { return blocks.count }
+        if let text = message["content"] as? String, !text.isEmpty { return 1 }
+        return 0
+    }
+
+    /// Stamps `cache_control` on the last content block of `messages[index]`,
+    /// converting string content to block form when needed. Returns false when
+    /// there is nothing markable at that index.
+    @discardableResult
+    private static func markLastBlockForCache(_ messages: inout [[String: Any]], at index: Int) -> Bool {
+        guard messages.indices.contains(index) else { return false }
+        var message = messages[index]
 
         var blocks: [[String: Any]]
-        if let existing = last["content"] as? [[String: Any]] {
+        if let existing = message["content"] as? [[String: Any]] {
             blocks = existing
-        } else if let text = last["content"] as? String, !text.isEmpty {
+        } else if let text = message["content"] as? String, !text.isEmpty {
             blocks = [["type": "text", "text": text]]
         } else {
-            return messages
+            return false
         }
-        guard var lastBlock = blocks.last else { return messages }
+        guard var lastBlock = blocks.last else { return false }
         lastBlock["cache_control"] = promptCacheControl
         blocks[blocks.count - 1] = lastBlock
-        last["content"] = blocks
-
-        var result = messages
-        result[result.count - 1] = last
-        return result
+        message["content"] = blocks
+        messages[index] = message
+        return true
     }
 
     static func conversationMessages(from messages: [AgentMessage]) -> [[String: Any]] {
@@ -667,11 +727,18 @@ final class OpenAIProvider: LLMProvider, @unchecked Sendable {
     }
 
     private func reasoningPayload(for model: String) -> [String: Any]? {
-        guard let effort = Self.reasoningEffort(for: model) else { return nil }
-        return [
-            "effort": effort,
-            "exclude": true
-        ]
+        if let effort = Self.reasoningEffort(for: model) {
+            return [
+                "effort": effort,
+                "exclude": true
+            ]
+        }
+        // Scoped Sonnet 5 effort (OpenRouter maps reasoning.effort onto
+        // Anthropic's effort parameter). Sonnet-5 only — see LLMEffortScope.
+        if let effort = LLMEffortScope.effort, model.lowercased().contains("sonnet-5") {
+            return ["effort": effort]
+        }
+        return nil
     }
 
     func complete(

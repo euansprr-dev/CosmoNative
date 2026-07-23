@@ -399,7 +399,22 @@ class InboxRepository: ObservableObject {
         }
     }
 
-    /// Honestly-unsorted items — candidates for the lazy LLM taxonomy pass
+    /// Suggestion-only rows the retired folders-only taxonomy pass filed,
+    /// identified by its fixed rationale string. Fetched once by the first
+    /// Atlas sweep's repair so those filings re-enter the full move grammar.
+    /// (The status filter keeps anything the user already acted on untouched.)
+    func fetchClassified(rationale: String, limit: Int) async throws -> [InboxItem] {
+        try await database.asyncRead { db in
+            try InboxItem
+                .filter(Column("status") == InboxItemStatus.classified.rawValue)
+                .filter(Column("rationale") == rationale)
+                .order(Column("createdAt").desc)
+                .limit(limit)
+                .fetchAll(db)
+        }
+    }
+
+    /// Honestly-unsorted items — candidates for the batched Atlas sweep
     /// that runs when the inbox becomes visible.
     func fetchUnsorted(limit: Int) async throws -> [InboxItem] {
         try await database.asyncRead { db in

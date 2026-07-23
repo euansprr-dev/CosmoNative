@@ -506,7 +506,8 @@ final class ConceptCartographer {
                 prompt: prompt,
                 systemPrompt: Self.systemPrompt,
                 tier: .strategist,
-                maxTokens: 900
+                maxTokens: 900,
+                disableReasoning: true  // structured JSON on Sonnet 5: thinking would share this budget
             )
             return Self.parseDrafts(raw: raw, uuidByAlias: uuidByAlias)
         } catch {

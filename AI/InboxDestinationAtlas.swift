@@ -176,7 +176,19 @@ actor InboxDestinationAtlas {
     }
 
     private func buildSeedlingEntries() async -> [InboxAtlasEntry] {
-        let seedlings = (try? await SeedlingRepository.shared.fetchGrowing(limit: 40)) ?? []
+        // Every scope: a seedling ripening in a Deep Dive's seedbed must stay
+        // reachable by routing, or dive-scoped growth goes deaf to the queue.
+        let seedlings = (try? await SeedlingRepository.shared.fetchGrowingAllScopes(limit: 40)) ?? []
+
+        // One title fetch per distinct dive scope — the entry's parent, so
+        // receipts can say "Grows \"emotion\" · in Presence".
+        var diveTitles: [String: String] = [:]
+        for scope in Set(seedlings.compactMap(\.scopeDeepDiveUUID)) {
+            if let dive = try? await AtomRepository.shared.fetch(uuid: scope), !dive.isDeleted {
+                diveTitles[scope] = dive.title
+            }
+        }
+
         return seedlings.map { seedling in
             var charterParts = ["Growing seedling — a proto-concept still accruing thoughts (\(seedling.massSummary))."]
             let aliases = seedling.aliases
@@ -193,8 +205,8 @@ actor InboxDestinationAtlas {
                 name: seedling.name,
                 charter: charterParts.joined(separator: " "),
                 examples: examples,
-                parentUUID: nil,
-                parentName: nil
+                parentUUID: seedling.scopeDeepDiveUUID,
+                parentName: seedling.scopeDeepDiveUUID.flatMap { diveTitles[$0] }
             )
         }
     }

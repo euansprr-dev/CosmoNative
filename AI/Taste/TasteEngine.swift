@@ -306,7 +306,8 @@ enum TasteDistiller {
             prompt: prompt,
             systemPrompt: "You distill creator taste signals into testable beliefs. Respond only with valid JSON.",
             tier: .strategist,
-            maxTokens: 1_500
+            maxTokens: 1_500,
+            disableReasoning: true  // structured JSON on Sonnet 5: thinking would share this budget
         ) else { return }
 
         guard let distilled = parseBeliefs(response) else {

@@ -195,9 +195,6 @@ struct InboxView: View {
                         InboxSectionHeader(title: section.title, itemCount: section.items.count)
                     }
                 }
-                // The Seedbed rides below the queue: proto-concepts accruing
-                // mass, ripest first — the "what should I develop?" answer.
-                InboxGrowingSection()
             }
             // Rows sit slightly inside the masthead margin — the same
             // title-to-content rhythm as the Today page's task list.
@@ -364,6 +361,23 @@ private struct InboxUndoToast: View {
 
             Spacer(minLength: DS.space8)
 
+            // The follow-up choice ("Develop now" after a grow) — doing
+            // nothing is "later"; the toast just fades.
+            if let actionLabel = viewModel.undoToastActionLabel, !viewModel.undoToastIsError {
+                Button {
+                    viewModel.runUndoToastAction()
+                } label: {
+                    Text(actionLabel)
+                        .font(DS.caption.weight(.semibold))
+                        .foregroundStyle(DS.textOnAccent)
+                        .padding(.horizontal, DS.space10)
+                        .padding(.vertical, DS.space4 + 1)
+                        .background(DS.accent, in: .capsule)
+                }
+                .buttonStyle(.plain)
+                .help("Open the development conversation")
+            }
+
             if !viewModel.undoToastIsError {
                 Button("Undo") {
                     Task { await viewModel.undoLastInboxAction() }
@@ -408,13 +422,6 @@ private struct InboxEmptyState: View {
                 }
 
                 recentActivitySection
-
-                // Inbox zero never hides the nursery — growing seedlings are
-                // the queue's continuation, not its clutter.
-                LazyVStack(spacing: 0) {
-                    InboxGrowingSection()
-                }
-                .frame(maxWidth: 420)
 
                 Spacer(minLength: DS.space32)
             }

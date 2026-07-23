@@ -30,6 +30,7 @@ final class SeedlingDevelopService {
 
         let pending = seedling.pendingThoughts
         let connectionUUID: String
+        var bornPage: Atom?
 
         if let target = seedling.mergeTargetConnectionUUID,
            let existing = try? await AtomRepository.shared.fetch(uuid: target),
@@ -62,6 +63,7 @@ final class SeedlingDevelopService {
             atom = atom.mergingMetadataKeys(["sourceSeedlingUuid": seedling.uuid])
             guard let created = try? await AtomRepository.shared.create(atom) else { return nil }
             connectionUUID = created.uuid
+            bornPage = created
         }
 
         // The bookshelf rides along: the strongest matching Readwise
@@ -86,7 +88,151 @@ final class SeedlingDevelopService {
             )
         }
 
+        // The concept lands where it belongs: a page born from a seedling
+        // whose affinity names a home gets a canvas block there — "develop
+        // later" still ends with the concept living in its space. A
+        // merge-target page the user already shaped keeps whatever spatial
+        // life it has — but a grow-pill development stub (this seedling's own
+        // page, still unplaced) earns its spot exactly now.
+        if let homeThinkspaceId = seedling.affinityThinkspaceId {
+            if let bornPage {
+                await InboxActionExecutor.shared.placeExistingAtomOnCanvas(
+                    atom: bornPage,
+                    thinkspaceId: homeThinkspaceId
+                )
+            } else if let target = try? await AtomRepository.shared.fetch(uuid: connectionUUID),
+                      Self.isDevelopmentStub(target, seedlingUUID: seedling.uuid),
+                      await Self.hasNoCanvasBlock(atomUUID: connectionUUID) {
+                await InboxActionExecutor.shared.placeExistingAtomOnCanvas(
+                    atom: target,
+                    thinkspaceId: homeThinkspaceId
+                )
+            }
+        }
+
+        // Mint provenance rides into the graph: the born page references the
+        // concepts it was spotted in, and each origin gets a staged ghost
+        // References row back. (Merge-target pages skip this — user-shaped
+        // pages only ever receive staged material.)
+        if let bornPage {
+            await SeedlingMintWiring.wire(
+                bornPage: bornPage,
+                thoughts: seedling.thoughts,
+                seedlingUUID: seedling.uuid
+            )
+        }
+
         try? await SeedlingRepository.shared.markDeveloped(uuid: seedling.uuid, connectionUUID: connectionUUID)
         return connectionUUID
+    }
+
+    /// A development-stage stub is THIS seedling's own address page (created
+    /// by the grow pill), never a page the user shaped independently — only
+    /// stubs may be auto-placed at develop time.
+    private nonisolated static func isDevelopmentStub(_ atom: Atom, seedlingUUID: String) -> Bool {
+        atom.metadataValue(as: SourceSeedlingOverlay.self)?.sourceSeedlingUuid == seedlingUUID
+    }
+
+    private struct SourceSeedlingOverlay: Codable {
+        var sourceSeedlingUuid: String?
+    }
+
+    private static func hasNoCanvasBlock(atomUUID: String) async -> Bool {
+        let count = (try? await CosmoDatabase.shared.asyncRead { db in
+            try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM canvas_blocks WHERE entity_uuid = ? AND COALESCE(is_deleted, 0) = 0",
+                arguments: [atomUUID]
+            )
+        }) ?? nil
+        return (count ?? 1) == 0
+    }
+}
+
+// MARK: - Mint wiring (spotted-in provenance → graph)
+
+/// Wires a seedling-born page back to the concepts its `.mint` thoughts were
+/// spotted in: References link rows + atom links on the BORN page (fresh —
+/// nothing holds its editing lock), and a staged ghost References row on each
+/// origin (usually closed, always user-shaped — reviewed ✓/✗, never silently
+/// edited). Shared by both develop paths: the unrooted shelf's
+/// SeedlingDevelopService and the dive seedbed's ConceptSeedbedService.
+@MainActor
+enum SeedlingMintWiring {
+
+    /// Distinct origin connection uuids across `.mint` thoughts, oldest first.
+    nonisolated static func mintOrigins(from thoughts: [SeedlingThought]) -> [String] {
+        var seen = Set<String>()
+        var out: [String] = []
+        for thought in thoughts where thought.sourceKind == .mint {
+            guard let uuid = thought.sourceAtomUUID, seen.insert(uuid).inserted else { continue }
+            out.append(uuid)
+        }
+        return out
+    }
+
+    static func wire(bornPage: Atom, thoughts: [SeedlingThought], seedlingUUID: String) async {
+        let origins = mintOrigins(from: thoughts)
+        guard !origins.isEmpty else { return }
+
+        var resolved: [(uuid: String, title: String)] = []
+        for uuid in origins {
+            if let atom = try? await AtomRepository.shared.fetch(uuid: uuid),
+               atom.type == .connection, !atom.isDeleted {
+                resolved.append((uuid, atom.title ?? "Untitled Concept"))
+            }
+        }
+        guard !resolved.isEmpty else { return }
+
+        // The born page: References rows + graph links.
+        if var page = try? await AtomRepository.shared.fetch(uuid: bornPage.uuid) {
+            var sections = ConnectionFocusModeState.backfillingMissingSections(
+                page.structured.flatMap { ConnectionStructuredData.fromJSON($0)?.sections } ?? []
+            )
+            if let refIdx = sections.firstIndex(where: { $0.type == .references }) {
+                for origin in resolved
+                where !sections[refIdx].items.contains(where: { $0.linkedConnectionUUID == origin.uuid }) {
+                    sections[refIdx].items.append(ConnectionItem(
+                        content: origin.title,
+                        sourceAtomUUID: origin.uuid,
+                        sourceSnippet: "Spotted while developing this concept.",
+                        linkedConnectionUUID: origin.uuid
+                    ))
+                }
+            }
+            page = page.mergingStructuredKeys(ConnectionStructuredData(sections: sections))
+            var links = page.linksList
+            for origin in resolved
+            where !links.contains(where: { $0.type == AtomLinkType.connection.rawValue && $0.uuid == origin.uuid }) {
+                links.append(AtomLink(
+                    type: AtomLinkType.connection.rawValue,
+                    uuid: origin.uuid,
+                    entityType: AtomType.connection.rawValue
+                ))
+            }
+            page = page.withLinks(links)
+            if let saved = try? await AtomRepository.shared.update(page) {
+                var state = ConnectionFocusModeState.load(atomUUID: saved.uuid)
+                    ?? ConnectionFocusModeState(atomUUID: saved.uuid)
+                state.sections = sections
+                state.lastModified = Date()
+                state.save()
+            }
+        }
+
+        // Each origin: a staged ghost References row pointing back — the
+        // mention token becomes a first-class link row on accept.
+        let bornTitle = bornPage.title ?? "Untitled Concept"
+        for origin in resolved {
+            _ = try? await ConnectionStagingStore.stage(
+                ConnectionStagedInsert(
+                    section: ConnectionSectionType.references.rawValue,
+                    text: "@[\(bornTitle)](connection:\(bornPage.uuid))",
+                    sourceKind: "seedling",
+                    sourceUUID: seedlingUUID
+                ),
+                onConnection: origin.uuid
+            )
+        }
     }
 }

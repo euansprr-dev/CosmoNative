@@ -245,6 +245,9 @@ struct FocusCanvasView: View {
         case .file:
             FilePortalPreviewSurface(atom: atom, onClose: closeFocusMode)
                 .ignoresSafeArea()
+        case .extract:
+            ExtractPeekView(atom: atom, onClose: closeFocusMode)
+                .ignoresSafeArea()
         default:
             EmptyView()
         }

@@ -144,6 +144,9 @@ struct ConceptRecommendationPanel: View {
                 ConceptRecommendationRow(
                     row: row,
                     onOpen: { open(row) },
+                    onOpenVia: row.viaConceptUUID.map { uuid in
+                        { actions.onSourceTap(uuid) }
+                    },
                     onWeave: { section in
                         withAnimation(ProMotionSprings.gentle) {
                             model.weave(row, into: section, viewModel: viewModel)
@@ -236,6 +239,8 @@ private struct SeekingLine: View {
 private struct ConceptRecommendationRow: View {
     let row: ConceptRecommendation
     let onOpen: () -> Void
+    /// Set when the row is badged "via <page>" — opens that page.
+    var onOpenVia: (() -> Void)? = nil
     let onWeave: (ConnectionSectionType) -> Void
     let onDismiss: () -> Void
 
@@ -249,6 +254,9 @@ private struct ConceptRecommendationRow: View {
                 VStack(alignment: .leading, spacing: 2) {
                     titleLine
                     excerptText
+                    if let rationale = row.rationale, !rationale.isEmpty {
+                        rationaleText(rationale)
+                    }
                     metaLine
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -312,6 +320,18 @@ private struct ConceptRecommendationRow: View {
             .lineSpacing(1.5)
     }
 
+    /// The judge's one-sentence justification (or the matched-phrase
+    /// receipt) — why this row earned its place.
+    private func rationaleText(_ rationale: String) -> some View {
+        Text(rationale)
+            .font(DS.caption2)
+            .italic()
+            .foregroundStyle(DS.textSecondary)
+            .lineLimit(2)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.top, 1)
+    }
+
     private var metaLine: some View {
         HStack(spacing: DS.space4) {
             Text(row.origin.label)
@@ -324,12 +344,32 @@ private struct ConceptRecommendationRow: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 0)
+            trailingBadge
+        }
+        .padding(.top, 1)
+    }
+
+    /// Material already embodied in a linked page says so instead of posing
+    /// as new; everything else names its landing section.
+    @ViewBuilder
+    private var trailingBadge: some View {
+        if let viaTitle = row.viaConceptTitle, let onOpenVia {
+            Button(action: onOpenVia) {
+                Text("via \(viaTitle)")
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.entityConnection.opacity(0.9))
+                    .lineLimit(1)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Already lives in \(viaTitle) — open that page")
+            .accessibilityLabel("Already in \(viaTitle)")
+        } else {
             Text("→ \(row.suggestedSection.displayName)")
                 .font(DS.caption2)
                 .foregroundStyle(row.suggestedSection.accentColor.opacity(0.8))
                 .lineLimit(1)
         }
-        .padding(.top, 1)
     }
 
     private var hoverActions: some View {

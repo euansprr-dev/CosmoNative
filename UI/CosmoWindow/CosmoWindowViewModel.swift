@@ -2353,7 +2353,7 @@ struct CosmoModelOption: Identifiable {
         CosmoModelOption(
             id: "sonnet",
             tier: .strategist,
-            title: "Sonnet 4.6",
+            title: "Sonnet 5",
             detail: "Daily driver via Claude API",
             icon: "point.3.connected.trianglepath.dotted"
         ),

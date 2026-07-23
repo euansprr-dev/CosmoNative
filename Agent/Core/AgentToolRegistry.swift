@@ -1410,6 +1410,30 @@ class AgentToolRegistry {
                 ]
             ),
             LLMToolDefinition(
+                name: "stage_on_concept",
+                description: "Stage bullets onto a DIFFERENT concept's board than the one being worked on — the rows persist as dashed ghost rows in that concept's sections and the user reviews them ✓/✗ when they next open it, so say the material is 'waiting on <title>'s board', never that it was added. Call this when the user's message contains a point that develops another concept they brought up (they linked the two concepts, or expanded on how this one relates to that one) — a References link alone loses the thinking behind it. Resolve the target's uuid from mention context, the References section, or recall — NEVER invent a uuid; pass connection_title only when no uuid can be found. When it strengthens the entry, write a mention token @[Working Concept Title](connection:<working-uuid>) inside the bullet text so the staged row carries the cross-link back to where the thinking happened. Every capture law applies here: one item per distinct point (never merge), organize their thinking without authoring substance, no em dashes. For the concept the user is working IN, use propose_workspace_edit instead — this tool rejects the active surface.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "connection_uuid": ["type": "string", "description": "UUID of the target concept, from mention context, the References section, or recall results."] as [String: Any],
+                        "connection_title": ["type": "string", "description": "Title of the target concept (fuzzy matched) ONLY when no uuid is available."] as [String: Any],
+                        "items": [
+                            "type": "array",
+                            "items": [
+                                "type": "object",
+                                "properties": [
+                                    "section": ["type": "string", "enum": ConnectionSectionType.allCases.map(\.rawValue), "description": "Board section the bullet belongs in."] as [String: Any],
+                                    "text": ["type": "string", "description": "The bullet text, ready to land: the user's point organized, optionally carrying @[Title](connection:uuid) mention tokens. No em dashes."] as [String: Any]
+                                ] as [String: Any],
+                                "required": ["section", "text"]
+                            ] as [String: Any],
+                            "description": "One entry per distinct point going onto the target concept."
+                        ] as [String: Any]
+                    ] as [String: Any],
+                    "required": ["items"]
+                ]
+            ),
+            LLMToolDefinition(
                 name: "append_to_note",
                 description: "Stage a reviewed addition to a note that is NOT the active surface — call this when the user says to add/append/save something 'to my X note' from anywhere in the app. Resolves the note by UUID or by title (fuzzy), and stages the text as a reviewed insertion the user accepts in the diff UI. The note does not need to be open; accepted text persists straight to the note. For edits to the ACTIVE surface, use propose_workspace_edit instead.",
                 parametersSchema: [

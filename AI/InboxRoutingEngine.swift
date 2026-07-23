@@ -15,9 +15,9 @@
 //                              runner-up. No membership mass, no recency boost.
 //
 // Anything that doesn't clear the bars abstains to `unsorted` — an honest
-// state, not a fake suggestion. Stage 3 (lazy batched LLM taxonomy pass for
-// unsorted items) lives in `taxonomyPass(items:)` and is driven by
-// InboxIngestService when the inbox becomes visible.
+// state, not a fake suggestion. Stage 3 (the batched Atlas sweep for unsorted
+// items — the SAME move grammar as capture time) lives in `atlasSweep(items:)`
+// and is driven by InboxIngestService when the inbox becomes visible.
 //
 // Runs OFF the main actor: scoring, embedding math, and caching happen here;
 // only repository/search/planner calls hop to @MainActor singletons.
@@ -330,27 +330,42 @@ actor InboxRoutingEngine {
 
             case .feedSeedling:
                 guard let key = move.targetKey, let entry = entriesByKey[key] else { continue }
+                let home = conceptHome(forKey: move.homeKey, entriesByKey: entriesByKey)
+                // A dive-scoped seedling names its world: "Grows "emotion" · in Presence".
+                let grows = entry.parentName.map { "Grows \u{201C}\(entry.name)\u{201D} · in \($0)" }
+                    ?? "Grows \u{201C}\(entry.name)\u{201D}"
                 results.append(InboxRecommendation(
                     kind: .feedSeedling,
                     confidence: move.confidence,
                     suggestedAtomType: AtomType.connection.rawValue,
-                    destinationPath: "Grows \u{201C}\(entry.name)\u{201D}",
+                    destinationPath: appendHome(grows, home: home),
                     rationale: rationale,
                     atlasMove: InboxAtlasMove(
                         seedlingUUID: entry.uuid,
-                        seedlingName: entry.name
+                        seedlingName: entry.name,
+                        homeThinkspaceId: home?.thinkspaceId,
+                        homeThinkspaceName: home?.thinkspaceName,
+                        homeClusterId: home?.clusterId,
+                        homeClusterName: home?.clusterName
                     )
                 ))
 
             case .startSeedling:
                 guard let newTitle = move.newTitle else { continue }
+                let home = conceptHome(forKey: move.homeKey, entriesByKey: entriesByKey)
                 results.append(InboxRecommendation(
                     kind: .startSeedling,
                     confidence: move.confidence,
                     suggestedAtomType: AtomType.connection.rawValue,
-                    destinationPath: "New seedling: \(newTitle)",
+                    destinationPath: appendHome("New concept: \(newTitle)", home: home),
                     rationale: rationale,
-                    atlasMove: InboxAtlasMove(germinateTitle: newTitle)
+                    atlasMove: InboxAtlasMove(
+                        germinateTitle: newTitle,
+                        homeThinkspaceId: home?.thinkspaceId,
+                        homeThinkspaceName: home?.thinkspaceName,
+                        homeClusterId: home?.clusterId,
+                        homeClusterName: home?.clusterName
+                    )
                 ))
 
             case .germinateDeepDive:
@@ -367,6 +382,47 @@ actor InboxRoutingEngine {
         }
 
         return results
+    }
+
+    /// The concept's future home resolved from a validated homeKey — where the
+    /// developed page will live. Tags affinity; places nothing.
+    private struct ConceptHome {
+        let thinkspaceId: String?
+        let thinkspaceName: String?
+        let clusterId: String?
+        let clusterName: String?
+        /// The most specific human name for pills ("Mindset", else "Philosophy").
+        var displayName: String? { clusterName ?? thinkspaceName }
+    }
+
+    private func conceptHome(
+        forKey key: String?,
+        entriesByKey: [String: InboxAtlasEntry]
+    ) -> ConceptHome? {
+        guard let key, let entry = entriesByKey[key] else { return nil }
+        switch entry.kind {
+        case .cluster:
+            return ConceptHome(
+                thinkspaceId: entry.parentUUID,
+                thinkspaceName: entry.parentName,
+                clusterId: entry.uuid,
+                clusterName: entry.name
+            )
+        case .thinkspace:
+            return ConceptHome(
+                thinkspaceId: entry.uuid,
+                thinkspaceName: entry.name,
+                clusterId: nil,
+                clusterName: nil
+            )
+        default:
+            return nil
+        }
+    }
+
+    private func appendHome(_ path: String, home: ConceptHome?) -> String {
+        guard let name = home?.displayName, !name.isEmpty else { return path }
+        return "\(path) — \(name)"
     }
 
     // MARK: - Stage 1 — Merge (near-duplicate territory only)
@@ -603,124 +659,77 @@ actor InboxRoutingEngine {
         return "\(clusterName) inside \(thinkspaceName) is the closest existing thread by meaning, with clear distance to the next candidate."
     }
 
-    // MARK: - Stage 3 — Lazy taxonomy pass (batched, for unsorted items)
+    // MARK: - Stage 3 — The Atlas sweep (batched, for unsorted items)
 
-    struct TaxonomyAssignment: Sendable {
-        let itemUuid: String
-        let thinkspaceId: String
-        let thinkspaceName: String
-        let clusterId: String?
-        let clusterName: String?
-    }
-
-    /// One batched Flash call that teaches the model the *actual* folder
-    /// taxonomy (names, intents, example member titles) and asks it to file
-    /// each unsorted capture — with an explicit NONE option. Returns only
-    /// assignments to destinations that really exist.
-    func taxonomyPass(items: [(uuid: String, title: String?, text: String)]) async -> [TaxonomyAssignment] {
-        guard !items.isEmpty else { return [] }
-
-        let thinkspaceAtoms = await fetchThinkspaceAtoms()
-        guard !thinkspaceAtoms.isEmpty else { return [] }
-
-        // Build the taxonomy with example titles so the model learns what each
-        // destination actually contains, not just what it's called.
-        var destinations: [(key: String, thinkspaceId: String, thinkspaceName: String, clusterId: String?, clusterName: String?)] = []
-        var taxonomyLines: [String] = []
-
-        for atom in thinkspaceAtoms {
-            guard let metadata = atom.metadataValue(as: ThinkspaceMetadata.self) else { continue }
-            for cluster in metadata.clusters {
-                let key = "D\(destinations.count + 1)"
-                destinations.append((key, atom.uuid, metadata.name, cluster.id, cluster.name))
-                let examples = await exampleTitles(for: cluster.blockUUIDs)
-                var line = "\(key): \(metadata.name) › \(cluster.name)"
-                if let intent = cluster.intent, !intent.isEmpty {
-                    line += " — collects: \(intent)"
-                }
-                if !examples.isEmpty {
-                    line += " — contains e.g. \(examples.map { "\"\($0)\"" }.joined(separator: ", "))"
-                }
-                taxonomyLines.append(line)
-            }
-            let key = "D\(destinations.count + 1)"
-            destinations.append((key, atom.uuid, metadata.name, nil, nil))
-            taxonomyLines.append("\(key): \(metadata.name) (the thinkspace surface itself, for material that fits the space but no cluster)")
-        }
-
-        guard !destinations.isEmpty else { return [] }
-
-        let captureLines = items.enumerated().map { index, item in
-            "C\(index + 1) (uuid \(item.uuid)): \(String(((item.title.map { "\($0) — " } ?? "") + item.text).prefix(280)))"
-        }.joined(separator: "\n")
-
-        let prompt = """
-        You are filing captured thoughts into a personal knowledge base. For each capture, choose the destination whose EXISTING CONTENTS it belongs with, or NONE.
-
-        HOW TO DECIDE (apply in this order):
-        1. Read the capture and identify its core subject — what is it ABOUT, not what words it uses.
-        2. A destination matches only if the capture would sit naturally next to its example contents. The destination name alone is never enough evidence.
-        3. If two destinations both seem plausible, that is ambiguity: answer NONE. Guessing wrong is worse than leaving it unsorted.
-        4. If the capture is a task, a fleeting reminder, or about the user's own software/app features, answer NONE — those are handled elsewhere.
-
-        EXAMPLE OF A CORRECT MATCH: a capture "discipline is choosing what you want most over what you want now" belongs in a destination whose examples are Stoicism quotes about self-control.
-        EXAMPLE OF A CORRECT NONE: a capture "remix feature for the swipe file" matches no knowledge destination — it is a product idea, answer NONE even if a destination mentions "ideas".
-
-        DESTINATIONS:
-        \(taxonomyLines.joined(separator: "\n"))
-
-        CAPTURES:
-        \(captureLines)
-
-        Respond with ONLY a JSON array, one entry per capture, in this exact shape:
-        [{"uuid": "<capture uuid>", "destination": "<destination key or NONE>"}]
-        """
-
-        do {
-            let response = try await ResearchService.shared.analyze(
-                prompt: prompt,
-                model: flashModel,
-                maxTokens: 600,
-                temperature: 0.0
-            )
-            return parseTaxonomyResponse(response, destinations: destinations, items: items)
-        } catch {
-            return []
-        }
-    }
-
-    private func parseTaxonomyResponse(
-        _ response: String,
-        destinations: [(key: String, thinkspaceId: String, thinkspaceName: String, clusterId: String?, clusterName: String?)],
+    /// The recovery net for unsorted captures — ONE batched sensor call that
+    /// speaks the exact same move ladder as capture-time routing (concepts,
+    /// questions, material, folders). Replaced the folders-only taxonomy pass
+    /// July 2026: a second, poorer vocabulary was flattening insight captures
+    /// into thinkspace notes. Abstain stays honest — captures the sweep
+    /// returns nothing for remain unsorted, and the next sweep re-reads them
+    /// against the atlas as it has grown since.
+    func atlasSweep(
         items: [(uuid: String, title: String?, text: String)]
-    ) -> [TaxonomyAssignment] {
-        guard let start = response.firstIndex(of: "["),
-              let end = response.lastIndex(of: "]"),
-              start < end,
-              let data = String(response[start...end]).data(using: .utf8),
-              let entries = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
-            return []
-        }
+    ) async -> [String: RoutingResult] {
+        guard !items.isEmpty else { return [:] }
 
-        let destinationsByKey = Dictionary(uniqueKeysWithValues: destinations.map { ($0.key, $0) })
-        let validUuids = Set(items.map(\.uuid))
-
-        return entries.compactMap { entry in
-            guard let uuid = entry["uuid"] as? String,
-                  validUuids.contains(uuid),
-                  let key = entry["destination"] as? String,
-                  key.uppercased() != "NONE",
-                  let destination = destinationsByKey[key] else {
-                return nil
+        // Union of every capture's own shortlist (order-preserving, dedup by
+        // key) — the batch shares one DESTINATIONS block, capped so twelve
+        // captures can't flood the prompt.
+        var seenKeys = Set<String>()
+        var candidates: [InboxDestinationAtlas.ScoredEntry] = []
+        for item in items {
+            guard let vector = await captureEmbedding(for: item.text) else { continue }
+            let shortlist = await InboxDestinationAtlas.shared.shortlist(queryVector: vector)
+            for scored in shortlist where seenKeys.insert(scored.entry.key).inserted {
+                candidates.append(scored)
             }
-            return TaxonomyAssignment(
-                itemUuid: uuid,
-                thinkspaceId: destination.thinkspaceId,
-                thinkspaceName: destination.thinkspaceName,
-                clusterId: destination.clusterId,
-                clusterName: destination.clusterName
+        }
+        candidates = Array(candidates.prefix(config.sweepCandidateCap))
+        guard !candidates.isEmpty else { return [:] }
+
+        let corrections = await InboxRoutingCorrectionLedger.shared
+            .recentExamples(limit: config.atlasCorrectionExamples)
+        let decisions = await InboxAtlasRouter.shared.sweep(
+            items: items,
+            candidates: candidates,
+            corrections: corrections
+        )
+        guard !decisions.isEmpty else { return [:] }
+
+        var results: [String: RoutingResult] = [:]
+        for item in items {
+            guard let decision = decisions[item.uuid] else { continue }
+
+            let userTitled = item.title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            var routedTitle = item.title ?? fallbackTitle(from: item.text)
+            if !userTitled, let cleaned = decision.title {
+                routedTitle = String(cleaned.prefix(80))
+            }
+            let atomType = Self.atomType(forCaptureType: decision.captureType)
+                ?? suggestAtomType(text: item.text)
+
+            let recommendations = await atlasRecommendations(
+                fromDecision: decision,
+                shortlist: candidates,
+                title: routedTitle,
+                fallbackAtomType: atomType,
+                searchResultUUIDs: []
+            )
+            // No surviving moves = the sweep abstained for this capture;
+            // it stays honestly unsorted (no result row at all).
+            guard !recommendations.isEmpty else { continue }
+
+            results[item.uuid] = RoutingResult(
+                title: routedTitle,
+                bundle: InboxRecommendationBundle(
+                    title: routedTitle,
+                    recommendations: recommendations
+                ),
+                abstained: false
             )
         }
+        return results
     }
 
     // MARK: - Embeddings & centroids
@@ -796,17 +805,6 @@ actor InboxRoutingEngine {
 
     private func fetchThinkspaceAtoms() async -> [Atom] {
         ((try? await AtomRepository.shared.fetchAll(type: .thinkspace)) ?? []).filter { !$0.isDeleted }
-    }
-
-    private func exampleTitles(for memberUUIDs: [String]) async -> [String] {
-        let sample = Array(memberUUIDs.prefix(config.taxonomyExampleTitles * 2))
-        guard !sample.isEmpty else { return [] }
-        let atoms = await fetchAtoms(uuids: sample)
-        return atoms
-            .compactMap(\.title)
-            .filter { !$0.isEmpty }
-            .prefix(config.taxonomyExampleTitles)
-            .map { String($0.prefix(60)) }
     }
 
     private func planExistingCluster(

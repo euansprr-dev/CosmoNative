@@ -189,6 +189,10 @@ enum CortexDetailSubject {
 
     var preferredPreviewHeight: CGFloat {
         if isKnownSwipe { return 380 }
+        // Link-backed research commits to its taller thumbnail stage on the
+        // first frame so the hydrated card swaps in without a reflow.
+        if case .result(let r) = self, r.atomType == .research, r.source != .swipes { return 300 }
+        if case .recent(let i) = self, i.type == .research { return 300 }
         return 220
     }
 }
@@ -349,6 +353,7 @@ struct CortexDetailPane: View {
 
     private var previewHeight: CGFloat {
         if atom?.toSwipeGalleryItem() != nil { return 380 }
+        if let atom, atom.type == .research, !atom.isSwipeFileAtom { return 300 }
         return subject.preferredPreviewHeight
     }
 }
@@ -369,6 +374,10 @@ private struct CortexPreviewBlock: View {
             // A task is an honest object too — due date, notes, checklist on
             // paper, never a blank page.
             CortexTaskDomainPreview(atom: atom)
+        } else if let atom, let research = CortexResearchLinkModel(atom: atom) {
+            // Link-backed research is a captured page/video, not a wall of
+            // transcript JSON: thumbnail stage + source line, Raycast-quiet.
+            CortexResearchDomainPreview(model: research)
         } else {
             switch subject {
             case .library(let item):
@@ -436,7 +445,7 @@ private struct CortexPreviewBlock: View {
         // the reading window on the matched passage (Spotlight shows you the
         // page; we show you the sentence).
         if let query = matchQuery, !query.isEmpty,
-           let body = atom?.body,
+           let body = readableBody,
            let window = CommandKMatchExcerpt.readingWindow(
                anchoredBy: subject.matchedExcerpt,
                query: query,
@@ -444,11 +453,23 @@ private struct CortexPreviewBlock: View {
            ) {
             return CommandKPreviewExcerpt.clamp(window, limit: CommandKPreviewExcerpt.readingLimit)
         }
-        let t = atom?.body ?? subject.previewText
+        let t = readableBody ?? subject.previewText
         guard let t, !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         // Excerpt only: typesetting a full transcript-sized body in one Text
         // freezes the main thread for the whole layout pass.
         return CommandKPreviewExcerpt.clamp(t, limit: CommandKPreviewExcerpt.readingLimit)
+    }
+
+    /// A research atom's body may be raw `[TranscriptSegment]` JSON (the
+    /// capture pipeline stores the segment array verbatim). Reading surfaces
+    /// show the spoken words, never the JSON.
+    private var readableBody: String? {
+        guard let body = atom?.body else { return nil }
+        guard atom?.type == .research else { return body }
+        if let plain = CortexResearchLinkModel.transcriptPlainText(fromBody: body, atom: atom) {
+            return plain
+        }
+        return body
     }
 
     /// Reading excerpt typeset directly on the body surface — no inner white
@@ -569,6 +590,163 @@ private struct CortexTaskDomainPreview: View {
         .padding(.horizontal, DS.space24)
         .padding(.vertical, DS.space20)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+/// A link-backed research atom distilled for the preview: what it links to,
+/// what it looks like, who made it. Nil for swipes (they own their preview)
+/// and for note-style research with neither a URL nor a thumbnail.
+private struct CortexResearchLinkModel {
+    let urlString: String?
+    let host: String?
+    let author: String?
+    let thumbnailURL: URL?
+    let isVideo: Bool
+    let durationText: String?
+
+    init?(atom: Atom) {
+        guard atom.type == .research, !atom.isSwipeFileAtom else { return nil }
+        let richContent = atom.richContent
+        let urlString = atom.url
+            ?? richContent?.videoId.map { "https://www.youtube.com/watch?v=\($0)" }
+        let thumbnail = (atom.thumbnailUrl ?? richContent?.thumbnailUrl)
+            .flatMap { $0.isEmpty ? nil : URL(string: $0) }
+        guard urlString != nil || thumbnail != nil else { return nil }
+
+        self.urlString = urlString
+        self.host = urlString
+            .flatMap(URL.init(string:))?.host?
+            .replacingOccurrences(of: "www.", with: "")
+        self.author = richContent?.author
+        self.thumbnailURL = thumbnail
+
+        switch richContent?.sourceType {
+        case .youtube, .youtubeShort, .loom:
+            self.isVideo = true
+        default:
+            let videoHosts = ["youtube.com", "youtu.be", "vimeo.com", "loom.com"]
+            self.isVideo = host.map { h in videoHosts.contains { h.hasSuffix($0) } } ?? false
+        }
+
+        if let seconds = richContent?.duration, seconds > 0 {
+            self.durationText = String(format: "%d:%02d", seconds / 60, seconds % 60)
+        } else {
+            self.durationText = nil
+        }
+    }
+
+    /// Decodes a body that is raw `[TranscriptSegment]` JSON into the spoken
+    /// words. Prefers the memoized richContent segments; falls back to a
+    /// bounded decode of the body itself. Nil when the body isn't segment
+    /// JSON (a real prose body must render as written).
+    static func transcriptPlainText(fromBody body: String, atom: Atom?) -> String? {
+        let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("[{"), trimmed.contains("\"text\"") else { return nil }
+        if let formatted = atom?.formattedTranscript, !formatted.isEmpty {
+            return formatted
+        }
+        guard body.utf8.count <= 2_000_000,
+              let data = body.data(using: .utf8),
+              let segments = try? JSONDecoder().decode([TranscriptSegment].self, from: data),
+              !segments.isEmpty else { return nil }
+        // The reading card clamps anyway — never join a full hour of speech.
+        return segments.prefix(120).map(\.text).joined(separator: " ")
+    }
+}
+
+/// Research preview: the captured page/video as an honest object — thumbnail
+/// stage (play seal for video), source favicon + host, author line. Mirrors
+/// the swipe preview chrome so the two capture types read as siblings.
+private struct CortexResearchDomainPreview: View {
+    let model: CortexResearchLinkModel
+
+    var body: some View {
+        VStack(spacing: DS.space10) {
+            toolbar
+            stage
+            caption
+        }
+        .padding(DS.space12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(CommandKPreviewPaper.panelFill)
+    }
+
+    private var toolbar: some View {
+        HStack(spacing: DS.space6) {
+            Image(systemName: model.isVideo ? "play.rectangle" : "doc.text.magnifyingglass")
+                .font(DS.caption.weight(.semibold))
+            Text("Research")
+                .font(DS.smallCaps)
+            Spacer(minLength: DS.space8)
+            if let durationText = model.durationText {
+                Text(durationText)
+                    .font(DS.caption.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(DS.textMuted)
+            }
+        }
+        .foregroundStyle(DS.giltMuted)
+    }
+
+    private var stage: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
+                .fill(CommandKPreviewPaper.stageFill)
+
+            if let thumbnailURL = model.thumbnailURL {
+                ZStack {
+                    CortexSwipeImageSurface(
+                        url: thumbnailURL,
+                        stableKey: "research-thumb-\(thumbnailURL.absoluteString)"
+                    )
+                    if model.isVideo { playSeal }
+                }
+                .aspectRatio(16.0 / 9.0, contentMode: .fit)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.vertical, DS.space4)
+            } else {
+                sourceMark
+            }
+        }
+        .clipShape(.rect(cornerRadius: DS.radiusMedium))
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
+                .strokeBorder(CommandKPreviewPaper.hairline, lineWidth: 0.5)
+        )
+    }
+
+    /// Static play affordance only — the ⌘K preview never builds a player;
+    /// ⏎ opens the captured page in the in-app browser pane.
+    private var playSeal: some View {
+        Image(systemName: "play.circle.fill")
+            .font(.system(size: 42, weight: .semibold))
+            .foregroundStyle(DS.textOnAccent.opacity(0.92))
+            .shadow(color: DS.inkWash.opacity(0.28), radius: 10, x: 0, y: 4)
+            .accessibilityHidden(true)
+    }
+
+    private var sourceMark: some View {
+        VStack(spacing: DS.space8) {
+            CommandKFavicon(host: model.host ?? "", size: 44) {
+                CosmoIdentityChip(
+                    systemName: "doc.text.magnifyingglass",
+                    tint: DS.entityResearch,
+                    size: 44
+                )
+            }
+            if let host = model.host {
+                Text(host)
+                    .font(DS.caption)
+                    .foregroundStyle(CommandKPreviewPaper.textSecondary)
+                    .lineLimit(1)
+            }
+        }
+    }
+
+    private var caption: some View {
+        Text([model.author, model.host].compactMap { $0 }.joined(separator: " · "))
+            .font(DS.caption)
+            .foregroundStyle(DS.textMuted)
+            .lineLimit(1)
     }
 }
 

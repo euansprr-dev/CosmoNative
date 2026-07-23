@@ -56,14 +56,12 @@ struct InboxRoutingConfig: Sendable {
     /// At or above this, the suggestion pill renders in the confident (accent) tint.
     let confidentTier: Double = 0.70
 
-    // MARK: - Stage 3 — Lazy LLM taxonomy pass
+    // MARK: - Stage 3 — The Atlas sweep (batched recovery for unsorted items)
 
-    /// Max unsorted items sent through one batched taxonomy call when the inbox opens.
-    let taxonomyPassBatchLimit: Int = 12
-    /// Confidence assigned to taxonomy-pass placements (tentative tier by design).
-    let taxonomyPassConfidence: Double = 0.62
-    /// Example member titles included per cluster when teaching the taxonomy.
-    let taxonomyExampleTitles: Int = 3
+    /// Max unsorted items sent through one batched Atlas call when the inbox opens.
+    let sweepBatchLimit: Int = 12
+    /// Cap on the unioned destination shortlist a sweep prompt may carry.
+    let sweepCandidateCap: Int = 40
 }
 
 // MARK: - Triageable types

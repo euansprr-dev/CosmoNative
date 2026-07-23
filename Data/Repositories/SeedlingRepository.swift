@@ -182,6 +182,32 @@ final class SeedlingRepository: ObservableObject {
         }
     }
 
+    /// Stamp the concept's future home ("a concept on your Philosophy space").
+    /// Fill-only by default: routing hints never overwrite a home the seedling
+    /// already carries — the first confident tag wins until the user develops.
+    func setAffinity(
+        uuid: String,
+        thinkspaceId: String?,
+        thinkspaceName: String?,
+        clusterId: String?,
+        clusterName: String?,
+        overwrite: Bool = false
+    ) async throws {
+        guard thinkspaceId != nil || clusterId != nil else { return }
+        _ = try await trackedMutation(uuid: uuid) { seedling in
+            guard overwrite || (seedling.affinityThinkspaceId == nil && seedling.affinityClusterId == nil) else {
+                return false
+            }
+            guard seedling.affinityThinkspaceId != thinkspaceId
+                    || seedling.affinityClusterId != clusterId else { return false }
+            seedling.affinityThinkspaceId = thinkspaceId
+            seedling.affinityThinkspaceName = thinkspaceName
+            seedling.affinityClusterId = clusterId
+            seedling.affinityClusterName = clusterName
+            return true
+        }
+    }
+
     func setStatus(uuid: String, status: SeedlingStatus) async throws {
         _ = try await trackedMutation(uuid: uuid) { seedling in
             guard seedling.status != status else { return false }
@@ -266,6 +292,21 @@ final class SeedlingRepository: ObservableObject {
             try Seedling
                 .filter(Column("status") == SeedlingStatus.growing.rawValue)
                 .filter(Column("scopeDeepDiveUUID") == nil)
+                .filter(sql: "COALESCE(is_deleted, 0) = 0")
+                .order(Column("lastTouchedAt").desc)
+                .limit(limit)
+                .fetchAll(db)
+        }
+    }
+
+    /// Growing seedlings in EVERY scope — the inbox atlas's view. A concept
+    /// ripening inside a Deep Dive's seedbed must stay reachable by inbox
+    /// routing ("this capture grows that"), or dive-scoped growth would go
+    /// deaf to the queue.
+    func fetchGrowingAllScopes(limit: Int = 100) async throws -> [Seedling] {
+        try await database.asyncRead { db in
+            try Seedling
+                .filter(Column("status") == SeedlingStatus.growing.rawValue)
                 .filter(sql: "COALESCE(is_deleted, 0) = 0")
                 .order(Column("lastTouchedAt").desc)
                 .limit(limit)

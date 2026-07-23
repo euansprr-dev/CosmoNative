@@ -54,9 +54,33 @@ actor InboxAtlasRouter {
         var newTitle: String?
         /// Nesting contract parent for spawnQuestion (validated question key).
         var parentQuestionKey: String?
+        /// The concept's future home — a cluster/thinkspace key the seedling
+        /// belongs to once developed (seedling moves only, validated). Tags
+        /// affinity; places nothing.
+        var homeKey: String?
         /// One line on how this move grows the knowledge base.
         var growth: String
         var confidence: Double
+
+        init(
+            kind: MoveKind,
+            targetKey: String? = nil,
+            section: String? = nil,
+            newTitle: String? = nil,
+            parentQuestionKey: String? = nil,
+            homeKey: String? = nil,
+            growth: String,
+            confidence: Double
+        ) {
+            self.kind = kind
+            self.targetKey = targetKey
+            self.section = section
+            self.newTitle = newTitle
+            self.parentQuestionKey = parentQuestionKey
+            self.homeKey = homeKey
+            self.growth = growth
+            self.confidence = confidence
+        }
     }
 
     struct Decision: Sendable, Equatable {
@@ -71,6 +95,8 @@ actor InboxAtlasRouter {
     /// Background classification with a visible "Reading…" state — accuracy
     /// over latency, but bounded so a hung call never wedges the queue.
     private let timeoutNanoseconds: UInt64 = 15_000_000_000
+    /// The sweep answers for a whole batch — a longer leash, same bound.
+    private let sweepTimeoutNanoseconds: UInt64 = 30_000_000_000
     private let maxAttempts = 2
 
     private init() {}
@@ -110,11 +136,50 @@ actor InboxAtlasRouter {
         return Self.parse(raw: raw, candidates: candidates)
     }
 
+    /// The sweep: several unsorted captures, one call, the same move ladder.
+    /// Replaces the folders-only taxonomy pass — the recovery net now speaks
+    /// the full Atlas grammar (concepts, questions, material), so an abstain
+    /// at capture time can still become a concept suggestion later.
+    func sweep(
+        items: [(uuid: String, title: String?, text: String)],
+        candidates: [InboxDestinationAtlas.ScoredEntry],
+        corrections: [InboxRoutingCorrectionLedger.Example]
+    ) async -> [String: Decision] {
+        guard !items.isEmpty, !candidates.isEmpty else { return [:] }
+        let prompt = Self.buildSweepPrompt(items: items, candidates: candidates, corrections: corrections)
+        let maxTokens = min(4000, 220 * items.count)
+
+        var raw: String?
+        for attempt in 1...maxAttempts {
+            raw = await withTimeout(nanoseconds: sweepTimeoutNanoseconds) {
+                try await ResearchService.shared.analyze(
+                    prompt: prompt,
+                    systemPrompt: Self.sweepSystemPrompt,
+                    tier: .sensor,
+                    maxTokens: maxTokens
+                )
+            }
+            if raw != nil { break }
+            if attempt < maxAttempts {
+                print("[InboxAtlasRouter] sweep attempt \(attempt) timed out — retrying")
+            }
+        }
+        guard let raw else { return [:] }
+        return Self.parseSweep(raw: raw, candidates: candidates, validUUIDs: Set(items.map(\.uuid)))
+    }
+
     private func withTimeout(_ work: @escaping @Sendable () async throws -> String) async -> String? {
+        await withTimeout(nanoseconds: timeoutNanoseconds, work)
+    }
+
+    private func withTimeout(
+        nanoseconds: UInt64,
+        _ work: @escaping @Sendable () async throws -> String
+    ) async -> String? {
         await withTaskGroup(of: String?.self) { group in
             group.addTask { try? await work() }
-            group.addTask { [timeoutNanoseconds] in
-                try? await Task.sleep(nanoseconds: timeoutNanoseconds)
+            group.addTask {
+                try? await Task.sleep(nanoseconds: nanoseconds)
                 return nil
             }
             let first = await group.next() ?? nil
@@ -161,6 +226,10 @@ actor InboxAtlasRouter {
     listed seedling or concept page covers. newTitle = a noun-phrase name for the concept. The \
     seedling grows in the nursery — no page and no canvas object is created until it ripens and the \
     user develops it. Not for fleeting notes.
+    Seedling moves may ALSO carry "homeKey": the key of exactly ONE cluster or workspace from \
+    DESTINATIONS whose material the developed concept would sit beside — its future home. This \
+    places nothing now; it only tags where the concept belongs once it becomes a page. Set homeKey \
+    null unless one home is obvious.
     - "germinateDeepDive" — the capture opens a substantial research territory no listed topic covers. \
     newTitle = the topic name. Rare; prefer spawnQuestion under an existing topic when one fits.
 
@@ -185,7 +254,8 @@ actor InboxAtlasRouter {
     fewer moves or none. moves: [] is a correct, honest answer. Guessing wrong is worse.
 
     HARD RULES:
-    1. NEVER invent keys — targetKey and parentQuestionKey must be copied verbatim from DESTINATIONS.
+    1. NEVER invent keys — targetKey, parentQuestionKey, and homeKey must be copied verbatim from \
+    DESTINATIONS (homeKey additionally must be a cluster or workspace key).
     2. At most 3 moves, ranked best first. At most ONE spawnQuestion/germinate move per capture.
     3. "title": a concise title for the capture, at most 10 words, preserving the user's language.
     4. "growth": one short sentence on what accepting the move builds ("adds evidence to a maturing \
@@ -220,16 +290,17 @@ actor InboxAtlasRouter {
     DESTINATIONS include {"key":"cluster-K2"} Mindset (in Philosophy), and \
     {"key":"seedling-S1"} "Directed attention" — Growing seedling (3 thoughts).
     → {"title":"Repeated thoughts compound — direct them","captureType":"insight","moves":[{"kind":"feedSeedling",\
-    "targetKey":"seedling-S1","section":null,"newTitle":null,"parentQuestionKey":null,\
+    "targetKey":"seedling-S1","section":null,"newTitle":null,"parentQuestionKey":null,"homeKey":"cluster-K2",\
     "growth":"Fourth thought on directed attention — the seedling is nearly ripe.","confidence":0.85}]}
-    (The Mindset cluster fits thematically, but a raw thought grows; it does not get pinned to a canvas.)
+    (The Mindset cluster fits thematically, but a raw thought grows; it does not get pinned to a canvas. \
+    homeKey tags Mindset as where the concept will live once developed.)
 
     Example B3 — a principle with no home starts a seedling, never a page:
     Capture: "constraints are a gift: the smaller the canvas, the sharper the idea"
     DESTINATIONS list no seedling or concept page about constraints.
     → {"title":"Constraints sharpen ideas","captureType":"insight","moves":[{"kind":"startSeedling",\
     "targetKey":null,"section":null,"newTitle":"Constraints as a creative gift","parentQuestionKey":null,\
-    "growth":"Names a proto-concept so future thoughts about constraints accrue in one place.",\
+    "homeKey":null,"growth":"Names a proto-concept so future thoughts about constraints accrue in one place.",\
     "confidence":0.7}]}
 
     Example C — the niche test picks the right client (and vetoes the familiar one):
@@ -252,8 +323,22 @@ actor InboxAtlasRouter {
     OUTPUT SCHEMA:
     {"title":"<concise title>","captureType":"task|question|insight|idea|note|source",\
     "moves":[{"kind":"<move kind>","targetKey":"<key or null>","section":"<section or null>",\
-    "newTitle":"<title or null>","parentQuestionKey":"<key or null>","growth":"<one line>",\
-    "confidence":<0-1>}]}
+    "newTitle":"<title or null>","parentQuestionKey":"<key or null>","homeKey":"<key or null>",\
+    "growth":"<one line>","confidence":<0-1>}]}
+    """
+
+    /// The sweep speaks the identical move ladder over several captures at
+    /// once — the system prompt is the single-capture teaching plus batch
+    /// framing, so the two paths can never drift apart.
+    static let sweepSystemPrompt = systemPrompt + """
+
+
+    SWEEP MODE: this request carries SEVERAL captures, each tagged with its uuid. Decide each \
+    capture independently with the exact move ladder above — the other captures are not context \
+    for each other. "moves": [] stays a correct, honest answer for any capture that fits nothing. \
+    Respond with ONLY a JSON array, one entry per capture, each entry in the single-capture \
+    OUTPUT SCHEMA plus its "uuid":
+    [{"uuid":"<capture uuid>","title":"…","captureType":"…","moves":[…]}]
     """
 
     static func buildPrompt(
@@ -262,8 +347,37 @@ actor InboxAtlasRouter {
         candidates: [InboxDestinationAtlas.ScoredEntry],
         corrections: [InboxRoutingCorrectionLedger.Example]
     ) -> String {
+        var lines = destinationAndCorrectionLines(candidates: candidates, corrections: corrections)
+        lines.append("\nCAPTURE (heuristic title: \(heuristicTitle)):")
+        lines.append(String(text.prefix(1600)))
+        lines.append("\nReturn the routing JSON now.")
+        return lines.joined(separator: "\n")
+    }
+
+    /// The sweep prompt: the same destination cards and learned rules, then
+    /// every capture tagged by uuid. Captures are clipped harder than the
+    /// single path (the sweep is a recovery net, not first contact).
+    static func buildSweepPrompt(
+        items: [(uuid: String, title: String?, text: String)],
+        candidates: [InboxDestinationAtlas.ScoredEntry],
+        corrections: [InboxRoutingCorrectionLedger.Example]
+    ) -> String {
+        var lines = destinationAndCorrectionLines(candidates: candidates, corrections: corrections)
+        lines.append("\nCAPTURES:")
+        for (index, item) in items.enumerated() {
+            let heading = item.title.map { "\($0) — " } ?? ""
+            lines.append("C\(index + 1) (uuid \(item.uuid)): \(String((heading + item.text).prefix(400)))")
+        }
+        lines.append("\nReturn the routing JSON array now.")
+        return lines.joined(separator: "\n")
+    }
+
+    private static func destinationAndCorrectionLines(
+        candidates: [InboxDestinationAtlas.ScoredEntry],
+        corrections: [InboxRoutingCorrectionLedger.Example]
+    ) -> [String] {
         var lines: [String] = []
-        lines.append("DESTINATIONS (the only valid targetKey/parentQuestionKey values):")
+        lines.append("DESTINATIONS (the only valid targetKey/parentQuestionKey/homeKey values):")
 
         let order: [(InboxAtlasKind, String)] = [
             (.client, "CLIENTS (apply the niche test; attaching none is common):"),
@@ -293,11 +407,7 @@ actor InboxAtlasRouter {
                 }
             }
         }
-
-        lines.append("\nCAPTURE (heuristic title: \(heuristicTitle)):")
-        lines.append(String(text.prefix(1600)))
-        lines.append("\nReturn the routing JSON now.")
-        return lines.joined(separator: "\n")
+        return lines
     }
 
     private static func card(for entry: InboxAtlasEntry) -> String {
@@ -319,77 +429,127 @@ actor InboxAtlasRouter {
         candidates: [InboxDestinationAtlas.ScoredEntry]
     ) -> Decision? {
         guard let dict = ConceptResolver.jsonObject(from: raw) else { return nil }
+        let entriesByKey = Dictionary(uniqueKeysWithValues: candidates.map { ($0.entry.key, $0.entry) })
+        return decision(fromEntry: dict, entriesByKey: entriesByKey)
+    }
+
+    /// The sweep answer: one Decision per capture uuid. Entries with invented
+    /// uuids are dropped; a missing entry simply leaves that capture unsorted.
+    static func parseSweep(
+        raw: String,
+        candidates: [InboxDestinationAtlas.ScoredEntry],
+        validUUIDs: Set<String>
+    ) -> [String: Decision] {
+        guard let start = raw.firstIndex(of: "["),
+              let end = raw.lastIndex(of: "]"),
+              start < end,
+              let data = String(raw[start...end]).data(using: .utf8),
+              let entries = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] else {
+            return [:]
+        }
 
         let entriesByKey = Dictionary(uniqueKeysWithValues: candidates.map { ($0.entry.key, $0.entry) })
+        var decisions: [String: Decision] = [:]
+        for entry in entries {
+            guard let uuid = entry["uuid"] as? String, validUUIDs.contains(uuid) else { continue }
+            decisions[uuid] = decision(fromEntry: entry, entriesByKey: entriesByKey)
+        }
+        return decisions
+    }
 
+    /// One capture's decision from its JSON entry — the single shared reader
+    /// for the single-capture and sweep paths (they must never drift).
+    private static func decision(
+        fromEntry dict: [String: Any],
+        entriesByKey: [String: InboxAtlasEntry]
+    ) -> Decision {
         var title = (dict["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
         if title?.isEmpty == true { title = nil }
         let captureType = (dict["captureType"] as? String)?.lowercased()
 
         var moves: [RoutedMove] = []
         var usedCreationMove = false
-
         for entry in (dict["moves"] as? [[String: Any]] ?? []).prefix(3) {
-            guard let kindRaw = entry["kind"] as? String,
-                  let kind = MoveKind(rawValue: kindRaw) else { continue }
-
-            var targetKey = entry["targetKey"] as? String
-            if let key = targetKey, entriesByKey[key] == nil {
-                targetKey = nil   // Never trust invented keys.
+            if let move = parseMove(entry, entriesByKey: entriesByKey, usedCreationMove: &usedCreationMove) {
+                moves.append(move)
             }
+        }
+        return Decision(title: title, captureType: captureType, moves: moves)
+    }
 
-            var section = entry["section"] as? String
-            if let s = section, !validSections.contains(s) { section = nil }
+    private static func parseMove(
+        _ entry: [String: Any],
+        entriesByKey: [String: InboxAtlasEntry],
+        usedCreationMove: inout Bool
+    ) -> RoutedMove? {
+        guard let kindRaw = entry["kind"] as? String,
+              let kind = MoveKind(rawValue: kindRaw) else { return nil }
 
-            var newTitle = (entry["newTitle"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
-            if newTitle?.isEmpty == true { newTitle = nil }
-
-            var parentQuestionKey = entry["parentQuestionKey"] as? String
-            if let key = parentQuestionKey,
-               entriesByKey[key]?.kind != .question {
-                parentQuestionKey = nil   // Invented or non-question parents fall to top level.
-            }
-
-            let growth = (entry["growth"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let confidence = (entry["confidence"] as? Double) ?? 0.6
-
-            // Per-kind structural validation — a move without its required
-            // target is dropped, not repaired into a guess.
-            switch kind {
-            case .advanceQuestion:
-                guard let key = targetKey, entriesByKey[key]?.kind == .question else { continue }
-            case .spawnQuestion:
-                guard let key = targetKey, entriesByKey[key]?.kind == .deepDive, newTitle != nil else { continue }
-                if usedCreationMove { continue }
-                usedCreationMove = true
-            case .feedConnection:
-                guard let key = targetKey, entriesByKey[key]?.kind == .connection, section != nil else { continue }
-            case .attachClient:
-                guard let key = targetKey, entriesByKey[key]?.kind == .client else { continue }
-            case .placeCluster:
-                guard let key = targetKey, entriesByKey[key]?.kind == .cluster else { continue }
-            case .placeThinkspace:
-                guard let key = targetKey, entriesByKey[key]?.kind == .thinkspace else { continue }
-            case .feedSeedling:
-                guard let key = targetKey, entriesByKey[key]?.kind == .seedling else { continue }
-            case .startSeedling, .germinateDeepDive:
-                guard newTitle != nil else { continue }
-                if usedCreationMove { continue }
-                usedCreationMove = true
-                targetKey = nil
-            }
-
-            moves.append(RoutedMove(
-                kind: kind,
-                targetKey: targetKey,
-                section: section,
-                newTitle: newTitle,
-                parentQuestionKey: parentQuestionKey,
-                growth: growth,
-                confidence: min(max(confidence, 0), 1)
-            ))
+        var targetKey = entry["targetKey"] as? String
+        if let key = targetKey, entriesByKey[key] == nil {
+            targetKey = nil   // Never trust invented keys.
         }
 
-        return Decision(title: title, captureType: captureType, moves: moves)
+        var section = entry["section"] as? String
+        if let s = section, !validSections.contains(s) { section = nil }
+
+        var newTitle = (entry["newTitle"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if newTitle?.isEmpty == true { newTitle = nil }
+
+        var parentQuestionKey = entry["parentQuestionKey"] as? String
+        if let key = parentQuestionKey,
+           entriesByKey[key]?.kind != .question {
+            parentQuestionKey = nil   // Invented or non-question parents fall to top level.
+        }
+
+        // A concept's future home rides only on seedling moves, and only when
+        // it names a real spatial destination.
+        var homeKey = entry["homeKey"] as? String
+        if kind != .feedSeedling && kind != .startSeedling {
+            homeKey = nil
+        } else if let key = homeKey {
+            let homeKind = entriesByKey[key]?.kind
+            if homeKind != .cluster && homeKind != .thinkspace { homeKey = nil }
+        }
+
+        let growth = (entry["growth"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let confidence = (entry["confidence"] as? Double) ?? 0.6
+
+        // Per-kind structural validation — a move without its required
+        // target is dropped, not repaired into a guess.
+        switch kind {
+        case .advanceQuestion:
+            guard let key = targetKey, entriesByKey[key]?.kind == .question else { return nil }
+        case .spawnQuestion:
+            guard let key = targetKey, entriesByKey[key]?.kind == .deepDive, newTitle != nil else { return nil }
+            if usedCreationMove { return nil }
+            usedCreationMove = true
+        case .feedConnection:
+            guard let key = targetKey, entriesByKey[key]?.kind == .connection, section != nil else { return nil }
+        case .attachClient:
+            guard let key = targetKey, entriesByKey[key]?.kind == .client else { return nil }
+        case .placeCluster:
+            guard let key = targetKey, entriesByKey[key]?.kind == .cluster else { return nil }
+        case .placeThinkspace:
+            guard let key = targetKey, entriesByKey[key]?.kind == .thinkspace else { return nil }
+        case .feedSeedling:
+            guard let key = targetKey, entriesByKey[key]?.kind == .seedling else { return nil }
+        case .startSeedling, .germinateDeepDive:
+            guard newTitle != nil else { return nil }
+            if usedCreationMove { return nil }
+            usedCreationMove = true
+            targetKey = nil
+        }
+
+        return RoutedMove(
+            kind: kind,
+            targetKey: targetKey,
+            section: section,
+            newTitle: newTitle,
+            parentQuestionKey: parentQuestionKey,
+            homeKey: homeKey,
+            growth: growth,
+            confidence: min(max(confidence, 0), 1)
+        )
     }
 }

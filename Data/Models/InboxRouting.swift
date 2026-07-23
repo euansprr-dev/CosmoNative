@@ -25,6 +25,97 @@ enum InboxRouteKind: String, Codable, CaseIterable, Sendable {
     case feedSeedling
     case startSeedling
 
+    /// What accepting this suggestion MAKES — the noun the pill and inspector
+    /// lead with, so "what it becomes" is never implicit. Spatial kinds name
+    /// the atom type they'd create; knowledge-graph kinds name the move.
+    func outcomeNoun(suggestedAtomType: String?) -> String {
+        let atomNoun = suggestedAtomType
+            .flatMap(AtomType.init(rawValue:))
+            .map(\.displayName) ?? "Note"
+        switch self {
+        case .mergeAtom:
+            return "Merge"
+        case .placeInExistingCluster, .createClusterAndPlace,
+             .placeInThinkspace, .createThinkspaceAndPlace:
+            return "\(atomNoun) on canvas"
+        case .createStandaloneAtom:
+            return atomNoun
+        case .advanceQuestion:
+            return "Answers a question"
+        case .spawnQuestion:
+            return "New question"
+        case .feedConnection:
+            return "Develops a concept page"
+        case .attachClient:
+            return "Client idea"
+        case .germinateDeepDive:
+            return "New deep dive"
+        case .feedSeedling:
+            return "Grows a concept"
+        case .startSeedling, .germinateConnection:
+            return "New concept"
+        }
+    }
+
+    /// The SF symbol that pairs with `outcomeNoun` in pills and the inspector.
+    var outcomeIcon: String {
+        switch self {
+        case .mergeAtom:
+            return "arrow.triangle.merge"
+        case .placeInExistingCluster, .createClusterAndPlace,
+             .placeInThinkspace, .createThinkspaceAndPlace, .createStandaloneAtom:
+            return "arrow.turn.down.right"
+        case .advanceQuestion:
+            return "questionmark.circle"
+        case .spawnQuestion:
+            return "questionmark.bubble"
+        case .feedConnection:
+            return "text.append"
+        case .attachClient:
+            return "person.crop.circle"
+        case .germinateDeepDive:
+            return "sparkle.magnifyingglass"
+        case .feedSeedling, .startSeedling, .germinateConnection:
+            return "leaf"
+        }
+    }
+
+    /// The primary accept button says what accepting DOES — one word per kind.
+    var primaryVerbLabel: String {
+        switch self {
+        case .mergeAtom:
+            return "Merge"
+        case .startSeedling, .germinateConnection:
+            return "Start concept"
+        case .feedSeedling:
+            return "Add to concept"
+        case .feedConnection:
+            return "Stage"
+        case .advanceQuestion:
+            return "Answer"
+        case .spawnQuestion:
+            return "Ask"
+        case .attachClient:
+            return "Attach"
+        case .germinateDeepDive:
+            return "Start dive"
+        case .placeInExistingCluster, .createClusterAndPlace,
+             .placeInThinkspace, .createThinkspaceAndPlace, .createStandaloneAtom:
+            return "Place"
+        }
+    }
+
+    /// Seedling-family kinds grow mass instead of creating atoms — the UI
+    /// branches on this for leaf icons and the develop-now follow-up.
+    var isSeedlingKind: Bool {
+        switch self {
+        case .feedSeedling, .startSeedling, .germinateConnection:
+            return true
+        default:
+            return false
+        }
+    }
+
     var legacyClassification: InboxClassification {
         switch self {
         case .mergeAtom:
@@ -72,6 +163,14 @@ struct InboxAtlasMove: Codable, Equatable, Sendable {
     var seedlingUUID: String?
     var seedlingName: String?
 
+    // The concept's future home (feedSeedling / startSeedling) — stamps the
+    // seedling's spatial affinity so the developed page knows where it lives.
+    // Tags, never places: no canvas object exists until development.
+    var homeThinkspaceId: String?
+    var homeThinkspaceName: String?
+    var homeClusterId: String?
+    var homeClusterName: String?
+
     init(
         deepDiveUUID: String? = nil,
         deepDiveName: String? = nil,
@@ -86,7 +185,11 @@ struct InboxAtlasMove: Codable, Equatable, Sendable {
         clientName: String? = nil,
         germinateTitle: String? = nil,
         seedlingUUID: String? = nil,
-        seedlingName: String? = nil
+        seedlingName: String? = nil,
+        homeThinkspaceId: String? = nil,
+        homeThinkspaceName: String? = nil,
+        homeClusterId: String? = nil,
+        homeClusterName: String? = nil
     ) {
         self.deepDiveUUID = deepDiveUUID
         self.deepDiveName = deepDiveName
@@ -102,6 +205,10 @@ struct InboxAtlasMove: Codable, Equatable, Sendable {
         self.germinateTitle = germinateTitle
         self.seedlingUUID = seedlingUUID
         self.seedlingName = seedlingName
+        self.homeThinkspaceId = homeThinkspaceId
+        self.homeThinkspaceName = homeThinkspaceName
+        self.homeClusterId = homeClusterId
+        self.homeClusterName = homeClusterName
     }
 }
 

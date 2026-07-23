@@ -301,6 +301,168 @@ final class ConnectionPromotionService {
         return ConceptMintResult(connectionUUID: saved.uuid, created: true)
     }
 
+    // MARK: - Seedling staging (the grow pill: no page, no canvas block)
+
+    struct SeedlingStageResult: Sendable {
+        let seedlingUUID: String
+        let seedlingName: String
+        /// True when the highlight fed an already-growing seedling instead of
+        /// starting a new one.
+        let fedExisting: Bool
+        /// The Deep Dive seedbed it landed in (nil = unrooted/global).
+        let scopeDeepDiveUUID: String?
+        let scopeDeepDiveTitle: String?
+        /// The development-stage page (the seedling's mergeTarget): an
+        /// UNPLACED connection atom that gives the grown concept an address —
+        /// the highlight hyperlinks to it and opening it lands in the concept
+        /// workspace. Placement stays develop's job. Nil when creation failed.
+        let developmentPageUUID: String?
+    }
+
+    /// The mint pill's "Grow" verb: stage the selection as a seedling in the
+    /// origin concept's Deep Dive seedbed instead of birthing a placed page.
+    /// No atom is created and no canvas block is placed — the concept ripens
+    /// in the dive's SEEDLINGS row and map until a development conversation
+    /// births the page. A same-key seedling already growing in that scope is
+    /// FED (one more thought), never forked.
+    func stageSeedling(
+        named name: String,
+        fromOrigin origin: Atom,
+        contextSnippet: String? = nil,
+        originSection: ConnectionSectionType? = nil
+    ) async -> SeedlingStageResult? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let key = ConceptResolver.conceptKey(trimmed)
+        guard !trimmed.isEmpty, !key.isEmpty,
+              key != ConceptResolver.conceptKey(origin.title ?? "") else { return nil }
+
+        let deepDive = await CosmoInlineInquiryQuestionResolver.resolveDeepDive(for: origin)
+        let scope = deepDive?.uuid
+        let thought = Self.mintThought(
+            contextSnippet: contextSnippet,
+            originUUID: origin.uuid,
+            originSection: originSection
+        )
+
+        if let existing = try? await SeedlingRepository.shared.fetchLive(
+            conceptKey: key,
+            scopeDeepDiveUUID: scope
+        ) {
+            if let thought {
+                _ = try? await SeedlingRepository.shared.feed(uuid: existing.uuid, thought: thought)
+            }
+            let pageUUID = await ensureDevelopmentPage(for: existing, origin: origin)
+            postSeedbedChanged(deepDiveUUID: scope)
+            return SeedlingStageResult(
+                seedlingUUID: existing.uuid,
+                seedlingName: existing.name,
+                fedExisting: true,
+                scopeDeepDiveUUID: scope,
+                scopeDeepDiveTitle: deepDive?.title,
+                developmentPageUUID: pageUUID
+            )
+        }
+
+        var seedling = Seedling.new(name: trimmed, firstThought: thought, scopeDeepDiveUUID: scope)
+        // Map anchor: the seedling hangs under the origin's concept node.
+        seedling.parentConceptName = origin.title
+        guard let created = try? await SeedlingRepository.shared.create(seedling) else { return nil }
+
+        // Fill-only affinity: the origin's space is where the family lives,
+        // so a develop-weeks-later page still lands beside it.
+        if let thinkspaceUUID = try? await anyBlockThinkspace(atomUUID: origin.uuid) {
+            let thinkspaceName = (try? await atoms.fetch(uuid: thinkspaceUUID))?.title
+            try? await SeedlingRepository.shared.setAffinity(
+                uuid: created.uuid,
+                thinkspaceId: thinkspaceUUID,
+                thinkspaceName: thinkspaceName,
+                clusterId: nil,
+                clusterName: nil
+            )
+        }
+        let pageUUID = await ensureDevelopmentPage(for: created, origin: origin)
+        postSeedbedChanged(deepDiveUUID: scope)
+        return SeedlingStageResult(
+            seedlingUUID: created.uuid,
+            seedlingName: trimmed,
+            fedExisting: false,
+            scopeDeepDiveUUID: scope,
+            scopeDeepDiveTitle: deepDive?.title,
+            developmentPageUUID: pageUUID
+        )
+    }
+
+    /// The grown concept's ADDRESS: an unplaced, development-stage connection
+    /// page set as the seedling's mergeTarget. It exists so the highlighted
+    /// phrase can hyperlink immediately and clicking through lands in the
+    /// concept workspace — but no canvas block is created, no claims are
+    /// seeded (the seedling's thoughts arrive as ghost rows at develop time,
+    /// via the existing mergeTarget path), and no dive links are added (the
+    /// map keeps showing the seedling leaf, not a duplicate concept node).
+    /// Reuses the seedling's existing mergeTarget when one is already live.
+    private func ensureDevelopmentPage(for seedling: Seedling, origin: Atom) async -> String? {
+        if let target = seedling.mergeTargetConnectionUUID,
+           let page = try? await atoms.fetch(uuid: target),
+           !page.isDeleted {
+            return page.uuid
+        }
+
+        let originTitle = origin.title ?? "Untitled Concept"
+        var sections = ConnectionFocusModeState.backfillingMissingSections([])
+        if let refIdx = sections.firstIndex(where: { $0.type == .references }) {
+            sections[refIdx].items.append(Self.linkItem(to: ConnectionLinkRef(uuid: origin.uuid, title: originTitle)))
+        }
+
+        var stub = Atom.new(type: .connection, title: seedling.name, body: nil, metadata: nil)
+        stub = stub.mergingStructuredKeys(ConnectionStructuredData(sections: sections))
+        stub.body = flattenedBody(sections: sections, notes: [])
+        stub = stub.mergingMetadataKeys(["sourceSeedlingUuid": seedling.uuid])
+        stub = stub.withLinks([
+            AtomLink(type: AtomLinkType.connection.rawValue, uuid: origin.uuid, entityType: AtomType.connection.rawValue)
+        ])
+        guard let created = try? await atoms.create(stub) else { return nil }
+
+        var state = ConnectionFocusModeState.load(atomUUID: created.uuid) ?? ConnectionFocusModeState(atomUUID: created.uuid)
+        state.sections = sections
+        state.lastModified = Date()
+        state.save()
+
+        _ = try? await SeedlingRepository.shared.mutate(uuid: seedling.uuid) { row in
+            guard row.mergeTargetConnectionUUID != created.uuid else { return false }
+            row.mergeTargetConnectionUUID = created.uuid
+            return true
+        }
+        return created.uuid
+    }
+
+    /// Pure factory: the provenance-carrying thought a grow-stage records.
+    /// Conversation hosts pass no snippet (the sentence may be Cosmo's words —
+    /// organize-don't-author), so the seedling stages name-only: a zero-mass
+    /// bookmark the user can pin ripe.
+    nonisolated static func mintThought(
+        contextSnippet: String?,
+        originUUID: String,
+        originSection: ConnectionSectionType?
+    ) -> SeedlingThought? {
+        guard let snippet = contextSnippet?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !snippet.isEmpty else { return nil }
+        return SeedlingThought(
+            text: snippet,
+            sourceKind: .mint,
+            sourceAtomUUID: originUUID,
+            proposedSection: originSection?.rawValue
+        )
+    }
+
+    private func postSeedbedChanged(deepDiveUUID: String?) {
+        guard let deepDiveUUID else { return }
+        NotificationCenter.default.post(
+            name: CosmoNotification.Inquiry.seedbedChanged,
+            object: nil,
+            userInfo: ["deepDiveUUID": deepDiveUUID]
+        )
+    }
+
     private func postReferencesChanged(originUUID: String, connectionUUID: String) {
         NotificationCenter.default.post(
             name: CosmoNotification.Connection.referencesChanged,

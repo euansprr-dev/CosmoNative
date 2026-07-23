@@ -734,7 +734,7 @@ private struct CosmoInlineAssistantRunCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space10) {
             if let ask {
-                askHeader(ask)
+                CosmoInlineAssistantAskHeader(ask: ask, skill: skill)
             }
             ForEach(deliverables) { message in
                 content(message)
@@ -757,25 +757,139 @@ private struct CosmoInlineAssistantRunCard: View {
         .accessibilityElement(children: .contain)
     }
 
-    private func askHeader(_ ask: CosmoInlineAssistantPaneMessage) -> some View {
+}
+
+/// The ask as a compact quoted header, clamped to four lines. Expanding grows
+/// the layout so everything beneath it reflows — the text must never paint
+/// under sibling receipt cards. Hovering reveals a copy affordance.
+private struct CosmoInlineAssistantAskHeader: View {
+    let ask: CosmoInlineAssistantPaneMessage
+    var skill: CosmoInlineSkillDefinition?
+
+    @State private var isExpanded = false
+    @State private var isHovered = false
+    @State private var clampedHeight: CGFloat = 0
+    @State private var fullHeight: CGFloat = 0
+
+    private static let collapsedLineLimit = 4
+
+    private var isTruncated: Bool { fullHeight > clampedHeight + 1 }
+
+    var body: some View {
         VStack(alignment: .leading, spacing: DS.space4) {
             if let skill {
                 CosmoInlineAssistantSkillBadge(skill: skill)
             }
-            HStack(alignment: .top, spacing: DS.space8) {
-                RoundedRectangle(cornerRadius: 1)
-                    .fill(DS.accent.opacity(0.55))
-                    .frame(width: 2)
-                Text(ask.content)
-                    .font(DS.callout)
-                    .foregroundStyle(DS.textSecondary)
-                    .textSelection(.enabled)
-                    .lineLimit(4)
+            quotedAsk
+            if isTruncated || isExpanded {
+                expandToggle
             }
-            .fixedSize(horizontal: false, vertical: true)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .overlay(alignment: .topTrailing) {
+            if isHovered {
+                CosmoInlineAssistantCopyMessageButton(text: ask.content)
+            }
+        }
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+        }
+        .animation(ProMotionSprings.focusTransition, value: isExpanded)
+    }
+
+    private var quotedAsk: some View {
+        HStack(alignment: .top, spacing: DS.space8) {
+            RoundedRectangle(cornerRadius: 1)
+                .fill(DS.accent.opacity(0.55))
+                .frame(width: 2)
+            Text(ask.content)
+                .font(DS.callout)
+                .foregroundStyle(DS.textSecondary)
+                .textSelection(.enabled)
+                .lineLimit(isExpanded ? nil : Self.collapsedLineLimit)
+                .background(truncationProbe)
+        }
+        .fixedSize(horizontal: false, vertical: true)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("You asked: \(ask.content)")
+    }
+
+    /// Hidden twins of the ask text — one clamped, one free — measured at the
+    /// live width. A taller free twin means the clamp is cutting lines, which
+    /// is the only case that earns the toggle.
+    private var truncationProbe: some View {
+        ZStack(alignment: .topLeading) {
+            Text(ask.content)
+                .font(DS.callout)
+                .lineLimit(Self.collapsedLineLimit)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
+                    clampedHeight = $0
+                }
+            Text(ask.content)
+                .font(DS.callout)
+                .fixedSize(horizontal: false, vertical: true)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
+                    fullHeight = $0
+                }
+        }
+        .hidden()
+        .accessibilityHidden(true)
+    }
+
+    private var expandToggle: some View {
+        Button {
+            isExpanded.toggle()
+        } label: {
+            HStack(spacing: DS.space4) {
+                Text(isExpanded ? "Show less" : "Show more")
+                    .font(DS.caption.weight(.medium))
+                Image(systemName: "chevron.down")
+                    .font(DS.caption2.weight(.semibold))
+                    .rotationEffect(.degrees(isExpanded ? 180 : 0))
+                    .accessibilityHidden(true)
+            }
+            .foregroundStyle(DS.textMuted)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .cosmoClickCursor()
+        .padding(.leading, DS.space8 + 2)
+        .help(isExpanded ? "Collapse your message" : "Show your whole message")
+        .accessibilityLabel(isExpanded ? "Show less of your message" : "Show your whole message")
+    }
+}
+
+/// Hover affordance on a user message: copies the prompt to the clipboard and
+/// flashes a checkmark as the receipt.
+private struct CosmoInlineAssistantCopyMessageButton: View {
+    let text: String
+    @State private var didCopy = false
+
+    var body: some View {
+        Button {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+            didCopy = true
+            Task {
+                try? await Task.sleep(for: .seconds(1.4))
+                didCopy = false
+            }
+        } label: {
+            Image(systemName: didCopy ? "checkmark" : "doc.on.doc")
+                .font(DS.caption2.weight(.semibold))
+                .foregroundStyle(didCopy ? DS.accent : DS.textSecondary)
+                .frame(width: 22, height: 22)
+                .background(DS.surfaceElevated, in: Circle())
+                .overlay(Circle().strokeBorder(DS.borderSubtle, lineWidth: 1))
+                .contentShape(Circle())
+                .contentTransition(.symbolEffect(.replace))
+        }
+        .buttonStyle(.plain)
+        .cosmoClickCursor()
+        .animation(ProMotionSprings.hover, value: didCopy)
+        .help("Copy your message")
+        .accessibilityLabel(didCopy ? "Copied" : "Copy your message")
+        .transition(.opacity.combined(with: .scale(scale: 0.9)))
     }
 }
 
@@ -786,6 +900,8 @@ private struct CosmoInlineAssistantRunCard: View {
 private struct CosmoInlineAssistantPaneUserRow: View {
     let message: CosmoInlineAssistantPaneMessage
     var skill: CosmoInlineSkillDefinition? = nil
+
+    @State private var isHovered = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space4) {
@@ -803,10 +919,18 @@ private struct CosmoInlineAssistantPaneUserRow: View {
                     RoundedRectangle(cornerRadius: 12)
                         .strokeBorder(DS.accent.opacity(0.14), lineWidth: 1)
                 }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(accessibilityText)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(accessibilityText)
+        .overlay(alignment: .topTrailing) {
+            if isHovered {
+                CosmoInlineAssistantCopyMessageButton(text: message.content)
+            }
+        }
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+        }
     }
 
     private var accessibilityText: String {

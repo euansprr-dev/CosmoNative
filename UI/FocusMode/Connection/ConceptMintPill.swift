@@ -94,6 +94,7 @@ private struct ConceptMintPillHost: ViewModifier {
     @State private var report: ConceptMintSelectionReport?
     @State private var resolution: ConceptMintResolver.Resolution?
     @State private var phase: ConceptMintPill.Phase = .idle
+    @State private var doneText = "Created"
 
     func body(content: Content) -> some View {
         content
@@ -135,35 +136,74 @@ private struct ConceptMintPillHost: ViewModifier {
                 ConceptMintPill(
                     anchor: report.anchor.offsetBy(dx: -host.minX, dy: -host.minY),
                     container: geo.size,
-                    label: resolution.existing.map { "Add link: \($0.title)" }
-                        ?? "New concept: \(report.text.trimmingCharacters(in: .whitespacesAndNewlines))",
-                    isCreate: resolution.existing == nil,
-                    phase: phase
-                ) {
-                    Task { await perform(report: report, resolution: resolution) }
+                    selectionName: report.text.trimmingCharacters(in: .whitespacesAndNewlines),
+                    existingTitle: resolution.existing?.title,
+                    phase: phase,
+                    doneText: doneText
+                ) { action in
+                    Task { await perform(action: action, report: report, resolution: resolution) }
                 }
             }
             .allowsHitTesting(true)
         }
     }
 
-    private func perform(report: ConceptMintSelectionReport, resolution: ConceptMintResolver.Resolution) async {
+    private func perform(
+        action: ConceptMintPill.Action,
+        report: ConceptMintSelectionReport,
+        resolution: ConceptMintResolver.Resolution
+    ) async {
         guard phase == .idle else { return }
         phase = .working
         let name = report.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let existing = resolution.existing {
+        switch action {
+        case .link:
+            guard let existing = resolution.existing else {
+                phase = .idle
+                return
+            }
             resolution.provider.addReferenceRow(uuid: existing.uuid, title: existing.title)
             NotificationCenter.default.post(
                 name: CosmoNotification.Connection.referencesChanged,
                 object: nil,
                 userInfo: ["originUUID": resolution.origin.uuid, "connectionUUID": existing.uuid]
             )
-        } else if let minted = await ConnectionPromotionService.shared.mintConcept(
-            named: name,
-            fromOrigin: resolution.origin,
-            contextSnippet: report.contextSnippet,
-            originSection: report.originSection
-        ) {
+            doneText = "Linked"
+
+        case .grow:
+            // Stage a seedling in the origin's dive seedbed. The concept gets
+            // an unplaced development-stage page (the seedling's mergeTarget)
+            // so the highlight hyperlinks immediately — but no canvas block:
+            // placement stays develop's job.
+            guard let staged = await ConnectionPromotionService.shared.stageSeedling(
+                named: name,
+                fromOrigin: resolution.origin,
+                contextSnippet: report.contextSnippet,
+                originSection: report.originSection
+            ) else {
+                phase = .idle
+                return
+            }
+            if let pageUUID = staged.developmentPageUUID {
+                resolution.provider.addReferenceRow(uuid: pageUUID, title: staged.seedlingName)
+                NotificationCenter.default.post(
+                    name: CosmoNotification.Connection.referencesChanged,
+                    object: nil,
+                    userInfo: ["originUUID": resolution.origin.uuid, "connectionUUID": pageUUID]
+                )
+            }
+            doneText = "Growing"
+
+        case .developNow:
+            guard let minted = await ConnectionPromotionService.shared.mintConcept(
+                named: name,
+                fromOrigin: resolution.origin,
+                contextSnippet: report.contextSnippet,
+                originSection: report.originSection
+            ) else {
+                phase = .idle
+                return
+            }
             resolution.provider.addReferenceRow(uuid: minted.connectionUUID, title: name)
             // The mint service posted referencesChanged BEFORE the live
             // References row above existed — re-post now so the origin's
@@ -173,9 +213,15 @@ private struct ConceptMintPillHost: ViewModifier {
                 object: nil,
                 userInfo: ["originUUID": resolution.origin.uuid, "connectionUUID": minted.connectionUUID]
             )
-        } else {
-            phase = .idle
-            return
+            doneText = "Created"
+            // Developing right away means SWITCHING to the new page — the
+            // whole point of the verb. Small beat first so the ✓ reads.
+            try? await Task.sleep(for: .milliseconds(450))
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.openBlockInFocusMode,
+                object: nil,
+                userInfo: ["atomUUID": minted.connectionUUID]
+            )
         }
         phase = .done
         try? await Task.sleep(for: .milliseconds(900))
@@ -188,20 +234,25 @@ private struct ConceptMintPillHost: ViewModifier {
 // MARK: - The pill
 
 /// The reader pill's positioning grammar (clamp horizontally, sit above the
-/// selection, flip below without headroom), one verb, three beats:
-/// idle → working → ✓ done.
+/// selection, flip below without headroom), three beats: idle → working → ✓
+/// done. When the selection has no page, the capsule splits into two verbs:
+/// "Grow" (stage a seedling in the dive's seedbed — the default) and a
+/// compact "Develop now" (birth the wired page and switch to it).
 struct ConceptMintPill: View {
     enum Phase: Equatable { case idle, working, done }
+    enum Action { case grow, developNow, link }
 
     let anchor: CGRect
     let container: CGSize
-    let label: String
-    let isCreate: Bool
+    let selectionName: String
+    /// Non-nil = a same-key page exists; the one verb is "Add link".
+    let existingTitle: String?
     let phase: Phase
-    let onTap: () -> Void
+    let doneText: String
+    let onAction: (Action) -> Void
 
     @State private var pillSize: CGSize = .zero
-    @State private var isHovered = false
+    @State private var hoveredAction: Action?
 
     private var effectivePillSize: CGSize {
         pillSize == .zero ? CGSize(width: 140, height: 28) : pillSize
@@ -227,25 +278,24 @@ struct ConceptMintPill: View {
     }
 
     var body: some View {
-        Button(action: onTap) {
-            HStack(spacing: DS.space6) {
-                pillIcon
-                Text(phase == .done ? (isCreate ? "Created" : "Linked") : label)
-                    .font(DS.caption.weight(.medium))
-                    .lineLimit(1)
+        HStack(spacing: 0) {
+            if phase != .idle {
+                statusSegment
+            } else if let existingTitle {
+                segment(.link, icon: "point.3.connected.trianglepath.dotted", text: "Add link: \(existingTitle)")
+                    .help("Add this concept to References")
+            } else {
+                segment(.grow, icon: "leaf", text: "Grow: \(selectionName)")
+                    .help("Stage as a growing concept in the dive's seedbed — develop it later")
+                Rectangle()
+                    .fill(DS.borderSubtle)
+                    .frame(width: 1, height: 16)
+                segment(.developNow, icon: "arrow.right.circle", text: "Develop now")
+                    .help("Create the concept page, wire it to this one, and open it")
             }
-            .foregroundStyle(phase == .done ? DS.green : (isHovered ? CosmoMentionColors.connection : DS.textSecondary))
-            .padding(.horizontal, DS.space10)
-            .frame(height: 28)
-            .frame(maxWidth: 320)
-            .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
-        .disabled(phase != .idle)
+        .frame(height: 28)
         .cosmoMenuChrome(cornerRadius: 14)
-        .onHover { hovering in
-            withAnimation(ProMotionSprings.hover) { isHovered = hovering }
-        }
         .onGeometryChange(for: CGSize.self) { proxy in
             proxy.size
         } action: { newValue in
@@ -254,27 +304,51 @@ struct ConceptMintPill: View {
         .position(resolvedPosition)
         .animation(ProMotionSprings.snappy, value: anchor)
         .animation(ProMotionSprings.gentle, value: phase)
-        .help(isCreate
-              ? "Create this concept, add it to References, and hyperlink its mentions"
-              : "Add this concept to References")
-        .accessibilityLabel(label)
     }
 
-    @ViewBuilder
-    private var pillIcon: some View {
-        switch phase {
-        case .idle:
-            Image(systemName: isCreate ? "plus.diamond" : "point.3.connected.trianglepath.dotted")
-                .font(DS.caption2.weight(.semibold))
-                .accessibilityHidden(true)
-        case .working:
-            ProgressView()
-                .controlSize(.small)
-                .scaleEffect(0.6)
-        case .done:
-            Image(systemName: "checkmark")
-                .font(DS.caption2.weight(.bold))
-                .accessibilityHidden(true)
+    private func segment(_ action: Action, icon: String, text: String) -> some View {
+        Button {
+            onAction(action)
+        } label: {
+            HStack(spacing: DS.space6) {
+                Image(systemName: icon)
+                    .font(DS.caption2.weight(.semibold))
+                    .accessibilityHidden(true)
+                Text(text)
+                    .font(DS.caption.weight(.medium))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(hoveredAction == action ? CosmoMentionColors.connection : DS.textSecondary)
+            .padding(.horizontal, DS.space10)
+            .frame(height: 28)
+            .frame(maxWidth: 240)
+            .contentShape(Capsule())
         }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) {
+                hoveredAction = hovering ? action : nil
+            }
+        }
+        .accessibilityLabel(text)
+    }
+
+    private var statusSegment: some View {
+        HStack(spacing: DS.space6) {
+            if phase == .working {
+                ProgressView()
+                    .controlSize(.small)
+                    .scaleEffect(0.6)
+            } else {
+                Image(systemName: "checkmark")
+                    .font(DS.caption2.weight(.bold))
+                    .accessibilityHidden(true)
+                Text(doneText)
+                    .font(DS.caption.weight(.medium))
+            }
+        }
+        .foregroundStyle(phase == .done ? DS.green : DS.textSecondary)
+        .padding(.horizontal, DS.space10)
+        .frame(height: 28)
     }
 }

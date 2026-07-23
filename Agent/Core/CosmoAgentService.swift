@@ -241,9 +241,11 @@ class CosmoAgentService: ObservableObject {
     /// Migrate old model IDs to the current daily-driver model.
     private static func migrateModelId(_ model: String) -> String {
         let migrations: [String: String] = [
-            "anthropic/claude-sonnet-4-5-20250929": "anthropic/claude-sonnet-4.6",
-            "claude-sonnet-4-5-20250929": "claude-sonnet-4-6",
-            "anthropic/claude-sonnet-4.5": "anthropic/claude-sonnet-4.6",
+            "anthropic/claude-sonnet-4-5-20250929": "anthropic/claude-sonnet-5",
+            "claude-sonnet-4-5-20250929": "claude-sonnet-5",
+            "anthropic/claude-sonnet-4.5": "anthropic/claude-sonnet-5",
+            "anthropic/claude-sonnet-4.6": "anthropic/claude-sonnet-5",
+            "claude-sonnet-4-6": "claude-sonnet-5",
             "anthropic/claude-haiku-4-5-20251001": "anthropic/claude-haiku-4.5",
         ]
         return migrations[model] ?? model

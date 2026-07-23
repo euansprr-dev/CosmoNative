@@ -426,6 +426,8 @@ extension EntityType {
             return [0.55, 0.42, 0.67, 1.0]  // Soft purple (mastery portal)
         case .inquirySession:
             return [0.18, 0.60, 0.45, 1.0]  // Accent green (active inquiry)
+        case .extract:
+            return [0.45, 0.44, 0.72, 1.0]  // Indigo-violet (inquiry capture)
         }
     }
 }

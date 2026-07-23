@@ -1,6 +1,8 @@
 // Tests for the Material rail's pure logic: the readiness gate, the evolving
-// "seeking" ladder, intent-query assembly, provenance exclusions, and the
-// diversity-guarded ranking. No DB, no embeddings — deterministic pieces only.
+// "seeking" ladder, facet-query assembly, the rare-term gate, provenance
+// exclusions and lineage overlap, weave linkification, diversity-guarded
+// ranking, and the judge's prompt/parse contract. No DB, no embeddings, no
+// network — deterministic pieces only.
 
 import Testing
 import Foundation
@@ -112,11 +114,6 @@ struct ConceptRecommendationTests {
         #expect(ConceptRecommendationModel.seekingSection(in: s) == .beliefsObjections)
     }
 
-    @Test func objectionsFilledSeeksExamples() {
-        let s = state(goal: ["g"], claims: ["c"], evidence: ["e"], objections: ["o"])
-        #expect(ConceptRecommendationModel.seekingSection(in: s) == .examples)
-    }
-
     @Test func saturatedConceptSeeksNothing() {
         let s = state(
             goal: ["g"], problems: ["p"], claims: ["c"], evidence: ["e"],
@@ -125,40 +122,75 @@ struct ConceptRecommendationTests {
         #expect(ConceptRecommendationModel.seekingSection(in: s) == nil)
     }
 
-    // MARK: - Intent query
+    // MARK: - Facet queries
 
-    @Test func intentQueryCarriesTitleGoalClaimsAndSeek() {
-        let s = state(goal: ["Protect deep work blocks"], claims: ["Switching costs compound"])
-        let query = ConceptRecommendationModel.intentQuery(
-            snapshot: snapshot(state: s),
-            seeking: .evidence
-        )
-        #expect(query.contains("Attention Residue"))
-        #expect(query.contains("Protect deep work blocks"))
-        #expect(query.contains("Switching costs compound"))
-        #expect(query.contains(ConnectionSectionType.evidence.promptQuestion))
-    }
-
-    @Test func intentQueryDedupesRepeatedTextAndCapsLength() {
-        let long = String(repeating: "attention residue theory ", count: 80)
-        let s = state(goal: [long, long], claims: [long])
-        let query = ConceptRecommendationModel.intentQuery(
-            snapshot: snapshot(state: s),
-            seeking: nil
-        )
-        #expect(query.count <= 900)
-    }
-
-    @Test func keyPhraseInputsUseTitleConceptNameAndGoal() {
-        var s = state(goal: ["Guard the first hour"])
+    @Test func identityFacetCarriesTitleConceptNameAndGoal() {
+        var s = state(goal: ["Protect deep work blocks"])
         s.addItem(ConnectionItem(content: "Residue-Free Switching"), toSection: .conceptName)
-        let keys = ConceptRecommendationModel.keyPhraseInputs(snapshot: snapshot(state: s))
-        #expect(keys.name == "Attention Residue")
-        #expect(keys.aliases.contains("Residue-Free Switching"))
-        #expect(keys.aliases.contains("Guard the first hour"))
+        let identity = ConceptRecommendationModel.identityQuery(snapshot: snapshot(state: s))
+        #expect(identity.contains("Attention Residue"))
+        #expect(identity.contains("Residue-Free Switching"))
+        #expect(identity.contains("Protect deep work blocks"))
     }
 
-    // MARK: - Exclusions
+    @Test func momentumFacetCarriesClaimsButNoPromptBoilerplate() {
+        let s = state(goal: ["g"], claims: ["Switching costs compound"])
+        let momentum = ConceptRecommendationModel.momentumQuery(snapshot: snapshot(state: s))
+        #expect(momentum.contains("Switching costs compound"))
+        // Generic prompt questions poison embeddings — banned from queries.
+        for section in ConnectionSectionType.allCases {
+            #expect(!momentum.contains(section.promptQuestion))
+        }
+    }
+
+    @Test func signatureTracksSeekTargetAndCapsFacets() {
+        let long = String(repeating: "attention residue theory ", count: 80)
+        let s = state(goal: [long], claims: [long])
+        let sig = ConceptRecommendationModel.signature(snapshot: snapshot(state: s), seeking: .evidence)
+        #expect(sig.contains("#seek:evidence"))
+        #expect(sig.count <= 600 + 600 + 32)
+    }
+
+    // MARK: - Rare-term gate
+
+    @Test func semanticConvictionBypassesTheGate() {
+        #expect(ConceptRecommendationModel.passesRareTermGate(
+            matchedText: "totally unrelated words",
+            title: "Whatever",
+            vectorSimilarity: 0.55,
+            distinctiveTerms: ["residue"]
+        ))
+    }
+
+    @Test func distinctiveTermHitPassesTheGate() {
+        #expect(ConceptRecommendationModel.passesRareTermGate(
+            matchedText: "the residue of prior tasks lingers",
+            title: "Deep Work",
+            vectorSimilarity: 0.35,
+            distinctiveTerms: ["residue"]
+        ))
+    }
+
+    @Test func commonWordsAloneFailTheGate() {
+        // The Power User Guide case: matches only on corpus-common words.
+        #expect(!ConceptRecommendationModel.passesRareTermGate(
+            matchedText: "the inquiry tab gives you a session experience",
+            title: "Cosmo Power User Guide",
+            vectorSimilarity: 0.34,
+            distinctiveTerms: ["residue"]
+        ))
+    }
+
+    @Test func noDistinctiveVocabularyMeansVectorOnly() {
+        #expect(!ConceptRecommendationModel.passesRareTermGate(
+            matchedText: "anything at all",
+            title: "Anything",
+            vectorSimilarity: 0.45,
+            distinctiveTerms: []
+        ))
+    }
+
+    // MARK: - Exclusions & lineage
 
     @Test func excludedUUIDsCoverSelfLinksAndProvenance() {
         var s = state(goal: ["g"])
@@ -177,6 +209,69 @@ struct ConceptRecommendationTests {
         #expect(excluded.contains("source-9"))    // item provenance
         #expect(excluded.contains("concept-7"))   // reference link
         #expect(excluded.contains("well-3"))      // linked well source
+    }
+
+    @Test func overlapRatioFlagsEmbodiedMaterial() {
+        let page = """
+        Self-experimentation
+        Every single thing must be verified by yourself, by your own direct \
+        experience. You cannot take anyone else's word for how to live.
+        """
+        let embodied = "Every single thing must be verified by your own direct experience."
+        let fresh = "Perception collapses possibility into a single observed outcome."
+        #expect(ConceptRecommendationModel.overlapRatio(of: embodied, within: page) >= 0.6)
+        #expect(ConceptRecommendationModel.overlapRatio(of: fresh, within: page) < 0.3)
+    }
+
+    // MARK: - Weave linkification
+
+    @Test func linkifiedWeaveTurnsKnownTitlesIntoMentions() {
+        let parsed = ConceptRecommendationModel.linkified(
+            text: "Self-experimentation is the only path; direct experience decides.",
+            targets: [
+                (uuid: "page-self-experimentation", title: "Self-experimentation"),
+                (uuid: "page-direct-experience", title: "Direct experience"),
+            ]
+        )
+        let mentions = parsed.mentions
+        #expect(mentions.count == 2)
+        #expect(mentions.contains { $0.entityUUID == "page-self-experimentation" })
+        #expect(mentions.contains { $0.entityUUID == "page-direct-experience" })
+        // Prose casing survives — the pill snapshots the matched words.
+        #expect(mentions.contains { $0.titleSnapshot == "direct experience" })
+    }
+
+    @Test func linkificationRespectsWordBoundaries() {
+        let parsed = ConceptRecommendationModel.linkified(
+            text: "Restarting means restart, not art.",
+            targets: [(uuid: "page-art-00000001", title: "art")]
+        )
+        // "art" is under the 4-char floor AND inside other words — no links.
+        #expect(parsed.mentions.isEmpty)
+    }
+
+    @Test func linkificationOnlyClaimsFirstOccurrence() {
+        let parsed = ConceptRecommendationModel.linkified(
+            text: "Direct experience first; direct experience second.",
+            targets: [(uuid: "page-direct-experience", title: "Direct experience")]
+        )
+        #expect(parsed.mentions.count == 1)
+    }
+
+    @Test func wholePhraseRangeRejectsEmbeddedMatches() {
+        #expect(ConceptRecommendationModel.wholePhraseRange(of: "habit", in: "they inhabit caves") == nil)
+        #expect(ConceptRecommendationModel.wholePhraseRange(of: "habit", in: "a habit forms") != nil)
+    }
+
+    // MARK: - Matched-phrase receipt
+
+    @Test func containedPhraseNamesTheMatch() {
+        let keys = ReadwiseEvidenceMatcher.keyPhrases(conceptName: "Attention Residue", aliases: [])
+        let phrase = ConceptRecommendationModel.containedPhrase(
+            in: "Notice the attention residue after each context switch.",
+            keys: keys
+        )
+        #expect(phrase == "attention residue")
     }
 
     // MARK: - Ranking
@@ -205,6 +300,19 @@ struct ConceptRecommendationTests {
         #expect(ranked.first?.origin == .book)
     }
 
+    @Test func weaveBoostsLiftTaughtOriginsWithinACap() {
+        let candidates = [
+            rec("n1", origin: .note, score: 0.50),
+            rec("q1", origin: .inquiry, score: 0.46),
+        ]
+        // Ten weaves cap at +15% — inquiry (0.46 → 0.529) overtakes the note.
+        let ranked = ConceptRecommendationModel.rank(
+            candidates, originCap: 3, totalCap: 9,
+            weaveBoosts: [ConceptRecommendationOrigin.inquiry.rawValue: 10]
+        )
+        #expect(ranked.map(\.id) == ["q1", "n1"])
+    }
+
     // MARK: - Inbox scoring through the shared phrase matcher
 
     @Test func inboxCaptureMatchingConceptWordsClearsTheFloor() {
@@ -227,5 +335,67 @@ struct ConceptRecommendationTests {
         )
         #expect(hit >= ReadwiseEvidenceMatcher.scoreFloor)
         #expect(miss < ReadwiseEvidenceMatcher.scoreFloor)
+    }
+
+    // MARK: - Judge contract
+
+    private var judgeCandidates: [ConceptRecommendationJudge.Candidate] {
+        [
+            .init(rowID: "atom:aaa", originLabel: "Book", title: "Deep Work", excerpt: "Residue lingers."),
+            .init(rowID: "atom:bbb", originLabel: "Note", title: "API's", excerpt: "Endpoints worth adding."),
+        ]
+    }
+
+    @Test func judgeParseMapsAliasesSectionsAndCoverage() {
+        let aliases = ConceptRecommendationJudge.aliasMap(for: judgeCandidates)
+        let linked = ConceptRecommendationJudge.linkedAliasMap(for: [(uuid: "page-self-experimentation", title: "Self-experimentation")])
+        let raw = """
+        Here is my ruling:
+        {"keep":[{"id":"m1","section":"evidence","why":"Shows residue empirically."}],
+         "covered":[{"id":"m2","by":"r1"}]}
+        """
+        let rulings = ConceptRecommendationJudge.parse(raw, aliases: aliases, linkedAliases: linked)
+        #expect(rulings?.count == 2)
+        #expect(rulings?[0].rowID == "atom:aaa")
+        #expect(rulings?[0].section == .evidence)
+        #expect(rulings?[0].why == "Shows residue empirically.")
+        #expect(rulings?[1].rowID == "atom:bbb")
+        #expect(rulings?[1].coveredByUUID == "page-self-experimentation")
+    }
+
+    @Test func judgeParseReturnsNilOnGarbageAndSkipsUnknownAliases() {
+        let aliases = ConceptRecommendationJudge.aliasMap(for: judgeCandidates)
+        #expect(ConceptRecommendationJudge.parse("no json here", aliases: aliases, linkedAliases: [:]) == nil)
+        let raw = #"{"keep":[{"id":"m9","section":"evidence","why":"ghost"}]}"#
+        let rulings = ConceptRecommendationJudge.parse(raw, aliases: aliases, linkedAliases: [:])
+        #expect(rulings?.isEmpty == true)
+    }
+
+    @Test func judgeEmptyKeepIsARealRuling() {
+        let aliases = ConceptRecommendationJudge.aliasMap(for: judgeCandidates)
+        let rulings = ConceptRecommendationJudge.parse(#"{"keep":[]}"#, aliases: aliases, linkedAliases: [:])
+        #expect(rulings != nil)
+        #expect(rulings?.isEmpty == true)
+    }
+
+    @Test func judgePromptCarriesDossierRulesAndAliases() {
+        let dossier = ConceptRecommendationJudge.Dossier(
+            title: "Experience & inquiry",
+            typeName: "Mental Model",
+            sections: [(name: "Goal", items: ["Understand experience as the ground of reality"])],
+            seekingName: "Claims",
+            linkedPages: [(uuid: "page-self-experimentation", title: "Self-experimentation")]
+        )
+        let aliases = ConceptRecommendationJudge.aliasMap(for: judgeCandidates)
+        let linked = ConceptRecommendationJudge.linkedAliasMap(for: dossier.linkedPages)
+        let prompt = ConceptRecommendationJudge.prompt(
+            dossier: dossier, candidates: judgeCandidates, aliases: aliases, linkedAliases: linked
+        )
+        #expect(prompt.contains("Experience & inquiry"))
+        #expect(prompt.contains("m1 [Book"))
+        #expect(prompt.contains("m2 [Note"))
+        #expect(prompt.contains("r1 · Self-experimentation"))
+        #expect(prompt.contains("REJECT anything about operating software"))
+        #expect(prompt.contains("\"keep\""))
     }
 }

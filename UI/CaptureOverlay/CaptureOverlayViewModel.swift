@@ -63,6 +63,26 @@ final class CaptureOverlayViewModel {
     /// File promises currently streaming in — dismissal is suppressed.
     var receivingCount = 0
 
+    // MARK: - Staged attachments
+
+    /// Files and images dropped into the panel wait here — visible as tiles
+    /// in the well — until the user sends them, so a typed thought and its
+    /// files can land as ONE linked capture. Text and link drops still
+    /// capture instantly; menu-bar drops never stage.
+    var stagedAttachments: [StagedAttachment] = []
+
+    struct StagedAttachment: Identifiable {
+        let id = UUID()
+        let payload: DropPayload
+        let displayName: String
+        let kind: MediaAttachmentKind
+        /// path|size fingerprint so re-dropping the same file doesn't double-stage.
+        let fingerprint: String?
+        var thumbnail: NSImage?
+
+        var isImage: Bool { kind == .image || kind == .screenshot }
+    }
+
     // MARK: - Sources
 
     /// Bumped to pop the Continuity Camera device menu.
@@ -93,6 +113,7 @@ final class CaptureOverlayViewModel {
         self.capturedFrom = capturedFrom
         captureText = ""
         sessionEntries = []
+        stagedAttachments = []
         errorLine = nil
         isDropTargeted = false
         dragPreview = nil
@@ -113,6 +134,12 @@ final class CaptureOverlayViewModel {
     }
 
     func submitText() async {
+        // Staged files present — Enter sends the bundle: the thought and its
+        // attachments leave as one linked capture.
+        if !stagedAttachments.isEmpty {
+            await sendStaged()
+            return
+        }
         let text = captureText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         captureText = ""
@@ -152,6 +179,176 @@ final class CaptureOverlayViewModel {
     }
 
     // MARK: - Drop / paste / picker intake
+
+    /// The drop funnel with staging manners: panel drops stage files and
+    /// images for a combined send; text and links — and every menu-bar drop
+    /// (`staging: false`) — capture instantly.
+    func receive(_ payloads: [DropPayload], staging: Bool) async {
+        guard staging else {
+            await ingest(payloads)
+            return
+        }
+        var instant: [DropPayload] = []
+        for payload in payloads {
+            switch payload {
+            case .text, .url:
+                instant.append(payload)
+            case .file(let url, _):
+                // Folders and .webloc links keep the instant path — folders
+                // expand to many items, weblocs are really links.
+                let isDirectory = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+                if isDirectory || url.pathExtension.lowercased() == "webloc" {
+                    instant.append(payload)
+                } else {
+                    stage(payload)
+                }
+            case .data:
+                stage(payload)
+            }
+        }
+        if !instant.isEmpty {
+            await ingest(instant)
+        }
+    }
+
+    /// Stage one file/data payload as a tile. Over-limit files fail honestly
+    /// here, before send; re-drops of an already-staged file are no-ops.
+    private func stage(_ payload: DropPayload) {
+        switch payload {
+        case .file(let url, let suggestedName):
+            let name = suggestedName ?? url.lastPathComponent
+            let size = Int64((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+            guard size <= InboxDropIngestService.maxFileBytes else {
+                errorLine = "\(name) is \(size / (1024 * 1024)) MB — the capture limit is 100 MB"
+                return
+            }
+            let fingerprint = "\(url.path)|\(size)"
+            guard !stagedAttachments.contains(where: { $0.fingerprint == fingerprint }) else { return }
+            let type = UTType(filenameExtension: url.pathExtension) ?? .data
+            let staged = StagedAttachment(
+                payload: payload,
+                displayName: name,
+                kind: InboxDropIngestService.attachmentKind(for: type),
+                fingerprint: fingerprint
+            )
+            stagedAttachments.append(staged)
+            if staged.isImage { loadThumbnail(for: staged.id, source: .url(url)) }
+
+        case .data(let data, let type, let suggestedName):
+            guard Int64(data.count) <= InboxDropIngestService.maxFileBytes else {
+                errorLine = "That file is \(Int64(data.count) / (1024 * 1024)) MB — the capture limit is 100 MB"
+                return
+            }
+            // Name it now so the eventual capture wears the same name the tile shows.
+            let name = suggestedName ?? InboxDropIngestService.defaultName(for: type)
+            let staged = StagedAttachment(
+                payload: .data(data, type: type, suggestedName: name),
+                displayName: name,
+                kind: InboxDropIngestService.attachmentKind(for: type),
+                fingerprint: nil
+            )
+            stagedAttachments.append(staged)
+            if staged.isImage { loadThumbnail(for: staged.id, source: .data(data)) }
+
+        case .text, .url:
+            break
+        }
+    }
+
+    func removeStaged(_ id: UUID) {
+        stagedAttachments.removeAll { $0.id == id }
+    }
+
+    func clearStaged() {
+        stagedAttachments = []
+    }
+
+    /// The send button: staged files plus whatever's in the thought field.
+    /// With a thought they leave as ONE linked capture; without one each
+    /// file is its own capture, exactly as a bare drop was.
+    func sendStaged() async {
+        let staged = stagedAttachments
+        guard !staged.isEmpty else { return }
+        let thought = captureText.trimmingCharacters(in: .whitespacesAndNewlines)
+        stagedAttachments = []
+        captureText = ""
+        laneAssist.reset()
+
+        guard !thought.isEmpty else {
+            await ingest(staged.map(\.payload))
+            return
+        }
+
+        let combined = await InboxDropIngestService.shared.ingestCombined(
+            text: thought,
+            attachments: staged.map(\.payload),
+            capturedFrom: capturedFrom
+        )
+        if !combined.failedNames.isEmpty {
+            errorLine = "Couldn't attach \(combined.failedNames.joined(separator: ", "))"
+        }
+        let state: SessionEntry.State
+        switch combined.outcome {
+        case .captured(let itemUUID): state = .captured(itemUUID: itemUUID)
+        case .consumed(let reason): state = .consumed(reason: reason)
+        case .failed(let detail): state = .failed(detail)
+        }
+        // A total failure keeps the thought — restore it, never drop the words.
+        if case .failed = combined.outcome, combined.attachedCount == 0 {
+            captureText = thought
+        }
+        let display = thought.count > 40 ? "\u{201C}\(thought.prefix(40))…\u{201D}" : "\u{201C}\(thought)\u{201D}"
+        var destination: String?
+        if case .captured = combined.outcome {
+            destination = "→ Inbox · \(combined.attachedCount) attached"
+        }
+        sessionEntries.append(SessionEntry(
+            displayName: display,
+            kind: staged.first?.kind,
+            state: state,
+            fingerprint: nil,
+            destinationLabel: destination
+        ))
+    }
+
+    /// The panel is closing with unsent staged files — capture them
+    /// individually (the bare-drop path) rather than dropping bytes on the
+    /// floor. Esc never loses a capture; Clear is the explicit discard.
+    func flushStagedOnClose() {
+        let staged = stagedAttachments
+        guard !staged.isEmpty else { return }
+        stagedAttachments = []
+        Task { await ingest(staged.map(\.payload)) }
+    }
+
+    // MARK: - Staged thumbnails
+
+    private enum ThumbnailSource: Sendable {
+        case url(URL)
+        case data(Data)
+    }
+
+    private func loadThumbnail(for id: UUID, source: ThumbnailSource) {
+        Task {
+            let image = await Task.detached(priority: .utility) { () -> NSImage? in
+                let cgSource: CGImageSource?
+                switch source {
+                case .url(let url): cgSource = CGImageSourceCreateWithURL(url as CFURL, nil)
+                case .data(let data): cgSource = CGImageSourceCreateWithData(data as CFData, nil)
+                }
+                guard let cgSource else { return nil }
+                let options: [CFString: Any] = [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceCreateThumbnailWithTransform: true,
+                    kCGImageSourceThumbnailMaxPixelSize: 160,
+                ]
+                guard let cg = CGImageSourceCreateThumbnailAtIndex(cgSource, 0, options as CFDictionary) else { return nil }
+                return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
+            }.value
+            guard let image, let index = stagedAttachments.firstIndex(where: { $0.id == id }) else { return }
+            stagedAttachments[index].thumbnail = image
+        }
+    }
 
     /// The one funnel: resolve → ingest → tray rows. Same-session duplicates
     /// (same file path + size) coalesce onto their existing row.
@@ -203,7 +400,8 @@ final class CaptureOverlayViewModel {
             || types.contains(.string) || types.contains(.URL)
     }
 
-    /// ⌘V while the panel is key and no text field owns focus.
+    /// ⌘V while the panel is key and no text field owns focus. Pasted files
+    /// and images stage like drops; pasted text and links capture instantly.
     func handlePaste() async {
         let pasteboard = NSPasteboard.general
 
@@ -211,16 +409,16 @@ final class CaptureOverlayViewModel {
             forClasses: [NSURL.self],
             options: [.urlReadingFileURLsOnly: true]
         ) as? [URL], !urls.isEmpty {
-            await ingest(urls.map { .file(url: $0, suggestedName: nil) })
+            await receive(urls.map { .file(url: $0, suggestedName: nil) }, staging: true)
             return
         }
 
         if let data = pasteboard.data(forType: .png) {
-            await ingest([.data(data, type: .png, suggestedName: nil)])
+            await receive([.data(data, type: .png, suggestedName: nil)], staging: true)
             return
         }
         if let data = pasteboard.data(forType: .tiff) {
-            await ingest([.data(data, type: .tiff, suggestedName: nil)])
+            await receive([.data(data, type: .tiff, suggestedName: nil)], staging: true)
             return
         }
 
@@ -305,6 +503,9 @@ struct CaptureDragPreview: Equatable {
 
     var items: [Item]
     var totalCount: Int
+    /// True when releasing will stage into the well (files/images over the
+    /// panel) rather than capture instantly — the release line says "add".
+    var stagesOnDrop: Bool = false
 
     var summary: String {
         switch totalCount {

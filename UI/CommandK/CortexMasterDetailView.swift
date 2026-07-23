@@ -95,6 +95,8 @@ struct CortexMasterDetailView: View {
         guard let id = viewModel.selectedNodeId else { return .empty }
         if let action = viewModel.primaryAction, action.id == id {
             return .action(action)
+        } else if let secondary = viewModel.secondaryAction, secondary.id == id {
+            return .action(secondary)
         } else if let row = viewModel.userCommandRows.first(where: { $0.id == id }) {
             return .action(row.action)
         } else if let domainItem = selectedDomainItem(for: id) {

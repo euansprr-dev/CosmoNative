@@ -130,6 +130,9 @@ final class CaptureOverlayPanelController: NSWindowController {
     func hide() {
         isShown = false
         removeMonitors()
+        // Staged-but-unsent files still land (individually, the bare-drop
+        // path) — closing the panel never loses a capture.
+        viewModel.flushStagedOnClose()
         panel.orderOut(nil)
     }
 

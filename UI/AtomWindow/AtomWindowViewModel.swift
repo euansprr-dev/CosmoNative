@@ -324,6 +324,7 @@ extension AtomWindowViewModel {
         case .connection, .clientProfile: return .connection
         case .project: return .project
         case .note: return .note
+        case .extract, .question: return .extract
         default: return .idea
         }
     }

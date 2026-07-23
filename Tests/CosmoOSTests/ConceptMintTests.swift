@@ -111,4 +111,56 @@ final class ConceptMintTests: XCTestCase {
         XCTAssertFalse(ConceptMintPolicy.isPlausibleConceptName("what is flow?"))
         XCTAssertFalse(ConceptMintPolicy.isPlausibleConceptName(String(repeating: "x", count: 80)))
     }
+
+    // MARK: - Grow staging (the mint thought)
+
+    func testMintThoughtCarriesFullProvenance() {
+        let thought = ConnectionPromotionService.mintThought(
+            contextSnippet: "Emotion colors what you notice in the present.",
+            originUUID: "origin-1",
+            originSection: .claims
+        )
+        XCTAssertEqual(thought?.text, "Emotion colors what you notice in the present.")
+        XCTAssertEqual(thought?.sourceKind, .mint)
+        XCTAssertEqual(thought?.sourceAtomUUID, "origin-1")
+        XCTAssertEqual(thought?.proposedSection, ConnectionSectionType.claims.rawValue)
+        XCTAssertNil(thought?.consumedAt)
+    }
+
+    func testMintThoughtWithoutSnippetIsNameOnlyBookmark() {
+        // Conversation hosts pass no snippet (the sentence may be Cosmo's
+        // words): the seedling stages with zero mass, not a fabricated thought.
+        XCTAssertNil(ConnectionPromotionService.mintThought(
+            contextSnippet: nil,
+            originUUID: "origin-1",
+            originSection: nil
+        ))
+        XCTAssertNil(ConnectionPromotionService.mintThought(
+            contextSnippet: "   \n",
+            originUUID: "origin-1",
+            originSection: nil
+        ))
+    }
+
+    func testMintOriginsAreDistinctOldestFirstAndMintOnly() {
+        let thoughts = [
+            SeedlingThought(text: "a", sourceKind: .mint, sourceAtomUUID: "origin-1"),
+            SeedlingThought(text: "b", sourceKind: .inbox, sourceUUID: "cap-1", sourceAtomUUID: "origin-9"),
+            SeedlingThought(text: "c", sourceKind: .mint, sourceAtomUUID: "origin-2"),
+            SeedlingThought(text: "d", sourceKind: .mint, sourceAtomUUID: "origin-1"),
+            SeedlingThought(text: "e", sourceKind: .mint, sourceAtomUUID: nil)
+        ]
+        XCTAssertEqual(SeedlingMintWiring.mintOrigins(from: thoughts), ["origin-1", "origin-2"])
+    }
+
+    func testMintThoughtSourceDecodesTolerantlyOnOlderBuilds() throws {
+        // The `.mint` rawValue must degrade to .manual on decoders that
+        // predate it (iOS mirror) — never poison the whole thoughts array.
+        let data = Data(#"{"id":"t1","text":"x","sourceKind":"definitely-unknown"}"#.utf8)
+        let decoded = try JSONDecoder().decode(SeedlingThought.self, from: data)
+        XCTAssertEqual(decoded.sourceKind, .manual)
+
+        let mint = Data(#"{"id":"t2","text":"y","sourceKind":"mint"}"#.utf8)
+        XCTAssertEqual(try JSONDecoder().decode(SeedlingThought.self, from: mint).sourceKind, .mint)
+    }
 }

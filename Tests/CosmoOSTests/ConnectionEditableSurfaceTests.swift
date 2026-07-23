@@ -263,7 +263,7 @@ struct ConnectionEditableSurfaceTests {
         #expect(resolved?.bullets == ["seeded"])
     }
 
-    @Test func pendingInsertReturnsNilForReplacement() {
+    @Test func pendingInsertResolvesBulletReplacementAsRevision() {
         let model = ConnectionSurfaceSerializer.serialize(
             title: "T",
             conceptType: .mentalModel,
@@ -274,7 +274,60 @@ struct ConnectionEditableSurfaceTests {
             original: "- rough goal",
             proposed: "- sharpened goal"
         )
+        let resolved = ConnectionSurfaceSerializer.pendingInsert(for: op, in: model)
+        #expect(resolved?.section == .goal)
+        #expect(resolved?.bullets == ["sharpened goal"])
+        #expect(resolved?.revisesText == "rough goal")
+        #expect(resolved?.afterText == nil)
+    }
+
+    @Test func pendingInsertReturnsNilForTitleReplacement() {
+        // Title/type edits keep their Manuscript-diff review — they never
+        // render as section ghost rows.
+        let model = ConnectionSurfaceSerializer.serialize(
+            title: "Trust Loops",
+            conceptType: .mentalModel,
+            sections: makeSections()
+        )
+        let op = operation(
+            kind: .textReplacement,
+            original: "# Trust Loops",
+            proposed: "# Better Title"
+        )
         #expect(ConnectionSurfaceSerializer.pendingInsert(for: op, in: model) == nil)
+    }
+
+    @Test func pendingInsertBulletAnchorCarriesPlacementCaption() {
+        let model = ConnectionSurfaceSerializer.serialize(
+            title: "T",
+            conceptType: .mentalModel,
+            sections: makeSections([.process: ["Pick one task.", "Work until the timer ends."]])
+        )
+        let op = operation(
+            kind: .textInsertion,
+            original: "- Pick one task.",
+            proposed: "- Set a 25 minute timer before starting."
+        )
+        let resolved = ConnectionSurfaceSerializer.pendingInsert(for: op, in: model)
+        #expect(resolved?.section == .process)
+        #expect(resolved?.afterText == "Pick one task.")
+        #expect(resolved?.revisesText == nil)
+    }
+
+    @Test func pendingInsertHeaderAnchorHasNoPlacementCaption() {
+        let model = ConnectionSurfaceSerializer.serialize(
+            title: "T",
+            conceptType: .mentalModel,
+            sections: makeSections([.claims: ["existing claim"]])
+        )
+        let op = operation(
+            kind: .textInsertion,
+            original: "## Claims",
+            proposed: "- a fresh claim"
+        )
+        let resolved = ConnectionSurfaceSerializer.pendingInsert(for: op, in: model)
+        #expect(resolved?.section == .claims)
+        #expect(resolved?.afterText == nil)
     }
 
     @Test func pendingInsertReturnsNilWhenAnchorMissing() {

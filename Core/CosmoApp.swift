@@ -328,6 +328,10 @@ struct CosmoApp: App {
             try? await Task.sleep(for: .seconds(6))
             guard !Task.isCancelled else { return }
             await UserDefaultsPruner.pruneStaleState()
+
+            // One-shot: strip idea-workbench keys that the old entity-routing
+            // fallback stamped onto extract/question atoms.
+            await ExtractMetadataWash.runIfNeeded()
         }
     }
 }
@@ -494,6 +498,7 @@ public enum EntityType: String, Codable, Sendable {
     case inquirySession = "inquiry_session"  // Inquiry Workspace: live inquiry session (focus mode)
     case portal                     // Window into another thinkspace (region miniature, travel on open)
     case file                       // File portal block (PDF/XLSX/CSV/any file previewed in place)
+    case extract                    // Inquiry capture (verbatim unit of meaning) — opens the peek reader, never a workbench
 
     public var icon: String {
         switch self {
@@ -518,6 +523,7 @@ public enum EntityType: String, Codable, Sendable {
         case .inquirySession: return "rectangle.split.3x1.fill"
         case .portal: return "arrow.up.forward.app"
         case .file: return "doc.fill"
+        case .extract: return "quote.opening"
         }
     }
 
@@ -545,6 +551,7 @@ public enum EntityType: String, Codable, Sendable {
         case .inquirySession: return DS.accent
         case .portal: return DS.accent
         case .file: return DS.entityFile
+        case .extract: return DS.entityIdea
         }
     }
 }

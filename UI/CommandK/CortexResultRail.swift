@@ -486,7 +486,10 @@ struct CortexResultRail: View {
             if let action = viewModel.primaryAction, action.kind == .calculator {
                 calculatorSection(action)
             } else if let action = viewModel.primaryAction {
-                CommandKSectionLabel(label: "COMMANDS", count: 1 + viewModel.userCommandRows.count)
+                let commandCount = 1
+                    + (viewModel.secondaryAction != nil ? 1 : 0)
+                    + viewModel.userCommandRows.count
+                CommandKSectionLabel(label: "COMMANDS", count: commandCount)
                 CortexRailRow(
                     title: action.title,
                     subtitle: action.subtitle ?? "Press return to run",
@@ -507,6 +510,34 @@ struct CortexResultRail: View {
                     }
                 )
                 .id(action.id)
+
+                // The other capture verb for the same link (swipe ↔ research):
+                // the URL's source type picks the default row above, never
+                // the set of options.
+                if let secondary = viewModel.secondaryAction {
+                    CortexRailRow(
+                        title: secondary.title,
+                        subtitle: secondary.subtitle ?? "Press return to run",
+                        accent: DS.accent,
+                        visualIdentity: CommandKVisualIdentity.action(secondary),
+                        thumbnailURL: nil,
+                        previewText: secondary.subtitle ?? secondary.payload.rawText,
+                        isConnection: false,
+                        isSelected: viewModel.selectedNodeId == secondary.id,
+                        onSelect: {
+                            viewModel.selectedNodeId = secondary.id
+                            viewModel.selectedResultIndex =
+                                viewModel.searchSelectionIndex(for: secondary.id)
+                        },
+                        onOpen: {
+                            viewModel.selectedNodeId = secondary.id
+                            viewModel.selectedResultIndex =
+                                viewModel.searchSelectionIndex(for: secondary.id)
+                            viewModel.openSelected()
+                        }
+                    )
+                    .id(secondary.id)
+                }
             }
 
             if !viewModel.userCommandRows.isEmpty {

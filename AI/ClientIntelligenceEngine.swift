@@ -36,7 +36,8 @@ final class ClientIntelligenceEngine {
         let response = try await ResearchService.shared.analyze(
             prompt: prompt,
             systemPrompt: intelligenceSystemPrompt,
-            tier: .strategist
+            tier: .strategist,
+            disableReasoning: true  // structured JSON on Sonnet 5: thinking would share the token budget
         )
 
         print("ClientIntelligenceEngine: Got response (\(response.count) chars)")
@@ -252,7 +253,8 @@ final class ClientIntelligenceEngine {
         let response = try await ResearchService.shared.analyze(
             prompt: prompt,
             systemPrompt: failureAnalysisSystemPrompt,
-            tier: .strategist
+            tier: .strategist,
+            disableReasoning: true  // structured JSON on Sonnet 5: thinking would share the token budget
         )
 
         print("ClientIntelligenceEngine: Failure fingerprint response (\(response.count) chars) for \(formatLabel)")

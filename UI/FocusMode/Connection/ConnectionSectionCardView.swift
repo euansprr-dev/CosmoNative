@@ -228,6 +228,8 @@ struct ConnectionSectionCardView: View {
 /// A not-yet-accepted concept-collaborator insert shown in place — dashed,
 /// accent-tinted, with the proposed bullet(s) and a ✓/✗ pair. Accepting routes
 /// through the same per-operation apply path as the old full-screen diff.
+/// A row with `revisesText` is a REVISION of an existing entry: the current
+/// wording shows struck-through above the proposed one.
 struct ConnectionPendingInsertRow: View {
     let insert: ConnectionPendingInsert
     let accent: Color
@@ -236,33 +238,16 @@ struct ConnectionPendingInsertRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: DS.space8) {
-            // Sparkles = collaborator proposal; tray = your own captured
-            // material waiting to be swept in (inbox feed, seedling develop).
-            Image(systemName: insert.isFromCapture ? "tray.and.arrow.down" : "sparkles")
+            // Sparkles = collaborator proposal; pencil = revision of an
+            // existing entry; tray = your own captured material waiting to be
+            // swept in (inbox feed, seedling develop).
+            Image(systemName: glyph)
                 .font(.system(size: 9, weight: .semibold))
                 .foregroundStyle(accent)
                 .padding(.top, 3)
                 .accessibilityHidden(true)
 
-            // Each bullet previews as its own dotted row — the exact rows that
-            // will land in the section — so a multi-item capture never reads
-            // as one blob before it's accepted.
-            VStack(alignment: .leading, spacing: DS.space6) {
-                ForEach(Array(insert.bullets.enumerated()), id: \.offset) { _, bullet in
-                    HStack(alignment: .top, spacing: DS.space8) {
-                        Circle()
-                            .fill(accent.opacity(0.9))
-                            .frame(width: 5, height: 5)
-                            .padding(.top, 6)
-                            .accessibilityHidden(true)
-                        Text(bullet)
-                            .font(DS.callout)
-                            .foregroundStyle(DS.text)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-            }
+            content
 
             HStack(spacing: DS.space4) {
                 decisionButton(system: "checkmark", tint: accent, label: "Accept") { onAccept(insert) }
@@ -277,11 +262,62 @@ struct ConnectionPendingInsertRow: View {
                 .stroke(accent.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
         )
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(
-            insert.isFromCapture
-                ? "From your inbox, waiting to be swept in: \(insert.bullets.joined(separator: ", "))"
-                : "Suggested for this section: \(insert.bullets.joined(separator: ", "))"
-        )
+        .accessibilityLabel(accessibilityText)
+    }
+
+    private var glyph: String {
+        if insert.isRevision { return "pencil" }
+        return insert.isFromCapture ? "tray.and.arrow.down" : "sparkles"
+    }
+
+    private var content: some View {
+        // Each bullet previews as its own dotted row — the exact rows that
+        // will land in the section — so a multi-item capture never reads
+        // as one blob before it's accepted.
+        VStack(alignment: .leading, spacing: DS.space6) {
+            if let revises = insert.revisesText {
+                Text(revises)
+                    .font(DS.callout)
+                    .strikethrough(true, color: DS.textMuted)
+                    .foregroundStyle(DS.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            ForEach(Array(insert.bullets.enumerated()), id: \.offset) { _, bullet in
+                HStack(alignment: .top, spacing: DS.space8) {
+                    Circle()
+                        .fill(accent.opacity(0.9))
+                        .frame(width: 5, height: 5)
+                        .padding(.top, 6)
+                        .accessibilityHidden(true)
+                    Text(bullet)
+                        .font(DS.callout)
+                        .foregroundStyle(DS.text)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            if let after = insert.afterText {
+                Text("after: \(after)")
+                    .font(DS.caption)
+                    .foregroundStyle(DS.textMuted)
+                    .lineLimit(1)
+            }
+        }
+    }
+
+    private var accessibilityText: String {
+        let joined = insert.bullets.joined(separator: ", ")
+        if let revises = insert.revisesText {
+            return "Suggested revision, replacing \(revises) with: \(joined)"
+        }
+        if insert.isFromCapture {
+            return "From your inbox, waiting to be swept in: \(joined)"
+        }
+        if let after = insert.afterText {
+            return "Suggested for this section after \(after): \(joined)"
+        }
+        return "Suggested for this section: \(joined)"
     }
 
     private func decisionButton(

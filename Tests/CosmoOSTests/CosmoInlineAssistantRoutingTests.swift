@@ -410,10 +410,10 @@ final class CosmoInlineAssistantRoutingTests: XCTestCase {
             AnthropicProvider.nativeModelID(AgentModelTier.sonnet5.modelId),
             "claude-sonnet-5"
         )
-        // Sonnet 4.6 stays the failover target — its mapping must hold too.
+        // The strategist tier rides Sonnet 5 too — its mapping must hold.
         XCTAssertEqual(
             AnthropicProvider.nativeModelID(AgentModelTier.strategist.modelId),
-            "claude-sonnet-4-6"
+            "claude-sonnet-5"
         )
     }
 

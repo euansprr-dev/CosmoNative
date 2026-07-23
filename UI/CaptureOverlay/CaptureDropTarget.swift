@@ -17,6 +17,7 @@ struct CaptureDropTarget: NSViewRepresentable {
     func makeNSView(context: Context) -> CaptureDropTargetView {
         let view = CaptureDropTargetView()
         view.viewModel = viewModel
+        view.stagesDrops = true
         return view
     }
 
@@ -30,6 +31,9 @@ final class CaptureDropTargetView: NSView {
     /// Fired whenever a drop was accepted — the menu-bar target uses it to
     /// flash confirmation (the panel shows its tray instead).
     var onDropHandled: (() -> Void)?
+    /// Panel target: dropped files stage in the well for a combined send.
+    /// Menu-bar target: false — drops there capture instantly, windowless.
+    var stagesDrops = false
 
     /// Serial queue for file-promise reception, per the API contract.
     private let promiseQueue: OperationQueue = {
@@ -55,7 +59,7 @@ final class CaptureDropTargetView: NSView {
     // MARK: - NSDraggingDestination
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        let preview = Self.preview(from: sender.draggingPasteboard)
+        let preview = Self.preview(from: sender.draggingPasteboard, stages: stagesDrops)
         Task { @MainActor in
             viewModel?.dragPreview = preview
             viewModel?.isDropTargeted = true
@@ -142,8 +146,9 @@ final class CaptureDropTargetView: NSView {
 
     private func ingest(_ payloads: [DropPayload]) {
         onDropHandled?()
+        let staging = stagesDrops
         Task { @MainActor [weak self] in
-            await self?.viewModel?.ingest(payloads)
+            await self?.viewModel?.receive(payloads, staging: staging)
         }
     }
 
@@ -163,7 +168,7 @@ final class CaptureDropTargetView: NSView {
                         viewModel.errorLine = "Couldn't receive the file — \(error.localizedDescription)"
                         return
                     }
-                    await viewModel.ingest([.file(url: url, suggestedName: nil)])
+                    await viewModel.receive([.file(url: url, suggestedName: nil)], staging: self.stagesDrops)
                 }
             }
         }
@@ -182,13 +187,17 @@ final class CaptureDropTargetView: NSView {
     /// Reads what it can from the drag pasteboard without consuming anything:
     /// filenames for file drags, promised types for promises, host for links,
     /// a snippet for text — so the well can show what's about to land.
-    private static func preview(from pasteboard: NSPasteboard) -> CaptureDragPreview {
+    private static func preview(from pasteboard: NSPasteboard, stages: Bool) -> CaptureDragPreview {
         var items: [CaptureDragPreview.Item] = []
+        // Files, promises, and raw images stage in the panel ("Release to
+        // add"); links and text always capture on release.
+        var stagesOnDrop = false
 
         if let urls = pasteboard.readObjects(
             forClasses: [NSURL.self],
             options: [.urlReadingFileURLsOnly: true]
         ) as? [URL], !urls.isEmpty {
+            stagesOnDrop = stages
             items = urls.enumerated().map { index, url in
                 let isDirectory = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
                 return CaptureDragPreview.Item(
@@ -200,6 +209,7 @@ final class CaptureDropTargetView: NSView {
         } else if let receivers = pasteboard.readObjects(
             forClasses: [NSFilePromiseReceiver.self]
         ) as? [NSFilePromiseReceiver], !receivers.isEmpty {
+            stagesOnDrop = stages
             items = receivers.enumerated().map { index, receiver in
                 let type = receiver.fileTypes.first.flatMap { UTType($0) }
                 let ext = type?.preferredFilenameExtension
@@ -215,13 +225,18 @@ final class CaptureDropTargetView: NSView {
         ) as? [URL], let url = urls.first(where: { !$0.isFileURL }) {
             items = [CaptureDragPreview.Item(id: 0, name: url.host ?? url.absoluteString, systemImage: "link")]
         } else if pasteboard.data(forType: .png) != nil || pasteboard.data(forType: .tiff) != nil {
+            stagesOnDrop = stages
             items = [CaptureDragPreview.Item(id: 0, name: "Image", systemImage: "photo")]
         } else if let string = pasteboard.string(forType: .string) {
             let snippet = string.trimmingCharacters(in: .whitespacesAndNewlines).prefix(48)
             items = [CaptureDragPreview.Item(id: 0, name: "\u{201C}\(snippet)…\u{201D}", systemImage: "text.quote")]
         }
 
-        return CaptureDragPreview(items: Array(items.prefix(4)), totalCount: items.count)
+        return CaptureDragPreview(
+            items: Array(items.prefix(4)),
+            totalCount: items.count,
+            stagesOnDrop: stagesOnDrop
+        )
     }
 
     private static func symbol(forPathExtension ext: String) -> String {

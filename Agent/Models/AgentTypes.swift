@@ -25,9 +25,9 @@ enum AgentProvider: String, Codable, CaseIterable, Sendable {
 
     var defaultModel: String {
         switch self {
-        case .anthropic: return "claude-sonnet-4-6"
+        case .anthropic: return "claude-sonnet-5"
         case .openai: return "gpt-4o"
-        case .openRouter: return "anthropic/claude-sonnet-4.6"
+        case .openRouter: return "anthropic/claude-sonnet-5"
         case .ollama: return "llama3.2"
         case .custom: return "gpt-4o"
         }
@@ -57,7 +57,7 @@ enum AgentProvider: String, Codable, CaseIterable, Sendable {
         ("openai/gpt-chat-latest", "GPT Chat Latest"),
         ("google/gemini-3.5-flash", "Gemini 3.5 Flash"),
         ("google/gemini-3-flash-preview", "Gemini 3 Flash"),
-        ("anthropic/claude-sonnet-4.6", "Claude Sonnet 4.6"),
+        ("anthropic/claude-sonnet-5", "Claude Sonnet 5"),
         ("anthropic/claude-sonnet-4.5", "Claude Sonnet 4.5"),
         ("anthropic/claude-haiku-4.5", "Claude Haiku 4.5"),
         ("anthropic/claude-opus-4.6", "Claude Opus 4.6"),
@@ -387,7 +387,7 @@ enum AgentModelTier: String, Codable, Sendable {
     static let autoDefault: AgentModelTier = .sonnet5
 
     case sensor      // Haiku 4.5 — cheap bulk analysis, classification, scoring
-    case strategist  // Sonnet 4.6 — daily driver conversations, outlines, re-ranking, strategy
+    case strategist  // Sonnet 5 — daily driver conversations, outlines, re-ranking, strategy
     case writer      // Opus 4.6 — explicit premium route only
     case sonnet5     // Sonnet 5 — agentic/spatial work (thinkspace organizing)
     case gpt55Thinking
@@ -396,6 +396,9 @@ enum AgentModelTier: String, Codable, Sendable {
     case geminiFlashLatest
     case gemini35Flash
 
+    // .strategist is intentionally absent: it now resolves to the same model as
+    // .sonnet5, and two "Sonnet 5" rows in the skill pickers would be confusing.
+    // The case itself stays so persisted skills keep decoding.
     static let skillSelectableCases: [AgentModelTier] = [
         .geminiFlashLatest,
         .gemini35Flash,
@@ -403,7 +406,6 @@ enum AgentModelTier: String, Codable, Sendable {
         .gpt55Thinking,
         .opus47,
         .sonnet5,
-        .strategist,
         .sensor,
         .writer
     ]
@@ -411,7 +413,7 @@ enum AgentModelTier: String, Codable, Sendable {
     var modelId: String {
         switch self {
         case .sensor: return "anthropic/claude-haiku-4.5"
-        case .strategist: return "anthropic/claude-sonnet-4.6"
+        case .strategist: return "anthropic/claude-sonnet-5"
         case .writer: return "anthropic/claude-opus-4.6"
         case .sonnet5: return "anthropic/claude-sonnet-5"
         case .gpt55Thinking: return "openai/gpt-5.5"
@@ -425,7 +427,7 @@ enum AgentModelTier: String, Codable, Sendable {
     var displayLabel: String {
         switch self {
         case .sensor: return "Haiku"
-        case .strategist: return "Sonnet 4.6"
+        case .strategist: return "Sonnet 5"
         case .writer: return "Opus"
         case .sonnet5: return "Sonnet 5"
         case .gpt55Thinking: return "GPT 5.5 Thinking"
@@ -439,7 +441,10 @@ enum AgentModelTier: String, Codable, Sendable {
     var maxTokens: Int {
         switch self {
         case .sensor: return 4096
-        case .strategist: return 8192
+        // Strategist now rides Sonnet 5, which thinks adaptively by default;
+        // thinking + response share max_tokens, so it needs the same headroom
+        // as .sonnet5.
+        case .strategist: return 16384
         case .writer: return 16384
         // Sonnet 5 thinks adaptively by default and thinking + response share
         // max_tokens — 8192 risked truncating heavy agentic turns.
@@ -879,9 +884,9 @@ struct ModelFailoverChain: Sendable {
         FailoverModel(modelId: "openai/gpt-5.4", maxRetries: 1, label: "GPT 5.4"),
     ])
 
-    /// Default chain: Sonnet 4.6 → Haiku → pinned Gemini 3 Flash
+    /// Default chain: Sonnet 5 → Haiku → pinned Gemini 3 Flash
     static let defaultChain = ModelFailoverChain(models: [
-        FailoverModel(modelId: "anthropic/claude-sonnet-4.6", maxRetries: 1, label: "Sonnet 4.6"),
+        FailoverModel(modelId: "anthropic/claude-sonnet-5", maxRetries: 1, label: "Sonnet 5"),
         FailoverModel(modelId: "anthropic/claude-haiku-4.5", maxRetries: 1, label: "Haiku"),
         FailoverModel(modelId: "google/gemini-3-flash-preview", maxRetries: 1, label: "Gemini 3 Flash"),
     ])
@@ -920,7 +925,7 @@ struct ModelFailoverChain: Sendable {
 
     static let sonnet5Chain = ModelFailoverChain(models: [
         FailoverModel(modelId: "anthropic/claude-sonnet-5", maxRetries: 1, label: "Sonnet 5"),
-        FailoverModel(modelId: "anthropic/claude-sonnet-4.6", maxRetries: 1, label: "Sonnet 4.6"),
+        FailoverModel(modelId: "anthropic/claude-haiku-4.5", maxRetries: 1, label: "Haiku"),
     ])
 
     /// Get the appropriate failover chain for a model tier

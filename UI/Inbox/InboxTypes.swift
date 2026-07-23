@@ -124,7 +124,35 @@ protocol InboxInspectorHost {
 
 // MARK: - Display Helpers
 
+extension InboxRouteKind {
+    /// The tint that pairs with `outcomeNoun`/`outcomeIcon` — the app's
+    /// established entity-color language, accent for the growing/spatial
+    /// flows, orange only for merges (the caught-a-duplicate warning voice).
+    var outcomeTint: Color {
+        switch self {
+        case .mergeAtom:
+            return DS.orange
+        case .feedConnection:
+            return DS.entityConnection
+        case .advanceQuestion, .spawnQuestion, .germinateDeepDive:
+            return DS.entityResearch
+        case .attachClient:
+            return DS.entityIdea
+        case .feedSeedling, .startSeedling, .germinateConnection,
+             .placeInExistingCluster, .createClusterAndPlace,
+             .placeInThinkspace, .createThinkspaceAndPlace, .createStandaloneAtom:
+            return DS.accent
+        }
+    }
+}
+
 extension InboxItem {
+    /// The primary suggestion's route kind, typed — decoded from the stored
+    /// column, never the bundle (per-row JSON decodes are a ledger hot-path
+    /// cost the revamp evicted).
+    var primaryRouteKindValue: InboxRouteKind? {
+        primaryRouteKind.flatMap(InboxRouteKind.init(rawValue:))
+    }
     /// Human destination line for pills, toasts, and the inspector.
     var spatialDestinationTitle: String {
         if let destinationPath, !destinationPath.isEmpty { return destinationPath }

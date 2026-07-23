@@ -263,6 +263,12 @@ struct ConnectionPendingInsert: Identifiable, Equatable {
     let operationID: UUID
     let section: ConnectionSectionType
     let bullets: [String]
+    /// Set when this row REVISES an existing entry (a textReplacement op):
+    /// the current bullet text, shown struck-through above the new wording.
+    var revisesText: String? = nil
+    /// Set when an insertion anchors an existing bullet (it will land right
+    /// after it) — display copy for the row's placement caption.
+    var afterText: String? = nil
     /// Set when this row is persisted pending material — accept/reject then
     /// route through `ConnectionStagingStore` instead of the assistant store.
     var stagedEntryId: String? = nil
@@ -272,6 +278,10 @@ struct ConnectionPendingInsert: Identifiable, Equatable {
     /// True for material that arrived from a capture (inbox/seedling) rather
     /// than an assistant proposal — the row wears a different mark.
     var isFromCapture: Bool { stagedEntryId != nil }
+
+    /// True when this ghost row rewrites an existing entry instead of adding
+    /// new ones.
+    var isRevision: Bool { revisesText != nil }
 }
 
 // MARK: - Staged objection handling

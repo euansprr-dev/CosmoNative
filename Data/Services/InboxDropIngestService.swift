@@ -88,6 +88,154 @@ final class InboxDropIngestService {
         return results
     }
 
+    // MARK: - Combined capture (thought + attachments)
+
+    /// What happened to a staged thought-plus-files send.
+    struct CombinedOutcome {
+        let outcome: DropCaptureResult.Outcome
+        let attachedCount: Int
+        /// Files that couldn't be read or stored — reported, never silently dropped.
+        let failedNames: [String]
+    }
+
+    /// One typed thought plus its staged files as a SINGLE inbox capture —
+    /// the thought is the item's text and every file rides it as an owned
+    /// attachment. The Capture Anywhere staging tray lands here; bare drops
+    /// (no thought) keep the one-item-per-file path above.
+    func ingestCombined(
+        text: String,
+        attachments: [DropPayload],
+        capturedFrom: String? = nil
+    ) async -> CombinedOutcome {
+        isIngesting = true
+        defer { isIngesting = false }
+
+        let dropSessionId = UUID().uuidString
+        var failedNames: [String] = []
+        var drafts: [StoredAttachmentDraft] = []
+
+        for payload in attachments {
+            guard let resolved = resolveAttachmentBytes(payload, failedNames: &failedNames) else { continue }
+            let kind = Self.attachmentKind(for: resolved.type)
+            let attachmentId = UUID().uuidString
+            do {
+                let media = try CaptureMediaStorage.shared.store(
+                    data: resolved.data,
+                    capturedItemId: dropSessionId,
+                    attachmentId: attachmentId,
+                    originalFilename: resolved.filename,
+                    mimeType: resolved.type.preferredMIMEType,
+                    telegramFilePath: nil,
+                    kind: kind
+                )
+                drafts.append(StoredAttachmentDraft(
+                    attachmentId: attachmentId,
+                    media: media,
+                    byteCount: resolved.data.count,
+                    type: resolved.type,
+                    filename: resolved.filename,
+                    kind: kind,
+                    extracted: await extractText(from: resolved.data, type: resolved.type, kind: kind)
+                ))
+            } catch {
+                failedNames.append(resolved.filename)
+            }
+        }
+
+        guard !drafts.isEmpty else {
+            return CombinedOutcome(
+                outcome: .failed("Couldn't read the attached files"),
+                attachedCount: 0,
+                failedNames: failedNames
+            )
+        }
+
+        let outcome = await ingestText(
+            rawText: text, title: nil,
+            dropSessionId: dropSessionId, capturedFrom: capturedFrom,
+            attachmentUUIDs: drafts.map(\.attachmentId)
+        )
+        guard case .captured(let itemUUID) = outcome else {
+            return CombinedOutcome(outcome: outcome, attachedCount: 0, failedNames: failedNames)
+        }
+
+        for draft in drafts {
+            var attachment = MediaAttachment.makeLocal(
+                owner: .inboxItem,
+                ownerUUID: itemUUID,
+                kind: draft.kind,
+                localStoragePath: draft.media.originalPath,
+                thumbnailPath: draft.media.thumbnailPath,
+                originalFilename: draft.filename,
+                mimeType: draft.type.preferredMIMEType,
+                fileSize: Int64(draft.byteCount),
+                metadata: metadataJSON([
+                    "captureSource": "mac_drop",
+                    "dropSessionId": dropSessionId,
+                ])
+            )
+            attachment.uuid = draft.attachmentId
+            attachment.extractedText = draft.extracted
+            do {
+                _ = try await MediaAttachmentRepository.shared.create(attachment)
+            } catch {
+                PersistenceHealth.note(
+                    .writeFailure,
+                    context: "InboxDropIngest.attachment(\(draft.attachmentId.prefix(8)))",
+                    detail: String(describing: error)
+                )
+            }
+        }
+        AttachmentCloudStore.kick()
+
+        return CombinedOutcome(
+            outcome: .captured(itemUUID: itemUUID),
+            attachedCount: drafts.count,
+            failedNames: failedNames
+        )
+    }
+
+    private struct StoredAttachmentDraft {
+        let attachmentId: String
+        let media: StoredCaptureMedia
+        let byteCount: Int
+        let type: UTType
+        let filename: String
+        let kind: MediaAttachmentKind
+        let extracted: String?
+    }
+
+    /// Resolve a stage-able payload (file or data) to bytes; size caps and
+    /// read failures land in `failedNames` honestly.
+    private func resolveAttachmentBytes(
+        _ payload: DropPayload,
+        failedNames: inout [String]
+    ) -> (data: Data, type: UTType, filename: String)? {
+        switch payload {
+        case .data(let data, let type, let suggestedName):
+            let name = suggestedName ?? Self.defaultName(for: type)
+            guard Int64(data.count) <= Self.maxFileBytes else {
+                failedNames.append(name)
+                return nil
+            }
+            return (data, type, name)
+        case .file(let url, let suggestedName):
+            let name = suggestedName ?? url.lastPathComponent
+            if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+               Int64(size) > Self.maxFileBytes {
+                failedNames.append(name)
+                return nil
+            }
+            guard let data = try? Data(contentsOf: url) else {
+                failedNames.append(name)
+                return nil
+            }
+            return (data, UTType(filenameExtension: url.pathExtension) ?? .data, name)
+        case .text, .url:
+            return nil
+        }
+    }
+
     // MARK: - Folder expansion
 
     /// Folders are enumerated one level deep up to the cap; an over-full
@@ -156,7 +304,7 @@ final class InboxDropIngestService {
             return DropCaptureResult(displayName: url.host ?? url.absoluteString, kind: nil, outcome: outcome)
 
         case .data(let data, let type, let suggestedName):
-            let name = suggestedName ?? defaultName(for: type)
+            let name = suggestedName ?? Self.defaultName(for: type)
             return await ingestBytes(
                 data: data, type: type, filename: name,
                 dropSessionId: dropSessionId, capturedFrom: capturedFrom
@@ -369,7 +517,7 @@ final class InboxDropIngestService {
         return .unknown
     }
 
-    private func defaultName(for type: UTType) -> String {
+    static func defaultName(for type: UTType) -> String {
         let ext = type.preferredFilenameExtension ?? "bin"
         let stamp = Self.nameStampFormatter.string(from: Date())
         if type.conforms(to: .image) { return "Pasted image \(stamp).\(ext)" }

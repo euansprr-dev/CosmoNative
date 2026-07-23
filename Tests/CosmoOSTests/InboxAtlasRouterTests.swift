@@ -228,6 +228,124 @@ final class InboxAtlasRouterTests: XCTestCase {
         XCTAssertEqual(parse(raw)?.moves.count, 3)
     }
 
+    // MARK: - homeKey (the concept's future home)
+
+    func testHomeKeySurvivesOnSeedlingMovesWhenSpatial() {
+        let raw = """
+        {"title":"T","captureType":"insight","moves":[
+          {"kind":"feedSeedling","targetKey":"seedling-S1","section":null,"newTitle":null,"parentQuestionKey":null,"homeKey":"cluster-C1","growth":"","confidence":0.85}
+        ]}
+        """
+        XCTAssertEqual(parse(raw)?.moves.first?.homeKey, "cluster-C1")
+
+        let thinkspaceHome = """
+        {"title":"T","captureType":"insight","moves":[
+          {"kind":"startSeedling","targetKey":null,"section":null,"newTitle":"Concept","parentQuestionKey":null,"homeKey":"thinkspace-TS1","growth":"","confidence":0.7}
+        ]}
+        """
+        XCTAssertEqual(parse(thinkspaceHome)?.moves.first?.homeKey, "thinkspace-TS1")
+    }
+
+    func testHomeKeyDroppedWhenInventedWrongKindOrNonSeedlingMove() {
+        let invented = """
+        {"title":"T","captureType":"insight","moves":[
+          {"kind":"feedSeedling","targetKey":"seedling-S1","section":null,"newTitle":null,"parentQuestionKey":null,"homeKey":"cluster-INVENTED","growth":"","confidence":0.85}
+        ]}
+        """
+        XCTAssertNil(parse(invented)?.moves.first?.homeKey)
+
+        // A connection key is a page, not a spatial home.
+        let wrongKind = """
+        {"title":"T","captureType":"insight","moves":[
+          {"kind":"startSeedling","targetKey":null,"section":null,"newTitle":"Concept","parentQuestionKey":null,"homeKey":"connection-X1","growth":"","confidence":0.7}
+        ]}
+        """
+        XCTAssertNil(parse(wrongKind)?.moves.first?.homeKey)
+
+        // homeKey rides only on seedling moves.
+        let nonSeedling = """
+        {"title":"T","captureType":"idea","moves":[
+          {"kind":"attachClient","targetKey":"client-A","section":null,"newTitle":null,"parentQuestionKey":null,"homeKey":"cluster-C1","growth":"","confidence":0.8}
+        ]}
+        """
+        XCTAssertNil(parse(nonSeedling)?.moves.first?.homeKey)
+    }
+
+    // MARK: - The sweep (batch parsing — same rules per capture)
+
+    func testParseSweepMapsDecisionsByUUIDAndDropsInvented() {
+        let raw = """
+        [
+          {"uuid":"item-1","title":"Constraints sharpen ideas","captureType":"insight","moves":[
+            {"kind":"startSeedling","targetKey":null,"section":null,"newTitle":"Constraints as a gift","parentQuestionKey":null,"homeKey":"cluster-C1","growth":"","confidence":0.7}
+          ]},
+          {"uuid":"item-2","title":"Thought","captureType":"note","moves":[]},
+          {"uuid":"item-INVENTED","title":"Ghost","captureType":"note","moves":[]}
+        ]
+        """
+        let decisions = InboxAtlasRouter.parseSweep(
+            raw: raw,
+            candidates: candidates,
+            validUUIDs: ["item-1", "item-2"]
+        )
+        XCTAssertEqual(decisions.count, 2)
+        XCTAssertEqual(decisions["item-1"]?.moves.first?.kind, .startSeedling)
+        XCTAssertEqual(decisions["item-1"]?.moves.first?.homeKey, "cluster-C1")
+        // An abstain entry is a real decision with no moves — the item stays
+        // honestly unsorted, distinct from an invented uuid (absent entirely).
+        XCTAssertEqual(decisions["item-2"]?.moves.isEmpty, true)
+        XCTAssertNil(decisions["item-INVENTED"])
+    }
+
+    func testParseSweepValidatesPerCaptureIndependently() {
+        // Each capture gets its own creation-move budget: two captures may
+        // each start a seedling; a second creation inside ONE capture drops.
+        let raw = """
+        [
+          {"uuid":"item-1","title":"A","captureType":"insight","moves":[
+            {"kind":"startSeedling","targetKey":null,"section":null,"newTitle":"Concept A","parentQuestionKey":null,"growth":"","confidence":0.7}
+          ]},
+          {"uuid":"item-2","title":"B","captureType":"insight","moves":[
+            {"kind":"startSeedling","targetKey":null,"section":null,"newTitle":"Concept B","parentQuestionKey":null,"growth":"","confidence":0.7},
+            {"kind":"germinateDeepDive","targetKey":null,"section":null,"newTitle":"Dive B","parentQuestionKey":null,"growth":"","confidence":0.7}
+          ]}
+        ]
+        """
+        let decisions = InboxAtlasRouter.parseSweep(
+            raw: raw,
+            candidates: candidates,
+            validUUIDs: ["item-1", "item-2"]
+        )
+        XCTAssertEqual(decisions["item-1"]?.moves.count, 1)
+        XCTAssertEqual(decisions["item-2"]?.moves.count, 1)
+        XCTAssertEqual(decisions["item-2"]?.moves.first?.kind, .startSeedling)
+    }
+
+    func testParseSweepToleratesProseAroundTheArray() {
+        let raw = """
+        Here is the routing:
+        [{"uuid":"item-1","title":"T","captureType":"note","moves":[]}]
+        Done.
+        """
+        let decisions = InboxAtlasRouter.parseSweep(raw: raw, candidates: candidates, validUUIDs: ["item-1"])
+        XCTAssertEqual(decisions.count, 1)
+    }
+
+    func testSweepPromptListsEveryCaptureWithUUID() {
+        let prompt = InboxAtlasRouter.buildSweepPrompt(
+            items: [
+                (uuid: "item-1", title: "Titled", text: "the first capture"),
+                (uuid: "item-2", title: nil, text: "the second capture")
+            ],
+            candidates: candidates,
+            corrections: []
+        )
+        XCTAssertTrue(prompt.contains("CAPTURES:"))
+        XCTAssertTrue(prompt.contains("C1 (uuid item-1): Titled — the first capture"))
+        XCTAssertTrue(prompt.contains("C2 (uuid item-2): the second capture"))
+        XCTAssertTrue(prompt.contains("\"key\":\"seedling-S1\""))
+    }
+
     // MARK: - Prompt assembly
 
     func testPromptGroupsDestinationsAndIncludesCorrections() {
@@ -287,6 +405,67 @@ final class InboxAtlasRouterTests: XCTestCase {
         XCTAssertEqual(decoded.primaryRecommendation?.kind, .advanceQuestion)
         XCTAssertEqual(decoded.primaryRecommendation?.atlasMove?.questionUUID, "Q1-uuid")
         XCTAssertEqual(decoded.primaryRecommendation?.kind.legacyClassification, .place)
+    }
+
+    func testAtlasMoveHomeFieldsRoundTripAndTolerateAbsence() throws {
+        let recommendation = InboxRecommendation(
+            kind: .startSeedling,
+            confidence: 0.7,
+            suggestedAtomType: "connection",
+            destinationPath: "New concept: Constraints — Philosophy",
+            rationale: "Names a proto-concept.",
+            atlasMove: InboxAtlasMove(
+                germinateTitle: "Constraints",
+                homeThinkspaceId: "TS1",
+                homeThinkspaceName: "Philosophy",
+                homeClusterId: "C9",
+                homeClusterName: "Mindset"
+            )
+        )
+        let bundle = InboxRecommendationBundle(title: "T", recommendations: [recommendation])
+        let encoded = try XCTUnwrap(bundle.encodedJSONString)
+        let decoded = try JSONDecoder().decode(InboxRecommendationBundle.self, from: Data(encoded.utf8))
+        XCTAssertEqual(decoded.primaryRecommendation?.atlasMove?.homeThinkspaceName, "Philosophy")
+        XCTAssertEqual(decoded.primaryRecommendation?.atlasMove?.homeClusterName, "Mindset")
+
+        // Pre-home rows (no home fields) must keep decoding.
+        let legacy = """
+        {"bundleId":"b1","title":"Old","createdAt":"2026-07-01T00:00:00Z",
+         "recommendations":[{"id":"r1","kind":"feedSeedling","confidence":0.85,
+         "suggestedAtomType":"connection","destinationPath":"Grows “X”",
+         "rationale":"Adds mass.","atlasMove":{"seedlingUUID":"S1","seedlingName":"X"}}]}
+        """
+        let old = try JSONDecoder().decode(InboxRecommendationBundle.self, from: Data(legacy.utf8))
+        XCTAssertNil(old.primaryRecommendation?.atlasMove?.homeThinkspaceId)
+    }
+
+    // MARK: - Outcome display mapping (what the pill/inspector say it becomes)
+
+    func testOutcomeNounsSayWhatTheCaptureBecomes() {
+        XCTAssertEqual(InboxRouteKind.startSeedling.outcomeNoun(suggestedAtomType: "connection"), "New concept")
+        XCTAssertEqual(InboxRouteKind.germinateConnection.outcomeNoun(suggestedAtomType: nil), "New concept")
+        XCTAssertEqual(InboxRouteKind.feedSeedling.outcomeNoun(suggestedAtomType: "connection"), "Grows a concept")
+        XCTAssertEqual(InboxRouteKind.feedConnection.outcomeNoun(suggestedAtomType: "note"), "Develops a concept page")
+        XCTAssertEqual(InboxRouteKind.placeInThinkspace.outcomeNoun(suggestedAtomType: "note"), "Note on canvas")
+        XCTAssertEqual(InboxRouteKind.placeInExistingCluster.outcomeNoun(suggestedAtomType: "idea"), "Idea on canvas")
+        XCTAssertEqual(InboxRouteKind.createStandaloneAtom.outcomeNoun(suggestedAtomType: "idea"), "Idea")
+        XCTAssertEqual(InboxRouteKind.mergeAtom.outcomeNoun(suggestedAtomType: nil), "Merge")
+        XCTAssertEqual(InboxRouteKind.attachClient.outcomeNoun(suggestedAtomType: "idea"), "Client idea")
+        XCTAssertEqual(InboxRouteKind.spawnQuestion.outcomeNoun(suggestedAtomType: "idea"), "New question")
+        XCTAssertEqual(InboxRouteKind.advanceQuestion.outcomeNoun(suggestedAtomType: "note"), "Answers a question")
+    }
+
+    func testPrimaryVerbLabelsPerKind() {
+        XCTAssertEqual(InboxRouteKind.startSeedling.primaryVerbLabel, "Start concept")
+        XCTAssertEqual(InboxRouteKind.feedSeedling.primaryVerbLabel, "Add to concept")
+        XCTAssertEqual(InboxRouteKind.feedConnection.primaryVerbLabel, "Stage")
+        XCTAssertEqual(InboxRouteKind.advanceQuestion.primaryVerbLabel, "Answer")
+        XCTAssertEqual(InboxRouteKind.spawnQuestion.primaryVerbLabel, "Ask")
+        XCTAssertEqual(InboxRouteKind.mergeAtom.primaryVerbLabel, "Merge")
+        XCTAssertEqual(InboxRouteKind.placeInThinkspace.primaryVerbLabel, "Place")
+        XCTAssertTrue(InboxRouteKind.startSeedling.isSeedlingKind)
+        XCTAssertTrue(InboxRouteKind.germinateConnection.isSeedlingKind)
+        XCTAssertFalse(InboxRouteKind.placeInThinkspace.isSeedlingKind)
     }
 
     // MARK: - Atlas entry mechanics

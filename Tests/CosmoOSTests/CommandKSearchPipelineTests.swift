@@ -33,6 +33,33 @@ final class CommandKSearchPipelineTests: XCTestCase {
         XCTAssertEqual(action?.payload.url, "https://example.com/article")
     }
 
+    // A pasted URL always offers BOTH capture verbs: the source type picks
+    // the default row, never the set of options (July 23 2026).
+    func testSwipeSourceURLOffersResearchCaptureAsAlternate() {
+        let primary = CommandKActionParser.parse("https://youtube.com/watch?v=dQw4w9WgXcQ")
+        let alternate = CommandKActionParser.alternateAction(for: primary)
+
+        XCTAssertEqual(primary?.kind, .captureSwipe)
+        XCTAssertEqual(alternate?.kind, .captureResearch)
+        XCTAssertEqual(alternate?.payload.url, "https://youtube.com/watch?v=dQw4w9WgXcQ")
+        XCTAssertTrue(alternate?.isExecutable ?? false)
+    }
+
+    func testResearchURLOffersSwipeCaptureAsAlternate() {
+        let primary = CommandKActionParser.parse("https://example.com/article")
+        let alternate = CommandKActionParser.alternateAction(for: primary)
+
+        XCTAssertEqual(primary?.kind, .captureResearch)
+        XCTAssertEqual(alternate?.kind, .captureSwipe)
+        XCTAssertEqual(alternate?.payload.url, "https://example.com/article")
+    }
+
+    func testNonURLActionsHaveNoAlternateCapture() {
+        XCTAssertNil(CommandKActionParser.alternateAction(for: CommandKActionParser.parse("task buy filters")))
+        XCTAssertNil(CommandKActionParser.alternateAction(for: CommandKActionParser.parse("browser")))
+        XCTAssertNil(CommandKActionParser.alternateAction(for: nil))
+    }
+
     func testActionParserParsesBrowserAlias() {
         let action = CommandKActionParser.parse("browser")
 

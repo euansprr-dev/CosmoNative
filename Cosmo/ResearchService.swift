@@ -298,6 +298,7 @@ final class ResearchService {
         model: String,
         maxTokens: Int = 8192,
         temperature: Double = 0.3,
+        disableReasoning: Bool = false,
         onToken: (@Sendable (String) -> Void)? = nil
     ) async throws -> String {
         guard let apiKey = apiKey, !apiKey.isEmpty else {
@@ -330,6 +331,12 @@ final class ResearchService {
             "temperature": temperature,
             "max_tokens": maxTokens
         ]
+        // Claude Sonnet 5 defaults to adaptive thinking, and max_tokens caps
+        // thinking + visible text combined — callers with tight budgets opt out
+        // so the whole budget goes to the answer.
+        if disableReasoning {
+            body["reasoning"] = ["enabled": false]
+        }
         if useStreaming {
             body["stream"] = true
         }
@@ -350,6 +357,7 @@ final class ResearchService {
         model: String,
         maxTokens: Int = 8192,
         temperature: Double = 0.3,
+        disableReasoning: Bool = false,
         onToken: (@Sendable (String) -> Void)? = nil
     ) async throws -> String {
         try await generateWithCaching(
@@ -360,6 +368,7 @@ final class ResearchService {
             model: model,
             maxTokens: maxTokens,
             temperature: temperature,
+            disableReasoning: disableReasoning,
             onToken: onToken
         )
     }

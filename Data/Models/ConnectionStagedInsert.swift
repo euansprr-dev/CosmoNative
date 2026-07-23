@@ -100,15 +100,28 @@ enum ConnectionStagingStore {
     static func stage(_ insert: ConnectionStagedInsert, onConnection connectionUUID: String) async throws -> Atom? {
         let updated = try await AtomRepository.shared.update(uuid: connectionUUID) { atom in
             var inserts = atom.connectionStagedInserts
-            if let sourceUUID = insert.sourceUUID,
-               inserts.contains(where: { $0.sourceUUID == sourceUUID && $0.section == insert.section }) {
-                return
-            }
+            if isRetryEcho(insert, existing: inserts) { return }
             inserts.append(insert)
             atom = atom.withConnectionStagedInserts(inserts)
         }
         notifyChanged(connectionUUID)
         return updated
+    }
+
+    /// A re-stage is an echo, not new material: the same source targeting the
+    /// same section again (inbox/seedling retries re-derive identical rows), or
+    /// byte-identical text landing in the same section (collaborator rows carry
+    /// no sourceUUID — two DISTINCT bullets into one section must both land, so
+    /// only an exact text match counts as an echo).
+    nonisolated static func isRetryEcho(
+        _ insert: ConnectionStagedInsert,
+        existing: [ConnectionStagedInsert]
+    ) -> Bool {
+        if let sourceUUID = insert.sourceUUID,
+           existing.contains(where: { $0.sourceUUID == sourceUUID && $0.section == insert.section }) {
+            return true
+        }
+        return existing.contains { $0.section == insert.section && $0.text == insert.text }
     }
 
     /// Remove one staged row (accept consumed it, reject discarded it, or an

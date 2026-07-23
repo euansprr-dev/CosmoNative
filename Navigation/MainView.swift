@@ -2796,6 +2796,11 @@ struct MainView: View {
             return .project
         case .note:
             return .note
+        case .extract, .question:
+            // Inquiry captures open the peek reader — the old .idea fallback
+            // dumped them into the Idea workbench, which even wrote idea
+            // metadata onto extract atoms.
+            return .extract
         default:
             return .idea  // Default fallback
         }

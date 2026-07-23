@@ -208,6 +208,7 @@ class AgentToolExecutor {
         case "pull_evidence": return try await pullEvidence(arguments)
         case "attach_media": return try await attachMediaCandidates(arguments)
         case "handle_objection": return try await stageObjectionHandling(arguments)
+        case "stage_on_concept": return try await stageOnConcept(arguments)
         case "append_to_note": return try await appendToNote(arguments)
         case "create_inline_skill": return try await createInlineSkill(arguments)
         // Recall + Navigation
@@ -2452,6 +2453,75 @@ class AgentToolExecutor {
         return atom
     }
 
+    // MARK: - stage_on_concept (cross-concept staging)
+
+    /// Stage bullets onto a concept that is NOT the active surface. Rows
+    /// persist on the target atom (ConnectionStagingStore) and render as
+    /// dashed ✓/✗ ghost rows whenever that page next opens — nothing enters
+    /// a board without the user's sweep, and the working surface's proposal
+    /// flow is untouched.
+    private func stageOnConcept(_ args: [String: Any]) async throws -> String {
+        guard let rawItems = args["items"] as? [[String: Any]], !rawItems.isEmpty else {
+            return jsonError("Missing required parameter: items (array of {section, text}).")
+        }
+
+        let atom: Atom?
+        if let uuid = trimmedString(args["connection_uuid"]) {
+            atom = try? await atomRepo.fetch(uuid: uuid)
+        } else if let title = trimmedString(args["connection_title"]) {
+            atom = await Self.atomMatching(title: title, type: .connection)
+        } else {
+            return jsonError("Provide connection_uuid or connection_title to target a concept.")
+        }
+        guard let atom, atom.type == .connection, !atom.isDeleted else {
+            return jsonError("No matching concept found. Use recall to find the concept's UUID, or ask the user which concept they mean.")
+        }
+
+        let workingSurfaceID = workspaceEditBoundSurface?.surfaceID
+            ?? CosmoEditableSurfaceRegistry.shared.activeSurface?.editableSnapshot().surfaceID
+        if let workingSurfaceID, workingSurfaceID.hasPrefix("connection:\(atom.uuid)") {
+            return jsonError("'\(atom.title ?? "Untitled")' is the concept being worked on right now — stage captures onto it with propose_workspace_edit, not stage_on_concept.")
+        }
+
+        var items: [(section: ConnectionSectionType, text: String)] = []
+        for raw in rawItems {
+            guard let rawSection = trimmedString(raw["section"]),
+                  let section = ConnectionSectionType(rawValue: rawSection) else {
+                let valid = ConnectionSectionType.allCases.map(\.rawValue).joined(separator: ", ")
+                return jsonError("Unknown section '\(trimmedString(raw["section"]) ?? "")'. Valid sections: \(valid).")
+            }
+            guard let text = trimmedString(raw["text"]) else {
+                return jsonError("Every item needs non-empty text.")
+            }
+            items.append((section, ConnectionSurfaceSerializer.removeEmDashes(text)))
+        }
+
+        for item in items {
+            _ = try? await ConnectionStagingStore.stage(
+                ConnectionStagedInsert(
+                    section: item.section.rawValue,
+                    text: item.text,
+                    sourceKind: "collaborator"
+                ),
+                onConnection: atom.uuid
+            )
+        }
+
+        let title = atom.title ?? "Untitled"
+        var message = "Staged \(items.count) bullet(s) on '\(title)' as ghost rows WAITING for the user's per-row review when they next open that concept. Never say they were added."
+        if conceptTurnContractActive, !paneAnswerDeliveredThisRun {
+            message += " This turn is NOT finished: call answer_in_assistant_pane now, in this same turn, with a short reaction that says the material is waiting on '\(title)' plus exactly ONE deepening question."
+        }
+        return jsonEncode([
+            "success": true,
+            "connectionUUID": atom.uuid,
+            "connectionTitle": title,
+            "stagedCount": items.count,
+            "sections": items.map(\.section.rawValue),
+            "message": message
+        ] as [String: Any])
+    }
+
     // MARK: - Recall (unified retrieval)
 
     /// One high-signal retrieval tool over the whole atom graph: hybrid BM25 +
@@ -2617,7 +2687,7 @@ class AgentToolExecutor {
         if let uuid = trimmedString(args["note_uuid"]) {
             atom = try? await AtomRepository.shared.fetch(uuid: uuid)
         } else if let title = trimmedString(args["note_title"]) {
-            atom = await Self.noteMatching(title: title)
+            atom = await Self.atomMatching(title: title, type: .note)
         } else {
             return jsonError("Provide note_uuid or note_title to target a note")
         }
@@ -2666,24 +2736,24 @@ class AgentToolExecutor {
         ] as [String: Any])
     }
 
-    /// Fuzzy title match across notes: exact (case-insensitive) beats prefix beats
-    /// containment; most recently updated wins ties.
-    private static func noteMatching(title query: String) async -> Atom? {
-        guard let notes = try? await AtomRepository.shared.fetchAll(type: .note) else { return nil }
+    /// Fuzzy title match across atoms of one type: exact (case-insensitive)
+    /// beats prefix beats containment; most recently updated wins ties.
+    private static func atomMatching(title query: String, type: AtomType) async -> Atom? {
+        guard let atoms = try? await AtomRepository.shared.fetchAll(type: type) else { return nil }
         let normalizedQuery = query.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedQuery.isEmpty else { return nil }
 
         var exact: Atom?
         var prefix: Atom?
         var containing: Atom?
-        for note in notes { // fetchAll returns updatedAt-descending — first hit is freshest
-            let noteTitle = note.title?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if noteTitle == normalizedQuery {
-                exact = exact ?? note
-            } else if noteTitle.hasPrefix(normalizedQuery) {
-                prefix = prefix ?? note
-            } else if noteTitle.contains(normalizedQuery) {
-                containing = containing ?? note
+        for atom in atoms { // fetchAll returns updatedAt-descending — first hit is freshest
+            let atomTitle = atom.title?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if atomTitle == normalizedQuery {
+                exact = exact ?? atom
+            } else if atomTitle.hasPrefix(normalizedQuery) {
+                prefix = prefix ?? atom
+            } else if atomTitle.contains(normalizedQuery) {
+                containing = containing ?? atom
             }
         }
         return exact ?? prefix ?? containing

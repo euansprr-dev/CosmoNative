@@ -168,6 +168,7 @@ enum CommandKAskEngine {
                 model: AgentModelTier.strategist.modelId,
                 maxTokens: 700,
                 temperature: 0.3,
+                disableReasoning: true,  // quick lookup on Sonnet 5: thinking would eat the 700-token cap
                 onToken: { token in
                     Task { @MainActor in
                         let partial = await streamBox.append(token)

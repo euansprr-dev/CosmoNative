@@ -155,30 +155,38 @@ struct CosmoInlineAssistantAgentBridge {
         if !preparedRequest.pipelineSteps.isEmpty {
             response = await Self.runPipeline(preparedRequest, route: route, store: store)
         } else {
-            (response, _) = await CosmoAgentService.shared.processMessage(
-                preparedRequest.prompt,
-                conversationId: preparedRequest.conversationID,
-                source: .inApp,
-                tierOverride: preparedRequest.tierOverride,
-                intentOverride: preparedRequest.intentOverride,
-                systemPromptOverride: preparedRequest.systemPromptOverride,
-                volatileContextOverride: preparedRequest.volatileContextOverride,
-                responseMode: preparedRequest.responseMode,
-                profileToolBundles: preparedRequest.profileToolBundles,
-                forcedToolBundles: preparedRequest.forcedToolBundles,
-                // Action edits inject their own compact context — skip the heavy Command-A layers.
-                lightweightContext: route == .action,
-                onToolActivity: { event in
-                    Task { @MainActor in
-                        store.receiveToolActivity(event)
+            // Chatty answer routes (concept development, brainstorms) run
+            // Sonnet 5 at medium effort — roughly Sonnet 4.6 at high, the
+            // pre-upgrade daily-driver bar — because thinking bills as output.
+            // Action/edit routes and the escalation retry below never set the
+            // scope: exact-match splicing keeps full effort.
+            let scopedEffort: String? = route == .action ? nil : "medium"
+            (response, _) = await LLMEffortScope.$effort.withValue(scopedEffort) {
+                await CosmoAgentService.shared.processMessage(
+                    preparedRequest.prompt,
+                    conversationId: preparedRequest.conversationID,
+                    source: .inApp,
+                    tierOverride: preparedRequest.tierOverride,
+                    intentOverride: preparedRequest.intentOverride,
+                    systemPromptOverride: preparedRequest.systemPromptOverride,
+                    volatileContextOverride: preparedRequest.volatileContextOverride,
+                    responseMode: preparedRequest.responseMode,
+                    profileToolBundles: preparedRequest.profileToolBundles,
+                    forcedToolBundles: preparedRequest.forcedToolBundles,
+                    // Action edits inject their own compact context — skip the heavy Command-A layers.
+                    lightweightContext: route == .action,
+                    onToolActivity: { event in
+                        Task { @MainActor in
+                            store.receiveToolActivity(event)
+                        }
+                    },
+                    onPaneAnswerDelta: { delta in
+                        Task { @MainActor in
+                            store.receivePaneAnswerDelta(delta)
+                        }
                     }
-                },
-                onPaneAnswerDelta: { delta in
-                    Task { @MainActor in
-                        store.receivePaneAnswerDelta(delta)
-                    }
-                }
-            )
+                )
+            }
         }
 
         // Escalation ladder: an edit run whose proposals kept failing

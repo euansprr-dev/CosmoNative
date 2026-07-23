@@ -526,6 +526,7 @@ final class InboxActionExecutor {
         // A nil feed means the dedup guard caught a repeat (same capture) —
         // the thought is already growing there, which IS the desired state.
         let fed = try await SeedlingRepository.shared.feed(uuid: seedlingUUID, thought: thought) ?? seedling
+        await stampAffinityIfNamed(seedlingUUID: seedlingUUID, move: move)
         try? await inboxRepo.updateMetadata(uuid: item.uuid, merging: [
             "actionOutcome": "Grew \u{201C}\(fed.name)\u{201D}"
         ])
@@ -557,18 +558,35 @@ final class InboxActionExecutor {
         // of forking a twin — starting twice is a vocabulary echo, not intent.
         let seedling: Seedling
         let fedExisting: Bool
+        var scopeDive: Atom?
         if let existing = try await SeedlingRepository.shared.fetchLive(conceptKey: ConceptResolver.conceptKey(name)) {
             seedling = try await SeedlingRepository.shared.feed(uuid: existing.uuid, thought: thought) ?? existing
             fedExisting = true
         } else {
-            seedling = try await SeedlingRepository.shared.create(Seedling.new(name: name, firstThought: thought))
+            // Born in its dive world when the routed home names one: the
+            // seedling joins that dive's SEEDLINGS row and map instead of
+            // the unrooted shelf.
+            scopeDive = await inferDiveScope(homeThinkspaceId: recommendation.atlasMove?.homeThinkspaceId)
+            seedling = try await SeedlingRepository.shared.create(
+                Seedling.new(name: name, firstThought: thought, scopeDeepDiveUUID: scopeDive?.uuid)
+            )
             fedExisting = false
+            if let scopeDive {
+                NotificationCenter.default.post(
+                    name: CosmoNotification.Inquiry.seedbedChanged,
+                    object: nil,
+                    userInfo: ["deepDiveUUID": scopeDive.uuid]
+                )
+            }
         }
+        await stampAffinityIfNamed(seedlingUUID: seedling.uuid, move: recommendation.atlasMove)
 
+        let startedOutcome = scopeDive?.title.map { "Started concept \u{201C}\(seedling.name)\u{201D} in \($0)" }
+            ?? "Started concept \u{201C}\(seedling.name)\u{201D}"
         try? await inboxRepo.updateMetadata(uuid: item.uuid, merging: [
             "actionOutcome": fedExisting
                 ? "Grew \u{201C}\(seedling.name)\u{201D}"
-                : "Started seedling \u{201C}\(seedling.name)\u{201D}"
+                : startedOutcome
         ])
         try await inboxRepo.markActioned(uuid: item.uuid)
 
@@ -592,6 +610,35 @@ final class InboxActionExecutor {
             }
         )
         return seedling
+    }
+
+    /// The concept's home space names its dive world: when the routed home
+    /// thinkspace hosts exactly ONE deep dive, a germinated seedling scopes
+    /// to it. Ambiguity abstains — zero or several dives on that space means
+    /// the seedling stays unrooted rather than guessing a home.
+    private func inferDiveScope(homeThinkspaceId: String?) async -> Atom? {
+        guard let homeThinkspaceId else { return nil }
+        let dives = (try? await AtomRepository.shared.fetchAll(type: .deepDive)) ?? []
+        let hosted = dives.filter { dive in
+            !dive.isDeleted && dive.linksList.contains {
+                $0.type == AtomLinkType.deepDiveParent.rawValue && $0.uuid == homeThinkspaceId
+            }
+        }
+        return hosted.count == 1 ? hosted.first : nil
+    }
+
+    /// A routed move that named the concept's future home stamps the
+    /// seedling's affinity — fill-only, so a hint never overwrites a home an
+    /// earlier confident route (or the user's own development) established.
+    private func stampAffinityIfNamed(seedlingUUID: String, move: InboxAtlasMove?) async {
+        guard let move, move.homeThinkspaceId != nil || move.homeClusterId != nil else { return }
+        try? await SeedlingRepository.shared.setAffinity(
+            uuid: seedlingUUID,
+            thinkspaceId: move.homeThinkspaceId,
+            thinkspaceName: move.homeThinkspaceName,
+            clusterId: move.homeClusterId,
+            clusterName: move.homeClusterName
+        )
     }
 
     /// The capture opens a research territory of its own: a new deep dive
@@ -869,6 +916,26 @@ final class InboxActionExecutor {
 
     private func restoreAtomSnapshot(_ atom: Atom) async throws {
         try await persistAtomSnapshot(atom)
+    }
+
+    /// Place an ALREADY-created atom on a thinkspace canvas at a planned
+    /// position. The develop flow uses this so a concept page born from a
+    /// seedling lands in the home its affinity named — same planner, same
+    /// block persistence as inbox placements. No inbox item involved.
+    func placeExistingAtomOnCanvas(atom: Atom, thinkspaceId: String) async {
+        let thinkspaceName = await resolveThinkspaceName(for: thinkspaceId) ?? "Thinkspace"
+        let plan = await planner.planForThinkspacePlacement(
+            title: atom.title ?? "Untitled",
+            atomType: atom.type,
+            thinkspaceId: thinkspaceId,
+            thinkspaceName: thinkspaceName,
+            relatedAtomUUIDs: []
+        )
+        guard let x = plan?.blockPositionX, let y = plan?.blockPositionY else { return }
+        let block = CanvasBlock.fromAtom(atom, position: CGPoint(x: x, y: y))
+        let record = CanvasBlockRecord.from(block, documentType: "home", documentId: 0, thinkspaceId: thinkspaceId)
+        try? await persistCanvasBlockSnapshot(record)
+        await refreshThinkspace(thinkspaceId)
     }
 
     private func persistCanvasBlockSnapshot(_ record: CanvasBlockRecord) async throws {

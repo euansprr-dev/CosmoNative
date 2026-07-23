@@ -36,7 +36,8 @@ actor DeepScoutLLMRanker {
                 prompt: prompt,
                 systemPrompt: Self.systemPrompt,
                 tier: .strategist,
-                maxTokens: 260 + batch.count * 60
+                maxTokens: 260 + batch.count * 60,
+                disableReasoning: true  // structured JSON on Sonnet 5: thinking would share this budget
             )
         }
         guard let raw else { return [:] }

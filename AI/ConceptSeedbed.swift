@@ -423,6 +423,16 @@ final class ConceptSeedbedService {
                     ))
                 guard let created = try? await AtomRepository.shared.create(atom) else { return }
                 connectionUUID = created.uuid
+                // Mint provenance rides into the graph: the page a grow-pill
+                // seedling develops into references the concept it was
+                // spotted in, and that origin gets a staged ghost References
+                // row back. The page stays otherwise empty — wiring is not
+                // content filling.
+                await SeedlingMintWiring.wire(
+                    bornPage: created,
+                    thoughts: row.thoughts,
+                    seedlingUUID: row.uuid
+                )
             }
 
             // NB: dive develops never consume items — pending material

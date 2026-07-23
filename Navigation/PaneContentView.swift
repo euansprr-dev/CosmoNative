@@ -165,6 +165,9 @@ struct PaneContentView: View {
         case .file:
             FilePortalPreviewSurface(atom: atom, onClose: onClose)
 
+        case .extract:
+            ExtractPeekView(atom: atom, onClose: onClose)
+
         default:
             ZStack {
                 CosmoColors.thinkspaceVoid

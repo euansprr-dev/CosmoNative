@@ -152,6 +152,14 @@ final class InboxViewModel {
     var undoToastMessage: String = ""
     /// True when the toast reports a failure — no Undo button, warning styling.
     var undoToastIsError: Bool = false
+    /// Optional follow-up the toast offers beside Undo ("Develop now" after a
+    /// grow). Doing nothing is the quiet default — the toast just fades.
+    var undoToastActionLabel: String?
+    private var undoToastAction: (@MainActor () -> Void)?
+
+    func runUndoToastAction() {
+        undoToastAction?()
+    }
 
     // MARK: - Private
 
@@ -164,12 +172,12 @@ final class InboxViewModel {
     private var overrideSearchTask: Task<Void, Never>?
     private var overrideSearchRequestID = UUID()
 
-    /// Visibility drives the lazy taxonomy pass for unsorted items — batched,
+    /// Visibility drives the Atlas sweep for unsorted items — batched,
     /// throttled, and never run while the inbox is off-screen.
     var isInboxVisible: Bool = false {
         didSet {
             guard isInboxVisible, !oldValue else { return }
-            InboxIngestService.shared.runTaxonomyPassIfNeeded()
+            InboxIngestService.shared.runAtlasSweepIfNeeded()
             loadEmptyStateData()
         }
     }
@@ -338,8 +346,8 @@ final class InboxViewModel {
         defer { processingItemIds.remove(item.uuid) }
 
         do {
-            if try await executor.executePrimaryRecommendation(item: item) != nil {
-                presentUndoToast(for: item, destination: item.spatialDestinationTitle)
+            if let outcome = try await executor.executePrimaryRecommendation(item: item) {
+                presentOutcomeToast(for: item, outcome: outcome, destination: item.spatialDestinationTitle)
                 if let primary = item.primaryRecommendationValue,
                    Self.atlasMoveKinds.contains(primary.kind) {
                     recordRoutingOutcome(
@@ -372,8 +380,8 @@ final class InboxViewModel {
 
         do {
             let final = adjustedPosition.map { recommendation.overridingBlockPosition($0) } ?? recommendation
-            if try await executor.executeRecommendation(item: item, recommendation: final) != nil {
-                presentUndoToast(for: item, destination: item.spatialDestinationTitle)
+            if let outcome = try await executor.executeRecommendation(item: item, recommendation: final) {
+                presentOutcomeToast(for: item, outcome: outcome, destination: item.spatialDestinationTitle)
             } else {
                 await recoverFromNilExecution(for: item)
             }
@@ -392,8 +400,8 @@ final class InboxViewModel {
         defer { processingItemIds.remove(item.uuid) }
 
         do {
-            if try await executor.executeRecommendation(item: item, recommendation: recommendation) != nil {
-                presentUndoToast(for: item, destination: recommendation.destinationPath)
+            if let outcome = try await executor.executeRecommendation(item: item, recommendation: recommendation) {
+                presentOutcomeToast(for: item, outcome: outcome, destination: recommendation.destinationPath)
                 recordRoutingOutcome(
                     for: item,
                     chosenKind: recommendation.kind.rawValue,
@@ -456,9 +464,14 @@ final class InboxViewModel {
                 await recoverFromNilExecution(for: item)
                 return
             }
+            // Grow & Develop: for a concept suggestion, "go" means the
+            // development conversation — the page is born and opens.
+            if case .seedling(let seedling) = outcome {
+                presentUndoToast(for: item, verb: "\u{201C}\(seedling.name)\u{201D} is growing")
+                developSeedlingNow(uuid: seedling.uuid)
+                return
+            }
             presentUndoToast(for: item, destination: item.spatialDestinationTitle)
-            // Seedling growth has no canvas destination — the receipt is the
-            // Growing section swelling, not a navigation.
             guard let atom = outcome.atom else { return }
             let targetThinkspaceId = item.primaryRecommendationValue?.thinkspaceId
                 ?? item.primaryRecommendationValue?.placementPlan?.targetThinkspaceId
@@ -609,7 +622,7 @@ final class InboxViewModel {
                 atlasMove: InboxAtlasMove(germinateTitle: item.title)
             )
             if let seedling = try await executor.executeStartSeedling(item: item, recommendation: recommendation) {
-                presentUndoToast(for: item, destination: "\u{201C}\(seedling.name)\u{201D} is growing")
+                presentGrowToast(for: seedling)
                 recordRoutingOutcome(
                     for: item,
                     chosenKind: InboxRouteKind.startSeedling.rawValue,
@@ -906,6 +919,47 @@ final class InboxViewModel {
         presentToast(message: message, isError: false)
     }
 
+    // MARK: - Develop now / later
+
+    /// A grow-type accept ends in a CHOICE, not a silent receipt: the toast
+    /// offers "Develop now" (the page is born from the accrued thoughts and
+    /// opens in the concept workspace). Doing nothing IS "later" — the
+    /// concept keeps growing where the Growing section shows it.
+    private func presentGrowToast(for seedling: Seedling) {
+        presentToast(
+            message: "\u{201C}\(seedling.name)\u{201D} is growing",
+            isError: false,
+            actionLabel: "Develop now",
+            action: { [weak self] in self?.developSeedlingNow(uuid: seedling.uuid) }
+        )
+    }
+
+    private func developSeedlingNow(uuid: String) {
+        dismissUndoToast()
+        Task {
+            guard let connectionUUID = await SeedlingDevelopService.shared.develop(seedlingUUID: uuid) else { return }
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.openBlockInFocusMode,
+                object: nil,
+                userInfo: ["atomUUID": connectionUUID]
+            )
+        }
+    }
+
+    /// Route the accept receipt by what the executor actually produced —
+    /// grown seedlings get the develop-now choice, atoms get the undo toast.
+    private func presentOutcomeToast(
+        for item: InboxItem,
+        outcome: InboxExecutionOutcome,
+        destination: String
+    ) {
+        if case .seedling(let seedling) = outcome {
+            presentGrowToast(for: seedling)
+        } else {
+            presentUndoToast(for: item, destination: destination)
+        }
+    }
+
     /// Lane surfaces borrow the queue's toast lane for their own outcomes
     /// (archive, edit failures) — one notification voice for the whole inbox.
     func presentLaneToast(_ message: String, isError: Bool = false) {
@@ -918,10 +972,17 @@ final class InboxViewModel {
         presentToast(message: message, isError: true)
     }
 
-    private func presentToast(message: String, isError: Bool) {
+    private func presentToast(
+        message: String,
+        isError: Bool,
+        actionLabel: String? = nil,
+        action: (@MainActor () -> Void)? = nil
+    ) {
         undoToastTask?.cancel()
         undoToastMessage = message
         undoToastIsError = isError
+        undoToastActionLabel = actionLabel
+        undoToastAction = action
         withAnimation(.easeOut(duration: 0.2)) {
             showUndoToast = true
         }

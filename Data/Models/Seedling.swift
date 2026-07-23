@@ -30,6 +30,8 @@ enum SeedlingThoughtSource: String, Codable, Sendable {
     case lane           // Routed from a capture lane
     case manual         // Typed directly into the seedling
     case study          // Deep Dive / research session material
+    case mint           // Highlighted while developing another concept (the
+                        // grow pill) — sourceAtomUUID names the origin page
 
     init(from decoder: Decoder) throws {
         let raw = try decoder.singleValueContainer().decode(String.self)

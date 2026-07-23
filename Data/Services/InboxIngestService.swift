@@ -37,11 +37,16 @@ final class InboxIngestService {
     private var queuedSet: Set<String> = []
     private var drainTask: Task<Void, Never>?
 
-    // MARK: - Taxonomy pass throttle
+    // MARK: - Atlas sweep throttle
 
-    private var lastTaxonomyPassAt: Date = .distantPast
-    private var taxonomyPassTask: Task<Void, Never>?
-    private let taxonomyPassThrottle: TimeInterval = 10 * 60
+    private var lastSweepAt: Date = .distantPast
+    private var sweepTask: Task<Void, Never>?
+    private let sweepThrottle: TimeInterval = 10 * 60
+
+    /// The retired taxonomy pass's fixed rationale — the provenance mark that
+    /// lets the one-time repair find its folder-only filings.
+    static let legacyTaxonomyRationale = "Filed by the taxonomy pass — it reads each destination's actual contents before assigning."
+    private let sweepRepairFlag = "inbox.atlasSweepRepair.v1"
 
     // MARK: - Synced-in captures
 
@@ -306,7 +311,17 @@ final class InboxIngestService {
             excludedAtomUUIDs: excluded,
             preferredTitle: item.title
         )
+        await storeClassification(result, for: item, context: "InboxIngestService.classifyAndStore")
+    }
 
+    /// The ONE persistence path for classification results — capture-time and
+    /// sweep results store identically (full bundle, route kind, honest
+    /// rationale) and share the auto-grow rule.
+    private func storeClassification(
+        _ result: InboxClassificationEngine.ClassificationResult,
+        for item: InboxItem,
+        context: String
+    ) async {
         do {
             try await inboxRepo.updateClassification(
                 uuid: item.uuid,
@@ -329,7 +344,7 @@ final class InboxIngestService {
             await autoGrowIfUnmistakable(itemUUID: item.uuid, bundle: result.recommendationBundle)
         } catch {
             print("⚠️ [InboxIngest] Failed to store classification for \(item.uuid): \(error)")
-            PersistenceHealth.note(.writeFailure, context: "InboxIngestService.classifyAndStore", detail: "classification store failed for \(item.uuid): \(error.localizedDescription)")
+            PersistenceHealth.note(.writeFailure, context: context, detail: "classification store failed for \(item.uuid): \(error.localizedDescription)")
         }
     }
 
@@ -426,52 +441,68 @@ final class InboxIngestService {
         return match.map { ($0, "text match") }
     }
 
-    // MARK: - Lazy taxonomy pass (Stage 3)
+    // MARK: - The Atlas sweep (Stage 3)
 
     /// Called when the inbox becomes visible. Batches unsorted items through
-    /// one taxonomy-teaching Flash call — never per-item, never in the background.
-    func runTaxonomyPassIfNeeded() {
-        guard Date().timeIntervalSince(lastTaxonomyPassAt) > taxonomyPassThrottle else { return }
-        guard taxonomyPassTask == nil else { return }
-        lastTaxonomyPassAt = Date()
+    /// ONE Atlas call speaking the same move grammar as capture-time routing
+    /// (concepts, questions, material, folders) — never per-item, never in
+    /// the background. Captures the sweep abstains on stay honestly unsorted
+    /// and are re-read against the atlas as it grows.
+    func runAtlasSweepIfNeeded() {
+        guard Date().timeIntervalSince(lastSweepAt) > sweepThrottle else { return }
+        guard sweepTask == nil else { return }
+        lastSweepAt = Date()
 
-        taxonomyPassTask = Task { @MainActor [weak self] in
-            defer { self?.taxonomyPassTask = nil }
+        sweepTask = Task { @MainActor [weak self] in
+            defer { self?.sweepTask = nil }
             guard let self else { return }
+            await self.repairLegacyTaxonomyRowsIfNeeded()
             do {
-                let unsorted = try await self.inboxRepo.fetchUnsorted(limit: self.config.taxonomyPassBatchLimit)
+                let unsorted = try await self.inboxRepo.fetchUnsorted(limit: self.config.sweepBatchLimit)
                 guard !unsorted.isEmpty else { return }
 
                 let payload = unsorted.map { (uuid: $0.uuid, title: $0.title, text: $0.rawText) }
-                let assignments = await InboxRoutingEngine.shared.taxonomyPass(items: payload)
-                guard !assignments.isEmpty else { return }
+                let results = await InboxClassificationEngine.shared.sweepClassify(items: payload)
+                guard !results.isEmpty else { return }
 
-                let itemsByUuid = Dictionary(uniqueKeysWithValues: unsorted.map { ($0.uuid, $0) })
-                for assignment in assignments {
-                    guard let item = itemsByUuid[assignment.itemUuid] else { continue }
-                    let destinationPath = assignment.clusterName.map { "\(assignment.thinkspaceName) › \($0)" }
-                        ?? assignment.thinkspaceName
-                    do {
-                        try await self.inboxRepo.updateClassification(
-                            uuid: item.uuid,
-                            classification: .place,
-                            confidence: self.config.taxonomyPassConfidence,
-                            title: item.title,
-                            placeThinkspaceId: assignment.thinkspaceId,
-                            placeThinkspaceName: assignment.thinkspaceName,
-                            placeAtomType: AtomType.note.rawValue,
-                            destinationPath: destinationPath,
-                            rationale: "Filed by the taxonomy pass — it reads each destination's actual contents before assigning."
-                        )
-                    } catch {
-                        print("⚠️ [InboxIngest] Taxonomy pass store failed for \(item.uuid): \(error)")
-                        PersistenceHealth.note(.writeFailure, context: "InboxIngestService.taxonomyPass", detail: "classification store failed for \(item.uuid): \(error.localizedDescription)")
-                    }
+                for item in unsorted {
+                    guard let result = results[item.uuid] else { continue }
+                    await self.storeClassification(result, for: item, context: "InboxIngestService.atlasSweep")
                 }
-                print("📥 [InboxIngest] Taxonomy pass placed \(assignments.count)/\(unsorted.count) unsorted item(s)")
+                print("📥 [InboxIngest] Atlas sweep routed \(results.count)/\(unsorted.count) unsorted item(s)")
             } catch {
-                print("⚠️ [InboxIngest] Taxonomy pass failed: \(error)")
+                print("⚠️ [InboxIngest] Atlas sweep failed: \(error)")
             }
+        }
+    }
+
+    /// One-time repair (July 2026): the retired folders-only taxonomy pass
+    /// stamped every filing with one fixed rationale. Those suggestion-only
+    /// rows reset to honest `unsorted`, so the sweeps re-route them under the
+    /// full grammar. Anything the user already acted on is untouched — both
+    /// here (status filter) and in updateClassification's own guard.
+    private func repairLegacyTaxonomyRowsIfNeeded() async {
+        guard !UserDefaults.standard.bool(forKey: sweepRepairFlag) else { return }
+        do {
+            let filed = try await inboxRepo.fetchClassified(
+                rationale: Self.legacyTaxonomyRationale,
+                limit: 500
+            )
+            for item in filed {
+                try await inboxRepo.updateClassification(
+                    uuid: item.uuid,
+                    classification: .unsorted,
+                    confidence: 0,
+                    title: item.title
+                )
+            }
+            UserDefaults.standard.set(true, forKey: sweepRepairFlag)
+            if !filed.isEmpty {
+                print("📥 [InboxIngest] Sweep repair reset \(filed.count) taxonomy-filed row(s) for re-routing")
+            }
+        } catch {
+            // Flag stays unset — the next sweep retries the repair.
+            print("⚠️ [InboxIngest] Sweep repair failed: \(error)")
         }
     }
 

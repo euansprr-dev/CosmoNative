@@ -1084,6 +1084,27 @@ final class LibraryViewModel: ObservableObject {
             return
         }
 
+        // A captured research link opens where it lives: the in-app browser
+        // pane. Swipes and note-style research keep their focus modes.
+        if item.atomType == .research {
+            Task { @MainActor in
+                if let target = await CommandKViewModel.researchBrowserTarget(atomUUID: item.uuid) {
+                    NotificationCenter.default.post(
+                        name: CosmoNotification.Navigation.openWebBrowserPane,
+                        object: nil,
+                        userInfo: ["url": target.url, "title": target.title]
+                    )
+                } else {
+                    self.postEnterFocusMode(item)
+                }
+            }
+            return
+        }
+
+        postEnterFocusMode(item)
+    }
+
+    private func postEnterFocusMode(_ item: LibraryItem) {
         guard let entityType = EntityType(rawValue: item.atomType.rawValue),
               item.entityId > 0 else { return }
 

@@ -230,6 +230,13 @@ struct DeepDiveOverviewView: View {
                 seedlingsSection
                     .studyCascade(hasAppeared, index: 4)
             }
+            // Growing concepts that belong to no dive yet — self-hiding when
+            // the seedbed is fully rooted. "Root here" adopts into THIS dive.
+            UnrootedSeedlingsStrip(
+                deepDiveUUID: atom.uuid,
+                deepDiveTitle: atom.title ?? "this dive"
+            )
+            .studyCascade(hasAppeared, index: 4)
             if !viewModel.gardenerProposals.isEmpty || !viewModel.cartographerProposals.isEmpty {
                 StudyTendingSection(
                     proposals: viewModel.gardenerProposals,

@@ -237,15 +237,20 @@ struct InboxInspector: View {
     private var suggestionSection: some View {
         if item.hasActionableSuggestion {
             VStack(alignment: .leading, spacing: DS.space6) {
+                // What the capture BECOMES — never implicit. The destination
+                // line below says where; this line says what.
                 HStack(spacing: DS.space6) {
                     Image(systemName: suggestionIcon)
                         .font(DS.caption.weight(.semibold))
-                        .foregroundStyle(suggestionTint)
-                    Text(item.spatialDestinationTitle)
-                        .font(DS.callout.weight(.semibold))
-                        .foregroundStyle(suggestionTint)
-                        .lineLimit(2)
+                    Text(outcomeNoun)
+                        .font(DS.caption.weight(.semibold))
                 }
+                .foregroundStyle(suggestionTint)
+
+                Text(item.spatialDestinationTitle)
+                    .font(DS.callout.weight(.semibold))
+                    .foregroundStyle(DS.text)
+                    .lineLimit(2)
 
                 if let why = suggestionWhy {
                     Text(why)
@@ -267,6 +272,17 @@ struct InboxInspector: View {
                 .foregroundStyle(DS.textMuted)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    private var outcomeNoun: String {
+        if let kind = item.primaryRouteKindValue {
+            return kind.outcomeNoun(suggestedAtomType: item.placeAtomType)
+        }
+        if item.classification == .merge { return "Merge" }
+        let atomNoun = item.placeAtomType
+            .flatMap(AtomType.init(rawValue:))
+            .map(\.displayName) ?? "Note"
+        return "\(atomNoun) on canvas"
     }
 
     private var suggestionFallbackCopy: String {
@@ -369,7 +385,13 @@ struct InboxInspector: View {
         VStack(spacing: DS.space8) {
             HStack(spacing: DS.space8) {
                 primaryVerb
-                secondaryVerb(label: "Place & Go", icon: "arrowshape.turn.up.right", shortcut: "⌘⏎") {
+                // For a concept suggestion, "go" means the development
+                // conversation — the workspace where the page is born.
+                secondaryVerb(
+                    label: isSeedlingSuggestion ? "Grow & Develop" : "Place & Go",
+                    icon: isSeedlingSuggestion ? "leaf.arrow.circlepath" : "arrowshape.turn.up.right",
+                    shortcut: "⌘⏎"
+                ) {
                     Task { await viewModel.placeAndGo(item) }
                 }
             }
@@ -392,9 +414,9 @@ struct InboxInspector: View {
                 }
             }
             HStack(spacing: DS.space8) {
-                // Manual grow — a thought becomes (or feeds) a seedling in
-                // the nursery, no canvas object, no premature page.
-                secondaryVerb(label: "Grow", icon: "leaf", shortcut: "G") {
+                // Manual grow — the thought becomes (or feeds) a growing
+                // concept in the nursery, no canvas object, no premature page.
+                secondaryVerb(label: "Concept", icon: "leaf", shortcut: "G") {
                     Task { await viewModel.growSeedling(item) }
                 }
                 if !item.relatedAtomUUIDsValue.isEmpty {
@@ -412,14 +434,11 @@ struct InboxInspector: View {
 
     @ViewBuilder
     private var primaryVerb: some View {
-        // The button says what accepting DOES: a seedling suggestion grows
-        // mass in the nursery; a page feed stages a ✓/✗ ghost row; only
-        // spatial suggestions actually "place".
+        // The button says what accepting DOES: start/grow a concept, stage a
+        // ✓/✗ ghost row, answer a question — "Place" only for spatial kinds.
         let label: String = {
-            if item.classification == .merge { return "Merge" }
-            if isSeedlingSuggestion { return "Grow" }
-            if item.primaryRouteKind == InboxRouteKind.feedConnection.rawValue { return "Stage" }
-            return "Place"
+            if let kind = item.primaryRouteKindValue { return kind.primaryVerbLabel }
+            return item.classification == .merge ? "Merge" : "Place"
         }()
         Button {
             Task { await viewModel.place(item, adjustedPosition: adjustedPosition) }
@@ -438,9 +457,7 @@ struct InboxInspector: View {
     }
 
     private var isSeedlingSuggestion: Bool {
-        item.primaryRouteKind == InboxRouteKind.feedSeedling.rawValue
-            || item.primaryRouteKind == InboxRouteKind.startSeedling.rawValue
-            || item.primaryRouteKind == InboxRouteKind.germinateConnection.rawValue
+        item.primaryRouteKindValue?.isSeedlingKind == true
     }
 
     private func secondaryVerb(label: String, icon: String, shortcut: String?, action: @escaping () -> Void) -> some View {
@@ -474,11 +491,13 @@ struct InboxInspector: View {
     // MARK: - Metadata
 
     private var suggestionIcon: String {
-        item.classification == .merge ? "arrow.triangle.merge" : "arrow.turn.down.right"
+        if let kind = item.primaryRouteKindValue { return kind.outcomeIcon }
+        return item.classification == .merge ? "arrow.triangle.merge" : "arrow.turn.down.right"
     }
 
     private var suggestionTint: Color {
-        item.classification == .merge ? DS.orange : DS.accent
+        if let kind = item.primaryRouteKindValue { return kind.outcomeTint }
+        return item.classification == .merge ? DS.orange : DS.accent
     }
 
     private var sourceLabel: String {

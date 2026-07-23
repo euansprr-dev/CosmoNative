@@ -177,7 +177,7 @@ final class CosmoWindowRoutingTests: XCTestCase {
         let gemini35Option = CosmoModelOption.all.first { $0.id == "gemini35Flash" }
 
         XCTAssertEqual(autoOption?.detail, "Sonnet 5 by default")
-        XCTAssertEqual(sonnetOption?.title, "Sonnet 4.6")
+        XCTAssertEqual(sonnetOption?.title, "Sonnet 5")
         XCTAssertEqual(sonnetOption?.detail, "Daily driver via Claude API")
         XCTAssertEqual(geminiOption?.title, "Gemini 3 Flash")
         XCTAssertEqual(geminiOption?.detail, "Pinned everyday search and brainstorming")

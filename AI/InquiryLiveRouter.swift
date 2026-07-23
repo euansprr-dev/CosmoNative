@@ -109,7 +109,8 @@ actor InquiryLiveRouter {
                     prompt: prompt,
                     systemPrompt: Self.systemPrompt,
                     tier: .strategist,
-                    maxTokens: 700 + batch.count * 500
+                    maxTokens: 700 + batch.count * 500,
+                    disableReasoning: true  // structured JSON on Sonnet 5: thinking would share this budget
                 )
             }
             if raw != nil { break }

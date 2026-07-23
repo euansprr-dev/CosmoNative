@@ -945,7 +945,13 @@ class ResearchFocusModeViewModel: ObservableObject {
     func openInBrowser() {
         guard let urlString = state.source?.url,
               let url = URL(string: urlString) else { return }
-        NSWorkspace.shared.open(url)
+        // The in-app browser pane, not Safari — research stays inside the
+        // workspace (the pane router reuses/splits under its own rules).
+        NotificationCenter.default.post(
+            name: CosmoNotification.Navigation.openWebBrowserPane,
+            object: nil,
+            userInfo: ["url": url, "title": atom.title ?? "Research"]
+        )
     }
 
     // MARK: - Annotation Management

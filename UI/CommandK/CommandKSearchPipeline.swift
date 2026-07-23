@@ -557,6 +557,34 @@ enum CommandKActionParser {
         return nil
     }
 
+    /// The other capture verb for a pasted URL. A swipe-source link's primary
+    /// stays Capture Swipe, but a YouTube video is often research, not a
+    /// hook — so both rows are offered and the URL decides only the DEFAULT,
+    /// never the options. Nil for anything that isn't a URL capture.
+    static func alternateAction(for primary: CommandKAction?) -> CommandKAction? {
+        guard let primary, let url = primary.payload.url else { return nil }
+        switch primary.kind {
+        case .captureSwipe:
+            return CommandKAction(
+                kind: .captureResearch,
+                title: "Capture Research",
+                subtitle: url,
+                icon: "doc.text.magnifyingglass",
+                payload: CommandKActionPayload(url: url, title: url, rawText: primary.payload.rawText)
+            )
+        case .captureResearch:
+            return CommandKAction(
+                kind: .captureSwipe,
+                title: "Capture Swipe",
+                subtitle: url,
+                icon: "bolt.fill",
+                payload: CommandKActionPayload(url: url, rawText: primary.payload.rawText)
+            )
+        default:
+            return nil
+        }
+    }
+
     /// "5 x 15,000" → the Raycast calculator card. The action's title is the
     /// verb (it labels the ⏎ button in the action bar); the card and detail
     /// pane draw from the payload's expression/result pair.

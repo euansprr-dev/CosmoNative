@@ -75,7 +75,7 @@ struct CommandKUserCommandSearchComposer {
 
     private func icon(forDomain domain: String) -> String {
         switch domain {
-        case "swipeGallery": return "bolt.fill"
+        case "swipeGallery": return "rectangle.stack.fill"
         case "ideas": return "lightbulb.fill"
         case "readwise": return "books.vertical.fill"
         case "database": return "tray.full.fill"
@@ -284,7 +284,7 @@ struct CommandKSystemCommandComposer {
             subtitle: "Browse swipes inside Command-K",
             category: "Domain",
             kind: .openDomain,
-            icon: "bolt.fill",
+            icon: "rectangle.stack.fill",
             payload: CommandKActionPayload(domain: "swipeGallery", rawText: "swipes"),
             aliases: ["browse swipes", "swipes", "swipe file", "swipe library"],
             priority: 5

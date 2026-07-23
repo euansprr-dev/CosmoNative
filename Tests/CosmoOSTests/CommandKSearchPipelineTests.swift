@@ -3643,6 +3643,33 @@ final class CommandKSearchPipelineTests: XCTestCase {
         XCTAssertNil(blank)
     }
 
+    // MARK: - Research result identity (thumbnail / favicon ladder)
+
+    /// Captured research links wear their page's identity in the rail:
+    /// mirrored thumbnail first, site favicon as the fallback, identity chip
+    /// only when neither exists. The rail reads both off the hydrated
+    /// LibraryItem, so its construction is the seam that matters.
+    func testResearchLibraryItemCarriesThumbnailAndFaviconHost() {
+        var research = Atom.new(type: .research, title: "How to write hooks")
+        research.metadata = """
+        {"url": "https://www.lennysnewsletter.com/p/hooks", "thumbnailUrl": "https://cdn.example.com/thumb.jpg"}
+        """
+        let item = LibraryItem(atom: research)
+        XCTAssertEqual(item.thumbnailURL, "https://cdn.example.com/thumb.jpg")
+        XCTAssertEqual(item.faviconHost, "www.lennysnewsletter.com")
+
+        // A capture with no mirrored thumbnail still gets its site favicon.
+        var linkOnly = Atom.new(type: .research, title: "Pricing page teardown")
+        linkOnly.metadata = #"{"url": "https://stripe.com/pricing"}"#
+        let linkItem = LibraryItem(atom: linkOnly)
+        XCTAssertNil(linkItem.thumbnailURL)
+        XCTAssertEqual(linkItem.faviconHost, "stripe.com")
+
+        // Non-research atoms never wear a favicon.
+        let note = Atom.new(type: .note, title: "Plain note")
+        XCTAssertNil(LibraryItem(atom: note).faviconHost)
+    }
+
     private func recentlyUpdated(_ atom: Atom, updatedAt: String) -> Atom {
         var atom = atom
         atom.updatedAt = updatedAt

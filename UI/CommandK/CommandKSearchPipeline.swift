@@ -672,7 +672,7 @@ enum CommandKActionParser {
         case "library", "database":
             domain = ("database", "Open Library", "tray.full.fill")
         case "swipe gallery", "swipes", "swipe library":
-            domain = ("swipeGallery", "Browse Swipes", "bolt.fill")
+            domain = ("swipeGallery", "Browse Swipes", "rectangle.stack.fill")
         case "ideas":
             domain = ("ideas", "Open Ideas", "lightbulb")
         case "readwise", "books":

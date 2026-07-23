@@ -460,6 +460,7 @@ public struct ContextAwareSearchAdapter: Sendable {
                 atomType: result.atomType,
                 title: result.title,
                 snippet: result.snippet,
+                matchedExcerpt: result.matchedExcerpt,
                 semanticWeight: result.semanticWeight,
                 structuralWeight: result.structuralWeight,
                 recencyWeight: result.recencyWeight,

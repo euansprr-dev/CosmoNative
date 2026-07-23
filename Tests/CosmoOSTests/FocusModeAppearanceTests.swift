@@ -246,9 +246,11 @@ final class FocusModeAppearanceTests: XCTestCase {
     func testSwipeStudyUsesThinCustomScrollChrome() throws {
         let swipeFocusSource = try source("UI/FocusMode/SwipeStudy/SwipeStudyFocusModeView.swift")
 
-        XCTAssertTrue(swipeFocusSource.contains("@State private var scrollMetrics = CortexScrollMetrics()"))
+        // Metrics live behind an @Observable store so per-frame scroll ticks
+        // invalidate only the thin scrollbar host — never the whole study view.
+        XCTAssertTrue(swipeFocusSource.contains("@State private var scrollMetrics = CortexScrollMetricsStore()"))
         XCTAssertTrue(swipeFocusSource.contains("CortexScrollViewIntrospector"))
-        XCTAssertTrue(swipeFocusSource.contains("CortexThinScrollbar(metrics: scrollMetrics)"))
+        XCTAssertTrue(swipeFocusSource.contains("CortexThinScrollbarHost(store: scrollMetrics)"))
     }
 
     func testIdeaFocusModeUsesContentFocusSizedCustomScrollbar() throws {

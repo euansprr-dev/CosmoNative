@@ -9,7 +9,6 @@ import GRDB
 struct CosmoApp: App {
     @StateObject private var appState = AppState()
     @StateObject private var database = CosmoDatabase.shared
-    @StateObject private var voiceEngine = VoiceEngine.shared
     @StateObject private var notifications = ProactiveNotificationService.shared
     @StateObject private var syncEngine = SyncEngine.shared
     @StateObject private var statePersistence = StatePersistence.shared
@@ -18,7 +17,6 @@ struct CosmoApp: App {
     @StateObject private var swipeFileEngine = SwipeFileEngine.shared
     @StateObject private var cosmoAgent = CosmoAgentService.shared
 
-    @State private var voicePillWindow: VoicePillWindowController?
     @State private var voicePillHideWorkItem: DispatchWorkItem?
     // NOTE: Global floating dock removed - using in-app dock + spacebar voice overlay instead
 
@@ -32,7 +30,6 @@ struct CosmoApp: App {
                 .preferredColorScheme(ThemeManager.shared.isDark ? .dark : .light)
                 .environmentObject(appState)
                 .environmentObject(database)
-                .environmentObject(voiceEngine)
                 .environmentObject(syncEngine)
                 .environmentObject(statePersistence)
                 .environmentObject(networkMonitor)
@@ -72,8 +69,7 @@ struct CosmoApp: App {
         // memory (fires on app-resign-active and session switches).
         CosmoSessionDistiller.shared.activate()
 
-        // Check for existing Supabase Auth session BEFORE starting Telegram bridge.
-        // This ensures isSignedIn is set before the bridge decides whether to poll or skip.
+        // Check for existing Supabase Auth session before cloud-dependent services start.
         Task {
             // Adopt an existing pre-auth workspace: a Mac with real local data
             // must never see the Welcome wall — the gate is for empty Macs.
@@ -88,11 +84,6 @@ struct CosmoApp: App {
                 RealtimeSyncService.shared.startListening()
                 PromptTemplateStore.shared.syncAllTemplatesToCloud()
             }
-            // NOW start the Telegram bridge — it checks isSignedIn to skip polling when cloud agent is active
-            if APIKeys.hasTelegramBot {
-                await TelegramBridgeService.shared.start()
-            }
-
             // Readwise mirror: highlights sync in as evidence (never inbox
             // rows). No-op without a token; defers its first pass internally.
             ReadwiseService.shared.startAutoSync()
@@ -155,12 +146,6 @@ struct CosmoApp: App {
         // Restore UI state
         restoreUIState()
 
-        // Initialize voice system (hotkey registered immediately, speech/LLM loaded async)
-        // Hotkey registration happens in VoiceEngine.init() for immediate availability
-        // Speech recognition TCC is handled gracefully without crashing
-        Task {
-            await voiceEngine.initialize()
-        }
         startInteractiveStartupPipeline()
 
         // Register Swipe File hotkey (Cmd+Shift+S)
@@ -177,16 +162,6 @@ struct CosmoApp: App {
             }
         }
         print("📋 Swipe File hotkey callback registered")
-
-        // Setup command bar (hidden by default, revealed on activation)
-        voicePillWindow = VoicePillWindowController()
-        // voicePillWindow?.setupTriggerZone()  // Disabled — settings cog replaces trigger zone
-
-        // Register Option-C hotkey to open command bar typing mode
-        HotkeyManager.shared.registerCommandBarTypingHotkey {
-            NotificationCenter.default.post(name: .activateCommandBarTyping, object: nil)
-        }
-        print("⌨️ Option-C hotkey registered for command bar typing")
 
         // Option+A opens the inline assistant instead of the retired floating Cosmo Window.
         HotkeyManager.shared.registerCosmoWindowHotkey {
@@ -218,21 +193,6 @@ struct CosmoApp: App {
 
         // Menu-bar leaf: click opens the capture panel, drops capture instantly.
         CaptureStatusItemController.shared.install()
-
-        // Observe voice engine state for recording indicator updates
-        NotificationCenter.default.addObserver(
-            forName: .voiceRecordingStateChanged,
-            object: nil,
-            queue: .main
-        ) { notification in
-            if let isRecording = notification.userInfo?["isRecording"] as? Bool {
-                print("🎤 Recording state: \(isRecording)")
-                if isRecording {
-                    voicePillWindow?.show()  // Reveal pill with listening mode
-                }
-                // Dismiss is handled by CommandBarView's onChange after flash
-            }
-        }
 
         // Listen for entity open requests
         NotificationCenter.default.addObserver(
@@ -321,10 +281,6 @@ struct CosmoApp: App {
             }
         }
 
-        // Telegram bridge is started in the auth Task above (after checkExistingSession)
-        // to prevent race condition where polling starts before isSignedIn is set.
-        AgentProactiveScheduler.shared.scheduleAll()
-
         print("✅ CosmoOS initialized")
         print("   🧠 Cosmo AI: Ready")
         print("   🔍 Semantic Search: Indexing...")
@@ -332,7 +288,7 @@ struct CosmoApp: App {
         print("   🔄 Sync Engine: \(networkMonitor.isConnected ? "Online" : "Offline")")
         print("   💾 State Persistence: Loaded")
         print("   📋 Swipe File: ⌘⇧S Hotkey Registered")
-        print("   🤖 Cosmo Agent: \(APIKeys.hasTelegramBot ? "Telegram Active" : "Configure in Settings")")
+        print("   🤖 Cosmo Agent: \(APIKeys.hasAgentLLM ? "Ready" : "Configure in Settings")")
     }
 
     private func restoreUIState() {
@@ -364,6 +320,14 @@ struct CosmoApp: App {
             await MainActor.run {
                 SwipeProcessingService.shared.scanForPendingSwipes()
             }
+
+            // Sweep stale per-atom UI-state keys out of UserDefaults (the
+            // plist loads fully into RAM at launch and grows unboundedly
+            // otherwise). Runs well after launch so it never competes with
+            // startup work.
+            try? await Task.sleep(for: .seconds(6))
+            guard !Task.isCancelled else { return }
+            await UserDefaultsPruner.pruneStaleState()
         }
     }
 }

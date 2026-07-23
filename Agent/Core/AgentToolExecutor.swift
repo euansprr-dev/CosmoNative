@@ -277,8 +277,6 @@ class AgentToolExecutor {
         case "list_automations": return try await listAutomations(arguments)
         case "toggle_automation": return try await toggleAutomation(arguments)
         case "delete_automation": return try await deleteAutomation(arguments)
-        // Telegram UX
-        case "send_telegram_buttons": return try await sendTelegramButtons(arguments)
         // In-App UX
         case "send_action_buttons": return try await sendActionButtons(arguments)
         // Knowledge Graph & Query
@@ -4804,8 +4802,6 @@ class AgentToolExecutor {
         ] as [String: Any])
     }
 
-    // MARK: - Telegram UX
-
     // MARK: - Module Management
 
     private func suggestModuleAddition(_ args: [String: Any]) async throws -> String {
@@ -4881,59 +4877,6 @@ class AgentToolExecutor {
         let drained = pendingModuleSuggestions
         pendingModuleSuggestions.removeAll()
         return drained
-    }
-
-    private func sendTelegramButtons(_ args: [String: Any]) async throws -> String {
-        guard let message = args["message"] as? String else {
-            return jsonError("Missing required parameter: message")
-        }
-        guard let buttons = args["buttons"] as? [[String: Any]], !buttons.isEmpty else {
-            return jsonError("Missing required parameter: buttons (non-empty array)")
-        }
-
-        // Resolve chat ID from active Telegram session
-        guard let chatId = TelegramBridgeService.shared.activeChatId else {
-            return jsonError("No active Telegram chat")
-        }
-
-        // Build inline keyboard rows (max 3 buttons per row, max 8 total)
-        let capped = Array(buttons.prefix(8))
-        var rows: [[[String: String]]] = []
-        var currentRow: [[String: String]] = []
-
-        for btn in capped {
-            guard let label = btn["label"] as? String,
-                  let action = btn["action"] as? String else { continue }
-
-            currentRow.append([
-                "text": label,
-                "callback_data": "agent_btn:\(action)"
-            ])
-
-            if currentRow.count >= 3 {
-                rows.append(currentRow)
-                currentRow = []
-            }
-        }
-        if !currentRow.isEmpty {
-            rows.append(currentRow)
-        }
-
-        guard !rows.isEmpty else {
-            return jsonError("No valid buttons provided")
-        }
-
-        let success = await TelegramBridgeService.shared.sendMessage(
-            chatId: chatId,
-            text: message,
-            parseMode: "Markdown",
-            replyMarkup: rows
-        )
-
-        return jsonEncode([
-            "success": success,
-            "buttonCount": capped.count
-        ] as [String: Any])
     }
 
     // MARK: - In-App Action Buttons

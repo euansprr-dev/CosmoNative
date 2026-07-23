@@ -152,7 +152,6 @@ struct CanvasView: View {
     @State private var drawingState = DrawingStateManager()
     @State private var clusterEngine = CanvasClusterEngine()
     @State private var renderPipeline = CanvasRenderPipeline()
-    @EnvironmentObject var voiceEngine: VoiceEngine
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var blockFrameTracker: CanvasBlockFrameTracker
     @EnvironmentObject var crossDragManager: CrossThinkspaceDragManager

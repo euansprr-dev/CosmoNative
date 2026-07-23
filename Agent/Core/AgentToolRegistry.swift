@@ -1570,20 +1570,12 @@ class AgentToolRegistry {
         ]
     }
 
-    // MARK: - Telegram UX Tools
+    // MARK: - Interactive UX Tools
 
     private func interactiveUXTools(for source: MessageSource) -> [LLMToolDefinition] {
-        let toolName: String
-        let toolDescription: String
-
-        switch source {
-        case .telegram:
-            toolName = "send_telegram_buttons"
-            toolDescription = "Send a message with inline buttons to Telegram. Each button triggers an action string that gets routed back through the agent as if the user typed it. Use this to offer quick-action choices after giving recommendations or asking a question. Max 8 buttons."
-        case .inApp, .whatsapp:
-            toolName = "send_action_buttons"
-            toolDescription = "Send a message with interactive buttons to the user. Each button triggers an action string that gets routed back through the agent as if the user typed it. Use this to offer quick-action choices after giving recommendations or asking a question. Max 8 buttons."
-        }
+        // Telegram bridge removed — every source gets the in-app button tool.
+        let toolName = "send_action_buttons"
+        let toolDescription = "Send a message with interactive buttons to the user. Each button triggers an action string that gets routed back through the agent as if the user typed it. Use this to offer quick-action choices after giving recommendations or asking a question. Max 8 buttons."
 
         return [
             LLMToolDefinition(
@@ -1669,7 +1661,6 @@ class AgentToolRegistry {
     // MARK: - Intent-Based Tool Selection
 
     /// Return relevant tools for a given intent.
-    /// Source-gated: Telegram gets `send_telegram_buttons`, in-app gets `send_action_buttons`.
     func toolsForIntent(_ intent: AgentIntent, source: MessageSource = .inApp) -> [LLMToolDefinition] {
         let uxTools = interactiveUXTools(for: source)
         let tools: [LLMToolDefinition]
@@ -1772,7 +1763,7 @@ class AgentToolRegistry {
     // MARK: - Registration
 
     private func registerAllTools() {
-        allTools = deduplicated(contextTools + knowledgeQueryTools + researchTools + ideaTools + swipeTools + captureTools + contentTools + contentDataTools + scheduleTools + analyticsTools + preferenceTools + clientTools + clientProfileTools + clientFactLookupTools + strategyTools + intelligenceTools + standingInstructionTools + writingTools + clientMemoryTools + scoringTools + insightMemoryTools + lessonTools + interactiveUXTools(for: .telegram) + interactiveUXTools(for: .inApp) + moduleManagementTools + webSearchTools + canvasSpatialTools + workspaceEditingTools + navigationTools + workspaceTools + sqlTools + automationTools + workflowTools)
+        allTools = deduplicated(contextTools + knowledgeQueryTools + researchTools + ideaTools + swipeTools + captureTools + contentTools + contentDataTools + scheduleTools + analyticsTools + preferenceTools + clientTools + clientProfileTools + clientFactLookupTools + strategyTools + intelligenceTools + standingInstructionTools + writingTools + clientMemoryTools + scoringTools + insightMemoryTools + lessonTools + interactiveUXTools(for: .inApp) + moduleManagementTools + webSearchTools + canvasSpatialTools + workspaceEditingTools + navigationTools + workspaceTools + sqlTools + automationTools + workflowTools)
     }
 
     private func deduplicated(_ tools: [LLMToolDefinition]) -> [LLMToolDefinition] {

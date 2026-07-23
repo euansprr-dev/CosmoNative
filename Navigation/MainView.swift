@@ -113,7 +113,6 @@ private extension NSView {
 struct MainView: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var database: CosmoDatabase
-    @EnvironmentObject var voiceEngine: VoiceEngine
     @EnvironmentObject var glassCenter: CosmoGlassCenter
     @EnvironmentObject var swipeFileEngine: SwipeFileEngine
 
@@ -126,7 +125,6 @@ struct MainView: View {
     @State private var radialMenuPosition: CGPoint = .zero
     @State private var rightClickMonitor: Any?
     @State private var keyMonitor: Any?
-    @State private var inAppVoiceHotkeyActive = false
     @StateObject private var rightClickRoutingState = MainRightClickRoutingState()
 
     // Command-K (constellation-based search)
@@ -1667,7 +1665,6 @@ struct MainView: View {
                 CanvasView(thinkspaceId: canvasThinkspaceId, isActive: isCanvasDestination)
                     .environmentObject(appState)
                     .environmentObject(database)
-                    .environmentObject(voiceEngine)
                     .environmentObject(blockFrameTracker)
                     .environmentObject(crossDragManager)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1751,7 +1748,6 @@ struct MainView: View {
                 .id(focusEntity)
                 .environmentObject(appState)
                 .environmentObject(database)
-                .environmentObject(voiceEngine)
                 // Full-screen surface: never rides the sidebar push offset,
                 // so the entrance doesn't slide sideways while it fades.
                 // Study surfaces arrive like a destination change (content
@@ -2522,16 +2518,6 @@ struct MainView: View {
                 return nil
             }
 
-            // Cmd+Shift+C - Open command bar typing mode
-            if event.type == .keyDown,
-               event.keyCode == 8,  // C key
-               event.modifierFlags.contains(.command),
-               event.modifierFlags.contains(.shift),
-               !isKeyboardInputReserved() {
-                NotificationCenter.default.post(name: .activateCommandBarTyping, object: nil)
-                return nil  // Consume event
-            }
-
             // Option+A - now handled by system-wide HotkeyManager → inline assistant
 
             // Ctrl+Z / Ctrl+Shift+Z for undo/redo (fallback when not in text field)
@@ -2550,11 +2536,6 @@ struct MainView: View {
                 return nil  // Consume event
             }
 
-            // In-app voice hotkey (consume to prevent macOS beep)
-            if handleInAppVoiceHotkey(event) {
-                return nil
-            }
-
             return event  // Pass through to text fields and other responders
         }
     }
@@ -2562,71 +2543,6 @@ struct MainView: View {
     /// Check if the current first responder owns keyboard input.
     private func isKeyboardInputReserved() -> Bool {
         MainKeyboardShortcutPolicy.isTextInputFocused(in: NSApp.keyWindow)
-    }
-
-    /// Handles the configured voice hotkey while CosmoOS is focused.
-    /// Returns true if the event was handled and should be consumed.
-    private func handleInAppVoiceHotkey(_ event: NSEvent) -> Bool {
-        // Only handle when app is active (prevents weird cross-app interception)
-        guard NSApp.isActive else { return false }
-
-        // Don't steal command-based shortcuts (system/app menus)
-        if event.modifierFlags.contains(.command) { return false }
-
-        // Avoid triggering while editing text (prevents accidental voice starts)
-        if isTextInputFocused(in: event.window) { return false }
-
-        let hotkey = HotkeyManager.shared.currentHotkey
-        let requiredMods = hotkey.modifierFlags
-        let cgFlags = event.cgEvent?.flags ?? CGEventFlags(rawValue: 0)
-        let hasRequiredMods = cgFlags.contains(requiredMods)
-
-        // Modifier-only hotkeys (e.g. Fn) are handled in HotkeyManager via event tap.
-        // We keep the in-app monitor focused on key-based hotkeys to avoid swallowing modifier events.
-        if hotkey.keyCode < 0 { return false }
-
-        let isOurKey = Int(event.keyCode) == hotkey.keyCode
-
-        switch event.type {
-        case .keyDown:
-            if isOurKey, hasRequiredMods {
-                if !inAppVoiceHotkeyActive {
-                    inAppVoiceHotkeyActive = true
-                    Task { @MainActor in
-                        await voiceEngine.startRecording()
-                    }
-                }
-                return true // consume to prevent beep
-            }
-
-        case .keyUp:
-            // Consume keyUp if we were activated OR if modifiers are still held to prevent beep
-            if isOurKey, (inAppVoiceHotkeyActive || hasRequiredMods) {
-                if inAppVoiceHotkeyActive {
-                    inAppVoiceHotkeyActive = false
-                    Task { @MainActor in
-                        await voiceEngine.stopRecording()
-                    }
-                }
-                return true
-            }
-
-        case .flagsChanged:
-            // If activated and required modifiers were released, stop recording
-            if inAppVoiceHotkeyActive, !hasRequiredMods {
-                inAppVoiceHotkeyActive = false
-                Task { @MainActor in
-                    await voiceEngine.stopRecording()
-                }
-                // Don't consume modifier changes; just ensure voice state is consistent
-                return false
-            }
-
-        default:
-            break
-        }
-
-        return false
     }
 
     private func isTextInputFocused(in window: NSWindow?) -> Bool {
@@ -3018,7 +2934,6 @@ struct ErrorView: View {
     MainView()
         .environmentObject(AppState())
         .environmentObject(CosmoDatabase.shared)
-        .environmentObject(VoiceEngine.shared)
         .environmentObject(CosmoGlassCenter.shared)
         .environmentObject(SwipeFileEngine.shared)
         .frame(width: 1200, height: 800)

@@ -24,7 +24,6 @@ struct APIKeys {
         case youtubeChannelId = "youtube_channel_id"
         case agentLLM = "agent_llm_api_key"
         case agentLLMBaseURL = "agent_llm_base_url"
-        case telegramBotToken = "telegram_bot_token"
         case whisperAPIKey = "whisper_api_key"
         case embeddings = "embeddings_api_key"
         case apify = "apify_api_key"
@@ -121,10 +120,6 @@ struct APIKeys {
 
     static var agentLLMBaseURL: String? {
         cachedValue(.agentLLMBaseURL, envKey: "AGENT_LLM_BASE_URL")
-    }
-
-    static var telegramBotToken: String? {
-        cachedValue(.telegramBotToken, envKey: "TELEGRAM_BOT_TOKEN")
     }
 
     static var whisperAPIKey: String? {
@@ -253,7 +248,6 @@ struct APIKeys {
     static var hasDiscoveryAPI: Bool {
         discoveryApiBaseURL?.isEmpty == false && discoveryApiKey?.isEmpty == false
     }
-    static var hasTelegramBot: Bool { telegramBotToken?.isEmpty == false }
     static var hasWhisper: Bool { whisperAPIKey?.isEmpty == false }
     static var hasApify: Bool { apify?.isEmpty == false }
     static var hasEmbeddings: Bool { embeddings?.isEmpty == false }
@@ -273,7 +267,6 @@ struct APIKeys {
         print("   X/Twitter: \(hasXTwitter ? "Configured" : "Optional (for Creative dimension tracking)")")
         print("   YT Channel ID: \(hasYouTubeChannelId ? "Configured" : "Optional (for YouTube analytics)")")
         print("   Agent LLM: \(hasAgentLLM ? "Configured" : "Optional (for Cosmo Agent)")")
-        print("   Telegram: \(hasTelegramBot ? "Configured" : "Optional (for Telegram bot)")")
         print("   Whisper: \(hasWhisper ? "Configured" : "Optional (for voice transcription)")")
         print("   Apify: \(hasApify ? "Configured" : "Optional (for creator import)")")
         print("   Supabase: \(hasSupabase ? "Configured" : "Not set (Sync Disabled)")")
@@ -314,7 +307,6 @@ struct APIKeys {
         case "youtube_channel_id": return .youtubeChannelId
         case "agent_llm": return .agentLLM
         case "agent_llm_base_url": return .agentLLMBaseURL
-        case "telegram_bot_token": return .telegramBotToken
         case "whisper_api_key": return .whisperAPIKey
         case "apify": return .apify
         case "embeddings": return .embeddings

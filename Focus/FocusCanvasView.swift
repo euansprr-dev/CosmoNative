@@ -14,7 +14,6 @@ struct FocusCanvasView: View {
     let entity: EntitySelection
 
     @EnvironmentObject var appState: AppState
-    @EnvironmentObject var voiceEngine: VoiceEngine
     @EnvironmentObject var database: CosmoDatabase
 
     // Use unified canvas blocks layer (same system as home canvas)
@@ -266,13 +265,7 @@ struct FocusCanvasView: View {
     @ViewBuilder
     private var editorView: some View {
         switch entity.type {
-        case .idea:
-            IdeaEditorView(ideaId: entity.id)
-                .environmentObject(voiceEngine)
-        case .content:
-            ContentEditorView(contentId: entity.id)
-                .environmentObject(voiceEngine)
-        case .research, .connection, .cosmoAI:
+        case .idea, .content, .research, .connection, .cosmoAI:
             // Handled by fullCanvasModeView
             EmptyView()
         default:

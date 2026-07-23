@@ -289,6 +289,36 @@ final class NotePersistenceRegressionTests: XCTestCase {
         )
     }
 
+    /// July 22 2026 regression: the observation's initial delivery matches the
+    /// init-seeded documents exactly, so its change-gated apply branch (the
+    /// only load-time `updateTextAnalysisImmediately` caller) never ran on
+    /// open — every reopened note read "0 words" and had an empty outline
+    /// rail until the first keystroke. onAppear must seed both from the
+    /// load-time snapshot.
+    func testNoteFocusSeedsWordCountAndOutlineAtLoadNotFirstKeystroke() throws {
+        let source = try String(
+            contentsOf: packageRoot.appendingPathComponent("UI/FocusMode/Notes/NoteFocusModeView.swift"),
+            encoding: .utf8
+        )
+        let appearRange = try XCTUnwrap(
+            source.range(of: "startObservingAtom()"),
+            "note open path changed — re-anchor this contract"
+        )
+        let afterAppear = source[appearRange.upperBound...]
+        let analysisSeed = try XCTUnwrap(
+            afterAppear.range(of: "scheduleTextAnalysis(for: plainContent)"),
+            "onAppear must seed the text analysis from the loaded content"
+        )
+        XCTAssertNotNil(
+            afterAppear.range(of: "updateBodyHeadingOutline(from: bodyDocument)"),
+            "onAppear must seed the heading outline from the loaded document"
+        )
+        // The seed must come before the auto-save section of the file — i.e.
+        // it lives in the open path, not somewhere that only runs on edits.
+        let autoSaveRange = try XCTUnwrap(afterAppear.range(of: "MARK: - Auto-Save"))
+        XCTAssertTrue(analysisSeed.lowerBound < autoSaveRange.lowerBound)
+    }
+
     func testNoteAutosavePolicyUsesPlainTextLaneForLargeTypingSaves() {
         let policy = NoteAutosavePolicy(
             richCheckpointCharacterThreshold: 4_000,

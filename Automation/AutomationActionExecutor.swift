@@ -173,7 +173,9 @@ class AutomationActionExecutor {
             handleShowNotification(action, context: context)
 
         case .sendTelegram:
-            try await handleSendTelegram(action, context: context)
+            // Telegram bridge removed — legacy rules with this action are a no-op.
+            // The enum case stays so persisted rules keep decoding.
+            break
 
         case .runAnalysis:
             try await handleRunAnalysis(action, context: context)
@@ -386,20 +388,6 @@ class AutomationActionExecutor {
                 "atomUUID": context.atom.uuid
             ]
         )
-    }
-
-    // MARK: - Telegram Action
-
-    private func handleSendTelegram(_ action: AutomationAction, context: AutomationContext) async throws {
-        let message = interpolateTemplate(
-            action.configString("message") ?? "⚡ Automation fired for {{atom.title}}",
-            context: context
-        )
-
-        // Use TelegramBridgeService to send the message via the bot
-        await TelegramBridgeService.shared.sendAutomationNotification(message)
-
-        print("⚡ [Automation] Sent Telegram notification: \(message)")
     }
 
     // MARK: - AI Actions

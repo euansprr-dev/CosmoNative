@@ -825,3 +825,14 @@ struct DeepWorkSessionResult: Sendable {
     let outputAtomCount: Int
     let notes: String?
 }
+
+// MARK: - Session Notifications
+// (moved here from the deleted Voice/Pipeline/DeepWorkVoiceCommands.swift)
+
+extension Notification.Name {
+    static let deepWorkSessionStarted = Notification.Name("deepWorkSessionStarted")
+    static let deepWorkSessionEnded = Notification.Name("deepWorkSessionEnded")
+    static let deepWorkSessionPaused = Notification.Name("deepWorkSessionPaused")
+    static let deepWorkSessionResumed = Notification.Name("deepWorkSessionResumed")
+    static let deepWorkSessionExtended = Notification.Name("deepWorkSessionExtended")
+}

@@ -2,59 +2,6 @@ import XCTest
 @testable import CosmoOS
 
 @MainActor
-final class VoiceCommandRouterTests: XCTestCase {
-    func testRelevantIdeasInFocusModeRoutesToBringRelatedBlocks() async throws {
-        let router = VoiceCommandRouter()
-
-        let ctx = VoiceContextSnapshot(
-            selectedSection: .home,
-            selectedEntity: nil,
-            focusedEntity: EntitySelection(id: 123, type: .content),
-            selectedBlockId: nil
-        )
-
-        let result = try await router.route(
-            "open the three most relevant ideas to the document i currently have open",
-            context: ctx
-        )
-
-        XCTAssertEqual(result.action, "unhandled")
-
-        XCTAssertNil(result.llmResult)
-    }
-
-    func testSearchAndPlaceCanAnchorToSelectedBlock() async throws {
-        let router = VoiceCommandRouter()
-
-        let ctx = VoiceContextSnapshot(
-            selectedSection: .home,
-            selectedEntity: nil,
-            focusedEntity: nil,
-            selectedBlockId: "block-123"
-        )
-
-        let result = try await router.route(
-            "bring up three ideas about productivity to the right of this block",
-            context: ctx
-        )
-
-        XCTAssertEqual(result.action, "unhandled")
-        XCTAssertNil(result.llmResult)
-    }
-
-    func testRouteSmokeDoesNotThrowForSimpleNavigation() async throws {
-        let router = VoiceCommandRouter()
-
-        let result = try await router.route(
-            "go to calendar",
-            context: VoiceContextStore.shared.snapshot()
-        )
-
-        XCTAssertEqual(result.action, "navigate:plannerum")
-    }
-}
-
-@MainActor
 final class ExplicitLessonCaptureTests: XCTestCase {
     private let explicitLessonMessage = """
     Please save this as a lesson for future reference:
@@ -79,11 +26,6 @@ final class ExplicitLessonCaptureTests: XCTestCase {
     func testExplicitLessonParserIgnoresLessonQueries() {
         XCTAssertNil(ExplicitLessonCaptureParser.parse("What lessons have you learned?"))
         XCTAssertNil(ExplicitLessonCaptureParser.parse("show my lessons"))
-    }
-
-    func testTelegramLessonFastPathOnlyMatchesExplicitLessonRequests() {
-        XCTAssertTrue(TelegramBridgeService.shouldUseExplicitLessonFastPath(explicitLessonMessage))
-        XCTAssertFalse(TelegramBridgeService.shouldUseExplicitLessonFastPath("Idea: build a calculator app"))
     }
 
     func testFlashLiteGuardForcesLessonRequestsToAgentFallback() {

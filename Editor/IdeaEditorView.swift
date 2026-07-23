@@ -12,7 +12,6 @@ struct IdeaEditorView: View {
     let presentation: EditorPresentation
 
     @Environment(\.dismiss) var dismiss
-    @EnvironmentObject var voiceEngine: VoiceEngine
 
     @State private var title = ""
     @State private var attributedContent = NSAttributedString()
@@ -31,7 +30,6 @@ struct IdeaEditorView: View {
     @State private var contentAppeared = false
 
     private let database = CosmoDatabase.shared
-    private let localLLM = LocalLLM.shared
     private let autoSaveDelay: TimeInterval = 1.5
     private let contextTracker = EditingContextTracker.shared
 

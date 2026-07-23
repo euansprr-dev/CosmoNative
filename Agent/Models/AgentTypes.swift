@@ -374,7 +374,7 @@ enum AgentConfirmationTier: String, Codable, Sendable {
 
 /// Model routing strategy for cost/quality optimization.
 /// Auto routes should stay cheap; premium models are selected explicitly.
-/// NOTE: Named `AgentModelTier` to avoid collision with `ModelTier` in VoiceAtom.swift
+/// NOTE: Named `AgentModelTier` (historically to avoid a collision with the retired voice pipeline's `ModelTier`)
 enum AgentModelTier: String, Codable, Sendable {
     /// The tier auto mode runs on when nothing picks a model — ONE stable
     /// default for every intent (per-intent switching fragments the prompt

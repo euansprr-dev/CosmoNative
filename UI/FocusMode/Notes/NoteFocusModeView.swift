@@ -464,6 +464,13 @@ struct NoteFocusModeView: View {
             startObservingAtom()
             loadLinkedAtoms()
             listenForAtomPicker()
+            // Seed the derived reading state from the load-time snapshot. The
+            // observation's initial delivery matches the init-seeded documents
+            // exactly, so its change-gated apply branch never runs on open —
+            // without this, the header reads "0 words" and the outline rail
+            // stays empty until the first keystroke.
+            updateBodyHeadingOutline(from: bodyDocument)
+            scheduleTextAnalysis(for: plainContent)
             titleEditorHeight = titleMinHeight
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 withAnimation(ProMotionSprings.cardEntrance) {

@@ -13,7 +13,7 @@ struct CloudSyncSettingsTab: View {
                 .font(DS.title2)
                 .foregroundStyle(DS.text)
 
-            Text("Sync your data across devices and enable the cloud Telegram agent")
+            Text("Sync your data across devices and enable the cloud agent")
                 .font(DS.navTitle)
                 .foregroundStyle(DS.textMuted)
 

@@ -95,6 +95,21 @@ class ConflictResolver {
                         localData: rowToDictionary(local),
                         remoteData: data
                     )
+                } else if Self.remoteWouldBlankLocalContent(table: table, localData: rowToDictionary(local), remoteData: data) {
+                    // Anti-wipe shield: a live remote row carrying a BLANK body
+                    // must never blind-overwrite substantial local content —
+                    // the observed source of such rows is another device stuck
+                    // holding an empty scaffold of this atom, not a user who
+                    // typed a full note and then deleted every character. Route
+                    // through the conflict merge: local content wins, the
+                    // remote payload stays recoverable as a conflict snapshot.
+                    PersistenceHealth.note(.conflict, context: "ConflictResolver.applyRemoteChange(\(uuid.prefix(8)))", detail: "anti-wipe: remote blank body over substantial local content — routed to merge")
+                    await handleConflict(
+                        table: table,
+                        uuid: uuid,
+                        localData: rowToDictionary(local),
+                        remoteData: data
+                    )
                 } else {
                     await applyRemoteUpdate(table: table, uuid: uuid, data: data)
                 }
@@ -161,8 +176,13 @@ class ConflictResolver {
         // Determine source of remote change
         let remoteSource = remoteData["_source"] as? String ?? "unknown"
 
-        // Fields that ALWAYS prefer remote (sync metadata)
-        let remotePreferredFields: Set = ["synced_at", "updated_at", "_server_version", "_version"]
+        // Fields that ALWAYS prefer remote (sync metadata). `_server_version`
+        // and `_version` are deliberately NOT here: the server's `_version`
+        // column froze at its insert-time default (no client bumps it), and
+        // adopting it REGRESSED the local push-ack counter — the row looked
+        // permanently "local-ahead", every future pull re-entered this merge,
+        // and the other device's edits could never land.
+        let remotePreferredFields: Set = ["synced_at", "updated_at"]
 
         // Fields where the local user's copy wins outright. The discarded remote
         // copy of body/title content is preserved as a conflict snapshot below —
@@ -178,11 +198,23 @@ class ConflictResolver {
             ? .preferRemoteForStatus
             : .preferLocal
 
+        // Content fields where the blank local copy lost to substantial remote
+        // content — their rich-document metadata keys must follow (below).
+        var contentAdoptedFromRemote: Set<String> = []
+
         for (key, remoteValue) in remoteData {
             if remotePreferredFields.contains(key) {
                 merged[key] = remoteValue
             } else if localPreferredFields.contains(key) {
-                // Keep local (already in merged)
+                // Local wins for user content — but only content that exists.
+                // A blank local copy never beats substantial remote content:
+                // "local wins" protects edits, not voids. (July 22 2026: an
+                // iPhone-created empty note scaffold rejected the Mac's typed
+                // body on every pull — the note could never reach the phone.)
+                if Self.isBlankContent(merged[key]), !Self.isBlankContent(remoteValue) {
+                    merged[key] = remoteValue
+                    contentAdoptedFromRemote.insert(key)
+                }
             } else if key == "metadata" {
                 merged[key] = mergeMetadata(
                     local: localData[key],
@@ -201,18 +233,35 @@ class ConflictResolver {
             }
         }
 
+        // Rich documents ride with their text field: when a blank local
+        // body/title adopted the remote text, the metadata documents must
+        // follow, or the editor keeps rendering the stale empty document
+        // (metadata beats the plaintext fallback in
+        // RichDocumentPersistence.loadAtomDocument).
+        if !contentAdoptedFromRemote.isEmpty {
+            merged["metadata"] = Self.metadataAdoptingRemoteDocuments(
+                merged: merged["metadata"],
+                remote: remoteData["metadata"],
+                adoptBody: contentAdoptedFromRemote.contains("body"),
+                adoptTitle: contentAdoptedFromRemote.contains("title")
+            )
+        }
+
         // BEFORE the local-wins resolution lands, preserve any remote user content
         // it discards so a multi-device edit is recoverable instead of vanishing.
+        // Fields adopted FROM remote didn't lose — nothing of theirs to preserve.
         await snapshotDiscardedRemote(
             table: table,
             uuid: uuid,
             localData: localData,
             remoteData: remoteData,
-            contentFields: ["title", "content", "body", "description"]
+            contentFields: ["title", "content", "body", "description"].filter { !contentAdoptedFromRemote.contains($0) }
         )
 
-        // Update server version to remote
-        merged["_server_version"] = remoteData["_version"] ?? remoteData["_server_version"] ?? remoteData["version"]
+        // `_server_version` stays LOCAL: it is this device's push-ack counter
+        // and only pushChange's ack may advance it. The merged row deliberately
+        // remains local-ahead so SyncQueueReconciler uploads the merge result;
+        // the ack then closes the gap and later pulls apply cleanly.
         // merged comes from rowToDictionary — GRDB row values are Int64, so
         // coerce both widths (the bare `as? Int` read always failed).
         let currentSyncVersion = (merged["_sync_version"] as? Int)
@@ -505,7 +554,17 @@ class ConflictResolver {
     private func applyRemoteUpdate(table: String, uuid: String, data: [String: Any]) async {
         var updateData = data
 
-        updateData["_server_version"] = data["_version"] as? Int ?? data["version"] as? Int ?? updateData["_server_version"]
+        // `_server_version` is this device's push-ack counter — remote payloads
+        // must never move it. This line used to adopt the server's `_version`
+        // column, which froze at its insert-time default (no client bumps it),
+        // so every clean apply REGRESSED the counter to ~1. The next pull then
+        // saw the row as "local-ahead" and fell into handleConflict's
+        // local-wins merge forever — a device that had once edited an atom
+        // could never accept remote updates to it again (the July 22 2026
+        // "note stays empty on iPhone" bug).
+        updateData.removeValue(forKey: "_server_version")
+        updateData.removeValue(forKey: "_local_version")
+        updateData.removeValue(forKey: "_local_pending")
 
         // Remove Postgres-only fields
         updateData.removeValue(forKey: "user_id")
@@ -600,6 +659,96 @@ class ConflictResolver {
             dict[column] = row[column]
         }
         return dict
+    }
+}
+
+// MARK: - Content-Preservation Policy (pure — unit-tested, iOS-mirrored)
+//
+// The July 22 2026 cross-device note incident: an iPhone-created note synced
+// its empty scaffold everywhere; the phone's copy then rejected the Mac's
+// typed content on every pull (blank-local-wins + regressed ack counter),
+// while its own re-pushed blank row could wipe the Mac's full note through
+// the clean-apply overwrite. These helpers encode the two laws that close
+// that class of bug: blank content never beats substantial content, and a
+// blank remote body never blind-overwrites a substantial local one.
+// CosmoOS-iOS/CosmoCoreKit/Sources/Sync/ConflictResolver.swift carries the
+// identical implementations — keep them in lockstep.
+extension ConflictResolver {
+    /// A content value is "blank" when it carries no user text — nil/NSNull or
+    /// whitespace-only. Non-string values are never blank (unknown payload
+    /// shapes must not trigger content adoption).
+    nonisolated static func isBlankContent(_ value: Any?) -> Bool {
+        guard let value, !(value is NSNull) else { return true }
+        guard let string = value as? String else { return false }
+        return string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// True when applying `remoteData` over `localData` would replace a
+    /// substantial local atom body with a blank one. Absent body keys are safe
+    /// (the UPDATE leaves the local column untouched).
+    nonisolated static func remoteWouldBlankLocalContent(
+        table: String,
+        localData: [String: Any],
+        remoteData: [String: Any]
+    ) -> Bool {
+        guard table == "atoms" else { return false }
+        guard remoteData.keys.contains("body") else { return false }
+        return isBlankContent(remoteData["body"]) && !isBlankContent(localData["body"])
+    }
+
+    /// Carries the rich-document metadata keys along with an adopted text
+    /// field: when the blank local body/title lost to remote content, the
+    /// remote's document replaces the stale empty local document — and when
+    /// the remote has no document at all, the stale local one is REMOVED so
+    /// the adopted plaintext fallback can render.
+    nonisolated static func metadataAdoptingRemoteDocuments(
+        merged: Any?,
+        remote: Any?,
+        adoptBody: Bool,
+        adoptTitle: Bool
+    ) -> Any {
+        var adoptedKeys: [String] = []
+        if adoptBody { adoptedKeys.append(RichDocumentMetadataKeys.bodyDocument) }
+        if adoptTitle { adoptedKeys.append(RichDocumentMetadataKeys.titleDocument) }
+        guard !adoptedKeys.isEmpty else { return merged ?? NSNull() }
+
+        let remoteDict = remote.flatMap(Self.parseJSONDict)
+        guard var mergedDict = merged.flatMap(Self.parseJSONDict) else {
+            // No usable merged metadata — the remote copy (which carries the
+            // adopted documents) is strictly better than a blank/unparseable one.
+            if let remoteDict,
+               let data = try? JSONSerialization.data(withJSONObject: remoteDict),
+               let json = String(data: data, encoding: .utf8) {
+                return json
+            }
+            return merged ?? NSNull()
+        }
+
+        for key in adoptedKeys {
+            if let remoteValue = remoteDict?[key] {
+                mergedDict[key] = remoteValue
+            } else {
+                mergedDict.removeValue(forKey: key)
+            }
+        }
+
+        if let data = try? JSONSerialization.data(withJSONObject: mergedDict),
+           let json = String(data: data, encoding: .utf8) {
+            return json
+        }
+        return merged ?? NSNull()
+    }
+
+    /// Metadata is a JSON string locally but a JSONB dictionary on payloads
+    /// straight from Postgres — accept both shapes.
+    nonisolated static func parseJSONDict(_ value: Any) -> [String: Any]? {
+        if let dict = value as? [String: Any] { return dict }
+        if let string = value as? String,
+           let data = string.data(using: .utf8),
+           let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            return dict
+        }
+        return nil
     }
 }
 

@@ -75,7 +75,7 @@ struct RecallIndexStatusCard: View {
             Button {
                 isWorking = true
                 Task {
-                    _ = await RecallIndexer.shared.backfill()
+                    _ = await RecallIndexer.shared.backfill(full: true)
                     await RecallIndexer.shared.scheduleDrain()
                     isWorking = false
                     refreshTick += 1

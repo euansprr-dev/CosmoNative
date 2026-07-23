@@ -5,28 +5,20 @@ import SwiftUI
 
 struct CosmoAgentSettingsTab: View {
     @StateObject private var agentService = CosmoAgentService.shared
-    @StateObject private var telegramBridge = TelegramBridgeService.shared
-    @StateObject private var scheduler = AgentProactiveScheduler.shared
 
     @State private var selectedProvider: AgentProvider = .anthropic
     @State private var agentAPIKey: String = ""
     @State private var agentModel: String = ""
     @State private var selectedOpenRouterModel: String = AgentProvider.openRouterModels[0].id
     @State private var agentBaseURL: String = ""
-    @State private var telegramToken: String = ""
     @State private var whisperKey: String = ""
     @State private var isTestingConnection = false
     @State private var connectionResult: (success: Bool, message: String)?
-    @State private var showTelegramInstructions = false
-    @State private var isTestingTelegram = false
-    @State private var telegramTestResult: (success: Bool, message: String)?
 
     // Collapsible sections
     @State private var isAPIExpanded = false
-    @State private var isTelegramExpanded = false
     @State private var isSystemPromptExpanded = false
     @State private var isVoiceExpanded = false
-    @State private var isProactiveExpanded = false
     // Custom system prompt
     @State private var customSystemPrompt: String = ""
     @State private var isSystemPromptDirty = false
@@ -40,23 +32,14 @@ struct CosmoAgentSettingsTab: View {
             // Section 1: AI Provider
             aiProviderSection
 
-            // Section 2: Telegram Bot
-            telegramSection
-
             // Section 3: System Prompt
             systemPromptSection
 
             // Section 4: Voice Transcription
             voiceSection
 
-            // Section 5: Proactive Intelligence
-            proactiveSection
-
             // Section 6: Skills link
             skillsLinkRow
-
-            // Section 7: WhatsApp (Coming Soon)
-            whatsappSection
 
             Spacer()
         }
@@ -75,7 +58,6 @@ struct CosmoAgentSettingsTab: View {
             } else {
                 if APIKeys.hasAgentLLM { agentAPIKey = String(repeating: "\u{2022}", count: 30) }
             }
-            if APIKeys.hasTelegramBot { telegramToken = String(repeating: "\u{2022}", count: 30) }
             if APIKeys.hasWhisper { whisperKey = String(repeating: "\u{2022}", count: 30) }
             if let url = APIKeys.agentLLMBaseURL { agentBaseURL = url }
             // Load custom system prompt
@@ -299,158 +281,6 @@ struct CosmoAgentSettingsTab: View {
         }
     }
 
-    // MARK: - Telegram Section
-    private var telegramSection: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            collapsibleHeader(
-                title: "Telegram Bot",
-                subtitle: telegramBridge.isConnected ? "Connected" : "Disconnected",
-                icon: "paperplane.fill",
-                isExpanded: $isTelegramExpanded,
-                statusColor: telegramBridge.isConnected ? .green : nil
-            )
-
-            if isTelegramExpanded {
-                VStack(spacing: 12) {
-                    // Token input
-                    HStack(spacing: 8) {
-                        SecureField("Bot Token", text: $telegramToken)
-                            .textFieldStyle(.plain)
-                            .font(.system(size: 13, design: .monospaced))
-                            .foregroundStyle(DS.text)
-
-                        if !telegramToken.isEmpty && !telegramToken.allSatisfy({ $0 == "\u{2022}" }) {
-                            Button(action: saveTelegramToken) {
-                                Image(systemName: "arrow.right.circle.fill")
-                                    .font(.system(size: 16))
-                                    .foregroundStyle(CosmoColors.cosmoAI)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(DS.surfaceHover))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(DS.borderSubtle, lineWidth: 1))
-
-                    // Start/Stop + Test + Status
-                    telegramControlRow
-
-                    // Setup instructions
-                    Button(action: { showTelegramInstructions.toggle() }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "questionmark.circle")
-                                .font(.system(size: 12))
-                            Text("How to create a Telegram bot")
-                                .font(.system(size: 11))
-                        }
-                        .foregroundStyle(CosmoColors.cosmoAI)
-                    }
-                    .buttonStyle(.plain)
-
-                    if showTelegramInstructions {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("1. Open Telegram and search for @BotFather")
-                            Text("2. Send /newbot and follow the prompts")
-                            Text("3. Copy the bot token and paste it above")
-                            Text("4. Start a chat with your new bot")
-                            Text("5. Click 'Start Polling' to connect")
-                        }
-                        .font(.system(size: 11))
-                        .foregroundStyle(DS.textSecondary)
-                        .padding(12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(RoundedRectangle(cornerRadius: 8).fill(CosmoColors.lavender.opacity(0.1)))
-                    }
-                }
-                .padding(16)
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-        }
-        .background(RoundedRectangle(cornerRadius: 10).fill(DS.surfaceHover))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(DS.borderSubtle, lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-    }
-
-    @ViewBuilder
-    private var telegramControlRow: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Button(action: {
-                    if telegramBridge.isConnected {
-                        telegramBridge.stop()
-                    } else {
-                        Task { await telegramBridge.start() }
-                    }
-                }) {
-                    HStack(spacing: 6) {
-                        Image(systemName: telegramBridge.isConnected ? "stop.fill" : "play.fill")
-                            .font(.system(size: 12))
-                        Text(telegramBridge.isConnected ? "Stop Polling" : "Start Polling")
-                            .font(.system(size: 13, weight: .medium))
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(
-                        telegramBridge.isConnected ? CosmoColors.coral.opacity(0.2) : CosmoColors.cosmoAI.opacity(0.2)
-                    ))
-                    .foregroundStyle(telegramBridge.isConnected ? CosmoColors.coral : CosmoColors.cosmoAI)
-                }
-                .buttonStyle(.plain)
-
-                Button(action: testTelegramBot) {
-                    HStack(spacing: 6) {
-                        if isTestingTelegram {
-                            ProgressView()
-                                .scaleEffect(0.7)
-                                .frame(width: 14, height: 14)
-                        } else {
-                            Image(systemName: "antenna.radiowaves.left.and.right")
-                                .font(.system(size: 12))
-                        }
-                        Text("Test Bot")
-                            .font(.system(size: 13, weight: .medium))
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(DS.surfaceHover))
-                    .foregroundStyle(DS.textSecondary)
-                }
-                .buttonStyle(.plain)
-                .disabled(isTestingTelegram)
-
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(telegramBridge.isConnected ? Color.green : (telegramBridge.lastError != nil ? Color.red : Color.gray))
-                        .frame(width: 8, height: 8)
-
-                    Text(telegramStatusText)
-                        .font(.system(size: 12))
-                        .foregroundStyle(DS.textSecondary)
-                }
-            }
-
-            if let result = telegramTestResult {
-                HStack(spacing: 4) {
-                    Image(systemName: result.success ? "checkmark.circle.fill" : "xmark.circle.fill")
-                        .foregroundStyle(result.success ? .green : .red)
-                    Text(result.message)
-                        .font(.system(size: 12))
-                        .foregroundStyle(result.success ? .green : .red)
-                        .lineLimit(3)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        }
-    }
-
-    private var telegramStatusText: String {
-        if telegramBridge.isConnected {
-            return "Connected (\(telegramBridge.messageCount) msgs)"
-        }
-        return telegramBridge.lastError ?? "Disconnected"
-    }
-
     // MARK: - Voice Section
     private var voiceSection: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -458,7 +288,7 @@ struct CosmoAgentSettingsTab: View {
                 .font(DS.title3)
                 .foregroundStyle(DS.text)
 
-            Text("OpenAI Whisper for voice messages in Telegram")
+            Text("OpenAI Whisper for swipe video transcription")
                 .font(.system(size: 13))
                 .foregroundStyle(DS.textMuted)
 
@@ -499,142 +329,6 @@ struct CosmoAgentSettingsTab: View {
             .padding(16)
             .background(RoundedRectangle(cornerRadius: 10).fill(DS.surfaceHover))
             .overlay(RoundedRectangle(cornerRadius: 10).stroke(DS.borderSubtle, lineWidth: 1))
-        }
-    }
-
-    // MARK: - Proactive Section
-    private var proactiveSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Proactive Intelligence")
-                .font(DS.title3)
-                .foregroundStyle(DS.text)
-
-            Text("Automated briefs and alerts via Telegram")
-                .font(.system(size: 13))
-                .foregroundStyle(DS.textMuted)
-
-            VStack(spacing: 12) {
-                // Morning brief
-                morningBriefRow
-
-                // Weekly review
-                weeklyReviewRow
-
-                // Streak alerts
-                Toggle(isOn: $scheduler.streakAlertsEnabled) {
-                    Text("Streak Protection Alerts")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(DS.text)
-                }
-                .toggleStyle(.switch)
-
-                // DND
-                Toggle(isOn: $scheduler.dndEnabled) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Respect Quiet Hours")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundStyle(DS.text)
-                        Text("Defer messages during deep work sessions")
-                            .font(.system(size: 11))
-                            .foregroundStyle(DS.textMuted)
-                    }
-                }
-                .toggleStyle(.switch)
-
-                // Heartbeat
-                heartbeatRow
-            }
-            .padding(16)
-            .background(RoundedRectangle(cornerRadius: 10).fill(DS.surfaceHover))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(DS.borderSubtle, lineWidth: 1))
-        }
-    }
-
-    @ViewBuilder
-    private var heartbeatRow: some View {
-        HStack {
-            Toggle(isOn: $scheduler.heartbeatEnabled) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Heartbeat Check-In")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(DS.text)
-                    Text("Periodic pulse of noteworthy activity")
-                        .font(.system(size: 11))
-                        .foregroundStyle(DS.textMuted)
-                }
-            }
-            .toggleStyle(.switch)
-
-            Spacer()
-
-            if scheduler.heartbeatEnabled {
-                Picker("", selection: $scheduler.heartbeatIntervalMinutes) {
-                    Text("30 min").tag(30)
-                    Text("1 hr").tag(60)
-                    Text("2 hr").tag(120)
-                    Text("4 hr").tag(240)
-                }
-                .pickerStyle(.menu)
-                .frame(width: 90)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var morningBriefRow: some View {
-        HStack {
-            Toggle(isOn: $scheduler.morningBriefEnabled) {
-                Text("Morning Brief")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(DS.text)
-            }
-            .toggleStyle(.switch)
-
-            Spacer()
-
-            if scheduler.morningBriefEnabled {
-                HStack(spacing: 4) {
-                    Text("\(String(format: "%02d", scheduler.morningBriefHour)):\(String(format: "%02d", scheduler.morningBriefMinute))")
-                        .font(.system(size: 13, design: .monospaced))
-                        .foregroundStyle(DS.text)
-
-                    Stepper("", value: $scheduler.morningBriefHour, in: 0...23)
-                        .labelsHidden()
-                        .frame(width: 40)
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var weeklyReviewRow: some View {
-        HStack {
-            Toggle(isOn: $scheduler.weeklyReviewEnabled) {
-                Text("Weekly Review")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(DS.text)
-            }
-            .toggleStyle(.switch)
-
-            Spacer()
-
-            if scheduler.weeklyReviewEnabled {
-                Picker("", selection: $scheduler.weeklyReviewDay) {
-                    Text("Sun").tag(1)
-                    Text("Mon").tag(2)
-                    Text("Tue").tag(3)
-                    Text("Wed").tag(4)
-                    Text("Thu").tag(5)
-                    Text("Fri").tag(6)
-                    Text("Sat").tag(7)
-                }
-                .pickerStyle(.menu)
-                .frame(width: 70)
-
-                Text("\(String(format: "%02d", scheduler.weeklyReviewHour)):00")
-                    .font(.system(size: 13, design: .monospaced))
-                    .foregroundStyle(DS.text)
-            }
         }
     }
 
@@ -787,34 +481,6 @@ struct CosmoAgentSettingsTab: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - WhatsApp Section
-    private var whatsappSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("WhatsApp")
-                .font(DS.title3)
-                .foregroundStyle(DS.text)
-
-            HStack(spacing: 12) {
-                Image(systemName: "bubble.left.and.bubble.right")
-                    .font(.system(size: 24))
-                    .foregroundStyle(CosmoColors.lavender)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Coming Soon")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(DS.text)
-                    Text("WhatsApp requires a relay server for webhook callbacks. This will be available in v2.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(DS.textMuted)
-                }
-            }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 10).fill(DS.surfaceHover))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(DS.borderSubtle, lineWidth: 1))
-        }
-    }
-
     // MARK: - Actions
 
     private func saveAPIKey() {
@@ -828,27 +494,6 @@ struct CosmoAgentSettingsTab: View {
         agentService.setProvider(selectedProvider)
         agentService.setModel(currentModel)
         agentModel = currentModel
-    }
-
-    private func saveTelegramToken() {
-        let input = telegramToken.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let token = TelegramBridgeService.sanitizeToken(input) else {
-            telegramTestResult = (false, "Invalid token format. Paste only the BotFather token.")
-            return
-        }
-        APIKeys.save(token, identifier: "telegram_bot_token")
-        telegramToken = String(repeating: "\u{2022}", count: 30)
-        telegramTestResult = nil
-    }
-
-    private func testTelegramBot() {
-        isTestingTelegram = true
-        telegramTestResult = nil
-        Task {
-            let result = await telegramBridge.testBot()
-            isTestingTelegram = false
-            telegramTestResult = result
-        }
     }
 
     private func testConnection() {

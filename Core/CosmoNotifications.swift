@@ -1085,3 +1085,11 @@ final class AtomRestoreAdopterRegistry {
 //
 // New code should prefer CosmoNotification.* namespaced names for better organization.
 // Legacy names are kept for backwards compatibility - do not add duplicate declarations here.
+
+// MARK: - Agent Navigation
+// (moved here from the deleted Voice/Pipeline/VoiceCommandPipeline.swift)
+
+public extension Notification.Name {
+    /// Posted when an agent/⌘K command requests navigation.
+    static let voiceNavigationRequested = Notification.Name("voiceNavigationRequested")
+}

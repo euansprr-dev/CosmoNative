@@ -248,52 +248,6 @@ class AgentWorkflowPlanner {
         return await executeWorkflow(&plan, chatId: workflowId)
     }
 
-    // MARK: - Telegram Formatting
-
-    /// Format a workflow plan as a Telegram-friendly numbered list.
-    func formatPlanForTelegram(_ plan: WorkflowPlan) -> String {
-        var lines: [String] = []
-        lines.append("WORKFLOW PLAN")
-        lines.append(plan.summary)
-        lines.append("")
-
-        for step in plan.steps {
-            let statusIcon: String
-            switch step.status {
-            case .pending: statusIcon = "[ ]"
-            case .running: statusIcon = "[..]"
-            case .completed: statusIcon = "[OK]"
-            case .failed: statusIcon = "[X]"
-            case .skipped: statusIcon = "[--]"
-            case .awaitingConfirmation: statusIcon = "[??]"
-            }
-
-            let confirmTag = step.confirmationRequired ? " (requires confirmation)" : ""
-            lines.append("\(step.index + 1). \(statusIcon) \(step.action)\(confirmTag)")
-            lines.append("   \(step.description)")
-
-            if !step.tools.isEmpty {
-                lines.append("   Tools: \(step.tools.joined(separator: ", "))")
-            }
-        }
-
-        lines.append("")
-        lines.append("Steps: \(plan.steps.count) | Estimated time: ~\(plan.steps.count * 5)s")
-
-        return lines.joined(separator: "\n")
-    }
-
-    /// Build inline keyboard buttons for Telegram plan approval.
-    func telegramApprovalButtons(planId: String) -> [[[String: String]]] {
-        return [
-            [
-                ["text": "Approve", "callback_data": "workflow_approve:\(planId)"],
-                ["text": "Edit", "callback_data": "workflow_edit:\(planId)"],
-                ["text": "Cancel", "callback_data": "workflow_cancel:\(planId)"]
-            ]
-        ]
-    }
-
     // MARK: - Private: Planning Prompt
 
     private func buildPlanningPrompt() -> String {

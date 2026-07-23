@@ -205,23 +205,59 @@ actor RecallIndexer {
 
     // MARK: - Backfill
 
-    /// Full reconciliation: enqueue every indexable atom that is missing from
-    /// the index OR stale (hash mismatch). Startup calls this deferred; the
-    /// Settings panel can trigger it manually.
-    @discardableResult
-    func backfill() async -> Int {
-        let indexed = await RecallStore.shared.indexedHashes()
+    /// Watermark for the incremental startup backfill. `updatedAt` is an
+    /// ISO8601 string, so string comparison in SQL orders correctly.
+    private static let backfillWatermarkKey = "recall.lastBackfillAt"
+    /// Re-scan a window behind the watermark so clock skew between devices
+    /// (sync writes carry remote timestamps) can never hide an update.
+    private static let backfillOverlap: TimeInterval = 48 * 3600
+    /// Periodic full sweep: catches tombstone cleanup and atoms that stopped
+    /// being indexable, which the incremental path deliberately skips.
+    private static let fullSweepInterval: TimeInterval = 7 * 24 * 3600
 
-        let candidates: [(uuid: String, hash: String)] = (try? await CosmoDatabase.shared.asyncRead { db in
-            let typeList = RecallDocumentBuilder.indexedTypes.map { "'\($0.rawValue)'" }.joined(separator: ",")
-            let atoms = try Atom
-                .filter(sql: "is_deleted = 0 AND type IN (\(typeList))")
-                .fetchAll(db)
-            return atoms.compactMap { atom in
-                guard RecallDocumentBuilder.isIndexable(atom) else { return nil }
-                return (atom.uuid, RecallDocumentBuilder.documentHash(for: atom))
+    /// Reconcile the index with the database and enqueue anything missing or
+    /// stale (hash mismatch). Startup calls this deferred with `full: false`,
+    /// which only decodes atoms updated since the last run — the previous
+    /// behavior decoded the entire corpus on every launch. A full sweep still
+    /// runs on first launch, weekly, and from the Settings panel.
+    @discardableResult
+    func backfill(full: Bool = false) async -> Int {
+        let defaults = UserDefaults.standard
+        let lastRun = defaults.object(forKey: Self.backfillWatermarkKey) as? Date
+        let runFull = full
+            || lastRun == nil
+            || Date().timeIntervalSince(lastRun!) > Self.fullSweepInterval
+
+        let startedAt = Date()
+        let indexed = await RecallStore.shared.indexedHashes()
+        let typeList = RecallDocumentBuilder.indexedTypes.map { "'\($0.rawValue)'" }.joined(separator: ",")
+
+        let candidates: [(uuid: String, hash: String)]?
+        if runFull {
+            candidates = try? await CosmoDatabase.shared.asyncRead { db in
+                let atoms = try Atom
+                    .filter(sql: "is_deleted = 0 AND type IN (\(typeList))")
+                    .fetchAll(db)
+                return atoms.compactMap { atom in
+                    guard RecallDocumentBuilder.isIndexable(atom) else { return nil }
+                    return (atom.uuid, RecallDocumentBuilder.documentHash(for: atom))
+                }
             }
-        }) ?? []
+        } else {
+            let since = ISO8601.string(from: lastRun!.addingTimeInterval(-Self.backfillOverlap))
+            candidates = try? await CosmoDatabase.shared.asyncRead { db in
+                let atoms = try Atom
+                    .filter(sql: "is_deleted = 0 AND type IN (\(typeList)) AND updated_at >= ?", arguments: [since])
+                    .fetchAll(db)
+                return atoms.compactMap { atom in
+                    guard RecallDocumentBuilder.isIndexable(atom) else { return nil }
+                    return (atom.uuid, RecallDocumentBuilder.documentHash(for: atom))
+                }
+            }
+        }
+
+        // Fetch failed — leave the watermark untouched so the next launch retries.
+        guard let candidates else { return 0 }
 
         var enqueued = 0
         for candidate in candidates where indexed[candidate.uuid] != candidate.hash {
@@ -229,14 +265,18 @@ actor RecallIndexer {
             enqueued += 1
         }
 
-        // Index rows for atoms that no longer exist or stopped being indexable.
-        let liveUuids = Set(candidates.map(\.uuid))
-        for staleUuid in indexed.keys where !liveUuids.contains(staleUuid) {
-            await RecallStore.shared.removeEntity(staleUuid)
+        if runFull {
+            // Index rows for atoms that no longer exist or stopped being indexable.
+            let liveUuids = Set(candidates.map(\.uuid))
+            for staleUuid in indexed.keys where !liveUuids.contains(staleUuid) {
+                await RecallStore.shared.removeEntity(staleUuid)
+            }
         }
 
+        defaults.set(startedAt, forKey: Self.backfillWatermarkKey)
+
         if enqueued > 0 {
-            print("RecallIndexer: backfill enqueued \(enqueued) atoms")
+            print("RecallIndexer: backfill (\(runFull ? "full" : "incremental")) enqueued \(enqueued) atoms")
             scheduleDrain()
         }
         return enqueued

@@ -955,7 +955,7 @@ struct LinkedKnowledgeItem: Identifiable, Equatable, Codable {
         self.relevance = relevance
     }
 
-    /// Full initializer for KnowledgeLinker
+    /// Full initializer (kept from the retired KnowledgeLinker)
     init(entityType: String, entityId: Int64, title: String, relevanceScore: Double, explanation: String?) {
         self.id = UUID().uuidString
         self.title = title

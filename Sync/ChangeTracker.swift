@@ -199,6 +199,11 @@ class ChangeTracker: ObservableObject {
                             sql: "UPDATE sync_queue SET status = 'synced', synced_at = ? WHERE uuid = ? AND table_name = ? AND status = 'pending' AND local_version <= ?",
                             arguments: [ISO8601.string(from: Date()), uuid, table, pushedLocalVersion]
                         )
+                        // A successful push carries the row's full current content,
+                        // superseding any older dead-lettered payload for it.
+                        try SyncQueueReconciler.clearSupersededDeadLetters(
+                            db, uuid: uuid, table: table, upToVersion: pushedLocalVersion
+                        )
                         // Suppressed: this is push bookkeeping, not a local edit —
                         // the table observers (canvas_blocks, atoms) must not
                         // re-enqueue it or every successful push loops forever.

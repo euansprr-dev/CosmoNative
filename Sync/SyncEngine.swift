@@ -43,8 +43,11 @@ class SyncEngine: ObservableObject {
     /// Overlap subtracted from the pull cursor so rows committed in the same
     /// second as the last pulled row are never skipped.
     private let pullCursorOverlap: TimeInterval = 2
-    /// Failed pushes are re-queued for retry after this cool-down (slow cadence, indefinite).
+    /// Failed pushes are re-queued for retry after this cool-down (slow cadence).
     private let failedPushRequeueDelay: TimeInterval = 600 // 10 minutes
+    /// Failed pushes that keep failing for this long are dead-lettered instead
+    /// of retried — see SyncQueueReconciler.abandonFailedPushes.
+    private let failedPushAbandonAfter: TimeInterval = 7 * 86_400 // 7 days
 
     // MARK: - Sync Tables (unified)
     // Push: atoms + canvas_blocks go UP to Supabase
@@ -394,6 +397,11 @@ class SyncEngine: ObservableObject {
                             sql: "UPDATE sync_queue SET status = 'synced', synced_at = ? WHERE id = ? AND local_version <= ?",
                             arguments: [ISO8601.string(from: Date()), item.id, item.localVersion]
                         )
+                        // A successful push carries the row's full current content,
+                        // superseding any older dead-lettered payload for it.
+                        try SyncQueueReconciler.clearSupersededDeadLetters(
+                            db, uuid: item.uuid, table: item.tableName, upToVersion: item.localVersion
+                        )
                     }
                 } catch {
                     PersistenceHealth.note(.syncFailure, context: "SyncEngine.syncPendingChanges(\(item.uuid.prefix(8)))", detail: "post-push queue bookkeeping failed: \(error)")
@@ -428,14 +436,16 @@ class SyncEngine: ObservableObject {
                         // failure. The shield must stay up — clearing it let every future
                         // remote change route into handleConflict and silently discard
                         // the unpushed local edit (audit RC7). The row is re-queued for
-                        // slow-cadence retry by requeueStaleFailedPushes() instead.
+                        // slow-cadence retry by requeueStaleFailedPushes() instead; only
+                        // after failedPushAbandonAfter does dead-lettering lower the
+                        // shield (with the payload preserved) so inbound sync resumes.
                     }
                 } catch {
                     PersistenceHealth.note(.writeFailure, context: "SyncEngine.syncPendingChanges(\(item.uuid.prefix(8)))", detail: "failed to record push failure: \(error)")
                 }
 
                 if resolution.status == "failed" {
-                    PersistenceHealth.note(.syncFailure, context: "SyncEngine.pushChange(\(item.uuid.prefix(8)))", detail: "push failed after \(resolution.retryCount) attempts (will keep retrying every \(Int(failedPushRequeueDelay / 60)) min): \(error.localizedDescription)")
+                    PersistenceHealth.note(.syncFailure, context: "SyncEngine.pushChange(\(item.uuid.prefix(8)))", detail: "push failed after \(resolution.retryCount) attempts (retries every \(Int(failedPushRequeueDelay / 60)) min for \(Int(failedPushAbandonAfter / 86_400)) days, then dead-letters): \(error.localizedDescription)")
                 }
 
                 if resolution.shouldPauseFurtherAttempts {
@@ -503,26 +513,46 @@ class SyncEngine: ObservableObject {
     }
 
     /// Re-queue permanently-failed pushes after a cool-down so they keep retrying
-    /// indefinitely at a slow cadence instead of orphaning local edits forever.
-    /// retry_count is reset to maxRetries - 1, granting exactly one fresh attempt
-    /// per cool-down window before the row returns to 'failed'.
+    /// at a slow cadence instead of orphaning local edits. retry_count is reset
+    /// to maxRetries - 1, granting exactly one fresh attempt per cool-down window
+    /// before the row returns to 'failed'.
+    ///
+    /// Bounded: rows still failing after `failedPushAbandonAfter` are dead-lettered
+    /// (status 'abandoned', payload kept, `_local_pending` shield lowered so
+    /// inbound sync resumes) rather than retried forever — an immortal outbox is
+    /// a pollution pump: a stale row whose cloud copy was since tombstoned would
+    /// push is_deleted = 0 every cool-down, resurrecting deletions.
     private func requeueStaleFailedPushes() async {
-        let cutoff = Int64((Date().timeIntervalSince1970 - failedPushRequeueDelay) * 1000)
+        let now = Date().timeIntervalSince1970
+        let cutoff = Int64((now - failedPushRequeueDelay) * 1000)
+        let abandonCutoff = Int64((now - failedPushAbandonAfter) * 1000)
         let retryFloor = maxRetries - 1
         do {
-            let requeued = try await database.asyncWrite { db -> Int in
+            let (abandoned, requeued) = try await database.asyncWrite { db -> ([SyncQueueReconciler.AbandonedPush], Int) in
+                let abandoned = try SyncQueueReconciler.abandonFailedPushes(db, olderThanMs: abandonCutoff)
                 try db.execute(
                     sql: """
                     UPDATE sync_queue
                     SET status = 'pending', retry_count = ?
-                    WHERE status = 'failed' AND created_at < ?
+                    WHERE status = 'failed' AND created_at < ? AND created_at > ?
                     """,
-                    arguments: [retryFloor, cutoff]
+                    arguments: [retryFloor, cutoff, abandonCutoff]
                 )
-                return db.changesCount
+                return (abandoned, db.changesCount)
             }
             if requeued > 0 {
                 print("🔁 Re-queued \(requeued) failed push(es) for slow-cadence retry")
+            }
+            if !abandoned.isEmpty {
+                let items = abandoned.prefix(5)
+                    .map { "\($0.tableName)/\($0.uuid.prefix(8))" }
+                    .joined(separator: ", ")
+                let lastError = abandoned.compactMap(\.errorMessage).last ?? "unknown"
+                PersistenceHealth.note(
+                    .syncFailure,
+                    context: "SyncEngine.abandonFailedPushes",
+                    detail: "\(abandoned.count) change(s) could not reach the cloud after \(Int(failedPushAbandonAfter / 86_400)) days of retries and were set aside (\(items)). The edits are kept on this device and in the sync queue's dead-letter rows (status 'abandoned'); cloud updates for these items resume and may replace the local edit. Last error: \(lastError)"
+                )
             }
         } catch {
             PersistenceHealth.note(.writeFailure, context: "SyncEngine.requeueStaleFailedPushes", detail: String(describing: error))
@@ -1113,7 +1143,11 @@ enum SyncQueueReconciler {
     ///   local-ahead with the shield down, and without this clause its
     ///   local-wins content would never reach the cloud. Failed rows are
     ///   excluded because requeueStaleFailedPushes already owns their retry —
-    ///   re-inserting would duplicate the queue row.
+    ///   re-inserting would duplicate the queue row. Abandoned (dead-lettered)
+    ///   rows are excluded only while they still cover the atom's current
+    ///   `_local_version`: re-enqueueing the same content would resurrect the
+    ///   doomed push loop dead-lettering just ended, but a NEWER local edit
+    ///   supersedes the dead letter and deserves a fresh attempt.
     /// - Clear the stale shield on atoms whose local version is NOT ahead
     ///   (`_local_version <= _server_version`) and that have no pending queue
     ///   row: the flag is spurious (the edit already reached the cloud, or the
@@ -1135,7 +1169,9 @@ enum SyncQueueReconciler {
             WHERE _local_version > _server_version
               AND NOT EXISTS (
                 SELECT 1 FROM sync_queue q
-                WHERE q.uuid = atoms.uuid AND q.table_name = 'atoms' AND q.status IN ('pending', 'failed')
+                WHERE q.uuid = atoms.uuid AND q.table_name = 'atoms'
+                  AND (q.status IN ('pending', 'failed')
+                       OR (q.status = 'abandoned' AND q.local_version >= atoms._local_version))
               )
             """)
 
@@ -1198,6 +1234,86 @@ enum SyncQueueReconciler {
             requeued += 1
         }
         return requeued
+    }
+
+    // MARK: Failed-push dead-lettering
+
+    struct AbandonedPush: Equatable {
+        var uuid: String
+        var tableName: String
+        var localVersion: Int
+        var errorMessage: String?
+    }
+
+    /// Dead-letter failed pushes older than the cutoff instead of retrying them
+    /// forever (pollution pump) or silently stranding them (permanent freeze):
+    /// - the queue row moves to status 'abandoned' with its payload intact, so
+    ///   the unpushed local edit stays recoverable instead of vanishing;
+    /// - the source row's `_local_pending` shield is lowered, scoped to the
+    ///   version that failed (a newer in-flight edit keeps its shield). Without
+    ///   this the row is frozen against ALL inbound remote changes forever:
+    ///   applyRemoteChange and ConflictResolver both skip on _local_pending = 1,
+    ///   and the orphaned-pending healer deliberately skips rows that still
+    ///   have a queue row.
+    /// Accepted trade: once pulls resume, remote content may replace the
+    /// abandoned local edit — its payload survives in the dead-letter row until
+    /// a later push of the same row succeeds (clearSupersededDeadLetters).
+    static func abandonFailedPushes(_ db: Database, olderThanMs cutoff: Int64) throws -> [AbandonedPush] {
+        let rows = try Row.fetchAll(
+            db,
+            sql: "SELECT id, uuid, table_name, local_version, error_message FROM sync_queue WHERE status = 'failed' AND created_at < ?",
+            arguments: [cutoff]
+        )
+        guard !rows.isEmpty else { return [] }
+
+        // Suppressed: lowering the shield is sync bookkeeping — unsuppressed,
+        // the table observers would re-enqueue the row and restart the doomed
+        // push loop this dead-lettering exists to end.
+        return try CanvasBlockSyncObserver.suppressingSync { () -> [AbandonedPush] in
+            var abandoned: [AbandonedPush] = []
+            for row in rows {
+                guard let rowId = row["id"] as Int64?,
+                      let uuid = row["uuid"] as String?, !uuid.isEmpty,
+                      let table = row["table_name"] as String? else { continue }
+                let localVersion = row["local_version"] as Int? ?? 0
+
+                try db.execute(sql: "UPDATE sync_queue SET status = 'abandoned' WHERE id = ?", arguments: [rowId])
+
+                // Queue rows can reference cloud-only tables with no local
+                // shield column (e.g. swipe_boards) — nothing to lower there.
+                if try db.tableExists(table),
+                   try db.columns(in: table).contains(where: { $0.name == "_local_pending" }) {
+                    let keyColumn = ["canvas_blocks", "canvas_drawings"].contains(table) ? "id" : "uuid"
+                    try db.execute(
+                        sql: """
+                        UPDATE \(table)
+                        SET _local_pending = CASE WHEN _local_version > ? THEN _local_pending ELSE 0 END
+                        WHERE \(keyColumn) = ?
+                        """,
+                        arguments: [localVersion, uuid]
+                    )
+                }
+
+                abandoned.append(AbandonedPush(
+                    uuid: uuid,
+                    tableName: table,
+                    localVersion: localVersion,
+                    errorMessage: row["error_message"] as String?
+                ))
+            }
+            return abandoned
+        }
+    }
+
+    /// A successful push carries the row's full current content (payloads are
+    /// full-row snapshots, never diffs), so any dead letter at the same or an
+    /// older version is superseded — drop it so recovered rows don't linger in
+    /// the dead-letter list.
+    static func clearSupersededDeadLetters(_ db: Database, uuid: String, table: String, upToVersion: Int) throws {
+        try db.execute(
+            sql: "DELETE FROM sync_queue WHERE uuid = ? AND table_name = ? AND status = 'abandoned' AND local_version <= ?",
+            arguments: [uuid, table, upToVersion]
+        )
     }
 }
 

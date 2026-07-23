@@ -375,4 +375,194 @@ final class SupabaseSyncTrafficPolicyTests: XCTestCase {
             XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM sync_queue WHERE uuid = 'AHEAD'"), 1)
         }
     }
+
+    // MARK: - Failed-push dead-lettering
+
+    // REGRESSION (July 2026): pushes that kept failing were either retried
+    // forever (pollution pump — a stale row whose cloud copy was tombstoned
+    // re-pushed is_deleted = 0 every cool-down) or abandoned SILENTLY with the
+    // atom's _local_pending shield still up. applyRemoteChange and
+    // ConflictResolver both skip shielded rows, and the orphaned-pending healer
+    // skips rows that still have a queue row — so the atom was permanently
+    // frozen against ALL inbound remote updates. Dead-lettering ends the retry
+    // loop, keeps the payload, lowers the shield, and surfaces the loss.
+
+    private let sevenDaysAgoMs = Int64((Date().timeIntervalSince1970 - 7 * 86_400) * 1000)
+
+    func testAbandonLowersShieldAndKeepsDeadLetterPayload() throws {
+        let queue = try makeAtomsAndQueueSchema()
+        try queue.write { db in
+            try db.execute(sql: """
+                INSERT INTO atoms (id, uuid, type, title, is_deleted, _local_version, _server_version, _local_pending)
+                VALUES (1, 'FROZEN', 'note', 'Edit that never uploaded', 0, 8, 3, 1)
+                """)
+            try db.execute(sql: """
+                INSERT INTO sync_queue (uuid, table_name, operation, data, local_version, created_at, status, error_message)
+                VALUES ('FROZEN', 'atoms', 'UPDATE', '{"title":"Edit that never uploaded"}', 8, 1000, 'failed', 'RLS violation')
+                """)
+        }
+
+        let abandoned = try queue.write { db in
+            try SyncQueueReconciler.abandonFailedPushes(db, olderThanMs: sevenDaysAgoMs)
+        }
+
+        XCTAssertEqual(abandoned.count, 1)
+        XCTAssertEqual(abandoned.first?.uuid, "FROZEN")
+        XCTAssertEqual(abandoned.first?.tableName, "atoms")
+        XCTAssertEqual(abandoned.first?.localVersion, 8)
+        XCTAssertEqual(abandoned.first?.errorMessage, "RLS violation")
+
+        try queue.read { db in
+            let row = try XCTUnwrap(try Row.fetchOne(db, sql: "SELECT * FROM sync_queue WHERE uuid = 'FROZEN'"))
+            XCTAssertEqual(row["status"] as String?, "abandoned")
+            XCTAssertEqual(row["data"] as String?, "{\"title\":\"Edit that never uploaded\"}", "the dead letter is the last copy of the local edit once a remote overwrite lands — it must survive")
+            XCTAssertEqual(
+                try Int.fetchOne(db, sql: "SELECT _local_pending FROM atoms WHERE uuid = 'FROZEN'"), 0,
+                "shield must come down or the atom stays frozen against every inbound remote update"
+            )
+        }
+    }
+
+    func testAbandonKeepsShieldWhenANewerLocalEditIsInFlight() throws {
+        let queue = try makeAtomsAndQueueSchema()
+        try queue.write { db in
+            // Atom edited again (v9) after the v8 push started failing — the
+            // newer edit's shield must survive its dead letter.
+            try db.execute(sql: """
+                INSERT INTO atoms (id, uuid, type, title, is_deleted, _local_version, _server_version, _local_pending)
+                VALUES (1, 'EDITED', 'task', 'Newer edit pending', 0, 9, 3, 1)
+                """)
+            try db.execute(sql: """
+                INSERT INTO sync_queue (uuid, table_name, operation, local_version, created_at, status)
+                VALUES ('EDITED', 'atoms', 'UPDATE', 8, 1000, 'failed')
+                """)
+        }
+
+        let abandoned = try queue.write { db in
+            try SyncQueueReconciler.abandonFailedPushes(db, olderThanMs: sevenDaysAgoMs)
+        }
+
+        XCTAssertEqual(abandoned.count, 1)
+        try queue.read { db in
+            XCTAssertEqual(try String.fetchOne(db, sql: "SELECT status FROM sync_queue WHERE uuid = 'EDITED'"), "abandoned")
+            XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT _local_pending FROM atoms WHERE uuid = 'EDITED'"), 1)
+        }
+    }
+
+    func testAbandonLeavesFreshFailedRowsForRetry() throws {
+        let queue = try makeAtomsAndQueueSchema()
+        let recent = Int64(Date().timeIntervalSince1970 * 1000)
+        try queue.write { db in
+            try db.execute(sql: """
+                INSERT INTO atoms (id, uuid, type, title, is_deleted, _local_version, _server_version, _local_pending)
+                VALUES (1, 'RECENT', 'note', 'Still retrying', 0, 4, 1, 1)
+                """)
+            try db.execute(
+                sql: "INSERT INTO sync_queue (uuid, table_name, operation, local_version, created_at, status) VALUES ('RECENT', 'atoms', 'UPDATE', 4, ?, 'failed')",
+                arguments: [recent]
+            )
+        }
+
+        let abandoned = try queue.write { db in
+            try SyncQueueReconciler.abandonFailedPushes(db, olderThanMs: sevenDaysAgoMs)
+        }
+
+        XCTAssertTrue(abandoned.isEmpty)
+        try queue.read { db in
+            XCTAssertEqual(try String.fetchOne(db, sql: "SELECT status FROM sync_queue WHERE uuid = 'RECENT'"), "failed", "fresh failures stay owned by the slow-cadence retry")
+            XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT _local_pending FROM atoms WHERE uuid = 'RECENT'"), 1)
+        }
+    }
+
+    func testAbandonSurvivesQueueRowsForCloudOnlyTables() throws {
+        let queue = try makeAtomsAndQueueSchema()
+        try queue.write { db in
+            // swipe_boards has no local table (cloud-only mirror) — there is no
+            // shield to lower, but the row must still dead-letter, not throw.
+            try db.execute(sql: """
+                INSERT INTO sync_queue (uuid, table_name, operation, local_version, created_at, status)
+                VALUES ('BOARD', 'swipe_boards', 'INSERT', 1, 1000, 'failed')
+                """)
+        }
+
+        let abandoned = try queue.write { db in
+            try SyncQueueReconciler.abandonFailedPushes(db, olderThanMs: sevenDaysAgoMs)
+        }
+
+        XCTAssertEqual(abandoned.count, 1)
+        try queue.read { db in
+            XCTAssertEqual(try String.fetchOne(db, sql: "SELECT status FROM sync_queue WHERE uuid = 'BOARD'"), "abandoned")
+        }
+    }
+
+    func testReconcilerDoesNotResurrectAbandonedPushAtSameVersion() throws {
+        let queue = try makeAtomsAndQueueSchema()
+        try queue.write { db in
+            // Post-abandonment state: shield down, still local-ahead, dead
+            // letter covers the current version. Re-enqueueing would restart
+            // the doomed push loop dead-lettering just ended.
+            try db.execute(sql: """
+                INSERT INTO atoms (id, uuid, type, title, is_deleted, _local_version, _server_version, _local_pending)
+                VALUES (1, 'DEAD', 'note', 'Abandoned edit', 0, 8, 3, 0)
+                """)
+            try db.execute(sql: """
+                INSERT INTO sync_queue (uuid, table_name, operation, local_version, status)
+                VALUES ('DEAD', 'atoms', 'UPDATE', 8, 'abandoned')
+                """)
+        }
+
+        let outcome = try queue.write { db in try SyncQueueReconciler.reconcileOrphanedPendingAtoms(db) }
+
+        XCTAssertEqual(outcome.requeued, 0, "a dead letter at the current version owns this content — no resurrection")
+        try queue.read { db in
+            XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM sync_queue WHERE uuid = 'DEAD'"), 1)
+        }
+    }
+
+    func testReconcilerRetriesWhenALocalEditSupersedesTheDeadLetter() throws {
+        let queue = try makeAtomsAndQueueSchema()
+        try queue.write { db in
+            // The user edited the atom again (v9) after v8 was dead-lettered —
+            // new content deserves a fresh push attempt.
+            try db.execute(sql: """
+                INSERT INTO atoms (id, uuid, type, title, is_deleted, _local_version, _server_version, _local_pending)
+                VALUES (1, 'REVIVED', 'note', 'Edited after abandonment', 0, 9, 3, 1)
+                """)
+            try db.execute(sql: """
+                INSERT INTO sync_queue (uuid, table_name, operation, local_version, status)
+                VALUES ('REVIVED', 'atoms', 'UPDATE', 8, 'abandoned')
+                """)
+        }
+
+        let outcome = try queue.write { db in try SyncQueueReconciler.reconcileOrphanedPendingAtoms(db) }
+
+        XCTAssertEqual(outcome.requeued, 1, "a newer local edit supersedes the dead letter")
+        try queue.read { db in
+            let pending = try XCTUnwrap(try Row.fetchOne(db, sql: "SELECT * FROM sync_queue WHERE uuid = 'REVIVED' AND status = 'pending'"))
+            XCTAssertEqual(pending["local_version"] as Int?, 9)
+            // The dead letter itself is untouched until a push SUCCEEDS.
+            XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM sync_queue WHERE uuid = 'REVIVED' AND status = 'abandoned'"), 1)
+        }
+    }
+
+    func testSuccessfulPushClearsSupersededDeadLetters() throws {
+        let queue = try makeAtomsAndQueueSchema()
+        try queue.write { db in
+            try db.execute(sql: "INSERT INTO sync_queue (uuid, table_name, operation, local_version, status) VALUES ('X', 'atoms', 'UPDATE', 5, 'abandoned')")
+            try db.execute(sql: "INSERT INTO sync_queue (uuid, table_name, operation, local_version, status) VALUES ('X', 'atoms', 'UPDATE', 9, 'abandoned')")
+            try db.execute(sql: "INSERT INTO sync_queue (uuid, table_name, operation, local_version, status) VALUES ('Y', 'atoms', 'UPDATE', 2, 'abandoned')")
+        }
+
+        try queue.write { db in
+            try SyncQueueReconciler.clearSupersededDeadLetters(db, uuid: "X", table: "atoms", upToVersion: 7)
+        }
+
+        try queue.read { db in
+            // v5 superseded by the successful v7 push; v9 is NEWER content the
+            // cloud still hasn't seen; Y belongs to another row entirely.
+            XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM sync_queue WHERE uuid = 'X' AND local_version = 5"), 0)
+            XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM sync_queue WHERE uuid = 'X' AND local_version = 9"), 1)
+            XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM sync_queue WHERE uuid = 'Y'"), 1)
+        }
+    }
 }

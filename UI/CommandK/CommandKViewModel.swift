@@ -35,7 +35,7 @@ public enum CommandKTab: String, CaseIterable, Equatable {
     var icon: String {
         switch self {
         case .database: return "tray.full.fill"
-        case .swipeGallery: return "bolt.fill"
+        case .swipeGallery: return "rectangle.stack.fill"
         case .ideas: return "lightbulb.fill"
         case .readwise: return "books.vertical.fill"
         case .inquiry: return "circle.hexagongrid.circle.fill"
@@ -593,7 +593,7 @@ enum UnifiedSearchSource: String, CaseIterable {
     var icon: String {
         switch self {
         case .atoms: return "tray.full.fill"
-        case .swipes: return "bolt.fill"
+        case .swipes: return "rectangle.stack.fill"
         case .ideas: return "lightbulb.fill"
         case .readwise: return "books.vertical.fill"
         case .browser: return "bookmark.fill"
@@ -646,6 +646,13 @@ struct UnifiedSearchResult: Identifiable {
     let readwiseBookId: Int?
     let browserURL: URL?
     let browserTitle: String?
+    /// Display identity for the rail's thumbnail > favicon > chip ladder.
+    /// Populated at enrichment from the hydrated LibraryItem (research atoms
+    /// wear their captured page); never consulted for open routing — that
+    /// gates on `resultKind`. Rebuild sites must copy both, same law as
+    /// `matchedExcerpt`/`lexicalTier`.
+    let thumbnailURL: String?
+    let faviconHost: String?
 
     init(
         id: String,
@@ -667,7 +674,9 @@ struct UnifiedSearchResult: Identifiable {
         thinkspaceNames: [String],
         readwiseBookId: Int?,
         browserURL: URL? = nil,
-        browserTitle: String? = nil
+        browserTitle: String? = nil,
+        thumbnailURL: String? = nil,
+        faviconHost: String? = nil
     ) {
         self.id = id
         self.source = source
@@ -689,6 +698,8 @@ struct UnifiedSearchResult: Identifiable {
         self.readwiseBookId = readwiseBookId
         self.browserURL = browserURL
         self.browserTitle = browserTitle
+        self.thumbnailURL = thumbnailURL
+        self.faviconHost = faviconHost
     }
 
     var selectionID: String {
@@ -5333,7 +5344,11 @@ public final class CommandKViewModel {
             projectUUID: item.projectUUID,
             projectName: item.projectName,
             thinkspaceNames: item.thinkspaceNames,
-            readwiseBookId: result.readwiseBookId
+            readwiseBookId: result.readwiseBookId,
+            browserURL: result.browserURL,
+            browserTitle: result.browserTitle,
+            thumbnailURL: result.thumbnailURL ?? item.thumbnailURL,
+            faviconHost: result.faviconHost ?? item.faviconHost
         )
     }
 

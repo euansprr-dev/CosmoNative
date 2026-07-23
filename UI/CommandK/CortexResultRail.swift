@@ -123,7 +123,7 @@ enum CommandKDomainRailItem: Identifiable {
         case .swipe:
             return CommandKVisualIdentity(
                 style: .swipeFile,
-                symbolName: "bolt.fill",
+                symbolName: "bolt",
                 title: "Swipe File",
                 subtitle: "Hook capture",
                 badge: "SWIPE"
@@ -544,7 +544,7 @@ struct CortexResultRail: View {
                         subtitle: result.subtitle ?? result.snippet ?? "",
                         accent: result.accentColor,
                         visualIdentity: CommandKVisualIdentity.result(result),
-                        thumbnailURL: nil,
+                        thumbnailURL: result.thumbnailURL,
                         faviconHost: Self.faviconHost(for: result),
                         previewText: result.snippet ?? result.subtitle,
                         matchedExcerptLine: excerptLine(for: result),
@@ -590,7 +590,7 @@ struct CortexResultRail: View {
     /// Extracted (not inline) — the row builder sits at the type-checker's
     /// budget edge.
     private static func faviconHost(for result: UnifiedSearchResult) -> String? {
-        result.browserURL?.host
+        result.faviconHost ?? result.browserURL?.host
     }
 
     /// Body-evidence rows show the matched sentence with the query tokens
@@ -616,6 +616,7 @@ struct CortexResultRail: View {
             subtitle: result.subtitle ?? result.snippet ?? "",
             accent: result.accentColor,
             symbolName: CommandKVisualIdentity.result(result).symbolName,
+            thumbnailURL: result.thumbnailURL,
             faviconHost: faviconHost(for: result)
         )
     }
@@ -818,19 +819,10 @@ private struct CortexRailRow: View {
             framedObject { SpotlightImageContent(urlString: url) }
         } else if let host = faviconHost {
             bareMark { CommandKFavicon(host: host) { identityChip } }
-        } else if isSwipeMotif, let visualIdentity {
-            framedObject { CommandKIconVisualTile(identity: visualIdentity, accent: accent, scale: .rail) }
         } else if visualIdentity != nil {
             bareMark { identityChip }
         } else {
             framedObject { SpotlightFauxPage(accentColor: accent) }
-        }
-    }
-
-    private var isSwipeMotif: Bool {
-        switch visualIdentity?.style {
-        case .swipeFile, .swipeShelf, .swipeGalleryPage: return true
-        default: return false
         }
     }
 

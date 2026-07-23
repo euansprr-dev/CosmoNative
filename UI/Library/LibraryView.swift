@@ -606,6 +606,9 @@ struct LibraryItem: Identifiable {
     let updatedAt: Date
     let preview: String?
     let thumbnailURL: String?
+    /// Host of the captured source page (research atoms) — favicon fallback
+    /// when there is no thumbnail. Display only.
+    let faviconHost: String?
     let statusBadge: String?
     let kind: LibraryItemKind
     let projectUUID: String?
@@ -790,6 +793,7 @@ struct LibraryItem: Identifiable {
         } else {
             self.thumbnailURL = nil
         }
+        self.faviconHost = atom.type == .research ? atom.domain : nil
 
         // Type-specific formatting
         switch atom.type {
@@ -872,6 +876,7 @@ struct LibraryItem: Identifiable {
             ? "\(thinkspace.blockCount) block\(thinkspace.blockCount == 1 ? "" : "s")"
             : "Nested space · \(thinkspace.blockCount) block\(thinkspace.blockCount == 1 ? "" : "s")"
         self.thumbnailURL = nil
+        self.faviconHost = nil
         self.statusBadge = nestedThinkspaceCount > 0 ? "\(nestedThinkspaceCount) space\(nestedThinkspaceCount == 1 ? "" : "s")" : nil
     }
 }

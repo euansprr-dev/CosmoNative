@@ -357,6 +357,11 @@ final class DeepDiveOverviewViewModel {
             try await InquiryRepository.shared.deleteQuestion(uuid: questionUUID)
             questions = (try? await InquiryRepository.shared.fetchQuestions(forDeepDive: atom.uuid))?
                 .sorted { $0.updatedAt > $1.updatedAt } ?? questions.filter { $0.uuid != questionUUID }
+            // Undo restores the question atom itself; children promoted to the
+            // parent stay where they are (the tree remains valid either way).
+            CosmoUndoManager.shared.registerAtomDeletion(
+                uuid: questionUUID, actionDescription: "Delete Question"
+            )
         } catch {
             print("[DeepDiveOverviewVM] deleteQuestion failed: \(error)")
         }
@@ -412,6 +417,9 @@ final class DeepDiveOverviewViewModel {
         do {
             try await AtomRepository.shared.delete(uuid: sessionUUID)
             sessions.removeAll { $0.uuid == sessionUUID }
+            CosmoUndoManager.shared.registerAtomDeletion(
+                uuid: sessionUUID, actionDescription: "Delete Session"
+            )
         } catch {
             print("[DeepDiveOverviewVM] deleteSession failed: \(error)")
         }

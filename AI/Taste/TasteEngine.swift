@@ -102,6 +102,10 @@ struct TasteSignal: Codable, FetchableRecord, PersistableRecord, Identifiable, S
         /// Swipe-study actions: what the user chose to study, and format
         /// corrections they made — interest + taxonomy beliefs.
         case swipeStudy = "swipe_study"
+        /// An (AI version → user version) pair from the edit loop: the user
+        /// accepted a staged edit then reshaped it (or rejected one and wrote
+        /// their own). The richest craft signal — the delta IS the lesson.
+        case editTweak = "edit_tweak"
     }
 
     var id: Int64?
@@ -291,6 +295,19 @@ enum TasteDistiller {
         - confidence 0.3–0.9 based on how many signals support it. Never invent a belief no signal supports.
         - Merge with the existing beliefs: strengthen ones the new signals confirm (raise confidence,
           increment sources), keep unconfirmed ones unchanged, only drop one if signals contradict it.
+
+        EDIT-PAIR SIGNALS ([edit_tweak]): each shows text an AI staged and how the user rewrote it. \
+        The lesson is the TRANSFORMATION, never the topic. Derive beliefs by comparing concretely: \
+        count the words in each version — did the rewrite shorten or lengthen? Did it split one \
+        sentence into two, or merge two into one? Did it remove punctuation (em dashes, ellipses) \
+        or add it? Did it change person (third → first)? Did it replace an abstract claim with a \
+        number? Did it move the concrete detail earlier? State the belief as the operation: \
+        "Cut connective openers like 'Here's the thing' — start on the claim." \
+        NEVER derive a belief about subject matter, clients, or topics from an edit pair; if the \
+        only difference between the two versions is topical, produce no belief from that pair. \
+        A pair whose note says "punctuation-level change" is a punctuation/format lesson — treat \
+        it as deliberate taste, not noise. Pairs marked "rejected then self-written" weigh the \
+        AI version as a stronger negative: the user refused it outright and wrote their own.
 
         EXISTING BELIEFS:
         \(existingLines.isEmpty ? "(none yet)" : existingLines)
@@ -579,6 +596,40 @@ enum TasteContext {
             advisoryRules: advisoryRules,
             formattedBlock: lines.joined(separator: "\n")
         )
+    }
+
+    /// Compact belief block for the INLINE EDIT route — the consumption half
+    /// of edit-loop learning. Injected into the volatile prompt layer (never
+    /// the cached prefix). Hard caps keep the cost constant: max 10 one-line
+    /// beliefs, and nothing below the repetition bar (pinned or ≥2 signals —
+    /// one-off moods never become law).
+    static func resolveForInlineEdit(clientUuid: String?) async -> String? {
+        var beliefs: [TasteBelief] = []
+        if let clientUuid, !clientUuid.isEmpty,
+           let clientProfile = await TasteStore.profile(clientUuid: clientUuid) {
+            beliefs.append(contentsOf: clientProfile.beliefs)
+        }
+        if let personal = await TasteStore.profile(clientUuid: nil) {
+            beliefs.append(contentsOf: personal.beliefs)
+        }
+        let active = beliefs
+            .filter { !$0.struck && ($0.pinned || $0.sources >= 2) }
+            .sorted { lhs, rhs in
+                if lhs.pinned != rhs.pinned { return lhs.pinned }
+                return lhs.confidence > rhs.confidence
+            }
+            .prefix(10)
+        guard !active.isEmpty else { return nil }
+
+        var lines = [
+            "## Learned Taste (from this creator's real review outcomes)",
+            "Grown from what they accepted, rejected, and reshaped by hand. Apply pinned rules strictly; treat the rest as strong defaults while drafting this edit."
+        ]
+        for belief in active {
+            let marker = belief.pinned ? "[RULE]" : "[\(belief.category), \(belief.sources) signals]"
+            lines.append("- \(marker) \(belief.text)")
+        }
+        return lines.joined(separator: "\n")
     }
 
     /// Agent-facing shape (mirrors the retired resolver's tuple).

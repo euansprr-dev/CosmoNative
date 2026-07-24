@@ -144,10 +144,7 @@ private struct CosmoInlineAssistantPaneToolbar: View {
                     .foregroundStyle(DS.text)
                     .fixedSize()
             }
-            CosmoScopePill(
-                title: store.activeSurfaceTitle,
-                entity: store.activeSurfaceEntity
-            )
+            CosmoScopeSwitcherPill(store: store)
             Spacer(minLength: DS.space8)
             sessionSpine
         }
@@ -342,6 +339,45 @@ private struct CosmoInlineAssistantPaneToolbar: View {
 
 // MARK: - Scope pill
 
+/// One vocabulary for surface-entity identity (icon, kind label, tint) —
+/// shared by the scope pill and the switcher menu so a document wears the
+/// same face everywhere.
+enum CosmoScopeSurfaceIdentity {
+    static func icon(for entity: String?) -> String {
+        switch entity {
+        case "content": return "doc.text"
+        case "note": return "note.text"
+        case "idea": return "lightbulb"
+        case "connection": return "point.3.connected.trianglepath.dotted"
+        case "thinkspace": return "square.grid.2x2"
+        default: return "scope"
+        }
+    }
+
+    static func label(for entity: String?) -> String {
+        switch entity {
+        case "content": return "Draft"
+        case "note": return "Note"
+        case "idea": return "Idea"
+        case "connection": return "Concept"
+        case "thinkspace": return "Thinkspace"
+        default: return "Document"
+        }
+    }
+
+    /// Entity tint for menu-row glyphs (the pill itself stays ink — one
+    /// accent per row, and the pill's accent is its text).
+    static func tint(for entity: String?) -> Color? {
+        switch entity {
+        case "content": return DS.entityContent
+        case "note": return DS.entityNote
+        case "idea": return DS.entityIdea
+        case "connection": return DS.entityConnection
+        default: return nil
+        }
+    }
+}
+
 /// The pane's name tag for what Cosmo is looking at — the iOS CosmoContextPill
 /// grammar (semibold title, muted kind subtitle), no ornament. A flat warm
 /// fill, never glass: it lives ON the glass toolbar (Law 3 — glass cannot
@@ -349,31 +385,35 @@ private struct CosmoInlineAssistantPaneToolbar: View {
 struct CosmoScopePill: View {
     let title: String?
     let entity: String?
+    /// The session is pinned to "General — no document" (an explicit choice,
+    /// not merely "nothing in focus").
+    var isGeneral: Bool = false
+    /// The user pinned this scope — a small pin glyph says why the scope no
+    /// longer follows focus.
+    var isPinned: Bool = false
+    /// Hosted inside the switcher button — wears the disclosure chevron.
+    var showsChevron: Bool = false
 
     var body: some View {
         HStack(spacing: DS.space6) {
-            Image(systemName: entityIcon)
+            Image(systemName: isGeneral ? "bubble.left" : CosmoScopeSurfaceIdentity.icon(for: entity))
                 .font(DS.caption2.weight(.semibold))
-                .foregroundStyle(title == nil ? DS.textMuted : DS.textSecondary)
+                .foregroundStyle(title == nil && !isGeneral ? DS.textMuted : DS.textSecondary)
                 .accessibilityHidden(true)
 
-            if let title {
-                Text(title)
-                    .font(DS.caption.weight(.semibold))
-                    .foregroundStyle(DS.text)
-                    .lineLimit(1)
-                // The kind label is short and load-bearing — under width
-                // pressure the title truncates, never the kind.
-                Text(entityLabel)
-                    .font(DS.caption)
+            pillText
+
+            if isPinned {
+                Image(systemName: "pin.fill")
+                    .font(DS.caption2)
                     .foregroundStyle(DS.textMuted)
-                    .lineLimit(1)
-                    .fixedSize()
-            } else {
-                Text("nothing in focus")
-                    .font(DS.caption)
-                    .italic()
+                    .accessibilityLabel("Pinned")
+            }
+            if showsChevron {
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(DS.caption2.weight(.semibold))
                     .foregroundStyle(DS.textMuted)
+                    .accessibilityHidden(true)
             }
         }
         .padding(.horizontal, DS.space10)
@@ -385,33 +425,191 @@ struct CosmoScopePill: View {
         // Compressible, never fixed: under pressure the title truncates
         // instead of shoving the row's trailing cluster off the bar.
         .frame(maxWidth: 280, alignment: .leading)
-        .help(title == nil
-            ? "Open a document or thinkspace to scope Cosmo"
-            : "Cosmo is scoped to this")
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(title.map { "Cosmo is scoped to \($0)" } ?? "Nothing in focus")
+        .accessibilityLabel(accessibilityDescription)
     }
 
-    private var entityIcon: String {
-        switch entity {
-        case "content": return "doc.text"
-        case "note": return "note.text"
-        case "idea": return "lightbulb"
-        case "connection": return "point.3.connected.trianglepath.dotted"
-        case "thinkspace": return "square.grid.2x2"
-        default: return "scope"
+    @ViewBuilder
+    private var pillText: some View {
+        if let title {
+            Text(title)
+                .font(DS.caption.weight(.semibold))
+                .foregroundStyle(DS.text)
+                .lineLimit(1)
+            // The kind label is short and load-bearing — under width
+            // pressure the title truncates, never the kind.
+            Text(CosmoScopeSurfaceIdentity.label(for: entity))
+                .font(DS.caption)
+                .foregroundStyle(DS.textMuted)
+                .lineLimit(1)
+                .fixedSize()
+        } else if isGeneral {
+            Text("General")
+                .font(DS.caption.weight(.semibold))
+                .foregroundStyle(DS.text)
+        } else {
+            Text("nothing in focus")
+                .font(DS.caption)
+                .italic()
+                .foregroundStyle(DS.textMuted)
         }
     }
 
-    private var entityLabel: String {
-        switch entity {
-        case "content": return "Draft"
-        case "note": return "Note"
-        case "idea": return "Idea"
-        case "connection": return "Concept"
-        case "thinkspace": return "Thinkspace"
-        default: return "Document"
+    private var accessibilityDescription: String {
+        if let title { return "Cosmo is scoped to \(title)\(isPinned ? ", pinned" : "")" }
+        return isGeneral ? "General — no document in context" : "Nothing in focus"
+    }
+}
+
+// MARK: - Scope switcher
+
+/// The scope pill as a control: click to see every open document Cosmo could
+/// look at and switch between them. Picking one PINS the session to it (focus
+/// churn can't unseat an explicit choice); "General" drops document context
+/// entirely; "Follow my focus" returns to the default. Sessions are isolated
+/// per document — switching swaps the whole conversation, never mixes two.
+struct CosmoScopeSwitcherPill: View {
+    @ObservedObject var store: CosmoInlineAssistantStore
+
+    @State private var isMenuShown = false
+    @State private var listings: [CosmoEditableSurfaceListing] = []
+
+    var body: some View {
+        Button {
+            // Snapshot the open-document list on click — never per-frame.
+            listings = CosmoEditableSurfaceRegistry.shared.liveSurfaceListings()
+            isMenuShown = true
+        } label: {
+            CosmoScopePill(
+                title: store.activeSurfaceTitle,
+                entity: store.activeSurfaceEntity,
+                isGeneral: store.isPinnedToGeneralScope,
+                isPinned: store.pinnedScopeSurfaceID != nil,
+                showsChevron: true
+            )
+            .contentShape(Capsule())
         }
+        .buttonStyle(.plain)
+        .cosmoClickCursor()
+        // Retargeting a live run is unsafe — the store guards too; the
+        // control just says so up front.
+        .disabled(store.isProcessing)
+        .help("What Cosmo is looking at — click to switch documents")
+        .popover(isPresented: $isMenuShown, arrowEdge: .bottom) {
+            CosmoScopeSwitcherMenu(store: store, listings: listings) {
+                isMenuShown = false
+            }
+        }
+    }
+}
+
+/// The switcher's popover: open documents in focus order, then the general
+/// scope, then (when pinned) the way back to following focus. Dense-menu
+/// grammar — same rows as the @ and / menus.
+private struct CosmoScopeSwitcherMenu: View {
+    @ObservedObject var store: CosmoInlineAssistantStore
+    let listings: [CosmoEditableSurfaceListing]
+    let dismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            CosmoAssistantMenuSectionHeader(title: "Open documents")
+            documentRows
+            Divider()
+                .overlay(DS.borderSubtle)
+                .padding(.vertical, DS.space4)
+            generalRow
+            followFocusRow
+        }
+        .padding(.vertical, DS.space6)
+        .frame(width: 320)
+    }
+
+    @ViewBuilder
+    private var documentRows: some View {
+        if listings.isEmpty {
+            Text("No documents open")
+                .font(DS.caption)
+                .italic()
+                .foregroundStyle(DS.textMuted)
+                .padding(.horizontal, DS.space12)
+                .padding(.vertical, DS.space6)
+        }
+        ForEach(listings) { listing in
+            CosmoScopeSwitcherRow(
+                icon: CosmoScopeSurfaceIdentity.icon(for: listing.entity),
+                iconTint: CosmoScopeSurfaceIdentity.tint(for: listing.entity),
+                title: listing.title,
+                trailingHint: CosmoScopeSurfaceIdentity.label(for: listing.entity),
+                isCurrent: store.currentScopeSurfaceID == listing.surfaceID
+            ) {
+                store.pinScope(toSurfaceID: listing.surfaceID)
+                dismiss()
+            }
+            .help("Scope Cosmo to \(listing.title) — its own conversation, its own context")
+        }
+    }
+
+    private var generalRow: some View {
+        CosmoScopeSwitcherRow(
+            icon: "bubble.left",
+            iconTint: nil,
+            title: "General",
+            trailingHint: "no document",
+            isCurrent: store.currentScopeSurfaceID == CosmoInlineAssistantSessionScope.globalSurfaceID
+        ) {
+            store.pinScopeToGeneral()
+            dismiss()
+        }
+        .help("Chat without any document in context")
+    }
+
+    @ViewBuilder
+    private var followFocusRow: some View {
+        if store.pinnedScopeSurfaceID != nil {
+            CosmoScopeSwitcherRow(
+                icon: "scope",
+                iconTint: nil,
+                title: "Follow my focus",
+                trailingHint: nil,
+                isCurrent: false
+            ) {
+                store.unpinScope()
+                dismiss()
+            }
+            .help("Unpin — Cosmo follows whichever document you're working in")
+        }
+    }
+}
+
+/// A hoverable dense-menu row (the composer menus drive highlight from the
+/// keyboard; a popover drives it from the pointer).
+private struct CosmoScopeSwitcherRow: View {
+    let icon: String
+    let iconTint: Color?
+    let title: String
+    let trailingHint: String?
+    let isCurrent: Bool
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            CosmoAssistantMenuRow(
+                icon: icon,
+                iconTint: iconTint,
+                title: title,
+                trailingHint: trailingHint,
+                showsCheckmark: isCurrent,
+                isHighlighted: isHovered
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .cosmoClickCursor()
+        .onHover { isHovered = $0 }
+        .accessibilityLabel(isCurrent ? "\(title), current scope" : title)
     }
 }
 

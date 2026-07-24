@@ -1252,6 +1252,9 @@ final class LibraryViewModel: ObservableObject {
                 try await AtomRepository.shared.delete(uuid: uuid)
                 allItems.removeAll { $0.uuid == uuid }
                 applyFilters()
+                CosmoUndoManager.shared.registerAtomDeletion(
+                    uuid: uuid, actionDescription: "Delete Item"
+                )
             } catch {
                 print("⚠️ Delete failed: \(error)")
             }

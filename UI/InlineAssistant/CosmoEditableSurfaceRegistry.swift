@@ -2,6 +2,17 @@ import Foundation
 import SwiftUI
 import AppKit
 
+/// One live editable surface, described for the scope switcher — just enough
+/// to render a menu row without holding the provider (or its document) itself.
+struct CosmoEditableSurfaceListing: Identifiable, Equatable {
+    let surfaceID: String
+    let title: String
+    /// The surfaceID's entity prefix ("content", "note", "idea", …).
+    let entity: String?
+
+    var id: String { surfaceID }
+}
+
 @MainActor
 final class CosmoEditableSurfaceRegistry {
     static let shared = CosmoEditableSurfaceRegistry()
@@ -12,6 +23,23 @@ final class CosmoEditableSurfaceRegistry {
     var activeSurface: (any CosmoEditableSurfaceProvider)? {
         cleanupReleasedProviders()
         return activationOrder.reversed().compactMap { providers[$0]?.provider }.first
+    }
+
+    /// Every live surface, most recently active first — the scope switcher's
+    /// menu. Renders each provider's snapshot for the title, so call on a
+    /// user gesture (menu open), never per-frame.
+    func liveSurfaceListings() -> [CosmoEditableSurfaceListing] {
+        cleanupReleasedProviders()
+        return activationOrder.reversed().compactMap { surfaceID in
+            guard let provider = providers[surfaceID]?.provider else { return nil }
+            let title = provider.editableSnapshot().title
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return CosmoEditableSurfaceListing(
+                surfaceID: provider.surfaceID,
+                title: title.isEmpty ? "Untitled" : title,
+                entity: provider.surfaceID.split(separator: ":").first.map(String.init)
+            )
+        }
     }
 
     func provider(surfaceID: String) -> (any CosmoEditableSurfaceProvider)? {
@@ -44,11 +72,21 @@ final class CosmoEditableSurfaceRegistry {
     /// Hot-path activation (typing, focus events): no-op when the surface is
     /// already frontmost, so per-keystroke callers cost two array reads.
     func activateIfNeeded(surfaceID: String) {
+        // Edit-loop learning listens here: this fires on every keystroke, so
+        // it doubles as the "surface is still being worked on" heartbeat that
+        // keeps accepted edits from settling mid-tweak. One dictionary write.
+        InlineEditLearningLoop.shared.noteUserActivity(surfaceID: surfaceID)
         guard activationOrder.last != surfaceID else { return }
         activate(surfaceID: surfaceID)
     }
 
     func unregister(surfaceID: String) {
+        // A closing document settles its learning episodes against its final
+        // text — grabbed now, before the provider is released.
+        if InlineEditLearningLoop.shared.hasOpenEpisodes(surfaceID: surfaceID),
+           let finalText = providers[surfaceID]?.provider?.editableSnapshot().text {
+            InlineEditLearningLoop.shared.surfaceWillClose(surfaceID: surfaceID, finalText: finalText)
+        }
         providers.removeValue(forKey: surfaceID)
         activationOrder.removeAll { $0 == surfaceID }
         // A closed document's highlight dies with it — even when no new

@@ -107,11 +107,10 @@ struct CosmoInlineAssistantPaneEmptyState: View {
                 .background(DS.accentSoft, in: Circle())
                 .accessibilityHidden(true)
 
-            // The pane names its scope in ONE voice — the same pill the header wears.
-            CosmoScopePill(
-                title: store.activeSurfaceTitle,
-                entity: store.activeSurfaceEntity
-            )
+            // The pane names its scope in ONE voice — the same switcher pill
+            // the header wears (clickable here too: "nothing in focus" is
+            // exactly when you'd reach for the list of open documents).
+            CosmoScopeSwitcherPill(store: store)
 
             VStack(alignment: .leading, spacing: DS.space4) {
                 if isCanvasScope {

@@ -42,6 +42,11 @@ struct CommandKActionExecutor {
 
         case .deleteAtom(let uuid):
             try await AtomRepository.shared.delete(uuid: uuid)
+            await MainActor.run {
+                CosmoUndoManager.shared.registerAtomDeletion(
+                    uuid: uuid, actionDescription: "Delete Item"
+                )
+            }
 
         case .copyCosmoLink(let uuid):
             NSPasteboard.general.clearContents()

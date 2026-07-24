@@ -572,6 +572,14 @@ final class CosmoInlineAssistantStore: ObservableObject {
     /// The entity prefix of the bound surface ("content", "note", "idea",
     /// "connection") — drives the scope chip's tint in the pane header.
     @Published private(set) var activeSurfaceEntity: String?
+    /// The surface the user explicitly chose in the header's scope switcher
+    /// (may be the global sentinel — "General, no document"). While set,
+    /// passive focus churn (typing in another editor, key-window flurries on
+    /// app switch) can no longer retarget the session, and submit binds to
+    /// the pin — the user's pick is the word. Cleared when the pinned surface
+    /// closes, the user picks "Follow my focus", or an explicit per-document
+    /// affordance (✦ on another document) names a different scope.
+    @Published private(set) var pinnedScopeSurfaceID: String?
     /// One record per run this session: ask → deliverable → review outcome.
     /// Rendered into the volatile prompt layer as "## Session So Far", so every
     /// turn's model sees the true session state (the continuity carrier).
@@ -631,6 +639,14 @@ final class CosmoInlineAssistantStore: ObservableObject {
         }
 
         bindToLiveSurfaceBeforeSubmission()
+
+        // A prompt sent right after rejecting a staged edit is the labeled
+        // "why" — captured by state (same scoped session, recent verdict),
+        // never by keyword matching.
+        InlineEditLearningLoop.shared.captureRejectionReasonIfPending(
+            prompt: rawPrompt,
+            sessionSurfaceID: currentScopeSurfaceID
+        )
 
         let skillRegistry = CosmoInlineSkillRegistry()
         let slashCommand = CosmoInlineSlashSkillParser.extractCommand(
@@ -1197,12 +1213,13 @@ final class CosmoInlineAssistantStore: ObservableObject {
         applying override: CosmoAssistantProposalOperation? = nil
     ) async {
         guard let location = operationLocation(for: operationID) else { return }
-        let operation = proposals[location.proposalIndex].operations[location.operationIndex]
+        let proposal = proposals[location.proposalIndex]
+        let operation = proposal.operations[location.operationIndex]
         guard operation.status == .pending || operation.status == .conflicted else { return }
         let applying = override ?? operation
 
         let snapshot = provider.editableSnapshot()
-        guard provider.surfaceID == proposals[location.proposalIndex].surfaceID
+        guard provider.surfaceID == proposal.surfaceID
                 || operation.targetID == snapshot.targetID else {
             markOperation(operationID, as: .conflicted)
             errorText = "The editable surface for this proposal changed."
@@ -1215,6 +1232,22 @@ final class CosmoInlineAssistantStore: ObservableObject {
             return
         }
 
+        // Edit-loop learning, resolved against the PRE-apply document: where
+        // this edit lands, and — the attribution firewall — any open episode
+        // whose region it touches is harvested first, while everything in the
+        // document is still purely the user's.
+        let learnsFromThisSurface = InlineEditLearningLoop.isLearnableSurface(provider.surfaceID)
+        let learningPlacement = learnsFromThisSurface
+            ? CosmoInlineTextEditResolver.placement(for: applying, in: snapshot.text)
+            : nil
+        if learnsFromThisSurface {
+            await InlineEditLearningLoop.shared.harvestBeforeApply(
+                surfaceID: provider.surfaceID,
+                preApplyText: snapshot.text,
+                incomingRange: learningPlacement?.range
+            )
+        }
+
         do {
             let result = try await provider.apply(operation: applying)
             markOperation(operationID, as: result.status)
@@ -1222,14 +1255,38 @@ final class CosmoInlineAssistantStore: ObservableObject {
             persistActiveSession()
             if result.status == .applied || result.status == .accepted {
                 recordSkillOutcome(
-                    proposal: proposals[location.proposalIndex],
+                    proposal: proposal,
                     operation: operation,
                     accepted: true
                 )
+                if learnsFromThisSurface {
+                    let appliedText = learningPlacement?.replacementText ?? applying.proposedText ?? ""
+                    var postApplyText = snapshot.text
+                    if let learningPlacement {
+                        postApplyText.replaceSubrange(
+                            learningPlacement.range, with: learningPlacement.replacementText
+                        )
+                    } else {
+                        postApplyText = provider.editableSnapshot().text
+                    }
+                    await InlineEditLearningLoop.shared.reviewVerdictDelivered(.init(
+                        operationID: operation.id,
+                        surfaceID: provider.surfaceID,
+                        targetID: operation.targetID,
+                        skillID: proposal.skillID,
+                        ask: proposal.prompt,
+                        verdict: .accepted,
+                        aiText: appliedText,
+                        originalText: applying.originalText,
+                        preApplyText: snapshot.text,
+                        appliedRange: learningPlacement?.range,
+                        postApplyText: postApplyText
+                    ))
+                }
                 // Event hook for auto-triggered skills (cooldown-guarded, so a
                 // multi-op accept-all fires at most once per skill+surface).
                 CosmoInlineSkillAutoRunner.shared.proposalAccepted(
-                    surfaceID: proposals[location.proposalIndex].surfaceID,
+                    surfaceID: proposal.surfaceID,
                     store: self
                 )
             }
@@ -1281,6 +1338,28 @@ final class CosmoInlineAssistantStore: ObservableObject {
         errorText = nil
         persistActiveSession()
         recordSkillOutcome(proposal: proposal, operation: operation, accepted: false)
+
+        // Edit-loop learning: a rejection opens an episode watching what the
+        // user does instead — the next ask becomes the labeled "why", and a
+        // hand-written replacement in the target region becomes a pair.
+        if InlineEditLearningLoop.isLearnableSurface(proposal.surfaceID),
+           let provider = registry.provider(surfaceID: proposal.surfaceID) {
+            let snapshot = provider.editableSnapshot()
+            let placement = CosmoInlineTextEditResolver.placement(for: operation, in: snapshot.text)
+            await InlineEditLearningLoop.shared.reviewVerdictDelivered(.init(
+                operationID: operation.id,
+                surfaceID: proposal.surfaceID,
+                targetID: operation.targetID,
+                skillID: proposal.skillID,
+                ask: proposal.prompt,
+                verdict: .rejected,
+                aiText: operation.proposedText ?? "",
+                originalText: operation.originalText,
+                preApplyText: snapshot.text,
+                appliedRange: placement?.range,
+                postApplyText: snapshot.text
+            ))
+        }
     }
 
     /// Accept every pending operation as ONE transaction: all anchors resolve
@@ -1443,6 +1522,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
            let scoped = registry.provider(surfaceID: activeSessionSurfaceID) {
             return scoped.residentSkillID
         }
+        guard !isPinnedToGeneralScope else { return nil }
         return registry.activeSurface?.residentSkillID
     }
 
@@ -1456,7 +1536,17 @@ final class CosmoInlineAssistantStore: ObservableObject {
             return scopedSnapshot
         }
 
+        // The live-surface fallback serves the unpinned default (a fresh
+        // session binds to what the user is looking at). Pinning "General"
+        // is an explicit opt-OUT of document context — nothing may leak
+        // back in through this fallback.
+        guard !isPinnedToGeneralScope else { return nil }
         return registry.activeSurface?.editableSnapshot()
+    }
+
+    /// True when the user pinned the session to "General — no document".
+    var isPinnedToGeneralScope: Bool {
+        pinnedScopeSurfaceID == CosmoInlineAssistantSessionScope.globalSurfaceID
     }
 
     func dismissPaneRequest() {
@@ -1468,6 +1558,9 @@ final class CosmoInlineAssistantStore: ObservableObject {
     /// scope the assistant to the calling surface and open the pane.
     func openPane(forSurfaceID surfaceID: String? = nil) {
         if let surfaceID {
+            // An explicit per-document ask outranks an older pin — the user's
+            // most recent gesture names the scope.
+            releasePinIfOverridden(byExplicitSurfaceID: surfaceID)
             CosmoEditableSurfaceRegistry.shared.activateIfNeeded(surfaceID: surfaceID)
             activateSessionIfIdle(surfaceID: surfaceID)
         }
@@ -1478,10 +1571,86 @@ final class CosmoInlineAssistantStore: ObservableObject {
     /// ("improve selected text") — binds, fills the composer, and sends.
     func submitPrompt(_ prompt: String, forSurfaceID surfaceID: String? = nil) {
         if let surfaceID {
+            // A surface-scoped programmatic ask must land on that surface —
+            // a stale pin hijacking it would edit the wrong document.
+            releasePinIfOverridden(byExplicitSurfaceID: surfaceID)
             CosmoEditableSurfaceRegistry.shared.activateIfNeeded(surfaceID: surfaceID)
         }
         composerText = prompt
         Task { await submit() }
+    }
+
+    // MARK: Scope switcher
+
+    /// The active session's surface key — what the header pill's menu marks
+    /// as current (the global sentinel for general sessions).
+    var currentScopeSurfaceID: String {
+        activeSessionSurfaceID
+    }
+
+    /// True while retargeting the session is unsafe (a run is in flight).
+    /// The switcher pill disables itself on `isProcessing`; this is the
+    /// store-side belt for programmatic callers.
+    private var isScopeSwitchLocked: Bool {
+        isProcessing || activeRunTask != nil
+    }
+
+    /// The user picked a document in the header's scope switcher: pin the
+    /// session to it. Pinning is the explicit-user session switch sanctioned
+    /// by the session-stability contract — each surface keeps its own
+    /// isolated session, so nothing from the outgoing conversation follows.
+    func pinScope(
+        toSurfaceID rawSurfaceID: String,
+        registry: CosmoEditableSurfaceRegistry = .shared
+    ) {
+        guard !isScopeSwitchLocked else { return }
+        let surfaceID = CosmoInlineAssistantSessionScope.surfaceID(for: rawSurfaceID)
+        guard surfaceID != CosmoInlineAssistantSessionScope.globalSurfaceID,
+              registry.provider(surfaceID: surfaceID) != nil else { return }
+        // Align the registry's focus order with the pick — this also clears a
+        // foreign selection so a highlight in the previous document can never
+        // ride along into requests aimed at the new scope.
+        registry.activate(surfaceID: surfaceID)
+        pinnedScopeSurfaceID = surfaceID
+        switchSessionPreservingDraft(to: surfaceID)
+    }
+
+    /// "General — no document": pin the session to the global scope so submit
+    /// does NOT rebind to whatever document happens to hold focus. Without the
+    /// pin, opting out of document context would silently opt back in.
+    func pinScopeToGeneral() {
+        guard !isScopeSwitchLocked else { return }
+        pinnedScopeSurfaceID = CosmoInlineAssistantSessionScope.globalSurfaceID
+        switchSessionPreservingDraft(to: nil)
+    }
+
+    /// Back to the default behavior: the session follows whichever surface
+    /// the user is working in.
+    func unpinScope(registry: CosmoEditableSurfaceRegistry = .shared) {
+        guard !isScopeSwitchLocked else { return }
+        pinnedScopeSurfaceID = nil
+        switchSessionPreservingDraft(to: registry.activeSurface?.surfaceID)
+    }
+
+    /// An explicit surface-named affordance clears a pin that points anywhere
+    /// else — two explicit gestures can't both win, and the newer one does.
+    private func releasePinIfOverridden(byExplicitSurfaceID rawSurfaceID: String) {
+        guard let pinned = pinnedScopeSurfaceID,
+              CosmoInlineAssistantSessionScope.surfaceID(for: rawSurfaceID) != pinned else { return }
+        pinnedScopeSurfaceID = nil
+    }
+
+    /// Session switching wipes composer state by design (per-surface
+    /// isolation) — but a half-typed, unsent ask is the user's draft, not
+    /// session content: retargeting it at another document must not eat it.
+    /// Explicit composer picks (@-attached atoms, chosen skill) stay behind:
+    /// carrying them between atom-scoped threads is context leakage.
+    private func switchSessionPreservingDraft(to rawSurfaceID: String?) {
+        let draft = composerText
+        activateSession(surfaceID: rawSurfaceID)
+        if !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            composerText = draft
+        }
     }
 
     /// Focus modes report their live selection here (from the same handlers
@@ -1555,6 +1724,13 @@ final class CosmoInlineAssistantStore: ObservableObject {
               activeRunTask == nil else {
             return
         }
+        // A pinned scope is the user's explicit pick — passive registration
+        // and focus churn must not unseat it. Explicit affordances clear the
+        // pin (releasePinIfOverridden) before reaching here.
+        if let pinned = pinnedScopeSurfaceID,
+           CosmoInlineAssistantSessionScope.surfaceID(for: rawSurfaceID) != pinned {
+            return
+        }
         activateSession(surfaceID: rawSurfaceID)
     }
 
@@ -1564,7 +1740,13 @@ final class CosmoInlineAssistantStore: ObservableObject {
     /// Mid-run the release is skipped (retargeting a live run is unsafe);
     /// `submit` re-settles the scope once the run ends.
     func releaseSessionIfScoped(toSurfaceID rawSurfaceID: String) {
-        guard activeSessionSurfaceID == CosmoInlineAssistantSessionScope.surfaceID(for: rawSurfaceID) else { return }
+        let closedSurfaceID = CosmoInlineAssistantSessionScope.surfaceID(for: rawSurfaceID)
+        // A pin dies with its document — never leave the session pinned to a
+        // surface that no longer exists.
+        if pinnedScopeSurfaceID == closedSurfaceID {
+            pinnedScopeSurfaceID = nil
+        }
+        guard activeSessionSurfaceID == closedSurfaceID else { return }
         guard !isProcessing, activeRunTask == nil else { return }
         activateSession(surfaceID: CosmoEditableSurfaceRegistry.shared.activeSurface?.surfaceID)
     }
@@ -1573,12 +1755,33 @@ final class CosmoInlineAssistantStore: ObservableObject {
     /// unregister path rightly refuses to retarget a live run, so the scope
     /// is settled here instead, after the run (and `submit`'s defers) finish.
     func releaseSessionIfScopedSurfaceClosed() {
+        if let pinned = pinnedScopeSurfaceID,
+           pinned != CosmoInlineAssistantSessionScope.globalSurfaceID,
+           CosmoEditableSurfaceRegistry.shared.provider(surfaceID: pinned) == nil {
+            pinnedScopeSurfaceID = nil
+        }
         guard activeSessionSurfaceID != CosmoInlineAssistantSessionScope.globalSurfaceID,
               CosmoEditableSurfaceRegistry.shared.provider(surfaceID: activeSessionSurfaceID) == nil else { return }
         activateSession(surfaceID: CosmoEditableSurfaceRegistry.shared.activeSurface?.surfaceID)
     }
 
     private func bindToLiveSurfaceBeforeSubmission() {
+        // A pinned scope wins over the registry's focus order: the pill said
+        // where this ask goes, and key-window churn or typing elsewhere must
+        // not silently rebind the message at the last moment.
+        if let pinned = pinnedScopeSurfaceID {
+            if pinned == CosmoInlineAssistantSessionScope.globalSurfaceID {
+                activateSession(surfaceID: nil)
+                return
+            }
+            if CosmoEditableSurfaceRegistry.shared.provider(surfaceID: pinned) != nil {
+                activateSession(surfaceID: pinned)
+                return
+            }
+            // The pinned document closed under us — fall back to following focus.
+            pinnedScopeSurfaceID = nil
+        }
+
         guard let liveSurfaceID = CosmoEditableSurfaceRegistry.shared.activeSurface?.surfaceID else { return }
 
         let previousSessionID = activeSessionSurfaceID
@@ -1696,6 +1899,12 @@ final class CosmoInlineAssistantStore: ObservableObject {
         let linkedIDs = Set(removedMessages.compactMap(\.proposalID))
         let dropped = proposals.filter { linkedIDs.contains($0.id) || $0.createdAt >= cutoff }
         guard !dropped.isEmpty else { return }
+
+        // A rollback is not a review verdict — the dropped operations'
+        // learning episodes vanish with the proposals.
+        InlineEditLearningLoop.shared.rollbackDiscardedOperations(
+            ids: dropped.flatMap { $0.operations.map(\.id) }
+        )
 
         for proposal in dropped {
             let pending = proposal.operations.filter {

@@ -227,6 +227,11 @@ struct IdeaBoardCard: View {
     private func deleteIdea() {
         Task {
             try? await AtomRepository.shared.delete(uuid: item.atomUUID)
+            await MainActor.run {
+                CosmoUndoManager.shared.registerAtomDeletion(
+                    uuid: item.atomUUID, actionDescription: "Delete Idea"
+                )
+            }
             NotificationCenter.default.post(
                 name: Notification.Name("ideaDeleted"),
                 object: nil,

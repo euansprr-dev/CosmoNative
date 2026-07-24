@@ -1205,21 +1205,41 @@ extension IdeaFocusModeView {
 
     // MARK: Outline Mutations
 
+    /// Apply a structural outline change and register it with CosmoUndoManager
+    /// so ⌘Z restores the previous outline (deleted slides come back with
+    /// their notes). Weak capture: undo silently no-ops once the focus
+    /// session is gone.
+    private func applyOutlineChange(_ actionDescription: String, _ newOutline: CodexOutlineModel) {
+        let previousOutline = viewModel.codexOutline
+        withAnimation(ProMotionSprings.snappy) {
+            viewModel.replaceCodexOutline(newOutline)
+        }
+        CosmoUndoManager.shared.register(InlineUndoAction(
+            actionDescription: actionDescription,
+            undo: { [weak viewModel] in
+                withAnimation(ProMotionSprings.snappy) {
+                    viewModel?.replaceCodexOutline(previousOutline)
+                }
+            },
+            redo: { [weak viewModel] in
+                withAnimation(ProMotionSprings.snappy) {
+                    viewModel?.replaceCodexOutline(newOutline)
+                }
+            }
+        ))
+    }
+
     private func addNewSlide() {
         guard var outline = viewModel.codexOutline else { return }
         _ = CodexOutlineEditing.insertSlide(after: outline.slides.last?.id ?? UUID(), in: &outline)
-        withAnimation(ProMotionSprings.snappy) {
-            viewModel.replaceCodexOutline(outline)
-        }
+        applyOutlineChange("Add Slide", outline)
     }
 
     private func removeSlide(_ id: UUID) {
         guard var outline = viewModel.codexOutline else { return }
         outline.slides.removeAll { $0.id == id }
         CodexOutlineEditing.renumberSlides(in: &outline)
-        withAnimation(ProMotionSprings.snappy) {
-            viewModel.replaceCodexOutline(outline)
-        }
+        applyOutlineChange("Remove Slide", outline)
     }
 
     /// ⌥↑ / ⌥↓ while a slide is focused — reorder without leaving the keys.
@@ -1227,16 +1247,14 @@ extension IdeaFocusModeView {
         guard var outline = viewModel.codexOutline else { return }
         let offset = direction == .previous ? -1 : 1
         guard CodexOutlineEditing.moveSlide(slideID, offset: offset, in: &outline) else { return }
-        withAnimation(ProMotionSprings.snappy) {
-            viewModel.replaceCodexOutline(outline)
-        }
+        applyOutlineChange("Move Slide", outline)
         focusOutlineSlide(slideID)
     }
 
     private func insertSlideAfterFocusedSlide(_ slideID: UUID) {
         guard var outline = viewModel.codexOutline else { return }
         let newID = CodexOutlineEditing.insertSlide(after: slideID, in: &outline)
-        viewModel.replaceCodexOutline(outline)
+        applyOutlineChange("Add Slide", outline)
         focusOutlineSlide(newID)
     }
 
@@ -1246,7 +1264,7 @@ extension IdeaFocusModeView {
             return .ignored
         }
 
-        viewModel.replaceCodexOutline(outline)
+        applyOutlineChange("Remove Slide", outline)
         focusOutlineSlide(previousID)
         return .handled
     }

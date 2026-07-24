@@ -2425,6 +2425,69 @@ class CosmoDatabase: ObservableObject {
             print("✅ taste engine tables created")
         }
 
+        migrator.registerMigration("create_inline_edit_episodes") { db in
+            // Edit-loop learning: one row per reviewed inline-edit operation,
+            // watching what the user does AFTER the verdict. Settled episodes
+            // carry the (AI text → user text) pair that feeds the taste
+            // distiller and the exemplar bank.
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS inline_edit_episodes (
+                    id TEXT PRIMARY KEY,
+                    surface_id TEXT NOT NULL,
+                    target_id TEXT NOT NULL,
+                    client_uuid TEXT,
+                    skill_id TEXT NOT NULL,
+                    ask TEXT NOT NULL,
+                    verdict TEXT NOT NULL,
+                    ai_text TEXT NOT NULL,
+                    original_text TEXT,
+                    slide_role TEXT,
+                    anchor_before TEXT,
+                    anchor_after TEXT,
+                    outcome TEXT NOT NULL DEFAULT 'settling',
+                    settled_text TEXT,
+                    magnitude REAL,
+                    user_reason TEXT,
+                    created_at TEXT NOT NULL,
+                    settled_at TEXT
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_inline_edit_episodes_open
+                    ON inline_edit_episodes(surface_id, outcome);
+                CREATE INDEX IF NOT EXISTS idx_inline_edit_episodes_scope
+                    ON inline_edit_episodes(client_uuid, outcome, created_at DESC);
+            """)
+            print("✅ inline_edit_episodes table created")
+        }
+
+        migrator.registerMigration("create_edit_exemplars") { db in
+            // The exemplar bank: curated (AI version → user version) pairs
+            // harvested from settled edit episodes, retrieved few-shot into
+            // future edit runs. Struck rows are tombstones — the dedup pass
+            // consults them so a struck lesson is never re-learned.
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS edit_exemplars (
+                    id TEXT PRIMARY KEY,
+                    client_uuid TEXT,
+                    skill_id TEXT NOT NULL,
+                    slide_role TEXT,
+                    kind TEXT NOT NULL,
+                    ai_text TEXT NOT NULL,
+                    human_text TEXT NOT NULL,
+                    embedding BLOB,
+                    support_count INTEGER NOT NULL DEFAULT 1,
+                    times_shown INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    created_at TEXT NOT NULL,
+                    last_shown_at TEXT
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_edit_exemplars_scope
+                    ON edit_exemplars(client_uuid, status, created_at DESC);
+            """)
+            print("✅ edit_exemplars table created")
+        }
+
         migrator.registerMigration("create_pdf_highlights") { db in
             // Reading Room highlights: visual marks on a PDF source, linked to
             // the capture atom the selection produced. Quads are page-space

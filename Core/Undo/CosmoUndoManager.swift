@@ -103,3 +103,19 @@ final class CosmoUndoManager: ObservableObject {
         redoActionName = redoStack.last?.actionDescription
     }
 }
+
+// MARK: - Soft-delete convenience
+
+extension CosmoUndoManager {
+    /// Register undo for an atom that was just soft-deleted anywhere in the
+    /// app: ⌘Z restores it through the resurrection contract (`restoredAt`),
+    /// redo re-deletes. Both repository calls post `.atomsDidChange`, so
+    /// list surfaces refresh on their own. Call AFTER the delete succeeds.
+    func registerAtomDeletion(uuid: String, actionDescription: String) {
+        register(InlineUndoAction(
+            actionDescription: actionDescription,
+            undo: { try? await AtomRepository.shared.restore(uuid: uuid) },
+            redo: { try? await AtomRepository.shared.delete(uuid: uuid) }
+        ))
+    }
+}

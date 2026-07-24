@@ -272,6 +272,7 @@ struct HookLineEditor: NSViewRepresentable {
         textView.delegate = context.coordinator
         textView.drawsBackground = false
         textView.isRichText = false
+        textView.allowsUndo = true
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
@@ -309,8 +310,11 @@ struct HookLineEditor: NSViewRepresentable {
             textView.textColor = textColor
         }
 
-        if textView.string != text {
+        // External replaces only, draining the invalidated undo stack —
+        // same contract as OutlineSlideNoteEditor above.
+        if textView.string != text, textView.window?.firstResponder !== textView {
             textView.string = text
+            textView.undoManager?.removeAllActions()
             textView.invalidateIntrinsicContentSize()
         }
 
@@ -490,6 +494,7 @@ struct OutlineSlideNoteEditor: NSViewRepresentable {
         textView.delegate = context.coordinator
         textView.drawsBackground = false
         textView.isRichText = false
+        textView.allowsUndo = true
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
@@ -521,8 +526,13 @@ struct OutlineSlideNoteEditor: NSViewRepresentable {
         textView.onMoveLine = onMoveLine
         textView.placeholder = placeholder
 
-        if textView.string != text {
+        // External replaces only — while the user types, the binding echo can
+        // be stale (same guard as IdeaContextTextEditor). An out-of-band
+        // storage swap invalidates every registered undo range, so the undo
+        // stack is drained in the same breath (external-replace undo law).
+        if textView.string != text, textView.window?.firstResponder !== textView {
             textView.string = text
+            textView.undoManager?.removeAllActions()
             textView.invalidateIntrinsicContentSize()
         }
 

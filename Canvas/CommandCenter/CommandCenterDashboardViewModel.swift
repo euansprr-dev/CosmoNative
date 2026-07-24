@@ -1855,6 +1855,7 @@ final class CommandCenterDashboardViewModel {
             if let headingsJSON = meta.headings, let data = headingsJSON.data(using: .utf8) {
                 headings = (try? JSONDecoder().decode([ProjectHeading].self, from: data)) ?? []
             }
+            let previousHeadings = headings
             headings.removeAll { $0.id == headingUUID }
 
             // Save back
@@ -1867,17 +1868,86 @@ final class CommandCenterDashboardViewModel {
 
             // Clear headingUUID from tasks that referenced this heading
             let tasks = try await AtomRepository.shared.fetchAll(type: .task)
+            var unstampedTaskUUIDs: [String] = []
             for task in tasks {
                 guard var updatedMeta = taskMetadataForWrite(task, context: "Dashboard.deleteHeading(\(task.uuid.prefix(8)))"),
                       updatedMeta.headingUUID == headingUUID else { continue }
                 updatedMeta.headingUUID = nil
                 guard let merged = task.mergingTaskMetadata(updatedMeta, context: "Dashboard.deleteHeading(\(task.uuid.prefix(8)))") else { continue }
                 try await AtomRepository.shared.update(merged)
+                unstampedTaskUUIDs.append(task.uuid)
             }
 
             await loadProjectTasks(projectUUID: projectUUID)
+
+            registerHeadingDeletionUndo(
+                projectUUID: projectUUID,
+                headingUUID: headingUUID,
+                previousHeadings: previousHeadings,
+                newHeadings: headings,
+                unstampedTaskUUIDs: unstampedTaskUUIDs
+            )
         } catch {
             print("❌ Dashboard: Failed to delete heading: \(error)")
+        }
+    }
+
+    /// ⌘Z contract for heading deletion: write the previous headings JSON back
+    /// onto the project and re-stamp `headingUUID` on the tasks that were
+    /// unfiled by the delete.
+    private func registerHeadingDeletionUndo(
+        projectUUID: String,
+        headingUUID: String,
+        previousHeadings: [ProjectHeading],
+        newHeadings: [ProjectHeading],
+        unstampedTaskUUIDs: [String]
+    ) {
+        CosmoUndoManager.shared.register(InlineUndoAction(
+            actionDescription: "Delete Heading",
+            undo: { [weak self] in
+                await self?.applyHeadingsState(
+                    projectUUID: projectUUID,
+                    headings: previousHeadings,
+                    unstampedTaskUUIDs: unstampedTaskUUIDs,
+                    taskHeadingUUID: headingUUID
+                )
+            },
+            redo: { [weak self] in
+                await self?.applyHeadingsState(
+                    projectUUID: projectUUID,
+                    headings: newHeadings,
+                    unstampedTaskUUIDs: unstampedTaskUUIDs,
+                    taskHeadingUUID: nil
+                )
+            }
+        ))
+    }
+
+    private func applyHeadingsState(
+        projectUUID: String,
+        headings: [ProjectHeading],
+        unstampedTaskUUIDs: [String],
+        taskHeadingUUID: String?
+    ) async {
+        do {
+            guard var projectAtom = try await AtomRepository.shared.fetch(uuid: projectUUID) else { return }
+            var meta = projectAtom.metadataValue(as: ProjectMetadata.self) ?? ProjectMetadata()
+            let encoded = try JSONEncoder().encode(headings)
+            meta.headings = String(data: encoded, encoding: .utf8)
+            projectAtom = projectAtom.withMetadata(meta)
+            try await AtomRepository.shared.update(projectAtom)
+            projectHeadings = headings
+
+            for uuid in unstampedTaskUUIDs {
+                guard let task = try await AtomRepository.shared.fetch(uuid: uuid),
+                      var taskMeta = taskMetadataForWrite(task, context: "Dashboard.undoDeleteHeading(\(uuid.prefix(8)))") else { continue }
+                taskMeta.headingUUID = taskHeadingUUID
+                guard let merged = task.mergingTaskMetadata(taskMeta, context: "Dashboard.undoDeleteHeading(\(uuid.prefix(8)))") else { continue }
+                try await AtomRepository.shared.update(merged)
+            }
+            await loadProjectTasks(projectUUID: projectUUID)
+        } catch {
+            print("❌ Dashboard: heading undo/redo write failed: \(error)")
         }
     }
 
@@ -1965,6 +2035,17 @@ final class CommandCenterDashboardViewModel {
         Task {
             try? await AtomRepository.shared.delete(uuid: block.id)
             await refreshScheduleBlocks()
+            CosmoUndoManager.shared.register(InlineUndoAction(
+                actionDescription: "Delete Schedule Block",
+                undo: { [weak self] in
+                    try? await AtomRepository.shared.restore(uuid: block.id)
+                    await self?.refreshScheduleBlocks()
+                },
+                redo: { [weak self] in
+                    try? await AtomRepository.shared.delete(uuid: block.id)
+                    await self?.refreshScheduleBlocks()
+                }
+            ))
         }
     }
 
@@ -3064,9 +3145,36 @@ final class CommandCenterDashboardViewModel {
             )
             try await deleteTasksAndCalendarEvents(targets)
             await refreshTaskCollectionsAfterMutation()
+            registerTaskDeletionUndo(
+                uuids: targets.map(\.uuid),
+                actionDescription: targets.count > 1 ? "Delete Tasks" : "Delete Task"
+            )
         } catch {
             PersistenceHealth.note(.writeFailure, context: "Dashboard.deleteTask(\(uuid.prefix(8)))", detail: error.localizedDescription)
         }
+    }
+
+    /// ⌘Z contract for task deletions: restore the tombstoned atoms and
+    /// refresh every list. Calendar events removed alongside the delete are
+    /// not resurrected — the task returns, its EK mirror is re-created on the
+    /// next calendar sync touch.
+    private func registerTaskDeletionUndo(uuids: [String], actionDescription: String) {
+        guard !uuids.isEmpty else { return }
+        CosmoUndoManager.shared.register(InlineUndoAction(
+            actionDescription: actionDescription,
+            undo: { [weak self] in
+                for uuid in uuids {
+                    try? await AtomRepository.shared.restore(uuid: uuid)
+                }
+                await self?.refreshTaskCollectionsAfterMutation()
+            },
+            redo: { [weak self] in
+                for uuid in uuids {
+                    try? await AtomRepository.shared.delete(uuid: uuid)
+                }
+                await self?.refreshTaskCollectionsAfterMutation()
+            }
+        ))
     }
 
     private func recurringDeleteTargets(
@@ -3183,6 +3291,10 @@ final class CommandCenterDashboardViewModel {
             }
         }
         await refreshTaskCollectionsAfterMutation()
+        registerTaskDeletionUndo(
+            uuids: Array(uuids),
+            actionDescription: uuids.count > 1 ? "Delete Tasks" : "Delete Task"
+        )
     }
 
     func startFocusSession(for task: TaskViewModel) {

@@ -587,6 +587,28 @@ final class CosmoTextView: NSTextView {
         super.paste(sender)
     }
 
+    /// Image drops must route through the same pipeline as image pastes.
+    /// NSTextView's native drop (enabled by `importsGraphics`) inserts the raw
+    /// file wrapper at intrinsic pixel size with no `imagePath` attribute, so
+    /// the image renders clipped by the text column and the resize overlay /
+    /// size menu never engage. Local drags (moving an existing image within
+    /// the document) keep the native move behavior.
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let pasteboard = sender.draggingPasteboard
+        if importsGraphics,
+           (sender.draggingSource as? NSView) !== self,
+           NSImage.canInit(with: pasteboard) {
+            let point = convert(sender.draggingLocation, from: nil)
+            let index = characterIndexForInsertion(at: point)
+            setSelectedRange(NSRange(location: index, length: 0))
+            if shortcutDelegate?.textView(self, shouldHandleImagePaste: pasteboard) == true {
+                window?.makeFirstResponder(self)
+                return true
+            }
+        }
+        return super.performDragOperation(sender)
+    }
+
     override func keyDown(with event: NSEvent) {
         FocusModeTextClipboardTarget.activate(self)
         super.keyDown(with: event)
@@ -2681,6 +2703,23 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
         func textView(_ textView: NSTextView, shouldHandleImagePaste pasteboard: NSPasteboard) -> Bool {
             guard parent.allowImages else { return false }
+
+            // Image files first (Finder drops, copied files): keep the original
+            // data and filename instead of a lossy NSImage → PNG round-trip.
+            let fileOptions: [NSPasteboard.ReadingOptionKey: Any] = [
+                .urlReadingFileURLsOnly: true,
+                .urlReadingContentsConformToTypes: [UTType.image.identifier]
+            ]
+            if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: fileOptions) as? [URL],
+               !urls.isEmpty {
+                var inserted = false
+                for url in urls {
+                    guard let data = try? Data(contentsOf: url) else { continue }
+                    insertImage(data: data, filename: url.lastPathComponent, into: textView)
+                    inserted = true
+                }
+                if inserted { return true }
+            }
 
             if let image = NSImage(pasteboard: pasteboard),
                let data = image.pngData() ?? image.tiffRepresentation {

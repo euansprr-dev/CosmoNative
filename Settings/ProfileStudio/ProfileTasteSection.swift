@@ -20,6 +20,8 @@ struct ProfileTasteSection: View {
     @State private var newRuleCategory = "voice"
     @State private var showStruck = false
     @State private var showProvenance = false
+    @State private var editLessons: [EditExemplar] = []
+    @State private var editMetrics: InlineEditEpisodeStore.Metrics?
 
     private static let categories = ["voice", "structure", "hooks", "format", "cta"]
 
@@ -42,11 +44,58 @@ struct ProfileTasteSection: View {
             if !struck.isEmpty {
                 struckFootnote
             }
+            if !editLessons.isEmpty {
+                editLessonsShelf
+            }
         }
         .task(id: store.atom?.uuid) { await reload() }
         .onReceive(NotificationCenter.default.publisher(for: .cosmoTasteChanged)) { _ in
             Task { await reload() }
         }
+    }
+
+    // MARK: - Edit lessons (exemplar bank oversight)
+
+    /// The pairs the assistant learns to write from — every lesson visible,
+    /// every lesson strikeable. Oversight is itself a wrong-lesson guard.
+    private var editLessonsShelf: some View {
+        VStack(alignment: .leading, spacing: DS.space12) {
+            SettingsSectionHeader(label: "EDIT LESSONS", detail: editLessonsDetail)
+            SettingsGroupedBox {
+                ForEach(Array(editLessons.prefix(6).enumerated()), id: \.element.id) { index, exemplar in
+                    if index > 0 { SettingsRowDivider() }
+                    EditLessonRow(exemplar: exemplar) {
+                        Task {
+                            await EditExemplarBank.strike(id: exemplar.id)
+                            await reload()
+                        }
+                    }
+                }
+            }
+            if let metrics = editMetrics, metrics.settledCount > 0 {
+                editMetricsFootnote(metrics)
+            }
+        }
+    }
+
+    private var editLessonsDetail: String {
+        "how you reshape staged edits — Cosmo writes from these"
+    }
+
+    /// The falsifiable improvement claim, in one quiet line: if learning
+    /// works, the tweak rate and reshape size fall over time.
+    private func editMetricsFootnote(_ metrics: InlineEditEpisodeStore.Metrics) -> some View {
+        var parts = ["\(metrics.settledCount) edits watched", "\(metrics.untouchedCount) survived untouched"]
+        if let tweakRate = metrics.tweakRate {
+            parts.append("tweak rate \(Int((tweakRate * 100).rounded()))%")
+        }
+        if let magnitude = metrics.meanTweakMagnitude {
+            parts.append("avg reshape \(Int((magnitude * 100).rounded()))%")
+        }
+        return Text(parts.joined(separator: " · "))
+            .font(DS.caption2)
+            .foregroundStyle(DS.textMuted)
+            .padding(.leading, DS.space4)
     }
 
     // MARK: - Header
@@ -278,10 +327,14 @@ struct ProfileTasteSection: View {
         let scope = clientUuid
         let profile = await TasteStore.profile(clientUuid: scope)
         let counts = await TasteStore.signalKindCounts(clientUuid: scope)
+        let lessons = await EditExemplarBank.recent(clientUuid: scope, limit: 6)
+        let metrics = await InlineEditEpisodeStore.metrics(clientUuid: scope)
         await MainActor.run {
             beliefs = profile?.beliefs ?? []
             profileVersion = profile?.version ?? 0
             signalCounts = counts
+            editLessons = lessons
+            editMetrics = metrics
         }
     }
 
@@ -289,6 +342,7 @@ struct ProfileTasteSection: View {
         switch kind {
         case "edit_accepted": return "checkmark.circle"
         case "edit_rejected": return "xmark.circle"
+        case "edit_tweak": return "arrow.triangle.2.circlepath"
         case "perf_entry": return "chart.line.uptrend.xyaxis"
         case "explicit_rule": return "pin"
         case "swipe_study": return "rectangle.stack"
@@ -300,11 +354,96 @@ struct ProfileTasteSection: View {
         switch kind {
         case "edit_accepted": return "Accepted edits"
         case "edit_rejected": return "Rejected suggestions"
+        case "edit_tweak": return "Edit reshapes"
         case "perf_entry": return "Performance entries"
         case "explicit_rule": return "Your rules"
         case "swipe_study": return "Swipe studies"
         default: return kind
         }
+    }
+}
+
+// MARK: - Edit lesson row
+
+/// One learned pair as a mini red/green diff — the review overlay's exact
+/// color vocabulary, shrunk to a receipt.
+private struct EditLessonRow: View {
+    let exemplar: EditExemplar
+    let onStrike: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: DS.space10) {
+            roleChip
+            VStack(alignment: .leading, spacing: DS.space4) {
+                diffLine(exemplar.aiText, removed: true)
+                diffLine(exemplar.humanText, removed: false)
+            }
+            Spacer(minLength: DS.space8)
+            trailing
+        }
+        .padding(.vertical, DS.space8)
+        .padding(.horizontal, DS.space12)
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.gentle) { isHovered = hovering }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Edit lesson: AI wrote \(exemplar.aiText); you made it \(exemplar.humanText)")
+    }
+
+    private var roleChip: some View {
+        Text((exemplar.slideRole ?? "edit").uppercased())
+            .font(.system(size: 9, weight: .semibold))
+            .tracking(0.8)
+            .foregroundStyle(DS.textMuted)
+            .frame(width: 62, alignment: .leading)
+            .padding(.top, DS.space2)
+            .accessibilityHidden(true)
+    }
+
+    private func diffLine(_ text: String, removed: Bool) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: DS.space6) {
+            Image(systemName: removed ? "minus" : "plus")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(removed ? DS.red : DS.green)
+                .accessibilityHidden(true)
+            Text(text)
+                .font(DS.caption)
+                .strikethrough(removed, color: DS.red.opacity(0.5))
+                .foregroundStyle(removed ? DS.textMuted : DS.textSecondary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, DS.space6)
+        .padding(.vertical, DS.space2)
+        .background(removed ? DS.redSoft.opacity(0.5) : DS.greenSoft.opacity(0.5), in: RoundedRectangle(cornerRadius: 4))
+    }
+
+    private var trailing: some View {
+        HStack(spacing: DS.space6) {
+            if exemplar.supportCount > 1 {
+                Text("×\(exemplar.supportCount)")
+                    .font(DS.caption2.monospacedDigit())
+                    .foregroundStyle(DS.textMuted)
+                    .help("Seen \(exemplar.supportCount) times — repetition is confidence")
+            }
+            if isHovered {
+                Button(action: onStrike) {
+                    Image(systemName: "strikethrough")
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textMuted)
+                        .frame(width: 20, height: 20)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Strike — never learned from again")
+                .accessibilityLabel("Strike edit lesson")
+                .transition(.opacity)
+            }
+        }
+        .frame(minWidth: 44, alignment: .trailing)
     }
 }
 

@@ -214,6 +214,19 @@ enum CosmoInlineReviewTrackRecord {
             guard !preview.isEmpty else { continue }
             lines.append("- Recently REJECTED: \"\(preview)\"")
         }
+        // Rejections the user explained (their next ask after the verdict)
+        // carry the WHY — the strongest steering available.
+        let explainedRejections = await InlineEditEpisodeStore.recentReasons(
+            skillId: skillID ?? CosmoInlineAssistantSkillID.inlineEdit.rawValue,
+            limit: 2
+        )
+        for explained in explainedRejections {
+            let preview = explained.rejectedText
+                .replacingOccurrences(of: "\n", with: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .prefix(120)
+            lines.append("- REJECTED: \"\(preview)\" — user's reason: \"\(explained.reason.prefix(120))\"")
+        }
         lines.append("Stay closer to the user's wording and scope than these rejected attempts did.")
         return lines.joined(separator: "\n")
     }

@@ -456,6 +456,11 @@ extension View {
                     Task {
                         do {
                             try await AtomRepository.shared.delete(uuid: uuid)
+                            await MainActor.run {
+                                CosmoUndoManager.shared.registerAtomDeletion(
+                                    uuid: uuid, actionDescription: "Delete Item"
+                                )
+                            }
                         } catch {
                             PersistenceHealth.note(
                                 .writeFailure,

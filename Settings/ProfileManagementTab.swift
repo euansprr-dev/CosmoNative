@@ -157,6 +157,11 @@ struct ProfileManagementTab: View {
             do {
                 try await AtomRepository.shared.delete(uuid: profile.uuid)
                 await loadProfiles()
+                await MainActor.run {
+                    CosmoUndoManager.shared.registerAtomDeletion(
+                        uuid: profile.uuid, actionDescription: "Delete Profile"
+                    )
+                }
             } catch {
                 print("ProfileManagementTab: Failed to delete profile: \(error.localizedDescription)")
             }

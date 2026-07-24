@@ -4069,6 +4069,9 @@ public final class CommandKViewModel {
             await MainActor.run {
                 recentItems.removeAll { $0.id == item.id }
                 refreshDomainPresentation()
+                CosmoUndoManager.shared.registerAtomDeletion(
+                    uuid: item.id, actionDescription: "Delete Item"
+                )
             }
         }
     }

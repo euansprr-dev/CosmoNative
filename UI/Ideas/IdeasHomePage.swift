@@ -225,6 +225,21 @@ final class IdeasPageModel {
         pendingRemovals.remove(idea.atomUUID)
         Task {
             try? await AtomRepository.shared.delete(uuid: idea.atomUUID)
+            // Once the deferred delete commits (toast gone), ⌘Z still works —
+            // the app-level stack takes over from the toast's local undo.
+            await MainActor.run {
+                CosmoUndoManager.shared.register(InlineUndoAction(
+                    actionDescription: "Delete Idea",
+                    undo: { [weak self] in
+                        try? await AtomRepository.shared.restore(uuid: idea.atomUUID)
+                        await self?.load()
+                    },
+                    redo: { [weak self] in
+                        try? await AtomRepository.shared.delete(uuid: idea.atomUUID)
+                        await self?.load()
+                    }
+                ))
+            }
             NotificationCenter.default.post(
                 name: Notification.Name("ideaDeleted"),
                 object: nil,

@@ -646,6 +646,15 @@ class ThinkspaceManager {
                 switchToDefault()
             }
 
+            // ⌘Z brings the thinkspace back. (Deleting the CURRENT space
+            // switches away, and the switch clears undo history — so this
+            // effectively covers sidebar deletes of non-active spaces.)
+            CosmoUndoManager.shared.register(InlineUndoAction(
+                actionDescription: "Delete Thinkspace",
+                undo: { [weak self] in await self?.restoreThinkspace(thinkspace.id) },
+                redo: { [weak self] in await self?.softDelete(thinkspace.id) }
+            ))
+
             print("🗑️ Deleted Thinkspace: \(thinkspace.name)")
         } catch {
             print("❌ Failed to delete Thinkspace: \(error)")

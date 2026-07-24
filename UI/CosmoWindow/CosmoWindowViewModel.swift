@@ -1516,6 +1516,29 @@ final class CosmoWindowViewModel: ObservableObject {
                 skillID: selectedSkillID ?? skillPlan.primarySkill.id.rawValue
             )
             : nil
+        // Edit-loop learning consumption (volatile layer only, hard-capped):
+        // distilled taste beliefs plus up to 3 retrieved (AI → user) pairs.
+        // Action-routed learnable surfaces only — this is where Cosmo writes
+        // prose the user will review, the exact place the lessons apply.
+        var learnedTasteBlock: String?
+        var editExemplarBlock: String?
+        if route == .action,
+           let snapshot,
+           InlineEditLearningLoop.isLearnableSurface(snapshot.surfaceID) {
+            let editClientUuid = await InlineEditLearningLoop.clientUuid(forSurfaceID: snapshot.surfaceID)
+                ?? activeContext.data.activeClientUUID
+            learnedTasteBlock = await TasteContext.resolveForInlineEdit(clientUuid: editClientUuid)
+            // Same query composition as the archival recall above — the
+            // embedding cache makes this second lookup effectively free.
+            let exemplars = await EditExemplarBank.retrieve(
+                query: [prompt, snapshot.title].joined(separator: " "),
+                clientUuid: editClientUuid
+            )
+            if !exemplars.isEmpty {
+                editExemplarBlock = EditExemplarBank.promptBlock(for: exemplars)
+                await EditExemplarBank.markShown(ids: exemplars.map(\.id))
+            }
+        }
         let contextPack = ContextPackAssembler.assemble(
             request: retrievalRequest,
             retrievalResults: retrievalResults,
@@ -1545,6 +1568,8 @@ final class CosmoWindowViewModel: ObservableObject {
             runtimePrompt,
             resolvedSkillContext.isEmpty ? nil : resolvedSkillContext.promptBlock,
             reviewTrackRecord,
+            learnedTasteBlock,
+            editExemplarBlock,
             // Prefetched related-work digest — assembled in the background when the
             // surface activated, so the common request needs zero tool round-trips.
             CosmoInlineAmbientContextPack.shared.digest(forSurfaceID: snapshot?.surfaceID),

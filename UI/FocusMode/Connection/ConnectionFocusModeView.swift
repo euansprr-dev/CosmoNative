@@ -1340,9 +1340,37 @@ final class ConnectionFocusModeViewModel {
     }
 
     func deleteItem(_ id: UUID, fromSection type: ConnectionSectionType) {
+        // Snapshot for ⌘Z before the removal mutates the section.
+        let removedSnapshot: (item: ConnectionItem, index: Int)? = state.sections
+            .first(where: { $0.type == type })
+            .flatMap { section in
+                section.items.firstIndex(where: { $0.id == id })
+                    .map { (section.items[$0], $0) }
+            }
+
         sectionsModifiedInFocusMode = true
         state.removeItem(id: id, fromSection: type)
         saveState()
+
+        guard let removed = removedSnapshot else { return }
+        CosmoUndoManager.shared.register(InlineUndoAction(
+            actionDescription: "Delete Item",
+            undo: { [weak self] in
+                guard let self,
+                      let sectionIndex = self.state.sections.firstIndex(where: { $0.type == type }) else { return }
+                let clamped = min(removed.index, self.state.sections[sectionIndex].items.count)
+                self.state.sections[sectionIndex].items.insert(removed.item, at: clamped)
+                self.state.lastModified = Date()
+                self.sectionsModifiedInFocusMode = true
+                self.saveState()
+            },
+            redo: { [weak self] in
+                guard let self else { return }
+                self.sectionsModifiedInFocusMode = true
+                self.state.removeItem(id: id, fromSection: type)
+                self.saveState()
+            }
+        ))
     }
 
     func updateConceptType(_ type: ConceptFrameworkType) {

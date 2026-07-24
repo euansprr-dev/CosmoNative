@@ -69,6 +69,10 @@ struct CosmoApp: App {
         // memory (fires on app-resign-active and session switches).
         CosmoSessionDistiller.shared.activate()
 
+        // Edit-loop learning: restore episode bookkeeping and settle anything
+        // that went stale while the app was closed.
+        Task { await InlineEditLearningLoop.shared.bootstrap() }
+
         // Check for existing Supabase Auth session before cloud-dependent services start.
         Task {
             // Adopt an existing pre-auth workspace: a Mac with real local data
@@ -729,14 +733,20 @@ struct CosmoCommands: Commands {
         }
 
         // Undo/Redo commands (⌘Z / ⌘⇧Z)
-        // When an NSTextView is first responder, route to the responder chain
-        // so the text view's built-in NSUndoManager handles character-level undo.
-        // Otherwise, route to CosmoUndoManager for canvas operations.
+        // Route to the responder chain only when the first responder's
+        // UndoManager actually has something to undo/redo — a text view whose
+        // stack is empty (or that never enabled allowsUndo) must not swallow
+        // ⌘Z. Everything else falls through to CosmoUndoManager, so structural
+        // actions (delete slide, delete task, …) stay reachable even while a
+        // text view has focus.
         CommandGroup(replacing: .undoRedo) {
             Button("Undo") {
-                if let window = NSApp.keyWindow,
-                   let firstResponder = window.firstResponder,
-                   firstResponder is NSTextView {
+                // Block rows keep allowsUndo=false and register document-level
+                // operations on the WINDOW's UndoManager, so both must be
+                // consulted before falling through.
+                let window = NSApp.keyWindow
+                if window?.firstResponder?.undoManager?.canUndo == true
+                    || window?.undoManager?.canUndo == true {
                     NSApp.sendAction(Selector(("undo:")), to: nil, from: nil)
                 } else {
                     NotificationCenter.default.post(name: .performUndo, object: nil)
@@ -745,9 +755,9 @@ struct CosmoCommands: Commands {
             .keyboardShortcut("z", modifiers: [.command])
 
             Button("Redo") {
-                if let window = NSApp.keyWindow,
-                   let firstResponder = window.firstResponder,
-                   firstResponder is NSTextView {
+                let window = NSApp.keyWindow
+                if window?.firstResponder?.undoManager?.canRedo == true
+                    || window?.undoManager?.canRedo == true {
                     NSApp.sendAction(Selector(("redo:")), to: nil, from: nil)
                 } else {
                     NotificationCenter.default.post(name: .performRedo, object: nil)

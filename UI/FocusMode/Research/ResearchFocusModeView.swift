@@ -1638,6 +1638,9 @@ private struct FloatingPanelWrapper: View {
                     Task {
                         try? await AtomRepository.shared.delete(uuid: atomUUID)
                         panelManager.removePanel(id: panelID)
+                        CosmoUndoManager.shared.registerAtomDeletion(
+                            uuid: atomUUID, actionDescription: "Delete Research"
+                        )
                     }
                 },
                 onPositionChange: { newPosition in

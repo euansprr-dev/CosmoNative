@@ -9,6 +9,41 @@
 import SwiftUI
 import AppKit
 
+// TEMP [WashProbe] — remove after Today quick-add focus bug is diagnosed.
+// NSLog does not persist to the unified log on this machine, so the probe
+// appends straight to a file the debugging session tails.
+func washProbeLog(_ message: String) {
+    let line = "\(ISO8601DateFormatter().string(from: Date())) \(message)\n"
+    guard let data = line.data(using: .utf8) else { return }
+    let url = URL(fileURLWithPath: "/tmp/cosmos-washprobe.log")
+    if let handle = try? FileHandle(forWritingTo: url) {
+        defer { try? handle.close() }
+        _ = try? handle.seekToEnd()
+        try? handle.write(contentsOf: data)
+    } else {
+        try? data.write(to: url)
+    }
+}
+// The window is the first responder of record after a makeFirstResponder(nil)
+// — the exact state where keystrokes beep. Log every clear with its caller so
+// the next recurrence names the code that yanked focus.
+extension NSWindow {
+    @objc func washProbe_makeFirstResponder(_ responder: NSResponder?) -> Bool {
+        // Swizzled: this call reaches the ORIGINAL implementation.
+        let ok = washProbe_makeFirstResponder(responder)
+        if ok {
+            if responder == nil || responder === self {
+                let stack = Thread.callStackSymbols.dropFirst().prefix(14).joined(separator: " | ")
+                washProbeLog("FR CLEARED to window — caller: \(stack)")
+            } else {
+                washProbeLog("FR -> \(String(describing: type(of: responder!)))")
+            }
+        }
+        return ok
+    }
+}
+// END TEMP [WashProbe]
+
 /// A highlighted run: UTF-16 range into the current text plus its ink color.
 /// The wash behind the run is the ink at low opacity.
 struct TextWashSegment: Equatable {
@@ -91,6 +126,8 @@ struct TokenWashTextView: NSViewRepresentable {
             let wantsFocus = coordinator.parent.isFocused
             let isFirstResponder = window.firstResponder === textView
             if wantsFocus, !isFirstResponder {
+                // TEMP [WashProbe] — remove after Today quick-add focus bug is diagnosed
+                washProbeLog("update block acquires focus (placeholder: \(coordinator.parent.placeholder)); current FR: \(window.firstResponder.map { String(describing: type(of: $0)) } ?? "nil")")
                 window.makeFirstResponder(textView)
             }
         }
@@ -173,9 +210,55 @@ final class WashTextView: NSTextView {
         didSet { needsLayout = true }
     }
 
+    // TEMP [WashProbe] diagnostics — remove after Today quick-add focus bug is diagnosed.
+    // Logs the deepest AppKit view under every left-click in any window, whether
+    // mouseDown ever reaches a wash field, and who holds/steals first responder.
+    private static let clickSpy: Void = {
+        NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { event in
+            if let window = event.window,
+               let frameView = window.contentView?.superview {
+                let hit = frameView.hitTest(event.locationInWindow)
+                washProbeLog("leftMouseDown at \(NSStringFromPoint(event.locationInWindow)) hit-tests to \(hit.map { String(describing: type(of: $0)) } ?? "nil") (FR before: \(window.firstResponder.map { String(describing: type(of: $0)) } ?? "nil"))")
+            }
+            return event
+        }
+        // Attribute every focus hand-off: log all makeFirstResponder calls,
+        // with a call stack when something CLEARS focus (responder == nil) —
+        // that clear is the suspected yank that leaves the window beeping.
+        if let original = class_getInstanceMethod(NSWindow.self, #selector(NSWindow.makeFirstResponder(_:))),
+           let probe = class_getInstanceMethod(NSWindow.self, #selector(NSWindow.washProbe_makeFirstResponder(_:))) {
+            method_exchangeImplementations(original, probe)
+        }
+        return ()
+    }()
+
+    override func mouseDown(with event: NSEvent) {
+        washProbeLog("mouseDown reached WashTextView (placeholder: \(placeholderLabel.stringValue))")
+        super.mouseDown(with: event)
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        let ok = super.becomeFirstResponder()
+        washProbeLog("becomeFirstResponder -> \(ok) (placeholder: \(placeholderLabel.stringValue))")
+        return ok
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let ok = super.resignFirstResponder()
+        if ok {
+            DispatchQueue.main.async { [weak self] in
+                let fr = self?.window?.firstResponder
+                washProbeLog("resigned first responder; new FR: \(fr.map { String(describing: type(of: $0)) } ?? "nil")")
+            }
+        }
+        return ok
+    }
+    // END TEMP [WashProbe]
+
     /// One-time field setup — called from makeNSView (no init overrides, so
     /// the TextKit 2 convenience initializer stays inherited).
     func configureWashField() {
+        _ = Self.clickSpy
         drawsBackground = false
         isRichText = false
         allowsUndo = true

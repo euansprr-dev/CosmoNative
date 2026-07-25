@@ -1718,6 +1718,25 @@ extension Atom {
         return copy
     }
 
+    /// Create a copy whose metadata column drops exactly `keys`, leaving every
+    /// sibling key untouched. The complement to `mergingMetadataKeys`: a typed
+    /// struct re-encode OMITS nil optionals, so the merge keeps the old value —
+    /// genuinely clearing a field (unassigning a client, reverting a status to
+    /// unset) must remove the key by name instead.
+    func removingMetadataKeys(_ keys: [String]) -> Atom {
+        var copy = self
+        guard var dict = metadataDict else { return copy }
+        var removedAny = false
+        for key in keys where dict.removeValue(forKey: key) != nil {
+            removedAny = true
+        }
+        guard removedAny,
+              let data = try? JSONSerialization.data(withJSONObject: dict),
+              let json = String(data: data, encoding: .utf8) else { return copy }
+        copy.metadata = json
+        return copy
+    }
+
     /// Get metadata as dictionary for flexible access
     var metadataDict: [String: Any]? {
         guard let metadata = metadata,
@@ -3381,6 +3400,10 @@ struct IdeaGalleryItem: Identifiable, Sendable {
     let context: String?
     let hooks: [String]
     let outline: [String]
+    /// When the idea was pinned to the desk's Up next lane (ISO string).
+    let pinnedAt: String?
+    /// Whether saved research results ride the idea (a readiness signal).
+    let hasResearch: Bool
 
     init(
         id: String,
@@ -3403,7 +3426,9 @@ struct IdeaGalleryItem: Identifiable, Sendable {
         updatedAt: String,
         context: String? = nil,
         hooks: [String] = [],
-        outline: [String] = []
+        outline: [String] = [],
+        pinnedAt: String? = nil,
+        hasResearch: Bool = false
     ) {
         self.id = id
         self.atomUUID = atomUUID
@@ -3426,6 +3451,8 @@ struct IdeaGalleryItem: Identifiable, Sendable {
         self.context = context
         self.hooks = hooks
         self.outline = outline
+        self.pinnedAt = pinnedAt
+        self.hasResearch = hasResearch
     }
 }
 
@@ -3456,7 +3483,10 @@ extension Atom {
             updatedAt: updatedAt,
             context: Self.normalizedIdeaContext(meta?.context, fallbackBody: body),
             hooks: meta?.hooks ?? [],
-            outline: Self.ideaOutlineItems(from: meta?.codexOutline)
+            outline: Self.ideaOutlineItems(from: meta?.codexOutline),
+            pinnedAt: meta?.pinnedAt,
+            // "[]" is a saved-but-empty result set — not research.
+            hasResearch: (meta?.researchResults).map { !$0.isEmpty && $0 != "[]" } ?? false
         )
     }
 

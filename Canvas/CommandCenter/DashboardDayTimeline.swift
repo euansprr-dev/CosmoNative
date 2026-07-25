@@ -334,6 +334,12 @@ struct DashboardDayTimeline: View {
             .dropDestination(for: String.self) { items, location in
                 timeBoxDroppedTask(items.first, atY: location.y, metrics: metrics)
             }
+            // The same empty-time landing for a row lifted out of the ledger.
+            // Registered as the widest zone in the Spine, so the block cards
+            // sitting on it win the drop where they overlap.
+            .taskDropZone(id: "cc-spine-canvas") { uuid, point in
+                timeBoxDroppedTask(uuid, atY: point.y, metrics: metrics)
+            }
     }
 
     private func dragCreateGesture(metrics: DayLaneMetrics) -> some Gesture {
@@ -624,7 +630,15 @@ private struct DayTimelineBlockCard: View {
     let onSelectTask: ((TaskViewModel) -> Void)?
 
     @State private var isHovered = false
-    @State private var isDropTargeted = false
+    @State private var isSystemDropTargeted = false
+    private var dragPilot: TaskDragPilot { .shared }
+
+    /// Aimed at by either kind of drag — a system drag's `isTargeted`, or a row
+    /// lifted out of the ledger by the pilot. One highlight for both.
+    private var isDropTargeted: Bool {
+        isSystemDropTargeted || dragPilot.hoveredZoneID == "cc-spine-block-\(block.id)"
+    }
+
     /// Live move/resize proposal (snapped) — nil when at rest.
     @State private var proposedSpan: (start: Date, end: Date)?
     @State private var renameDraft = ""
@@ -697,8 +711,15 @@ private struct DayTimelineBlockCard: View {
             Task { await viewModel.setScheduleBlock(taskUUID: taskUUID, blockUUID: block.id) }
             return true
         } isTargeted: { targeted in
-            withAnimation(ProMotionSprings.snappy) { isDropTargeted = targeted }
+            withAnimation(ProMotionSprings.snappy) { isSystemDropTargeted = targeted }
         }
+        // The ledger's own lift lands here too — the block is a smaller zone
+        // than the Spine canvas beneath it, so it wins the overlap.
+        .taskDropZone(id: "cc-spine-block-\(block.id)") { taskUUID, _ in
+            Task { await viewModel.setScheduleBlock(taskUUID: taskUUID, blockUUID: block.id) }
+            return true
+        }
+        .animation(ProMotionSprings.snappy, value: isDropTargeted)
         .contextMenu { menuItems }
         .popover(isPresented: $isRenaming, arrowEdge: .trailing) { renamePopover }
         .help(helpText)

@@ -8,6 +8,9 @@ struct CommandCenterSidebar: View {
 
     var viewModel: CommandCenterDashboardViewModel
     @State private var hoveredMode: DashboardViewMode?
+    /// Only `hoveredZoneID` is read here — the pilot's per-frame pointer is
+    /// deliberately not observed, so a drag repaints the one row it is over.
+    private var dragPilot: TaskDragPilot { .shared }
 
     var body: some View {
         ScrollView(.vertical) {
@@ -41,7 +44,10 @@ struct CommandCenterSidebar: View {
             viewModel.selectedProjectUUID == nil &&
             viewModel.selectedAreaUUID == nil &&
             !viewModel.showReports
-        let isHovered = hoveredMode == mode
+        // A row being aimed at by a lifted task reads exactly like a hovered
+        // one — the invitation is the same affordance, so it wears the same
+        // chrome instead of inventing a drop style of its own.
+        let isHovered = hoveredMode == mode || dragPilot.hoveredZoneID == Self.zoneID(for: mode)
         let count = badgeCount(for: mode)
 
         Button {
@@ -95,10 +101,21 @@ struct CommandCenterSidebar: View {
             }
         }
         .help(helpText(for: mode))
+        // Two doors, one destination: `.dropDestination` catches system drags
+        // (⌘K drag-out, the Library, the Thinkspace sidebar), `.taskDropZone`
+        // catches a row lifted out of the ledger by the pilot.
         .dropDestination(for: String.self) { uuids, _ in
             handleDrop(uuids: uuids, onto: mode)
             return true
         }
+        .taskDropZone(id: Self.zoneID(for: mode)) { uuid, _ in
+            handleDrop(uuids: [uuid], onto: mode)
+            return true
+        }
+    }
+
+    private static func zoneID(for mode: DashboardViewMode) -> String {
+        "cc-sidebar-mode-\(mode.rawValue)"
     }
 
     private func helpText(for mode: DashboardViewMode) -> String {

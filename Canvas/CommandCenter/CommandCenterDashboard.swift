@@ -50,6 +50,12 @@ struct CommandCenterDashboard: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            // The one space every drag-aware surface measures in: the ledger's
+            // rows, the sidebar's smart lists and project rows, and the Day
+            // Spine's blocks and time slots all speak these points, so a lifted
+            // task row can be carried between them.
+            .coordinateSpace(name: CommandCenterDragSpace.name)
+            .overlay(alignment: .topLeading) { TaskDragTravelCard() }
             .task {
                 // Warm the sound graph so the first completion of the session
                 // is as tight as the tenth.
@@ -83,16 +89,10 @@ struct CommandCenterDashboard: View {
 
             CommandCenterComposerHost(viewModel: viewModel, composer: composer)
         }
-        // The cancelled-drag net: the drag preview's onDisappear is not a
-        // reliable end-of-session signal on macOS, and a drag dropped on no
-        // target hits no drop handler. Hover events are suppressed for the
-        // whole drag session and resume the instant it ends — so the first
-        // hover afterwards clears the invitation.
-        .onContinuousHover { phase in
-            if case .active = phase, viewModel.isTaskDragInFlight {
-                viewModel.isTaskDragInFlight = false
-            }
-        }
+        // (No cancelled-drag net needed any more: the task lift is a real
+        // gesture with a real onEnded — TaskDragPilot — instead of a system drag
+        // session whose lifetime had to be inferred from a preview view's
+        // onAppear/onDisappear and un-stuck by the next hover.)
     }
 
     private func publishCommandCenterContext() {
@@ -252,6 +252,23 @@ struct CommandCenterDashboard: View {
         }
 
         let tasks = viewModel.currentVisibleTasks
+
+        // ⌥⌘↑/↓ — move the selected task one slot inside its band: the drag's
+        // keyboard twin, so reordering has a path that never needs a mouse.
+        if (modifiersRaw & (1 << 20)) != 0, (modifiersRaw & (1 << 19)) != 0,
+           keyCode == 125 || keyCode == 126 {
+            guard let idx = viewModel.selectedTaskIndex, tasks.indices.contains(idx) else { return }
+            let moved = withAnimation(ProMotionSprings.release) {
+                viewModel.nudgeTask(rowID: tasks[idx].id, by: keyCode == 126 ? -1 : 1)
+            }
+            if moved {
+                Sound.dragDrop()
+                // The cursor follows the row it moved, not the slot it left.
+                viewModel.selectedTaskIndex = viewModel.currentVisibleTasks
+                    .firstIndex(where: { $0.id == tasks[idx].id }) ?? idx
+            }
+            return
+        }
 
         switch keyCode {
         case 125: // Arrow Down

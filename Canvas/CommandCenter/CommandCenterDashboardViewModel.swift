@@ -281,8 +281,17 @@ enum CommandCenterTodayTaskSectioning {
         return repeatedTodayParents.contains(parentUUID)
     }
 
+    /// Overdue reads oldest-debt-first until a hand touches it — then the hand
+    /// wins (iOS `TodayEngine`: "hand-placed order wins within a band"). Before
+    /// any drag every row's `manualSortOrder` is nil, so the day comparison
+    /// decides; a single reorder stamps the whole band, and from then on the
+    /// arrangement is the user's. Without this promotion the band shuffled under
+    /// the pointer and reverted on the next load.
     private static func overdueSort(calendar: Calendar) -> (TaskViewModel, TaskViewModel) -> Bool {
         { lhs, rhs in
+            if lhs.manualSortOrder != rhs.manualSortOrder {
+                return (lhs.manualSortOrder ?? Int.max) < (rhs.manualSortOrder ?? Int.max)
+            }
             let lhsDay = plannedDate(for: lhs).map { calendar.startOfDay(for: $0) } ?? lhs.calendarStart(using: calendar) ?? .distantPast
             let rhsDay = plannedDate(for: rhs).map { calendar.startOfDay(for: $0) } ?? rhs.calendarStart(using: calendar) ?? .distantPast
             if lhsDay != rhsDay { return lhsDay < rhsDay }
@@ -1234,50 +1243,98 @@ final class CommandCenterDashboardViewModel {
 
     // MARK: - Task Reordering
 
-    enum TaskSection { case overdue, scheduled, unscheduled }
+    /// The bands a hand can arrange. Today's *Scheduled* band is deliberately
+    /// absent: the clock owns its order (`scheduledSort`), so a manual index
+    /// there would be overwritten by the next load — a promise the UI must not
+    /// make. See `TaskBandOrdering.clock`.
+    enum ManualOrderBand: Equatable {
+        case overdue
+        case unscheduled
+        case anytime
+        case someday
+        case project
+    }
 
-    func reorderTasks(section: TaskSection, fromOffsets: IndexSet, toOffset: Int) {
-        switch section {
+    /// Commit a hand-arranged order, named by ROW ID rather than by index.
+    ///
+    /// Ids, because a band on screen is not always the whole array behind it:
+    /// the project page draws one heading's rows and hides completed ones, so an
+    /// index handed over from the view would address a different task than the
+    /// one the hand moved. Row ids can't drift.
+    ///
+    /// The arrangement is stamped into `manualSortOrder` and syncs like any other
+    /// edit (iOS `TodayEngine.setManualOrder` is the twin).
+    func applyManualOrder(band: ManualOrderBand, orderedRowIDs: [String]) {
+        guard orderedRowIDs.count > 1 else { return }
+        switch band {
         case .overdue:
-            overdueTasks.move(fromOffsets: fromOffsets, toOffset: toOffset)
+            overdueTasks = TaskReorderGeometry.permuted(overdueTasks, to: orderedRowIDs)
             persistSortOrder(for: overdueTasks)
-        case .scheduled:
-            scheduledTasks.move(fromOffsets: fromOffsets, toOffset: toOffset)
-            persistSortOrder(for: scheduledTasks)
         case .unscheduled:
-            unscheduledTasks.move(fromOffsets: fromOffsets, toOffset: toOffset)
+            unscheduledTasks = TaskReorderGeometry.permuted(unscheduledTasks, to: orderedRowIDs)
             persistSortOrder(for: unscheduledTasks)
+        case .anytime:
+            anytimeTasks = TaskReorderGeometry.permuted(anytimeTasks, to: orderedRowIDs)
+            persistSortOrder(for: anytimeTasks)
+        case .someday:
+            somedayTasks = TaskReorderGeometry.permuted(somedayTasks, to: orderedRowIDs)
+            persistSortOrder(for: somedayTasks)
+        case .project:
+            projectTasks = TaskReorderGeometry.permuted(projectTasks, to: orderedRowIDs)
+            persistSortOrder(for: projectTasks)
         }
     }
 
-    func moveTask(uuid: String, toSection section: TaskSection, atIndex index: Int) {
-        // Remove from current section
-        overdueTasks.removeAll { $0.uuid == uuid }
-        scheduledTasks.removeAll { $0.uuid == uuid }
-        unscheduledTasks.removeAll { $0.uuid == uuid }
+    /// The drag's keyboard twin (⌥⌘↑/↓): nudge a row one slot inside its own
+    /// band. Returns false when there is nowhere to go — a clock-ordered band,
+    /// or already at the end — so the caller can stay silent instead of
+    /// pretending something moved.
+    @discardableResult
+    func nudgeTask(rowID: String, by delta: Int) -> Bool {
+        guard let (band, rows) = manualBand(containing: rowID) else { return false }
+        guard let from = rows.firstIndex(where: { $0.id == rowID }) else { return false }
+        let to = from + delta
+        guard rows.indices.contains(to) else { return false }
+        applyManualOrder(
+            band: band,
+            orderedRowIDs: TaskReorderGeometry.reordered(rows, from: from, to: to).map(\.id)
+        )
+        return true
+    }
 
-        // Find the task from any previous section
-        guard let task = (overdueTasks + scheduledTasks + unscheduledTasks).first(where: { $0.uuid == uuid })
-            ?? [uuid].compactMap({ id in overdueTasks.first { $0.uuid == id } }).first
-        else { return }
-
-        // Insert into target section
-        switch section {
-        case .overdue:
-            overdueTasks.insert(task, at: min(index, overdueTasks.count))
-            persistSortOrder(for: overdueTasks)
-        case .scheduled:
-            scheduledTasks.insert(task, at: min(index, scheduledTasks.count))
-            persistSortOrder(for: scheduledTasks)
-        case .unscheduled:
-            unscheduledTasks.insert(task, at: min(index, unscheduledTasks.count))
-            persistSortOrder(for: unscheduledTasks)
+    /// Which hand-arranged band a row belongs to on the page being looked at.
+    /// Mode-scoped on purpose: the same task can satisfy both Today's "To do"
+    /// and Anytime (a day-planned task with no clock time is in both arrays),
+    /// and the answer must be the band the user can actually see.
+    private func manualBand(containing rowID: String) -> (ManualOrderBand, [TaskViewModel])? {
+        switch viewMode {
+        case .today:
+            if overdueTasks.contains(where: { $0.id == rowID }) { return (.overdue, overdueTasks) }
+            if unscheduledTasks.contains(where: { $0.id == rowID }) { return (.unscheduled, unscheduledTasks) }
+            return nil
+        case .anytime:
+            return (.anytime, anytimeTasks)
+        case .someday:
+            return (.someday, somedayTasks)
+        case .project:
+            // A project's rows are drawn grouped by heading, so the keyboard's
+            // band is the row's own heading — never the whole project.
+            guard let task = projectTasks.first(where: { $0.id == rowID }) else { return nil }
+            return (.project, projectTasks.filter { $0.headingUUID == task.headingUUID })
+        case .upcoming, .logbook, .habits, .reports, .queue, .area:
+            return nil
         }
     }
 
+    /// Stamps positions into `manualSortOrder`, skipping rows already carrying
+    /// the index they need. Skipping matters: the shorter the write window, the
+    /// smaller the chance a refresh lands mid-persist and reads a half-arranged
+    /// ladder back onto the screen.
     private func persistSortOrder(for tasks: [TaskViewModel]) {
+        let pending = tasks.enumerated().filter { $0.element.manualSortOrder != $0.offset }
+        guard !pending.isEmpty else { return }
         Task {
-            for (index, task) in tasks.enumerated() {
+            for (index, task) in pending {
                 do {
                     _ = try await AtomRepository.shared.update(uuid: task.uuid) { atom in
                         guard var metadata = taskMetadataForWrite(atom, context: "Dashboard.persistSortOrder(\(task.uuid.prefix(8)))") else { return }

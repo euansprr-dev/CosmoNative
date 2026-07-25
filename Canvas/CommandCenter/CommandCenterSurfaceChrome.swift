@@ -135,6 +135,12 @@ struct CommandCenterLedgerSectionHeader: View {
     }
 }
 
+/// The ledger row's resting/hover/selected chrome.
+///
+/// Every shadow here has to fall off inside the `DS.space8` this glass is inset
+/// by in the row (`DashboardTaskRow`): past that gutter the ledger's ScrollView
+/// clips, and a radius that overruns it ends in a straight vertical line down
+/// the row's sides. Keep radii ≤ 6.
 struct CommandCenterRowGlass: View {
     let isActive: Bool
     let isSelected: Bool
@@ -170,7 +176,10 @@ struct CommandCenterRowGlass: View {
     }
 
     private var shadowRadius: CGFloat {
-        isActive || isSelected ? 8 : (isHovered ? 4 : 0)
+        // 6, not 8: at 8 the selected/active row's falloff reached the clip
+        // exactly and terminated on a hard edge — the same defect as the drag
+        // shadow, just two shades fainter.
+        isActive || isSelected ? 6 : (isHovered ? 4 : 0)
     }
 
     private var shadowY: CGFloat {

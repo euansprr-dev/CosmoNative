@@ -40,7 +40,9 @@ struct SmartTaskCaptureRow: View {
             }
         }
         .animation(ProMotionSprings.snappy, value: hasAnyMetadata)
-        .animation(.easeInOut(duration: 0.15), value: showMentionSearch)
+        // One dialect: the mention sheet arrives on the same spring as the
+        // chips. An easeInOut here read "web" next to everything around it.
+        .animation(ProMotionSprings.menuAppear, value: showMentionSearch)
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("com.cosmo.commandCenter.quickAddTask"))) { _ in
             isFocused = true
         }

@@ -140,9 +140,7 @@ struct ProjectDetailView: View {
                     sectionHeader("No Heading", count: tasksWithNoHeading.count)
                 }
 
-                ForEach(tasksWithNoHeading) { task in
-                    compactTaskRow(task)
-                }
+                reorderableRows(tasksWithNoHeading)
 
                 SmartTaskCaptureRow(
                     viewModel: viewModel,
@@ -196,9 +194,7 @@ struct ProjectDetailView: View {
 
         // Tasks within heading (if not collapsed)
         if !heading.isCollapsed {
-            ForEach(tasks) { task in
-                compactTaskRow(task)
-            }
+            reorderableRows(tasks)
 
             SmartTaskCaptureRow(
                 viewModel: viewModel,
@@ -213,11 +209,33 @@ struct ProjectDetailView: View {
 
     // MARK: - Compact Task Row
 
+    /// A heading's rows, reordering live under the pointer — the same band the
+    /// Command Center ledger uses. Ids, not indices, cross the boundary: this
+    /// view hides completed tasks, so the band it draws is a subset of the
+    /// project's `manualSortOrder` ladder.
+    private func reorderableRows(_ tasks: [TaskViewModel]) -> some View {
+        TaskReorderBand(
+            tasks: tasks,
+            ordering: .manual,
+            onReorder: { from, to in
+                viewModel.applyManualOrder(
+                    band: .project,
+                    orderedRowIDs: TaskReorderGeometry.reordered(tasks, from: from, to: to).map(\.id)
+                )
+            },
+            onDragInFlightChange: { viewModel.isTaskDragInFlight = $0 }
+        ) { task in
+            compactTaskRow(task)
+        }
+    }
+
     @ViewBuilder
     private func compactTaskRow(_ task: TaskViewModel) -> some View {
         HStack(spacing: DS.space10) {
             // Checkbox
             Button {
+                // The drop's mouse-up must not complete the task it just moved.
+                guard !TaskDragPilot.shared.suppressesRowTap else { return }
                 Task {
                     _ = await viewModel.completeTask(uuid: task.uuid)
                 }

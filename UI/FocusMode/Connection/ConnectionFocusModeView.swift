@@ -400,11 +400,19 @@ struct ConnectionFocusModeView: View {
             guard uuid != atom.uuid,
                   let source = try? await AtomRepository.shared.fetch(uuid: uuid),
                   !source.isDeleted else { continue }
-            // A note/sticky dropped on the open board starts the collaborator
-            // merge directly — the drop IS the intent, and every bullet still
-            // goes through staged review.
+            // A note/sticky/content piece dropped on the open board starts
+            // the collaborator merge directly — the drop IS the intent, and
+            // every bullet still goes through staged review.
             if ConceptNoteMergeComposer.isMergeableSource(source.type) {
-                await ConceptNoteMergeLauncher.begin(noteUUID: source.uuid, conceptUUID: atom.uuid)
+                await ConceptNoteMergeLauncher.begin(
+                    source: ConceptMergeSourceSnapshot(
+                        uuid: source.uuid,
+                        kind: source.type,
+                        title: source.title,
+                        inlineBody: source.body
+                    ),
+                    conceptUUID: atom.uuid
+                )
                 continue
             }
             // Anything with renderable media qualifies; plain text atoms
@@ -554,18 +562,20 @@ struct ConnectionFocusModeView: View {
             // Sections come from a FRESH DB fetch — never from the UserDefaults
             // blob or the (possibly stale) open-time atom snapshot.
             await viewModel.refreshSectionsFromDatabase()
+            // A source was dropped onto this concept on the canvas: the
+            // collaborator opens in the pane already intaking it — AFTER the
+            // fresh section load (so it stages against current content), but
+            // BEFORE the slower rail loads below, so a hiccup in any of them
+            // can never swallow the merge the user just confirmed.
+            if let source = ConceptMergeHandoff.consume(for: atom.uuid) {
+                await ConceptNoteMergeLauncher.begin(source: source, conceptUUID: atom.uuid)
+            }
             await loadPersistedInserts()
             await viewModel.loadMediaAtoms()
             await loadSources()
             await loadLinkTargets()
             bindRecommendations()
             await recommendations.refresh()
-            // A note was dropped onto this concept on the canvas: the
-            // collaborator opens in the pane already intaking it — AFTER the
-            // fresh section load, so it stages against current content.
-            if let noteUUID = ConceptMergeHandoff.consume(for: atom.uuid) {
-                await ConceptNoteMergeLauncher.begin(noteUUID: noteUUID, conceptUUID: atom.uuid)
-            }
         }
     }
 

@@ -7,18 +7,21 @@
 
 import SwiftUI
 
-/// What the drag-end detector found: a mergeable note sitting on a concept.
+/// What the drag-end detector found: a mergeable source sitting on a concept.
+/// Carries the drop-time source snapshot — canvas-only stickies have no atom
+/// row, so the block's own text must travel with the confirm.
 struct ConceptMergeDropCandidate: Identifiable, Equatable {
-    let noteUUID: String
+    let source: ConceptMergeSourceSnapshot
+    /// Display title for the card (falls back to "Sticky note" etc.).
     let noteTitle: String
-    let noteType: AtomType
     let conceptBlockID: String
     let conceptUUID: String
     let conceptTitle: String
     /// Canvas-space anchor for the card (the concept block's center).
     let anchorPoint: CGPoint
 
-    var id: String { noteUUID + conceptUUID }
+    var id: String { source.uuid + conceptUUID }
+    var noteType: AtomType { source.kind }
 }
 
 struct ConceptMergeDropCard: View {
@@ -27,7 +30,7 @@ struct ConceptMergeDropCard: View {
     let onCancel: () -> Void
 
     private var noteWord: String {
-        candidate.noteType == .stickyNote ? "sticky note" : "note"
+        ConceptNoteMergeComposer.kindWord(for: candidate.noteType)
     }
 
     var body: some View {

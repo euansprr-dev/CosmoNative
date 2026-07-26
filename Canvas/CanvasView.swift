@@ -206,6 +206,7 @@ struct CanvasView: View {
     @State private var flowVerbPickerClusterId: String?
     /// A note/sticky was dropped on a concept block — the merge drop card.
     @State private var conceptMergeDrop: ConceptMergeDropCandidate?
+    @State private var conceptMergeHoverPreview: ActiveConceptMergeHoverPreview?
     @State private var runningFlowIds: Set<String> = []
     @State private var firingFlowIds: Set<String> = []
     private let minScale: CGFloat = 0.25
@@ -996,6 +997,7 @@ struct CanvasView: View {
 
             canvasClusterDropPreviewLayer
             blocksLayer(snapshot: snapshot)
+            conceptMergeHoverPreviewLayer
             inboxBlocksLayer
 
             // Drag-to-connect overlay shares the same raw canvas coordinates as blocks.
@@ -1212,6 +1214,23 @@ struct CanvasView: View {
                 clusterColor: cluster.color,
                 interaction: interactionState
             )
+            .allowsHitTesting(false)
+        }
+    }
+
+    /// Merge indication while a mergeable source hovers a concept block —
+    /// ring + "Merge into …" pill on the target, same drop-preview grammar
+    /// as clusters. The target block doesn't move during the hover, so this
+    /// renders from @State identity only (no per-frame work).
+    @ViewBuilder
+    private var conceptMergeHoverPreviewLayer: some View {
+        if let preview = conceptMergeHoverPreview,
+           let target = spatialEngine.blocks.first(where: { $0.id == preview.conceptBlockID }) {
+            ConceptMergeHoverPreviewView(
+                conceptTitle: preview.conceptTitle,
+                size: target.size
+            )
+            .position(target.position)
             .allowsHitTesting(false)
         }
     }
@@ -3929,8 +3948,12 @@ struct CanvasView: View {
                 y: block.position.y + translation.height
             )
             updateCanvasClusterDropPreview(for: block, draggedPosition: draggedPosition)
+
+            // Mergeable source hovering a concept block: light the merge preview.
+            updateConceptMergeHoverPreview(for: block, draggedPosition: draggedPosition)
         } else {
             clearCanvasClusterDropPreview()
+            clearConceptMergeHoverPreview()
         }
     }
 
@@ -4042,6 +4065,7 @@ struct CanvasView: View {
         } else {
             // Block not found — still clear drag state
             interactionState.clearBlockDrag()
+            clearConceptMergeHoverPreview()
         }
 
         // Update frame tracker after position change
@@ -4067,19 +4091,13 @@ struct CanvasView: View {
         detectConceptMergeDrop(blockId: blockId)
     }
 
-    // MARK: - Concept merge drop (note/sticky → connection)
+    // MARK: - Concept merge drop (note/sticky/content → connection)
 
-    /// A note or sticky dropped so its center sits on a connection block
-    /// offers to merge its content into the concept via the collaborator.
-    /// Detection runs ONCE at drag end (never per gesture frame) and the
-    /// block's position commit above stands either way — cancel just leaves
-    /// the note where it was dropped.
-    private func detectConceptMergeDrop(blockId: String) {
-        guard let dropped = spatialEngine.blocks.first(where: { $0.id == blockId }),
-              dropped.entityType == .note || dropped.entityType == .stickyNote,
-              !dropped.entityUuid.isEmpty else { return }
-        let center = dropped.position
-        guard let target = spatialEngine.blocks.first(where: { block in
+    /// The connection block whose (+12pt-inset) frame contains `center` —
+    /// the single hit-test shared by the drag-hover preview and the drag-end
+    /// detect, so the preview can never promise a drop the detect refuses.
+    private func conceptMergeTargetBlock(under center: CGPoint, excluding blockId: String) -> CanvasBlock? {
+        spatialEngine.blocks.first { block in
             guard block.entityType == .connection, block.id != blockId,
                   !block.entityUuid.isEmpty else { return false }
             let frame = CGRect(
@@ -4089,17 +4107,27 @@ struct CanvasView: View {
                 height: block.size.height
             ).insetBy(dx: -12, dy: -12)
             return frame.contains(center)
-        }) else { return }
+        }
+    }
 
-        let noteTitle = dropped.title.isEmpty
-            ? (dropped.entityType == .stickyNote ? "Sticky note" : "Untitled note")
-            : dropped.title
+    /// A note, sticky, or content piece dropped so its center sits on a
+    /// connection block offers to merge its content into the concept via the
+    /// collaborator. Detection runs ONCE at drag end (never per gesture
+    /// frame) and the block's position commit above stands either way —
+    /// cancel just leaves the source where it was dropped.
+    private func detectConceptMergeDrop(blockId: String) {
+        clearConceptMergeHoverPreview()
+        guard let dropped = spatialEngine.blocks.first(where: { $0.id == blockId }),
+              let source = ConceptMergeSourceSnapshot(block: dropped),
+              let target = conceptMergeTargetBlock(under: dropped.position, excluding: blockId)
+        else { return }
+
+        let noteTitle = source.title ?? ConceptNoteMergeComposer.untitledFallback(for: source.kind)
         let conceptTitle = target.title.isEmpty ? "this concept" : target.title
         withAnimation(ProMotionSprings.snappy) {
             conceptMergeDrop = ConceptMergeDropCandidate(
-                noteUUID: dropped.entityUuid,
+                source: source,
                 noteTitle: noteTitle,
-                noteType: dropped.entityType == .stickyNote ? .stickyNote : .note,
                 conceptBlockID: target.id,
                 conceptUUID: target.entityUuid,
                 conceptTitle: conceptTitle,
@@ -4112,9 +4140,34 @@ struct CanvasView: View {
     /// it after its surface registers) and open the concept.
     private func beginConceptMerge(_ candidate: ConceptMergeDropCandidate) {
         withAnimation(ProMotionSprings.snappy) { conceptMergeDrop = nil }
-        ConceptMergeHandoff.stash(conceptUUID: candidate.conceptUUID, noteUUID: candidate.noteUUID)
+        ConceptMergeHandoff.stash(conceptUUID: candidate.conceptUUID, source: candidate.source)
         if let conceptBlock = spatialEngine.blocks.first(where: { $0.id == candidate.conceptBlockID }) {
             openBlockInFocusMode(conceptBlock)
+        }
+    }
+
+    /// Per-frame during drag: a mergeable source hovering a concept block
+    /// lights the merge preview (ring + pill on the target). The @State
+    /// identity changes on enter/exit ONLY — never per gesture frame.
+    private func updateConceptMergeHoverPreview(for block: CanvasBlock, draggedPosition: CGPoint) {
+        guard ConceptMergeSourceSnapshot(block: block) != nil,
+              let target = conceptMergeTargetBlock(under: draggedPosition, excluding: block.id) else {
+            clearConceptMergeHoverPreview()
+            return
+        }
+        let newPreview = ActiveConceptMergeHoverPreview(
+            blockId: block.id,
+            conceptBlockID: target.id,
+            conceptTitle: target.title.isEmpty ? "this concept" : target.title
+        )
+        if conceptMergeHoverPreview != newPreview {
+            withAnimation(ProMotionSprings.snappy) { conceptMergeHoverPreview = newPreview }
+        }
+    }
+
+    private func clearConceptMergeHoverPreview() {
+        if conceptMergeHoverPreview != nil {
+            withAnimation(ProMotionSprings.snappy) { conceptMergeHoverPreview = nil }
         }
     }
 
@@ -6444,6 +6497,54 @@ private struct CanvasDropDelegate: DropDelegate {
 /// Leaf host for the drop-preview ghost: the only view that reads the
 /// per-frame dropPreviewPosition, so a drag frame over a cluster invalidates
 /// just this body — CanvasView.body stays out of the gesture hot path.
+/// Identity for the concept-merge hover indication. Changes on enter/exit
+/// only — the per-frame drag path compares before writing (120fps law).
+struct ActiveConceptMergeHoverPreview: Equatable {
+    let blockId: String
+    let conceptBlockID: String
+    let conceptTitle: String
+}
+
+/// The merge drop indication drawn over a hovered concept block: a dashed
+/// accent ring around its frame and a "Merge into …" pill above it.
+private struct ConceptMergeHoverPreviewView: View {
+    let conceptTitle: String
+    let size: CGSize
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 16)
+            .fill(DS.accent.opacity(0.07))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(
+                        DS.accent.opacity(0.7),
+                        style: StrokeStyle(lineWidth: 2, dash: [8, 5])
+                    )
+            )
+            .overlay(alignment: .top) { mergePill.offset(y: -16) }
+            .frame(width: size.width + 12, height: size.height + 12)
+            .shadow(color: DS.accent.opacity(0.18), radius: 12, y: 6)
+            .transition(.opacity)
+            .accessibilityHidden(true)
+    }
+
+    private var mergePill: some View {
+        HStack(spacing: DS.space6) {
+            Image(systemName: "arrow.triangle.merge")
+                .font(DS.caption.weight(.semibold))
+                .accessibilityHidden(true)
+            Text("Merge into \(conceptTitle)")
+                .font(DS.caption.weight(.semibold))
+                .lineLimit(1)
+        }
+        .foregroundStyle(DS.textOnAccent)
+        .padding(.horizontal, DS.space10)
+        .frame(height: 26)
+        .background(DS.accent, in: Capsule())
+        .shadow(color: .black.opacity(0.2), radius: 8, y: 3)
+    }
+}
+
 private struct CanvasClusterDropPreviewHost: View {
     let block: CanvasBlock
     let clusterColor: Color

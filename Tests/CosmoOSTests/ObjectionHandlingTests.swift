@@ -189,6 +189,85 @@ final class ObjectionHandlingTests: XCTestCase {
         XCTAssertEqual(payload?.displayTitle, "Untitled note")
 
         let research = Atom.new(type: .research, title: "Swipe", body: "body")
-        XCTAssertNil(ConceptNoteMergeComposer.mergePayload(from: research), "only notes and stickies merge")
+        XCTAssertNil(ConceptNoteMergeComposer.mergePayload(from: research), "only notes, stickies, and content merge")
+    }
+
+    func testMergeMessageContentPieceVariant() {
+        let message = ConceptNoteMergeComposer.mergeMessage(
+            noteTitle: "Hook drafts", noteBody: "Nobody plans to fail.", sourceKind: .content
+        )
+        XCTAssertTrue(message.contains("content piece"))
+        XCTAssertTrue(message.contains("CONTENT PIECE — Hook drafts:"))
+
+        let contentAtom = Atom.new(type: .content, title: "Hook drafts", body: "Nobody plans to fail.")
+        XCTAssertNotNil(ConceptNoteMergeComposer.mergePayload(from: contentAtom), "content pieces merge too")
+    }
+
+    // MARK: - Drop-time snapshot (canvas-only stickies have NO atom row)
+
+    func testMergePayloadFromInlineSnapshot() {
+        let sticky = ConceptMergeSourceSnapshot(
+            uuid: "S1", kind: .stickyNote, title: nil,
+            inlineBody: "Manifestation is mental rehearsal."
+        )
+        let payload = ConceptNoteMergeComposer.mergePayload(from: sticky)
+        XCTAssertNotNil(payload, "a canvas-only sticky must merge from its inline text")
+        XCTAssertEqual(payload?.displayTitle, "Sticky note")
+        XCTAssertTrue(payload?.message.contains("STICKY NOTE:") == true)
+        XCTAssertTrue(payload?.message.contains("mental rehearsal") == true)
+
+        let empty = ConceptMergeSourceSnapshot(uuid: "S2", kind: .stickyNote, title: " ", inlineBody: "  ")
+        XCTAssertNil(ConceptNoteMergeComposer.mergePayload(from: empty), "nothing to merge → no payload")
+
+        let titleOnly = ConceptMergeSourceSnapshot(uuid: "S3", kind: .note, title: "Just a headline", inlineBody: nil)
+        XCTAssertEqual(ConceptNoteMergeComposer.mergePayload(from: titleOnly)?.displayTitle, "Just a headline")
+    }
+
+    func testSnapshotFromCanvasBlockGates() {
+        // Canvas-only sticky (entityId -1, no atom) with inline text → mergeable.
+        let sticky = CanvasBlock(
+            position: .zero,
+            entityType: .stickyNote, entityId: -1, entityUuid: "STICKY-UUID",
+            title: "Content",
+            metadata: ["content": "Witches call it spells."]
+        )
+        let snapshot = ConceptMergeSourceSnapshot(block: sticky)
+        XCTAssertEqual(snapshot?.uuid, "STICKY-UUID")
+        XCTAssertEqual(snapshot?.kind, .stickyNote)
+        XCTAssertEqual(snapshot?.inlineBody, "Witches call it spells.")
+
+        // Canvas-only sticky with NO text anywhere → the card must never offer.
+        let emptySticky = CanvasBlock(
+            position: .zero,
+            entityType: .stickyNote, entityId: -1, entityUuid: "EMPTY-UUID",
+            title: "  ", metadata: [:]
+        )
+        XCTAssertNil(ConceptMergeSourceSnapshot(block: emptySticky))
+
+        // Atom-backed note without an inline mirror still offers — the
+        // launcher reads the fresh atom body.
+        let note = CanvasBlock(
+            position: .zero,
+            entityType: .note, entityId: 42, entityUuid: "NOTE-UUID",
+            title: "", metadata: [:]
+        )
+        XCTAssertEqual(ConceptMergeSourceSnapshot(block: note)?.kind, .note)
+
+        // Non-mergeable types never snapshot.
+        let research = CanvasBlock(
+            position: .zero,
+            entityType: .research, entityId: 7, entityUuid: "R-UUID",
+            title: "Paper", metadata: [:]
+        )
+        XCTAssertNil(ConceptMergeSourceSnapshot(block: research))
+    }
+
+    @MainActor
+    func testHandoffStashConsumeRoundTrip() {
+        let source = ConceptMergeSourceSnapshot(uuid: "N1", kind: .stickyNote, title: nil, inlineBody: "text")
+        ConceptMergeHandoff.stash(conceptUUID: "C1", source: source)
+        XCTAssertNil(ConceptMergeHandoff.consume(for: "OTHER"), "a different concept never steals the handoff")
+        XCTAssertEqual(ConceptMergeHandoff.consume(for: "C1"), source)
+        XCTAssertNil(ConceptMergeHandoff.consume(for: "C1"), "the handoff is one-shot")
     }
 }

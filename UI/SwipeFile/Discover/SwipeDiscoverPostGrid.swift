@@ -24,6 +24,7 @@ struct SwipeDiscoverPostGrid: View {
                 spacing: 14,
                 maxColumns: 4,
                 itemHeight: { model, width in model.height(forWidth: width) },
+                onPrefetch: { SwipeThumbnailPrewarmer.shared.warmAhead(models: $0) },
                 cell: { cardModel, width, index in
                     SwipeDiscoverCardCell(
                         model: cardModel,

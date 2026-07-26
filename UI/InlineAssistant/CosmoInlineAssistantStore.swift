@@ -29,6 +29,10 @@ struct CosmoInlineAssistantPaneMessage: Identifiable, Codable, Equatable, Sendab
     /// copilot). Plans are transient — a persisted message whose plan is gone
     /// renders as plain text. Decodes as nil from older persisted sessions.
     var canvasPlanID: UUID? = nil
+    /// Links the message to an interactive riff-directions card (/riff). The
+    /// markdown in `content` stays the durable fallback when the card is gone.
+    /// Decodes as nil from older persisted sessions.
+    var riffCardID: UUID? = nil
     /// Groups every message of one run (ask → receipts → deliverables) so the
     /// pane renders runs as cards instead of a flat bubble stream. Decodes as
     /// nil from older persisted sessions (those render ungrouped).
@@ -39,6 +43,40 @@ enum CosmoCanvasPlanStatus: Equatable, Sendable {
     case pending
     case applied
     case dismissed
+}
+
+/// One /riff deliverable as an interactive pane card: every direction is its
+/// own block — hovering (or arrow keys) previews the variation woven into the
+/// live draft, one click applies it, Reject all passes on the whole set.
+struct CosmoAssistantRiffDirectionsCard: Identifiable, Codable, Equatable, Sendable {
+    enum Status: String, Codable, Equatable, Sendable {
+        case pending
+        case applied
+        case dismissed
+    }
+
+    var id = UUID()
+    var riff: CraftRiffResult
+    var surfaceID: String
+    var targetID: String
+    var receiptLine: String
+    var status: Status = .pending
+    var appliedVariationIndex: Int? = nil
+    var appliedProposalID: UUID? = nil
+    var createdAt = Date()
+
+    /// The riffed beat exists in the draft (replacement) vs. is new (insertion).
+    var replacesExistingText: Bool {
+        !riff.targetOriginalText.isEmpty
+    }
+}
+
+/// Which card + variation is currently peeked in-document. In-memory only —
+/// the woven diff it drives is a transient flagged proposal.
+struct CosmoRiffPreviewState: Equatable, Sendable {
+    var cardID: UUID
+    var variationIndex: Int
+    var proposalID: UUID
 }
 
 enum CosmoInlineAssistantSessionScope {
@@ -73,11 +111,14 @@ struct CosmoInlineAssistantPersistedSession: Codable, Equatable {
     /// The session's turn ledger — optional so older persisted blobs decode
     /// unchanged (schemaVersion stays 1).
     var ledger: [CosmoInlineTurnRecord]? = nil
+    /// Optional so blobs persisted before riff-direction cards decode unchanged.
+    var riffDirectionCards: [CosmoAssistantRiffDirectionsCard]? = nil
     var updatedAt = Date()
 
     var isEmpty: Bool {
         paneMessages.isEmpty && proposals.isEmpty && selectedContextAtoms.isEmpty && selectedSkillID == nil
             && (inquiryQuestionProposals?.isEmpty ?? true)
+            && (riffDirectionCards?.isEmpty ?? true)
     }
 }
 
@@ -538,6 +579,9 @@ final class CosmoInlineAssistantStore: ObservableObject {
     @Published var phase: CosmoInlineAssistantPhase = .idle
     @Published var proposals: [CosmoAssistantProposal] = []
     @Published var inquiryQuestionProposals: [CosmoAssistantInquiryQuestionProposal] = []
+    @Published private(set) var riffDirectionCards: [CosmoAssistantRiffDirectionsCard] = []
+    /// Live riff peek — set while a direction block is hovered/arrow-selected.
+    @Published private(set) var riffPreview: CosmoRiffPreviewState?
     @Published var paneMessages: [CosmoInlineAssistantPaneMessage] = []
     @Published var selectedContextAtoms: [Atom] = []
     @Published var selectedSkillID: String? {
@@ -637,6 +681,9 @@ final class CosmoInlineAssistantStore: ObservableObject {
             await clearActiveSession()
             return
         }
+
+        // A new ask closes any riff peek — the editor comes back before the run.
+        endRiffPreview()
 
         bindToLiveSurfaceBeforeSubmission()
 
@@ -739,8 +786,20 @@ final class CosmoInlineAssistantStore: ObservableObject {
         }.count
         let proposalCountBeforeRun = proposals.count
 
+        // First-token timing rides a task-local down to the provider's SSE
+        // loop: the relay collapses the event stream to one signal per run,
+        // so "first token" means the model's first streamed output of any
+        // kind — not just pane-answer deltas.
+        let firstTokenRelay = CosmoFirstStreamTokenRelay()
         let runTask = Task { [agentBridge] in
-            try await agentBridge.send(prompt, route, self)
+            try await LLMStreamObserver.$onFirstEvent.withValue({
+                guard firstTokenRelay.claimFirst() else { return }
+                Task { @MainActor in
+                    CosmoInlineAssistantMetrics.shared.firstTokenArrived()
+                }
+            }) {
+                try await agentBridge.send(prompt, route, self)
+            }
         }
         activeRunTask = runTask
         do {
@@ -764,6 +823,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
             }
         }
         activeRunTask = nil
+        CosmoInlineAssistantMetrics.shared.requestEnded()
 
         appendLedgerRecord(
             runID: runID,
@@ -840,6 +900,177 @@ final class CosmoInlineAssistantStore: ObservableObject {
         phase = .reviewing
         followUpSuggestions = Self.followUps(afterProposal: stamped)
         CosmoInlineAssistantMetrics.shared.proposalStaged()
+        persistActiveSession()
+    }
+
+    // MARK: - Riff direction cards (/riff)
+
+    /// Stage a /riff result as an interactive directions card. The pane message
+    /// carries the rendered markdown as its durable fallback; the card drives
+    /// hover-preview in the live draft and one-click apply.
+    func receiveRiffDirections(
+        riff: CraftRiffResult,
+        snapshot: CosmoEditableSourceSnapshot,
+        receiptLine: String,
+        fallbackMarkdown: String
+    ) {
+        let card = CosmoAssistantRiffDirectionsCard(
+            riff: riff,
+            surfaceID: snapshot.surfaceID,
+            targetID: snapshot.targetID,
+            receiptLine: receiptLine
+        )
+        riffDirectionCards.append(card)
+        paneMessages.append(.init(
+            role: .assistant,
+            content: fallbackMarkdown,
+            sourceRefs: currentSourceRefs,
+            activitySteps: takeFinalizedRunSteps(),
+            riffCardID: card.id,
+            runID: currentRunID
+        ))
+        statusText = nil
+        isPaneRequested = true
+        CosmoInlineAssistantMetrics.shared.paneAnswerDelivered()
+        followUpSuggestions = ["Riff on a different beat", "Push the bet further", "Give me 3 more"]
+        persistActiveSession()
+    }
+
+    func riffDirectionsCard(id: UUID) -> CosmoAssistantRiffDirectionsCard? {
+        riffDirectionCards.first { $0.id == id }
+    }
+
+    /// Peek one direction in the live document: the variation compiles into a
+    /// transient flagged proposal, so every focus-mode host renders it through
+    /// the same in-place woven diff it already owns for reviewed edits. Nothing
+    /// applies and nothing persists — moving between blocks swaps the operation
+    /// in place, leaving the card clears it.
+    func previewRiffVariation(
+        cardID: UUID,
+        index: Int,
+        registry: CosmoEditableSurfaceRegistry = .shared
+    ) {
+        guard let card = riffDirectionsCard(id: cardID),
+              card.status == .pending,
+              index >= 1, index <= card.riff.variations.count,
+              let snapshot = registry.provider(surfaceID: card.surfaceID)?.editableSnapshot() else {
+            return
+        }
+        let operation = CosmoCraftSkillRunner.riffApplyOperation(index: index, riff: card.riff, snapshot: snapshot)
+        let proposalID = riffPreview?.proposalID ?? UUID()
+        let preview = CosmoAssistantProposal(
+            id: proposalID,
+            prompt: "",
+            surfaceID: card.surfaceID,
+            title: "Riff variation \(index)",
+            summary: "Previewing variation \(index) (\(card.riff.variations[index - 1].mechanism)).",
+            operations: [operation],
+            skillID: CosmoInlineAssistantSkillID.voiceVariations.rawValue,
+            isRiffPreview: true
+        )
+        proposals.removeAll { $0.isRiffPreview == true && $0.id != proposalID }
+        if let existing = proposals.firstIndex(where: { $0.id == proposalID }) {
+            proposals[existing] = preview
+        } else {
+            proposals.append(preview)
+        }
+        riffPreview = CosmoRiffPreviewState(cardID: cardID, variationIndex: index, proposalID: proposalID)
+    }
+
+    /// Close the in-document peek without deciding anything.
+    func endRiffPreview() {
+        guard riffPreview != nil || proposals.contains(where: { $0.isRiffPreview == true }) else { return }
+        proposals.removeAll { $0.isRiffPreview == true }
+        riffPreview = nil
+    }
+
+    /// Accept ONE direction. The preview was the review, so the variation applies
+    /// immediately through the standard accept pipeline — learning, skill
+    /// outcomes, and revert support included. The card becomes the applied
+    /// receipt with Undo; no separate proposal card is added to the pane.
+    func applyRiffVariation(
+        cardID: UUID,
+        index: Int,
+        registry: CosmoEditableSurfaceRegistry = .shared
+    ) async {
+        guard let card = riffDirectionsCard(id: cardID),
+              card.status == .pending,
+              index >= 1, index <= card.riff.variations.count else { return }
+
+        endRiffPreview()
+
+        var resolvedProvider: (any CosmoEditableSurfaceProvider)? = registry.provider(surfaceID: card.surfaceID)
+        if resolvedProvider == nil {
+            resolvedProvider = await CosmoAtomBackedEditableSurface.load(surfaceID: card.surfaceID)
+        }
+        guard let provider = resolvedProvider else {
+            errorText = "The draft this riff was made for is no longer available."
+            return
+        }
+
+        let snapshot = provider.editableSnapshot()
+        let operation = CosmoCraftSkillRunner.riffApplyOperation(index: index, riff: card.riff, snapshot: snapshot)
+        let staged = CosmoAssistantProposal(
+            prompt: "",
+            surfaceID: card.surfaceID,
+            title: "Riff variation \(index)",
+            summary: "Applied variation \(index) (\(card.riff.variations[index - 1].mechanism)) as the \(card.riff.beatLabel.lowercased()).",
+            operations: [operation],
+            skillID: CosmoInlineAssistantSkillID.voiceVariations.rawValue
+        )
+        proposals.append(staged)
+        await accept(operationID: operation.id, provider: provider)
+
+        guard let applied = proposal(id: staged.id),
+              applied.operations.contains(where: { $0.status == .applied || $0.status == .accepted }) else {
+            // Conflicted: errorText is already set and the staged diff stays
+            // reviewable in-document — the card keeps offering the other picks.
+            return
+        }
+        settleRiffCard(cardID: cardID, appliedIndex: index, proposalID: staged.id)
+    }
+
+    /// Reject all: pass on every direction. Nothing touched the document.
+    func dismissRiffDirections(cardID: UUID) {
+        guard let index = riffDirectionCards.firstIndex(where: { $0.id == cardID }),
+              riffDirectionCards[index].status == .pending else { return }
+        if riffPreview?.cardID == cardID { endRiffPreview() }
+        riffDirectionCards[index].status = .dismissed
+        persistActiveSession()
+    }
+
+    /// Undo an applied direction and reopen the card for another pick.
+    func undoRiffVariation(
+        cardID: UUID,
+        registry: CosmoEditableSurfaceRegistry = .shared
+    ) async {
+        guard let card = riffDirectionsCard(id: cardID),
+              card.status == .applied,
+              let proposalID = card.appliedProposalID else { return }
+        await revertAll(proposalID: proposalID, registry: registry)
+        guard proposal(id: proposalID)?.operations.contains(where: { $0.status == .reverted }) == true,
+              let index = riffDirectionCards.firstIndex(where: { $0.id == cardID }) else { return }
+        riffDirectionCards[index].status = .pending
+        riffDirectionCards[index].appliedVariationIndex = nil
+        riffDirectionCards[index].appliedProposalID = nil
+        persistActiveSession()
+    }
+
+    /// The user accepted a PREVIEW hunk inside the document — promote the
+    /// transient proposal to a real applied record and settle its card.
+    private func promoteRiffPreview(proposalID: UUID) {
+        guard let state = riffPreview, state.proposalID == proposalID,
+              let proposalIndex = proposals.firstIndex(where: { $0.id == proposalID }) else { return }
+        proposals[proposalIndex].isRiffPreview = nil
+        riffPreview = nil
+        settleRiffCard(cardID: state.cardID, appliedIndex: state.variationIndex, proposalID: proposalID)
+    }
+
+    private func settleRiffCard(cardID: UUID, appliedIndex: Int, proposalID: UUID) {
+        guard let index = riffDirectionCards.firstIndex(where: { $0.id == cardID }) else { return }
+        riffDirectionCards[index].status = .applied
+        riffDirectionCards[index].appliedVariationIndex = appliedIndex
+        riffDirectionCards[index].appliedProposalID = proposalID
         persistActiveSession()
     }
 
@@ -949,7 +1180,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
         guard !delta.isEmpty else { return }
         phase = .drafting
         statusText = nil
-        CosmoInlineAssistantMetrics.shared.firstAnswerTokenArrived()
+        CosmoInlineAssistantMetrics.shared.firstTokenArrived()
 
         if let streamingID = streamingPaneMessageID,
            let index = paneMessages.firstIndex(where: { $0.id == streamingID }) {
@@ -1254,6 +1485,9 @@ final class CosmoInlineAssistantStore: ObservableObject {
             errorText = nil
             persistActiveSession()
             if result.status == .applied || result.status == .accepted {
+                if proposal.isRiffPreview == true {
+                    promoteRiffPreview(proposalID: proposal.id)
+                }
                 recordSkillOutcome(
                     proposal: proposal,
                     operation: operation,
@@ -1328,6 +1562,13 @@ final class CosmoInlineAssistantStore: ObservableObject {
         let proposal = proposals[location.proposalIndex]
         let operation = proposal.operations[location.operationIndex]
         guard operation.status == .pending || operation.status == .conflicted else { return }
+
+        // Rejecting a preview hunk just closes the peek — nothing was staged,
+        // the card stays pending, and no learning verdict is recorded.
+        if proposal.isRiffPreview == true {
+            endRiffPreview()
+            return
+        }
 
         if let provider = registry.provider(surfaceID: proposal.surfaceID) {
             let result = await provider.reject(operation: operation)
@@ -1873,6 +2114,9 @@ final class CosmoInlineAssistantStore: ObservableObject {
         inquiryQuestionProposals.removeAll { removedInquiryIDs.contains($0.id) }
         let removedPlanIDs = Set(removed.compactMap(\.canvasPlanID))
         canvasPlanProposals.removeAll { removedPlanIDs.contains($0.id) }
+        endRiffPreview()
+        let removedRiffCardIDs = Set(removed.compactMap(\.riffCardID))
+        riffDirectionCards.removeAll { removedRiffCardIDs.contains($0.id) }
         sessionLedger.removeAll { record in
             record.runID.map { removedRunIDs.contains($0) } ?? (record.createdAt >= cutoff)
         }
@@ -2143,13 +2387,15 @@ final class CosmoInlineAssistantStore: ObservableObject {
         sessionPersistence.save(CosmoInlineAssistantPersistedSession(
             surfaceID: activeSessionSurfaceID,
             paneMessages: paneMessages,
-            proposals: proposals,
+            // Riff previews are a live peek, never a session fact.
+            proposals: proposals.filter { $0.isRiffPreview != true },
             selectedContextAtoms: selectedContextAtoms,
             selectedSkillID: selectedSkillID,
             selectedSkillIsExplicit: selectedSkillID == nil ? nil : selectedSkillIsExplicit,
             lastSubmissionRoute: lastSubmissionRoute,
             inquiryQuestionProposals: inquiryQuestionProposals,
-            ledger: sessionLedger.isEmpty ? nil : sessionLedger
+            ledger: sessionLedger.isEmpty ? nil : sessionLedger,
+            riffDirectionCards: riffDirectionCards.isEmpty ? nil : riffDirectionCards
         ))
     }
 
@@ -2163,6 +2409,8 @@ final class CosmoInlineAssistantStore: ObservableObject {
         paneMessages = repairedPaneMessages.messages
         proposals = session.proposals
         inquiryQuestionProposals = session.inquiryQuestionProposals ?? []
+        riffDirectionCards = session.riffDirectionCards ?? []
+        riffPreview = nil
         sessionLedger = session.ledger ?? []
         selectedContextAtoms = ContextSourcePolicy.filteredAtoms(session.selectedContextAtoms, query: "")
         selectedSkillID = session.selectedSkillIsExplicit == true ? session.selectedSkillID : nil
@@ -2185,6 +2433,8 @@ final class CosmoInlineAssistantStore: ObservableObject {
         paneMessages = []
         proposals = []
         inquiryQuestionProposals = []
+        riffDirectionCards = []
+        riffPreview = nil
         sessionLedger = []
         selectedContextAtoms = []
         selectedSkillID = nil
@@ -2201,5 +2451,21 @@ final class CosmoInlineAssistantStore: ObservableObject {
 
     private static func isClearCommand(_ prompt: String) -> Bool {
         prompt.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "/clear"
+    }
+}
+
+/// Collapses a run's many stream events into one first-token signal: the SSE
+/// loop fires the observer on every delta of every iteration, and only the
+/// first claim wins — so the MainActor hop happens once per run, not per token.
+final class CosmoFirstStreamTokenRelay: @unchecked Sendable {
+    private let lock = NSLock()
+    private var claimed = false
+
+    func claimFirst() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !claimed else { return false }
+        claimed = true
+        return true
     }
 }

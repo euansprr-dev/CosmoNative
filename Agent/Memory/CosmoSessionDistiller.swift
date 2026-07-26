@@ -61,11 +61,17 @@ final class CosmoSessionDistiller {
                 }
             }
 
-            let raw = try? await CosmoAgentService.shared.summarize(
+            // A failed call (network, provider, auth) must NOT mark these
+            // turns distilled — leaving the count untouched retries them on
+            // the next natural trigger. Only a real "nothing durable here"
+            // verdict advances the watermark.
+            guard let response = try? await CosmoAgentService.shared.summarize(
                 messages: [.user(Self.distillationPrompt(ledgerBlock: ledgerBlock))],
                 tier: .sensor
-            )
-            let facts = Self.parseFacts(from: raw ?? "")
+            ) else {
+                return
+            }
+            let facts = Self.parseFacts(from: response)
             guard !facts.isEmpty else {
                 await MainActor.run { [weak self] in
                     self?.distilledTurnCounts[sessionKey] = turnCount

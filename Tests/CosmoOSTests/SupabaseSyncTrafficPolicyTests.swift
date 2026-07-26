@@ -83,7 +83,7 @@ final class SupabaseSyncTrafficPolicyTests: XCTestCase {
         let resolution = SyncFailurePolicy.resolve(
             currentRetryCount: 2,
             maxRetries: 3,
-            error: SupabaseError.updateFailed(statusCode: 402)
+            error: SupabaseError.updateFailed(statusCode: 402, body: "")
         )
 
         XCTAssertEqual(resolution.status, "pending")
@@ -159,7 +159,7 @@ final class SupabaseSyncTrafficPolicyTests: XCTestCase {
         let resolution = SyncFailurePolicy.resolve(
             currentRetryCount: 2,
             maxRetries: 3,
-            error: SupabaseError.updateFailed(statusCode: 500)
+            error: SupabaseError.updateFailed(statusCode: 500, body: "")
         )
 
         XCTAssertEqual(resolution.status, "failed")

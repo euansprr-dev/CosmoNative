@@ -1168,6 +1168,14 @@ enum LLMStreamEvent: Sendable {
     case toolCallArgumentsDelta(index: Int, name: String, accumulatedJSON: String)
 }
 
+/// Task-local stream observer: lets a caller (the inline assistant) time
+/// "first streamed model output" without threading a callback through every
+/// layer between the store and the SSE loop. Set for the duration of a run's
+/// task tree; fired on every stream event — the observer dedups on its side.
+enum LLMStreamObserver {
+    @TaskLocal static var onFirstEvent: (@Sendable () -> Void)?
+}
+
 typealias LLMStreamEventCallback = @Sendable (LLMStreamEvent) -> Void
 
 /// Protocol extension for providers that support streaming

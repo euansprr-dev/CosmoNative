@@ -2291,6 +2291,12 @@ struct CosmoAssistantProposal: Identifiable, Codable, Equatable, Sendable {
     /// skill-scoped learning: accept/reject outcomes accrue to the skill so it
     /// improves with use.
     var skillID: String?
+    /// True while this proposal is a transient riff-direction PREVIEW: it renders
+    /// the in-document woven diff like any reviewed proposal, but it never
+    /// persists and never gets its own pane card — accepting a hunk promotes it
+    /// to a real applied proposal, leaving the block clears it. Decodes nil from
+    /// older payloads.
+    var isRiffPreview: Bool? = nil
 
     init(
         id: UUID = UUID(),
@@ -2300,7 +2306,8 @@ struct CosmoAssistantProposal: Identifiable, Codable, Equatable, Sendable {
         summary: String,
         operations: [CosmoAssistantProposalOperation],
         createdAt: Date = Date(),
-        skillID: String? = nil
+        skillID: String? = nil,
+        isRiffPreview: Bool? = nil
     ) {
         self.id = id
         self.prompt = prompt
@@ -2310,6 +2317,7 @@ struct CosmoAssistantProposal: Identifiable, Codable, Equatable, Sendable {
         self.operations = operations
         self.createdAt = createdAt
         self.skillID = skillID
+        self.isRiffPreview = isRiffPreview
     }
 
     var addedHunkCount: Int {

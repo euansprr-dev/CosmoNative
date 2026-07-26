@@ -148,6 +148,9 @@ actor CosmoMemoryService {
 
     /// Embedding recall for prompt assembly: the closest stored facts to the
     /// query, threshold-gated so unrelated memories never pollute a request.
+    /// Semantic-only by choice — no keyword fallback (lower-quality matches
+    /// would drag noise into prompts). When embeddings are unavailable this
+    /// returns nothing, and EmbeddingHealth surfaces exactly why in the UI.
     func recallArchivalMemory(
         query: String,
         limit: Int = 3,
@@ -165,6 +168,43 @@ actor CosmoMemoryService {
             .sorted { $0.score > $1.score }
             .prefix(limit)
             .map(\.value)
+    }
+
+    /// Repair pass: rows written while embeddings were unconfigured carry NULL
+    /// vectors and are invisible to semantic recall. Embeds them in batches
+    /// once a key exists; safe to call every launch (no-op when nothing is
+    /// missing, quiet abort on failure — the next launch retries).
+    func backfillMissingEmbeddings() async {
+        await loadIfNeeded()
+        let client = CloudEmbeddingClient()
+        guard client.isConfigured else { return }
+        let missingIndices = archival.indices.filter { archival[$0].embedding == nil }
+        guard !missingIndices.isEmpty else { return }
+
+        var repaired = 0
+        for batchStart in stride(from: 0, to: missingIndices.count, by: 64) {
+            let batch = Array(missingIndices[batchStart..<min(batchStart + 64, missingIndices.count)])
+            let texts = batch.map { String(archival[$0].value.prefix(2_000)) }
+            guard let vectors = try? await client.embed(texts), vectors.count == batch.count else { return }
+
+            for (offset, index) in batch.enumerated() {
+                archival[index].embedding = vectors[offset]
+                await EmbeddingCache.shared.set(vectors[offset], for: archival[index].value)
+            }
+            if usesDatabase, let dbQueue = Self.resolveDBQueue() {
+                let rows = batch.enumerated().map { (archival[$0.element].value, Self.blob(from: vectors[$0.offset])) }
+                try? await dbQueue.write { db in
+                    for (value, blob) in rows {
+                        try db.execute(
+                            sql: "UPDATE agent_archival_memory SET embedding = ? WHERE value = ? AND embedding IS NULL",
+                            arguments: [blob, value]
+                        )
+                    }
+                }
+            }
+            repaired += batch.count
+        }
+        print("🧠 [Memory] backfilled embeddings for \(repaired) archival fact(s)")
     }
 
     func archivalMemoryCount() async -> Int {

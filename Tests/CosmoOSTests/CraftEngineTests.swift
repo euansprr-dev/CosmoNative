@@ -275,6 +275,104 @@ final class CraftEngineTests: XCTestCase {
         XCTAssertEqual(result.variations.first?.mechanism, "mechanism-first")
     }
 
+    func testRenderableRiffResultAcceptsEmptyTargetForNewBeat() throws {
+        // The user asks "what can we write on slide 7?" where slide 7 is empty:
+        // there is no draft text to copy verbatim, so a correct model answer
+        // carries a blank targetOriginalText alongside fully-formed variations.
+        let output = """
+        {
+          "beatLabel": "Slide 7 — sober-living income beat",
+          "targetOriginalText": "",
+          "variations": [
+            {"text": "Each bed brings in $600-$1,000/mo. Six beds is $3,600-$6,000 before the mortgage even notices.", "mechanism": "number-first math", "borrowedFrom": "Government pays reel", "numbers": "480K views"},
+            {"text": "You don't rent the house. You rent the beds.", "mechanism": "reframe via unit shift", "borrowedFrom": "none", "numbers": ""}
+          ],
+          "bet": "Variation 1 — the per-bed math is the scroll-stopper."
+        }
+        """
+
+        let riff = try CraftStructuredOutputParser.decodeRenderable(CraftRiffResult.self, from: output)
+        XCTAssertEqual(riff.variations.count, 2)
+
+        let usage = CraftUsage(inputTokens: 1000, cacheWriteTokens: 0, cacheReadTokens: 9000, outputTokens: 800)
+        let markdown = CraftAnswerRenderer.markdown(for: riff, usage: usage)
+        XCTAssertFalse(markdown.contains("Current:"))
+        XCTAssertTrue(markdown.contains("apply N"))
+    }
+
+    func testRenderableRiffResultStillRejectsShellWithNoVariations() {
+        // Relaxing targetOriginalText must not reopen the schema-shaped-shell
+        // hole: a riff with no variations stays a hard failure.
+        let output = """
+        {
+          "beatLabel": "Slide 7 — income beat",
+          "targetOriginalText": "",
+          "variations": [],
+          "bet": "x"
+        }
+        """
+
+        XCTAssertThrowsError(
+            try CraftStructuredOutputParser.decodeRenderable(CraftRiffResult.self, from: output)
+        )
+    }
+
+    // MARK: - Riff apply staging
+
+    private func snapshot(text: String) -> CosmoEditableSourceSnapshot {
+        CosmoEditableSourceSnapshot(
+            surfaceID: "content:abc",
+            targetID: "content:abc:body",
+            kind: .text,
+            title: "DSCR carousel",
+            text: text,
+            sourceHash: "hash-1",
+            anchors: []
+        )
+    }
+
+    func testRiffApplyStagesReplacementForExistingBeat() {
+        let riff = CraftRiffResult(
+            beatLabel: "Slide 1 hook",
+            targetOriginalText: "I bought a duplex.",
+            variations: [
+                CraftRiffVariation(text: "The duplex cost me $0.", mechanism: "number-first", borrowedFrom: "none", numbers: "")
+            ],
+            bet: "Variation 1."
+        )
+        let operation = CosmoCraftSkillRunner.riffApplyOperation(
+            index: 1,
+            riff: riff,
+            snapshot: snapshot(text: "SLIDE 1\nI bought a duplex.")
+        )
+        XCTAssertEqual(operation.kind, .textReplacement)
+        XCTAssertEqual(operation.originalText, "I bought a duplex.")
+        XCTAssertEqual(operation.proposedText, "The duplex cost me $0.")
+    }
+
+    func testRiffApplyStagesInsertionForNewBeat() {
+        // Empty target = the beat doesn't exist in the draft yet. Apply stages a
+        // textInsertion; the beat label rides the rationale so the diff engine's
+        // slide-header fallback can place it under the right SLIDE N header.
+        let riff = CraftRiffResult(
+            beatLabel: "Slide 7 — sober-living income beat",
+            targetOriginalText: "",
+            variations: [
+                CraftRiffVariation(text: "Each bed brings in $600-$1,000/mo.", mechanism: "number-first math", borrowedFrom: "none", numbers: "")
+            ],
+            bet: "Variation 1."
+        )
+        let operation = CosmoCraftSkillRunner.riffApplyOperation(
+            index: 1,
+            riff: riff,
+            snapshot: snapshot(text: "SLIDE 6\nApply for the DSCR loan.\n\nSLIDE 7\n\nSLIDE 8\nAdd bedrooms.")
+        )
+        XCTAssertEqual(operation.kind, .textInsertion)
+        XCTAssertNil(operation.originalText)
+        XCTAssertEqual(operation.proposedText, "Each bed brings in $600-$1,000/mo.")
+        XCTAssertTrue(operation.rationale.localizedCaseInsensitiveContains("slide 7"))
+    }
+
     func testSchemasAreValidJSONObjects() {
         XCTAssertTrue(JSONSerialization.isValidJSONObject(CosmoCraftEngine.reviewSchema))
         XCTAssertTrue(JSONSerialization.isValidJSONObject(CosmoCraftEngine.riffSchema))

@@ -8,78 +8,147 @@ import SwiftUI
 
 // MARK: - Metrics
 
-/// Session-scoped scorecard for the inline assistant. These numbers are the
-/// definition of "most efficient assistant" — not vibes: time-to-first-token,
-/// proposal latency, accept/conflict rates, and the prompt-cache read ratio.
+/// Lifetime scorecard for the inline assistant, persisted across launches.
+/// These numbers are the definition of "most efficient assistant" — not vibes:
+/// time-to-first-token, proposal latency, accept/conflict rates. Only the
+/// prompt-cache read ratio (LLMCacheTelemetry) stays session-scoped: it is a
+/// live health canary, and blending it across launches would hide a fresh
+/// cache regression behind weeks of healthy history.
 @MainActor
 @Observable
 final class CosmoInlineAssistantMetrics {
     static let shared = CosmoInlineAssistantMetrics()
 
-    private(set) var requestCount = 0
-    private(set) var ttftSamplesMs: [Int] = []
-    private(set) var proposalLatencySamplesMs: [Int] = []
-    private(set) var proposalsStaged = 0
-    private(set) var operationsAccepted = 0
-    private(set) var operationsRejected = 0
-    private(set) var operationsConflicted = 0
-    private(set) var paneAnswers = 0
+    /// Aggregates, not sample arrays — averages survive relaunches without
+    /// unbounded growth.
+    private struct Persisted: Codable {
+        var requestCount = 0
+        var ttftSampleCount = 0
+        var ttftTotalMs = 0
+        var proposalLatencySampleCount = 0
+        var proposalLatencyTotalMs = 0
+        var proposalsStaged = 0
+        var operationsAccepted = 0
+        var operationsRejected = 0
+        var operationsConflicted = 0
+        var paneAnswers = 0
+    }
+
+    private static let defaultsKey = "inlineAssistant.metrics.v1"
+
+    private var state: Persisted
+    private let defaults: UserDefaults
 
     private var activeRequestStart: Date?
     private var recordedFirstTokenForActiveRequest = false
+    private var recordedProposalLatencyForActiveRequest = false
 
-    func requestStarted() {
-        requestCount += 1
-        activeRequestStart = Date()
-        recordedFirstTokenForActiveRequest = false
-    }
-
-    func firstAnswerTokenArrived() {
-        guard let start = activeRequestStart, !recordedFirstTokenForActiveRequest else { return }
-        recordedFirstTokenForActiveRequest = true
-        ttftSamplesMs.append(Int(Date().timeIntervalSince(start) * 1000))
-    }
-
-    func proposalStaged() {
-        proposalsStaged += 1
-        if let start = activeRequestStart {
-            proposalLatencySamplesMs.append(Int(Date().timeIntervalSince(start) * 1000))
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        if let data = defaults.data(forKey: Self.defaultsKey),
+           let decoded = try? JSONDecoder().decode(Persisted.self, from: data) {
+            state = decoded
+        } else {
+            state = Persisted()
         }
     }
 
+    var requestCount: Int { state.requestCount }
+    var proposalsStaged: Int { state.proposalsStaged }
+    var operationsAccepted: Int { state.operationsAccepted }
+    var operationsRejected: Int { state.operationsRejected }
+    var operationsConflicted: Int { state.operationsConflicted }
+    var paneAnswers: Int { state.paneAnswers }
+
+    func requestStarted() {
+        state.requestCount += 1
+        activeRequestStart = Date()
+        recordedFirstTokenForActiveRequest = false
+        recordedProposalLatencyForActiveRequest = false
+        persist()
+    }
+
+    /// The run finished — success, error, or cancel. Latency samples must
+    /// never be measured against a dead run's clock, so anything staged after
+    /// this (late tool results, retries) records counts but no timing.
+    func requestEnded() {
+        activeRequestStart = nil
+        recordedFirstTokenForActiveRequest = false
+        recordedProposalLatencyForActiveRequest = false
+    }
+
+    /// First streamed model output of the run — answer text or tool-call
+    /// arguments, whichever the provider produces first. One sample per run.
+    func firstTokenArrived() {
+        guard let start = activeRequestStart, !recordedFirstTokenForActiveRequest else { return }
+        recordedFirstTokenForActiveRequest = true
+        state.ttftSampleCount += 1
+        state.ttftTotalMs += Int(Date().timeIntervalSince(start) * 1000)
+        persist()
+    }
+
+    func proposalStaged() {
+        state.proposalsStaged += 1
+        // Latency = request → FIRST reviewable diff. Later proposals in the
+        // same run would sample cumulative loop time and inflate the average.
+        if let start = activeRequestStart, !recordedProposalLatencyForActiveRequest {
+            recordedProposalLatencyForActiveRequest = true
+            state.proposalLatencySampleCount += 1
+            state.proposalLatencyTotalMs += Int(Date().timeIntervalSince(start) * 1000)
+        }
+        persist()
+    }
+
     func paneAnswerDelivered() {
-        paneAnswers += 1
+        state.paneAnswers += 1
+        persist()
     }
 
     func operationResolved(status: CosmoProposalStatus) {
         switch status {
-        case .accepted, .applied: operationsAccepted += 1
-        case .rejected: operationsRejected += 1
-        case .conflicted: operationsConflicted += 1
-        case .pending, .reverted: break
+        case .accepted, .applied: state.operationsAccepted += 1
+        case .rejected: state.operationsRejected += 1
+        case .conflicted: state.operationsConflicted += 1
+        case .pending, .reverted: return
         }
+        persist()
+    }
+
+    /// Fresh contract — zeroes the lifetime scorecard.
+    func reset() {
+        state = Persisted()
+        requestEnded()
+        persist()
     }
 
     var averageTTFTMs: Int? {
-        ttftSamplesMs.isEmpty ? nil : ttftSamplesMs.reduce(0, +) / ttftSamplesMs.count
+        state.ttftSampleCount > 0 ? state.ttftTotalMs / state.ttftSampleCount : nil
     }
 
     var averageProposalLatencyMs: Int? {
-        proposalLatencySamplesMs.isEmpty ? nil : proposalLatencySamplesMs.reduce(0, +) / proposalLatencySamplesMs.count
+        state.proposalLatencySampleCount > 0
+            ? state.proposalLatencyTotalMs / state.proposalLatencySampleCount
+            : nil
     }
 
     /// Accepted / (accepted + rejected). Conflicts are tracked separately —
     /// they measure locator staleness, not output quality.
     var acceptRate: Double? {
-        let decided = operationsAccepted + operationsRejected
+        let decided = state.operationsAccepted + state.operationsRejected
         guard decided > 0 else { return nil }
-        return Double(operationsAccepted) / Double(decided)
+        return Double(state.operationsAccepted) / Double(decided)
     }
 
     var conflictRate: Double? {
-        let total = operationsAccepted + operationsRejected + operationsConflicted
+        let total = state.operationsAccepted + state.operationsRejected + state.operationsConflicted
         guard total > 0 else { return nil }
-        return Double(operationsConflicted) / Double(total)
+        return Double(state.operationsConflicted) / Double(total)
+    }
+
+    private func persist() {
+        if let data = try? JSONEncoder().encode(state) {
+            defaults.set(data, forKey: Self.defaultsKey)
+        }
     }
 }
 
@@ -1469,7 +1538,12 @@ private struct CosmoStudioPersonalityTab: View {
 private struct CosmoStudioMetricsTab: View {
     private var metrics: CosmoInlineAssistantMetrics { .shared }
 
+    /// Below this many calls a low cache ratio is cold-start noise (the first
+    /// request per conversation always writes the cache), not a regression.
+    private static let cacheJudgementFloor = 8
+
     @State private var cacheSnapshot = LLMCacheTelemetry.shared.current()
+    @State private var rememberedFactCount: Int?
     @State private var hasAppeared = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -1482,12 +1556,19 @@ private struct CosmoStudioMetricsTab: View {
                     .studioCascade(hasAppeared: hasAppeared, index: 1, reduceMotion: reduceMotion)
                 outcomeSection
                     .studioCascade(hasAppeared: hasAppeared, index: 2, reduceMotion: reduceMotion)
+                memorySection
+                    .studioCascade(hasAppeared: hasAppeared, index: 3, reduceMotion: reduceMotion)
+                resetFooter
+                    .studioCascade(hasAppeared: hasAppeared, index: 4, reduceMotion: reduceMotion)
             }
             .padding(DS.space24)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .scrollEdgeEffectStyle(.soft, for: .all)
-        .task { cacheSnapshot = LLMCacheTelemetry.shared.current() }
+        .task {
+            cacheSnapshot = LLMCacheTelemetry.shared.current()
+            rememberedFactCount = await CosmoMemoryService.shared.archivalMemoryCount()
+        }
         .onAppear {
             Task { @MainActor in
                 withAnimation(ProMotionSprings.gentle) { hasAppeared = true }
@@ -1496,7 +1577,7 @@ private struct CosmoStudioMetricsTab: View {
     }
 
     private var explainer: some View {
-        Text("Since launch. These numbers are the contract: warm cache reads, sub-second first tokens, edits that locate and get accepted.")
+        Text("The lifetime contract: warm cache reads, fast first tokens, edits that locate and get accepted. Cache health is this session only — a fresh regression must never hide behind old averages.")
             .font(DS.footnote)
             .foregroundStyle(DS.textMuted)
             .fixedSize(horizontal: false, vertical: true)
@@ -1509,27 +1590,28 @@ private struct CosmoStudioMetricsTab: View {
                 metricRow(
                     icon: "arrow.triangle.2.circlepath",
                     title: "Cache read ratio",
-                    subtitle: "target ≥ 85% · \(cacheSnapshot.requestCount) LLM calls",
+                    subtitle: "target ≥ 85% · \(cacheSnapshot.requestCount) LLM calls this session",
                     value: cacheSnapshot.requestCount > 0
                         ? "\(Int(cacheSnapshot.readRatio * 100))%"
                         : "—",
-                    healthy: cacheSnapshot.requestCount == 0 || cacheSnapshot.readRatio >= 0.5
+                    healthy: cacheSnapshot.requestCount < Self.cacheJudgementFloor
+                        || cacheSnapshot.readRatio >= 0.85
                 )
                 SettingsRowDivider()
                 metricRow(
                     icon: "bolt",
                     title: "First token",
-                    subtitle: "avg time to first streamed answer token",
+                    subtitle: "avg submit → first streamed model output",
                     value: metrics.averageTTFTMs.map { "\($0) ms" } ?? "—",
-                    healthy: (metrics.averageTTFTMs ?? 0) < 1500
+                    healthy: (metrics.averageTTFTMs ?? 0) < 3000
                 )
                 SettingsRowDivider()
                 metricRow(
                     icon: "clock",
                     title: "Proposal staged",
-                    subtitle: "avg request → reviewable diff",
+                    subtitle: "avg submit → first reviewable diff of the run",
                     value: metrics.averageProposalLatencyMs.map { "\($0) ms" } ?? "—",
-                    healthy: (metrics.averageProposalLatencyMs ?? 0) < 4000
+                    healthy: (metrics.averageProposalLatencyMs ?? 0) < 8000
                 )
             }
         }
@@ -1563,6 +1645,46 @@ private struct CosmoStudioMetricsTab: View {
                     healthy: true
                 )
             }
+        }
+    }
+
+    /// Memory health belongs on the scorecard: remembered facts are worthless
+    /// if semantic recall is offline, and that state must be loud, not silent.
+    private var memorySection: some View {
+        VStack(alignment: .leading, spacing: DS.space12) {
+            SettingsSectionHeader(label: "MEMORY")
+            SettingsGroupedBox {
+                metricRow(
+                    icon: "brain",
+                    title: "Remembered facts",
+                    subtitle: "distilled from finished sessions — inspect via the brain chip",
+                    value: rememberedFactCount.map { "\($0)" } ?? "—",
+                    healthy: true
+                )
+                SettingsRowDivider()
+                metricRow(
+                    icon: "point.3.connected.trianglepath.dotted",
+                    title: "Semantic recall",
+                    subtitle: EmbeddingHealth.shared.userFacingIssue
+                        ?? "embeddings healthy — memories reach prompts",
+                    value: EmbeddingHealth.shared.userFacingIssue == nil ? "On" : "Off",
+                    healthy: EmbeddingHealth.shared.userFacingIssue == nil
+                )
+            }
+        }
+    }
+
+    private var resetFooter: some View {
+        HStack {
+            Spacer()
+            Button("Reset scorecard") {
+                metrics.reset()
+            }
+            .buttonStyle(.plain)
+            .font(DS.caption.weight(.medium))
+            .foregroundStyle(DS.textSecondary)
+            .cosmoClickCursor()
+            .help("Zero the lifetime numbers and start a fresh contract")
         }
     }
 

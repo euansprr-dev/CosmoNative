@@ -19,19 +19,33 @@ actor ThumbnailCacheService {
     /// full quality, so a future larger display size only changes this constant.
     nonisolated static let displayMaxPixelSize: CGFloat = 600
 
-    private let memoryCache = NSCache<NSString, NSImage>()
-    private var inflightTasks: [String: Task<NSImage?, Never>] = [:]
+    /// A decoded 600px thumb costs ~1.4 MB. The old 128 MB ceiling held barely
+    /// 90 of them, so two screens of masonry evicted the screen above it and
+    /// scrolling back up paid a fresh disk decode every single time.
+    private static let memoryCostLimit = 384 * 1024 * 1024
+    private static let memoryCountLimit = 1200
 
-    private var cacheDirectory: URL {
+    /// Disk entries are never evicted individually; a once-per-launch prune
+    /// keeps the folder bounded instead.
+    private static let diskBudgetBytes: Int64 = 2 * 1024 * 1024 * 1024
+
+    /// `nonisolated(unsafe)` is the honest annotation, not a shortcut: NSCache
+    /// is documented thread-safe, and the synchronous first-frame probe in
+    /// `CachedAsyncImage.init` depends on reading it without an actor hop.
+    nonisolated(unsafe) private let memoryCache = NSCache<NSString, NSImage>()
+    private var inflightTasks: [String: Task<NSImage?, Never>] = [:]
+    private var didPruneDisk = false
+
+    nonisolated static var cacheDirectory: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             .appendingPathComponent("Cosmo/ThumbnailCache", isDirectory: true)
     }
 
     private init() {
-        memoryCache.countLimit = 400
+        memoryCache.countLimit = Self.memoryCountLimit
         // Decoded bitmaps are charged by pixel cost; without this the cache could
         // hold gigabytes of full-frame textures.
-        memoryCache.totalCostLimit = 128 * 1024 * 1024
+        memoryCache.totalCostLimit = Self.memoryCostLimit
     }
 
     // MARK: - Downsampled decode
@@ -134,71 +148,152 @@ actor ThumbnailCacheService {
     }
 
     /// Full lookup: memory → disk → network download.
-    func image(for url: URL, key: String) async -> NSImage? {
-        // 1. Memory
+    ///
+    /// LAW: this actor arbitrates the memory cache and the in-flight table and
+    /// NOTHING ELSE. Every byte of file IO and every ImageIO decode runs in a
+    /// detached task. Decoding inline on the actor serialized the entire grid
+    /// behind one queue — 60 visible cards meant 60 sequential disk decodes
+    /// before the last one could paint, which is precisely what a cold open
+    /// looked like.
+    /// `_Concurrency.TaskPriority` is spelled out because the app defines its
+    /// own `TaskPriority` (task-system urgency) that shadows it.
+    func image(
+        for url: URL,
+        key: String,
+        priority: _Concurrency.TaskPriority = .userInitiated
+    ) async -> NSImage? {
         if let cached = memoryCache.object(forKey: key as NSString) { return cached }
 
-        // 2. Disk — decode downsampled, never at full resolution
-        let diskPath = cacheDirectory.appendingPathComponent("thumb-\(key).jpg")
-        if FileManager.default.fileExists(atPath: diskPath.path),
-           let diskImage = Self.downsampledImage(contentsOf: diskPath) {
-            store(diskImage, forKey: key)
-            return diskImage
-        }
-
-        // 3. Deduplicated network fetch
+        // Dedupe now covers the DISK leg too. Two surfaces sharing a key (a
+        // card and its preview, the same swipe in two shelves) used to run the
+        // identical decode twice.
         if let existing = inflightTasks[key] { return await existing.value }
 
-        let dir = cacheDirectory
-        let task = Task<NSImage?, Never> {
-            do {
-                let request: URLRequest
-                if InstagramCarouselImageCache.shouldUseInstagramHeaders(for: url) {
-                    request = InstagramCarouselImageCache.request(for: url)
-                } else if let authorized = await MainActor.run(body: {
-                    SupabaseClient.shared.flatMap { client in
-                        client.isSupabaseHostedURL(url) ? client.authorizedRequest(for: url) : nil
-                    }
-                }) {
-                    // Mirrored thumbnails live in a private storage bucket —
-                    // fetch them with the client's own Bearer.
-                    request = authorized
-                } else {
-                    var genericRequest = URLRequest(url: url)
-                    genericRequest.timeoutInterval = 45
-                    request = genericRequest
-                }
-                let (data, _) = try await URLSession.shared.data(for: request)
-                let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
-                guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions),
-                      let image = Self.downsample(from: source, maxPixelSize: Self.displayMaxPixelSize) else {
-                    return nil
-                }
-
-                // Persist full quality to disk; memory only ever holds the downsample
-                try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-                Self.writeJPEG(from: source, to: diskPath, originalData: data)
-
-                await self.store(image, forKey: key)
-                return image
-            } catch {
-                return nil
-            }
+        let task = Task<NSImage?, Never>.detached(priority: priority) {
+            await Self.load(url: url, key: key)
         }
         inflightTasks[key] = task
         let result = await task.value
         inflightTasks.removeValue(forKey: key)
-        if let result { return result }
 
-        // Fallback decode only when the fetch actually failed — computing it
-        // up front paid a disk decode on every cache miss, serialized through
-        // this actor.
-        if let fallbackImage = InstagramCarouselImageCache.fallbackImage(forStableKey: key) {
-            store(fallbackImage, forKey: key)
-            return fallbackImage
+        if let result { store(result, forKey: key) }
+        return result
+    }
+
+    /// Point extra cache keys at bytes we already resolved. One image addressed
+    /// under several keys (a card's key vs the Study stage's) used to mean one
+    /// network round trip and one disk copy PER KEY.
+    func alias(key: String, to otherKeys: [String]) {
+        let image = memoryCache.object(forKey: key as NSString)
+        for other in otherKeys where other != key {
+            if let image {
+                memoryCache.setObject(image, forKey: other as NSString, cost: Self.cacheCost(of: image))
+            }
+            Self.linkDiskEntry(from: key, to: other)
+        }
+    }
+
+    // MARK: - Disk
+
+    private nonisolated static func diskPath(for key: String) -> URL {
+        cacheDirectory.appendingPathComponent("thumb-\(key).jpg")
+    }
+
+    /// Hard-link, never copy — an alias costs an inode, not a second megabyte.
+    private nonisolated static func linkDiskEntry(from sourceKey: String, to destinationKey: String) {
+        guard sourceKey != destinationKey else { return }
+        let manager = FileManager.default
+        let source = diskPath(for: sourceKey)
+        let destination = diskPath(for: destinationKey)
+        guard manager.fileExists(atPath: source.path),
+              !manager.fileExists(atPath: destination.path) else { return }
+        try? manager.linkItem(at: source, to: destination)
+    }
+
+    /// Disk → network, entirely off the actor.
+    private nonisolated static func load(url: URL, key: String) async -> NSImage? {
+        let path = diskPath(for: key)
+        if FileManager.default.fileExists(atPath: path.path),
+           let diskImage = downsampledImage(contentsOf: path) {
+            return diskImage
         }
 
-        return nil
+        do {
+            let request: URLRequest
+            if InstagramCarouselImageCache.shouldUseInstagramHeaders(for: url) {
+                request = InstagramCarouselImageCache.request(for: url)
+            } else if let authorized = await MainActor.run(body: {
+                SupabaseClient.shared.flatMap { client in
+                    client.isSupabaseHostedURL(url) ? client.authorizedRequest(for: url) : nil
+                }
+            }) {
+                // Mirrored thumbnails live in a private storage bucket —
+                // fetch them with the client's own Bearer.
+                request = authorized
+            } else {
+                var genericRequest = URLRequest(url: url)
+                genericRequest.timeoutInterval = 45
+                request = genericRequest
+            }
+            let (data, _) = try await URLSession.shared.data(for: request)
+            let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+            guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions),
+                  let image = downsample(from: source, maxPixelSize: displayMaxPixelSize) else {
+                return legacyFallback(for: key)
+            }
+
+            // Persist full quality to disk; memory only ever holds the downsample
+            try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+            writeJPEG(from: source, to: path, originalData: data)
+            return image
+        } catch {
+            return legacyFallback(for: key)
+        }
+    }
+
+    /// Only reached when the fetch actually failed — computing it up front paid
+    /// a disk decode on every cache miss.
+    private nonisolated static func legacyFallback(for key: String) -> NSImage? {
+        guard InstagramCarouselImageCache.mayHaveLegacyFallback(forStableKey: key) else { return nil }
+        return InstagramCarouselImageCache.fallbackImage(forStableKey: key)
+    }
+
+    // MARK: - Disk prune
+
+    /// The cache folder had no eviction of any kind and grew for the life of
+    /// the install. Trim to `diskBudgetBytes`, coldest first, once per launch.
+    func pruneDiskCacheIfNeeded() {
+        guard !didPruneDisk else { return }
+        didPruneDisk = true
+        Task.detached(priority: .background) { Self.pruneDiskCache() }
+    }
+
+    private nonisolated static func pruneDiskCache() {
+        let manager = FileManager.default
+        let resourceKeys: [URLResourceKey] = [.contentAccessDateKey, .contentModificationDateKey, .fileSizeKey]
+        guard let entries = try? manager.contentsOfDirectory(
+            at: cacheDirectory,
+            includingPropertiesForKeys: resourceKeys,
+            options: [.skipsHiddenFiles]
+        ) else { return }
+
+        var records: [(url: URL, date: Date, size: Int64)] = []
+        records.reserveCapacity(entries.count)
+        var total: Int64 = 0
+        for entry in entries {
+            guard let values = try? entry.resourceValues(forKeys: Set(resourceKeys)) else { continue }
+            let size = Int64(values.fileSize ?? 0)
+            let date = values.contentAccessDate ?? values.contentModificationDate ?? .distantPast
+            records.append((entry, date, size))
+            total += size
+        }
+
+        guard total > diskBudgetBytes else { return }
+        records.sort { $0.date < $1.date }
+        for record in records where total > diskBudgetBytes {
+            try? manager.removeItem(at: record.url)
+            total -= record.size
+        }
     }
 }
 
@@ -242,25 +337,30 @@ struct CachedAsyncImage<Content: View>: View {
                 let key = cache.cacheKey(for: url, stableKey: stableKey)
 
                 // Check memory cache first (instant, no flicker)
-                if let cached = await cache.cachedImage(for: key) {
+                if let cached = cache.cachedImage(for: key) {
                     phase = .success(Image(nsImage: cached))
                     return
                 }
 
-                // Carousel fallback probe is disk IO + an ImageIO decode —
-                // never on the main actor (this task inherits it). It runs
-                // concurrently with the full lookup and only fills the phase
-                // while that lookup is still in flight.
-                async let fallbackProbe = Task.detached(priority: .userInitiated) {
-                    InstagramCarouselImageCache.fallbackImage(forStableKey: key)
-                }.value
+                // The real lookup starts FIRST and runs while anything else
+                // happens — it used to sit behind the legacy probe's await, so
+                // every cache miss paid a detached task spawn before a single
+                // byte was requested.
+                async let lookup = cache.image(for: url, key: key)
 
-                if let fallback = await fallbackProbe, case .empty = phase {
+                // Legacy carousel probe is disk IO + an ImageIO decode — never
+                // on the main actor (this task inherits it), and never at all
+                // for the keys it provably cannot resolve. It only fills the
+                // phase while the real lookup is still in flight.
+                if InstagramCarouselImageCache.mayHaveLegacyFallback(forStableKey: key),
+                   let fallback = await Task.detached(priority: .utility, operation: {
+                       InstagramCarouselImageCache.fallbackImage(forStableKey: key)
+                   }).value,
+                   case .empty = phase {
                     phase = .success(Image(nsImage: fallback))
                 }
 
-                // Full lookup: disk then network
-                if let image = await cache.image(for: url, key: key) {
+                if let image = await lookup {
                     phase = .success(Image(nsImage: image))
                 } else if case .success = phase {
                     return
@@ -403,6 +503,13 @@ enum InstagramCarouselImageCache {
     static func fallbackImage(forStableKey stableKey: String) -> NSImage? {
         guard let fallbackURL = fallbackFileURL(forStableKey: stableKey) else { return nil }
         return ThumbnailCacheService.downsampledImage(contentsOf: fallbackURL)
+    }
+
+    /// Cheap string test for the ONLY key shape `fallbackImage` can ever
+    /// resolve. Without it, every cache miss in the app spawned a detached task
+    /// to stat a file that could not exist.
+    static func mayHaveLegacyFallback(forStableKey stableKey: String) -> Bool {
+        stableKey.hasPrefix("ig-carousel-") && stableKey.hasSuffix("-0")
     }
 
     private static func cachePath(for stableKey: String) -> URL {

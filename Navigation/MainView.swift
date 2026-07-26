@@ -1156,6 +1156,14 @@ struct MainView: View {
                 Task { await WorkbenchStore.shared.loadIfNeeded() }
             }
             .task {
+                // Swipe thumbnails start warming at t=0, ahead of everything
+                // else in this task: the manifest replays last session's keys
+                // straight off disk with no database query, so opening the
+                // Swipe File in the first seconds of a launch still paints
+                // finished cards. It also prunes the (previously unbounded)
+                // thumbnail folder.
+                SwipeThumbnailPrewarmer.shared.warmFromManifest()
+
                 // Warm Command-K's search index, recents, and domain counts
                 // after launch settles, so the first ⌘K open animates over
                 // preloaded state instead of querying mid-spring.

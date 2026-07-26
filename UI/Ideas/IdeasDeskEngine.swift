@@ -169,8 +169,10 @@ struct IdeasDeskEngine {
         if inspiration.contains(idea.atomUUID) { substance.append("from a saved swipe") }
         segments.append(contentsOf: substance.prefix(2))
 
+        // Sparks admit their staleness too ("Spark · quiet for 8w") — the
+        // fresh-capture stages can never trip this (updated ≥ created), so
+        // no status gate is needed.
         if substance.count < 2,
-           idea.status != .spark,
            let quiet = daysSince(idea.updatedAt, now: now),
            quiet > quietAfterDays {
             segments.append("quiet for \(max(1, Int(quiet / 7)))w")

@@ -183,6 +183,17 @@ final class IdeasDeskEngineTests: XCTestCase {
         XCTAssertEqual(IdeasDeskEngine.whyLine(for: old, inspiration: [], now: now), "Spark")
     }
 
+    func testWhyLineOldBareSparkAdmitsQuietness() {
+        let stale = makeIdea(
+            uuid: "stale", client: clientA,
+            createdHoursAgo: 60 * 24, updatedHoursAgo: 28 * 24
+        )
+        XCTAssertEqual(
+            IdeasDeskEngine.whyLine(for: stale, inspiration: [], now: now),
+            "Spark · quiet for 4w"
+        )
+    }
+
     func testWhyLineNotesQuietNonSparksWhenSubstanceLeavesRoom() {
         let quiet = makeIdea(
             uuid: "q", client: clientA, status: .developing,

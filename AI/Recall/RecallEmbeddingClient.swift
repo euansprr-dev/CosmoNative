@@ -36,6 +36,47 @@ enum RecallEmbeddingError: LocalizedError {
     }
 }
 
+/// The embeddings integration's health, recorded at the one choke point every
+/// cloud embedding call flows through. Memory recall, the Recall index, and
+/// exemplar retrieval all die silently when embeddings fail — this is how the
+/// UI tells the user exactly what is wrong (missing key, bad key, API error)
+/// instead of degrading in silence.
+final class EmbeddingHealth: @unchecked Sendable {
+    static let shared = EmbeddingHealth()
+
+    private let lock = NSLock()
+    private var lastErrorStorage: String?
+
+    /// The most recent failure, cleared by the next success. Nil = healthy
+    /// (or no attempt yet this session).
+    var lastError: String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return lastErrorStorage
+    }
+
+    func recordSuccess() {
+        lock.lock()
+        lastErrorStorage = nil
+        lock.unlock()
+    }
+
+    func recordFailure(_ message: String) {
+        lock.lock()
+        lastErrorStorage = message
+        lock.unlock()
+    }
+
+    /// One-line diagnosis for UI surfaces, nil when healthy. Missing key wins
+    /// (it's the actionable case); otherwise the most recent runtime failure.
+    var userFacingIssue: String? {
+        if !APIKeys.hasEmbeddings {
+            return "No embeddings API key — add one in Settings → Connections → Service Keys."
+        }
+        return lastError.map { "Embeddings are failing: \($0)" }
+    }
+}
+
 // MARK: - Cloud Client (OpenAI wire format)
 
 struct CloudEmbeddingClient: RecallEmbeddingClient {
@@ -63,6 +104,7 @@ struct CloudEmbeddingClient: RecallEmbeddingClient {
 
     func embed(_ texts: [String]) async throws -> [[Float]] {
         guard let key = APIKeys.embeddings, !key.isEmpty else {
+            EmbeddingHealth.shared.recordFailure(RecallEmbeddingError.notConfigured.localizedDescription)
             throw RecallEmbeddingError.notConfigured
         }
         guard !texts.isEmpty else { return [] }
@@ -74,8 +116,14 @@ struct CloudEmbeddingClient: RecallEmbeddingClient {
         while start < texts.count {
             let slice = Array(texts[start..<min(start + Self.maxBatchSize, texts.count)])
             start += Self.maxBatchSize
-            vectors.append(contentsOf: try await embedBatch(slice, key: key))
+            do {
+                vectors.append(contentsOf: try await embedBatch(slice, key: key))
+            } catch {
+                EmbeddingHealth.shared.recordFailure(error.localizedDescription)
+                throw error
+            }
         }
+        EmbeddingHealth.shared.recordSuccess()
         return vectors
     }
 

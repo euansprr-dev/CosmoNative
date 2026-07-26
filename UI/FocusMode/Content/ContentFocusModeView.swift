@@ -877,11 +877,12 @@ struct ContentFocusModeView: View {
 
     // MARK: - Scriptorium manuscript (title hero + step ledger + rich editor)
 
-    /// Margins scroll silently — no fat legacy scroller (which macOS's "always
-    /// show scroll bars" setting otherwise forces straight through
-    /// `.scrollIndicators(.hidden)`). Instead they borrow the manuscript's slim
-    /// capsule scrollbar, which fades in only when the rail actually overflows.
-    /// Like the manuscript, they rest below the toolbar and slide under its glass.
+    /// Margins scroll silently — no scrollbar of any kind, and no fat legacy
+    /// scroller (which macOS's "always show scroll bars" setting otherwise
+    /// forces straight through `.scrollIndicators(.hidden)`). A long outline or
+    /// reference stack just scrolls; the manuscript owns the page's only visible
+    /// scrollbar. Like the manuscript, the rails rest below the toolbar and
+    /// slide under its glass.
     private func scriptoriumMarginScroll<Content: View>(
         width: CGFloat,
         height: CGFloat,
@@ -2883,45 +2884,37 @@ private struct PremiumManuscriptScrollbar: View {
     }
 }
 
-/// A pinned side rail (outline · context) that suppresses the native scroller —
-/// so macOS's "Show scroll bars: Always" setting can't force a fat legacy bar
-/// through `.scrollIndicators(.hidden)` — and replaces it with the same slim
-/// capsule the manuscript uses, which fades in only when the rail overflows.
+/// A pinned side rail (outline · context) that scrolls with no scrollbar at all.
+/// The native scroller is suppressed through the introspector — macOS's "Show
+/// scroll bars: Always" forces a fat legacy bar straight through
+/// `.scrollIndicators(.hidden)` — and nothing is drawn in its place: the page
+/// carries exactly one visible scrollbar, the manuscript's. No metrics observer
+/// is attached either, so a long outline costs nothing per scroll tick.
 private struct MarginRailScroll<Content: View>: View {
     let width: CGFloat
     let height: CGFloat
     let topInset: CGFloat
     @ViewBuilder var content: () -> Content
 
-    @State private var metrics = ManuscriptScrollMetrics()
-
     var body: some View {
         ScrollView {
             content()
                 .frame(width: width, alignment: .leading)
                 .padding(.bottom, DS.space20)
-                .background(
-                    ScrollViewIntrospector(onResolve: { _ in }) { newMetrics in
-                        metrics = newMetrics
-                    }
-                )
+                .background(ScrollViewIntrospector(onResolve: { _ in }))
         }
         .scrollIndicators(.hidden)
         .scrollEdgeEffectStyle(.soft, for: .vertical)
         .contentMargins(.top, topInset, for: .scrollContent)
-        .overlay(alignment: .trailing) {
-            PremiumManuscriptScrollbar(metrics: metrics)
-                .padding(.trailing, DS.space2)
-                .padding(.top, topInset + DS.space8)
-                .padding(.bottom, DS.space8)
-        }
         .frame(width: width, height: height, alignment: .top)
     }
 }
 
 private struct ScrollViewIntrospector: NSViewRepresentable {
     var onResolve: (NSScrollView) -> Void
-    var onMetricsChange: (ManuscriptScrollMetrics) -> Void = { _ in }
+    /// Nil for scrollers that draw no scrollbar — they want the native-scroller
+    /// suppression only, never a bounds observer running math per scroll tick.
+    var onMetricsChange: ((ManuscriptScrollMetrics) -> Void)? = nil
 
     func makeNSView(context: Context) -> NSView {
         let view = NSView(frame: .zero)
@@ -2951,14 +2944,14 @@ private struct ScrollViewIntrospector: NSViewRepresentable {
 
     final class Coordinator {
         var onResolve: (NSScrollView) -> Void
-        var onMetricsChange: (ManuscriptScrollMetrics) -> Void
+        var onMetricsChange: ((ManuscriptScrollMetrics) -> Void)?
         private weak var scrollView: NSScrollView?
         private var observers: [NSObjectProtocol] = []
         private var lastMetrics = ManuscriptScrollMetrics()
 
         init(
             onResolve: @escaping (NSScrollView) -> Void,
-            onMetricsChange: @escaping (ManuscriptScrollMetrics) -> Void
+            onMetricsChange: ((ManuscriptScrollMetrics) -> Void)?
         ) {
             self.onResolve = onResolve
             self.onMetricsChange = onMetricsChange
@@ -2979,6 +2972,9 @@ private struct ScrollViewIntrospector: NSViewRepresentable {
             observers.removeAll()
             self.scrollView = scrollView
             configure(scrollView)
+
+            // Scrollbar-less rails stop here: suppression, no observation.
+            guard onMetricsChange != nil else { return }
 
             let clipView = scrollView.contentView
             clipView.postsBoundsChangedNotifications = true
@@ -3017,6 +3013,7 @@ private struct ScrollViewIntrospector: NSViewRepresentable {
         }
 
         private func publishMetrics(for scrollView: NSScrollView) {
+            guard let onMetricsChange else { return }
             let visibleHeight = max(scrollView.documentVisibleRect.height, 1)
             let documentHeight = max(scrollView.documentView?.bounds.height ?? visibleHeight, visibleHeight)
             let scrollableDistance = max(documentHeight - visibleHeight, 0)

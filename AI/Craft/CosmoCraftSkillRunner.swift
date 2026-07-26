@@ -210,10 +210,15 @@ final class CosmoCraftSkillRunner {
                 )
                 session.lastRiff = riff
                 sessions[sessionKey] = session
-                store.receivePaneAnswer(
-                    title: nil,
-                    answer: CraftAnswerRenderer.markdown(for: riff, usage: completion.usage),
-                    route: .answer
+                // Interactive directions card: each variation is a block that
+                // previews in the live draft and applies with one click. The
+                // rendered markdown rides along as the durable fallback (old
+                // sessions, copy, repair). Typed "apply N" still works.
+                store.receiveRiffDirections(
+                    riff: riff,
+                    snapshot: snapshot,
+                    receiptLine: completion.usage.receiptLine,
+                    fallbackMarkdown: CraftAnswerRenderer.markdown(for: riff, usage: completion.usage)
                 )
             } else {
                 let review = try CraftStructuredOutputParser.decodeRenderable(
@@ -280,38 +285,59 @@ final class CosmoCraftSkillRunner {
             return
         }
         let variation = riff.variations[index - 1]
+        let operation = Self.riffApplyOperation(index: index, riff: riff, snapshot: snapshot)
+        let isNewBeat = riff.targetOriginalText.isEmpty
+
+        let proposal = CosmoAssistantProposal(
+            prompt: prompt,
+            surfaceID: snapshot.surfaceID,
+            title: "Riff variation \(index)",
+            summary: isNewBeat
+                ? "Insert variation \(index) (\(variation.mechanism)) as the \(riff.beatLabel.lowercased()). Review the diff in the editor."
+                : "Swap the \(riff.beatLabel.lowercased()) for variation \(index) (\(variation.mechanism)). Review the diff in the editor.",
+            operations: [operation],
+            skillID: CosmoInlineAssistantSkillID.voiceVariations.rawValue
+        )
+        store.receive(proposal: proposal)
+    }
+
+    /// Build the staged operation for "apply N". A non-empty target stages the
+    /// verbatim replacement diff. An empty target means the beat doesn't exist
+    /// in the draft yet — stage a textInsertion instead, with the beat label in
+    /// the rationale so the diff engine's slide-header fallback places it under
+    /// the right SLIDE N header (or appends when no header matches).
+    nonisolated static func riffApplyOperation(
+        index: Int,
+        riff: CraftRiffResult,
+        snapshot: CosmoEditableSourceSnapshot
+    ) -> CosmoAssistantProposalOperation {
+        let variation = riff.variations[index - 1]
         let original = riff.targetOriginalText
+        let borrowedSuffix = variation.borrowedFrom.isEmpty || variation.borrowedFrom == "none"
+            ? ""
+            : ", pattern from \(variation.borrowedFrom)"
 
         guard !original.isEmpty else {
-            store.receivePaneAnswer(
-                title: nil,
-                answer: "I don't have a clean handle on the original text for that beat — re-run /riff and I'll grab it.",
-                route: .answer
+            return CosmoAssistantProposalOperation(
+                kind: .textInsertion,
+                targetID: snapshot.targetID,
+                anchorID: nil,
+                originalText: nil,
+                proposedText: variation.text,
+                sourceHash: snapshot.sourceHash,
+                rationale: "Riff \(index) for the \(riff.beatLabel) — \(variation.mechanism)\(borrowedSuffix)"
             )
-            return
         }
 
-        let operation = CosmoAssistantProposalOperation(
+        return CosmoAssistantProposalOperation(
             kind: .textReplacement,
             targetID: snapshot.targetID,
             anchorID: CraftSurfaceContext.anchorID(forOriginalText: original, in: snapshot),
             originalText: original,
             proposedText: variation.text,
             sourceHash: snapshot.sourceHash,
-            rationale: "Riff \(index) — \(variation.mechanism)"
-                + (variation.borrowedFrom.isEmpty || variation.borrowedFrom == "none"
-                    ? ""
-                    : ", pattern from \(variation.borrowedFrom)")
+            rationale: "Riff \(index) — \(variation.mechanism)\(borrowedSuffix)"
         )
-        let proposal = CosmoAssistantProposal(
-            prompt: prompt,
-            surfaceID: snapshot.surfaceID,
-            title: "Riff variation \(index)",
-            summary: "Swap the \(riff.beatLabel.lowercased()) for variation \(index) (\(variation.mechanism)). Review the diff in the editor.",
-            operations: [operation],
-            skillID: CosmoInlineAssistantSkillID.voiceVariations.rawValue
-        )
-        store.receive(proposal: proposal)
     }
 
     // MARK: - Context resolution
@@ -449,7 +475,7 @@ final class CosmoCraftSkillRunner {
             ## Task — Riff
             The writer is stuck on one beat and wants directions, not a rewrite. Their request: "\(prompt)"
 
-            Identify which beat of the draft they mean (use their words; if genuinely ambiguous, riff the hook). Copy that beat's current text VERBATIM into targetOriginalText. Then write 5–7 variations, each using a genuinely different mechanism, each at \(format.displayName) density, each in the client's voice from the top-performer transcripts. Borrow patterns from the comparables and carry their numbers. Close with the one you'd bet on and why.
+            Identify which beat of the draft they mean (use their words; if genuinely ambiguous, riff the hook). Copy that beat's current text VERBATIM into targetOriginalText. If the beat is new or currently empty — they're asking what to write there — leave targetOriginalText as an empty string and write each variation as a complete candidate for that beat; never invent a quote the draft doesn't contain. Then write 5–7 variations, each using a genuinely different mechanism, each at \(format.displayName) density, each in the client's voice from the top-performer transcripts. Borrow patterns from the comparables and carry their numbers. Close with the one you'd bet on and why.
             """
         default:
             task = """

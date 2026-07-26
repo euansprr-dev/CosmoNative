@@ -107,6 +107,11 @@ struct CosmoApp: App {
             try? await Task.sleep(for: .seconds(60))
             _ = await RecallIndexer.shared.backfill()
 
+            // Archival memories written while embeddings were unconfigured
+            // have NULL vectors and are invisible to semantic recall — repair
+            // them as soon as a key exists (no-op otherwise).
+            await CosmoMemoryService.shared.backfillMissingEmbeddings()
+
             // Version-history maintenance: apply the tiered retention policy
             // (at most once per day; cheap no-op otherwise).
             await AtomRevisionPruner.pruneIfDue()

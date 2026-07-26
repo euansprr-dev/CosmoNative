@@ -197,6 +197,19 @@ enum CosmoCraftEngine {
                      model, usage.inputTokens, usage.cacheWriteTokens,
                      usage.cacheReadTokens, usage.outputTokens, usage.costUSD))
         await CraftCostLog.shared.record(usage)
+        // Craft speaks its own HTTP — without this, craft runs are invisible
+        // to the studio's "LLM calls" count and cache-health ratio.
+        LLMCacheTelemetry.shared.record(
+            response: LLMResponse(
+                content: nil,
+                toolCalls: [],
+                inputTokens: usage.inputTokens,
+                outputTokens: usage.outputTokens,
+                cacheReadInputTokens: usage.cacheReadTokens,
+                cacheCreationInputTokens: usage.cacheWriteTokens
+            ),
+            label: "craft"
+        )
 
         return CraftCompletion(text: text, usage: usage)
     }
@@ -265,7 +278,7 @@ enum CosmoCraftEngine {
     static var riffSchema: [String: Any] {
         object([
             "beatLabel": string("The beat being riffed, e.g. 'Slide 3 — tension beat'."),
-            "targetOriginalText": string("The draft's current text for this beat, copied VERBATIM — used to stage the replacement diff."),
+            "targetOriginalText": string("The draft's current text for this beat, copied VERBATIM — used to stage the replacement diff. Empty string when the beat is new or currently empty; never invent text the draft doesn't contain.", minLength: 0),
             "variations": array(object([
                 "text": string("The variation, format-correct density, client's voice."),
                 "mechanism": string("The mechanism in ≤6 words, e.g. 'curiosity gap via absence'."),

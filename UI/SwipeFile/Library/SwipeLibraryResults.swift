@@ -136,6 +136,7 @@ struct SwipeLibraryResults: View {
             targetColumnWidth: 208,
             spacing: 20,
             itemHeight: { model, width in model.height(forWidth: width) },
+            onPrefetch: { SwipeThumbnailPrewarmer.shared.warmAhead(models: $0) },
             cell: { model, width, index in
                 SwipeLibraryCardCell(
                     model: model,

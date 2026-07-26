@@ -21,6 +21,10 @@ final class SwipeStudyPrewarmer {
     /// Parallel prewarms — small so scrolling stays smooth and Instagram's
     /// CDN never sees a burst.
     private let semaphore = AsyncSemaphore(value: 3)
+    /// Reels are ~9 MB. They get their OWN slot, held outside the image
+    /// semaphore: three concurrent video downloads used to occupy every prewarm
+    /// slot and starve the thumbnails the user is actually looking at.
+    private let videoSemaphore = AsyncSemaphore(value: 1)
     /// UUIDs already warmed (or in flight) this launch. Bounded — a very long
     /// browsing session resets rather than growing forever.
     private var warmed: Set<String> = []
@@ -38,44 +42,66 @@ final class SwipeStudyPrewarmer {
 
         Task(priority: .utility) { [weak self] in
             guard let self else { return }
+
             await self.semaphore.wait()
-            defer { Task { await self.semaphore.signal() } }
-            await self.warm(uuid: uuid)
+            let deferred = await self.warm(uuid: uuid)
+            await self.semaphore.signal()
+
+            // Everything only Swipe Study needs — carousel slides 1..N and the
+            // reel MP4 — runs AFTER the image slot is released, on its own
+            // one-at-a-time lane. Scrolling past a 10-slide carousel used to
+            // enqueue ten full-size downloads in a slot the visible grid's
+            // thumbnails were waiting for.
+            guard let deferred else { return }
+            await self.videoSemaphore.wait()
+            await self.warmStudyOnlyMedia(deferred)
+            await self.videoSemaphore.signal()
         }
     }
 
-    private func warm(uuid: String) async {
+    /// The fast lane: the atom row plus the ONE thumbnail the grid renders.
+    /// Returns the handle for the deferred lane.
+    private func warm(uuid: String) async -> DeferredWarm? {
         // 1) The row itself + decoded columns. `swipeAnalysis`/`richContent`
         //    populate DecodedColumnCache as a side effect, so the bench's
         //    first decode on open is a cache hit.
         guard let atom = try? await AtomRepository.shared.fetch(uuid: uuid),
-              atom.isSwipeFileAtom else { return }
+              atom.isSwipeFileAtom else { return nil }
         _ = atom.swipeAnalysis
         let richContent = atom.richContent
 
-        // 2) Stage hero images — the SAME stable keys SwipeStudyStagePane
-        //    uses, so its CachedAsyncImage resolves instantly.
-        if let thumb = (atom.thumbnailUrl ?? richContent?.thumbnailUrl),
-           let url = URL(string: thumb) {
-            _ = await ThumbnailCacheService.shared.image(
-                for: url,
-                key: ThumbnailCacheService.shared.cacheKey(for: url, stableKey: "swipe-ig-thumb-\(uuid)")
-            )
-            _ = await ThumbnailCacheService.shared.image(
-                for: url,
-                key: ThumbnailCacheService.shared.cacheKey(for: url, stableKey: "swipe-stage-\(uuid)")
-            )
-        }
+        // 2) One fetch, three keys. The card, the Study stage and the IG hero
+        //    address the SAME image under different stable keys; resolving each
+        //    separately meant three network round trips and three identical
+        //    copies on disk. Resolve under the card's key (so the library grid
+        //    is warmed too — it never was for non-carousel swipes) and alias
+        //    the stage keys onto it: memory shares the decode, disk hard-links.
+        await warmSharedThumbnail(atom: atom, uuid: uuid)
 
-        // 3) Carousel pages → on-disk cache (keys match the pager's).
+        // 3) Carousel pages and the reel MP4 are Study-only — handed to the
+        //    deferred lane rather than run here.
         let shortcode = richContent?.instagramId
             ?? atom.url.flatMap(URL.init(string:)).flatMap {
                 InstagramExtractor.shared.extractShortcode(from: $0)
             }
-        if let items = richContent?.instagramData?.carouselItems, !items.isEmpty {
+        return DeferredWarm(atom: atom, shortcode: shortcode)
+    }
+
+    private struct DeferredWarm {
+        let atom: Atom
+        let shortcode: String?
+    }
+
+    /// Carousel slides → on-disk cache (keys match the pager's), then the reel.
+    /// Slide 0 is already resident: it is the card's thumbnail, written to the
+    /// very same `thumb-ig-carousel-<code>-0.jpg` by the fast lane, so
+    /// `cacheCarouselImages` finds it and skips the download.
+    private func warmStudyOnlyMedia(_ request: DeferredWarm) async {
+        let atom = request.atom
+        if let items = atom.richContent?.instagramData?.carouselItems, !items.isEmpty {
             _ = await InstagramCarouselImageCache.cacheCarouselImages(
                 items: items,
-                shortcode: shortcode
+                shortcode: request.shortcode
             )
         } else if let mirrorItems = SwipeCarouselCloudMirror.mirroredCarouselItems(from: atom.metadata) {
             // No local slide list, but the worker's durable Supabase copies
@@ -83,13 +109,30 @@ final class SwipeStudyPrewarmer {
             // stage's mirror fast path will derive on open.
             _ = await InstagramCarouselImageCache.cacheCarouselImages(
                 items: mirrorItems,
-                shortcode: shortcode
+                shortcode: request.shortcode
             )
         }
 
-        // 4) Reel video → local MP4 cache. Only when a durable source exists;
-        //    never triggers a live Instagram extraction.
-        await prewarmVideoIfNeeded(atom: atom, shortcode: shortcode)
+        // Reel video → local MP4 cache. Only when a durable source exists;
+        // never triggers a live Instagram extraction.
+        await prewarmVideoIfNeeded(atom: atom, shortcode: request.shortcode)
+    }
+
+    /// Resolves the thumbnail ONCE under the card's own key, then points the
+    /// Study stage's keys at the same bytes. The card's URL is derived through
+    /// `toSwipeGalleryItem()` rather than read off the atom, because that is
+    /// where the durable Supabase mirror overrides the expiring CDN URL — the
+    /// two are frequently different, and only the mirror matches what the grid
+    /// actually requests.
+    private func warmSharedThumbnail(atom: Atom, uuid: String) async {
+        guard let item = atom.toSwipeGalleryItem() else { return }
+        let model = SwipeCardModel(item: item)
+        guard let url = model.mediaURL else { return }
+
+        let cache = ThumbnailCacheService.shared
+        let cardKey = cache.cacheKey(for: url, stableKey: model.mediaStableKey)
+        guard await cache.image(for: url, key: cardKey, priority: .utility) != nil else { return }
+        await cache.alias(key: cardKey, to: ["swipe-stage-\(uuid)", "swipe-ig-thumb-\(uuid)"])
     }
 
     private func prewarmVideoIfNeeded(atom: Atom, shortcode: String?) async {

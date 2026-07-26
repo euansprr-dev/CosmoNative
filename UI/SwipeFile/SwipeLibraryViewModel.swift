@@ -245,6 +245,12 @@ final class SwipeLibraryViewModel {
         )
     }
 
+    /// The default browse — no query, no filters, newest first. The shape a
+    /// cold launch lands on, and the only one worth persisting a warm list for.
+    private var isUnfilteredBrowse: Bool {
+        query.isEmpty && !filterState.hasActiveFilters && sortMode == .recent
+    }
+
     private func recomputeIfNeeded(_ shouldRecompute: Bool) {
         guard shouldRecompute else { return }
         recompute()
@@ -274,6 +280,14 @@ final class SwipeLibraryViewModel {
             : []
         shelves = SwipeLibraryFiltering.shelves(from: items)
         summary = SwipeLibraryFiltering.facetSummary(allItems: allItems, filteredItems: items)
+        // Warm the head of whatever the user is about to be looking at — a
+        // launch prewarm, a scope switch, a filter, a search keystroke. Already
+        // resident keys never reach the queue, so this is nearly free. Only an
+        // unfiltered browse is worth recording for next launch.
+        SwipeThumbnailPrewarmer.shared.warmLibrary(
+            models: visibleCardModels,
+            recordAsLaunchManifest: isUnfilteredBrowse
+        )
 
         if let selectedItem, !items.contains(where: { $0.id == selectedItem.id }) {
             self.selectedItem = items.first

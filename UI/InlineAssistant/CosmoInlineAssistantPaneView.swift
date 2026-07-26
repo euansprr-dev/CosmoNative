@@ -131,6 +131,7 @@ private struct CosmoInlineAssistantPaneToolbar: View {
 
     @Environment(\.paneDeckChrome) private var paneDeckChrome
     @State private var memoryFacts: [String] = []
+    @State private var memoryTotal = 0
     @State private var isMemoryPopoverShown = false
 
     var body: some View {
@@ -157,6 +158,15 @@ private struct CosmoInlineAssistantPaneToolbar: View {
         .background(escapeShortcut)
         .animation(ProMotionSprings.gentle, value: store.activeSurfaceTitle)
         .task { await refreshMemoryFacts() }
+        .task {
+            // Distillation fires when the app resigns active — the chip must
+            // pick up the new facts when the user comes back.
+            for await _ in NotificationCenter.default.notifications(
+                named: NSApplication.didBecomeActiveNotification
+            ) {
+                await refreshMemoryFacts()
+            }
+        }
         .onChange(of: store.isProcessing) { _, processing in
             guard !processing else { return }
             Task { await refreshMemoryFacts() }
@@ -268,17 +278,22 @@ private struct CosmoInlineAssistantPaneToolbar: View {
                 Image(systemName: "brain")
                     .font(DS.caption2)
                     .accessibilityHidden(true)
-                Text("\(memoryFacts.count)")
+                Text("\(memoryTotal)")
                     .font(DS.caption)
                     .monospacedDigit()
+                    .contentTransition(.numericText())
             }
-            .foregroundStyle(DS.textMuted)
+            // A red brain is the at-a-glance tell that recall is broken —
+            // the popover carries the exact reason and the fix.
+            .foregroundStyle(EmbeddingHealth.shared.userFacingIssue == nil ? DS.textMuted : DS.red)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .cosmoClickCursor()
-        .help("What Cosmo remembers — click to inspect or forget")
-        .accessibilityLabel("\(memoryFacts.count) remembered facts")
+        .help(EmbeddingHealth.shared.userFacingIssue == nil
+            ? "What Cosmo remembers — click to inspect or forget"
+            : "Memory recall is off — click to see why")
+        .accessibilityLabel("\(memoryTotal) remembered facts")
         .popover(isPresented: $isMemoryPopoverShown, arrowEdge: .bottom) {
             memoryPopover
         }
@@ -286,9 +301,17 @@ private struct CosmoInlineAssistantPaneToolbar: View {
 
     private var memoryPopover: some View {
         VStack(alignment: .leading, spacing: DS.space8) {
-            Text("Cosmo remembers")
-                .font(DS.caption.weight(.semibold))
-                .foregroundStyle(DS.textSecondary)
+            HStack(alignment: .firstTextBaseline) {
+                Text("Cosmo remembers")
+                    .font(DS.caption.weight(.semibold))
+                    .foregroundStyle(DS.textSecondary)
+                Spacer(minLength: DS.space8)
+                if memoryTotal > memoryFacts.count {
+                    Text("latest \(memoryFacts.count) of \(memoryTotal)")
+                        .font(DS.caption2)
+                        .foregroundStyle(DS.textMuted)
+                }
+            }
 
             ForEach(memoryFacts, id: \.self) { fact in
                 HStack(alignment: .firstTextBaseline, spacing: DS.space8) {
@@ -313,12 +336,22 @@ private struct CosmoInlineAssistantPaneToolbar: View {
                     .accessibilityLabel("Forget: \(fact)")
                 }
             }
+
+            // Silent degradation is how this system died once — if recall is
+            // broken, the person inspecting memory is told exactly why, here.
+            if let issue = EmbeddingHealth.shared.userFacingIssue {
+                Text("Memory recall is OFF — these facts are not reaching Cosmo's prompts. \(issue)")
+                    .font(DS.caption2)
+                    .foregroundStyle(DS.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(DS.space12)
         .frame(width: 340, alignment: .leading)
     }
 
     private func refreshMemoryFacts() async {
+        memoryTotal = await CosmoMemoryService.shared.archivalMemoryCount()
         memoryFacts = await CosmoMemoryService.shared.allArchivalMemory().suffix(8).reversed()
     }
 
@@ -842,6 +875,9 @@ struct CosmoInlineAssistantPaneMessages: View {
         } else if let canvasPlanID = message.canvasPlanID,
                   let plan = store.canvasPlan(id: canvasPlanID) {
             CosmoInlineAssistantPaneCanvasPlanCard(store: store, plan: plan)
+        } else if let riffCardID = message.riffCardID,
+                  let riffCard = store.riffDirectionsCard(id: riffCardID) {
+            CosmoInlineRiffDirectionsCardView(store: store, card: riffCard)
         } else {
             switch message.role {
             case .user:
@@ -2166,7 +2202,7 @@ private struct CosmoInlineAssistantPaneInquiryCard: View {
 
 /// Quiet pill button for card actions: hover lift, press compress, optional
 /// prominent (accent) variant for the primary verb.
-private struct CosmoPanePillButton: View {
+struct CosmoPanePillButton: View {
     let label: String
     let icon: String?
     let help: String

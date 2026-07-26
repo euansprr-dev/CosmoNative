@@ -747,6 +747,10 @@ class CosmoAgentService: ObservableObject {
         }
         let state = AnswerStreamState()
 
+        // Capture the task-local before the closure: the inline assistant sets
+        // it for the run's task tree to time first streamed model output.
+        let onFirstStreamEvent = LLMStreamObserver.onFirstEvent
+
         return try await streamingProvider.completeStreamingEvents(
             messages: messages,
             tools: tools,
@@ -754,6 +758,7 @@ class CosmoAgentService: ObservableObject {
             tier: tier,
             systemPrompt: systemPrompt
         ) { event in
+            onFirstStreamEvent?()
             guard case .toolCallArgumentsDelta(_, let name, let accumulatedJSON) = event,
                   name == "answer_in_assistant_pane",
                   let answer = LLMPartialToolArguments.stringValue(of: "answer", inPartialJSON: accumulatedJSON),

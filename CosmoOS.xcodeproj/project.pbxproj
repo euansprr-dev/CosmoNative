@@ -188,6 +188,7 @@
 		34DF226D4415D6C1D23E407D /* InstagramSwipeModal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200D6F1058EDFFDE093E9A31 /* InstagramSwipeModal.swift */; };
 		35A08CA2ED01AEA46EC80E74 /* AnnotationTypePickerPopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E717F71ABE96DFFD4CC8E03 /* AnnotationTypePickerPopover.swift */; };
 		35F0EFD8645E7F027EB8BEC7 /* ConceptCartographer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C9CDA68AF926BB954629356 /* ConceptCartographer.swift */; };
+		363BBAB2DB98DB7EE46C5E3B /* CosmoInlineRiffDirectionsCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B583339DA54EF2934BF648E /* CosmoInlineRiffDirectionsCard.swift */; };
 		367947D4621BD3B3189DD9D6 /* CosmoAssistantProseParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9C85BC581C87CD2A5ED0FCC /* CosmoAssistantProseParser.swift */; };
 		367F3557B19D0A3239C0B244 /* TaskLinkedAtomPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BC605327A4417D91C32CBA1 /* TaskLinkedAtomPicker.swift */; };
 		36AA1E4B3E91E74EA6E1BA78 /* CaptureDropTarget.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA9EC5043F061FF9F4A3221B /* CaptureDropTarget.swift */; };
@@ -777,6 +778,7 @@
 		D2C46A68847D8529352FB67F /* RichDocumentPersistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4600A03324615DF6F96B6D70 /* RichDocumentPersistence.swift */; };
 		D31F8A5CAC015DAB7E27B631 /* CosmoInlineAssistantDiffEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08467DF4490F0A503A2763C6 /* CosmoInlineAssistantDiffEngine.swift */; };
 		D328F65F01DBD96BD67E5005 /* ConnectionObjectionHandling.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9D637A5E38D91709DAA8902 /* ConnectionObjectionHandling.swift */; };
+		D3CFC024AF9B47C76CDDDA62 /* SwipeThumbnailPrewarmer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09DDDA182B560782D3CAAB17 /* SwipeThumbnailPrewarmer.swift */; };
 		D3E066617161F460F5D8A6D1 /* FocusStreakEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97F0B5F146DE70CA05E52E67 /* FocusStreakEngine.swift */; };
 		D4678E8FD9F2765680CCE42D /* SeedlingRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0E354AA03AE5AD32D68CF49 /* SeedlingRepository.swift */; };
 		D49C0F0FC6D0F6E388107E1B /* BlueprintDisplayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EC801BDF4A5DDE9BFB3FA9A /* BlueprintDisplayView.swift */; };
@@ -949,6 +951,7 @@
 		090597754446D78C195A77C1 /* TemplateBlockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateBlockView.swift; sourceTree = "<group>"; };
 		097B9509FD87D985F2EBF7D8 /* CosmoSessionDistiller.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CosmoSessionDistiller.swift; sourceTree = "<group>"; };
 		0991D7E1BD5C5AB465636B61 /* IdeaResearchPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdeaResearchPanel.swift; sourceTree = "<group>"; };
+		09DDDA182B560782D3CAAB17 /* SwipeThumbnailPrewarmer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SwipeThumbnailPrewarmer.swift; sourceTree = "<group>"; };
 		09E7B5E6ADAA2F96E31FD3DA /* FilmGrainOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FilmGrainOverlay.swift; sourceTree = "<group>"; };
 		0A26679EB4A00B0C739AD179 /* ReadwiseLibraryTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadwiseLibraryTab.swift; sourceTree = "<group>"; };
 		0A31881C5ED0D6432F0F1B43 /* DeepScoutIntentPlanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepScoutIntentPlanner.swift; sourceTree = "<group>"; };
@@ -1007,6 +1010,7 @@
 		1AB3A16F38BD76D03B00F860 /* DetachAtomAction.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DetachAtomAction.swift; sourceTree = "<group>"; };
 		1AF7B28AB61DA0D2EF1DFA1F /* SwipeStudyDetailsSection.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SwipeStudyDetailsSection.swift; sourceTree = "<group>"; };
 		1AFA965B29F120B6DDAB1FEC /* 003_inbox_sync.sql */ = {isa = PBXFileReference; lastKnownFileType = text; path = 003_inbox_sync.sql; sourceTree = "<group>"; };
+		1B583339DA54EF2934BF648E /* CosmoInlineRiffDirectionsCard.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CosmoInlineRiffDirectionsCard.swift; sourceTree = "<group>"; };
 		1BF91EDEB4787E78C4C1718D /* AddToConceptMenu.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AddToConceptMenu.swift; sourceTree = "<group>"; };
 		1C4A9C4BAD56AF4656F56537 /* DashboardViewModeBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardViewModeBar.swift; sourceTree = "<group>"; };
 		1C4BF8FEB338D306AAD829D2 /* IdeaBoardBlockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdeaBoardBlockView.swift; sourceTree = "<group>"; };
@@ -2785,6 +2789,7 @@
 				D75BD406ED9F504B6823FB4F /* CosmoInlineSkillAutoRunner.swift */,
 				108479F51D4829AA25FEDA6D /* CosmoAssistantMenuKit.swift */,
 				06F6CE678F47B25C94CE54BF /* CosmoInlineAssistantSkillMenu.swift */,
+				1B583339DA54EF2934BF648E /* CosmoInlineRiffDirectionsCard.swift */,
 			);
 			path = InlineAssistant;
 			sourceTree = "<group>";
@@ -3669,6 +3674,7 @@
 				711928F89E3B9A3F340EFE9D /* NicheRegistry.swift */,
 				5B468E9D1385F409E232A412 /* SwipeNicheBackfill.swift */,
 				B18B223F2912C3A5343C0BA4 /* SwipeStudyPrewarmer.swift */,
+				09DDDA182B560782D3CAAB17 /* SwipeThumbnailPrewarmer.swift */,
 			);
 			path = SwipeFile;
 			sourceTree = "<group>";
@@ -4664,6 +4670,8 @@
 				1F0A9A985BA6CB67009DA475 /* IdeasAllView.swift in Sources */,
 				BE4804C6BFE5A6EA90F01920 /* IdeaQuickLookPanel.swift in Sources */,
 				D28E2B67D4D3A2AB21E152A2 /* IdeaTriageSheet.swift in Sources */,
+				D3CFC024AF9B47C76CDDDA62 /* SwipeThumbnailPrewarmer.swift in Sources */,
+				363BBAB2DB98DB7EE46C5E3B /* CosmoInlineRiffDirectionsCard.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

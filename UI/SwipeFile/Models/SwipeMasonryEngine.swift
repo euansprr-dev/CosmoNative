@@ -67,8 +67,25 @@ struct SwipeMasonryVisibleBand: Equatable {
 
     /// Overscans one viewport above and below so fast flicks land on live cells.
     static func quantized(offsetInGrid: CGFloat, viewportHeight: CGFloat) -> SwipeMasonryVisibleBand {
-        let lower = offsetInGrid - viewportHeight
-        let upper = offsetInGrid + viewportHeight * 2
+        band(offsetInGrid: offsetInGrid, viewportHeight: viewportHeight, above: 1, below: 2)
+    }
+
+    /// Cache-warm band. Reaches much further than the mount band so thumbnails
+    /// are decoded and resident BEFORE their cell mounts — the mount band is
+    /// where the image request used to start, which is why a fast flick
+    /// outran the loader.
+    static func prefetchQuantized(offsetInGrid: CGFloat, viewportHeight: CGFloat) -> SwipeMasonryVisibleBand {
+        band(offsetInGrid: offsetInGrid, viewportHeight: viewportHeight, above: 2, below: 5)
+    }
+
+    private static func band(
+        offsetInGrid: CGFloat,
+        viewportHeight: CGFloat,
+        above: CGFloat,
+        below: CGFloat
+    ) -> SwipeMasonryVisibleBand {
+        let lower = offsetInGrid - viewportHeight * above
+        let upper = offsetInGrid + viewportHeight * below
         return SwipeMasonryVisibleBand(
             minY: (lower / bucket).rounded(.down) * bucket,
             maxY: (upper / bucket).rounded(.up) * bucket
@@ -77,6 +94,22 @@ struct SwipeMasonryVisibleBand: Equatable {
 
     func intersects(_ frame: CGRect) -> Bool {
         frame.maxY > minY && frame.minY < maxY
+    }
+}
+
+/// The two bands the grid tracks, carried together so one `onGeometryChange`
+/// serves both mounting and cache warming.
+struct SwipeMasonryScrollBands: Equatable {
+    let mount: SwipeMasonryVisibleBand
+    let prefetch: SwipeMasonryVisibleBand
+
+    static let everything = SwipeMasonryScrollBands(mount: .everything, prefetch: .everything)
+
+    static func quantized(offsetInGrid: CGFloat, viewportHeight: CGFloat) -> SwipeMasonryScrollBands {
+        SwipeMasonryScrollBands(
+            mount: .quantized(offsetInGrid: offsetInGrid, viewportHeight: viewportHeight),
+            prefetch: .prefetchQuantized(offsetInGrid: offsetInGrid, viewportHeight: viewportHeight)
+        )
     }
 }
 
@@ -92,10 +125,14 @@ struct SwipeWaterfallGrid<Item: Identifiable & Equatable, Cell: View>: View {
     var minColumns = 2
     var maxColumns = 5
     let itemHeight: (Item, CGFloat) -> CGFloat
+    /// Items entering the (much wider) prefetch band. Fires only when the
+    /// quantized band changes — a few times per second of scrolling, never per
+    /// frame. Purely for cache warming; these items are NOT mounted.
+    var onPrefetch: (([Item]) -> Void)?
     @ViewBuilder let cell: (Item, CGFloat, Int) -> Cell
 
     @State private var availableWidth: CGFloat = 0
-    @State private var visibleBand = SwipeMasonryVisibleBand.everything
+    @State private var bands = SwipeMasonryScrollBands.everything
 
     var body: some View {
         let metrics = SwipeWaterfallLayout.columnMetrics(
@@ -124,13 +161,15 @@ struct SwipeWaterfallGrid<Item: Identifiable & Equatable, Cell: View>: View {
         .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width in
             availableWidth = width
         }
-        .onGeometryChange(for: SwipeMasonryVisibleBand.self, of: { proxy in
+        .onGeometryChange(for: SwipeMasonryScrollBands.self, of: { proxy in
             let frame = proxy.frame(in: .scrollView)
             let viewportHeight = proxy.bounds(of: .scrollView)?.height ?? 1600
-            return SwipeMasonryVisibleBand.quantized(offsetInGrid: -frame.minY, viewportHeight: viewportHeight)
-        }) { band in
-            visibleBand = band
+            return SwipeMasonryScrollBands.quantized(offsetInGrid: -frame.minY, viewportHeight: viewportHeight)
+        }) { next in
+            bands = next
+            emitPrefetch(layout, band: next.prefetch)
         }
+        .onChange(of: items.count) { emitPrefetch(layout, band: bands.prefetch) }
     }
 
     private func visibleEntries(_ layout: SwipeWaterfallLayout) -> [Entry] {
@@ -138,11 +177,23 @@ struct SwipeWaterfallGrid<Item: Identifiable & Equatable, Cell: View>: View {
         var entries: [Entry] = []
         for (index, item) in items.enumerated() {
             let frame = layout.frames[index]
-            if visibleBand.intersects(frame) {
+            if bands.mount.intersects(frame) {
                 entries.append(Entry(item: item, index: index, frame: frame))
             }
         }
         return entries
+    }
+
+    /// Items in the prefetch band, in scroll order — the warmer takes a bounded
+    /// head of this list, so order is what decides which ones win.
+    private func emitPrefetch(_ layout: SwipeWaterfallLayout, band: SwipeMasonryVisibleBand) {
+        guard let onPrefetch, !layout.frames.isEmpty else { return }
+        var pending: [Item] = []
+        for (index, item) in items.enumerated() where band.intersects(layout.frames[index]) {
+            pending.append(item)
+        }
+        guard !pending.isEmpty else { return }
+        onPrefetch(pending)
     }
 
     private struct Entry: Identifiable {

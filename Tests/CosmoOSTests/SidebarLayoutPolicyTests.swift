@@ -716,13 +716,14 @@ final class SidebarLayoutPolicyTests: XCTestCase {
         XCTAssertLessThan(existingReturn.lowerBound, metadataFetch.lowerBound)
     }
 
-    func testContentFocusMarginaliaRailScrollsQuietlyWithSlimCapsuleScrollbars() throws {
-        // Scriptorium policy: no native scroller anywhere on the page. The
-        // marginalia rail scrolls through MarginRailScroll, which suppresses
-        // the native scroller (macOS's "Show scroll bars: Always" forces a fat
-        // legacy bar straight through `.scrollIndicators(.hidden)`) and mounts
-        // the manuscript's slim capsule instead, fading in only on overflow.
-        // No per-margin scroll metrics leak into the focus view's state.
+    func testContentFocusMarginaliaRailScrollsWithNoScrollbarAtAll() throws {
+        // Scriptorium policy: the manuscript owns the page's ONLY scrollbar. The
+        // marginalia rail scrolls through MarginRailScroll, which suppresses the
+        // native scroller (macOS's "Show scroll bars: Always" forces a fat legacy
+        // bar straight through `.scrollIndicators(.hidden)`) and draws nothing in
+        // its place — a long outline or reference stack scrolls silently. No
+        // per-margin scroll metrics leak into the focus view's state, and the
+        // rail attaches no metrics observer at all.
         let contentFocusView = try String(
             contentsOf: repositoryRoot.appendingPathComponent("UI/FocusMode/Content/ContentFocusModeView.swift"),
             encoding: .utf8
@@ -732,14 +733,17 @@ final class SidebarLayoutPolicyTests: XCTestCase {
         XCTAssertTrue(contentFocusView.contains("scriptoriumMarginScroll(width: ContentFocusLayoutPolicy.marginaliaRailWidth"))
         XCTAssertTrue(contentFocusView.contains("private struct MarginRailScroll<Content: View>: View"))
         XCTAssertTrue(contentFocusView.contains(".scrollIndicators(.hidden)"))
+        // Suppression stays: the rail still reaches its NSScrollView.
+        XCTAssertTrue(contentFocusView.contains("ScrollViewIntrospector(onResolve: { _ in })"))
 
         XCTAssertFalse(contentFocusView.contains("leftMarginScrollMetrics"))
         XCTAssertFalse(contentFocusView.contains("rightMarginScrollMetrics"))
-        // Exactly two PremiumManuscriptScrollbar mounts: the manuscript's own,
-        // and the one inside the shared MarginRailScroll rail component.
+        // Exactly one PremiumManuscriptScrollbar mount: the manuscript's own.
         let scrollbarMounts = contentFocusView.components(separatedBy: "PremiumManuscriptScrollbar(metrics:").count - 1
-        XCTAssertEqual(scrollbarMounts, 2)
+        XCTAssertEqual(scrollbarMounts, 1)
         XCTAssertTrue(contentFocusView.contains("PremiumManuscriptScrollbar(metrics: manuscriptScrollMetrics)"))
+        // Metrics observation is opt-in, so the scrollbar-less rail costs nothing.
+        XCTAssertTrue(contentFocusView.contains("var onMetricsChange: ((ManuscriptScrollMetrics) -> Void)? = nil"))
     }
 
     func testIdeaFocusHooksUseMultilineEditorsForSavedAndDraftHooks() throws {

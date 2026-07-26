@@ -31,6 +31,11 @@ struct CosmoInlineDiffReviewView: View {
     var onAcceptOperation: ((UUID) -> Void)?
     var onRejectOperation: ((UUID) -> Void)?
 
+    /// Drives the swap-in centering scroll. Owned per mounted review, so a
+    /// fresh proposal re-centers while accept/reject churn on the open one
+    /// does not.
+    @State private var centeringDriver = CosmoInlineReviewCenteringDriver()
+
     private var segments: [CosmoInlineDiffSegment] {
         CosmoInlineDiffReviewBuilder.segments(
             sourceText: sourceText,
@@ -39,30 +44,47 @@ struct CosmoInlineDiffReviewView: View {
     }
 
     var body: some View {
+        let segments = self.segments
+        let firstChangeID = segments.first {
+            if case .change = $0 { return true } else { return false }
+        }?.id
+
         VStack(alignment: .leading, spacing: 14) {
             ForEach(segments) { segment in
-                switch segment {
-                case let .unchanged(_, text):
-                    Text(text)
-                        .font(bodyFont)
-                        .foregroundStyle(textColor.opacity(unchangedOpacity))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
-                case let .change(change):
-                    CosmoInlineDiffChangeRow(
-                        change: change,
-                        onAccept: { accept(change.id) },
-                        onReject: { reject(change.id) }
-                    )
-                    .transition(.asymmetric(
-                        insertion: .opacity,
-                        removal: .opacity.combined(with: .scale(scale: 0.97))
-                    ))
-                }
+                segmentView(segment, isFirstChange: segment.id == firstChangeID)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .animation(ProMotionSprings.gentle, value: sourceText)
+        .onAppear { centeringDriver.centerOnAnchor() }
+        .onChange(of: proposal.id) { centeringDriver.centerOnAnchor() }
+    }
+
+    @ViewBuilder
+    private func segmentView(_ segment: CosmoInlineDiffSegment, isFirstChange: Bool) -> some View {
+        switch segment {
+        case let .unchanged(_, text):
+            Text(text)
+                .font(bodyFont)
+                .foregroundStyle(textColor.opacity(unchangedOpacity))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+        case let .change(change):
+            CosmoInlineDiffChangeRow(
+                change: change,
+                onAccept: { accept(change.id) },
+                onReject: { reject(change.id) }
+            )
+            .background {
+                if isFirstChange {
+                    CosmoInlineReviewCenterAnchor(driver: centeringDriver)
+                }
+            }
+            .transition(.asymmetric(
+                insertion: .opacity,
+                removal: .opacity.combined(with: .scale(scale: 0.97))
+            ))
+        }
     }
 
     private func accept(_ operationID: UUID) {
@@ -234,6 +256,106 @@ final class CosmoInlineReviewScrollPositionKeeper {
         // window stays open (never ends early) because the first attempt can
         // land BEFORE the swap renders, when everything still looks settled.
         lastAppliedOffsetY = desired
+    }
+}
+
+// MARK: - Review swap-in centering
+
+/// Centers the first staged change when a review swaps IN.
+///
+/// Opening a review replaces the editor with `CosmoInlineDiffReviewView`, whose
+/// layout shares nothing with the editor it displaced — the scroll view keeps
+/// its old pixel offset, which now lands on arbitrary prose, often a long way
+/// from the change the user is being asked to judge. This driver scrolls the
+/// first change row to the vertical center of the viewport once the swapped-in
+/// layout settles, replaying over the same delay ladder as
+/// `CosmoInlineReviewScrollPositionKeeper` because the diff rows report their
+/// heights asynchronously. A user scroll during the window wins immediately.
+///
+/// Main-thread only, like the scroll views it drives.
+final class CosmoInlineReviewCenteringDriver {
+    fileprivate weak var anchorView: NSView?
+    private var lastAppliedOffsetY: CGFloat?
+    private var generation = 0
+
+    /// Same ladder as the position keeper: early attempts catch the common
+    /// single-frame relayout, later ones cover slow settles on long documents.
+    private static let attemptDelays: [TimeInterval] = [0, 0.03, 0.08, 0.16, 0.3, 0.6, 1.0]
+
+    /// Where the viewport should land so the anchor sits mid-viewport, clamped
+    /// to the scrollable range. Pure math, split out for tests.
+    static func desiredOffsetY(
+        anchorMidY: CGFloat,
+        viewportHeight: CGFloat,
+        documentHeight: CGFloat
+    ) -> CGFloat {
+        let maxOffsetY = max(0, documentHeight - viewportHeight)
+        return min(max(0, anchorMidY - viewportHeight / 2), maxOffsetY)
+    }
+
+    /// Call when the review swaps in, or a new proposal replaces the open one.
+    func centerOnAnchor() {
+        generation += 1
+        lastAppliedOffsetY = nil
+        let generation = self.generation
+        for delay in Self.attemptDelays {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.performCenterAttempt(generation: generation)
+            }
+        }
+    }
+
+    private func performCenterAttempt(generation: Int) {
+        guard generation == self.generation,
+              let anchorView,
+              anchorView.window != nil,
+              let scrollView = anchorView.enclosingScrollView,
+              let documentView = scrollView.documentView else { return }
+
+        let clipView = scrollView.contentView
+        let current = scrollView.documentVisibleRect.origin.y
+        let maxOffsetY = max(0, documentView.frame.height - clipView.bounds.height)
+
+        // The user scrolled between attempts — their position wins, stop for
+        // good. A drift pinned at the clamp limit is layout (the document
+        // momentarily shrank and AppKit clamped), not the user; keep going.
+        if let lastApplied = lastAppliedOffsetY,
+           abs(current - lastApplied) > 1,
+           abs(current - maxOffsetY) > 1 {
+            self.generation += 1
+            return
+        }
+
+        // Recomputed per attempt: the anchor row migrates as segments above it
+        // finish laying out, so a stale rect would center the wrong spot.
+        let anchorRect = documentView.convert(anchorView.bounds, from: anchorView)
+        let desired = Self.desiredOffsetY(
+            anchorMidY: anchorRect.midY,
+            viewportHeight: clipView.bounds.height,
+            documentHeight: documentView.frame.height
+        )
+
+        if abs(current - desired) > 0.5 {
+            clipView.setBoundsOrigin(NSPoint(x: clipView.bounds.origin.x, y: desired))
+            scrollView.reflectScrolledClipView(clipView)
+        }
+        lastAppliedOffsetY = desired
+    }
+}
+
+/// Marks the first change row so the centering driver can locate it inside the
+/// host's scroll view. Place as the row's background.
+private struct CosmoInlineReviewCenterAnchor: NSViewRepresentable {
+    let driver: CosmoInlineReviewCenteringDriver
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        driver.anchorView = view
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        driver.anchorView = nsView
     }
 }
 

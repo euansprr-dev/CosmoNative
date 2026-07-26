@@ -265,7 +265,11 @@ extension CraftReviewResult: CraftRenderableStructuredOutput {
 extension CraftRiffResult: CraftRenderableStructuredOutput {
     var craftValidationIssue: String? {
         if beatLabel.isBlankForCraft { return "missing beat label" }
-        if targetOriginalText.isBlankForCraft { return "missing target text" }
+        // targetOriginalText is deliberately NOT gated: an empty target is the
+        // legitimate answer when the writer asks about a beat that doesn't exist
+        // yet ("what can we write on slide 7?") — there is nothing to copy
+        // verbatim, and apply stages an insertion instead of a replacement.
+        // Substance lives in the variations, which stay gated below.
         if variations.isEmpty { return "missing variations" }
         if bet.isBlankForCraft { return "missing bet" }
         if variations.contains(where: { $0.text.isBlankForCraft || $0.mechanism.isBlankForCraft }) {

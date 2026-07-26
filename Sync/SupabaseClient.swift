@@ -169,12 +169,13 @@ final class SupabaseClient {
         addHeaders(to: &request)
         request.httpBody = try JSONSerialization.data(withJSONObject: data)
 
-        let (_, response) = try await session.data(for: request)
+        let (responseData, response) = try await session.data(for: request)
 
         guard let httpResponse = response as? HTTPURLResponse,
               (200...299).contains(httpResponse.statusCode) else {
             let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
-            throw SupabaseError.updateFailed(statusCode: statusCode)
+            let body = String(data: responseData, encoding: .utf8) ?? ""
+            throw SupabaseError.updateFailed(statusCode: statusCode, body: body)
         }
     }
 
@@ -418,12 +419,13 @@ final class SupabaseClient {
             "_source": SupabaseSyncTrafficPolicy.localSource
         ])
 
-        let (_, response) = try await session.data(for: request)
+        let (responseData, response) = try await session.data(for: request)
 
         guard let httpResponse = response as? HTTPURLResponse,
               (200...299).contains(httpResponse.statusCode) else {
             let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
-            throw SupabaseError.updateFailed(statusCode: statusCode)
+            let body = String(data: responseData, encoding: .utf8) ?? ""
+            throw SupabaseError.updateFailed(statusCode: statusCode, body: body)
         }
     }
 
@@ -500,7 +502,7 @@ final class SupabaseClient {
 enum SupabaseError: LocalizedError {
     case invalidURL
     case insertFailed(statusCode: Int)
-    case updateFailed(statusCode: Int)
+    case updateFailed(statusCode: Int, body: String)
     case upsertFailed(statusCode: Int, body: String)
     case fetchFailed
     case invalidResponse
@@ -510,7 +512,7 @@ enum SupabaseError: LocalizedError {
         switch self {
         case .invalidURL: return "Invalid Supabase URL"
         case .insertFailed(let code): return "Failed to insert to Supabase (HTTP \(code))"
-        case .updateFailed(let code): return "Failed to update Supabase (HTTP \(code))"
+        case .updateFailed(let code, let body): return "Failed to update Supabase (HTTP \(code)): \(body)"
         case .upsertFailed(let code, let body): return "Failed to upsert to Supabase (HTTP \(code)): \(body)"
         case .fetchFailed: return "Failed to fetch from Supabase"
         case .invalidResponse: return "Invalid response from Supabase"

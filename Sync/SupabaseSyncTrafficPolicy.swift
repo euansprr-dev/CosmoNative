@@ -122,7 +122,7 @@ extension SupabaseError {
     var statusCode: Int? {
         switch self {
         case .insertFailed(let statusCode),
-             .updateFailed(let statusCode),
+             .updateFailed(let statusCode, _),
              .upsertFailed(let statusCode, _):
             return statusCode
         case .invalidURL, .fetchFailed, .invalidResponse, .authRequired:
@@ -139,7 +139,7 @@ extension SupabaseError {
         case .authRequired:
             return true
         case .insertFailed(let statusCode),
-             .updateFailed(let statusCode),
+             .updateFailed(let statusCode, _),
              .upsertFailed(let statusCode, _):
             return statusCode == 401 || statusCode == 403
         case .invalidURL, .fetchFailed, .invalidResponse:

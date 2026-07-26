@@ -209,9 +209,14 @@ struct IdeaReadinessTicks: View {
 
 // MARK: - Hero card (the committed lane)
 
-/// Committed work wears the desk's richest object: identity row, serif hook,
-/// readiness ticks, the session chip, and the inspiration thumb grown into a
-/// poster. The whole card resumes the bench.
+/// Committed work wears the desk's richest object: identity row, the hook in
+/// its honest register, readiness ticks, the session chip, and the
+/// inspiration thumb grown into a poster. Two compositions, one layout: a
+/// short bare hook is a PULL QUOTE (display serif — the sentence is the
+/// product, set like it matters); anything with substance is a document
+/// (reading serif + up to two muted context lines, the Spotlight full-preview
+/// law). The text block centers between the identity row and the footer so
+/// neither state leaves a void. The whole card resumes the bench.
 struct IdeaHeroCard: View {
     let idea: IdeaGalleryItem
     var inspirationThumbs: [String] = []
@@ -224,18 +229,39 @@ struct IdeaHeroCard: View {
     @State private var isHovered = false
     @State private var isDropTarget = false
 
+    /// Above this, display serif would wrap past two lines and crowd the
+    /// card — the quote treatment is reserved for lines that can carry it.
+    private static let quoteThreshold = 40
+
     private var headline: String {
         if let hook = idea.hooks.first, !hook.isEmpty { return hook }
         return idea.title
     }
 
+    /// The idea's own body, flattened to flowing lines (context falls back
+    /// to body upstream in `toIdeaGalleryItem`).
+    private var excerpt: String? {
+        guard let context = idea.context?
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !context.isEmpty else { return nil }
+        return context
+    }
+
+    /// Quote or document — binary, data-derived, never a sliding scale
+    /// (three type sizes in one shelf reads ransom-note, not editorial).
+    private var isQuoteCard: Bool {
+        excerpt == nil && headline.count <= Self.quoteThreshold
+    }
+
     var body: some View {
         Button(action: actions.open) {
-            HStack(alignment: .top, spacing: DS.space12) {
-                VStack(alignment: .leading, spacing: DS.space8) {
+            HStack(alignment: .center, spacing: DS.space12) {
+                VStack(alignment: .leading, spacing: 0) {
                     identityRow
-                    hookText
-                    Spacer(minLength: 0)
+                    Spacer(minLength: DS.space6)
+                    textBlock
+                    Spacer(minLength: DS.space6)
                     footerRow
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -300,14 +326,29 @@ struct IdeaHeroCard: View {
         .foregroundStyle(DS.textMuted)
     }
 
-    private var hookText: some View {
-        Text(headline)
-            .font(DS.blockTitleSerif)
-            .foregroundStyle(DS.text)
-            .lineSpacing(2)
-            .lineLimit(3)
-            .multilineTextAlignment(.leading)
-            .fixedSize(horizontal: false, vertical: true)
+    /// Hook (+ excerpt when the idea has a body). Quote cards set the line
+    /// at display scale; document cards keep the reading register and show
+    /// their own material beneath — never both treatments at once.
+    private var textBlock: some View {
+        VStack(alignment: .leading, spacing: DS.space6) {
+            Text(headline)
+                .font(isQuoteCard ? DS.heroTitleSerif : DS.blockTitleSerif)
+                .foregroundStyle(DS.text)
+                .lineSpacing(isQuoteCard ? 3 : 2)
+                .lineLimit(isQuoteCard ? 2 : 3)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+            if let excerpt {
+                // No fixedSize: the excerpt yields (truncates) before it can
+                // ever push a long hook against the card's fixed height.
+                Text(excerpt)
+                    .font(DS.subheadline)
+                    .foregroundStyle(DS.textSecondary)
+                    .lineSpacing(2)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+            }
+        }
     }
 
     private var footerRow: some View {

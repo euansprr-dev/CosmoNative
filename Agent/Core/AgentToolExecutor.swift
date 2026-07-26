@@ -1981,6 +1981,31 @@ class AgentToolExecutor {
             return jsonError(buildResult.error ?? "Missing required workspace edit proposal fields")
         }
 
+        // Concept boards carry read-only lines (`↳ handled:` rebuttals,
+        // gallery rows) the generic text validator can't see — an operation
+        // anchored there passes the substring check, enters pending state,
+        // and then renders NOWHERE (the board only ghost-renders ops that
+        // resolve to a section), leaving a phantom "capture waiting" count.
+        // Gate against the live surface while the model is still in the
+        // tool loop so it fixes the proposal itself.
+        if proposal.surfaceID.hasPrefix("connection:") {
+            let surfaceID = proposal.surfaceID
+            let operations = proposal.operations
+            let issues = await MainActor.run { () -> [String] in
+                guard let provider = CosmoEditableSurfaceRegistry.shared.provider(surfaceID: surfaceID) as? ConnectionContextProvider else {
+                    return []
+                }
+                return provider.stagingIssues(for: operations)
+            }
+            if !issues.isEmpty {
+                workspaceEditValidationRejections += 1
+                let issueList = issues.enumerated()
+                    .map { "\($0.offset + 1). \($0.element)" }
+                    .joined(separator: "\n")
+                return jsonError("The proposal was NOT staged — fix these and call propose_workspace_edit again:\n\(issueList)")
+            }
+        }
+
         onWorkspaceEditProposal?(proposal)
 
         var payload: [String: Any] = [

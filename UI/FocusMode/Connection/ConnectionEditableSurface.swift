@@ -397,6 +397,158 @@ enum ConnectionSurfaceSerializer {
         return nil
     }
 
+    // MARK: - Stage-time gate (guard-twin of apply)
+
+    /// Model-facing guidance for edits that touch a handled objection's
+    /// read-only `↳ handled:` line — shared verbatim by the stage-time gate
+    /// and the apply path so the two can never explain the refusal
+    /// differently.
+    static let handledLineGuidance = "the '↳ handled:' line under an objection is read-only. To add or change how an objection is handled, call handle_objection quoting the objection's bullet text verbatim (a still-staged objection must be accepted onto the board first). To insert new bullets after a handled objection, anchor the objection's own bullet line, never its handling line."
+
+    /// Issues for operations this surface's apply would deterministically
+    /// refuse (read-only lines, unlocatable anchors, cross-section spans) —
+    /// the guard-twin of `ConnectionContextProvider.applyInsertion` /
+    /// `applyReplacement`; change both together. The executor runs this while
+    /// the model is still in the tool loop, so a doomed operation bounces
+    /// back as a structured error instead of entering pending state, where
+    /// the receipt banner would count it while the board ghost-renders it
+    /// nowhere. Operations that pass may still skip ghost rows (title/type
+    /// edits review in the Manuscript diff) — legitimate pending state,
+    /// never bounced here.
+    static func stagingIssues(
+        operations: [CosmoAssistantProposalOperation],
+        in model: ConnectionSurfaceModel
+    ) -> [String] {
+        var issues: [String] = []
+        for (index, operation) in operations.enumerated() {
+            if let issue = stagingIssue(for: operation, in: model) {
+                issues.append("Operation \(index + 1): \(issue)")
+            }
+        }
+        return issues
+    }
+
+    private static func stagingIssue(
+        for operation: CosmoAssistantProposalOperation,
+        in model: ConnectionSurfaceModel
+    ) -> String? {
+        switch operation.kind {
+        case .textInsertion:
+            return insertionStagingIssue(for: operation, in: model)
+        case .textReplacement, .structuredFieldReplacement:
+            return replacementStagingIssue(for: operation, in: model)
+        case .formatMarks, .canvasPlan:
+            // Apply handles these honestly (skip / conflict) and they never
+            // count as board captures — not this gate's concern.
+            return nil
+        }
+    }
+
+    private static func insertionStagingIssue(
+        for operation: CosmoAssistantProposalOperation,
+        in model: ConnectionSurfaceModel
+    ) -> String? {
+        let proposed = operation.proposedText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !proposed.isEmpty else { return "proposedText is empty — nothing to insert." }
+
+        // Mirror locateAnchorLine: verbatim originalText first, then the
+        // structured section anchorID.
+        let anchorText = operation.originalText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        var anchorLine: ConnectionSurfaceModel.Line?
+        if !anchorText.isEmpty,
+           let range = CosmoInlineDiffLocator.range(of: operation.originalText ?? "", in: model.text) {
+            anchorLine = model.line(at: range.upperBound)
+        } else if let anchorID = operation.anchorID, anchorID.hasPrefix("section:"),
+                  let type = ConnectionSectionType(rawValue: String(anchorID.dropFirst("section:".count))) {
+            anchorLine = model.lines.first {
+                if case .header(let lineType) = $0.kind { return lineType == type }
+                return false
+            }
+        }
+        guard let anchorLine else {
+            return "the insertion anchor matches nothing on the board. Set originalText to a section header or an existing bullet copied verbatim, or pass anchorID \"section:<sectionID>\"."
+        }
+        switch anchorLine.kind {
+        case .header(let type), .empty(let type), .item(let type, _), .itemContinuation(let type, _):
+            guard let items = parseItems(from: proposed, targetSection: type) else {
+                return "the proposed text names another section — stage one operation per section."
+            }
+            guard !items.isEmpty else { return "no bullet content found in proposedText." }
+            return nil
+        case .title, .meta, .blank:
+            if isHandledObjectionLine(anchorLine, in: model) { return handledLineGuidance }
+            return "the anchor lands on a read-only line — insertions must anchor a section header or a bullet line."
+        }
+    }
+
+    private static func replacementStagingIssue(
+        for operation: CosmoAssistantProposalOperation,
+        in model: ConnectionSurfaceModel
+    ) -> String? {
+        let original = operation.originalText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !original.isEmpty else {
+            return "replacements need originalText copied verbatim from the board."
+        }
+        guard let range = CosmoInlineDiffLocator.range(of: operation.originalText ?? "", in: model.text) else {
+            return "originalText matches nothing on the board — copy the target line(s) verbatim from the surface text."
+        }
+        let touched = model.lines(intersecting: range).filter {
+            if case .blank = $0.kind { return false }
+            return true
+        }
+        guard !touched.isEmpty else { return "the located range covers no editable line." }
+
+        if touched.allSatisfy({ if case .title = $0.kind { return true }; return false }) {
+            return nil // Title edit — reviewed in the Manuscript diff.
+        }
+        if touched.allSatisfy({ if case .meta = $0.kind { return true }; return false }) {
+            if touched.allSatisfy({ isConceptTypeLine($0, in: model) }) { return nil } // Type edit.
+            if touched.contains(where: { isHandledObjectionLine($0, in: model) }) { return handledLineGuidance }
+            return "that line is read-only board metadata and can't be edited."
+        }
+
+        var sectionTypes = Set<ConnectionSectionType>()
+        var coversHeader = false
+        for line in touched {
+            switch line.kind {
+            case .header(let type):
+                coversHeader = true
+                sectionTypes.insert(type)
+            case .empty(let type), .item(let type, _), .itemContinuation(let type, _):
+                sectionTypes.insert(type)
+            case .title, .meta, .blank:
+                if isHandledObjectionLine(line, in: model) { return handledLineGuidance }
+                return "edits can't span the title or metadata lines together with section content — quote only the bullet line(s) being rewritten."
+            }
+        }
+        guard sectionTypes.count == 1, let type = sectionTypes.first else {
+            return "the quoted lines span multiple sections — stage one operation per section."
+        }
+        guard let items = parseItems(from: operation.proposedText ?? "", targetSection: type) else {
+            return "the proposed text names another section — stage one operation per section."
+        }
+        if coversHeader, items.isEmpty || !(operation.proposedText ?? "").localizedCaseInsensitiveContains(type.displayName) {
+            return "section headers can't be renamed or removed — quote only the bullets, not the '## \(type.displayName)' header line."
+        }
+        return nil
+    }
+
+    /// True for a handled objection's `↳ handled:` rebuttal line.
+    static func isHandledObjectionLine(
+        _ line: ConnectionSurfaceModel.Line,
+        in model: ConnectionSurfaceModel
+    ) -> Bool {
+        String(model.text[line.range]).trimmingCharacters(in: .whitespaces).hasPrefix("↳ handled")
+    }
+
+    /// True for the one `.meta` line that IS editable: the `Type:` line.
+    static func isConceptTypeLine(
+        _ line: ConnectionSurfaceModel.Line,
+        in model: ConnectionSurfaceModel
+    ) -> Bool {
+        String(model.text[line.range]).hasPrefix("Type:")
+    }
+
     /// Shared by every host that renders a connection's staged edits (the
     /// Connection focus mode and the Study's Concept Desk): filters the store's
     /// proposals to this connection, resolves still-pending operations into
@@ -532,6 +684,13 @@ final class ConnectionContextProvider: CosmoContextProvider, CosmoEditableSurfac
             // may auto-route here — only an explicit slash/picker choice can.
             residentSkillID: CosmoInlineAssistantSkillID.concept.rawValue
         )
+    }
+
+    /// Stage-time gate for `propose_workspace_edit`: issues for operations
+    /// this surface's apply would deterministically refuse. Read-only —
+    /// resolves against the LIVE board, never mutates.
+    func stagingIssues(for operations: [CosmoAssistantProposalOperation]) -> [String] {
+        ConnectionSurfaceSerializer.stagingIssues(operations: operations, in: currentModel())
     }
 
     func apply(operation: CosmoAssistantProposalOperation) async throws -> CosmoEditableOperationResult {
@@ -673,6 +832,16 @@ final class ConnectionContextProvider: CosmoContextProvider, CosmoEditableSurfac
             return replaceTitle(with: proposed, operation: operation, viewModel: viewModel)
         }
         if touched.allSatisfy({ if case .meta = $0.kind { return true }; return false }) {
+            // `.meta` carries more than the Type line (handling rebuttals,
+            // gallery rows) — only the Type line may route to a type edit,
+            // or a staged rebuttal rewrite whose text happens to contain a
+            // framework name would silently change the concept type.
+            guard touched.allSatisfy({ ConnectionSurfaceSerializer.isConceptTypeLine($0, in: model) }) else {
+                let reason = touched.contains(where: { ConnectionSurfaceSerializer.isHandledObjectionLine($0, in: model) })
+                    ? "Can't edit that line — \(ConnectionSurfaceSerializer.handledLineGuidance)"
+                    : "That line is read-only board metadata and can't be edited"
+                return result(operation, .conflicted, reason)
+            }
             return replaceConceptType(with: proposed, operation: operation, viewModel: viewModel)
         }
         return replaceSectionLines(touched, with: proposed, operation: operation, viewModel: viewModel)

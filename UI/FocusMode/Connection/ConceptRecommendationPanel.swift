@@ -21,9 +21,31 @@ struct ConceptRecommendationPanel: View {
                 SeekingLine(section: seeking) {
                     workspace.openSection(seeking)
                 }
+            } else if shouldOfferDistill {
+                DistillLine { beginDistill() }
             }
             content
         }
+    }
+
+    /// The seeking ladder has nothing left to feed and Synthesis is still
+    /// empty: the concept's next hunger is its own conclusions. Everything
+    /// downstream of the tap is the existing collaborator grammar — proposals
+    /// in the pane, ghost rows on the board, per-item ✓/✗.
+    private var shouldOfferDistill: Bool {
+        model.gate == .ready
+            && model.seeking == nil
+            && viewModel.state.section(for: .synthesis)?.hasContent != true
+    }
+
+    private func beginDistill() {
+        let surfaceID = "connection:\(viewModel.state.atomUUID)"
+        let store = CosmoInlineAssistantStore.shared
+        store.openPane(forSurfaceID: surfaceID)
+        store.submitPrompt(
+            "Distill this concept: from what's on the board, propose the core realizations that answer the Goal, and stage the ones I approve into Synthesis.",
+            forSurfaceID: surfaceID
+        )
     }
 
     // MARK: - Header
@@ -227,6 +249,45 @@ private struct SeekingLine: View {
         }
         .help(section.promptQuestion)
         .accessibilityLabel("Seeking \(section.displayName). \(section.promptQuestion)")
+    }
+}
+
+// MARK: - Distill line
+
+/// The maturity moment: every station the ladder seeks is fed and Synthesis
+/// is still empty. One quiet line in the seeking slot offers the conclusions
+/// ritual; tapping opens the collaborator with the distill ask.
+private struct DistillLine: View {
+    let onTap: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: DS.space6) {
+                Image(systemName: "key.fill")
+                    .font(DS.caption2)
+                    .foregroundStyle(ConnectionSectionType.synthesis.accentColor)
+                    .accessibilityHidden(true)
+                Text("Ready to distill")
+                    .font(DS.caption)
+                    .foregroundStyle(isHovered ? DS.text : DS.textSecondary)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, DS.space8)
+            .padding(.vertical, DS.space4)
+            .background(
+                ConnectionSectionType.synthesis.accentColor.opacity(isHovered ? 0.10 : 0.06),
+                in: .rect(cornerRadius: 6)
+            )
+            .contentShape(.rect(cornerRadius: 6))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+        }
+        .help("Cosmo proposes the realizations that answer the Goal; you approve each one")
+        .accessibilityLabel("Ready to distill. Open the collaborator to draw the concept's conclusions into Synthesis.")
     }
 }
 

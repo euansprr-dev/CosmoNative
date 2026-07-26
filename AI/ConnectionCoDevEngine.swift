@@ -446,6 +446,8 @@ class ConnectionCoDevEngine: ObservableObject {
             return "\(snippet) (from: \(sourceTitle))"
         case .openQuestions:
             return "\(snippet) (from: \(sourceTitle))"
+        case .synthesis:
+            return "\(snippet) (from: \(sourceTitle))"
         case .conceptName:
             return sourceTitle
         case .references:

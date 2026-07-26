@@ -122,6 +122,7 @@ enum ConnectionSectionType: String, Codable, CaseIterable, Sendable {
     case beliefsObjections  // Counterarguments, alternative views
     case process            // Step-by-step implementation
     case openQuestions      // Unresolved questions for further inquiry (V2)
+    case synthesis          // The distilled answer to the Goal (V3)
     case conceptName        // Your unique name for this idea
     case references         // Sources and cross-Connection web
 
@@ -136,6 +137,7 @@ enum ConnectionSectionType: String, Codable, CaseIterable, Sendable {
         case .beliefsObjections: return "Beliefs & Objections"
         case .process: return "Process"
         case .openQuestions: return "Open Questions"
+        case .synthesis: return "Synthesis"
         case .conceptName: return "Concept Name"
         case .references: return "References"
         }
@@ -152,6 +154,7 @@ enum ConnectionSectionType: String, Codable, CaseIterable, Sendable {
         case .beliefsObjections: return "bubble.left.and.bubble.right.fill"
         case .process: return "list.number"
         case .openQuestions: return "questionmark.diamond.fill"
+        case .synthesis: return "key.fill"
         case .conceptName: return "lightbulb.fill"
         case .references: return "book.fill"
         }
@@ -168,6 +171,7 @@ enum ConnectionSectionType: String, Codable, CaseIterable, Sendable {
         case .beliefsObjections: return "What are common views or counterarguments?"
         case .process: return "What are the implementation steps?"
         case .openQuestions: return "What's still unresolved?"
+        case .synthesis: return "What are the core realizations that answer the Goal?"
         case .conceptName: return "What is your unique name for this idea?"
         case .references: return "What sources support this?"
         }
@@ -184,6 +188,7 @@ enum ConnectionSectionType: String, Codable, CaseIterable, Sendable {
         case .beliefsObjections: return Color(hex: "#8B5CF6")  // Purple
         case .process: return Color(hex: "#06B6D4")       // Cyan
         case .openQuestions: return Color(hex: "#818CF8") // Lavender (a known "question" tint in CosmoOS)
+        case .synthesis: return Color(hex: "#EAB308")     // Gold (the payoff)
         case .conceptName: return Color(hex: "#F59E0B")   // Amber
         case .references: return Color(hex: "#6366F1")    // Indigo
         }
@@ -201,6 +206,7 @@ enum ConnectionSectionType: String, Codable, CaseIterable, Sendable {
         case .beliefsObjections: return "BEL"
         case .process: return "PRC"
         case .openQuestions: return "Q?"
+        case .synthesis: return "SYN"
         case .conceptName: return "CN"
         case .references: return "REF"
         }
@@ -208,7 +214,8 @@ enum ConnectionSectionType: String, Codable, CaseIterable, Sendable {
 
     /// Default order for display. Claims+evidence sit between problems and benefits
     /// (statement → support → outcome). Open questions sit between process and the
-    /// closing meta sections (conceptName / references).
+    /// closing arc: synthesis (the distilled answer to the Goal) reads as the
+    /// conclusion, then the meta sections (conceptName / references).
     var sortOrder: Int {
         switch self {
         case .goal: return 0
@@ -220,8 +227,9 @@ enum ConnectionSectionType: String, Codable, CaseIterable, Sendable {
         case .beliefsObjections: return 6
         case .process: return 7
         case .openQuestions: return 8
-        case .conceptName: return 9
-        case .references: return 10
+        case .synthesis: return 9
+        case .conceptName: return 10
+        case .references: return 11
         }
     }
 

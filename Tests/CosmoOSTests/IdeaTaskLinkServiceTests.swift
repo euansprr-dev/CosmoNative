@@ -112,6 +112,112 @@ final class IdeaTaskLinkServiceTests: XCTestCase {
         XCTAssertEqual(freshIdea?.isDeleted, false)
     }
 
+    // MARK: - Batched reverse lookup (the Desk / shelf chips)
+
+    /// The bug this guards: `resolveScheduledDays` used to read only
+    /// `linkedAtoms`, so after Begin Writing retargeted the link to the content
+    /// atom the Ideas Desk chip went blank — while the ⌘⇧T popover still listed
+    /// the session and the calendar still held it. Only the chip lied.
+    func testBatchedLookupStillFindsSessionsRetargetedToContent() async throws {
+        let idea = try await makeIdea()
+        let task = try await IdeaTaskLinkService.createScheduledTask(for: idea, on: day(offset: 2))
+        cleanupUUIDs.append(task.uuid)
+
+        let content = try await AtomRepository.shared.create(Atom.new(type: .content, title: "Promoted piece"))
+        cleanupUUIDs.append(content.uuid)
+        _ = try await IdeaTaskLinkService.retargetToPromotedContent(ideaUUID: idea.uuid, content: content)
+
+        let fetched = try await AtomRepository.shared.fetch(uuid: task.uuid)
+        let retargeted = try XCTUnwrap(fetched)
+        let days = IdeaTaskLinkService.openSessionDaysByIdea(in: [retargeted])
+
+        XCTAssertNotNil(days[idea.uuid], "a promoted idea must keep its Scheduled chip")
+    }
+
+    /// The batched lookup and the single-idea lookup are twins — they must
+    /// answer "is this a session for that idea" identically, or a surface goes
+    /// blank while another still shows the session.
+    func testBatchedLookupAgreesWithTheSingleIdeaLookup() async throws {
+        let idea = try await makeIdea()
+        let task = try await IdeaTaskLinkService.createScheduledTask(for: idea, on: day(offset: 3))
+        cleanupUUIDs.append(task.uuid)
+
+        let single = try await IdeaTaskLinkService.scheduledTasks(for: idea.uuid)
+        let batched = IdeaTaskLinkService.openSessionDaysByIdea(in: single)
+
+        XCTAssertEqual(single.map(\.uuid), [task.uuid])
+        XCTAssertNotNil(batched[idea.uuid])
+    }
+
+    func testBatchedLookupKeepsTheEarliestOpenSessionAndSkipsCompleted() async throws {
+        let idea = try await makeIdea()
+        let later = try await IdeaTaskLinkService.createScheduledTask(for: idea, on: day(offset: 9))
+        cleanupUUIDs.append(later.uuid)
+        let sooner = try await IdeaTaskLinkService.createScheduledTask(for: idea, on: day(offset: 4))
+        cleanupUUIDs.append(sooner.uuid)
+
+        let both = try await IdeaTaskLinkService.scheduledTasks(for: idea.uuid)
+        let days = IdeaTaskLinkService.openSessionDaysByIdea(in: both)
+        XCTAssertEqual(days[idea.uuid], IdeaTaskLinkService.plannedDay(sooner))
+
+        // A finished session is a record, not a booking — it must not hold the chip.
+        let onlyCompleted = both.filter { $0.uuid == later.uuid }
+        var completedMeta = try XCTUnwrap(onlyCompleted.first?.metadataValue(as: TaskMetadata.self))
+        completedMeta.isCompleted = true
+        let completedAtom = try XCTUnwrap(onlyCompleted.first?.mergingTaskMetadata(completedMeta, context: "test"))
+        XCTAssertTrue(IdeaTaskLinkService.openSessionDaysByIdea(in: [completedAtom]).isEmpty)
+    }
+
+    // MARK: - Undo symmetry
+
+    /// Remove and restore are the undo/redo pair for a booked session, and they
+    /// must round-trip the SAME uuid.
+    ///
+    /// Guards a real bug: the desk's redo used to call `createScheduledTask`
+    /// again, minting a fresh uuid the already-captured undo closure knew
+    /// nothing about — so the next undo deleted the long-dead original and left
+    /// the new task alive, stranding one orphan per redo.
+    func testRemoveAndRestoreRoundTripTheSameSession() async throws {
+        let idea = try await makeIdea()
+        let task = try await IdeaTaskLinkService.createScheduledTask(for: idea, on: day(offset: 1))
+        cleanupUUIDs.append(task.uuid)
+
+        // undo
+        try await IdeaTaskLinkService.removeScheduledTask(taskUUID: task.uuid)
+        let afterUndo = try await IdeaTaskLinkService.scheduledTasks(for: idea.uuid)
+        XCTAssertTrue(afterUndo.isEmpty)
+
+        // redo — the SAME task comes back, not a second one.
+        try await IdeaTaskLinkService.restoreScheduledTask(taskUUID: task.uuid)
+        let afterRedo = try await IdeaTaskLinkService.scheduledTasks(for: idea.uuid)
+        XCTAssertEqual(afterRedo.map(\.uuid), [task.uuid])
+
+        // undo again — the pair stays symmetric, nothing is stranded.
+        try await IdeaTaskLinkService.removeScheduledTask(taskUUID: task.uuid)
+        let afterSecondUndo = try await IdeaTaskLinkService.scheduledTasks(for: idea.uuid)
+        XCTAssertTrue(afterSecondUndo.isEmpty)
+    }
+
+    /// The restore has to survive other devices' one-way delete guards, which
+    /// only accept an undelete carrying a `restoredAt` marker newer than their
+    /// tombstone. Without it the session comes back locally and vanishes again
+    /// on the next sync.
+    func testRestoreStampsTheResurrectionMarker() async throws {
+        let idea = try await makeIdea()
+        let task = try await IdeaTaskLinkService.createScheduledTask(for: idea, on: day(offset: 1))
+        cleanupUUIDs.append(task.uuid)
+
+        try await IdeaTaskLinkService.removeScheduledTask(taskUUID: task.uuid)
+        try await IdeaTaskLinkService.restoreScheduledTask(taskUUID: task.uuid)
+
+        let restored = try await AtomRepository.shared.fetch(uuid: task.uuid)
+        XCTAssertEqual(restored?.isDeleted, false)
+        XCTAssertTrue(
+            restored?.metadata?.contains("restoredAt") == true,
+            "restore must stamp restoredAt or the undelete never crosses a tombstone"
+        )
+    }
+
     // MARK: - Reschedule
 
     func testRescheduleMovesAllThreePinsAndKeepsSiblingKeys() async throws {

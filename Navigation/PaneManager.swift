@@ -119,6 +119,24 @@ class PaneManager: ObservableObject {
     /// 1.0 = full width (no panes visible). Animates to 0.5 when first pane opens.
     @Published var mainSplitRatio: CGFloat = 1.0
 
+    /// True while the user is dragging the main split divider. Pane content
+    /// layout freezes for the duration — slots keep tracking the divider, but
+    /// a heavy pane body pays one re-layout at drag end, not one per mouse
+    /// event. A deep pane subtree that re-lays-out per event can wedge the
+    /// main thread for minutes (July 28 assistant-pane livelock).
+    @Published private(set) var isDraggingMainSplit = false
+
+    /// True while the hosting window is in a live resize. Window resize is
+    /// the same continuous width stream as a divider drag, just delivered by
+    /// AppKit instead of a gesture — it gets the same content-layout freeze.
+    @Published private(set) var isWindowLiveResizing = false
+
+    /// The one flag the deck consults: pane bodies lay out at resting widths
+    /// while ANY continuous width stream is live.
+    var isPaneContentLayoutFrozen: Bool {
+        isDraggingMainSplit || isWindowLiveResizing
+    }
+
     /// ID of the pane the user last interacted with (tap/focus).
     /// Used to determine which pane's context the CosmoWindow and voice system see.
     @Published var activePaneId: String? = nil
@@ -518,6 +536,24 @@ class PaneManager: ObservableObject {
         let deltaRatio = delta / totalWidth
         let newRatio = mainSplitRatio + deltaRatio
         mainSplitRatio = max(minMainRatio, min(maxMainRatio, newRatio))
+    }
+
+    func beginMainSplitDrag() {
+        isDraggingMainSplit = true
+    }
+
+    func endMainSplitDrag() {
+        isDraggingMainSplit = false
+    }
+
+    // MARK: - Window Live Resize
+
+    func beginWindowLiveResize() {
+        isWindowLiveResizing = true
+    }
+
+    func endWindowLiveResize() {
+        isWindowLiveResizing = false
     }
 
 }

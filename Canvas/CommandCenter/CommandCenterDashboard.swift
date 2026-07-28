@@ -56,6 +56,12 @@ struct CommandCenterDashboard: View {
             // task row can be carried between them.
             .coordinateSpace(name: CommandCenterDragSpace.name)
             .overlay(alignment: .topLeading) { TaskDragTravelCard() }
+            .overlay(alignment: .bottom) {
+                SwipeSaveToast(message: Binding(
+                    get: { viewModel.dropToastMessage },
+                    set: { viewModel.dropToastMessage = $0 }
+                ))
+            }
             .task {
                 // Warm the sound graph so the first completion of the session
                 // is as tight as the tenth.
@@ -390,6 +396,17 @@ struct CommandCenterDashboard: View {
         viewModel.viewMode == .upcoming && viewModel.upcomingLens == .content
     }
 
+    /// The schedule lens offers a Shelf too — the ideas you drag onto the week
+    /// board to book writing sessions. Unlike the Content lens it's a TAB, not
+    /// a takeover: habits, reports and task details stay one click away.
+    private var offersWorkShelf: Bool {
+        viewModel.viewMode == .upcoming && viewModel.upcomingLens == .schedule
+    }
+
+    private var showsWorkShelf: Bool {
+        offersWorkShelf && viewModel.upcomingRailFace == .shelf
+    }
+
     private var rightColumn: some View {
         CommandCenterRail {
             VStack(alignment: .leading, spacing: DS.space16) {
@@ -397,13 +414,18 @@ struct CommandCenterDashboard: View {
                     ContentShelfRail(viewModel: viewModel)
                 } else {
                     rightColumnTabs
-                    rightColumnContent
+                    if showsWorkShelf {
+                        IdeaWorkShelfRail(viewModel: viewModel)
+                    } else {
+                        rightColumnContent
+                    }
                 }
                 Spacer(minLength: 0)
             }
         }
         .frame(width: 280)
         .animation(ProMotionSprings.gentle, value: showsContentShelf)
+        .animation(ProMotionSprings.gentle, value: showsWorkShelf)
         .onChange(of: visibleTaskUUIDs) { _, taskUUIDs in
             clearDeletedTaskState(visibleTaskUUIDs: taskUUIDs)
         }
@@ -411,6 +433,9 @@ struct CommandCenterDashboard: View {
 
     private var rightColumnTabs: some View {
         HStack(spacing: 0) {
+            if offersWorkShelf {
+                rightColumnTab(.shelf, label: "Shelf", icon: "tray.full")
+            }
             if selectedTaskForDetail != nil {
                 rightColumnTab(.details, label: "Details", icon: "info.circle")
             }
@@ -422,6 +447,9 @@ struct CommandCenterDashboard: View {
     @ViewBuilder
     private var rightColumnContent: some View {
         switch showingDetailTab {
+        case .shelf:
+            // Unreachable — the shelf renders in place of this whole branch.
+            EmptyView()
         case .details:
             if let task = resolvedSelectedTask {
                 TaskDetailPanel(
@@ -445,11 +473,15 @@ struct CommandCenterDashboard: View {
     }
 
     private enum RightColumnTab {
-        case details, habits, reports
+        case shelf, details, habits, reports
     }
 
     private var showingDetailTab: RightColumnTab {
-        if selectedTaskForDetail != nil && !viewModel.showReports {
+        // The shelf is a stored face, so it outranks the derived trio — those
+        // three have no selection of their own, they're inferred from state.
+        if showsWorkShelf {
+            return .shelf
+        } else if selectedTaskForDetail != nil && !viewModel.showReports {
             return .details
         } else if viewModel.showReports {
             return .reports
@@ -492,7 +524,14 @@ struct CommandCenterDashboard: View {
         let isActive = showingDetailTab == tab
         return Button {
             withAnimation(ProMotionSprings.snappy) {
+                // Any tab other than Shelf means "show me the inspector", and
+                // that choice is remembered across launches.
+                if offersWorkShelf {
+                    viewModel.upcomingRailFace = (tab == .shelf) ? .shelf : .inspector
+                }
                 switch tab {
+                case .shelf:
+                    break
                 case .reports:
                     viewModel.showReports = true
                     selectedTaskForDetail = nil

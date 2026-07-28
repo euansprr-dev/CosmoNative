@@ -958,30 +958,49 @@ extension BlockOperations {
 }
 
 extension RichBlockKind {
-    /// Drops the prefix the serializer renders at the head of the text view
-    /// ("• ", "1. ", "☐ ", "│ ") so live editor text maps back to block
-    /// content. Plain kinds return the text untouched.
-    func strippedRenderPrefix(from text: String) -> String {
+    /// UTF-16 length of the prefix the serializer renders at the head of the
+    /// text view ("• ", "1. ", "☐ ", "│ "). GUARD-TWIN of RichDocument's
+    /// blockPrefix — the two prefix tables must change together.
+    ///
+    /// That prefix is real, editable text in the storage, but it belongs to the
+    /// block's KIND, not its content: a row's caret home is the character right
+    /// AFTER it (BlockOperationResult.caretOffsetFromEnd measures from the END
+    /// for exactly this reason). So boundary detection must measure "start of
+    /// row" and "empty row" from here, never from raw location 0 / raw line
+    /// text. Treating the prefix as content let Backspace chew it apart one
+    /// character at a time — space, then glyph, then finally the block, three
+    /// presses to leave a list — and each stale parse in between came back as a
+    /// paragraph that BlockRowSyncPolicy correctly forced back to a list,
+    /// leaving the row desynced (document: bullet, view: plain) and every later
+    /// transform on it dead (see BlockTextEditorRow's header).
+    func renderedPrefixLength(in text: String) -> Int {
         switch self {
         case .bulletList:
-            return text.hasPrefix("• ") ? String(text.dropFirst(2)) : text
+            return text.hasPrefix("• ") ? 2 : 0
         case .quote:
-            return text.hasPrefix("│ ") ? String(text.dropFirst(2)) : text
+            return text.hasPrefix("│ ") ? 2 : 0
         case .checklist:
-            if text.hasPrefix("☐ ") || text.hasPrefix("☑ ") {
-                return String(text.dropFirst(2))
-            }
-            return text
+            return (text.hasPrefix("☐ ") || text.hasPrefix("☑ ")) ? 2 : 0
         case .numberedList:
-            guard let dotRange = text.range(of: ". "),
-                  !text[..<dotRange.lowerBound].isEmpty,
-                  text[..<dotRange.lowerBound].allSatisfy(\.isNumber) else {
-                return text
-            }
-            return String(text[dotRange.upperBound...])
+            guard let match = text.range(of: #"^[0-9]+\. "#, options: .regularExpression) else { return 0 }
+            return text.utf16.distance(from: text.utf16.startIndex, to: match.upperBound)
         default:
+            return 0
+        }
+    }
+
+    /// Drops the prefix the serializer renders at the head of the text view
+    /// so live editor text maps back to block content. Plain kinds return the
+    /// text untouched.
+    func strippedRenderPrefix(from text: String) -> String {
+        let prefixLength = renderedPrefixLength(in: text)
+        guard prefixLength > 0 else { return text }
+        let utf16 = text.utf16
+        guard let utf16Start = utf16.index(utf16.startIndex, offsetBy: prefixLength, limitedBy: utf16.endIndex),
+              let contentStart = String.Index(utf16Start, within: text) else {
             return text
         }
+        return String(text[contentStart...])
     }
 }
 

@@ -206,6 +206,108 @@ final class BlockOperationsTests: XCTestCase {
         XCTAssertEqual(result.focusPath, .root(index: 0))
     }
 
+    // MARK: - Rendered chrome prefix
+
+    /// The measurement the caret and the boundary detectors rely on must equal
+    /// what the serializer actually renders. If these drift, Backspace and
+    /// Return start editing the prefix instead of exiting the list.
+    func testRenderedPrefixLengthMatchesSerializedChrome() {
+        let cases: [(RichBlock, Int)] = [
+            (RichBlock(kind: .bulletList, inlines: [.text("beta")]), 2),
+            (RichBlock(kind: .bulletList, inlines: [.text("")]), 2),
+            (RichBlock(kind: .quote, inlines: [.text("beta")]), 2),
+            (RichBlock(kind: .checklist, inlines: [.text("beta")], checked: false), 2),
+            (RichBlock(kind: .checklist, inlines: [.text("beta")], checked: true), 2),
+            (RichBlock(kind: .numberedList, inlines: [.text("beta")]), 3),
+            (RichBlock(kind: .paragraph, inlines: [.text("beta")]), 0),
+            (RichBlock(kind: .heading1, inlines: [.text("beta")]), 0),
+            (RichBlock(kind: .toggle, inlines: [.text("beta")]), 0),
+            (RichBlock(kind: .callout, inlines: [.text("beta")]), 0),
+            (RichBlock(kind: .code, inlines: [.text("beta")]), 0)
+        ]
+
+        for (block, expected) in cases {
+            let rendered = RichDocumentSerializer.attributedString(
+                from: RichDocument(blocks: [block])
+            ).string
+            XCTAssertEqual(
+                block.kind.renderedPrefixLength(in: rendered),
+                expected,
+                "\(block.kind) rendered as \(rendered.debugDescription)"
+            )
+            XCTAssertEqual(
+                rendered.utf16.count - block.kind.renderedPrefixLength(in: rendered),
+                block.plainInlineText.utf16.count,
+                "\(block.kind) prefix does not account for the whole non-content head"
+            )
+        }
+    }
+
+    /// The caret's home in a prefixed row (offset-from-end for content offset 0)
+    /// must land exactly at the end of the chrome — the position Backspace has
+    /// to recognise as "start of row".
+    func testCaretHomeInPrefixedRowLandsRightAfterTheChrome() throws {
+        let block = RichBlock(kind: .bulletList, inlines: [.text("beta")])
+        let rendered = RichDocumentSerializer.attributedString(
+            from: RichDocument(blocks: [block])
+        ).string
+        let result = BlockOperationResult(
+            document: RichDocument(blocks: [block]),
+            focusPath: .root(index: 0),
+            caretUTF16Offset: 0
+        )
+
+        let offsetFromEnd = try XCTUnwrap(result.caretOffsetFromEnd(for: block))
+        XCTAssertEqual(
+            rendered.utf16.count - offsetFromEnd,
+            block.kind.renderedPrefixLength(in: rendered)
+        )
+    }
+
+    /// Measuring and stripping are one table read two ways.
+    func testStrippedRenderPrefixAgreesWithMeasuredLength() {
+        let cases: [(RichBlockKind, String, String)] = [
+            (.bulletList, "• beta", "beta"),
+            (.bulletList, "• ", ""),
+            (.bulletList, "•beta", "•beta"),
+            (.bulletList, "beta", "beta"),
+            (.quote, "│ beta", "beta"),
+            (.checklist, "☐ beta", "beta"),
+            (.checklist, "☑ beta", "beta"),
+            (.numberedList, "1. beta", "beta"),
+            (.numberedList, "12. beta", "beta"),
+            (.numberedList, "beta. gamma", "beta. gamma"),
+            (.paragraph, "• beta", "• beta")
+        ]
+
+        for (kind, text, expected) in cases {
+            XCTAssertEqual(kind.strippedRenderPrefix(from: text), expected, text.debugDescription)
+            XCTAssertEqual(
+                kind.renderedPrefixLength(in: text),
+                text.utf16.count - expected.utf16.count,
+                text.debugDescription
+            )
+        }
+    }
+
+    /// One Backspace at the start of a list item un-lists it — it must not need
+    /// a second and third press to chew through the rendered "• ".
+    func testBackspaceAtStartOfListItemUnlistsInOneStep() throws {
+        let document = RichDocument(blocks: [
+            RichBlock(kind: .bulletList, inlines: [.text("alpha")]),
+            RichBlock(kind: .bulletList, inlines: [.text("beta")])
+        ])
+
+        let transformed = try BlockOperations.transformBlock(
+            in: document,
+            at: .root(index: 1),
+            to: .paragraph
+        )
+
+        XCTAssertEqual(transformed.document.blocks.map(\.kind), [.bulletList, .paragraph])
+        XCTAssertEqual(transformed.document.blocks[1].plainInlineText, "beta")
+    }
+
     func testBackspaceAtStartOfEmptyParagraphRemovesBlock() throws {
         let document = RichDocument(blocks: [.paragraph("A"), .paragraph("")])
 

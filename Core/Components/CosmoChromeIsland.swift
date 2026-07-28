@@ -6,6 +6,7 @@
 // and wake on hover (the "disappear" law).
 
 import SwiftUI
+import AppKit
 
 /// One baseline for every floating chrome island in the app.
 enum CosmoChromeMetrics {
@@ -13,6 +14,27 @@ enum CosmoChromeMetrics {
     static let topInset: CGFloat = 10
     static let sideInset: CGFloat = 16
     static let islandSpacing: CGFloat = 10
+
+    /// A host's width, quantized to 24pt steps: pane-divider drags must not
+    /// invalidate the chrome row on every frame.
+    static func quantizedWidth(_ width: CGFloat) -> CGFloat {
+        (width / 24).rounded() * 24
+    }
+
+    /// Hard title width for a center pill: the measured text, capped by the
+    /// row's budget. A hard frame is the only shape that both HUGS a short
+    /// title (a flexible `maxWidth` frame greedily fills, ballooning the glass
+    /// island) and CAPS a long one (`.fixedSize()` reports the uncapped ideal —
+    /// the bug that ran a long title clean over the side islands at pane
+    /// widths). Measured at DS.buttonText.weight(.semibold) → 12pt semibold.
+    static func measuredTitleWidth(_ title: String, cap: CGFloat) -> CGFloat {
+        let font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        let measured = (title as NSString)
+            .size(withAttributes: [.font: font])
+            .width
+            .rounded(.up)
+        return min(measured + 2, cap)
+    }
 }
 
 /// A hugging glass capsule for a functional group of controls.

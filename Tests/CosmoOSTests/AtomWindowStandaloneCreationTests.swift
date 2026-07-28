@@ -9,9 +9,34 @@ final class AtomWindowStandaloneCreationTests: XCTestCase {
     private let lastAtomKey = "atomWindowLastAtomUUID"
     private var originalLastAtomUUID: String?
 
-    override func setUp() {
-        super.setUp()
+    override func setUp() async throws {
+        try await super.setUp()
         originalLastAtomUUID = defaults.string(forKey: lastAtomKey)
+
+        // Arm the project→thinkspace migration's one-shot guard.
+        //
+        // Tests run against a FRESH temp database per process
+        // (`CosmoDatabase.databasePath` → `CosmoOSTests-<pid>`), where this flag
+        // is absent — so the migration is armed by default. Its whole job is to
+        // rewrite legacy `.project` links into `.thinkspace` memberships, which
+        // is precisely the link `testProjectOwnedAtomsDoNotLeakIntoStandaloneSection`
+        // depends on. Anything that calls `ThinkspaceManager.loadThinkspaces()`
+        // (including `LibraryViewModel.loadLibrary()` itself) would fire it and
+        // silently destroy the fixture mid-test — and whether that happened
+        // depended on which earlier suites had already triggered a thinkspace
+        // load, which is what made this suite pass under `--filter` and fail in
+        // full runs.
+        //
+        // Marking it done is the correct PRECONDITION, not a workaround: the
+        // invariant under test is about legacy project links that arrive by sync
+        // *after* the migration epoch (see `LibraryViewModel.loadLibrary`), i.e.
+        // a world where the migration has already run.
+        try await CosmoDatabase.shared.asyncWrite { db in
+            try db.execute(
+                sql: "INSERT OR REPLACE INTO app_flags (key, value, updated_at) VALUES (?, '1', ?)",
+                arguments: ["projectsMigratedToThinkspaces", ISO8601.string(from: Date())]
+            )
+        }
     }
 
     override func tearDown() async throws {
@@ -100,6 +125,19 @@ final class AtomWindowStandaloneCreationTests: XCTestCase {
         )
         let createdLinked = try await AtomRepository.shared.create(linkedAtom)
         createdUUIDs.append(createdLinked.uuid)
+
+        // Precondition: the Library decides ownership by reading exactly this
+        // link. Asserting it separately means a failure below says "the Library
+        // filter is wrong" rather than "something upstream ate the link".
+        // Precondition: the Library decides ownership by reading exactly this
+        // link, and the project→thinkspace migration exists to destroy it. If
+        // this fires, the migration guard came unarmed — not a Library bug.
+        let persisted = try await AtomRepository.shared.fetch(uuid: createdLinked.uuid)
+        XCTAssertNotNil(
+            persisted?.link(ofType: .project),
+            "project link must survive — projectOwnedAtomUUIDs is built from it; "
+                + "got links=\(String(describing: persisted?.links))"
+        )
 
         let libraryViewModel = LibraryViewModel()
         libraryViewModel.forceReload()

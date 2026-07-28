@@ -54,7 +54,9 @@ struct IntentSummary: Identifiable, Equatable {
 }
 
 struct HabitDefinition: Identifiable, Codable, Equatable, Sendable {
-    let id: String
+    /// `var` so `normalized` can be a copy-and-mutate — it has to be able to
+    /// fall back to the carrying atom's uuid when a stored row has an empty id.
+    var id: String
     var title: String
     var icon: String
     var accentColor: String
@@ -528,7 +530,7 @@ final class CommandCenterHabitEngine: ObservableObject {
             let atoms = try await atomRepository.fetchAll(type: .routineDefinition)
             let custom = atoms.compactMap { atom -> HabitDefinition? in
                 guard var habit = atom.structuredData(as: HabitDefinition.self) else { return nil }
-                habit = normalized(habit, fallbackId: atom.uuid)
+                habit = Self.normalized(habit, fallbackId: atom.uuid)
                 return habit
             }
 
@@ -575,7 +577,7 @@ final class CommandCenterHabitEngine: ObservableObject {
             icon: icon,
             accentColor: accentColor,
             dailyTargetCount: max(1, dailyTargetCount),
-            keywordTriggers: normalizedKeywords(keywordTriggers),
+            keywordTriggers: Self.normalizedKeywords(keywordTriggers),
             mappedIntents: mappedIntents.map(\.rawValue),
             defaultIntentUUID: defaultIntentUUID,
             allowManualCompletion: allowManualCompletion,
@@ -599,7 +601,7 @@ final class CommandCenterHabitEngine: ObservableObject {
 
         do {
             _ = try await atomRepository.update(uuid: definition.id) { atom in
-                let normalized = normalized(definition, fallbackId: atom.uuid)
+                let normalized = Self.normalized(definition, fallbackId: atom.uuid)
                 atom.title = normalized.title
                 atom.body = bodyText(
                     keywordTriggers: normalized.keywordTriggers,
@@ -1047,24 +1049,37 @@ final class CommandCenterHabitEngine: ObservableObject {
         return names.isEmpty ? nil : names.joined(separator: " · ")
     }
 
-    private func normalized(_ definition: HabitDefinition, fallbackId: String) -> HabitDefinition {
-        HabitDefinition(
-            id: definition.id.isEmpty ? fallbackId : definition.id,
-            title: definition.title.trimmingCharacters(in: .whitespacesAndNewlines),
-            icon: definition.icon.isEmpty ? "repeat" : definition.icon,
-            accentColor: definition.accentColor.isEmpty ? "2D6A4F" : definition.accentColor.replacingOccurrences(of: "#", with: ""),
-            dailyTargetCount: max(1, definition.dailyTargetCount),
-            keywordTriggers: normalizedKeywords(definition.keywordTriggers),
-            mappedIntents: definition.taskIntents.map(\.rawValue),
-            defaultIntentUUID: definition.defaultIntentUUID,
-            allowManualCompletion: definition.allowManualCompletion,
-            sortOrder: definition.sortOrder,
-            isBuiltIn: definition.isBuiltIn,
-            isArchived: definition.isArchived
-        )
+    /// Field cleanup, applied on every load AND before every write.
+    ///
+    /// Copy-and-mutate on purpose. The field-by-field rebuild this replaced left
+    /// out `goalType` and `dailyTargetMinutes`; both carry `= nil` defaults in the
+    /// memberwise init, so the omission compiled silently and a minutes habit came
+    /// back from `refreshDefinitions` as a count habit — wrong ring, wrong 7-day
+    /// history, and `recordTaskCompletion`'s `isTimeBased` guard wide open — then
+    /// lost its goal from the atom the first time it was edited. Only touch the
+    /// fields being cleaned: everything else, including fields added later, must
+    /// ride through untouched.
+    static func normalized(_ definition: HabitDefinition, fallbackId: String) -> HabitDefinition {
+        var normalized = definition
+        if normalized.id.isEmpty { normalized.id = fallbackId }
+        normalized.title = definition.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalized.icon.isEmpty { normalized.icon = "repeat" }
+        normalized.accentColor = definition.accentColor.isEmpty
+            ? "2D6A4F"
+            : definition.accentColor.replacingOccurrences(of: "#", with: "")
+        normalized.dailyTargetCount = max(1, definition.dailyTargetCount)
+        normalized.keywordTriggers = normalizedKeywords(definition.keywordTriggers)
+        normalized.mappedIntents = definition.taskIntents.map(\.rawValue)
+        // createHabit's floors, re-applied on every pass (twin of the iOS
+        // HabitEngine.updateHabit): minutes belong only to a minutes goal, and a
+        // minutes goal is never shorter than 5.
+        normalized.dailyTargetMinutes = definition.goalType == "minutes"
+            ? definition.dailyTargetMinutes.map { max(5, $0) }
+            : nil
+        return normalized
     }
 
-    private func normalizedKeywords(_ input: [String]) -> [String] {
+    static func normalizedKeywords(_ input: [String]) -> [String] {
         input
             .flatMap { $0.split(separator: ",").map(String.init) }
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
@@ -1083,7 +1098,7 @@ final class CommandCenterHabitEngine: ObservableObject {
     }
 
     private func bodyText(keywordTriggers: [String], mappedIntents: [String]) -> String? {
-        let keywords = normalizedKeywords(keywordTriggers)
+        let keywords = Self.normalizedKeywords(keywordTriggers)
         var parts: [String] = []
         if !mappedIntents.isEmpty {
             parts.append("Intents: \(mappedIntents.joined(separator: ", "))")

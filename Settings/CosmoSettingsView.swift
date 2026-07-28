@@ -1404,6 +1404,7 @@ private struct APIKeyCard: View {
         case "x_twitter": return APIKeys.xTwitter
         case "youtube_channel_id": return APIKeys.youtubeChannelId
         case "apify": return APIKeys.apify
+        case "embeddings": return APIKeys.embeddings
         case "discovery_api_base_url": return APIKeys.discoveryApiBaseURL
         case "discovery_api_key": return APIKeys.discoveryApiKey
         default: return nil
@@ -1411,11 +1412,29 @@ private struct APIKeyCard: View {
     }
 
     private func saveKey() {
-        guard !apiKey.allSatisfy({ $0 == "\u{2022}" }) else { return }
-        APIKeys.save(apiKey, identifier: keyIdentifier)
+        // Pasted keys arrive with trailing newlines often enough to matter — an
+        // untrimmed key goes into the Authorization header verbatim and every
+        // call 401s with no hint why.
+        let trimmed = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.allSatisfy({ $0 == "\u{2022}" }) else { return }
+        APIKeys.save(trimmed, identifier: keyIdentifier)
+        apiKey = trimmed
         withAnimation(ProMotionSprings.snappy) { showSuccess = true }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
             withAnimation(ProMotionSprings.snappy) { showSuccess = false }
+        }
+        if keyIdentifier == "embeddings" { startEmbeddingsCatchUp() }
+    }
+
+    /// Saving the embeddings key mid-session used to change nothing visible: the
+    /// Recall backfill and the NULL-vector memory repair only run 60s after
+    /// launch, so everything captured before the key existed stayed unindexed
+    /// until the next relaunch. Kick both the moment the key lands.
+    private func startEmbeddingsCatchUp() {
+        Task {
+            _ = await RecallIndexer.shared.backfill()
+            await RecallIndexer.shared.scheduleDrain()
+            await CosmoMemoryService.shared.backfillMissingEmbeddings()
         }
     }
 }

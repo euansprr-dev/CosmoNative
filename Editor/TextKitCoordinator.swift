@@ -3443,16 +3443,36 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             return NSMaxRange(lineRange) >= textView.string.utf16.count
         }
 
+        /// UTF-16 length of the chrome prefix this row's kind renders at the head
+        /// of the text ("• ", "1. ", "☐ ", "│ "). Zero for the legacy continuous
+        /// editor, which has no rowBlockKind and owns its prefixes as content.
+        private func renderedRowPrefixLength(in textView: NSTextView) -> Int {
+            guard let kind = parent.rowBlockKind else { return 0 }
+            return kind.renderedPrefixLength(in: textView.string)
+        }
+
         private func selectionIsAtDocumentStart(in textView: NSTextView) -> Bool {
             let selection = textView.selectedRange()
-            return selection.location == 0 && selection.length == 0
+            guard selection.length == 0 else { return false }
+            // The row's rendered prefix is chrome, not content — the caret's home
+            // is the character right after it. Counting only location 0 made
+            // Backspace delete the prefix a character at a time instead of
+            // exiting the list, so leaving a bullet took three presses.
+            return selection.location <= renderedRowPrefixLength(in: textView)
         }
 
         private func selectionIsOnEmptyFinalLine(in textView: NSTextView) -> Bool {
             guard selectionIsOnLastLine(in: textView) else { return false }
             let lineRange = currentLineRange(in: textView)
-            let lineText = (textView.string as NSString).substring(with: lineRange)
-            return lineText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            let lineText = (textView.string as NSString).substring(with: lineRange) as NSString
+            // Same chrome rule: "• " must read as empty here, or Return on an
+            // empty bullet splits the row into ANOTHER empty bullet instead of
+            // exiting the list.
+            let prefixLength = lineRange.location == 0
+                ? min(renderedRowPrefixLength(in: textView), lineText.length)
+                : 0
+            let content = lineText.substring(from: prefixLength)
+            return content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
 
         /// After a checklist continuation prefix ("☐ ") is inserted with live

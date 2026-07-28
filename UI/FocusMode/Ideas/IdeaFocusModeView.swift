@@ -25,6 +25,8 @@ struct IdeaFocusModeView: View {
 
     @State private var viewModel: IdeaFocusModeViewModel
     @State private var workspace = IdeaWorkspaceModel()
+    /// The bench's width, quantized — feeds the chrome row's title budget.
+    @State private var chromeWidth: CGFloat = 0
     @State private var newHookText: String = ""
     /// The view OWNS its context provider — the editable-surface registry holds
     /// it weakly; the old single global slot deallocated it on any other view's
@@ -90,6 +92,12 @@ struct IdeaFocusModeView: View {
                 if workspace.breakpoint != resolved {
                     workspace.breakpoint = resolved
                 }
+                // Quantized: a pane-divider drag must not invalidate the
+                // chrome row on every frame.
+                let quantized = CosmoChromeMetrics.quantizedWidth(width)
+                if chromeWidth != quantized {
+                    chromeWidth = quantized
+                }
             }
         }
         .background {
@@ -133,6 +141,7 @@ struct IdeaFocusModeView: View {
             viewModel: viewModel,
             workspace: workspace,
             isPaneContext: isPaneContext,
+            availableWidth: chromeWidth,
             isPromoting: isPromoting,
             isReceded: isActivelyTyping,
             actions: workspaceActions
@@ -218,10 +227,14 @@ struct IdeaFocusModeView: View {
         }
     }
 
+    /// Presence, not ownership — see `CosmoEditableSurfaceRegistry.registerPresence`.
+    /// Every open document registers so the assistant's scope switcher can list
+    /// it; only one pane at a time may own the *window* context.
     private func registerContextProvider() {
-        guard !isPaneContext || isPaneContextOwner else { return }
-        let provider = IdeaContextProvider(atom: atom, viewModel: viewModel)
+        let provider = ownedContextProvider ?? IdeaContextProvider(atom: atom, viewModel: viewModel)
         ownedContextProvider = provider
+        CosmoEditableSurfaceRegistry.shared.registerPresence(provider)
+        guard !isPaneContext || isPaneContextOwner else { return }
         CosmoWindowViewModel.shared.updateContext(provider: provider)
     }
 

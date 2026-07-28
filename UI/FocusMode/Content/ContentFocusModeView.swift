@@ -533,8 +533,15 @@ struct ContentFocusModeView: View {
                     try await self.applyInlineAssistantDraftEdit(operation)
                 }
             )
+            // Registration is presence, not ownership. Every open document has to
+            // be in the registry or the assistant's scope switcher cannot list it
+            // — and only one pane can ever be the context owner, so gating
+            // registration on ownership made every other open document invisible
+            // ("No documents open" with three of them on screen). The single
+            // *window* context slot stays owner-gated; the registry does not.
+            ownedContextProvider = provider
+            CosmoEditableSurfaceRegistry.shared.registerPresence(provider)
             if !isPaneContext || isPaneContextOwner {
-                ownedContextProvider = provider
                 CosmoWindowViewModel.shared.updateContext(provider: provider)
             }
             ContentFocusWritingAIScope.shared.activate(atomUUID: atom.uuid) {
@@ -542,20 +549,11 @@ struct ContentFocusModeView: View {
             }
         }
         .onChange(of: isPaneContextOwner) { _, isOwner in
-            if isOwner {
-                let provider = ContentContextProvider(
-                    atom: atom,
-                    stateRef: { [viewModel] in viewModel.state },
-                    phaseRef: { [viewModel] in viewModel.displayPhase },
-                    draftTextRef: { [self] in self.localDraftContent },
-                    selectionRef: { [self] in self.currentEditableSelection() },
-                    applyDraftEdit: { [self] operation in
-                        try await self.applyInlineAssistantDraftEdit(operation)
-                    }
-                )
-                ownedContextProvider = provider
-                CosmoWindowViewModel.shared.updateContext(provider: provider)
-            }
+            // Promote the provider this view already owns rather than building a
+            // second one — a fresh instance would orphan the registry's weak
+            // entry for an instant and drop the surface out of the switcher.
+            guard isOwner, let provider = ownedContextProvider else { return }
+            CosmoWindowViewModel.shared.updateContext(provider: provider)
         }
         .onReceive(CosmoInlineAssistantStore.shared.$proposals) { proposals in
             updateDraftReviewProposal(proposals.last { proposal in

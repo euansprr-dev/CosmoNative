@@ -69,7 +69,10 @@ enum CosmoInlineAssistantTimelineMetrics {
 }
 
 enum CosmoInlineAssistantActivityTimelineMotion {
-    private static let spinCycleDuration: TimeInterval = 1.1
+    /// One revolution of the running-step circle. The spin is driven as a
+    /// repeating transform animation rather than a per-frame re-render, so the
+    /// duration is also the animation's cycle length.
+    static let spinCycleDuration: TimeInterval = 1.1
 
     static func circleRotationDegrees(
         for state: CosmoInlineAssistantActivityStep.State,
@@ -91,7 +94,10 @@ private struct CosmoInlineAssistantActivityStepRow: View {
     let appearIndex: Int
 
     @State private var hasAppeared = false
+    @State private var spinDegrees: Double = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var isSpinning: Bool { step.state == .running && !reduceMotion }
 
     var body: some View {
         HStack(alignment: .top, spacing: DS.space8) {
@@ -119,30 +125,16 @@ private struct CosmoInlineAssistantActivityStepRow: View {
 
     private var railColumn: some View {
         VStack(spacing: 2) {
-            TimelineView(.animation(
-                minimumInterval: 1.0 / 60.0,
-                paused: step.state != .running || reduceMotion
-            )) { context in
-                Image(systemName: CosmoInlineAssistantToolTaxonomy.icon(forToolName: step.toolName))
-                    .font(DS.caption2.weight(.semibold))
-                    .foregroundStyle(step.state == .done ? DS.textSecondary : DS.accent)
-                    .frame(width: CosmoInlineAssistantTimelineMetrics.dotColumn,
-                           height: CosmoInlineAssistantTimelineMetrics.dotColumn)
-                    .background(
-                        (step.state == .done ? DS.surfaceHover : DS.accentSoft),
-                        in: Circle()
-                    )
-                    .rotationEffect(.degrees(
-                        CosmoInlineAssistantActivityTimelineMotion.circleRotationDegrees(
-                            for: step.state,
-                            reduceMotion: reduceMotion,
-                            date: context.date
-                        )
-                    ))
-                    .accessibilityHidden(true)
-            }
-            .frame(width: CosmoInlineAssistantTimelineMetrics.dotColumn,
-                   height: CosmoInlineAssistantTimelineMetrics.dotColumn)
+            // The circle spins as a repeating *transform* animation, never as a
+            // per-frame re-render. A TimelineView(.animation) here re-evaluated
+            // this row's body 60×/s for every running step, and each of those
+            // re-evaluations re-entered the pane's (deeply nested) layout — with
+            // a few steps in flight the main thread could stop draining its
+            // transaction queue entirely and the window would wedge. rotationEffect
+            // is applied after sizing, so animating it costs no layout at all.
+            spinningIcon
+                .frame(width: CosmoInlineAssistantTimelineMetrics.dotColumn,
+                       height: CosmoInlineAssistantTimelineMetrics.dotColumn)
 
             if !isLast {
                 RoundedRectangle(cornerRadius: CosmoInlineAssistantTimelineMetrics.railWidth / 2)
@@ -150,6 +142,52 @@ private struct CosmoInlineAssistantActivityStepRow: View {
                     .frame(width: CosmoInlineAssistantTimelineMetrics.railWidth)
                     .frame(minHeight: DS.space8)
             }
+        }
+    }
+
+    private var spinningIcon: some View {
+        Image(systemName: CosmoInlineAssistantToolTaxonomy.icon(forToolName: step.toolName))
+            .font(DS.caption2.weight(.semibold))
+            .foregroundStyle(step.state == .done ? DS.textSecondary : DS.accent)
+            .frame(width: CosmoInlineAssistantTimelineMetrics.dotColumn,
+                   height: CosmoInlineAssistantTimelineMetrics.dotColumn)
+            .background(
+                (step.state == .done ? DS.surfaceHover : DS.accentSoft),
+                in: Circle()
+            )
+            .rotationEffect(.degrees(spinDegrees))
+            .accessibilityHidden(true)
+            .onAppear { syncSpin() }
+            .onChange(of: isSpinning) { syncSpin() }
+    }
+
+    /// Starts (or stops) the continuous spin. The starting angle is seeded from
+    /// absolute time via the same helper the old per-frame clock used, so every
+    /// running circle on the rail stays in phase with every other one — a row
+    /// that appears late still lands mid-revolution alongside its neighbours.
+    private func syncSpin() {
+        guard isSpinning else {
+            var stop = Transaction()
+            stop.disablesAnimations = true
+            withTransaction(stop) { spinDegrees = 0 }
+            return
+        }
+
+        let phase = CosmoInlineAssistantActivityTimelineMotion.circleRotationDegrees(
+            for: .running,
+            reduceMotion: false,
+            date: Date()
+        )
+
+        var seed = Transaction()
+        seed.disablesAnimations = true
+        withTransaction(seed) { spinDegrees = phase }
+
+        withAnimation(
+            .linear(duration: CosmoInlineAssistantActivityTimelineMotion.spinCycleDuration)
+            .repeatForever(autoreverses: false)
+        ) {
+            spinDegrees = phase + 360
         }
     }
 
@@ -260,9 +298,7 @@ struct CosmoInlineAssistantActivityReceiptView: View {
         }
         .buttonStyle(.plain)
         .cosmoClickCursor()
-        .onHover { hovering in
-            withAnimation(ProMotionSprings.hover) { isHovered = hovering }
-        }
+        .cosmoHover { isHovered = $0 }
         .help(isExpanded ? "Hide Cosmo's steps" : "Show Cosmo's steps")
         .accessibilityLabel("Cosmo's work: \(CosmoInlineAssistantRunReceiptFormatter.summary(steps: steps, sourceCount: sourceCount))")
         .accessibilityAddTraits(isExpanded ? [.isSelected] : [])

@@ -488,8 +488,13 @@ struct NoteFocusModeView: View {
                     try await self.applyInlineAssistantBodyEdit(operation)
                 }
             )
+            // Presence, not ownership — see CosmoEditableSurfaceRegistry.
+            // registerPresence: only one pane can own the window context, so
+            // gating registration on it hid every other open document from the
+            // assistant's scope switcher.
+            ownedContextProvider = provider
+            CosmoEditableSurfaceRegistry.shared.registerPresence(provider)
             if !isPaneContext || isPaneContextOwner {
-                ownedContextProvider = provider
                 CosmoWindowViewModel.shared.updateContext(provider: provider)
             }
             // Safety fallback: ensure isInitialLoad clears even if GRDB observation
@@ -501,20 +506,11 @@ struct NoteFocusModeView: View {
             }
         }
         .onChange(of: isPaneContextOwner) { _, isOwner in
-            if isOwner {
-                let provider = NoteContextProvider(
-                    atom: atom,
-                    titleRef: { [self] in self.titlePlainText },
-                    contentRef: { [self] in self.plainContent },
-                    tagsRef: { [self] in self.tags },
-                    selectedTextRef: { [self] in self.selectedText },
-                    applyBodyEdit: { [self] operation in
-                        try await self.applyInlineAssistantBodyEdit(operation)
-                    }
-                )
-                ownedContextProvider = provider
-                CosmoWindowViewModel.shared.updateContext(provider: provider)
-            }
+            // Promote the provider this view already owns — a second instance
+            // would orphan the registry's weak entry for an instant and drop the
+            // note out of the switcher.
+            guard isOwner, let provider = ownedContextProvider else { return }
+            CosmoWindowViewModel.shared.updateContext(provider: provider)
         }
         .onReceive(CosmoInlineAssistantStore.shared.$proposals) { proposals in
             let surfaceID = "note:\(atom.uuid)"

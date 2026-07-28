@@ -329,24 +329,13 @@ final class SwipeStudyModel {
             transcriptText = ""
         }
 
-        // Slide transcript: swipeAnalysis.transcriptSlides is the source of
-        // truth (survives analysis rewrites); fallback parses transcriptText.
-        // One decode for the whole load — this runs on the main actor during
-        // the entrance animation.
+        // Slide transcript: swipeAnalysis is the source of truth (it survives
+        // analysis rewrites); the prose is only a fallback. One decode for the
+        // whole load — this runs on the main actor during the entrance
+        // animation.
         let savedAnalysis = sourceAtom.swipeAnalysis
-        if let savedSlides = savedAnalysis?.transcriptSlides,
-           !savedSlides.isEmpty,
-           savedSlides.contains(where: { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
-            transcriptSlides = savedSlides
-            rawTranscriptSlides = savedAnalysis?.rawTranscriptSlides ?? savedSlides
-            transcriptSpeechSegments = savedAnalysis?.transcriptSpeechSegments ?? []
-            transcriptionQuality = savedAnalysis?.transcriptionQuality
-            transcriptionWarnings = savedAnalysis?.transcriptionWarnings ?? []
-            instagramTranscript = transcriptText
-        } else if !transcriptText.isEmpty {
-            loadSlides(from: transcriptText)
-            instagramTranscript = transcriptText
-        }
+        hydrateTranscriptState(from: savedAnalysis, fallbackTranscript: transcriptText)
+        instagramTranscript = transcriptText
 
         if let savedComments = savedAnalysis?.transcriptComments, !savedComments.isEmpty {
             transcriptComments = savedComments
@@ -700,8 +689,13 @@ final class SwipeStudyModel {
     /// just before persisting.
     private func applyingLiveTranscriptState(to analysis: SwipeAnalysis) -> SwipeAnalysis {
         var copy = analysis
-        copy.transcriptSlides = transcriptSlides
-        copy.rawTranscriptSlides = rawTranscriptSlides.isEmpty ? transcriptSlides : rawTranscriptSlides
+        // Speech tier: the live slide lists are blank placeholders, not content.
+        // Stamping them would write a phantom slide over the worker's
+        // deliberately-empty list and make the swipe read as slide-transcribed.
+        if !showsSpeechTranscript {
+            copy.transcriptSlides = transcriptSlides
+            copy.rawTranscriptSlides = rawTranscriptSlides.isEmpty ? transcriptSlides : rawTranscriptSlides
+        }
         copy.transcriptSpeechSegments = transcriptSpeechSegments
         copy.transcriptionQuality = transcriptionQuality
         copy.transcriptionWarnings = transcriptionWarnings
@@ -927,6 +921,40 @@ final class SwipeStudyModel {
         transcriptionWarnings.isEmpty
             ? "Transcript quality was degraded. Review the raw capture before editing."
             : transcriptionWarnings.joined(separator: " ")
+    }
+
+    /// The ONE place persisted transcript state becomes editor state — every
+    /// load path (open, Instagram stage, cloud poll) goes through here so they
+    /// can't drift into three different answers for the same swipe.
+    ///
+    /// The tier decision lives in `SwipeStudyTranscriptTier` (next to the
+    /// preview rail's `resolve`, its GUARD-TWIN); this only applies it.
+    /// The trap it closes: a talking-head reel banks its words as speech
+    /// segments with a deliberately EMPTY slide list, and parsing its prose
+    /// fallback into slide cards both fills `transcriptSlides` (so
+    /// `slidesCarryText` flips true) and clears `transcriptSpeechSegments` —
+    /// knocking the manuscript out of the speech tier the preview rail is
+    /// happily showing. The prose is a fallback for swipes with NO analysis
+    /// transcript, never a substitute for one.
+    func hydrateTranscriptState(from analysis: SwipeAnalysis?, fallbackTranscript: String) {
+        switch SwipeStudyTranscriptTier.resolve(analysis: analysis) {
+        case .slides(let slides, let raw, let speech):
+            transcriptSlides = slides
+            rawTranscriptSlides = raw
+            transcriptSpeechSegments = speech
+        case .speech(let speech):
+            // The slide lists stay the blank placeholder so
+            // `showsSpeechTranscript` reads true and the manuscript renders
+            // timestamped rows instead of empty slide editors.
+            transcriptSlides = [TranscriptSlide(text: "", slideNumber: 1)]
+            rawTranscriptSlides = transcriptSlides
+            transcriptSpeechSegments = speech
+        case .proseFallback:
+            loadSlides(from: fallbackTranscript)
+            return
+        }
+        transcriptionQuality = analysis?.transcriptionQuality
+        transcriptionWarnings = analysis?.transcriptionWarnings ?? []
     }
 
     func loadSlides(from transcript: String) {
@@ -1288,8 +1316,7 @@ final class SwipeStudyModel {
 
         if hasPendingSlideEdits {
             applySlideTranscriptEdits(to: &current, markUserEdited: true)
-            transcriptText = slidesTranscriptText
-            instagramTranscript = slidesTranscriptText
+            mirrorSlideTextIntoTranscriptFields()
         }
         if let pending = pendingTranscriptText {
             var richContent = current.richContent ?? ResearchRichContent()
@@ -1335,10 +1362,16 @@ final class SwipeStudyModel {
     /// terminal and tells auto-transcription to never re-run for this swipe.
     private func applySlideTranscriptEdits(to current: inout Atom, markUserEdited: Bool) {
         let combined = slidesTranscriptText
-        current.body = combined
         var richContent = current.richContent ?? ResearchRichContent()
-        richContent.transcript = combined
-        richContent.transcriptStatus = "available"
+        // The slide list is the transcript of record ONLY when it carries text.
+        // On the speech tier (talking-head reel) the slides are a blank
+        // placeholder, and joining them would erase the spoken transcript from
+        // body/richContent — the words the speech rows are rendered from.
+        if !showsSpeechTranscript {
+            current.body = combined
+            richContent.transcript = combined
+            richContent.transcriptStatus = "available"
+        }
         if let hook = canonicalHookFromSlides() {
             current.hook = String(hook.prefix(200))
             // The library headline stays the short displayTitle when one
@@ -1354,8 +1387,10 @@ final class SwipeStudyModel {
         if let hook = canonicalHookFromSlides() {
             sa.hookText = String(hook.prefix(500))
         }
-        sa.transcriptSlides = transcriptSlides
-        sa.rawTranscriptSlides = rawTranscriptSlides.isEmpty ? transcriptSlides : rawTranscriptSlides
+        if !showsSpeechTranscript {
+            sa.transcriptSlides = transcriptSlides
+            sa.rawTranscriptSlides = rawTranscriptSlides.isEmpty ? transcriptSlides : rawTranscriptSlides
+        }
         sa.transcriptSpeechSegments = transcriptSpeechSegments
         sa.transcriptionQuality = transcriptionQuality
         sa.transcriptionWarnings = transcriptionWarnings
@@ -1366,6 +1401,15 @@ final class SwipeStudyModel {
         current = current.withSwipeAnalysis(sa)
     }
 
+    /// Mirror the just-saved slide text into the in-memory transcript fields.
+    /// A no-op on the speech tier, where the slides are placeholders and the
+    /// prose the speech rows were built from has to survive the save.
+    private func mirrorSlideTextIntoTranscriptFields() {
+        guard !showsSpeechTranscript else { return }
+        transcriptText = slidesTranscriptText
+        instagramTranscript = slidesTranscriptText
+    }
+
     /// Fire-and-forget save — used from debounced manual edits.
     /// Marks the transcript user-edited (terminal for auto-transcription).
     func saveSlideTranscript() {
@@ -1373,8 +1417,7 @@ final class SwipeStudyModel {
         applySlideTranscriptEdits(to: &current, markUserEdited: true)
         let generation = slideEditGeneration
 
-        transcriptText = slidesTranscriptText
-        instagramTranscript = slidesTranscriptText
+        mirrorSlideTextIntoTranscriptFields()
         currentAtom = current
         Task { [weak self] in
             do {
@@ -1400,10 +1443,8 @@ final class SwipeStudyModel {
     func saveSlideTranscriptAsync() async {
         guard var current = currentAtom else { return }
         applySlideTranscriptEdits(to: &current, markUserEdited: false)
-        let combined = slidesTranscriptText
 
-        transcriptText = combined
-        instagramTranscript = combined
+        mirrorSlideTextIntoTranscriptFields()
         currentAtom = current
 
         do {
@@ -1440,15 +1481,10 @@ final class SwipeStudyModel {
     func prepareInstagramStage() {
         let atom = displayAtom
         instagramTranscript = atom.richContent?.transcript ?? ""
-        if let savedSlides = atom.swipeAnalysis?.transcriptSlides, !savedSlides.isEmpty {
-            transcriptSlides = savedSlides
-            rawTranscriptSlides = atom.swipeAnalysis?.rawTranscriptSlides ?? savedSlides
-            transcriptSpeechSegments = atom.swipeAnalysis?.transcriptSpeechSegments ?? []
-            transcriptionQuality = atom.swipeAnalysis?.transcriptionQuality
-            transcriptionWarnings = atom.swipeAnalysis?.transcriptionWarnings ?? []
-        } else {
-            loadSlides(from: atom.richContent?.transcript ?? "")
-        }
+        hydrateTranscriptState(
+            from: atom.swipeAnalysis,
+            fallbackTranscript: atom.richContent?.transcript ?? ""
+        )
         // Pre-detect carousel/post from URL pattern (avoids "loading video"
         // flash). Only the URL — sourceType can be stale.
         if let url = atom.url?.lowercased(), url.contains("/p/") && !url.contains("/reel/") {
@@ -1799,13 +1835,13 @@ final class SwipeStudyModel {
                 }
                 if let sa = fresh.swipeAnalysis {
                     self.analysis = sa
-                    if let slides = sa.transcriptSlides, !slides.isEmpty {
-                        self.transcriptSlides = slides
-                        self.rawTranscriptSlides = sa.rawTranscriptSlides?.isEmpty == false
-                            ? sa.rawTranscriptSlides! : slides
-                        self.transcriptSpeechSegments = sa.transcriptSpeechSegments ?? []
-                        self.transcriptionQuality = sa.transcriptionQuality
-                        self.transcriptionWarnings = sa.transcriptionWarnings ?? []
+                    // Only adopt an analysis that actually banked words — an
+                    // empty one arriving mid-poll must not wipe what's on screen.
+                    if Self.hasTranscriptContent(sa) {
+                        self.hydrateTranscriptState(
+                            from: sa,
+                            fallbackTranscript: fresh.richContent?.transcript ?? ""
+                        )
                         self.cleanAllSlideLineBreaks()
                     } else if let transcript = fresh.richContent?.transcript, !transcript.isEmpty {
                         self.loadSlides(from: transcript)

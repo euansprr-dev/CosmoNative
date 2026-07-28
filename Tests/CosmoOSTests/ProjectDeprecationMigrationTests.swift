@@ -5,14 +5,48 @@ import XCTest
 final class ProjectDeprecationMigrationTests: XCTestCase {
     private var cleanupUUIDs: [String] = []
 
-    override func setUp() async throws {
-        try await super.setUp()
-        // The project migration is one-shot in production (gated by an app_flags
-        // row so it can never destructively re-run against an already-migrated
-        // or synced database). Tests exercise the migration directly, so clear
-        // the flag first.
+    /// `nonisolated` — read inside the database's Sendable write closures.
+    private nonisolated static let migrationFlagKey = "projectsMigratedToThinkspaces"
+
+    /// Runs `body` with the migration's one-shot guard disarmed, re-arming it
+    /// immediately afterwards even if `body` throws.
+    ///
+    /// The guard MUST be down for the shortest possible moment. This suite runs
+    /// against the REAL application database, which is shared with any running
+    /// instance of the app and with every other suite in the process. While the
+    /// flag is absent, ANY of them can trigger
+    /// `ThinkspaceManager.loadThinkspaces()` → `migrateLegacyProjectsIfNeeded()`
+    /// and re-run a destructive migration that rewrites `.project` links into
+    /// thinkspace memberships — silently stripping the link out from under a
+    /// concurrent test (this is what made `AtomWindowStandaloneCreationTests`
+    /// flaky). Disarming it for a whole setUp/tearDown span, as this suite used
+    /// to, left that window open for the entire suite — and, because nothing
+    /// restored the flag, for every later run and for the user's own app.
+    private func withMigrationGuardDisarmed<T>(_ body: () async throws -> T) async throws -> T {
+        try await setMigrationFlag(present: false)
+        do {
+            let result = try await body()
+            try await setMigrationFlag(present: true)
+            return result
+        } catch {
+            try? await setMigrationFlag(present: true)
+            throw error
+        }
+    }
+
+    private func setMigrationFlag(present: Bool) async throws {
         try await CosmoDatabase.shared.asyncWrite { db in
-            try db.execute(sql: "DELETE FROM app_flags WHERE key = 'projectsMigratedToThinkspaces'")
+            if present {
+                try db.execute(
+                    sql: "INSERT OR REPLACE INTO app_flags (key, value, updated_at) VALUES (?, '1', ?)",
+                    arguments: [Self.migrationFlagKey, ISO8601.string(from: Date())]
+                )
+            } else {
+                try db.execute(
+                    sql: "DELETE FROM app_flags WHERE key = ?",
+                    arguments: [Self.migrationFlagKey]
+                )
+            }
         }
     }
 
@@ -23,6 +57,12 @@ final class ProjectDeprecationMigrationTests: XCTestCase {
         for uuid in uuids {
             try? await AtomRepository.shared.hardDelete(uuid: uuid, confirmed: true)
         }
+
+        // Belt and braces: `withMigrationGuardDisarmed` already re-arms on both
+        // the success and throw paths, but a test that fails an assertion before
+        // reaching it must never leave the guard down — a deleted flag primes
+        // the user's own app to re-run a destructive migration on next launch.
+        try await setMigrationFlag(present: true)
 
         await ThinkspaceManager.shared.loadThinkspaces()
         try await super.tearDown()
@@ -51,7 +91,9 @@ final class ProjectDeprecationMigrationTests: XCTestCase {
         let savedLinkedAtom = try await AtomRepository.shared.create(linkedAtom)
         cleanupUUIDs.append(savedLinkedAtom.uuid)
 
-        try await AtomRepository.shared.migrateProjectsToThinkspaces()
+        try await withMigrationGuardDisarmed {
+            try await AtomRepository.shared.migrateProjectsToThinkspaces()
+        }
 
         let migratedLinkedAtom = try await AtomRepository.shared.fetch(uuid: savedLinkedAtom.uuid)
         XCTAssertNil(migratedLinkedAtom?.link(ofType: .project))

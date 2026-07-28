@@ -50,6 +50,42 @@ enum SwipePreviewTranscript: Equatable {
     }
 }
 
+/// Which tier Swipe Study's manuscript must hydrate from persisted analysis
+/// state — the editor-state twin of `SwipePreviewTranscript.resolve`, kept in
+/// this file so the two can't drift into disagreeing about the same swipe.
+/// They share `slidesCarryText`, and the order of truth is identical:
+/// slides-that-carry-text → timestamped speech → the prose fallback.
+///
+/// GUARD-TWIN of `SwipePreviewTranscript.resolve` — change together.
+enum SwipeStudyTranscriptTier: Equatable {
+    /// Slides carry the words. Speech segments ride along when the reel has
+    /// both (voiceover-plus-text) so slide rows can still seek the video.
+    case slides(slides: [TranscriptSlide], raw: [TranscriptSlide], speech: [TranscriptSegment])
+    /// Talking-head / voiceover-only reel: the timestamped speech IS the
+    /// transcript. The worker banks it with an EMPTY slide list on purpose.
+    case speech([TranscriptSegment])
+    /// The analysis banked no words — parse the prose transcript into slides.
+    case proseFallback
+
+    static func resolve(analysis: SwipeAnalysis?) -> SwipeStudyTranscriptTier {
+        let savedSlides = analysis?.transcriptSlides ?? []
+        let savedSpeech = analysis?.transcriptSpeechSegments ?? []
+
+        if SwipePreviewTranscript.slidesCarryText(savedSlides) {
+            let savedRaw = analysis?.rawTranscriptSlides ?? []
+            return .slides(
+                slides: savedSlides,
+                raw: savedRaw.isEmpty ? savedSlides : savedRaw,
+                speech: savedSpeech
+            )
+        }
+        if !savedSpeech.isEmpty {
+            return .speech(savedSpeech)
+        }
+        return .proseFallback
+    }
+}
+
 /// One tap-to-seek request flowing from a speech row to the playing reel.
 /// A fresh id per tap so seeking to the same timestamp twice still fires.
 struct SwipePreviewSeekRequest: Equatable {

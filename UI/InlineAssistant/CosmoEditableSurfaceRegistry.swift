@@ -47,8 +47,30 @@ final class CosmoEditableSurfaceRegistry {
         return providers[surfaceID]?.provider
     }
 
+    /// Presence only: this document is open and switchable, but the user is not
+    /// necessarily looking at it.
+    ///
+    /// Every open document must register — the scope switcher's whole job is to
+    /// list them — but only the one the user is actually working in may become
+    /// `activeSurface`. So a presence registration goes in at the *back* of the
+    /// activation order (least recently active) and never reorders a surface the
+    /// registry already tracks. Crucially it also skips `register`'s activation
+    /// side effects: a background document must not warm the prompt cache, must
+    /// not fire the skill auto-runner, and above all must not call
+    /// `clearSelectionIfForeign` — that would wipe the highlight the user is
+    /// holding in the document they ARE looking at.
+    func registerPresence(_ provider: any CosmoEditableSurfaceProvider) {
+        let surfaceID = provider.surfaceID
+        let alreadyTracked = providers[surfaceID]?.provider != nil
+        providers[surfaceID] = WeakEditableSurfaceProvider(provider)
+        guard !alreadyTracked else { return }
+        activationOrder.removeAll { $0 == surfaceID }
+        activationOrder.insert(surfaceID, at: 0)
+    }
+
+    /// Presence *and* "this is what the user is now looking at".
     func register(_ provider: any CosmoEditableSurfaceProvider) {
-        providers[provider.surfaceID] = WeakEditableSurfaceProvider(provider)
+        registerPresence(provider)
         activationOrder.removeAll { $0 == provider.surfaceID }
         activationOrder.append(provider.surfaceID)
         // An editable surface coming alive is the strongest signal an inline edit

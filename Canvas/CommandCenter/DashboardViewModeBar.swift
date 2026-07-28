@@ -26,6 +26,14 @@ enum UpcomingLens: String, CaseIterable {
     }
 }
 
+/// What the right rail shows on Upcoming's schedule lens. The Shelf is where
+/// unscheduled ideas wait to be dragged onto a day; the inspector is the
+/// existing habits/reports/details stack.
+enum UpcomingRailFace: String {
+    case shelf
+    case inspector
+}
+
 enum DashboardViewMode: String, CaseIterable {
     case today
     case upcoming

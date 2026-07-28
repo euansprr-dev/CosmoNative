@@ -21,7 +21,7 @@ struct StudyChromeRow: View {
     @State private var isQuestionHovered = false
 
     static func quantizedWidth(_ width: CGFloat) -> CGFloat {
-        (width / 24).rounded() * 24
+        CosmoChromeMetrics.quantizedWidth(width)
     }
 
     /// Width the centered question title may claim: the row width minus the
@@ -37,19 +37,10 @@ struct StudyChromeRow: View {
         min(320, max(120, availableWidth - 640))
     }
 
-    /// Hard title width: the measured text, capped by the budget. A hard
-    /// frame is the only shape that both HUGS a short title (a flexible
-    /// `maxWidth` frame greedily fills, ballooning the glass island) and
-    /// CAPS a long one (`.fixedSize()` reports the uncapped ideal — the bug
-    /// that ran a long question clean over the side islands at pane widths).
+    /// Hard title width — the shared chrome law (see
+    /// `CosmoChromeMetrics.measuredTitleWidth`).
     private static func measuredTitleWidth(_ title: String, cap: CGFloat) -> CGFloat {
-        // DS.buttonText.weight(.semibold) → 12pt semibold system.
-        let font = NSFont.systemFont(ofSize: 12, weight: .semibold)
-        let measured = (title as NSString)
-            .size(withAttributes: [.font: font])
-            .width
-            .rounded(.up)
-        return min(measured + 2, cap)
+        CosmoChromeMetrics.measuredTitleWidth(title, cap: cap)
     }
 
     var body: some View {

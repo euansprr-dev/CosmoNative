@@ -608,9 +608,11 @@ struct ConnectionFocusModeView: View {
         }
     }
 
+    /// Presence, not ownership — see `CosmoEditableSurfaceRegistry.registerPresence`.
+    /// Every open document registers so the assistant's scope switcher can list
+    /// it; only one pane at a time may own the *window* context.
     private func registerContextProvider() {
-        guard !isPaneContext || isPaneContextOwner else { return }
-        let provider = ConnectionContextProvider(
+        let provider = ownedContextProvider ?? ConnectionContextProvider(
             atom: atom,
             viewModel: viewModel,
             titleProvider: { [weak viewModel] in
@@ -618,6 +620,8 @@ struct ConnectionFocusModeView: View {
             }
         )
         ownedContextProvider = provider
+        CosmoEditableSurfaceRegistry.shared.registerPresence(provider)
+        guard !isPaneContext || isPaneContextOwner else { return }
         CosmoWindowViewModel.shared.updateContext(provider: provider)
     }
 

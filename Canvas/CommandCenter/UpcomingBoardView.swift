@@ -310,7 +310,10 @@ struct UpcomingBoardView: View {
                     onOpenEditor: openEditor,
                     onCreateDraft: openCreationEditor,
                     onMoveEntry: moveEntry,
-                    onResizeEntry: resizeEntry
+                    onResizeEntry: resizeEntry,
+                    onDropIdea: { target in
+                        Task { await viewModel.bookIdeaSession(target: target) }
+                    }
                 )
             case .month:
                 UpcomingMonthCalendarView(
@@ -582,6 +585,10 @@ private struct UpcomingTimelineCalendarView: View {
     let onCreateDraft: (CalendarDragDraft) -> Void
     let onMoveEntry: (CommandCenterCalendarEntry, Int, Int) -> Void
     let onResizeEntry: (CommandCenterCalendarEntry, CalendarResizeEdge, Int) -> Void
+    let onDropIdea: (UpcomingDropActions.Target) -> Void
+
+    /// The day column an idea is currently hovering over, for the drop wash.
+    @State private var ideaDropDay: Date?
 
     private let timelineHeight = CGFloat(CommandCenterCalendarLayout.dayMinutes) / 60 * CommandCenterCalendarLayout.hourHeight
 
@@ -639,7 +646,8 @@ private struct UpcomingTimelineCalendarView: View {
                     AllDayLaneCell(
                         date: date,
                         entries: allDayEntries(for: date),
-                        onOpenEditor: onOpenEditor
+                        onOpenEditor: onOpenEditor,
+                        onDropIdea: onDropIdea
                     )
                     .frame(width: dayWidth, height: CommandCenterCalendarLayout.allDayLaneHeight)
                 }
@@ -703,23 +711,57 @@ private struct UpcomingTimelineCalendarView: View {
 
     private func draftGestureLayer(dayWidth: CGFloat) -> some View {
         ForEach(Array(dates.enumerated()), id: \.element) { index, date in
-            GeometryReader { columnProxy in
-                Rectangle()
-                    .fill(Color.black.opacity(0.001))
-                    .contentShape(Rectangle())
-                    .gesture(
-                        DragGesture(minimumDistance: 2, coordinateSpace: .local)
-                            .onChanged { value in
-                                dragDraft = draft(from: value, on: date, frame: columnProxy.frame(in: .named(coordinateSpaceName)))
-                            }
-                            .onEnded { value in
-                                onCreateDraft(draft(from: value, on: date, frame: columnProxy.frame(in: .named(coordinateSpaceName))))
-                            }
-                    )
-            }
-            .frame(width: dayWidth, height: timelineHeight)
-            .offset(x: CommandCenterCalendarLayout.timeRailWidth + CGFloat(index) * dayWidth)
+            dayColumnCanvas(date: date)
+                .frame(width: dayWidth, height: timelineHeight)
+                // The wash must be composed BEFORE the offset. `.offset` only
+                // translates rendering — it leaves the layout frame where it
+                // was, so an overlay applied after it lays out against the
+                // UNSHIFTED frame and paints the wrong column.
+                .overlay {
+                    if ideaDropDay == date {
+                        Rectangle()
+                            .fill((ShelfDragSession.shared.activeColor ?? DS.accent).opacity(0.07))
+                            .allowsHitTesting(false)
+                    }
+                }
+                .offset(x: CommandCenterCalendarLayout.timeRailWidth + CGFloat(index) * dayWidth)
         }
+    }
+
+    /// One day's empty canvas: draw a block by dragging, or drop an idea on it
+    /// to book a writing session at that hour.
+    private func dayColumnCanvas(date: Date) -> some View {
+        GeometryReader { columnProxy in
+            Rectangle()
+                .fill(Color.black.opacity(0.001))
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 2, coordinateSpace: .local)
+                        .onChanged { value in
+                            dragDraft = draft(from: value, on: date, frame: columnProxy.frame(in: .named(coordinateSpaceName)))
+                        }
+                        .onEnded { value in
+                            onCreateDraft(draft(from: value, on: date, frame: columnProxy.frame(in: .named(coordinateSpaceName))))
+                        }
+                )
+                // Coexists with the gesture above: the gesture owns drags that
+                // START inside the column, the drop destination owns an external
+                // drag session ENTERING it.
+                .dropDestination(for: String.self) { payloads, location in
+                    handleIdeaDrop(payloads, atY: location.y, on: date)
+                } isTargeted: { targeting in
+                    withAnimation(ProMotionSprings.snappy) {
+                        ideaDropDay = targeting ? date : (ideaDropDay == date ? nil : ideaDropDay)
+                    }
+                }
+        }
+    }
+
+    private func handleIdeaDrop(_ payloads: [String], atY y: CGFloat, on date: Date) -> Bool {
+        ideaDropDay = nil
+        guard let ideaUUID = UpcomingDropActions.firstIdeaUUID(in: payloads) else { return false }
+        onDropIdea(UpcomingDropActions.timedTarget(ideaUUID: ideaUUID, y: y, on: date))
+        return true
     }
 
     private func timedEntryLayer(dayWidth: CGFloat) -> some View {
@@ -932,6 +974,9 @@ private struct AllDayLaneCell: View {
     let date: Date
     let entries: [CommandCenterCalendarEntry]
     let onOpenEditor: (CommandCenterCalendarEntry, CGRect) -> Void
+    let onDropIdea: (UpcomingDropActions.Target) -> Void
+
+    @State private var isDropTargeted = false
 
     var body: some View {
         HStack(spacing: DS.space4) {
@@ -978,6 +1023,24 @@ private struct AllDayLaneCell: View {
             Rectangle()
                 .fill(DS.borderSubtle)
                 .frame(width: 0.5)
+        }
+        .contentShape(Rectangle())
+        // The "sometime that day" landing: a session pinned to the day with no
+        // time block, so it rides the all-day lane rather than the hour grid.
+        .dropDestination(for: String.self) { payloads, _ in
+            isDropTargeted = false
+            guard let ideaUUID = UpcomingDropActions.firstIdeaUUID(in: payloads) else { return false }
+            onDropIdea(UpcomingDropActions.allDayTarget(ideaUUID: ideaUUID, on: date))
+            return true
+        } isTargeted: { targeting in
+            withAnimation(ProMotionSprings.snappy) { isDropTargeted = targeting }
+        }
+        .overlay {
+            if isDropTargeted {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(ShelfDragSession.shared.activeColor ?? DS.accent, lineWidth: 1.5)
+                    .allowsHitTesting(false)
+            }
         }
     }
 }

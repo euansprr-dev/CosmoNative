@@ -239,9 +239,7 @@ private struct CosmoInlineAssistantSkillCard: View {
         }
         .buttonStyle(.plain)
         .cosmoClickCursor()
-        .onHover { hovering in
-            withAnimation(reduceMotion ? nil : ProMotionSprings.hover) { isHovered = hovering }
-        }
+        .cosmoHover(reduceMotion ? nil : ProMotionSprings.hover) { isHovered = $0 }
         .help("Start \(skill.name): \(skill.summary)")
         .accessibilityLabel("Use skill \(skill.name): \(skill.summary)")
     }
@@ -269,9 +267,7 @@ struct CosmoInlineAssistantStarterChip: View {
         }
         .buttonStyle(.plain)
         .cosmoClickCursor()
-        .onHover { hovering in
-            withAnimation(ProMotionSprings.snappy) { isHovered = hovering }
-        }
+        .cosmoHover(ProMotionSprings.snappy) { isHovered = $0 }
         .help("Start with this prompt")
         .accessibilityLabel("Use starter prompt: \(label)")
     }

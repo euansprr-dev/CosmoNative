@@ -42,7 +42,11 @@ struct SplitPaneContainer<MainContent: View>: View {
 
             // Vertical divider between main and pane column
             if paneManager.isActive {
-                PaneDivider(isVertical: true) { delta in
+                PaneDivider(
+                    isVertical: true,
+                    onDragBegan: { paneManager.beginMainSplitDrag() },
+                    onDragEnded: { paneManager.endMainSplitDrag() }
+                ) { delta in
                     paneManager.updateMainSplit(delta: delta, totalWidth: geo.size.width)
                 }
             }
@@ -97,15 +101,50 @@ struct PaneDeckView: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    /// Content layout widths from the last frame outside a continuous width
+    /// stream (divider drag or window live resize). While a stream is live,
+    /// pane bodies keep laying out at these widths and only the slot clip
+    /// tracks the new width — a per-event content re-layout of a deep pane
+    /// subtree (assistant pane ≈ 2^17 stack cost) queues transactions faster
+    /// than they finish and wedges the app.
+    @State private var restingContentWidths: [String: CGFloat] = [:]
+
     var body: some View {
         GeometryReader { geo in
             let layout = deckLayout(columnWidth: geo.size.width)
             slotRow(layout: layout)
                 .animation(deckSpring, value: deckSignature)
+                .onChange(of: layout.contentWidths) { _, widths in
+                    guard !paneManager.isPaneContentLayoutFrozen else { return }
+                    restingContentWidths = widths
+                }
+                // The width onChange can't refresh the snapshot when a freeze
+                // ends — the thaw re-evaluation sees the same widths as the
+                // last frozen frame. Without this, the NEXT freeze would trap
+                // content at widths from before the previous one.
+                .onChange(of: paneManager.isPaneContentLayoutFrozen) { _, frozen in
+                    guard !frozen else { return }
+                    restingContentWidths = layout.contentWidths
+                }
+                .onAppear { restingContentWidths = layout.contentWidths }
+                .background(WindowLiveResizeObserver(
+                    onBegan: { paneManager.beginWindowLiveResize() },
+                    onEnded: { paneManager.endWindowLiveResize() }
+                ))
         }
     }
 
     // MARK: Slots
+
+    /// The width a pane body lays out at right now. Frozen while a divider
+    /// drag or window live resize streams widths; live otherwise. Panes
+    /// opened mid-stream fall through to the live layout.
+    private func contentWidth(for paneId: String, layout: DeckLayout) -> CGFloat? {
+        if paneManager.isPaneContentLayoutFrozen, let resting = restingContentWidths[paneId] {
+            return resting
+        }
+        return layout.contentWidths[paneId]
+    }
 
     private func slotRow(layout: DeckLayout) -> some View {
         let focusedId = paneManager.focusedPaneId ?? paneManager.panes.last?.id
@@ -120,7 +159,7 @@ struct PaneDeckView: View {
                     isActive: paneManager.activePaneId == pane.id,
                     isContextOwner: paneManager.contextOwnerPaneId == pane.id,
                     deckChrome: pane.id == focusedId ? payload : nil,
-                    expandedWidth: layout.contentWidths[pane.id] ?? slotWidth,
+                    expandedWidth: contentWidth(for: pane.id, layout: layout) ?? slotWidth,
                     slotWidth: slotWidth,
                     onClose: {
                         withAnimation(deckSpring) {
@@ -152,7 +191,7 @@ struct PaneDeckView: View {
                 position: index + 1
             )
         }
-        let paneWidth = focusedId.flatMap { layout.contentWidths[$0] }
+        let paneWidth = focusedId.flatMap { contentWidth(for: $0, layout: layout) }
             ?? PaneSlotPresentationPolicy.minimumContentWidth
 
         return PaneDeckChromePayload(
@@ -270,6 +309,55 @@ struct PaneDeckView: View {
             spacing[pane.id] = PaneSlotPresentationPolicy.expandedSlotSpacing
         }
         return spacing
+    }
+}
+
+// MARK: - Window Live Resize Observer
+
+/// Invisible AppKit shim that reports the hosting window's live-resize span.
+/// `viewWillStartLiveResize`/`viewDidEndLiveResize` arrive on every NSView in
+/// the resizing window, so this needs no notification plumbing and is scoped
+/// to the deck's own window for free.
+private struct WindowLiveResizeObserver: NSViewRepresentable {
+    let onBegan: () -> Void
+    let onEnded: () -> Void
+
+    func makeNSView(context: Context) -> ObserverView {
+        let view = ObserverView()
+        view.onBegan = onBegan
+        view.onEnded = onEnded
+        return view
+    }
+
+    func updateNSView(_ nsView: ObserverView, context: Context) {
+        nsView.onBegan = onBegan
+        nsView.onEnded = onEnded
+    }
+
+    final class ObserverView: NSView {
+        var onBegan: () -> Void = {}
+        var onEnded: () -> Void = {}
+
+        override func viewWillStartLiveResize() {
+            super.viewWillStartLiveResize()
+            onBegan()
+        }
+
+        override func viewDidEndLiveResize() {
+            super.viewDidEndLiveResize()
+            onEnded()
+        }
+
+        // Leaving the window mid-resize would swallow the end callback and
+        // freeze pane content forever — thaw on the way out.
+        override func viewWillMove(toWindow newWindow: NSWindow?) {
+            if window?.inLiveResize == true, newWindow !== window {
+                onEnded()
+            }
+            super.viewWillMove(toWindow: newWindow)
+        }
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
     }
 }
 
@@ -394,6 +482,8 @@ enum PaneInfo {
 /// Draggable resize handle between main content and the pane column.
 struct PaneDivider: View {
     let isVertical: Bool
+    var onDragBegan: (() -> Void)? = nil
+    var onDragEnded: (() -> Void)? = nil
     let onDrag: (CGFloat) -> Void
 
     @State private var isHovered = false
@@ -442,6 +532,7 @@ struct PaneDivider: View {
                         isDragging = true
                         lastDragValue = 0
                         pushResizeCursor()
+                        onDragBegan?()
                     }
                     let currentValue = isVertical ? value.translation.width : value.translation.height
                     let delta = currentValue - lastDragValue
@@ -451,6 +542,7 @@ struct PaneDivider: View {
                 .onEnded { _ in
                     isDragging = false
                     lastDragValue = 0
+                    onDragEnded?()
                     if !isHovered {
                         NSCursor.pop()
                     }

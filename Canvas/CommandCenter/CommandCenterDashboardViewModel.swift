@@ -363,6 +363,45 @@ enum CommandCenterTaskScheduling {
         return true
     }
 
+    /// Place a task at an ABSOLUTE time range. The sibling of `reschedule` for
+    /// callers that are *setting* a time rather than *moving* one — dropping an
+    /// idea onto the week board's hour grid, chiefly.
+    ///
+    /// Why this exists rather than seeding the time and calling `reschedule`:
+    /// `reschedule` routes through `moveCalendarTime` → `merged(date:time:)`,
+    /// which rebuilds the start from date+time COMPONENTS and returns nil for a
+    /// wall-clock time that doesn't exist (the spring-forward gap). On nil,
+    /// `reschedule` silently falls back to `applyPlannedDate` and the task
+    /// renders all-day — a downgrade with no error and no toast. Taking an
+    /// absolute `Date` and never re-deriving it sidesteps that entirely.
+    ///
+    /// `schedulingState` is cleared here for parity with `reschedule` — a row
+    /// holding a time block AND an anytime/someday bucket makes
+    /// `unifiedPinCorrection` bail out and paints in both places at once.
+    static func schedule(
+        _ metadata: inout TaskMetadata,
+        from start: Date,
+        to end: Date,
+        calendar: Calendar = .current
+    ) {
+        let floor = calendar.date(byAdding: .minute, value: CommandCenterCalendarLayout.snapMinutes, to: start)
+            ?? start.addingTimeInterval(TimeInterval(CommandCenterCalendarLayout.snapMinutes * 60))
+        applyCalendarTimeRange(start: start, end: max(end, floor), to: &metadata, calendar: calendar)
+        metadata.schedulingState = nil
+    }
+
+    /// Strip a task's time block, leaving its day pins alone. Public so the
+    /// all-day lane can land a session that previously had a time: `reschedule`
+    /// alone would CARRY the old wall-clock time onto the new day and the entry
+    /// would reappear in the hour grid at a time nobody picked.
+    static func clearCalendarTime(from metadata: inout TaskMetadata) {
+        metadata.startTime = nil
+        metadata.endTime = nil
+        metadata.scheduledStart = nil
+        metadata.scheduledEnd = nil
+        metadata.durationMinutes = nil
+    }
+
     static func reschedule(
         _ metadata: inout TaskMetadata,
         toDate date: Date?,
@@ -442,14 +481,6 @@ enum CommandCenterTaskScheduling {
         metadata.dueDate = nil
         metadata.focusDate = nil
         metadata.whenDate = nil
-    }
-
-    private static func clearCalendarTime(from metadata: inout TaskMetadata) {
-        metadata.startTime = nil
-        metadata.endTime = nil
-        metadata.scheduledStart = nil
-        metadata.scheduledEnd = nil
-        metadata.durationMinutes = nil
     }
 
     private static func applyCalendarTimeRange(
@@ -567,6 +598,21 @@ final class CommandCenterDashboardViewModel {
     }
 
     private static let upcomingLensDefaultsKey = "commandCenter.upcomingLens"
+
+    /// Which face the right rail wears on Upcoming's schedule lens: the
+    /// habits/reports/details inspector, or the Shelf you drag ideas from.
+    /// Defaults to `.shelf` so the capability is discoverable; persisted so a
+    /// deliberate flip to the inspector sticks.
+    var upcomingRailFace: UpcomingRailFace = UpcomingRailFace(
+        rawValue: UserDefaults.standard.string(forKey: CommandCenterDashboardViewModel.upcomingRailFaceDefaultsKey) ?? ""
+    ) ?? .shelf {
+        didSet {
+            guard oldValue != upcomingRailFace else { return }
+            UserDefaults.standard.set(upcomingRailFace.rawValue, forKey: Self.upcomingRailFaceDefaultsKey)
+        }
+    }
+
+    private static let upcomingRailFaceDefaultsKey = "commandCenter.upcomingRailFace"
 
     var upcomingWeekStart: Date {
         CommandCenterCalendarLayout.mondayStartingWeek(containing: upcomingAnchorDate)
@@ -1134,6 +1180,118 @@ final class CommandCenterDashboardViewModel {
     }
 
     // MARK: - Upcoming Tasks
+
+    // MARK: - Idea → writing session (the week board's drop)
+
+    /// Toast for a completed drop. Rendered by the dashboard.
+    var dropToastMessage: String?
+
+    /// Ideas with a drop already in flight. `resolveDrop` reads then writes
+    /// across a suspension point, so two fast drops on the same idea could both
+    /// see "no open session" and both create one. @MainActor only rules out
+    /// true parallelism, not interleaving at awaits — this closes it.
+    private var ideaDropsInFlight: Set<String> = []
+
+    /// Book (or move) a writing session from a shelf idea dropped on the board.
+    /// Owns the write, the undo registration AND the refresh, because
+    /// `.atomsDidChange` has no observer anywhere in the Command Center — a drop
+    /// that only posted it would leave the board stale until the view mode changed.
+    func bookIdeaSession(target: UpcomingDropActions.Target) async {
+        let ideaUUID: String
+        let day: Date
+        let start: Date?
+        switch target {
+        case .timed(let uuid, let at):
+            ideaUUID = uuid
+            start = at
+            day = Calendar.current.startOfDay(for: at)
+        case .allDay(let uuid, let on):
+            ideaUUID = uuid
+            start = nil
+            day = on
+        }
+
+        guard !ideaDropsInFlight.contains(ideaUUID) else { return }
+        ideaDropsInFlight.insert(ideaUUID)
+        defer { ideaDropsInFlight.remove(ideaUUID) }
+
+        // Re-fetch rather than trusting the drag payload: the shelf snapshot can
+        // outlive the atom, and a session built against a deleted idea leaves a
+        // mention pill that resolves to nothing.
+        guard let idea = try? await AtomRepository.shared.fetch(uuid: ideaUUID), idea.type == .idea else {
+            return
+        }
+
+        let resolution = (try? await IdeaTaskLinkService.resolveDrop(for: ideaUUID)) ?? .create
+        var moved = false
+        var siblings = 0
+
+        switch resolution {
+        case .move(let taskUUID, let siblingCount):
+            guard let before = try? await IdeaTaskLinkService.move(
+                taskUUID: taskUUID,
+                to: day,
+                at: start
+            ) else { return }
+            moved = true
+            siblings = siblingCount
+            registerIdeaSessionUndo(
+                description: "Move Writing Session",
+                undo: { try? await IdeaTaskLinkService.restorePins(taskUUID: taskUUID, to: before) },
+                redo: { _ = try? await IdeaTaskLinkService.move(taskUUID: taskUUID, to: day, at: start) }
+            )
+
+        case .create:
+            guard let task = try? await IdeaTaskLinkService.createScheduledTask(
+                for: idea,
+                on: day,
+                at: start
+            ) else { return }
+            let taskUUID = task.uuid
+            // Delete/restore, never delete/re-create: re-creating mints a NEW
+            // uuid that the captured undo closure doesn't know about, so every
+            // redo would strand another orphan task. The service verbs are the
+            // symmetric pair and post `.atomsDidChange` for the surfaces outside
+            // the Command Center (the Thinkspace sidebar, ⌘K).
+            registerIdeaSessionUndo(
+                description: "Book Writing Session",
+                undo: { try? await IdeaTaskLinkService.removeScheduledTask(taskUUID: taskUUID) },
+                redo: { try? await IdeaTaskLinkService.restoreScheduledTask(taskUUID: taskUUID) }
+            )
+        }
+
+        await refreshAfterIdeaSessionDrop()
+        withAnimation(ProMotionSprings.gentle) {
+            dropToastMessage = UpcomingDropActions.toast(moved: moved, siblings: siblings, target: target)
+        }
+    }
+
+    private func registerIdeaSessionUndo(
+        description: String,
+        undo: @escaping @MainActor () async -> Void,
+        redo: @escaping @MainActor () async -> Void
+    ) {
+        CosmoUndoManager.shared.register(InlineUndoAction(
+            actionDescription: description,
+            undo: { [weak self] in
+                await undo()
+                await self?.refreshAfterIdeaSessionDrop()
+            },
+            redo: { [weak self] in
+                await redo()
+                await self?.refreshAfterIdeaSessionDrop()
+            }
+        ))
+    }
+
+    /// Everything that must be told a session moved. The board reloads itself,
+    /// the shelf listens only to `.contentCalendarNeedsReload`, and the drag
+    /// session must end or day cells stay tinted.
+    private func refreshAfterIdeaSessionDrop() async {
+        await refreshTaskCollectionsAfterMutation()
+        ShelfDragSession.shared.end()
+        NotificationCenter.default.post(name: .contentCalendarNeedsReload, object: nil)
+    }
 
     func loadUpcomingTasks() async {
         do {

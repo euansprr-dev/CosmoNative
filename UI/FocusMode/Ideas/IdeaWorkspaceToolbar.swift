@@ -12,6 +12,11 @@ struct IdeaWorkspaceToolbar: View {
     var viewModel: IdeaFocusModeViewModel
     var workspace: IdeaWorkspaceModel
     let isPaneContext: Bool
+    /// The bench's width, quantized to 24pt steps (pane divider drags must not
+    /// invalidate the row every frame). The pill is absolutely centered at full
+    /// width, so its title cap is derived from this — overlap with the side
+    /// clusters becomes arithmetically impossible at any pane width.
+    let availableWidth: CGFloat
     let isPromoting: Bool
     /// True while keystrokes are landing — islands quiet to a whisper.
     var isReceded: Bool = false
@@ -90,8 +95,8 @@ struct IdeaWorkspaceToolbar: View {
                 .foregroundStyle(DS.text)
                 .lineLimit(1)
                 .truncationMode(.tail)
-                .frame(maxWidth: isCompact ? 200 : 320)
-            if wordCount > 0, !isCompact {
+                .frame(width: CosmoChromeMetrics.measuredTitleWidth(pillTitle, cap: titleCap))
+            if showsVitals {
                 Text("·")
                     .foregroundStyle(DS.textMuted)
                     .accessibilityHidden(true)
@@ -109,6 +114,44 @@ struct IdeaWorkspaceToolbar: View {
 
     /// Pane and Atom-window widths — labels yield to the columns.
     private var isCompact: Bool { workspace.breakpoint == .compact }
+
+    /// Word count is the first thing to go when the row gets tight.
+    private var showsVitals: Bool { wordCount > 0 && !isCompact && availableWidth >= 900 }
+
+    // MARK: - The title budget (why the pill can never overrun the clusters)
+
+    /// GUARD-TWIN of the `centersAbsolutely:` argument above — the title
+    /// budget must mirror the layout the row actually uses (change together).
+    private var centersAbsolutely: Bool { !isPaneContext && workspace.breakpoint == .regular }
+
+    /// Navigate cluster: the conversation toggle island, plus the navigation
+    /// trail island when this bench owns the whole screen, or the atom
+    /// window's own controls when it's hosted in one.
+    private var leadingReserve: CGFloat {
+        if atomChrome != nil { return 110 }
+        return isPaneContext ? 54 : 274
+    }
+
+    /// Tools cluster: the two-button island + Begin Writing (which carries its
+    /// label only at regular width) + the atom window's trailing controls.
+    private var trailingReserve: CGFloat {
+        (isCompact ? 134 : 223) + (atomChrome != nil ? 65 : 0)
+    }
+
+    /// The pill's own non-title chrome: mark, gaps, insets, and the vitals.
+    private var pillChromeReserve: CGFloat { showsVitals ? 110 : 42 }
+
+    /// Width the centered title may claim: the row minus the side clusters —
+    /// mirrored on BOTH sides while centering is absolute — minus the pill's
+    /// own chrome. Bounded, so overlap is arithmetically impossible.
+    private var titleCap: CGFloat {
+        guard availableWidth > 0 else { return 200 }
+        let sides = centersAbsolutely
+            ? max(leadingReserve, trailingReserve) * 2
+            : leadingReserve + trailingReserve
+        let budget = availableWidth - sides - pillChromeReserve - CosmoChromeMetrics.sideInset * 2
+        return min(320, max(120, budget))
+    }
 
     private var pillTitle: String {
         let title = viewModel.editableTitle.trimmingCharacters(in: .whitespacesAndNewlines)

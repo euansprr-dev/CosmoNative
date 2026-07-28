@@ -696,9 +696,7 @@ private struct CosmoInlineAssistantPaneFollowUps: View {
             }
             .buttonStyle(.plain)
             .cosmoClickCursor()
-            .onHover { hovering in
-                withAnimation(ProMotionSprings.hover) { isHovered = hovering }
-            }
+            .cosmoHover { isHovered = $0 }
             .accessibilityLabel("Send follow-up: \(label)")
         }
     }
@@ -831,7 +829,7 @@ struct CosmoInlineAssistantPaneMessages: View {
                     messages: run.messages,
                     skill: skillResolver.skill(id: run.messages.first(where: { $0.role == .user })?.skillID),
                     content: { message in
-                        AnyView(messageRow(message))
+                        messageRow(message)
                     }
                 )
             } else {
@@ -918,9 +916,7 @@ private struct CosmoInlineAssistantRollbackHover: ViewModifier {
                     rollbackButton(anchorMessageID)
                 }
             }
-            .onHover { hovering in
-                withAnimation(ProMotionSprings.hover) { isHovered = hovering }
-            }
+            .cosmoHover { isHovered = $0 }
     }
 
     private func rollbackButton(_ messageID: UUID) -> some View {
@@ -950,12 +946,16 @@ private struct CosmoInlineAssistantRollbackHover: ViewModifier {
 /// the run's receipts and deliverables stacked beneath it. The card is a quiet
 /// warm container (inner chrome on the glass pane — Law 3); the answer prose
 /// stays the hero inside it. Right-click promotes the run into a skill.
-private struct CosmoInlineAssistantRunCard: View {
+/// `RowContent` is generic rather than `AnyView` on purpose: erasing every row
+/// through `AnyView` hands SwiftUI a fresh opaque type each pass, so it cannot
+/// reuse the row's layout or diff it structurally — the whole card re-measures
+/// from scratch on every one of the pane's (very frequent) invalidations.
+private struct CosmoInlineAssistantRunCard<RowContent: View>: View {
     @ObservedObject var store: CosmoInlineAssistantStore
     let runID: UUID
     let messages: [CosmoInlineAssistantPaneMessage]
     var skill: CosmoInlineSkillDefinition?
-    let content: (CosmoInlineAssistantPaneMessage) -> AnyView
+    @ViewBuilder let content: (CosmoInlineAssistantPaneMessage) -> RowContent
 
     private var ask: CosmoInlineAssistantPaneMessage? {
         messages.first { $0.role == .user }
@@ -1004,10 +1004,28 @@ private struct CosmoInlineAssistantAskHeader: View {
     @State private var isHovered = false
     @State private var clampedHeight: CGFloat = 0
     @State private var fullHeight: CGFloat = 0
+    @State private var measuredWidth: CGFloat = 0
+    @State private var measuredAtWidth: CGFloat = 0
 
     private static let collapsedLineLimit = 4
 
     private var isTruncated: Bool { fullHeight > clampedHeight + 1 }
+
+    /// The probe is scaffolding, not chrome: once it has produced heights for the
+    /// current width there is nothing left to learn, so it comes back out of the
+    /// tree. Leaving it mounted made every ask in the transcript re-lay-out two
+    /// extra copies of its text on every pass — and, worse, kept a
+    /// state-write-from-`onGeometryChange` live in a pane that re-renders
+    /// continuously while a run streams, which is a transaction the layout loop
+    /// has to drain before it can settle.
+    private var needsMeasurement: Bool {
+        measuredWidth <= 0 || measuredAtWidth != measuredWidth
+    }
+
+    private func recordMeasurementIfComplete() {
+        guard measuredWidth > 0, clampedHeight > 0, fullHeight > 0 else { return }
+        measuredAtWidth = measuredWidth
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space4) {
@@ -1025,9 +1043,7 @@ private struct CosmoInlineAssistantAskHeader: View {
                 CosmoInlineAssistantCopyMessageButton(text: ask.content)
             }
         }
-        .onHover { hovering in
-            withAnimation(ProMotionSprings.hover) { isHovered = hovering }
-        }
+        .cosmoHover { isHovered = $0 }
         .animation(ProMotionSprings.focusTransition, value: isExpanded)
     }
 
@@ -1041,7 +1057,19 @@ private struct CosmoInlineAssistantAskHeader: View {
                 .foregroundStyle(DS.textSecondary)
                 .textSelection(.enabled)
                 .lineLimit(isExpanded ? nil : Self.collapsedLineLimit)
-                .background(truncationProbe)
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: {
+                    measuredWidth = $0
+                }
+                .background {
+                    // A background is sized to its foreground, so mounting and
+                    // unmounting the probe can never move the ask itself.
+                    if needsMeasurement { truncationProbe }
+                }
+                .onChange(of: ask.content) {
+                    clampedHeight = 0
+                    fullHeight = 0
+                    measuredAtWidth = 0
+                }
         }
         .fixedSize(horizontal: false, vertical: true)
         .accessibilityElement(children: .combine)
@@ -1058,12 +1086,14 @@ private struct CosmoInlineAssistantAskHeader: View {
                 .lineLimit(Self.collapsedLineLimit)
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
                     clampedHeight = $0
+                    recordMeasurementIfComplete()
                 }
             Text(ask.content)
                 .font(DS.callout)
                 .fixedSize(horizontal: false, vertical: true)
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
                     fullHeight = $0
+                    recordMeasurementIfComplete()
                 }
         }
         .hidden()
@@ -1162,9 +1192,7 @@ private struct CosmoInlineAssistantPaneUserRow: View {
                 CosmoInlineAssistantCopyMessageButton(text: message.content)
             }
         }
-        .onHover { hovering in
-            withAnimation(ProMotionSprings.hover) { isHovered = hovering }
-        }
+        .cosmoHover { isHovered = $0 }
     }
 
     private var accessibilityText: String {
@@ -1644,9 +1672,7 @@ private struct SourceChip: View {
         }
         .buttonStyle(.plain)
         .cosmoClickCursor()
-        .onHover { hovering in
-            withAnimation(ProMotionSprings.snappy) { isHovered = hovering }
-        }
+        .cosmoHover(ProMotionSprings.snappy) { isHovered = $0 }
         .help("Open \(ref.title)")
         .accessibilityLabel("Open source: \(ref.title)")
     }
@@ -2236,9 +2262,7 @@ struct CosmoPanePillButton: View {
         }
         .buttonStyle(.plain)
         .cosmoClickCursor()
-        .onHover { hovering in
-            withAnimation(ProMotionSprings.snappy) { isHovered = hovering }
-        }
+        .cosmoHover(ProMotionSprings.snappy) { isHovered = $0 }
         .help(help)
         .accessibilityLabel(label)
     }

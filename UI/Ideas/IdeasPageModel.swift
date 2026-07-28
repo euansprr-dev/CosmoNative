@@ -194,20 +194,15 @@ final class IdeasPageModel {
     }
 
     /// The cards' scheduled chips: walk the task table once and keep, per
-    /// linked idea, the earliest open session day (the reverse of
-    /// `IdeaTaskLinkService.scheduledTasks`, batched for the whole page).
+    /// linked idea, the earliest open session day.
+    ///
+    /// Matching lives in `IdeaTaskLinkService.openSessionDaysByIdea` so this
+    /// page and the idea's own ⌘⇧T popover can never disagree about whether a
+    /// session exists — they used to, and a promoted idea's chip went blank
+    /// while the session sat on the calendar.
     private static func resolveScheduledDays() async -> [String: Date] {
         let tasks = (try? await AtomRepository.shared.fetchAll(type: .task)) ?? []
-        var days: [String: Date] = [:]
-        for task in tasks {
-            guard task.metadataValue(as: TaskMetadata.self)?.isCompleted != true,
-                  let day = IdeaTaskLinkService.plannedDay(task) else { continue }
-            for link in IdeaTaskLinkService.linkedAtoms(of: task) where link.atomType == AtomType.idea.rawValue {
-                if let existing = days[link.atomUUID], existing <= day { continue }
-                days[link.atomUUID] = day
-            }
-        }
-        return days
+        return IdeaTaskLinkService.openSessionDaysByIdea(in: tasks)
     }
 
     /// The card's anchor: the linked swipe's thumbnail, cheapest source first.
@@ -495,12 +490,17 @@ final class IdeasPageModel {
                 return
             }
             let taskUUID = task.uuid
-            registerUndo("Schedule Development") {
+            // Delete/restore, NEVER delete/re-create. Re-creating on redo mints a
+            // new uuid that this captured closure doesn't know about, so the next
+            // undo deletes the already-dead original and leaves the new task
+            // alive — one orphan per redo. The soft delete keeps the uuid stable
+            // in both directions, so the pair stays symmetric forever.
+            registerUndo("Schedule Development") { [weak self] in
                 try? await IdeaTaskLinkService.removeScheduledTask(taskUUID: taskUUID)
+                await self?.load()
             } redo: { [weak self] in
-                guard let self, let atom = try? await AtomRepository.shared.fetch(uuid: idea.atomUUID) else { return }
-                _ = try? await IdeaTaskLinkService.createScheduledTask(for: atom, on: day)
-                await self.load()
+                try? await IdeaTaskLinkService.restoreScheduledTask(taskUUID: taskUUID)
+                await self?.load()
             }
             withAnimation(ProMotionSprings.gentle) {
                 toastMessage = "Development session · \(Self.dayLabel(day))"

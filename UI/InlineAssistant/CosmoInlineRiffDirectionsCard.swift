@@ -313,7 +313,9 @@ struct CosmoInlineRiffDirectionBlock: View {
         .opacity(state == .dimmed ? 0.45 : 1)
         .onHover { hovering in
             guard isInteractive else { return }
-            withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+            withCosmoHoverAnimation { isHovered = hovering }
+            // Stays outside the animation transaction — it drives the parent's
+            // dimming, which was never animated from here.
             onHoverChanged(hovering)
         }
         .onTapGesture {

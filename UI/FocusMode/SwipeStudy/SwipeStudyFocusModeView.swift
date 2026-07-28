@@ -130,8 +130,6 @@ struct SwipeStudyFocusModeView: View {
                     onClose: onClose
                 )
                 workbenchSheet(atom: atom, proxy: proxy)
-                    .padding(.horizontal, DS.space10)
-                    .padding(.bottom, DS.space10)
             }
         }
     }

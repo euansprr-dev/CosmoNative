@@ -27,20 +27,12 @@ struct CosmoWebBrowserPane: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: CosmoSurfaceMetrics.chromeGap) {
             CosmoBrowserToolbarView(browserState: browserState, fallbackURL: url, onClose: onClose)
-                .padding(.horizontal, 10)
-                .padding(.top, 8)
-                .padding(.bottom, 8)
+                .cosmoChromeBandInsets()
 
             contentWell
-                .clipShape(RoundedRectangle(cornerRadius: 7))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 7)
-                        .stroke(DS.borderSubtle, lineWidth: 1)
-                )
-                .padding(.horizontal, 10)
-                .padding(.bottom, 10)
+                .cosmoInnerWindow()
         }
         .background(DS.bg)
         .task {

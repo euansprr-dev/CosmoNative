@@ -29,7 +29,15 @@ struct CosmoBrowserToolbarView: View {
         // A persistent bar attached to its pane, not a floating overlay —
         // it separates by material alone (the Safari-toolbar elevation
         // class); a cast shadow this close to the pane edges reads as smudge.
-        .cosmoGlassPanel(role: .floatingAssistant, cornerRadius: 22, castsShadow: false)
+        //
+        // Half the band height = a capsule (see the assistant pane's toolbar):
+        // the old literal 22 clamped to 20 on a 40pt bar and only looked
+        // deliberate by accident.
+        .cosmoGlassPanel(
+            role: .floatingAssistant,
+            cornerRadius: CosmoChromeMetrics.height / 2,
+            castsShadow: false
+        )
         .background {
             if isPaneActive {
                 shortcutLayer

@@ -14,10 +14,6 @@ struct PaneContentView: View {
     @State private var loadedAtom: Atom?
     @State private var swipeLibraryViewModel = SwipeLibraryViewModel()
 
-    /// Matches ConnectionWorkspaceView.sheetCorner — the one rounded surface
-    /// every windowed pane content shares.
-    private static let canvasSheetCorner: CGFloat = 14
-
     var body: some View {
         VStack(spacing: 0) {
             // Shell-owned tab row, STACKED above content (never overlaid), for
@@ -30,8 +26,11 @@ struct PaneContentView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(backgroundFill)
-        .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+        .clipShape(CosmoSurfaceMetrics.containerShape)
         .overlay(borderOverlay)
+        // Declares the pane as the concentric container: every
+        // `cosmoInnerWindow()` inside resolves its corner against this shape.
+        .cosmoSurfaceContainer()
         .task(id: content.entitySelection) {
             guard case .entity(let entity) = content else {
                 loadedAtom = nil
@@ -70,14 +69,7 @@ struct PaneContentView: View {
             // rounded sheet inset on DS.bg — not an edge-to-edge void the
             // chrome floats over.
             PaneCanvasView(thinkspaceId: thinkspaceId)
-                .clipShape(RoundedRectangle(cornerRadius: Self.canvasSheetCorner, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: Self.canvasSheetCorner, style: .continuous)
-                        .stroke(DS.borderSubtle, lineWidth: 1)
-                )
-                .padding(.top, DS.space4)
-                .padding(.horizontal, DS.space10)
-                .padding(.bottom, DS.space10)
+                .cosmoInnerWindow(insetTop: true)
                 .environment(\.isPaneContext, true)
                 .environment(\.isPaneActive, isActive)
                 .environment(\.isPaneContextOwner, isContextOwner)
@@ -179,34 +171,24 @@ struct PaneContentView: View {
     }
 
     private var backgroundFill: some View {
-        Group {
-            switch content.chromeStyle {
-            case .standard:
-                DS.bg
-            case .minimal:
-                DS.bg
-            }
-        }
+        DS.bg
     }
 
-    @ViewBuilder
+    /// Pane kind decides border WEIGHT (an inactive minimal pane recedes),
+    /// never geometry. Letting `chromeStyle` fork the corner radius is what
+    /// gave the assistant pane 14 and the idea pane 8 — the same rung of the
+    /// ladder rendering two different shapes side by side.
     private var borderOverlay: some View {
-        switch content.chromeStyle {
-        case .standard:
-            RoundedRectangle(cornerRadius: cornerRadius)
-                .stroke(DS.border, lineWidth: 1)
-        case .minimal:
-            RoundedRectangle(cornerRadius: cornerRadius)
-                .stroke(isActive ? DS.borderSubtle : DS.borderSubtle.opacity(0.7), lineWidth: 1)
-        }
+        CosmoSurfaceMetrics.containerShape
+            .stroke(borderTint, lineWidth: 1)
     }
 
-    private var cornerRadius: CGFloat {
+    private var borderTint: Color {
         switch content.chromeStyle {
         case .standard:
-            return 8
+            return DS.borderSubtle
         case .minimal:
-            return 14
+            return isActive ? DS.borderSubtle : DS.borderSubtle.opacity(0.7)
         }
     }
 }

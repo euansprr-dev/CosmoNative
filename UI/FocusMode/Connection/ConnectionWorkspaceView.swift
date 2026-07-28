@@ -24,12 +24,10 @@ struct ConnectionWorkspaceView: View {
     let isPaneContext: Bool
     let actions: ConnectionWorkspaceActions
 
-    private static let sheetCorner: CGFloat = 14
-
     var body: some View {
         GeometryReader { geometry in
             let breakpoint = ConnectionWorkspaceBreakpoint(width: geometry.size.width)
-            VStack(spacing: DS.space8) {
+            VStack(spacing: CosmoSurfaceMetrics.chromeGap) {
                 ConnectionWorkspaceToolbar(
                     workspace: workspace,
                     breakpoint: breakpoint,
@@ -37,8 +35,6 @@ struct ConnectionWorkspaceView: View {
                     actions: actions
                 )
                 workspaceSheet(breakpoint: breakpoint)
-                    .padding(.horizontal, DS.space10)
-                    .padding(.bottom, DS.space10)
             }
             .onChange(of: geometry.size.width, initial: true) { _, width in
                 let resolved = ConnectionWorkspaceBreakpoint(width: width)
@@ -60,11 +56,7 @@ struct ConnectionWorkspaceView: View {
             .overlay(alignment: .leading) { navigatorOverlay(breakpoint: breakpoint) }
             .overlay(alignment: .trailing) { inspectorOverlay(breakpoint: breakpoint) }
             .background(DS.bg)
-            .clipShape(RoundedRectangle(cornerRadius: Self.sheetCorner, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: Self.sheetCorner, style: .continuous)
-                    .stroke(DS.borderSubtle, lineWidth: 1)
-            )
+            .cosmoInnerWindow()
     }
 
     // MARK: - Columns

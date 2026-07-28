@@ -18,8 +18,6 @@ struct StudyShellView: View {
     @State private var scanController = InquiryScanController()
     @State private var showScanImporter = false
 
-    private static let sheetCorner: CGFloat = 14
-
     var body: some View {
         GeometryReader { proxy in
             let breakpoint = StudyBreakpoint(width: proxy.size.width)
@@ -33,8 +31,6 @@ struct StudyShellView: View {
                         isReceded: dockFocused
                     )
                     workspaceSheet(breakpoint)
-                        .padding(.horizontal, DS.space10)
-                        .padding(.bottom, DS.space10)
                 }
                 bottomInstruments
                 if let toast = viewModel.toast {
@@ -124,8 +120,7 @@ struct StudyShellView: View {
             isLeadingShowing: viewModel.isTrailShowing,
             isTrailingShowing: viewModel.isReadingShowing,
             showsScrim: breakpoint == .narrow,
-            onScrimTap: dismissOverlayPanels,
-            cornerRadius: Self.sheetCorner
+            onScrimTap: dismissOverlayPanels
         ) {
             leadingPanel(isOverlay: !breakpoint.panelsDisplace)
         } center: {

@@ -305,11 +305,15 @@ struct WorkbenchShell<Leading: View, Center: View, Trailing: View>: View {
     /// dismisses (the Study's `.narrow` manner).
     var showsScrim: Bool = false
     var onScrimTap: () -> Void = {}
-    var cornerRadius: CGFloat = 14
     @ViewBuilder var leading: () -> Leading
     @ViewBuilder var center: () -> Center
     @ViewBuilder var trailing: () -> Trailing
 
+    /// The sheet no longer carries a `cornerRadius` knob. A bench renders BOTH
+    /// full-screen and inside a pane — two different containers — so a corner
+    /// this view could name would be wrong in one of them. `cosmoInnerWindow`
+    /// resolves it against whichever container it actually landed in, and owns
+    /// the insets the callers used to repeat.
     var body: some View {
         ZStack {
             columns
@@ -321,11 +325,7 @@ struct WorkbenchShell<Leading: View, Center: View, Trailing: View>: View {
             }
         }
         .background(DS.bg)
-        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .stroke(DS.borderSubtle, lineWidth: 1)
-        )
+        .cosmoInnerWindow()
     }
 
     /// At regular width the panels are true columns of the sheet — welded by

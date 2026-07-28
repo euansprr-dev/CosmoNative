@@ -11,8 +11,12 @@ import AppKit
 /// One baseline for every floating chrome island in the app.
 enum CosmoChromeMetrics {
     static let height: CGFloat = 40      // Island height (capsule ⇒ radius 20)
-    static let topInset: CGFloat = 10
-    static let sideInset: CGFloat = 16
+    static let topInset: CGFloat = CosmoSurfaceMetrics.chromeTopInset
+    /// Matches `CosmoSurfaceMetrics.windowInset` so the leading island's edge
+    /// lands EXACTLY on the edge of the inner window beneath it. At the old 16
+    /// the band was 6pt narrower than its own sheet on each side — two visible
+    /// edges 6pt apart, which reads as a mistake rather than a decision.
+    static let sideInset: CGFloat = CosmoSurfaceMetrics.windowInset
     static let islandSpacing: CGFloat = 10
 
     /// A host's width, quantized to 24pt steps: pane-divider drags must not

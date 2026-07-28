@@ -33,20 +33,12 @@ struct CosmoInlineAssistantPaneView: View {
     let onClose: () -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: CosmoSurfaceMetrics.chromeGap) {
             CosmoInlineAssistantPaneToolbar(store: store, onClose: onClose)
-                .padding(.horizontal, 10)
-                .padding(.top, 8)
-                .padding(.bottom, 8)
+                .cosmoChromeBandInsets()
 
             contentWell
-                .clipShape(RoundedRectangle(cornerRadius: 7))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 7)
-                        .stroke(DS.borderSubtle, lineWidth: 1)
-                )
-                .padding(.horizontal, 10)
-                .padding(.bottom, 10)
+                .cosmoInnerWindow()
         }
         .background(DS.bg)
     }
@@ -154,7 +146,17 @@ private struct CosmoInlineAssistantPaneToolbar: View {
         // A persistent bar attached to its pane, not a floating overlay —
         // material alone separates it (the browser-toolbar elevation class);
         // a cast shadow this close to the pane edges reads as smudge.
-        .cosmoGlassPanel(role: .floatingAssistant, cornerRadius: 22, castsShadow: false)
+        //
+        // Half the band height = a capsule, which is what this always rendered:
+        // the old literal 22 exceeded half of a 40pt bar and silently clamped
+        // to 20. Saying it outright keeps the bar in the chrome-island family
+        // (`CosmoChromeIsland` is a capsule at the same height) instead of
+        // claiming a radius the geometry throws away.
+        .cosmoGlassPanel(
+            role: .floatingAssistant,
+            cornerRadius: CosmoChromeMetrics.height / 2,
+            castsShadow: false
+        )
         .background(escapeShortcut)
         .animation(ProMotionSprings.gentle, value: store.activeSurfaceTitle)
         .task { await refreshMemoryFacts() }

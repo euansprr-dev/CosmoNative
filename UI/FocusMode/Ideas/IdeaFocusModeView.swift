@@ -79,11 +79,9 @@ struct IdeaFocusModeView: View {
         GeometryReader { geometry in
             ZStack {
                 DS.bg.ignoresSafeArea()
-                VStack(spacing: DS.space8) {
+                VStack(spacing: CosmoSurfaceMetrics.chromeGap) {
                     chromeRow
                     workbenchSheet
-                        .padding(.horizontal, DS.space10)
-                        .padding(.bottom, DS.space10)
                 }
                 overlayPresentations
             }

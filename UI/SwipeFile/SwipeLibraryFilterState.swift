@@ -58,14 +58,18 @@ enum SwipeLibrarySmartPreset: String, CaseIterable, Identifiable {
 }
 
 enum SwipeLibrarySectionSelection: Equatable, Hashable {
-    /// The swipe context's single landing page — hero, shelves, and the full
-    /// catalog on one surface.
+    /// The swipe file's landing page — hero, shelves, and the full catalog on
+    /// one surface. POSTS ONLY since the spaces shipped: every other genre
+    /// lives in its own room (`.genre`), so the stream never mixes mediums.
     case home
     case all
     case highHookScore
     case unstudied
     case boards
     case board(String)
+    /// A genre space: the same catalog page scoped to one medium —
+    /// "the swipe file for newsletters", "the swipe file for funnels".
+    case genre(SwipeGenre)
 
     var title: String {
         switch self {
@@ -75,6 +79,7 @@ enum SwipeLibrarySectionSelection: Equatable, Hashable {
         case .unstudied: return "Unstudied"
         case .boards: return "Boards"
         case .board(let name): return name
+        case .genre(let genre): return genre.pluralName
         }
     }
 }
@@ -219,10 +224,12 @@ struct SwipeLibraryFacetSummary: Equatable {
 
 struct SwipeLibraryFilterState: Equatable {
     var smartPreset: SwipeLibrarySmartPreset = .all
-    /// Artifact kind — posts, pages, screenshot sets, flows, saved copy.
-    /// First facet in the panel because it is the coarsest cut a mixed library
-    /// needs ("show me only the sales pages").
+    /// Artifact kind (structural axis). Still filterable programmatically, but
+    /// the panel's facet row now speaks GENRE — the collector's axis.
     var kinds: Set<SwipeKind> = []
+    /// Genre — what a swipe IS (newsletter, sales page, ad…). First facet in
+    /// the panel because it is the coarsest cut a mixed library needs.
+    var genres: Set<SwipeGenre> = []
     var platforms: Set<String> = []
     var hookTypes: Set<SwipeHookType> = []
     var frameworks: Set<SwipeFrameworkType> = []
@@ -237,6 +244,7 @@ struct SwipeLibraryFilterState: Equatable {
     var hasActiveFilters: Bool {
         smartPreset != .all ||
         !kinds.isEmpty ||
+        !genres.isEmpty ||
         !platforms.isEmpty ||
         !hookTypes.isEmpty ||
         !frameworks.isEmpty ||

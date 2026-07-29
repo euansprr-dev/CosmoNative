@@ -1263,6 +1263,19 @@ struct IncubatingConcept: Codable, Sendable, Identifiable, Equatable {
         stagedItems.filter { $0.consumedAt == nil }
     }
 
+    /// The seedbed's two-tier identity, derived (never stored). A SPROUT is a
+    /// first-capture name still earning its place: one item, no pin, no page
+    /// ties. Sprouts fold freely (accrual ladder, tidy pass) and render
+    /// lighter; everything else is an established seedling whose identity is
+    /// stable — folding one always goes through an offer the user accepts.
+    var isSprout: Bool {
+        status == .incubating
+            && pinnedAt == nil
+            && mergeTargetConnectionUUID == nil
+            && developedConnectionUUID == nil
+            && stagedItems.count < 2
+    }
+
     init(
         conceptKey: String,
         name: String,
@@ -2503,6 +2516,22 @@ struct ConnectionSectionItemDraft: Codable, Sendable, Identifiable, Hashable {
     }
 }
 
+/// A debrief-time consolidation offer: the resolver's whole-session view
+/// filed this seedling's captures inside another concept, but the seedling
+/// has earned stable identity (it is not a sprout), so the fold is OFFERED
+/// per-row at the debrief — never applied silently.
+struct SeedbedFoldOffer: Codable, Sendable, Identifiable, Equatable {
+    var seedlingKey: String
+    var seedlingName: String
+    var targetKey: String
+    var targetName: String
+    /// Pending captures that would move into the target.
+    var itemCount: Int
+    var reason: String
+
+    var id: String { seedlingKey }
+}
+
 struct CrystallizationOutput: Codable, Sendable {
     struct LexiconCandidate: Codable, Sendable, Identifiable {
         var id: String
@@ -2784,6 +2813,10 @@ struct CrystallizationOutput: Codable, Sendable {
     /// proposes pages; concepts ripen in the Deep Dive's seedbed instead.
     /// Optional so pre-seedbed persisted outputs still decode.
     var seedbedSeedlingNames: [String]?
+    /// Per-row fold offers computed after the tidy pass (established
+    /// seedlings whose captures the resolver re-homed). Optional so older
+    /// persisted outputs still decode.
+    var seedbedFoldOffers: [SeedbedFoldOffer]?
 
     init(
         summary: String = "",

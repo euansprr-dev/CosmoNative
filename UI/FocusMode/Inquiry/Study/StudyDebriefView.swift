@@ -108,6 +108,9 @@ struct StudyDebriefView: View {
             if let seedling = viewModel.debriefRipeSeedling {
                 seedlingOffer(seedling)
             }
+            if !viewModel.debriefFoldOffers.isEmpty {
+                foldOffersCard
+            }
             confirmsSection
             footerBar
         }
@@ -173,6 +176,35 @@ struct StudyDebriefView: View {
             .buttonStyle(.plain)
             .help("Finish the debrief and pivot to the Concept Desk")
             .accessibilityLabel("Develop \(seedling.name) now")
+        }
+        .padding(DS.space16)
+        .background(DS.surfaceElevated, in: .rect(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(DS.borderSubtle, lineWidth: 1))
+    }
+
+    /// The consolidation offers: established seedlings whose captures the
+    /// whole-session resolver filed under another concept. Sprouts folded
+    /// silently at tidy time — every row here is per-fold consent.
+    private var foldOffersCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: DS.space8) {
+                Image(systemName: "arrow.triangle.merge")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(DS.accent)
+                    .accessibilityHidden(true)
+                Text("Consolidation")
+                    .font(DS.caption.weight(.semibold))
+                    .foregroundStyle(DS.text)
+                Spacer()
+            }
+            .padding(.bottom, DS.space8)
+            ForEach(viewModel.debriefFoldOffers) { offer in
+                DebriefFoldOfferRow(
+                    offer: offer,
+                    onFold: { Task { await viewModel.acceptDebriefFoldOffer(offer) } },
+                    onDismiss: { viewModel.dismissDebriefFoldOffer(offer) }
+                )
+            }
         }
         .padding(DS.space16)
         .background(DS.surfaceElevated, in: .rect(cornerRadius: 14))
@@ -294,6 +326,68 @@ struct StudyDebriefView: View {
             get: { viewModel.debrief?.acceptedQuestionIds ?? [] },
             set: { viewModel.debrief?.acceptedQuestionIds = $0 }
         )
+    }
+}
+
+/// One fold offer: the seedling, where its captures were filed, and the two
+/// exits — Fold (captures merge, name survives as an alias) or keep separate.
+@MainActor
+private struct DebriefFoldOfferRow: View {
+    let offer: SeedbedFoldOffer
+    let onFold: () -> Void
+    let onDismiss: () -> Void
+
+    @State private var isWorking = false
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: DS.space8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Fold “\(offer.seedlingName)” into “\(offer.targetName)”")
+                    .font(DS.callout)
+                    .foregroundStyle(DS.text)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(offer.reason)
+                    .font(DS.caption)
+                    .foregroundStyle(DS.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: DS.space8)
+            if isWorking {
+                ProgressView().controlSize(.small).scaleEffect(0.7)
+            } else {
+                actions
+            }
+        }
+        .padding(.vertical, DS.space6)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Fold \(offer.seedlingName) into \(offer.targetName): \(offer.reason)")
+    }
+
+    private var actions: some View {
+        HStack(spacing: DS.space8) {
+            Button("Fold") {
+                isWorking = true
+                onFold()
+            }
+            .buttonStyle(.plain)
+            .font(DS.caption.weight(.semibold))
+            .foregroundStyle(DS.accent)
+            .help("Its captures move into \(offer.targetName); the old name still routes there")
+            .accessibilityLabel("Fold \(offer.seedlingName)")
+
+            Button {
+                onDismiss()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(DS.caption2.weight(.semibold))
+                    .foregroundStyle(DS.textMuted)
+                    .frame(width: 20, height: 20)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Keep it separate — it keeps growing on its own")
+            .accessibilityLabel("Keep \(offer.seedlingName) separate")
+        }
     }
 }
 

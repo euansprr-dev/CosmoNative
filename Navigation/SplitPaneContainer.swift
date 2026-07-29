@@ -83,6 +83,30 @@ enum PaneSlotPresentationPolicy {
         max(expandedWidth, minimumContentWidth)
     }
 
+    /// Rung height of the width ladder a `.tracksSteps` pane follows while a
+    /// continuous width stream runs. Two properties matter, and both come
+    /// from the deadband rather than from the size of the number:
+    ///
+    /// * Jitter inside one rung costs nothing. The old livelock's worst case
+    ///   was a user nudging the divider back and forth — hundreds of events
+    ///   travelling almost no distance, each one a full re-layout. Those now
+    ///   cost zero.
+    /// * Re-layouts are bounded by distance travelled, not by stream
+    ///   duration, so no stream can queue work faster than it retires it.
+    ///
+    /// A body that reflows in visible 48pt steps and lands exactly on drop
+    /// reads as resizing. One that doesn't move until drop reads as broken.
+    static let widthStreamStep: CGFloat = 48
+
+    /// The width a stepped pane lays out at: the live width once the stream
+    /// has carried it a full rung away from where the body currently sits,
+    /// otherwise the width it is already laid out at. `adopted == nil` means
+    /// the pane joined mid-stream — it takes the live width immediately.
+    static func steppedWidth(live: CGFloat, adopted: CGFloat?) -> CGFloat {
+        guard let adopted else { return live }
+        return abs(live - adopted) >= widthStreamStep ? live : adopted
+    }
+
     static func contentOffset(isExpanded: Bool, expandedWidth: CGFloat) -> CGFloat {
         guard !isExpanded else { return 0 }
         return -(contentWidth(for: expandedWidth) + collapsedContentClearance)
@@ -101,13 +125,14 @@ struct PaneDeckView: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// Content layout widths from the last frame outside a continuous width
-    /// stream (divider drag or window live resize). While a stream is live,
-    /// pane bodies keep laying out at these widths and only the slot clip
-    /// tracks the new width — a per-event content re-layout of a deep pane
-    /// subtree (assistant pane ≈ 2^17 stack cost) queues transactions faster
-    /// than they finish and wedges the app.
-    @State private var restingContentWidths: [String: CGFloat] = [:]
+    /// The rung of the width ladder each `.tracksSteps` pane is currently laid
+    /// out at, held only for the span of a continuous width stream and dropped
+    /// when it ends. Empty at rest, and never holds a `.tracksLive` pane —
+    /// those track the stream pixel for pixel like any other resizable view.
+    ///
+    /// Because it is cleared on thaw rather than re-snapshotted, a stale rung
+    /// from a previous stream can't survive into the next one.
+    @State private var steppedContentWidths: [String: CGFloat] = [:]
 
     var body: some View {
         GeometryReader { geo in
@@ -115,18 +140,19 @@ struct PaneDeckView: View {
             slotRow(layout: layout)
                 .animation(deckSpring, value: deckSignature)
                 .onChange(of: layout.contentWidths) { _, widths in
-                    guard !paneManager.isPaneContentLayoutFrozen else { return }
-                    restingContentWidths = widths
+                    guard paneManager.isWidthStreamActive else { return }
+                    advanceSteppedWidths(towards: widths)
                 }
-                // The width onChange can't refresh the snapshot when a freeze
-                // ends — the thaw re-evaluation sees the same widths as the
-                // last frozen frame. Without this, the NEXT freeze would trap
-                // content at widths from before the previous one.
-                .onChange(of: paneManager.isPaneContentLayoutFrozen) { _, frozen in
-                    guard !frozen else { return }
-                    restingContentWidths = layout.contentWidths
+                .onChange(of: paneManager.isWidthStreamActive) { _, isStreaming in
+                    // Entering: seed the ladder where the stepped bodies
+                    // already sit, so the first rung is measured from the
+                    // resting width. Leaving: drop it, which lands every
+                    // stepped body on the exact final width in one last
+                    // re-layout.
+                    steppedContentWidths = [:]
+                    guard isStreaming else { return }
+                    advanceSteppedWidths(towards: layout.contentWidths)
                 }
-                .onAppear { restingContentWidths = layout.contentWidths }
                 .background(WindowLiveResizeObserver(
                     onBegan: { paneManager.beginWindowLiveResize() },
                     onEnded: { paneManager.endWindowLiveResize() }
@@ -136,14 +162,33 @@ struct PaneDeckView: View {
 
     // MARK: Slots
 
-    /// The width a pane body lays out at right now. Frozen while a divider
-    /// drag or window live resize streams widths; live otherwise. Panes
-    /// opened mid-stream fall through to the live layout.
+    /// The width a pane body lays out at right now — the live layout width for
+    /// every pane except a `.tracksSteps` pane inside a running width stream,
+    /// which sits on its current rung. Panes opened mid-stream fall through to
+    /// the live width.
     private func contentWidth(for paneId: String, layout: DeckLayout) -> CGFloat? {
-        if paneManager.isPaneContentLayoutFrozen, let resting = restingContentWidths[paneId] {
-            return resting
+        guard let live = layout.contentWidths[paneId] else { return nil }
+        guard paneManager.isWidthStreamActive,
+              paneManager.panes.first(where: { $0.id == paneId })?.widthStreamBehavior == .tracksSteps,
+              let rung = steppedContentWidths[paneId]
+        else { return live }
+        return rung
+    }
+
+    /// Advance each stepped pane to the live width if the stream has carried
+    /// it a full rung, otherwise leave it where it is. Written back as one
+    /// mutation so a stream that moves nothing publishes nothing.
+    private func advanceSteppedWidths(towards widths: [String: CGFloat]) {
+        var next = steppedContentWidths
+        for pane in paneManager.panes where pane.widthStreamBehavior == .tracksSteps {
+            guard let live = widths[pane.id] else { continue }
+            next[pane.id] = PaneSlotPresentationPolicy.steppedWidth(
+                live: live,
+                adopted: next[pane.id]
+            )
         }
-        return layout.contentWidths[paneId]
+        guard next != steppedContentWidths else { return }
+        steppedContentWidths = next
     }
 
     private func slotRow(layout: DeckLayout) -> some View {

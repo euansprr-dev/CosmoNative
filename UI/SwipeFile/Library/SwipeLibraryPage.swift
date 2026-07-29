@@ -53,6 +53,9 @@ struct SwipeLibraryPage: View {
         .task(id: section) {
             await SwipeBoardStore.shared.loadIfNeeded()
             await viewModel.loadIfNeeded(section: section)
+            // Each room opens in its native view (Copy/Scripts read as a
+            // list); the shared catalog scopes keep the user's last choice.
+            viewModel.applyRoomDefaultDisplayMode(for: section)
         }
         .onChange(of: viewModel.visibleItemsIdentity) { revealDate = Date() }
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.swipeStudyDidAppear)) { _ in
@@ -63,6 +66,13 @@ struct SwipeLibraryPage: View {
         .animation(ProMotionSprings.bouncy, value: showFilters)
         .overlay(alignment: .bottom) {
             SwipeSaveToast(message: $viewModel.boardMessage)
+        }
+        // The recording pill rides every surface that can capture — this page
+        // is a drop target, so a forgotten recording session must stay visible.
+        .overlay(alignment: .topTrailing) {
+            SwipeFlowRecordingPill()
+                .padding(.trailing, DS.space24)
+                .padding(.top, DS.space16)
         }
         .swipeLibraryDropTarget()
     }
@@ -79,6 +89,9 @@ struct SwipeLibraryPage: View {
                     showFilters: $showFilters
                 )
                 SwipeLibraryScopeBar(viewModel: viewModel)
+                if section == .genre(.funnel) {
+                    SwipeFunnelRecordCTA()
+                }
                 SwipeLibraryResults(
                     viewModel: viewModel,
                     frameStore: frameStore,
@@ -340,4 +353,48 @@ struct SwipeLibraryPage: View {
 final class SwipeScrollMetrics {
     var offsetY: CGFloat = 0
     var viewportHeight: CGFloat = 0
+}
+
+// MARK: - Funnels room CTA
+
+/// "Record a funnel" — the Funnels room's one live affordance. Starting a
+/// session flips the global recording pill on; while recording this row
+/// yields (the pill IS the state, and two records reads as two systems).
+private struct SwipeFunnelRecordCTA: View {
+    @State private var recorder = SwipeFlowRecorder.shared
+    @State private var isHovered = false
+
+    var body: some View {
+        if recorder.session == nil {
+            Button {
+                Task { _ = await SwipeFlowRecorder.shared.start(named: SwipeFlowRecorder.defaultName()) }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "record.circle")
+                        .font(DS.caption.weight(.semibold))
+                        .foregroundStyle(DS.accent)
+                        .accessibilityHidden(true)
+                    Text("Record a funnel")
+                        .font(DS.subheadline.weight(.semibold))
+                        .foregroundStyle(DS.text)
+                    Text("every page you swipe becomes a step")
+                        .font(DS.subheadline)
+                        .foregroundStyle(DS.textMuted)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 11)
+                .background(
+                    isHovered ? AnyShapeStyle(DS.accentSoft) : AnyShapeStyle(DS.glassSectionFill),
+                    in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .onHover { isHovered = $0 }
+            .animation(ProMotionSprings.hover, value: isHovered)
+            .help("Start a recording session — captures append as steps")
+            .accessibilityLabel("Record a funnel")
+        }
+    }
 }

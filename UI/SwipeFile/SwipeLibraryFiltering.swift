@@ -11,6 +11,12 @@ struct SwipeLibraryVisibleItemsIdentity: Equatable {
 enum SwipeLibraryFiltering {
     /// Scope-composed filtering: `scope ∧ filters ∧ query`. Scope is the structural
     /// pre-filter owned by navigation; user filters never encode it.
+    ///
+    /// SEARCH LIFTS GENRE SCOPE: a non-empty query widens `.home` and `.genre`
+    /// to the whole library — finding beats browsing, and a search typed in
+    /// the Posts room that silently missed every newsletter would read as
+    /// data loss. Board scope does NOT lift: searching inside a board is an
+    /// intentional narrowing the user chose.
     static func filteredItems(
         from items: [SwipeGalleryItem],
         scope: SwipeLibrarySectionSelection,
@@ -18,21 +24,43 @@ enum SwipeLibraryFiltering {
         query: String,
         sortMode: SwipeSortMode
     ) -> [SwipeGalleryItem] {
+        let effectiveScope = effectiveScope(scope, query: query)
         let inScope: [SwipeGalleryItem]
-        switch scope {
-        case .home, .all, .boards:
+        switch effectiveScope {
+        case .all, .boards:
             inScope = items
         default:
-            let predicate = scopePredicate(scope)
+            let predicate = scopePredicate(effectiveScope)
             inScope = items.filter(predicate)
         }
         return filteredItems(from: inScope, filters: filters, query: query, sortMode: sortMode)
     }
 
+    /// The scope a non-empty query actually searches under.
+    static func effectiveScope(
+        _ scope: SwipeLibrarySectionSelection,
+        query: String
+    ) -> SwipeLibrarySectionSelection {
+        guard !query.isEmpty else { return scope }
+        switch scope {
+        case .home, .genre:
+            return .all
+        default:
+            return scope
+        }
+    }
+
     static func scopePredicate(_ scope: SwipeLibrarySectionSelection) -> (SwipeGalleryItem) -> Bool {
         switch scope {
-        case .home, .all, .boards:
+        case .all, .boards:
             return { _ in true }
+        case .home:
+            // The landing page is the POSTS room — every other genre has its
+            // own space, and one mixed stream is the junk drawer this whole
+            // system exists to end.
+            return { $0.genre == .post }
+        case .genre(let genre):
+            return { $0.genre == genre }
         case .highHookScore:
             return { ($0.hookScore ?? 0) >= 7.5 }
         case .unstudied:
@@ -146,6 +174,10 @@ enum SwipeLibraryFiltering {
 
     private static func matchesExplicitFilters(_ item: SwipeGalleryItem, filters: SwipeLibraryFilterState) -> Bool {
         if !filters.kinds.isEmpty, !filters.kinds.contains(item.kind) {
+            return false
+        }
+
+        if !filters.genres.isEmpty, !filters.genres.contains(item.genre) {
             return false
         }
 

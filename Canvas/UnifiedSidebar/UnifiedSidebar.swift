@@ -1215,8 +1215,18 @@ private struct SidebarSwipeFileContext: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            // One page now — no group label needed for a single row.
-            swipeFileRow
+            // The swipe file's rooms: Posts is the always-present landing;
+            // every other genre earns its row by having content. A posts-only
+            // library shows exactly one row — the spaces reveal themselves as
+            // the collection grows (same progressive-disclosure law as the
+            // genre facet).
+            VStack(alignment: .leading, spacing: 4) {
+                SidebarContextLabel(title: "Swipe File")
+                swipeFileRow
+                ForEach(SwipeSpaceStore.shared.visibleSpaces, id: \.rawValue) { genre in
+                    spaceRow(genre)
+                }
+            }
             ideasRow
 
             VStack(alignment: .leading, spacing: 4) {
@@ -1241,7 +1251,7 @@ private struct SidebarSwipeFileContext: View {
                     .help("New Board")
                 }
 
-                sectionRow(.boards, icon: "square.grid.2x2", subtitle: "All collections")
+                sectionRow(.boards, icon: "square.grid.2x2", subtitle: "All boards")
 
                 if isCreatingBoard {
                     newBoardRow
@@ -1256,9 +1266,13 @@ private struct SidebarSwipeFileContext: View {
         .task {
             await SwipeBoardStore.shared.loadIfNeeded()
             await SwipeBoardStore.shared.refreshCountsFromDatabase()
+            await SwipeSpaceStore.shared.loadIfNeeded()
         }
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.SwipeFile.libraryDidChange)) { _ in
-            Task { await SwipeBoardStore.shared.refreshCountsFromDatabase() }
+            Task {
+                await SwipeBoardStore.shared.refreshCountsFromDatabase()
+                await SwipeSpaceStore.shared.refreshCountsFromDatabase()
+            }
         }
     }
 
@@ -1278,11 +1292,11 @@ private struct SidebarSwipeFileContext: View {
         }
     }
 
-    /// The single swipe file entry — active for `.home` and legacy `.all` links,
-    /// which both land on the merged page.
+    /// The Posts room — the swipe file's landing page, active for `.home` and
+    /// legacy `.all` links (both land on the merged page).
     private var swipeFileRow: some View {
         SidebarContextRow(
-            title: "Swipe File",
+            title: "Posts",
             icon: "rectangle.stack",
             subtitle: "Up next, new saves & all",
             isActive: currentDestination == .swipeFile(section: .home)
@@ -1290,6 +1304,21 @@ private struct SidebarSwipeFileContext: View {
             tint: DS.textSecondary
         ) {
             open(.home)
+        }
+    }
+
+    /// An adaptive genre room — rendered only while its genre has content
+    /// (see `SwipeSpaceStore.visibleSpaces`).
+    private func spaceRow(_ genre: SwipeGenre) -> some View {
+        SidebarContextRow(
+            title: genre.pluralName,
+            icon: genre.iconName,
+            count: SwipeSpaceStore.shared.counts[genre],
+            subtitle: nil,
+            isActive: currentDestination == .swipeFile(section: .genre(genre)),
+            tint: DS.textSecondary
+        ) {
+            open(.genre(genre))
         }
     }
 

@@ -30,6 +30,27 @@ final class ConceptCartographerTests: XCTestCase {
         .init(kind: .nest(childUUID: child, parentUUID: parent), reason: reason)
     }
 
+    private func foldDraft(_ umbrella: String, _ memberKeys: [String], reason: String = "r") -> ConceptCartographerSignals.Draft {
+        .init(kind: .foldSeedlings(umbrellaName: umbrella, memberKeys: memberKeys), reason: reason)
+    }
+
+    private func seedlingFact(
+        _ name: String,
+        count: Int = 1,
+        parent: String? = nil,
+        pinned: Bool = false,
+        foldable: Bool = true
+    ) -> ConceptCartographerSignals.SeedlingFacts {
+        ConceptCartographerSignals.SeedlingFacts(
+            conceptKey: ConceptResolver.conceptKey(name),
+            name: name,
+            pendingCount: count,
+            parentConceptName: parent,
+            isPinned: pinned,
+            isFoldable: foldable
+        )
+    }
+
     // MARK: - Gating
 
     func testSmallMapDoesNotWantOrganization() {
@@ -243,6 +264,106 @@ final class ConceptCartographerTests: XCTestCase {
     }
 
     // MARK: - Co-occurrence
+
+    // MARK: - Seedling folds (umbrella consolidation)
+
+    func testFragmentedSeedbedWantsConsolidation() {
+        // The screenshot signature: many thin seedlings at once.
+        let thin = ["Pitch", "Pace", "Prosody", "Vocal register"].map { seedlingFact($0, count: 1) }
+        XCTAssertTrue(ConceptCartographerSignals.wantsSeedlingConsolidation(seedlings: thin))
+        XCTAssertFalse(ConceptCartographerSignals.wantsSeedlingConsolidation(seedlings: Array(thin.prefix(3))))
+        // Thick seedlings are established concepts, not fragmentation.
+        let thick = ["A", "B", "C", "D"].map { seedlingFact($0, count: 5) }
+        XCTAssertFalse(ConceptCartographerSignals.wantsSeedlingConsolidation(seedlings: thick))
+    }
+
+    func testParentFoldDraftsGroupSiblingsByResolverParent() {
+        let seedlings = [
+            seedlingFact("Pitch", parent: "Vocal delivery"),
+            seedlingFact("Pace", parent: "Vocal delivery"),
+            seedlingFact("Prosody", parent: "Vocal delivery"),
+            seedlingFact("HAIL framework"),                        // No parent — untouched.
+            seedlingFact("Silence", parent: "Vocal delivery", pinned: true)   // Pinned — never drafted.
+        ]
+        let drafts = ConceptCartographerSignals.parentFoldDrafts(seedlings: seedlings)
+        XCTAssertEqual(drafts.count, 1)
+        guard case .foldSeedlings(let umbrella, let members) = drafts[0].kind else {
+            return XCTFail("expected a fold draft")
+        }
+        XCTAssertEqual(umbrella, "Vocal delivery")
+        XCTAssertEqual(members, ["pace", "pitch", "prosody"])   // Sorted, pin excluded.
+    }
+
+    func testParentFoldDraftsIgnoreSelfParentAndSingletons() {
+        let seedlings = [
+            seedlingFact("Vocal delivery", parent: "Vocal delivery"),   // Self-parent never drafts.
+            seedlingFact("Pitch", parent: "Articulation")               // A lone facet is no group.
+        ]
+        XCTAssertTrue(ConceptCartographerSignals.parentFoldDrafts(seedlings: seedlings).isEmpty)
+    }
+
+    func testFoldValidationDropsPinnedUnknownAndClaimedMembers() {
+        let seedlings = [
+            seedlingFact("Pitch"),
+            seedlingFact("Pace"),
+            seedlingFact("Prosody", pinned: true),
+            seedlingFact("Vocal register", foldable: false)
+        ]
+        let proposals = ConceptCartographerSignals.validated(
+            [
+                foldDraft("Vocal delivery", ["pitch", "pace", "prosody", "vocal register", "unknown key"]),
+                foldDraft("Delivery", ["pitch", "pace"])   // Members already claimed above.
+            ],
+            facts: [],
+            seedlings: seedlings
+        )
+        XCTAssertEqual(proposals.count, 1)
+        guard case .foldSeedlings(let umbrella, let members) = proposals[0].kind else {
+            return XCTFail("expected a fold proposal")
+        }
+        XCTAssertEqual(umbrella, "Vocal delivery")
+        XCTAssertEqual(members, ["pace", "pitch"])
+        XCTAssertEqual(proposals[0].memberTitles.sorted(), ["Pace", "Pitch"])
+    }
+
+    func testFoldUmbrellaCollidingWithItsOnlyMemberIsDropped() {
+        // "Silence" folding into "Silence" leaves one member — below minimum.
+        let proposals = ConceptCartographerSignals.validated(
+            [foldDraft("Silence", ["silence", "pace"])],
+            facts: [],
+            seedlings: [seedlingFact("Silence"), seedlingFact("Pace")]
+        )
+        XCTAssertTrue(proposals.isEmpty)
+    }
+
+    func testFoldKeyIsSortedAndStable() {
+        XCTAssertEqual(
+            ConceptCartographerProposal.foldKey(memberKeys: ["prosody", "pace", "pitch"]),
+            "cartographer.fold:pace~pitch~prosody"
+        )
+    }
+
+    func testParseDraftsMapsFoldAliasesAndDropsUnknowns() {
+        let raw = """
+        {"proposals":[
+          {"kind":"fold","umbrella":"Vocal delivery","members":["s1","s2"],"reason":"facets of one topic"},
+          {"kind":"fold","umbrella":"Ghost","members":["s9"],"reason":"unknown alias"},
+          {"kind":"fold","umbrella":"","members":["s1"],"reason":"empty name"}
+        ]}
+        """
+        let drafts = ConceptCartographer.parseDrafts(
+            raw: raw,
+            uuidByAlias: [:],
+            seedlingKeyByAlias: ["s1": "pitch", "s2": "pace"]
+        )
+        XCTAssertEqual(drafts.count, 1)
+        guard case .foldSeedlings(let umbrella, let members) = drafts[0].kind else {
+            return XCTFail("expected a fold draft")
+        }
+        XCTAssertEqual(umbrella, "Vocal delivery")
+        XCTAssertEqual(members, ["pitch", "pace"])
+        XCTAssertEqual(drafts[0].reason, "facets of one topic")
+    }
 
     func testCoOccurrencePairsAreCountedAndDeterministic() {
         let pairs = ConceptCartographerSignals.coOccurrencePairs(

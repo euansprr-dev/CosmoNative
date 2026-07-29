@@ -236,6 +236,7 @@
 		402BE9519DC0A4970D99FF6B /* ContentFocusModeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD38B44989B1E14897B93302 /* ContentFocusModeView.swift */; };
 		40D620CFACD2C724DAAEF5A4 /* CaptureRequestRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE679DE29213468ED067E269 /* CaptureRequestRepository.swift */; };
 		40E8730DCE50CAE2027C8428 /* BrainstormContextSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89641C676B12C9B78DF411FE /* BrainstormContextSidebar.swift */; };
+		41236913F4C8B92610FB8188 /* SwipeSpaceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E659D44855B17E024F20D82A /* SwipeSpaceStore.swift */; };
 		4146A5CC8901FE05BECF5382 /* InboxSectionHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1970FC75844F92B1BF1A8CE4 /* InboxSectionHeader.swift */; };
 		4153063EDA17E2B8C1D0A4D1 /* FocusCanvasView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C58C617025D459A343997DD /* FocusCanvasView.swift */; };
 		4155173AE5ED17A1B4DBD95D /* CosmoDocumentEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 845884C0E33871260B8D0D1C /* CosmoDocumentEditor.swift */; };
@@ -641,6 +642,7 @@
 		AEB752723BB99B6E1ABF84DE /* InquiryMindMapNodeCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 311B8F247900BEB0D1C643F6 /* InquiryMindMapNodeCard.swift */; };
 		AEE689FC6028CCD4D59559C2 /* PerplexityService.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD23AEE8E88A0C9D6448F6C6 /* PerplexityService.swift */; };
 		AEF77FE7ADDA8A94355E3290 /* TaxonomyManagementView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39AD8BE8C1D368782B09088C /* TaxonomyManagementView.swift */; };
+		AFA956976D7C1AC07C5A81C7 /* SwipeGenreMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59D3DC09749AE9E5EF699AD8 /* SwipeGenreMenu.swift */; };
 		B00F3A5DF73E7D8C7A1D8DD0 /* InboxCaptureBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C82281972414C82A86F84FA /* InboxCaptureBar.swift */; };
 		B039D279C83334E1528D2049 /* CanvasClusterLayoutResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8973E2EF7A5F400FB0CB7F08 /* CanvasClusterLayoutResolver.swift */; };
 		B03A17A466A9BBCE51AE7BF6 /* SpatialEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B65EA20D935FAA8FA76B3D6A /* SpatialEngine.swift */; };
@@ -943,6 +945,7 @@
 		FEA0526764AF6FE4AFEA417F /* SwipeLibraryFilterState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B85667D49542B5920897BC5 /* SwipeLibraryFilterState.swift */; };
 		FEA6B39496A84EB6C266BB0D /* ResearchFocusModeState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B4691B303FB8CF1A98FE172 /* ResearchFocusModeState.swift */; };
 		FF14FF4D7C751CFED3C4C285 /* DashboardHabitPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEFDA7A2B36018A3931329D7 /* DashboardHabitPanel.swift */; };
+		FF2B88DF8BFD63AE17B712EA /* SwipeGenre.swift in Sources */ = {isa = PBXBuildFile; fileRef = 658EE6CB934D65250453385D /* SwipeGenre.swift */; };
 		FF5B662FCA1DE5E653E11F46 /* CosmoAIFocusModeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 655D3881F33D80A3122DC79D /* CosmoAIFocusModeView.swift */; };
 		FF7367464092B93511121F0D /* CosmoAssistantMenuKit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 108479F51D4829AA25FEDA6D /* CosmoAssistantMenuKit.swift */; };
 		FF73A64DABE9C06E526B3256 /* ReadinessCalculator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DBA73BF41F6AC4ED4B6CE10 /* ReadinessCalculator.swift */; };
@@ -1279,6 +1282,7 @@
 		5967A2CDB575219B1E15EE1F /* DashboardReportsPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardReportsPanel.swift; sourceTree = "<group>"; };
 		59B448CF2B656359EEE82995 /* SwipePatternWeaver.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SwipePatternWeaver.swift; path = Patterns/SwipePatternWeaver.swift; sourceTree = "<group>"; };
 		59C19FA34DBED1003CB43F43 /* AutomationPreviewCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomationPreviewCard.swift; sourceTree = "<group>"; };
+		59D3DC09749AE9E5EF699AD8 /* SwipeGenreMenu.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SwipeGenreMenu.swift; sourceTree = "<group>"; };
 		5A13C32B21B3B8087429EBA7 /* InquiryNotebookPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InquiryNotebookPane.swift; sourceTree = "<group>"; };
 		5A28A04ACCE8D2205ED1F77F /* CosmoRetrievalService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmoRetrievalService.swift; sourceTree = "<group>"; };
 		5A5B1C6AAD41AED40C341FBA /* CommandKFormModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandKFormModel.swift; sourceTree = "<group>"; };
@@ -1316,6 +1320,7 @@
 		648E7ED439D2FAE9B74DA39C /* IdeasDeskView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = IdeasDeskView.swift; path = Ideas/IdeasDeskView.swift; sourceTree = "<group>"; };
 		65592ADCFCE5030DD8CACA4F /* ConceptMediaLightbox.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ConceptMediaLightbox.swift; sourceTree = "<group>"; };
 		655D3881F33D80A3122DC79D /* CosmoAIFocusModeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosmoAIFocusModeView.swift; sourceTree = "<group>"; };
+		658EE6CB934D65250453385D /* SwipeGenre.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SwipeGenre.swift; path = Artifacts/SwipeGenre.swift; sourceTree = "<group>"; };
 		65A65A12758E70813B100C65 /* ConversationMemoryService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationMemoryService.swift; sourceTree = "<group>"; };
 		65F1771C4D685FB3D774E8E5 /* LocalFileThumbnail.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = LocalFileThumbnail.swift; sourceTree = "<group>"; };
 		6663C84983DBE576AF0885F2 /* HealthKitConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthKitConfiguration.swift; sourceTree = "<group>"; };
@@ -1801,6 +1806,7 @@
 		E5FE751CD7218400668F551B /* InlineEditLearningLoop.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = InlineEditLearningLoop.swift; path = Taste/InlineEditLearningLoop.swift; sourceTree = "<group>"; };
 		E6145B7E50FB61ED48295ED3 /* InboxRoutingConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxRoutingConfig.swift; sourceTree = "<group>"; };
 		E61935AA28BC72286AF55DC2 /* SocialDiscoveryQuery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocialDiscoveryQuery.swift; sourceTree = "<group>"; };
+		E659D44855B17E024F20D82A /* SwipeSpaceStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SwipeSpaceStore.swift; sourceTree = "<group>"; };
 		E68BE4BCFF6A0262830632A0 /* InboxInspector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxInspector.swift; sourceTree = "<group>"; };
 		E6A9F82AC21A4FB0F946D5B6 /* SwipeLibraryFiltering.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwipeLibraryFiltering.swift; sourceTree = "<group>"; };
 		E7191A4BEF4AA8F25DCECA48 /* BlockTextEditorRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockTextEditorRow.swift; sourceTree = "<group>"; };
@@ -2001,6 +2007,7 @@
 				7E7300A96ADBA32C7F062D5E /* SwipeDiscoverModel.swift */,
 				4B78DDC278F17C2910699121 /* SwipeDiscoverPillar.swift */,
 				EF320F09D3297E73FCCB706A /* SwipeMasonryEngine.swift */,
+				E659D44855B17E024F20D82A /* SwipeSpaceStore.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -2273,6 +2280,7 @@
 				ED250C47975CAAC5D0FFBBDC /* SwipeFlowRecordingPill.swift */,
 				DF4E266A01AFBF97A6BA9ED6 /* SwipeFlowMenu.swift */,
 				D8E37CF40CE5C4746571B476 /* SwipeLensControls.swift */,
+				59D3DC09749AE9E5EF699AD8 /* SwipeGenreMenu.swift */,
 			);
 			path = Shared;
 			sourceTree = "<group>";
@@ -3651,6 +3659,7 @@
 				8988F636F2C938D2FF652126 /* SwipeFlowRecorder.swift */,
 				3D92ACC455972D5C42F6D741 /* SwipeReferenceQuery.swift */,
 				8CFC11DD5C8983C2ADF073AD /* SwipeLensRouter.swift */,
+				658EE6CB934D65250453385D /* SwipeGenre.swift */,
 			);
 			name = Artifacts;
 			sourceTree = "<group>";
@@ -4812,6 +4821,9 @@
 				CE8B6D6A5AF9A373EC2CF4CB /* SwipeReferenceQuery.swift in Sources */,
 				C671F5C6EFD60455E06FA32A /* SwipeLensRouter.swift in Sources */,
 				F46B55C2211D390ABBB0D5DA /* SwipeLensControls.swift in Sources */,
+				FF2B88DF8BFD63AE17B712EA /* SwipeGenre.swift in Sources */,
+				41236913F4C8B92610FB8188 /* SwipeSpaceStore.swift in Sources */,
+				AFA956976D7C1AC07C5A81C7 /* SwipeGenreMenu.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

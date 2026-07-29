@@ -87,7 +87,11 @@ private struct SwipeCardMedia: View {
 
     var body: some View {
         Group {
-            if model.aspect == .paper {
+            if model.kind == .flow, !model.mosaicURLs.isEmpty {
+                // A funnel's artwork is its steps — a mosaic reads as a
+                // container, never as any one member.
+                SwipeCardFlowMosaic(urls: model.mosaicURLs)
+            } else if model.aspect == .paper {
                 SwipeCardPaperWell(text: model.paperText ?? model.hookText)
             } else {
                 thumbnail
@@ -95,7 +99,7 @@ private struct SwipeCardMedia: View {
         }
         .frame(width: width, height: mediaHeight)
         .clipped()
-        .overlay(alignment: .topLeading) { outlierBadge }
+        .overlay(alignment: .topLeading) { outlierBadge; genreBadge }
         .overlay(alignment: .bottomTrailing) { durationBadge }
         .overlay(alignment: .bottomLeading) { unitBadge }
         .overlay(alignment: .topTrailing) {
@@ -164,6 +168,25 @@ private struct SwipeCardMedia: View {
         }
     }
 
+    /// In mixed contexts a non-post card names its space ("Newsletter") —
+    /// rendered on the media, never in the footer: footer heights are exact
+    /// slot sums the masonry precomputes, and a new footer line would drift
+    /// every column. Shares the outlier's slot; outliers only exist on
+    /// Discover cards, which never set `showsGenreChip`.
+    @ViewBuilder
+    private var genreBadge: some View {
+        if model.showsGenreChip, model.outlierLabel == nil {
+            Text(model.genre.displayName)
+                .font(DS.caption2.weight(.semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 7)
+                .frame(height: 18)
+                .background(.black.opacity(0.55), in: Capsule())
+                .padding(8)
+                .accessibilityLabel("Filed under \(model.genre.pluralName)")
+        }
+    }
+
     @ViewBuilder
     private var durationBadge: some View {
         if let duration = model.durationLabel {
@@ -199,6 +222,58 @@ private struct SwipeCardPaperWell: View {
         .padding(14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(DS.glassSectionFill)
+    }
+}
+
+// MARK: - Flow mosaic
+
+/// Step-mosaic artwork for funnel cards: up to four member thumbnails on a
+/// hairline grid. One member fills the well; two split it; three or more take
+/// quadrants, with any empty quadrant staying a warm fill.
+private struct SwipeCardFlowMosaic: View {
+    let urls: [URL]
+
+    var body: some View {
+        Group {
+            if urls.count == 1 {
+                tile(urls[0])
+            } else if urls.count == 2 {
+                HStack(spacing: 1) {
+                    tile(urls[0])
+                    tile(urls[1])
+                }
+            } else {
+                VStack(spacing: 1) {
+                    HStack(spacing: 1) {
+                        tile(urls[0])
+                        tile(urls[1])
+                    }
+                    HStack(spacing: 1) {
+                        tile(urls[2])
+                        if urls.count > 3 { tile(urls[3]) } else { emptyQuadrant }
+                    }
+                }
+            }
+        }
+        .background(DS.glassSectionFill)
+    }
+
+    private func tile(_ url: URL) -> some View {
+        Color.clear.overlay {
+            CachedAsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image.resizable().scaledToFill()
+                default:
+                    Rectangle().fill(DS.glassSectionFill)
+                }
+            }
+        }
+        .clipped()
+    }
+
+    private var emptyQuadrant: some View {
+        Rectangle().fill(DS.glassSectionFill)
     }
 }
 

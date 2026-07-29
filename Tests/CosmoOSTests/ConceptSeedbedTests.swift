@@ -272,6 +272,229 @@ final class ConceptSeedbedTests: XCTestCase {
         XCTAssertEqual(tidied.first?.status, .dismissed)
     }
 
+    // MARK: - Attach ladder (alias + token-subset before minting)
+
+    func testAccrualFeedsExistingSeedlingThroughAlias() {
+        var existing = seedling("Silence", items: [item("e-1")])
+        existing.aliases = ["Strategic pause"]
+        let result = ConceptSeedbedReducer.accrue([existing], entries: [
+            entry(["Strategic pause"], extractUUID: "e-2")
+        ])
+        XCTAssertEqual(result.seedbed.count, 1)
+        XCTAssertEqual(result.seedbed.first?.conceptKey, "silence")
+        XCTAssertEqual(result.seedbed.first?.stagedItems.count, 2)
+    }
+
+    func testAccrualFeedsUniqueTokenSubsetInsteadOfMinting() {
+        let existing = seedling("Silence", items: [item("e-1")])
+        let result = ConceptSeedbedReducer.accrue([existing], entries: [
+            entry(["Silence at the end of talking"], extractUUID: "e-2")
+        ])
+        XCTAssertEqual(result.seedbed.count, 1)
+        XCTAssertEqual(result.seedbed.first?.conceptKey, "silence")
+        XCTAssertEqual(result.seedbed.first?.stagedItems.count, 2)
+        // The wording that arrived is recorded, so the next capture with that
+        // phrasing resolves on the alias rung.
+        XCTAssertEqual(result.seedbed.first?.aliases, ["Silence at the end of talking"])
+    }
+
+    func testAmbiguousSubsetMintsInsteadOfGuessing() {
+        let a = seedling("Silence", items: [item("e-1")])
+        let b = seedling("Talking", items: [item("e-2")])
+        // "Silence while talking" subset-matches BOTH — ambiguity mints.
+        let result = ConceptSeedbedReducer.accrue([a, b], entries: [
+            entry(["Silence while talking"], extractUUID: "e-3")
+        ])
+        XCTAssertEqual(result.seedbed.count, 3)
+        XCTAssertTrue(result.seedbed.contains { $0.conceptKey == "silence while talking" })
+    }
+
+    func testDismissedSeedlingDoesNotAttractSubsetMatches() {
+        // Dismissing "Breathing" must not swallow "Box breathing".
+        let dismissed = seedling("Breathing", items: [item("e-1")], status: .dismissed)
+        let result = ConceptSeedbedReducer.accrue([dismissed], entries: [
+            entry(["Box breathing"], extractUUID: "e-2")
+        ])
+        XCTAssertEqual(result.seedbed.count, 2)
+        XCTAssertTrue(result.seedbed.contains { $0.conceptKey == "box breathing" })
+    }
+
+    func testSubsetFeedDoesNotStealMergeTargetPage() {
+        let existing = seedling("Breathing", items: [item("e-1")])
+        let result = ConceptSeedbedReducer.accrue(
+            [existing],
+            entries: [entry(["Box breathing"], extractUUID: "e-2")],
+            existingPageUUIDsByKey: ["box breathing": "conn-1"]
+        )
+        XCTAssertEqual(result.seedbed.count, 1)
+        XCTAssertNil(result.seedbed.first?.mergeTargetConnectionUUID)
+    }
+
+    func testAliasFeedReportsRipenessUnderTheSeedlingsOwnKey() {
+        var existing = seedling("Silence", items: [
+            item("e-1", session: "s-0"), item("e-2", session: "s-0"), item("e-3", session: "s-0")
+        ])
+        existing.aliases = ["Strategic pause"]
+        let result = ConceptSeedbedReducer.accrue([existing], entries: [
+            entry(["Strategic pause"], extractUUID: "e-4", session: "s-1")
+        ])
+        XCTAssertEqual(result.newlyRipeKeys, ["silence"])
+    }
+
+    // MARK: - Sprout tier
+
+    func testSproutTierDerivation() {
+        XCTAssertTrue(seedling("Pitch", items: [item("e-1")]).isSprout)
+        XCTAssertFalse(seedling("Pitch", items: [item("e-1"), item("e-2")]).isSprout)
+        XCTAssertFalse(seedling("Pitch", items: [item("e-1")], pinned: true).isSprout)
+        var pageTied = seedling("Pitch", items: [item("e-1")])
+        pageTied.mergeTargetConnectionUUID = "conn-1"
+        XCTAssertFalse(pageTied.isSprout)
+        var developed = seedling("Pitch", items: [item("e-1")], status: .developed)
+        developed.developedConnectionUUID = "conn-2"
+        XCTAssertFalse(developed.isSprout)
+    }
+
+    // MARK: - Tidy: alias-declared folds
+
+    func testTidyFoldsSeedlingDeclaredAsAliasRegardlessOfItemCoverage() {
+        // The resolver named "Silence" and declared "Silence at the end of
+        // talking" one of its aliases. The rival seedling folds even though
+        // its item (e-9) appears in NO assignment.
+        let survivor = seedling("Silence", items: [item("e-1")])
+        let rival = seedling("Silence at the end of talking", items: [item("e-9")])
+        let tidied = ConceptSeedbedReducer.applyTidy(
+            [survivor, rival],
+            assignments: [assignment(
+                "Silence",
+                extracts: ["e-1"],
+                aliases: ["Silence at the end of talking"]
+            )],
+            extracts: [],
+            sessionUUID: "s-1"
+        )
+        XCTAssertEqual(tidied.count, 1)
+        XCTAssertEqual(tidied.first?.conceptKey, "silence")
+        XCTAssertEqual(Set(tidied.first?.stagedItems.map(\.sourceExtractUUID) ?? []), ["e-1", "e-9"])
+        XCTAssertTrue(tidied.first?.aliases.contains("Silence at the end of talking") ?? false)
+    }
+
+    // MARK: - Reconciliation offers (debrief consolidation)
+
+    func testEstablishedSeedlingWithReHomedMajorityBecomesAnOffer() {
+        // Post-tidy bed: "Vocal delivery" (the survivor) and "Vocal register"
+        // (2 items, both assigned to Vocal delivery, but NOT all its items
+        // were seen so it did not silently fold — one item e-7 is unseen).
+        let survivor = seedling("Vocal delivery", items: [item("e-1"), item("e-2")])
+        let register = seedling("Vocal register", items: [item("e-3"), item("e-4"), item("e-7")])
+        let offers = ConceptSeedbedReducer.reconciliationOffers(
+            [survivor, register],
+            assignments: [assignment("Vocal delivery", extracts: ["e-1", "e-2", "e-3", "e-4"])]
+        )
+        XCTAssertEqual(offers.count, 1)
+        XCTAssertEqual(offers.first?.seedlingKey, "vocal register")
+        XCTAssertEqual(offers.first?.targetKey, "vocal delivery")
+        XCTAssertEqual(offers.first?.targetName, "Vocal delivery")
+        XCTAssertEqual(offers.first?.itemCount, 3)
+    }
+
+    func testSproutsAndPinnedAndResolverNamedSeedlingsAreNeverOffered() {
+        let survivor = seedling("Vocal delivery", items: [item("e-1")])
+        let sprout = seedling("Pace", items: [item("e-2")])
+        let pinned = seedling("Prosody", items: [item("e-3"), item("e-4")], pinned: true)
+        let named = seedling("Pitch", items: [item("e-5"), item("e-6")])
+        let offers = ConceptSeedbedReducer.reconciliationOffers(
+            [survivor, sprout, pinned, named],
+            assignments: [
+                assignment("Vocal delivery", extracts: ["e-1", "e-2", "e-3", "e-4", "e-5", "e-6"]),
+                assignment("Pitch", extracts: ["e-5"])
+            ]
+        )
+        XCTAssertTrue(offers.isEmpty)
+    }
+
+    func testOneStrayReHomedCaptureIsNotConsolidationEvidence() {
+        let survivor = seedling("Vocal delivery", items: [item("e-1")])
+        let hail = seedling("HAIL framework", items: [
+            item("e-2"), item("e-3"), item("e-4"), item("e-5"), item("e-6")
+        ])
+        // Only 1 of HAIL's 5 captures was filed under Vocal delivery.
+        let offers = ConceptSeedbedReducer.reconciliationOffers(
+            [survivor, hail],
+            assignments: [assignment("Vocal delivery", extracts: ["e-1", "e-2"])]
+        )
+        XCTAssertTrue(offers.isEmpty)
+    }
+
+    // MARK: - Fold (umbrella consolidation)
+
+    func testFoldMergesMembersIntoUmbrellaWithAliasesAndRelated() {
+        let pitch = seedling("Pitch", items: [item("e-1")])
+        let pace = seedling("Pace", items: [item("e-2")])
+        var prosody = seedling("Prosody", items: [item("e-3"), item("e-4")])
+        prosody.aliases = ["Vocal melody"]
+        let (folded, changed) = ConceptSeedbedReducer.foldSeedlings(
+            [pitch, pace, prosody],
+            umbrellaName: "Vocal delivery",
+            memberKeys: ["pitch", "pace", "prosody"]
+        )
+        XCTAssertTrue(changed)
+        XCTAssertEqual(folded.count, 1)
+        let umbrella = folded[0]
+        XCTAssertEqual(umbrella.conceptKey, "vocal delivery")
+        XCTAssertEqual(Set(umbrella.stagedItems.map(\.sourceExtractUUID)), ["e-1", "e-2", "e-3", "e-4"])
+        XCTAssertEqual(Set(umbrella.aliases), ["Pitch", "Pace", "Prosody", "Vocal melody"])
+        XCTAssertEqual(Set(umbrella.relatedConceptNames), ["Pitch", "Pace", "Prosody"])
+        XCTAssertFalse(umbrella.isSprout)
+    }
+
+    func testFoldIntoExistingUmbrellaSeedlingKeepsItsIdentity() {
+        var umbrella = seedling("Vocal delivery", items: [item("e-1")])
+        umbrella.pinnedAt = ISO8601.string(from: Date())
+        let pitch = seedling("Pitch", items: [item("e-2")])
+        let (folded, changed) = ConceptSeedbedReducer.foldSeedlings(
+            [umbrella, pitch],
+            umbrellaName: "Vocal delivery",
+            memberKeys: ["pitch"]
+        )
+        XCTAssertTrue(changed)
+        XCTAssertEqual(folded.count, 1)
+        XCTAssertNotNil(folded.first?.pinnedAt)   // The umbrella's own pin survives.
+        XCTAssertEqual(folded.first?.stagedItems.count, 2)
+    }
+
+    func testFoldNeverTouchesPinnedDevelopedOrPageTiedMembers() {
+        let pinned = seedling("Pitch", items: [item("e-1")], pinned: true)
+        var developed = seedling("Pace", items: [item("e-2")], status: .developed)
+        developed.developedConnectionUUID = "conn-1"
+        var pageTied = seedling("Prosody", items: [item("e-3")])
+        pageTied.mergeTargetConnectionUUID = "conn-2"
+        let (folded, changed) = ConceptSeedbedReducer.foldSeedlings(
+            [pinned, developed, pageTied],
+            umbrellaName: "Vocal delivery",
+            memberKeys: ["pitch", "pace", "prosody"]
+        )
+        // Nothing foldable: the original bed comes back untouched — no empty
+        // umbrella sprout is left behind.
+        XCTAssertFalse(changed)
+        XCTAssertEqual(folded.count, 3)
+        XCTAssertFalse(folded.contains { $0.conceptKey == "vocal delivery" })
+    }
+
+    func testDebriefOfferAcceptIsASingleMemberFold() {
+        let target = seedling("Vocal delivery", items: [item("e-1")])
+        let register = seedling("Vocal register", items: [item("e-2"), item("e-3")])
+        let (folded, changed) = ConceptSeedbedReducer.foldSeedlings(
+            [target, register],
+            umbrellaName: "Vocal delivery",
+            memberKeys: ["vocal register"]
+        )
+        XCTAssertTrue(changed)
+        XCTAssertEqual(folded.count, 1)
+        XCTAssertEqual(folded.first?.stagedItems.count, 3)
+        XCTAssertTrue(folded.first?.aliases.contains("Vocal register") ?? false)
+    }
+
     // MARK: - Decode back-compat
 
     func testDeepDiveStructuredDecodesWithoutSeedbedKey() throws {

@@ -374,6 +374,14 @@ final class SwipeStudyModel {
             // vision is never re-bought on this path.
             if cloudActivelyProcessing(displayAtom) {
                 pollForBackgroundCompletion()
+            } else if displayAtom.swipeKind != .post {
+                // Artifact self-heal: units captured but never read (the craft
+                // pass failed, or the app quit mid-decomposition) would
+                // otherwise stay un-analyzed forever, since nothing re-runs it.
+                if let artifact = displayAtom.swipeArtifact,
+                   !artifact.units.isEmpty, !artifact.isAnalyzed {
+                    reanalyzeArtifact()
+                }
             } else {
                 let hasText = !slidesTranscriptText.isEmpty || !transcriptText.isEmpty
                 if hasText {
@@ -651,6 +659,15 @@ final class SwipeStudyModel {
     /// Explicit user action: save the live transcript onto the atom, then run
     /// the insight pass. Replaces the old two-phase NLP + classification flow.
     func reanalyze() {
+        // Artifact kinds first. A frame or page keeps its content in
+        // `structured.swipeArtifact.units`, NOT in a transcript or a body —
+        // so the post path's `guard !text.isEmpty` bailed out silently and
+        // Reanalyze looked like a dead button.
+        if displayAtom.swipeKind != .post {
+            reanalyzeArtifact()
+            return
+        }
+
         let text: String = {
             let slides = slidesTranscriptText.trimmingCharacters(in: .whitespacesAndNewlines)
             if !slides.isEmpty { return slides }
@@ -687,6 +704,39 @@ final class SwipeStudyModel {
             }
 
             await runInsightPass(context: "reanalyze")
+        }
+    }
+
+    /// Re-run the CRAFT pass for a page / frame / flow / note.
+    ///
+    /// Re-reads the units that are already there rather than re-capturing:
+    /// the vision transcription (frames) and the DOM text (pages) were the
+    /// expensive, unrepeatable half, and they have not changed. This is one
+    /// Sonnet call over text already in hand — the same shape as the post
+    /// path's reanalyze, which also never re-transcribes.
+    private func reanalyzeArtifact() {
+        guard !isAnalyzing else { return }
+        let atomForAnalysis = displayAtom
+        guard let artifact = atomForAnalysis.swipeArtifact, !artifact.units.isEmpty else { return }
+        let uuid = atomForAnalysis.uuid
+        let note = atomForAnalysis.body
+
+        isAnalyzing = true
+        Task {
+            defer { isAnalyzing = false }
+            let result = await SwipeArtifactAnalyzer.analyze(
+                atom: atomForAnalysis, artifact: artifact, userNote: note
+            )
+            // PERSIST-BY-UUID: the uuid was captured at schedule time, so a
+            // pass that finishes after the user navigated away still writes to
+            // the swipe it analysed.
+            await SwipeArtifactPersistence.apply(result, toAtomWithUUID: uuid, artifact: artifact)
+
+            guard isViewingAtom(uuid: uuid) else { return }
+            if let refreshed = try? await AtomRepository.shared.fetch(uuid: uuid) {
+                currentAtom = refreshed
+                analysis = refreshed.swipeAnalysis
+            }
         }
     }
 
@@ -1695,6 +1745,11 @@ final class SwipeStudyModel {
     /// The auto-transcribe gate: only when nothing user-visible exists yet and
     /// the background processor isn't already on it.
     private func shouldAutoTranscribe() -> Bool {
+        // An artifact kind is never transcribed by the POST pipeline. A frame
+        // has no slides, no transcript and often no body, so every negative
+        // gate below passed and opening one kicked off an Instagram extraction
+        // for a swipe that has no URL to extract.
+        guard displayAtom.swipeKind == .post else { return false }
         let hasSlideContent = transcriptSlides.contains { !$0.text.isEmpty }
         let hasTranscript = !transcriptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasSavedBody = !(displayAtom.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

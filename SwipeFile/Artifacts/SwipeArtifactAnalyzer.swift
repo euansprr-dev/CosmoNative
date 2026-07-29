@@ -26,10 +26,24 @@ enum SwipeArtifactAnalyzer {
     /// premium call per capture is the budget.
     static let tier: AgentModelTier = SwipeInsightEngine.analysisTier
 
+    /// NO `contentType` IN THIS PROMPT — deliberate.
+    ///
+    /// `ContentFormat` is a POST vocabulary (reel variants, carousel, tweet,
+    /// thread, newsletter…). Asked about a screenshot set of a webinar landing
+    /// page it has no right answer, so the model picks the least-wrong one and
+    /// the swipe lands filed as a "Two-Step CTA" — wrong in the Details rail
+    /// and wrong under the Format filter. The KIND already answers "what shape
+    /// is this"; asking a second, post-shaped shape question can only produce
+    /// noise. Non-post swipes leave `swipeContentFormat` nil.
+
     struct Result {
         var analysis: SwipeAnalysis
         var units: [SwipeArtifactUnit]
         var anatomy: String?
+        /// The model's genre verdict, already resolved onto the closed
+        /// vocabulary — nil when it answered nothing usable, in which case the
+        /// swipe keeps whatever it had (seed or structural default).
+        var genre: SwipeGenre?
     }
 
     /// Read an artifact and return the analysis + role-assigned units.
@@ -113,7 +127,8 @@ enum SwipeArtifactAnalyzer {
             units: applying(response.unitRoles, to: units),
             anatomy: response.anatomy?.trimmed.isEmpty == false
                 ? response.anatomy?.trimmed
-                : analysis.structuralRecipe
+                : analysis.structuralRecipe,
+            genre: SwipeGenre.resolve(response.genre)
         )
     }
 
@@ -239,11 +254,16 @@ enum SwipeArtifactAnalyzer {
         lines.append("""
 
         TAXONOMY
+        `genre` — what this artifact IS, from this closed list. Choose exactly one. \
+        When none of the specific genres fits, answer the structural fallback \
+        (`page` for web pages, `screenshot` for images, `copy` for text) rather \
+        than forcing a fit:
+        \(SwipeGenre.promptVocabulary)
+
         `niche` — choose from this canonical list when one fits; only coin a new one when \
         nothing does:
         \(canonicalNiches)
 
-        `contentType` — one of: \(ContentFormat.allCases.map(\.rawValue).joined(separator: ", "))
         `hookType` — one of: \(SwipeHookType.allCases.map(\.rawValue).joined(separator: ", "))
         `primaryNarrative` / `secondaryNarrative` — one of: \(NarrativeStyle.allCases.map(\.rawValue).joined(separator: ", "))
         `frameworkType` — one of: \(SwipeFrameworkType.allCases.map(\.rawValue).joined(separator: ", "))
@@ -257,13 +277,13 @@ enum SwipeArtifactAnalyzer {
         {
           "displayTitle": "≤60 chars. The artifact's own headline verbatim when it is already short; a compression of it when it is long. Never a description of the artifact.",
           "keyInsight": "One or two sentences: the single thing worth stealing here.",
+          "genre": "one value from the genre list above",
           "hookType": "...",
           "hookScore": 0.0,
           "hookScoreReason": "...",
           "hookMechanism": "What the opening does to earn the next second of attention.",
           "primaryNarrative": "...",
           "secondaryNarrative": "...",
-          "contentType": "...",
           "niche": "...",
           "creatorHandle": "@handle or null",
           "creatorName": "Name or null",

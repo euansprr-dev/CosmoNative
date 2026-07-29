@@ -22,6 +22,22 @@ final class SwipeLibraryViewModel {
                 }
             }
             .store(in: &cancellables)
+
+        // A capture made ON THIS MAC has no sync pull to ride in on. The
+        // library posted `libraryDidChange` for years but never listened to
+        // it, so a locally captured swipe only appeared when the NEXT pull
+        // happened — up to a minute later, which reads as "nothing happened".
+        // Short debounce: this is a direct user action, so it must feel
+        // immediate, unlike a hundred-atom sync burst.
+        NotificationCenter.default.publisher(for: CosmoNotification.SwipeFile.libraryDidChange)
+            .debounce(for: .milliseconds(250), scheduler: DispatchQueue.main)
+            .sink { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self, self.hasLoaded else { return }
+                    await self.reload()
+                }
+            }
+            .store(in: &cancellables)
     }
 
     /// Debounced: batch pulls arrive in bursts (up to 100 atoms per page) —
@@ -57,6 +73,9 @@ final class SwipeLibraryViewModel {
     /// than one — a library of nothing but posts must look exactly as it did
     /// before the artifact spine shipped.
     private(set) var availableKinds: [SwipeKind] = []
+    /// Genres actually present, in vocabulary order — same progressive
+    /// disclosure as kinds: the facet renders only when there is more than one.
+    private(set) var availableGenres: [SwipeGenre] = []
     private(set) var isLoading = false
     var errorMessage: String?
     var selectedItem: SwipeGalleryItem?
@@ -132,6 +151,9 @@ final class SwipeLibraryViewModel {
 
             allItems = items
             hasLoaded = true
+            // Sidebar space rows ride every library refresh for free — a
+            // capture or a sync pull updates their counts in the same beat.
+            SwipeSpaceStore.shared.refreshCounts(from: items)
             await refreshAvailableFacets()
             recompute()
         } catch {
@@ -170,6 +192,19 @@ final class SwipeLibraryViewModel {
 
     func toggleKind(_ kind: SwipeKind) {
         toggle(kind, in: &filterState.kinds)
+    }
+
+    func toggleGenre(_ genre: SwipeGenre) {
+        toggle(genre, in: &filterState.genres)
+    }
+
+    /// Each room opens in its native view: text-forward rooms (Copy, Scripts)
+    /// read best as a compact list; everything else is a grid. Applied on
+    /// ENTERING a genre room only — the catalog and boards keep whatever the
+    /// user last chose.
+    func applyRoomDefaultDisplayMode(for section: SwipeLibrarySectionSelection) {
+        guard case .genre(let genre) = section else { return }
+        displayMode = (genre == .copy || genre == .script) ? .compact : .grid
     }
 
     func togglePlatform(_ platform: String) {
@@ -278,7 +313,31 @@ final class SwipeLibraryViewModel {
             visibleItemsIdentity = nextIdentity
         }
         visibleItems = items
-        visibleCardModels = items.map(SwipeCardModel.init(item:))
+        // In MIXED contexts (cross-genre search, boards, the legacy .all
+        // catalog) a non-post card names its space; inside a single-genre room
+        // the chip would just repeat the masthead.
+        let effective = SwipeLibraryFiltering.effectiveScope(scope, query: query)
+        let isSingleGenreRoom: Bool = {
+            if case .genre = effective { return true }
+            return effective == .home
+        }()
+        // Flow mosaics look up member thumbnails among SIBLING rows — a flow's
+        // steps are themselves library swipes, so no fetch is ever needed.
+        let thumbnailByID: [String: String] = allItems.reduce(into: [:]) { acc, item in
+            if let thumb = item.thumbnailUrl, !thumb.isEmpty { acc[item.id] = thumb }
+        }
+        visibleCardModels = items.map { item in
+            var model = SwipeCardModel(item: item)
+            if !isSingleGenreRoom, item.genre != .post {
+                model.showsGenreChip = true
+            }
+            if item.kind == .flow, !item.memberSwipeUUIDs.isEmpty {
+                model.mosaicURLs = item.memberSwipeUUIDs
+                    .prefix(4)
+                    .compactMap { thumbnailByID[$0].flatMap(URL.init(string:)) }
+            }
+            return model
+        }
         cardModelsByID = Dictionary(zip(items.map(\.id), visibleCardModels), uniquingKeysWith: { first, _ in first })
         let wantsDateSections = scope == .all
             && sortMode == .recent
@@ -313,11 +372,18 @@ final class SwipeLibraryViewModel {
         }
         let present = Set(allItems.map(\.kind))
         availableKinds = SwipeKind.allCases.filter(present.contains)
+        let presentGenres = Set(allItems.map(\.genre))
+        availableGenres = SwipeGenre.allCases.filter(presentGenres.contains)
     }
 
     /// How many swipes of a kind the library holds — the facet row's live count.
     func kindCount(_ kind: SwipeKind) -> Int {
         allItems.reduce(into: 0) { $0 += ($1.kind == kind ? 1 : 0) }
+    }
+
+    /// How many swipes of a genre the library holds — the facet row's live count.
+    func genreCount(_ genre: SwipeGenre) -> Int {
+        allItems.reduce(into: 0) { $0 += ($1.genre == genre ? 1 : 0) }
     }
 
     /// Niche facet options: the exact strings present in the library (the

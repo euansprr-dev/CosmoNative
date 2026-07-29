@@ -19,6 +19,13 @@ actor InquiryLiveRouter {
             var title: String
             var parentUUID: String?
         }
+        /// One growing seedling as the router sees it — the model must know
+        /// what is already accruing before it may name anything new.
+        struct SeedlingRef: Sendable {
+            var name: String
+            var aliases: [String]
+            var pendingCount: Int
+        }
         var deepDiveTitle: String?
         var activeQuestionUUID: String?
         var activeQuestionTitle: String
@@ -26,6 +33,7 @@ actor InquiryLiveRouter {
         var lexiconTerms: [String]
         var conceptNames: [String]      // Existing connection-page titles
         var recentCaptures: [String]
+        var seedlings: [SeedlingRef] = []
         var corrections: [CorrectionExample] = []
     }
 
@@ -214,7 +222,7 @@ actor InquiryLiveRouter {
        mechanisms, practices, examples, and evidence.
     3. DESTINATION: pick the existing question each unit answers; null keeps it on the active
        question. Move a unit only when another question clearly fits better.
-    4. CONCEPTS: tag durable concepts per rule 6 below.
+    4. CONCEPTS: apply THE CONCEPT LADDER (rule 6 below).
 
     HARD RULES:
     1. NEVER invent question UUIDs — targetQuestionUUID must be copied from the QUESTIONS list, or null.
@@ -238,8 +246,23 @@ actor InquiryLiveRouter {
        does sleep play in becoming my best self?" does → child of it. Depth bias: if the candidate
        parent already sits 2+ levels deep (see its "parent" chain in QUESTIONS), prefer null unless
        the decomposition is unmistakable — deep trees stop helping humans think.
-    6. conceptNames: pick from LEXICON/CONCEPTS when one clearly applies; you may add at most one new
-       noun-phrase concept when the unit is clearly about a durable concept not yet listed. Otherwise [].
+    6. conceptNames — THE CONCEPT LADDER (per unit, apply in order; the first rung that fits wins):
+       a. An existing CONCEPTS page covers the unit's subject → tag that page's name.
+       b. A GROWING SEEDLING covers it → tag that seedling's name, COPIED EXACTLY as listed. Match by
+          MEANING, not wording: a unit about pausing before you speak feeds a seedling named
+          "Silence" even though the word never appears — same concept, different phrasing, ONE
+          seedling. Never mint a synonym or a rephrasing of a listed name ("Silence at the end of
+          talking" when "Silence" is listed is the same concept, not a new one).
+       c. No listed name covers it → you may mint AT MOST ONE new noun-phrase concept per capture,
+          and only when it passes the ENCYCLOPEDIA LITMUS: a topic someone would look up on its own
+          and revisit across future sessions. An ASPECT of a topic — its benefits, steps, history,
+          problems, variations — is NEVER its own concept; tag the topic itself ("Benefits of box
+          breathing" → "Box breathing"). A one-off detail that will never accrue a second capture
+          gets no tag at all.
+       d. Otherwise [].
+       MINT DISCIPLINE: most units feed an existing name; a healthy session mints a small handful of
+       new concepts, not one per capture. If a new name and a listed name would both file the same
+       future capture, they are the SAME concept — use the listed name.
     7. PAST USER CORRECTIONS in the input are learned rules — when a capture resembles one, follow the
        corrected kind. They override your instincts.
     8. Respond with VALID JSON only. No prose, no markdown fences. Every capture id from the input
@@ -284,6 +307,20 @@ actor InquiryLiveRouter {
     → units: {"text":"This increases energy, focus, and makes you happier","kind":"benefit","targetQuestionUUID":null,"newBranchTitle":null,"conceptNames":[],"confidence":0.9}
     (Declarative shape, but it names positive payoffs — the valence test fires before the claim fallback.)
 
+    Example G — different words, same seedling (THE CONCEPT LADDER, rung b):
+    GROWING SEEDLINGS includes: "Silence" · 2 captures
+    Capture: "leaving a beat of quiet after a key point gives the audience room to absorb it"
+    → units: {"text":"leaving a beat of quiet after a key point gives the audience room to absorb it","kind":"principle","targetQuestionUUID":null,"newBranchTitle":null,"newBranchParentUUID":null,"conceptNames":["Silence"],"confidence":0.85}
+    (The capture never says "silence", but it is about the same durable concept — it feeds the listed
+    seedling, copied exactly. Minting "Strategic pause" here would split one concept across two names.)
+
+    Example H — an aspect tags its topic, not itself (THE CONCEPT LADDER, rung c):
+    GROWING SEEDLINGS includes: "Vocal warm-up" · 3 captures
+    Capture: "the siren exercise is the single best warm-up if you only have time for one"
+    → units: {"text":"the siren exercise is the single best warm-up if you only have time for one","kind":"practice","targetQuestionUUID":null,"newBranchTitle":null,"newBranchParentUUID":null,"conceptNames":["Vocal warm-up"],"confidence":0.9}
+    ("The siren exercise" is one step OF vocal warm-up, not a topic anyone revisits on its own — it
+    fails the encyclopedia litmus, so it feeds the listed seedling instead of minting.)
+
     OUTPUT SCHEMA:
     {"captures":[{"id":"<capture id from input>","units":[{"text":"<verbatim>","kind":"<raw kind>","targetQuestionUUID":"<uuid or null>","newBranchTitle":"<title or null>","newBranchParentUUID":"<uuid or null>","conceptNames":["<name>"],"confidence":<0-1>}]}]}
     """
@@ -308,6 +345,17 @@ actor InquiryLiveRouter {
         }
         if !context.conceptNames.isEmpty {
             lines.append("CONCEPTS (existing pages): \(context.conceptNames.prefix(25).joined(separator: ", "))")
+        }
+        if !context.seedlings.isEmpty {
+            lines.append("GROWING SEEDLINGS (proto-concepts already accruing captures — feed these before naming anything new; copy names exactly):")
+            for seedling in context.seedlings.prefix(25) {
+                var line = "- \"\(seedling.name)\" · \(seedling.pendingCount) capture\(seedling.pendingCount == 1 ? "" : "s")"
+                if !seedling.aliases.isEmpty {
+                    let aka = seedling.aliases.prefix(3).map { "\"\($0)\"" }.joined(separator: ", ")
+                    line += " (aka \(aka))"
+                }
+                lines.append(line)
+            }
         }
         if !context.corrections.isEmpty {
             lines.append("\nPAST USER CORRECTIONS (learned rules — follow these patterns, they override your instincts):")

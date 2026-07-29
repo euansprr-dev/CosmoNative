@@ -197,6 +197,25 @@ final class SwipeFrameAnalyzerTests: XCTestCase {
         ).contains("THE IMAGES, IN ORDER"))
     }
 
+    /// `ContentFormat` is a POST vocabulary. Asked about a screenshot set of a
+    /// landing page it has no right answer, and the model answered
+    /// "twoStepCTA" — wrong in the Details rail and wrong under the Format
+    /// filter. The kind already says what shape the artifact is.
+    func testTheArtifactPromptNeverAsksForAPostContentFormat() {
+        let artifact = SwipeArtifact(kind: .frame, units: units(3))
+        let prompt = SwipeArtifactAnalyzer.buildPrompt(
+            artifact: artifact, units: artifact.orderedUnits,
+            userNote: nil, canonicalNiches: ""
+        )
+        XCTAssertFalse(prompt.contains("contentType"),
+                       "asking a post-format question about a frame or page can only produce noise")
+        XCTAssertFalse(prompt.contains("twoStepCTA"))
+        XCTAssertFalse(prompt.contains("multiSliderReel"))
+        // The taxonomy fields that DO apply are still asked for.
+        XCTAssertTrue(prompt.contains("hookType"))
+        XCTAssertTrue(prompt.contains("niche"))
+    }
+
     func testPromptCarriesTheUsersNoteWhenTheyWroteOne() {
         let artifact = SwipeArtifact(kind: .frame, units: units(1))
         let prompt = SwipeArtifactAnalyzer.buildPrompt(

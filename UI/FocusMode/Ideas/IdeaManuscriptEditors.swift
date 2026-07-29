@@ -500,6 +500,11 @@ struct OutlineSlideNoteEditor: NSViewRepresentable {
         textView.isAutomaticTextReplacementEnabled = false
         textView.textContainerInset = .zero
         textView.textContainer?.lineFragmentPadding = 0
+        // Without this the container keeps its creation-time width while the
+        // text view's frame narrows, so slide notes never rewrap on a resize
+        // — the glyphs just run past the row and get clipped. Both sibling
+        // editors in this file set it; this one was missing it.
+        textView.textContainer?.widthTracksTextView = true
         textView.minSize = NSSize(width: 0, height: IdeaOutlineLayoutMetrics.minimumEditorHeight)
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.isVerticallyResizable = true

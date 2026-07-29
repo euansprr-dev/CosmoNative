@@ -54,18 +54,23 @@ struct SwipeIntakeReceipt: Equatable, Identifiable {
     var unitCount: Int
     var atomUUID: String
     var flowName: String?
+    /// What the capture was FILED AS — the space it landed in. Defaults to the
+    /// kind's structural fallback so every existing call site stays honest.
+    var genre: SwipeGenre?
 
-    /// "Swiped · Page · 14 sections" — the kind is always NAMED, because the
-    /// user never chose it and silently guessing would make the system feel
-    /// arbitrary the first time it guessed wrong.
+    /// "Swiped · Newsletter · 14 sections" — what it IS is always NAMED,
+    /// because the user never chose it and silently guessing would make the
+    /// system feel arbitrary the first time it guessed wrong. The genre is
+    /// also how the user learns a new space just appeared in the sidebar.
     var message: String {
+        let noun = (genre ?? SwipeGenre.defaultGenre(for: kind)).displayName
         if let flowName {
-            return "Added to \(flowName) · \(kind.displayName)"
+            return "Added to \(flowName) · \(noun)"
         }
         if unitCount > 0 {
-            return "Swiped · \(kind.displayName) · \(kind.unitCountLabel(unitCount))"
+            return "Swiped · \(noun) · \(kind.unitCountLabel(unitCount))"
         }
-        return "Swiped · \(kind.displayName)"
+        return "Swiped · \(noun)"
     }
 }
 
@@ -383,9 +388,19 @@ enum SwipeIntakeRouter {
         liveWebView: WKWebView? = nil
     ) async -> Atom? {
         if let existing = await QuickCaptureProcessor.findExistingLiveSwipe(url: url) {
-            finish(existing, kind: existing.swipeKind, unitCount: existing.swipeArtifactUnits.count)
+            finish(
+                existing, kind: existing.swipeKind,
+                unitCount: existing.swipeArtifactUnits.count,
+                genre: existing.swipeGenre
+            )
             return existing
         }
+
+        // Genre seed from the URL alone — a Substack issue files under
+        // Newsletters the moment it is swiped, not a model round-trip later.
+        // The analyzer may refine it; the measured page shape seeds only when
+        // this said nothing (host identity is the stronger prior).
+        let genreSeed = SwipeGenreSeed.infer(url: url)
 
         var atom = Atom.newSwipeFile(
             url: url, hook: nil, sourceType: .website, contentSource: .clipboard
@@ -395,14 +410,16 @@ enum SwipeIntakeRouter {
             meta.contentSource = SwipeKind.page.rawValue
             meta.processingStatus = "extracting"
             meta.swipeBoardIDs = boardIDs.isEmpty ? nil : boardIDs
+            if let genreSeed { meta.swipeGenre = genreSeed.rawValue }
         }
         if let note = note?.trimmed, !note.isEmpty { atom.body = note }
         atom = atom.withSwipeArtifact(SwipeArtifact(
-            kind: .page, units: [], captureMode: captureMode, capturedURL: url, pageTitle: title
+            kind: .page, units: [], genre: genreSeed,
+            captureMode: captureMode, capturedURL: url, pageTitle: title
         ))
 
         guard let created = await persist(atom, attachments: []) else { return nil }
-        finish(created, kind: .page, unitCount: 0)
+        finish(created, kind: .page, unitCount: 0, genre: genreSeed)
 
         let uuid = created.uuid
         // The live webview must be read on THIS turn of the main actor — the
@@ -498,7 +515,12 @@ enum SwipeIntakeRouter {
 
     /// Receipt + flow append + undo + library refresh. Every capture path ends
     /// here, which is why no capture surface has to know flows exist.
-    private static func finish(_ atom: Atom, kind: SwipeKind, unitCount: Int) {
+    private static func finish(
+        _ atom: Atom,
+        kind: SwipeKind,
+        unitCount: Int,
+        genre: SwipeGenre? = nil
+    ) {
         // A recording session claims the capture before the receipt is
         // published, so the receipt can say "Added to Client X funnel" rather
         // than "Swiped" followed by a second, contradicting message.
@@ -507,17 +529,18 @@ enum SwipeIntakeRouter {
             Task { @MainActor in
                 if let session = await SwipeFlowRecorder.shared.appendCapturedSwipe(uuid: uuid) {
                     SwipeIntakeReceiptCenter.shared.publish(SwipeIntakeReceipt(
-                        kind: kind, unitCount: unitCount, atomUUID: uuid, flowName: session.name
+                        kind: kind, unitCount: unitCount, atomUUID: uuid,
+                        flowName: session.name, genre: genre
                     ))
                 } else {
                     SwipeIntakeReceiptCenter.shared.publish(SwipeIntakeReceipt(
-                        kind: kind, unitCount: unitCount, atomUUID: uuid
+                        kind: kind, unitCount: unitCount, atomUUID: uuid, genre: genre
                     ))
                 }
             }
         } else {
             SwipeIntakeReceiptCenter.shared.publish(SwipeIntakeReceipt(
-                kind: kind, unitCount: unitCount, atomUUID: atom.uuid
+                kind: kind, unitCount: unitCount, atomUUID: atom.uuid, genre: genre
             ))
         }
         NotificationCenter.default.post(name: CosmoNotification.SwipeFile.libraryDidChange, object: nil)
@@ -554,6 +577,7 @@ enum SwipeIntakeRouter {
         publishesReceipt: Bool = true
     ) {
         let kind = atom.swipeKind
+        let genre = atom.swipeGenre
         let unitCount = atom.swipeArtifactUnits.count
 
         if SwipeFlowRecorder.shared.isRecording {
@@ -562,12 +586,13 @@ enum SwipeIntakeRouter {
                 let session = await SwipeFlowRecorder.shared.appendCapturedSwipe(uuid: uuid)
                 guard publishesReceipt else { return }
                 SwipeIntakeReceiptCenter.shared.publish(SwipeIntakeReceipt(
-                    kind: kind, unitCount: unitCount, atomUUID: uuid, flowName: session?.name
+                    kind: kind, unitCount: unitCount, atomUUID: uuid,
+                    flowName: session?.name, genre: genre
                 ))
             }
         } else if publishesReceipt {
             SwipeIntakeReceiptCenter.shared.publish(SwipeIntakeReceipt(
-                kind: kind, unitCount: unitCount, atomUUID: atom.uuid
+                kind: kind, unitCount: unitCount, atomUUID: atom.uuid, genre: genre
             ))
         }
 
@@ -687,9 +712,19 @@ enum SwipePageDecomposition {
 
         artifact.units = capture.units
         artifact.pageTitle = capture.probe.title ?? artifact.pageTitle
+        // Second seed tier: the measured page shape, only when the URL seed
+        // said nothing (host identity is the stronger prior). Runs BEFORE the
+        // model call so the swipe sits in the right space even while the read
+        // is in flight — and stays there if the read fails.
+        if artifact.genre == nil, let shapeSeed = SwipeGenreSeed.infer(shape: capture.probe.shape) {
+            artifact.genre = shapeSeed
+        }
         var staged = live.withSwipeArtifact(artifact)
         staged.updateResearchMetadata { meta in
             meta.processingStatus = "analyzing"
+            if let genre = artifact.genre, !genre.isStructuralFallback(for: artifact.kind) {
+                meta.swipeGenre = genre.rawValue
+            }
             if let thumbnail = capture.attachments.first(where: { $0.metadata?.contains("pageIndex\":0") == true })?
                 .thumbnailPath ?? capture.attachments.last?.thumbnailPath {
                 // The card's artwork is the page's HERO slice, not the tall
@@ -743,6 +778,11 @@ enum SwipeArtifactPersistence {
             updated.anatomy = result.anatomy
             updated.analyzedAt = ISO8601.string(from: Date())
             if let detected = artifact.detectedSource { updated.detectedSource = detected }
+            // The analyzer read the whole artifact, so its genre verdict beats
+            // the capture-time seed — but never a human's "File under →".
+            if let genre = result.genre, updated.genreLockedByUser != true {
+                updated.genre = genre
+            }
         }
 
         var atom = live.withSwipeArtifact(updated)
@@ -757,6 +797,11 @@ enum SwipeArtifactPersistence {
         atom.updateResearchMetadata { meta in
             meta.processingStatus = result == nil ? "partial" : "complete"
             if let hook = result?.analysis.hookText, !hook.isEmpty { meta.hook = hook }
+            // Keep the hint in lockstep with the envelope (absence = default).
+            if let genre = updated.genre {
+                meta.swipeGenre = genre.isStructuralFallback(for: updated.kind)
+                    ? nil : genre.rawValue
+            }
         }
 
         _ = try? await AtomRepository.shared.update(atom)

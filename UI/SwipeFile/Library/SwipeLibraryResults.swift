@@ -157,6 +157,9 @@ struct SwipeLibraryResults: View {
                         if let item = viewModel.visibleItems.first(where: { $0.id == id }) {
                             viewModel.addToCanvas(item)
                         }
+                    },
+                    onFiled: { genre in
+                        viewModel.boardMessage = "Filed under \(genre.pluralName)"
                     }
                 )
             }
@@ -178,6 +181,8 @@ private struct SwipeLibraryCardCell: View {
     let onOpen: (String) -> Void
     let onStudy: (String) -> Void
     let onAddToCanvas: (String) -> Void
+    /// Toast hook for "File Under" — the surface owns its own toast channel.
+    var onFiled: ((SwipeGenre) -> Void)?
 
     @State private var hasAppeared = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -220,6 +225,7 @@ private struct SwipeLibraryCardCell: View {
                 }
             }
         }
+        SwipeGenreMenu(swipeUUID: model.id, currentGenre: model.genre, onFiled: onFiled)
         SwipeFlowMenu(swipeUUID: model.id)
         SwipeLensMenuLoader(swipeUUID: model.id)
         Button("Add to Canvas", systemImage: "square.grid.2x2") { onAddToCanvas(model.id) }

@@ -164,12 +164,13 @@ private struct StudySeedlingRow: View {
             Image(systemName: glyphName)
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(verdict.isRipe ? DS.accent : DS.textMuted)
+                .opacity(seedling.isSprout ? 0.5 : 1)
                 .frame(width: 24, alignment: .center)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 1) {
                 Text(seedling.name)
                     .font(DS.callout)
-                    .foregroundStyle(DS.text)
+                    .foregroundStyle(seedling.isSprout ? DS.textSecondary : DS.text)
                     .lineLimit(1)
                 Text(detailLine)
                     .font(DS.caption2)
@@ -210,6 +211,9 @@ private struct StudySeedlingRow: View {
             return "\(count) new since last visit"
         }
         if let reason = verdict.reason { return "Ripe · \(reason)" }
+        // A sprout is a first-capture name still earning its place — it says
+        // so, instead of impersonating an established seedling.
+        if seedling.isSprout { return "Sprout · first capture" }
         let count = seedling.pendingItems.count
         return "\(count) capture\(count == 1 ? "" : "s")"
     }

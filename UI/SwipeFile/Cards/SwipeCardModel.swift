@@ -48,9 +48,20 @@ struct SwipeCardModel: Identifiable, Equatable {
     /// What kind of artifact this is. Drives the honest aspect and the unit
     /// badge; `.post` behaves exactly as it did before the artifact spine.
     var kind: SwipeKind = .post
+    /// What this swipe IS to the collector — the space it files under.
+    var genre: SwipeGenre = .post
+    /// True only in MIXED contexts (cross-genre search results, board detail):
+    /// the card names its space. Inside a genre room the chip would repeat the
+    /// masthead, so rooms leave this false.
+    var showsGenreChip = false
     /// "14 sections" / "3 images" — the badge that tells you a card is a whole
     /// page or a set, not a single image. Nil for posts and single units.
     var unitBadge: String?
+    /// Flow cards only: member thumbnails, step order, max 4 — the card's
+    /// artwork becomes a step mosaic. Filled by the VIEW MODEL after the item
+    /// map (members are sibling library rows; an item-local adapter can't see
+    /// them). Empty ⇒ the card falls back to its own media/paper well.
+    var mosaicURLs: [URL] = []
     var boardIDs: Set<String> = []
     /// Recency shelves drop the footer hook line — the thumbnail already
     /// carries the hook, so printing it twice reads as a stutter. Paper
@@ -175,6 +186,7 @@ extension SwipeCardModel {
             isUnstudied: !item.isStudied,
             processing: processing,
             kind: item.kind,
+            genre: item.genre,
             // A single-image frame needs no badge — the card IS the image. The
             // badge exists to say "there is more here than you can see".
             unitBadge: item.unitCount > 1 ? item.kind.unitCountLabel(item.unitCount) : nil,

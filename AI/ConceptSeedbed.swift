@@ -83,12 +83,57 @@ enum ConceptSeedbedReducer {
         var newlyRipeKeys: [String]
     }
 
-    /// Upserts each tagged capture into its seedling(s). One extract carrying
-    /// two concept tags lands in both seedlings (overlap is good — same rule
-    /// as ConceptResolver). Dedup is per-seedling by sourceExtractUUID, so
-    /// re-running a batch never double-counts. Dismissed seedlings stop
-    /// accruing; developed ones keep collecting (their pending items become
-    /// the "new since last visit" material on the page's evidence rail).
+    /// How an incoming concept tag resolved onto the existing bed.
+    struct AttachResolution: Equatable {
+        enum Rung: Equatable {
+            case exact      // Same conceptKey
+            case alias      // A wording the bed already folded into a seedling
+            case subset     // Unique token-subset near-duplicate
+        }
+        var index: Int
+        var rung: Rung
+    }
+
+    /// The attach-vs-mint resolution ladder — an existing identity always
+    /// wins over minting a rival:
+    ///   1. exact conceptKey match
+    ///   2. alias match ("Strategic pause" was already folded into "Silence")
+    ///   3. UNIQUE token-subset match ("silence" ⊂ "silence at the end of
+    ///      talking"), via ConceptResolver.keysAreTokenSubset — GUARD-TWIN of
+    ///      the resolver's consolidation fold, change together. Two subset
+    ///      candidates = ambiguity = no match: a wrong fold is worse than a
+    ///      duplicate the tidy pass can still repair. Dismissed seedlings
+    ///      never attract subset matches (dismissing "breathing" must not
+    ///      swallow "box breathing").
+    static func attachResolution(for key: String, in seedbed: [IncubatingConcept]) -> AttachResolution? {
+        if let idx = seedbed.firstIndex(where: { $0.conceptKey == key }) {
+            return AttachResolution(index: idx, rung: .exact)
+        }
+        if let idx = seedbed.firstIndex(where: { seedling in
+            seedling.aliases.contains { ConceptResolver.conceptKey($0) == key }
+        }) {
+            return AttachResolution(index: idx, rung: .alias)
+        }
+        let candidates = seedbed.indices.filter {
+            seedbed[$0].status != .dismissed
+                && ConceptResolver.keysAreTokenSubset(seedbed[$0].conceptKey, key)
+        }
+        if candidates.count == 1, let idx = candidates.first {
+            return AttachResolution(index: idx, rung: .subset)
+        }
+        return nil
+    }
+
+    /// Upserts each tagged capture into its seedling(s), resolving each tag
+    /// through the attach ladder before ever minting a new row. One extract
+    /// carrying two concept tags lands in both seedlings (overlap is good —
+    /// same rule as ConceptResolver). Dedup is per-seedling by
+    /// sourceExtractUUID, so re-running a batch never double-counts.
+    /// Dismissed seedlings stop accruing; developed ones keep collecting
+    /// (their pending items become the "new since last visit" material on
+    /// the page's evidence rail). A tag that reached a seedling through a
+    /// non-exact rung records its wording as an alias, so the next capture
+    /// with that phrasing resolves on the first rung.
     static func accrue(
         _ seedbed: [IncubatingConcept],
         entries: [AccrualEntry],
@@ -104,19 +149,33 @@ enum ConceptSeedbedReducer {
             for name in entry.conceptNames {
                 let key = ConceptResolver.conceptKey(name)
                 guard !key.isEmpty else { continue }
-                if let idx = result.firstIndex(where: { $0.conceptKey == key }) {
+                if let match = attachResolution(for: key, in: result) {
+                    let idx = match.index
                     guard result[idx].status != .dismissed else { continue }
                     guard !result[idx].stagedItems.contains(where: { $0.sourceExtractUUID == entry.extractUUID }) else { continue }
                     let wasRipe = ConceptRipeness.evaluate(result[idx]).isRipe
                     result[idx].stagedItems.append(item(from: entry, snippet: snippet))
                     result[idx].lastTouchedAt = entry.capturedAt
-                    if result[idx].mergeTargetConnectionUUID == nil,
+                    if match.rung != .exact {
+                        let known = Set(
+                            (result[idx].aliases + [result[idx].name]).map(ConceptResolver.conceptKey)
+                                + [result[idx].conceptKey]
+                        )
+                        if !known.contains(key) {
+                            result[idx].aliases.append(name)
+                        }
+                    }
+                    // Page backfill only when the tag IS this seedling's
+                    // concept (exact/alias) — a subset hit does not prove the
+                    // entry's page belongs to this seedling.
+                    if match.rung != .subset,
+                       result[idx].mergeTargetConnectionUUID == nil,
                        let pageUUID = existingPageUUIDsByKey[key] {
                         result[idx].mergeTargetConnectionUUID = pageUUID
                     }
                     changed = true
                     if !wasRipe, ConceptRipeness.evaluate(result[idx]).isRipe {
-                        newlyRipe.append(key)
+                        newlyRipe.append(result[idx].conceptKey)
                     }
                 } else {
                     result.append(IncubatingConcept(
@@ -209,12 +268,27 @@ enum ConceptSeedbedReducer {
             }
         }
 
-        // 2. Fold near-duplicates the resolver consolidated away. A candidate
-        //    folds only when the resolver saw EVERY one of its items and put
-        //    them all under one surviving key.
+        // 2. Fold near-duplicates the resolver consolidated away — two rungs:
+        //    (a) NAME-DECLARED: the resolver listed this seedling's name as an
+        //        alias of a survivor. Same concept by declaration — fold
+        //        regardless of item coverage (the synonym kill: "Silence at
+        //        the end of talking" folds into "Silence").
+        //    (b) ITEM-ACCOUNTED: the resolver saw EVERY one of its items and
+        //        put them all under one surviving key. Because a sprout holds
+        //        exactly one item, any sprout the resolver saw folds here
+        //        silently; established seedlings with PARTIAL coverage
+        //        survive and become debrief fold OFFERS instead
+        //        (reconciliationOffers below).
         let assignmentKeys = Set(assignments.map(\.conceptKey))
+        var aliasHome: [String: String] = [:]     // alias conceptKey → surviving conceptKey
         var extractHome: [String: String] = [:]   // extractUUID → surviving conceptKey
         for assignment in assignments {
+            for alias in assignment.aliases {
+                let aliasKey = ConceptResolver.conceptKey(alias)
+                if !aliasKey.isEmpty, aliasHome[aliasKey] == nil {
+                    aliasHome[aliasKey] = assignment.conceptKey
+                }
+            }
             for uuid in assignment.extractUUIDs where extractHome[uuid] == nil {
                 extractHome[uuid] = assignment.conceptKey
             }
@@ -224,12 +298,18 @@ enum ConceptSeedbedReducer {
         where seedling.status == .incubating
             && seedling.pinnedAt == nil
             && !assignmentKeys.contains(seedling.conceptKey) {
-            let itemUUIDs = seedling.stagedItems.map(\.sourceExtractUUID)
-            guard !itemUUIDs.isEmpty,
-                  itemUUIDs.allSatisfy({ extractHome[$0] != nil }) else { continue }
-            let homes = Set(itemUUIDs.compactMap { extractHome[$0] })
-            guard homes.count == 1, let home = homes.first, home != seedling.conceptKey,
-                  let survivorIdx = result.firstIndex(where: { $0.conceptKey == home }) else { continue }
+            let home: String?
+            if let declared = aliasHome[seedling.conceptKey] {
+                home = declared
+            } else {
+                let itemUUIDs = seedling.stagedItems.map(\.sourceExtractUUID)
+                let homes = Set(itemUUIDs.compactMap { extractHome[$0] })
+                let allAccounted = !itemUUIDs.isEmpty && itemUUIDs.allSatisfy { extractHome[$0] != nil }
+                home = (allAccounted && homes.count == 1) ? homes.first : nil
+            }
+            guard let home, home != seedling.conceptKey,
+                  let survivorIdx = result.firstIndex(where: { $0.conceptKey == home }),
+                  !foldedKeys.contains(home) else { continue }
             let knownExtracts = Set(result[survivorIdx].stagedItems.map(\.sourceExtractUUID))
             result[survivorIdx].stagedItems += seedling.stagedItems.filter { !knownExtracts.contains($0.sourceExtractUUID) }
             let survivorAliasKeys = Set((result[survivorIdx].aliases + [result[survivorIdx].name]).map(ConceptResolver.conceptKey) + [home])
@@ -241,6 +321,141 @@ enum ConceptSeedbedReducer {
         }
         result.removeAll { foldedKeys.contains($0.conceptKey) }
         return result
+    }
+
+    /// Debrief-time reconciliation offers: seedlings that SURVIVED the tidy
+    /// pass but whose captures the resolver filed under other concepts.
+    /// Sprouts never appear here — a sprout the resolver saw already folded
+    /// silently in applyTidy. Pinned seedlings and any seedling the resolver
+    /// itself named (by key or alias — that name is canonical) are never
+    /// offered. The dominant home must account for at least half of the
+    /// seedling's pending captures: one stray re-homed capture out of five
+    /// is not consolidation evidence.
+    static func reconciliationOffers(
+        _ seedbed: [IncubatingConcept],
+        assignments: [ConceptResolver.ConceptAssignment]
+    ) -> [SeedbedFoldOffer] {
+        guard !assignments.isEmpty else { return [] }
+        let assignmentKeys = Set(assignments.map(\.conceptKey))
+        let declaredAliasKeys = Set(assignments.flatMap { $0.aliases.map(ConceptResolver.conceptKey) })
+        var extractHome: [String: String] = [:]
+        for assignment in assignments {
+            for uuid in assignment.extractUUIDs where extractHome[uuid] == nil {
+                extractHome[uuid] = assignment.conceptKey
+            }
+        }
+        let bedNamesByKey = Dictionary(
+            seedbed.map { ($0.conceptKey, $0.name) },
+            uniquingKeysWith: { first, _ in first }
+        )
+
+        var offers: [SeedbedFoldOffer] = []
+        for seedling in seedbed
+        where seedling.status == .incubating
+            && seedling.pinnedAt == nil
+            && !seedling.isSprout
+            && !assignmentKeys.contains(seedling.conceptKey)
+            && !declaredAliasKeys.contains(seedling.conceptKey) {
+            let pending = seedling.pendingItems
+            let homes = pending
+                .compactMap { extractHome[$0.sourceExtractUUID] }
+                .filter { $0 != seedling.conceptKey }
+            guard !homes.isEmpty else { continue }
+            var tally: [String: Int] = [:]
+            for home in homes { tally[home, default: 0] += 1 }
+            let ranked = tally.sorted { lhs, rhs in
+                if lhs.value != rhs.value { return lhs.value > rhs.value }
+                return lhs.key < rhs.key
+            }
+            guard let top = ranked.first,
+                  top.value * 2 >= pending.count,
+                  let targetName = bedNamesByKey[top.key] else { continue }
+            offers.append(SeedbedFoldOffer(
+                seedlingKey: seedling.conceptKey,
+                seedlingName: seedling.name,
+                targetKey: top.key,
+                targetName: targetName,
+                itemCount: pending.count,
+                reason: "The debrief filed \(top.value) of its \(pending.count) capture\(pending.count == 1 ? "" : "s") under \(targetName)."
+            ))
+        }
+        return offers.sorted { lhs, rhs in
+            if lhs.itemCount != rhs.itemCount { return lhs.itemCount > rhs.itemCount }
+            return lhs.seedlingKey < rhs.seedlingKey
+        }
+    }
+
+    /// Folds member seedlings' mass into one umbrella seedling — the seedbed's
+    /// answer to fragmentation ("Pitch", "Pace", "Prosody" become facets of
+    /// "Vocal delivery"). The umbrella is found by exact name/alias or minted.
+    /// Facet names survive as BOTH aliases (future captures with the old
+    /// wording keep routing here — the encyclopedia litmus applied to
+    /// routing: facet material belongs on the umbrella until the facet earns
+    /// its own page) AND relatedConceptNames (map structure). Pinned,
+    /// developed, dismissed, and page-tied members never fold.
+    static func foldSeedlings(
+        _ seedbed: [IncubatingConcept],
+        umbrellaName: String,
+        memberKeys: [String],
+        now: String = ISO8601.string(from: Date())
+    ) -> (seedbed: [IncubatingConcept], changed: Bool) {
+        let umbrellaKey = ConceptResolver.conceptKey(umbrellaName)
+        guard !umbrellaKey.isEmpty else { return (seedbed, false) }
+        var result = seedbed
+
+        let umbrellaIdx: Int
+        if let idx = result.firstIndex(where: { seedling in
+            seedling.conceptKey == umbrellaKey
+                || seedling.aliases.contains { ConceptResolver.conceptKey($0) == umbrellaKey }
+        }) {
+            guard result[idx].status != .dismissed else { return (seedbed, false) }
+            umbrellaIdx = idx
+        } else {
+            result.append(IncubatingConcept(
+                conceptKey: umbrellaKey,
+                name: umbrellaName,
+                createdAt: now,
+                lastTouchedAt: now
+            ))
+            umbrellaIdx = result.count - 1
+        }
+
+        var changed = false
+        var foldedKeys = Set<String>()
+        for key in memberKeys where key != result[umbrellaIdx].conceptKey {
+            guard let idx = result.firstIndex(where: { $0.conceptKey == key }),
+                  idx != umbrellaIdx,
+                  result[idx].status == .incubating,
+                  result[idx].pinnedAt == nil,
+                  result[idx].mergeTargetConnectionUUID == nil,
+                  result[idx].developedConnectionUUID == nil
+            else { continue }
+            let member = result[idx]
+            let knownExtracts = Set(result[umbrellaIdx].stagedItems.map(\.sourceExtractUUID))
+            result[umbrellaIdx].stagedItems += member.stagedItems.filter { !knownExtracts.contains($0.sourceExtractUUID) }
+            var aliasKeys = Set(
+                (result[umbrellaIdx].aliases + [result[umbrellaIdx].name]).map(ConceptResolver.conceptKey)
+                    + [result[umbrellaIdx].conceptKey]
+            )
+            for candidate in [member.name] + member.aliases {
+                let candidateKey = ConceptResolver.conceptKey(candidate)
+                guard !candidateKey.isEmpty, !aliasKeys.contains(candidateKey) else { continue }
+                aliasKeys.insert(candidateKey)
+                result[umbrellaIdx].aliases.append(candidate)
+            }
+            let knownRelated = Set(result[umbrellaIdx].relatedConceptNames.map(ConceptResolver.conceptKey))
+            if !knownRelated.contains(ConceptResolver.conceptKey(member.name)) {
+                result[umbrellaIdx].relatedConceptNames.append(member.name)
+            }
+            result[umbrellaIdx].lastTouchedAt = now
+            foldedKeys.insert(member.conceptKey)
+            changed = true
+        }
+        // Nothing folded: return the ORIGINAL bed so a freshly minted umbrella
+        // never lingers as an empty sprout.
+        guard changed else { return (seedbed, false) }
+        result.removeAll { foldedKeys.contains($0.conceptKey) }
+        return (result, true)
     }
 }
 
@@ -392,6 +607,24 @@ final class ConceptSeedbedService {
                     sessionUUID: sessionUUID
                 )
                 return (tidied, true, [])
+            }
+        }
+    }
+
+    /// Folds member seedlings into one umbrella concept. Both consolidation
+    /// surfaces land here: Cartographer fold proposals (N micro-seedlings →
+    /// one umbrella) and debrief fold offers (a single member folding into
+    /// the concept the resolver filed its captures under).
+    func foldSeedlings(deepDiveUUID: String, umbrellaName: String, memberKeys: [String]) async {
+        guard !memberKeys.isEmpty else { return }
+        await enqueue {
+            _ = await Self.mutate(deepDiveUUID: deepDiveUUID) { seedbed in
+                let folded = ConceptSeedbedReducer.foldSeedlings(
+                    seedbed,
+                    umbrellaName: umbrellaName,
+                    memberKeys: memberKeys
+                )
+                return (folded.seedbed, folded.changed, [])
             }
         }
     }

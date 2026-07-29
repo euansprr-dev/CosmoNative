@@ -135,8 +135,69 @@ struct SwipeHomePage: View {
             librarySwipeShelf(label: "NEW THIS MONTH", count: newThisMonth.count, models: newThisMonth)
         }
         boardsShelf
+        collectionsShelf
         patternsShelf
         outliersShelf
+    }
+
+    /// Doors to the other rooms — one tile per non-empty genre beyond posts.
+    /// The stream above stays posts-only; this shelf is discovery, not mixing:
+    /// tiles are labeled doors, never loose items. A posts-only library shows
+    /// one quiet teaching line instead — absence teaches the fix, and the line
+    /// retires itself the moment a first space exists.
+    @ViewBuilder
+    private var collectionsShelf: some View {
+        let spaces = SwipeSpaceStore.shared.visibleSpaces
+        if !spaces.isEmpty {
+            SwipeShelfRow(
+                label: "COLLECTIONS",
+                count: spaces.count,
+                onSeeAll: nil
+            ) {
+                ForEach(spaces, id: \.rawValue) { genre in
+                    SwipeHomeSpaceTile(
+                        genre: genre,
+                        coverItems: spaceCoverItems(genre),
+                        count: SwipeSpaceStore.shared.counts[genre] ?? 0
+                    ) {
+                        onNavigate(.swipeFile(section: .genre(genre)))
+                    }
+                }
+            }
+        } else {
+            spacesTeachingRow
+        }
+    }
+
+    /// The capture verbs, once — pages, screenshots and funnels file into
+    /// their own rooms, but only captures make those rooms exist.
+    private var spacesTeachingRow: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "command")
+                .font(DS.caption.weight(.semibold))
+                .foregroundStyle(DS.accent)
+                .accessibilityHidden(true)
+            Text("⌘⇧S swipes what you're looking at — sales pages, newsletters, screenshots and funnels file into their own spaces here")
+                .font(DS.subheadline)
+                .foregroundStyle(DS.textSecondary)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(DS.glassSectionFill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .accessibilityElement(children: .combine)
+    }
+
+    /// Newest four of a genre — `allItems` is load-sorted newest-first, and
+    /// non-post models aren't in the visible cache (the stream is posts-only),
+    /// so misses build their model directly.
+    private func spaceCoverItems(_ genre: SwipeGenre) -> [SwipeCardModel] {
+        Array(
+            viewModel.allItems
+                .filter { $0.genre == genre }
+                .prefix(4)
+                .map { viewModel.cardModelsByID[$0.id] ?? SwipeCardModel(item: $0) }
+        )
     }
 
     /// The complete catalog, inline — header voice + the library's tool cluster,
@@ -616,6 +677,53 @@ private struct SwipeHomePatternTile: View {
         .help("Study this pattern — the chevrons walk its swipes")
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(pattern.name), \(pattern.members.count) swipes")
+        .accessibilityAddTraits(.isButton)
+    }
+}
+
+// MARK: - Space tile (shelf size)
+
+/// A door to a genre room: mosaic of its newest saves, the room's name, and a
+/// live count. Same anatomy as the board tile — a space IS a collection, just
+/// one the system files for you.
+private struct SwipeHomeSpaceTile: View {
+    let genre: SwipeGenre
+    let coverItems: [SwipeCardModel]
+    let count: Int
+    let onOpen: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: onOpen) {
+            VStack(alignment: .leading, spacing: 8) {
+                SwipeBoardMosaic(coverItems: coverItems, icon: genre.iconName, height: 116)
+                HStack(spacing: 6) {
+                    Image(systemName: genre.iconName)
+                        .font(DS.caption.weight(.semibold))
+                        .foregroundStyle(DS.textMuted)
+                        .accessibilityHidden(true)
+                    Text(genre.pluralName)
+                        .font(DS.callout.weight(.semibold))
+                        .foregroundStyle(DS.text)
+                        .lineLimit(1)
+                }
+                Text(count == 1 ? "1 swipe" : "\(count) swipes")
+                    .font(DS.caption.monospacedDigit())
+                    .foregroundStyle(DS.textMuted)
+            }
+            .padding(10)
+            .frame(width: 208, alignment: .topLeading)
+            .swipeCardSurface(isHovered: isHovered)
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .scaleEffect(isHovered ? 1.01 : 1)
+        .animation(ProMotionSprings.hover, value: isHovered)
+        .onHover { isHovered = $0 }
+        .help("Open \(genre.pluralName)")
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(genre.pluralName), \(count) swipes")
         .accessibilityAddTraits(.isButton)
     }
 }

@@ -2158,7 +2158,10 @@ final class InquiryWorkspaceViewModel {
     }
 
     /// Seedlings worth showing: incubating mass and developed pages with
-    /// unswept material, newest activity first. Dismissed stay hidden.
+    /// unswept material. Established seedlings first (newest activity on
+    /// top), sprouts sink to the bottom — a first-capture name starts light
+    /// and low, and visibly jumps up when its second capture lands.
+    /// Dismissed stay hidden.
     var visibleSeedlings: [IncubatingConcept] {
         conceptSeedbed
             .filter { seedling in
@@ -2168,7 +2171,10 @@ final class InquiryWorkspaceViewModel {
                 case .dismissed: return false
                 }
             }
-            .sorted { $0.lastTouchedAt > $1.lastTouchedAt }
+            .sorted { lhs, rhs in
+                if lhs.isSprout != rhs.isSprout { return !lhs.isSprout }
+                return lhs.lastTouchedAt > rhs.lastTouchedAt
+            }
     }
 
     // MARK: - Debrief (Close & Debrief)
@@ -2218,6 +2224,33 @@ final class InquiryWorkspaceViewModel {
     /// The ripest incubating seedling — the debrief's Movement 3 offer.
     var debriefRipeSeedling: IncubatingConcept? {
         visibleSeedlings.first { $0.status == .incubating && ConceptRipeness.evaluate($0).isRipe }
+    }
+
+    /// The debrief's consolidation offers: established seedlings whose
+    /// captures the resolver's whole-session view filed under another
+    /// concept. Sprouts already folded silently in the tidy pass — these
+    /// earned identity, so each fold is per-row consent.
+    var debriefFoldOffers: [SeedbedFoldOffer] {
+        debriefSynthesis?.seedbedFoldOffers ?? []
+    }
+
+    /// Accepting an offer folds the seedling's mass into the target concept
+    /// (name survives as an alias, so its wording keeps routing there).
+    func acceptDebriefFoldOffer(_ offer: SeedbedFoldOffer) async {
+        guard let uuid = deepDive?.uuid else { return }
+        await ConceptSeedbedService.shared.foldSeedlings(
+            deepDiveUUID: uuid,
+            umbrellaName: offer.targetName,
+            memberKeys: [offer.seedlingKey]
+        )
+        debriefSynthesis?.seedbedFoldOffers?.removeAll { $0.id == offer.id }
+        await reloadSeedbed()
+    }
+
+    /// Dismissing just clears the row for this debrief — mass keeps accruing,
+    /// and a future session's resolver view may re-offer with more evidence.
+    func dismissDebriefFoldOffer(_ offer: SeedbedFoldOffer) {
+        debriefSynthesis?.seedbedFoldOffers?.removeAll { $0.id == offer.id }
     }
 
     /// Commits the debrief: understanding diff (from the teach-back, never the
@@ -2432,7 +2465,22 @@ final class InquiryWorkspaceViewModel {
             },
             lexiconTerms: lexicon.compactMap(\.title),
             conceptNames: deepDiveConnections.compactMap(\.title),
-            recentCaptures: structured.sessionCaptures.suffix(4).map(\.body)
+            recentCaptures: structured.sessionCaptures.suffix(4).map(\.body),
+            // The seedbed rides into every routing call — rule 6's ladder is
+            // only a real three-way choice (page / seedling / mint) when the
+            // model can see what is already growing. Developed seedlings are
+            // excluded: their pages are already in conceptNames.
+            seedlings: conceptSeedbed
+                .filter { $0.status == .incubating }
+                .sorted { $0.lastTouchedAt > $1.lastTouchedAt }
+                .prefix(25)
+                .map { seedling in
+                    InquiryLiveRouter.ContextSnapshot.SeedlingRef(
+                        name: seedling.name,
+                        aliases: seedling.aliases,
+                        pendingCount: seedling.pendingItems.count
+                    )
+                }
         )
     }
 

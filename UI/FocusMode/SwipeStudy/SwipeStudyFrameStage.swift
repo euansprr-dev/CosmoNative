@@ -161,7 +161,12 @@ private struct SwipeStudyFrameImage: View {
             }
         }
         .task(id: attachment.uuid) {
-            guard image == nil else { return }
+            // NO `guard image == nil`: SwiftUI reuses this view when the pager
+            // moves to a different attachment, so the old image is still in
+            // @State. Guarding on it made the page counter advance while the
+            // picture never changed. Clearing first also gives the loading
+            // state something honest to show.
+            image = nil
             if let url = await AttachmentCloudStore.shared.localOriginalURL(for: attachment),
                let loaded = NSImage(contentsOf: url) {
                 image = loaded

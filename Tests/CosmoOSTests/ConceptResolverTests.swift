@@ -1,8 +1,6 @@
-// TEMP-DISABLED-BY-CLAUDE: references in-flight working-tree API changes (deep-study classifier/connection rework)
-// and does not compile. Wrapped so the rest of the test target can build+run. Remove #if false / #endif after realigning.
-#if false
 // CosmoOS/Tests/CosmoOSTests/ConceptResolverTests.swift
-// Heuristic (offline) concept assignment + shared helpers.
+// Heuristic (offline) concept assignment + shared helpers, the consolidation
+// post-pass, and the omitted-extracts-only backfill. Realigned July 2026.
 
 import XCTest
 @testable import CosmoOS
@@ -164,6 +162,35 @@ final class ConceptResolverTests: XCTestCase {
         )
     }
 
+    func testKeysAreTokenSubsetIsSymmetricAndStrict() {
+        XCTAssertTrue(ConceptResolver.keysAreTokenSubset("breathing", "box breathing"))
+        XCTAssertTrue(ConceptResolver.keysAreTokenSubset("silence at the end of talking", "silence"))
+        XCTAssertFalse(ConceptResolver.keysAreTokenSubset("vocal register", "vocal delivery"))
+        XCTAssertFalse(ConceptResolver.keysAreTokenSubset("silence", "silence"))   // Equal = exact, not subset.
+        XCTAssertFalse(ConceptResolver.keysAreTokenSubset("", "silence"))
+    }
+
+    func testBackfillOnlyCoversExtractsTheModelOmitted() {
+        // e-1 was consolidated by the model into some other page; e-2 was
+        // omitted entirely. Only e-2 backfills — and only into an EXISTING
+        // page (the create-tagged e-3 never backfills at all).
+        let preassigned = [
+            assignment("Prosody", extracts: ["e-1", "e-2"], action: .mergeInto(connectionUUID: "conn-1")),
+            assignment("Pace", extracts: ["e-3"])
+        ]
+        let backfill = ConceptResolver.backfillAssignments(preassigned, covering: ["e-1"])
+        XCTAssertEqual(backfill.count, 1)
+        XCTAssertEqual(backfill.first?.conceptKey, "prosody")
+        XCTAssertEqual(backfill.first?.extractUUIDs, ["e-2"])
+    }
+
+    func testBackfillVanishesWhenTheModelPlacedEverything() {
+        let preassigned = [
+            assignment("Prosody", extracts: ["e-1"], action: .mergeInto(connectionUUID: "conn-1"))
+        ]
+        XCTAssertTrue(ConceptResolver.backfillAssignments(preassigned, covering: ["e-1"]).isEmpty)
+    }
+
     func testConsolidationFoldsTokenSubsetConcepts() {
         let result = ConceptResolver.consolidated([
             assignment("Breathing", extracts: ["e-1"]),
@@ -219,4 +246,3 @@ final class ConceptResolverTests: XCTestCase {
         XCTAssertEqual(survivor?.parentConceptName, "Box breathing")
     }
 }
-#endif

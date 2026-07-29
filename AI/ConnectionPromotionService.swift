@@ -1123,6 +1123,12 @@ extension ConnectionPromotionService {
         deepDive: Atom
     ) async -> String? {
         switch proposal.kind {
+        case .foldSeedlings:
+            // Seedbed folds never touch pages or canvas —
+            // ConceptCartographer.accept routes them to ConceptSeedbedService
+            // before this apply is ever reached.
+            return nil
+
         case .nest(let childUUID, let parentUUID):
             await pinConceptParent(on: childUUID, parentUUID: parentUUID)
             NotificationCenter.default.post(name: CosmoNotification.NodeGraph.graphNodeUpdated, object: nil)

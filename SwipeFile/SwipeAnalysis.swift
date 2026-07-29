@@ -983,12 +983,20 @@ public struct SwipeGalleryItem: Identifiable, Sendable {
     /// `Atom.swipeKind`), so the card/filter/shelf code can switch on this
     /// without a single legacy row having been touched.
     public let kind: SwipeKind
+    /// What this swipe IS to the collector — the browsing axis the sidebar's
+    /// spaces scope on. Total for the same reason `kind` is (see
+    /// `Atom.swipeGenre`).
+    public let genre: SwipeGenre
     /// Units in the artifact: a page's sections, a frame set's images, a
     /// flow's steps. Zero for every post (their transcript is the unit list,
     /// and it resolves through its own ladder).
     public let unitCount: Int
     /// Roles present across those units — the Role facet reads this.
     public let roles: Set<SwipeUnitRole>
+    /// Flow swipes only: the member swipes, in step order. The library's flow
+    /// cards build their step mosaic by looking these up among their sibling
+    /// items — no extra fetch, the members ARE library rows.
+    public let memberSwipeUUIDs: [String]
 
     /// Pre-lowercased concatenation of searchable fields for fast filtering
     public let searchableText: String
@@ -1021,8 +1029,10 @@ public struct SwipeGalleryItem: Identifiable, Sendable {
         boardIDs: [String] = [],
         processingStatus: String? = nil,
         kind: SwipeKind = .post,
+        genre: SwipeGenre? = nil,
         unitCount: Int = 0,
-        roles: Set<SwipeUnitRole> = []
+        roles: Set<SwipeUnitRole> = [],
+        memberSwipeUUIDs: [String] = []
     ) {
         self.id = atomUUID
         self.atomUUID = atomUUID
@@ -1052,10 +1062,15 @@ public struct SwipeGalleryItem: Identifiable, Sendable {
         self.boardIDs = boardIDs
         self.processingStatus = processingStatus
         self.kind = kind
+        let resolvedGenre = genre ?? SwipeGenre.defaultGenre(for: kind)
+        self.genre = resolvedGenre
         self.unitCount = unitCount
         self.roles = roles
+        self.memberSwipeUUIDs = memberSwipeUUIDs
+        // Genre rides the search text so "newsletter" finds the newsletters
+        // even from a scope that would otherwise hide them.
         self.searchableText = CommandKSearchMatcher.searchableText(
-            from: [title, hookText, author, niche, creatorName]
+            from: [title, hookText, author, niche, creatorName, resolvedGenre.pluralName]
         )
     }
 
@@ -1339,8 +1354,12 @@ extension Atom {
             boardIDs: meta?.swipeBoardIDs ?? [],
             processingStatus: meta?.processingStatus,
             kind: swipeKind,
+            genre: swipeGenre,
             unitCount: artifact?.units.count ?? 0,
-            roles: artifact?.roles ?? []
+            roles: artifact?.roles ?? [],
+            memberSwipeUUIDs: swipeKind == .flow
+                ? (artifact?.orderedUnits.compactMap(\.memberSwipeUUID) ?? [])
+                : []
         )
     }
 

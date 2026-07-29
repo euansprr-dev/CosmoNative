@@ -125,18 +125,24 @@ final class SwipeIntakeRouterTests: XCTestCase {
 
     // MARK: - Receipt
 
-    /// The receipt always NAMES the kind: the user never chose it, and a
-    /// system that silently guesses reads arbitrary the first time it is wrong.
-    func testReceiptNamesTheKindAndItsUnits() {
+    /// The receipt always NAMES what the capture was filed as: the user never
+    /// chose it, and a system that silently guesses reads arbitrary the first
+    /// time it is wrong. Since the genre spine it speaks GENRE — the kind's
+    /// structural fallback when nothing sharper is known ("Screenshot", not
+    /// the internal word "Frame"), the seeded/verdict genre when one is.
+    func testReceiptNamesTheGenreAndItsUnits() {
         XCTAssertEqual(
             SwipeIntakeReceipt(kind: .page, unitCount: 14, atomUUID: "u").message,
             "Swiped · Page · 14 sections")
         XCTAssertEqual(
             SwipeIntakeReceipt(kind: .frame, unitCount: 3, atomUUID: "u").message,
-            "Swiped · Frame · 3 images")
+            "Swiped · Screenshot · 3 images")
         XCTAssertEqual(
             SwipeIntakeReceipt(kind: .frame, unitCount: 1, atomUUID: "u").message,
-            "Swiped · Frame · 1 image")
+            "Swiped · Screenshot · 1 image")
+        XCTAssertEqual(
+            SwipeIntakeReceipt(kind: .page, unitCount: 12, atomUUID: "u", genre: .newsletter).message,
+            "Swiped · Newsletter · 12 sections")
     }
 
     func testReceiptWithNoUnitsStillNamesTheKind() {

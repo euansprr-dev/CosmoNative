@@ -3126,6 +3126,13 @@ struct ResearchMetadata: Codable, Sendable {
     /// Both halves of the SCOPE-TWIN (`SwipeProcessingService.isCloudWorkerScoped`
     /// and the worker's `inWorkerScope`) read this, never the envelope.
     var swipeKind: String?
+    /// `SwipeGenre.rawValue`, denormalised beside `swipeKind` for the same
+    /// reason (sidebar space counts, scope predicates). A genre equal to the
+    /// kind's structural default writes nil — absence means "nothing decided",
+    /// and readers derive through `Atom.swipeGenre`. TWIN: CosmoCoreKit's
+    /// ResearchMetadata carries this field too; iOS re-encodes this struct
+    /// wholesale, so a one-sided field is wiped on the next iPhone save.
+    var swipeGenre: String?
     /// True when this source carries the research lens — you care about what it
     /// CLAIMS, not how it is built. `isSwipeFile` is the swipe lens; a source
     /// can carry both and then appears in both libraries as ONE row.

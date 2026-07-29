@@ -4,9 +4,30 @@
 
 import GRDB
 import SwiftUI
-import Combine
 
+/// The freshness contract for idea writes, in one place: where a model's
+/// content-modified clock STARTS, and whether a given write may land.
+///
+/// Both halves have to agree or neither works. `allowsWrite` refuses a writer
+/// whose content predates the row — but only if that writer's clock was seeded
+/// honestly. Seeding it from `Date()` (which is effectively what the old
+/// write-time stamping did) makes every writer the freshest and the check can
+/// never fire, which is how a duplicate model overwrote live typing on
+/// 2026-07-29.
 enum IdeaFocusWritePolicy {
+    /// Where a newly-built model's `lastModified` starts: whatever the row
+    /// already claims, never "now". A model that takes no edits therefore can
+    /// never out-rank the row it was built from.
+    static func seededModifiedTime(metadata: String?, updatedAt: String?) -> Date {
+        if let persisted = persistedModifiedTime(from: metadata) {
+            return Date(timeIntervalSince1970: persisted)
+        }
+        if let updatedAt, let date = ISO8601.date(from: updatedAt) {
+            return date
+        }
+        return .distantPast
+    }
+
     static func allowsWrite(existingMetadata: String?, snapshotLastModified: Date) -> Bool {
         guard let existingModified = persistedModifiedTime(from: existingMetadata) else {
             return true
@@ -181,11 +202,33 @@ final class IdeaFocusModeViewModel {
 
     @ObservationIgnored private var autoSaveTask: Task<Void, Never>?
     @ObservationIgnored private var autoEnrichTask: Task<Void, Never>?
-    @ObservationIgnored private var terminationCancellable: AnyCancellable?
     private let autoSaveDelay: TimeInterval = 1.5
     private let autoEnrichDelay: TimeInterval = 1.5
     @ObservationIgnored private var saveSequence: UInt64 = 0
-    @ObservationIgnored private var lastModified: Date = Date()
+
+    /// When this model's CONTENT last changed — never when a write was attempted.
+    ///
+    /// LAW: only `markEdited()` may move this. `IdeaFocusWritePolicy.allowsWrite`
+    /// compares it against the row's persisted `lastModifiedUnix` to refuse a
+    /// writer whose content predates what is already saved, so stamping it at
+    /// write time makes every writer look like the freshest one and defeats the
+    /// guard entirely. That is exactly what happened on 2026-07-29: a duplicate
+    /// model holding pre-edit text flushed at quit, stamped itself `now`, passed
+    /// the freshness check, and overwrote three minutes of typing. Seeded from
+    /// the persisted stamp so a model that never takes an edit is never "newer".
+    @ObservationIgnored private var lastModified: Date
+
+    /// Whether this model has ever taken a content edit of its own.
+    ///
+    /// GUARD-TWIN of `lastModified` (change together). Close and termination
+    /// flushes persist what the model already knows is dirty; they must never
+    /// claim freshness on behalf of a model that never edited anything. Latches
+    /// true and never resets — a save must not be able to clear it and leave a
+    /// later untracked mutation unwritten.
+    @ObservationIgnored private var hasRecordedEdit = false
+
+    /// Latches on the first `start()` so the loader ladder runs once per model.
+    @ObservationIgnored private var hasStarted = false
 
     // MARK: - Initialization
 
@@ -206,6 +249,13 @@ final class IdeaFocusModeViewModel {
 
         self.sessionState = IdeaFocusModeState(atomUUID: atom.uuid)
 
+        // Seeded from what is already on the row, never `Date()`: an unedited
+        // model must never out-rank the row it was built from.
+        self.lastModified = IdeaFocusWritePolicy.seededModifiedTime(
+            metadata: atom.metadata,
+            updatedAt: atom.updatedAt
+        )
+
         // Restore insight from atom's structured JSON (decoded once)
         let restoredInsight = atom.ideaInsight
         self.insight = restoredInsight
@@ -216,20 +266,12 @@ final class IdeaFocusModeViewModel {
             self.selectedHookIndex = hookIdx
         }
 
-        // Flush pending saves synchronously when the app is about to terminate
-        terminationCancellable = NotificationCenter.default
-            .publisher(for: .cosmoAppWillTerminate)
-            .sink { [weak self] _ in
-                self?.flushForTermination()
-            }
-
-        // Load client profiles in background
-        Task { await loadClientProfiles() }
-
-        // If a client is assigned, load it
-        if let clientUUID = meta?.clientUUID {
-            Task { await loadLinkedClient(uuid: clientUUID) }
-        }
+        // The termination flush is NOT subscribed here — it lives on the view
+        // (`IdeaFocusModeView`, the Content/Notes idiom). `State(initialValue:)`
+        // is not lazy, so this initializer runs on every re-render of the host
+        // view and SwiftUI discards all but the first model. When each of those
+        // discarded models subscribed to `.cosmoAppWillTerminate`, quitting made
+        // every one of them flush its own pre-edit copy. See `lastModified`.
 
         // Restore codex-era fields from metadata
         self.editableContext = meta?.context ?? ""
@@ -255,18 +297,33 @@ final class IdeaFocusModeViewModel {
            let data = arcJSON.data(using: .utf8) {
             self.arcRecommendations = (try? JSONDecoder().decode([ArcRecommendation].self, from: data)) ?? []
         }
+    }
 
-        // Load blueprint atom if UUID exists
+    /// Begin loading everything this idea hangs off the network and the DB.
+    ///
+    /// Deliberately NOT done in `init`: the initializer runs on every re-render
+    /// of the host view (`State(initialValue:)` is not lazy) and SwiftUI throws
+    /// all but the first model away. Loading here meant every throwaway ran the
+    /// whole ladder — including `loadRecommendedSwipes`, a full `fetchAll` over
+    /// the research table — and, worse, the in-flight tasks kept those dead
+    /// models alive long enough to still be listening at quit. Idempotent: the
+    /// view calls it on appear, and calling it twice is harmless.
+    func start() {
+        guard !hasStarted else { return }
+        hasStarted = true
+
+        let meta = idea.ideaMetadata
+
+        Task { await loadClientProfiles() }
+        if let clientUUID = meta?.clientUUID {
+            Task { await loadLinkedClient(uuid: clientUUID) }
+        }
         if let bpUUID = meta?.blueprintUUID {
             Task { selectedBlueprint = try? await AtomRepository.shared.fetch(uuid: bpUUID) }
         }
-
-        // Load supporting swipes
         if let swipeUUIDs = meta?.supportingSwipeUUIDs, !swipeUUIDs.isEmpty {
             Task { supportingSwipes = (try? await AtomRepository.shared.fetchBatch(uuids: swipeUUIDs)) ?? [] }
         }
-
-        // Load linked swipes and connections
         Task { await loadLinkedSwipes() }
         Task { await loadRecommendedSwipes() }
         Task { await loadLinkedConnections() }
@@ -278,7 +335,6 @@ final class IdeaFocusModeViewModel {
     deinit {
         autoSaveTask?.cancel()
         autoEnrichTask?.cancel()
-        terminationCancellable?.cancel()
     }
 
     // MARK: - Analysis Pipeline
@@ -1024,7 +1080,11 @@ final class IdeaFocusModeViewModel {
 
     /// Persist current editable fields to the atom.
     func save() async {
-        let sequence = nextSaveSequence(markModified: true)
+        // Every caller reaches here straight after mutating an editable field
+        // (the inline-assistant applies, the view's explicit saves), so this
+        // IS an edit commit point.
+        markEdited()
+        let sequence = nextSaveSequence()
         let snapshot = makeSaveSnapshot()
         do {
             if let savedAtom = try await writeSnapshot(snapshot, sequence: sequence) {
@@ -1113,7 +1173,8 @@ final class IdeaFocusModeViewModel {
     /// Schedule a debounced auto-save (call after each keystroke in text fields).
     func scheduleAutoSave() {
         autoSaveTask?.cancel()
-        let sequence = nextSaveSequence(markModified: true)
+        markEdited()
+        let sequence = nextSaveSequence()
         let snapshot = makeSaveSnapshot()
         autoSaveTask = Task {
             try? await Task.sleep(nanoseconds: UInt64(autoSaveDelay * 1_000_000_000))
@@ -1137,10 +1198,17 @@ final class IdeaFocusModeViewModel {
     /// Guarantees data is persisted before the view/app exits.
     func saveOnClose() {
         autoSaveTask?.cancel()
-        let sequence = nextSaveSequence(markModified: true)
-        let snapshot = makeSaveSnapshot()
         sessionState.selectedHookIndex = selectedHookIndex
         sessionState.save()
+
+        // A model that never took an edit has nothing of its own to persist,
+        // and writing anyway means overwriting the row with the copy this model
+        // was BUILT from — the 2026-07-29 clobber. Session state above is UI
+        // selection, not content, so it still persists.
+        guard hasRecordedEdit else { return }
+
+        let sequence = nextSaveSequence()
+        let snapshot = makeSaveSnapshot()
 
         // Async close save: the focus-exit animation must never block on the
         // DB write lock (cross-process busy timeout is 5s). The registry
@@ -1167,10 +1235,14 @@ final class IdeaFocusModeViewModel {
     /// exit, so an async write would never commit.
     func flushForTermination() {
         autoSaveTask?.cancel()
-        let sequence = nextSaveSequence(markModified: true)
-        let snapshot = makeSaveSnapshot()
         sessionState.selectedHookIndex = selectedHookIndex
         sessionState.save()
+
+        // GUARD-TWIN of the gate in `saveOnClose` (change together).
+        guard hasRecordedEdit else { return }
+
+        let sequence = nextSaveSequence()
+        let snapshot = makeSaveSnapshot()
 
         do {
             if let savedAtom = try writeSnapshotSync(snapshot, sequence: sequence) {
@@ -1191,12 +1263,21 @@ final class IdeaFocusModeViewModel {
         }
     }
 
-    private func nextSaveSequence(markModified: Bool) -> UInt64 {
-        if markModified {
-            lastModified = Date()
-        }
+    /// Bumps the per-model write sequence so a slower in-flight write can tell
+    /// it has been superseded. Deliberately has NO effect on `lastModified` —
+    /// see that property. It used to stamp it, which is what let a stale writer
+    /// win the freshness comparison it was supposed to lose.
+    private func nextSaveSequence() -> UInt64 {
         saveSequence += 1
         return saveSequence
+    }
+
+    /// The single funnel for "the user changed something". Every content
+    /// mutation must pass through here (via `scheduleAutoSave` or `save`)
+    /// before it is persisted.
+    private func markEdited() {
+        lastModified = Date()
+        hasRecordedEdit = true
     }
 
     private func makeSaveSnapshot() -> IdeaFocusSaveSnapshot {
@@ -1298,6 +1379,19 @@ final class IdeaFocusModeViewModel {
     }
 
     nonisolated private static func write(snapshot: IdeaFocusSaveSnapshot, existingMetadata: String?, db: Database) throws {
+        // Snapshot the pre-image inside this transaction before overwriting it.
+        // This path issues raw SQL instead of going through AtomRepository, so
+        // without this it accumulated NO history — the same gap that made the
+        // note loss unrecoverable, and the reason the 2026-07-29 idea clobber
+        // had to be recovered from the sync queue instead of `atom_revisions`.
+        // Never throws upward: losing a snapshot must not block a save.
+        AtomRevisionWriter.snapshotBeforeRawWrite(
+            db,
+            uuid: snapshot.uuid,
+            incomingTitle: snapshot.title,
+            incomingBody: snapshot.body
+        )
+
         try db.execute(
             sql: """
             UPDATE atoms

@@ -77,19 +77,30 @@ struct IdeaFocusModeView: View {
 
     var body: some View {
         GeometryReader { geometry in
+            // Resolved in-pass, exactly as the Study and Swipe Study shells do
+            // it. Routing this through `.onChange` -> state instead would draw
+            // one pass late: the sheet would seat its columns against the
+            // width from BEFORE the resize, so mid-drag (and for one frame
+            // after the drop) it lays out wider than the container it was
+            // given and gets clipped instead of reflowing.
+            let breakpoint = IdeaWorkspaceBreakpoint(
+                width: geometry.size.width,
+                columns: workspace.requestedColumnCount
+            )
             ZStack {
                 DS.bg.ignoresSafeArea()
                 VStack(spacing: CosmoSurfaceMetrics.chromeGap) {
                     chromeRow
-                    workbenchSheet
+                    workbenchSheet(breakpoint: breakpoint)
                 }
                 overlayPresentations
             }
+            .onChange(of: breakpoint, initial: true) { _, resolved in
+                // The toolbar and keyboard shortcuts read the model, and can
+                // afford to trail a pass — the layout above cannot.
+                workspace.breakpoint = resolved
+            }
             .onChange(of: geometry.size.width, initial: true) { _, width in
-                let resolved = IdeaWorkspaceBreakpoint(width: width)
-                if workspace.breakpoint != resolved {
-                    workspace.breakpoint = resolved
-                }
                 // Quantized: a pane-divider drag must not invalidate the
                 // chrome row on every frame.
                 let quantized = CosmoChromeMetrics.quantizedWidth(width)
@@ -127,6 +138,15 @@ struct IdeaFocusModeView: View {
                 ownedContextProvider = nil
             }
         }
+        // The termination flush belongs to the MOUNTED view, never to the model
+        // (the Content/Notes idiom). `State(initialValue:)` is not lazy, so this
+        // view's initializer builds a model on every re-render and SwiftUI
+        // discards all but the first; when the model subscribed in its own init,
+        // quitting made every discarded copy flush its pre-edit text over the
+        // live one. Only one view is mounted, so only one flush can fire.
+        .onReceive(NotificationCenter.default.publisher(for: .cosmoAppWillTerminate)) { _ in
+            viewModel.flushForTermination()
+        }
         .onKeyPress(.escape) { handleEscape() }
         .onKeyPress { handleKeyCommand($0) }
         .overlay { profileEditorOverlay }
@@ -148,15 +168,22 @@ struct IdeaFocusModeView: View {
 
     /// The worksheet: conversation | manuscript | swipe wall, welded into one
     /// rounded sheet (the bench anatomy shared with the Study).
-    private var workbenchSheet: some View {
+    private func workbenchSheet(breakpoint: IdeaWorkspaceBreakpoint) -> some View {
         WorkbenchShell(
-            panelsDisplace: workspace.breakpoint == .regular,
-            isLeadingShowing: workspace.isConversationShowing,
-            isTrailingShowing: workspace.isInspectorShowing
+            panelsDisplace: breakpoint == .regular,
+            isLeadingShowing: workspace.isConversationShowing(at: breakpoint),
+            isTrailingShowing: workspace.isInspectorShowing(at: breakpoint),
+            showsScrim: breakpoint == .compact,
+            onScrimTap: {
+                withAnimation(ProMotionSprings.focusTransition) {
+                    workspace.isConversationOverlayPresented = false
+                    workspace.isInspectorOverlayPresented = false
+                }
+            }
         ) {
             IdeaConversationPanel(
                 store: CosmoInlineAssistantStore.shared,
-                isOverlay: workspace.breakpoint == .compact
+                isOverlay: breakpoint == .compact
             )
         } center: {
             centerColumn
@@ -164,7 +191,7 @@ struct IdeaFocusModeView: View {
             IdeaInspectorView(
                 viewModel: viewModel,
                 actions: workspaceActions,
-                isOverlay: workspace.breakpoint == .compact
+                isOverlay: breakpoint == .compact
             )
         }
     }
@@ -215,6 +242,9 @@ struct IdeaFocusModeView: View {
 
     private func handleAppear() {
         AtomRepository.shared.acquireEditingLock(uuid: atom.uuid)
+        // The loader ladder runs here, not in the model's init — only the model
+        // that actually got mounted should touch the database. Idempotent.
+        viewModel.start()
         registerContextProvider()
         guard !hasArrived else { return }
         // One frame after mount so the cascade actually animates (views
@@ -528,21 +558,34 @@ extension IdeaFocusModeView {
     /// ONE quiet identity line, and it's the editing surface: date · format ·
     /// platform · client, each a borderless menu (the IdeaCard meta grammar).
     private var identityRow: some View {
-        HStack(spacing: DS.space6) {
+        // Wraps rather than runs off the edge. Every item here is a
+        // `.fixedSize()` menu — they hug their label so the menu doesn't
+        // stretch, which also means none of them will truncate. Strung along
+        // one HStack that made the line, and therefore the whole manuscript
+        // column, incompressible below the sum of its labels: at pane widths
+        // and in the narrow band where both bench columns are seated, the
+        // sheet then demanded more width than it was given and got clipped.
+        // Flowing them costs nothing at full width and always fits.
+        CosmoFlowLayout(spacing: DS.space6) {
             Text(formattedCreatedDate)
                 .foregroundStyle(focusTextMuted)
-            metaDot
-            formatMenu
-            metaDot
-            platformMenu
-            metaDot
-            clientMenu
+            identityItem { formatMenu }
+            identityItem { platformMenu }
+            identityItem { clientMenu }
             if let label = scheduledChipLabel {
-                metaDot
-                scheduledChip(label)
+                identityItem { scheduledChip(label) }
             }
         }
         .font(DS.caption)
+    }
+
+    /// The separator rides with the item it precedes, so a wrap never strands
+    /// a lone dot at the head of a line.
+    private func identityItem<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        HStack(spacing: DS.space6) {
+            metaDot
+            content()
+        }
     }
 
     /// Quiet echo of the toolbar's schedule state: the next open development

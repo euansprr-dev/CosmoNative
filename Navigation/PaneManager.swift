@@ -11,6 +11,19 @@ enum PaneChromeStyle: Equatable {
     case minimal
 }
 
+/// How a pane's body follows a continuous width stream (main-split divider
+/// drag or window live resize).
+enum PaneWidthStreamBehavior: Equatable {
+    /// Re-lay-out at every width the stream produces. This is the default and
+    /// what resizing should look like: the body reflows under the cursor.
+    case tracksLive
+    /// Follow a coarse width ladder instead of every pixel. Reserved for
+    /// bodies deep enough that a per-event re-layout queues transactions
+    /// faster than they finish and wedges the main thread (the July 28
+    /// assistant-pane resize livelock).
+    case tracksSteps
+}
+
 /// What a single pane displays — either a focus mode for an atom or a thinkspace canvas
 enum PaneContent: Identifiable, Equatable {
     case entity(EntitySelection)
@@ -92,6 +105,23 @@ enum PaneContent: Identifiable, Equatable {
         }
     }
 
+    /// Only the assistant family pays the width ladder. Its transcript is one
+    /// deep stack of streamed blocks whose re-layout cost is superlinear in
+    /// depth; every other pane kind is a normal focus mode, canvas, or web
+    /// view that reflows in a frame and must resize live under the cursor.
+    ///
+    /// This split coincides with `chromeStyle` today by accident, not by rule
+    /// — a pane can be chromeless and cheap, or standard and expensive. Keep
+    /// the two switches independent.
+    var widthStreamBehavior: PaneWidthStreamBehavior {
+        switch self {
+        case .cosmoWindow, .collaborator, .inlineAssistant:
+            return .tracksSteps
+        case .entity, .thinkspace, .commandCenter, .swipeGallery, .webBrowser:
+            return .tracksLive
+        }
+    }
+
     static func == (lhs: PaneContent, rhs: PaneContent) -> Bool {
         lhs.id == rhs.id
     }
@@ -119,22 +149,21 @@ class PaneManager: ObservableObject {
     /// 1.0 = full width (no panes visible). Animates to 0.5 when first pane opens.
     @Published var mainSplitRatio: CGFloat = 1.0
 
-    /// True while the user is dragging the main split divider. Pane content
-    /// layout freezes for the duration — slots keep tracking the divider, but
-    /// a heavy pane body pays one re-layout at drag end, not one per mouse
-    /// event. A deep pane subtree that re-lays-out per event can wedge the
-    /// main thread for minutes (July 28 assistant-pane livelock).
+    /// True while the user is dragging the main split divider — one of the two
+    /// continuous width streams.
     @Published private(set) var isDraggingMainSplit = false
 
     /// True while the hosting window is in a live resize. Window resize is
     /// the same continuous width stream as a divider drag, just delivered by
-    /// AppKit instead of a gesture — it gets the same content-layout freeze.
-    @Published private(set) var isWindowLiveResizing = false
+    /// AppKit instead of a gesture, so it feeds the same flag.
+    @Published private(set) var isWidthStreamWindowResize = false
 
-    /// The one flag the deck consults: pane bodies lay out at resting widths
-    /// while ANY continuous width stream is live.
-    var isPaneContentLayoutFrozen: Bool {
-        isDraggingMainSplit || isWindowLiveResizing
+    /// The one flag the deck consults. It does NOT freeze layout: every pane
+    /// whose `widthStreamBehavior` is `.tracksLive` reflows under the cursor
+    /// as normal. It only tells `.tracksSteps` panes to follow the coarse
+    /// width ladder for the duration of the stream.
+    var isWidthStreamActive: Bool {
+        isDraggingMainSplit || isWidthStreamWindowResize
     }
 
     /// ID of the pane the user last interacted with (tap/focus).
@@ -549,11 +578,11 @@ class PaneManager: ObservableObject {
     // MARK: - Window Live Resize
 
     func beginWindowLiveResize() {
-        isWindowLiveResizing = true
+        isWidthStreamWindowResize = true
     }
 
     func endWindowLiveResize() {
-        isWindowLiveResizing = false
+        isWidthStreamWindowResize = false
     }
 
 }

@@ -264,6 +264,15 @@ final class InquiryCrystallizationEngine {
                 sessionUUID: session.uuid
             )
             copy.seedbedSeedlingNames = context.assignments.map(\.conceptName)
+            // Reconciliation offers read the POST-tidy bed: sprouts the
+            // resolver saw are already gone (silent fold), so what remains
+            // here are established seedlings whose folds need consent — the
+            // debrief renders them as per-row offers.
+            let tidiedBed = await ConceptSeedbedService.shared.seedbed(deepDiveUUID: deepDive.uuid)
+            copy.seedbedFoldOffers = ConceptSeedbedReducer.reconciliationOffers(
+                tidiedBed,
+                assignments: context.assignments
+            )
         }
         copy.possibleConnections = []
 

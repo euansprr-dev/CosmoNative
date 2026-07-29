@@ -130,6 +130,15 @@ public struct SwipeArtifactUnit: Codable, Sendable, Equatable, Identifiable {
 public struct SwipeArtifact: Codable, Sendable, Equatable {
     public var kind: SwipeKind
     public var units: [SwipeArtifactUnit]
+    /// What this artifact IS to the collector — the browsing axis (newsletter,
+    /// sales page, ad…), orthogonal to `kind`'s structural axis. nil means
+    /// "nothing decided yet"; readers fall back to the kind default through
+    /// `Atom.swipeGenre`. See SwipeGenre.swift for the vocabulary laws.
+    public var genre: SwipeGenre?
+    /// True once the user filed this swipe by hand ("File under →"). A locked
+    /// genre survives every later analyzer pass — the transcriptEditedByUser
+    /// pattern: a human decision is terminal.
+    public var genreLockedByUser: Bool?
     /// The structural recipe for non-post kinds: the sequence, written so
     /// someone could rebuild the artifact from it.
     public var anatomy: String?
@@ -148,6 +157,8 @@ public struct SwipeArtifact: Codable, Sendable, Equatable {
     public init(
         kind: SwipeKind,
         units: [SwipeArtifactUnit] = [],
+        genre: SwipeGenre? = nil,
+        genreLockedByUser: Bool? = nil,
         anatomy: String? = nil,
         captureMode: String? = nil,
         capturedURL: String? = nil,
@@ -158,6 +169,8 @@ public struct SwipeArtifact: Codable, Sendable, Equatable {
     ) {
         self.kind = kind
         self.units = units
+        self.genre = genre
+        self.genreLockedByUser = genreLockedByUser
         self.anatomy = anatomy
         self.captureMode = captureMode
         self.capturedURL = capturedURL
@@ -170,10 +183,14 @@ public struct SwipeArtifact: Codable, Sendable, Equatable {
     /// Tolerant decode: `kind` and `units` are the only fields worth failing
     /// over, and both have safe defaults. A row from a newer build decodes
     /// with its unknown fields dropped rather than taking the whole swipe down.
+    /// (`genre` deliberately rides `try?` — an unknown genre from a newer
+    /// build decodes as nil and readers fall back to the kind default.)
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         kind = (try? c.decode(SwipeKind.self, forKey: .kind)) ?? .post
         units = (try? c.decode([SwipeArtifactUnit].self, forKey: .units)) ?? []
+        genre = try? c.decodeIfPresent(SwipeGenre.self, forKey: .genre)
+        genreLockedByUser = try? c.decodeIfPresent(Bool.self, forKey: .genreLockedByUser)
         anatomy = try? c.decodeIfPresent(String.self, forKey: .anatomy)
         captureMode = try? c.decodeIfPresent(String.self, forKey: .captureMode)
         capturedURL = try? c.decodeIfPresent(String.self, forKey: .capturedURL)
@@ -363,6 +380,50 @@ extension Atom {
     public func withSwipeKindMetadata(_ kind: SwipeKind) -> Atom {
         var copy = self
         copy.updateResearchMetadata { $0.swipeKind = (kind == .post) ? nil : kind.rawValue }
+        return copy
+    }
+
+    // MARK: Genre
+
+    /// What this swipe IS to the collector — the browsing axis. TOTAL and
+    /// derive-never-migrate, exactly like `swipeKind`:
+    ///   1. the denormalised metadata hint (cheapest; what sidebar counts read),
+    ///   2. the envelope's stored genre,
+    ///   3. the kind's structural default — which is what every legacy swipe
+    ///      and every unclassified capture answers.
+    public var swipeGenre: SwipeGenre {
+        guard isSwipeFileAtom else { return .post }
+        if let raw = researchMetadata?.swipeGenre, let genre = SwipeGenre.resolve(raw) {
+            return genre
+        }
+        if let genre = swipeArtifact?.genre { return genre }
+        return SwipeGenre.defaultGenre(for: swipeKind)
+    }
+
+    /// True when the user filed this swipe by hand — a locked genre survives
+    /// every later analyzer pass.
+    public var swipeGenreIsLocked: Bool {
+        swipeArtifact?.genreLockedByUser == true
+    }
+
+    /// Copy with the genre written to BOTH homes: the envelope (durable,
+    /// syncs inside `structured`) and the metadata hint (cheap reads).
+    ///
+    /// The hint mirrors `withSwipeKindMetadata`'s absence rule: a genre equal
+    /// to the kind's structural default CLEARS the key, so "nothing decided"
+    /// stays distinguishable from "decided, and it happens to match".
+    /// Posts have no envelope (DERIVE-NEVER-MIGRATE forbids minting one just
+    /// to carry a genre) — for kind `.post` this writes the hint alone.
+    public func withSwipeGenre(_ genre: SwipeGenre, lockedByUser: Bool = false) -> Atom {
+        var copy = self
+        if var artifact = swipeArtifact {
+            artifact.genre = genre
+            if lockedByUser { artifact.genreLockedByUser = true }
+            copy = copy.withSwipeArtifact(artifact)
+        }
+        copy.updateResearchMetadata { meta in
+            meta.swipeGenre = genre.isStructuralFallback(for: swipeKind) ? nil : genre.rawValue
+        }
         return copy
     }
 

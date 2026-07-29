@@ -11,11 +11,13 @@ struct SwipeLibraryFilterPanel: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 // PROGRESSIVE DISCLOSURE: a library of nothing but posts never
-                // sees this section — the facet appears the day a second kind
-                // exists, and only then. New kinds add facets, never sidebar rows.
-                if viewModel.availableKinds.count > 1 {
+                // sees this section — the facet appears the day a second genre
+                // exists, and only then. "Kind" is the Finder word; the rows
+                // speak GENRE (the collector's axis), which strictly refines
+                // the old structural-kind rows.
+                if viewModel.availableGenres.count > 1 {
                     SwipeFilterDisclosure(title: "Kind", isInitiallyExpanded: true) {
-                        kindRows
+                        genreRows
                     }
                     divider
                 }
@@ -57,20 +59,20 @@ struct SwipeLibraryFilterPanel: View {
             .opacity(0.7)
     }
 
-    /// Kind rows wear the kind's own glyph in the neutral muted tint — a kind
-    /// is a category, not a brand, so it never earns a colour the way a
+    /// Genre rows wear the genre's own glyph in the neutral muted tint — a
+    /// genre is a category, not a brand, so it never earns a colour the way a
     /// platform mark does (Law 6: accent is punctuation).
-    private var kindRows: some View {
+    private var genreRows: some View {
         VStack(spacing: 2) {
-            ForEach(viewModel.availableKinds, id: \.rawValue) { kind in
+            ForEach(viewModel.availableGenres, id: \.rawValue) { genre in
                 SwipeFilterCheckRow(
-                    title: kind.pluralName,
-                    systemImage: kind.iconName,
+                    title: genre.pluralName,
+                    systemImage: genre.iconName,
                     iconTint: DS.textMuted,
-                    trailingCount: viewModel.kindCount(kind),
-                    isOn: viewModel.filterState.kinds.contains(kind)
+                    trailingCount: viewModel.genreCount(genre),
+                    isOn: viewModel.filterState.genres.contains(genre)
                 ) {
-                    withAnimation(ProMotionSprings.snappy) { viewModel.toggleKind(kind) }
+                    withAnimation(ProMotionSprings.snappy) { viewModel.toggleGenre(genre) }
                 }
             }
         }

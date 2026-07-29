@@ -141,6 +141,154 @@ final class IdeaFocusPersistenceRegressionTests: XCTestCase {
         ))
     }
 
+    // MARK: - The 2026-07-29 stale-model clobber
+
+    // An idea was open with three minutes of unsaved-to-the-row typing. On quit,
+    // a DISCARDED duplicate view model — built from the pre-edit atom, kept alive
+    // by the loader tasks its initializer fired, and subscribed to termination in
+    // that same initializer — flushed its own copy. Because every write path
+    // stamped `lastModified = Date()` immediately before comparing, the stale
+    // writer looked like the freshest one, passed `allowsWrite`, and reverted the
+    // row. The five tests below pin each link of that chain.
+
+    /// A model built from a row, which then takes NO edits of its own, must not
+    /// out-rank that row after someone else saves it. Before the fix the model's
+    /// clock was stamped at write time, so this comparison always passed and the
+    /// pre-edit copy won.
+    func testUneditedModelCannotOutrankARowSavedAfterItWasBuilt() {
+        let builtFrom = #"{"lastModifiedUnix":1000}"#
+        let savedAgainLater = #"{"lastModifiedUnix":1002}"#
+
+        let seed = IdeaFocusWritePolicy.seededModifiedTime(metadata: builtFrom, updatedAt: nil)
+
+        XCTAssertEqual(
+            seed, Date(timeIntervalSince1970: 1_000),
+            "A new model's content clock must start at the row's persisted stamp, never at `now`."
+        )
+        XCTAssertFalse(
+            IdeaFocusWritePolicy.allowsWrite(
+                existingMetadata: savedAgainLater,
+                snapshotLastModified: seed
+            ),
+            "A model holding the pre-edit copy must be refused once the row has been saved again — this is the 2026-07-29 clobber."
+        )
+    }
+
+    func testSeededModifiedTimeFallsBackToRowTimestampThenDistantPast() {
+        let updatedAt = "2026-07-29T04:22:12Z"
+
+        XCTAssertEqual(
+            IdeaFocusWritePolicy.seededModifiedTime(metadata: nil, updatedAt: updatedAt),
+            ISO8601.date(from: updatedAt),
+            "With no metadata stamp the row's own updated_at is the honest starting point."
+        )
+        XCTAssertEqual(
+            IdeaFocusWritePolicy.seededModifiedTime(metadata: nil, updatedAt: nil),
+            .distantPast,
+            "With nothing to seed from, a model must rank LAST rather than newest."
+        )
+    }
+
+    /// `lastModified` means "content changed", not "write attempted". Exactly one
+    /// place may move it.
+    func testOnlyMarkEditedStampsTheContentModificationClock() throws {
+        let source = try ideaFocusViewModelSource()
+
+        XCTAssertEqual(
+            source.components(separatedBy: "lastModified = Date()").count - 1, 1,
+            "Only `markEdited()` may stamp `lastModified`; stamping it on a write path is what defeated the freshness guard."
+        )
+        XCTAssertTrue(
+            source.contains("private func markEdited() {\n        lastModified = Date()"),
+            "The single stamp must live in `markEdited()`."
+        )
+        XCTAssertFalse(
+            source.contains("nextSaveSequence(markModified:"),
+            "`nextSaveSequence` must not carry a modification-stamping side effect."
+        )
+    }
+
+    /// GUARD-TWIN assertion: both exit flushes gate on a recorded edit.
+    func testCloseAndTerminationFlushesRequireARecordedEdit() throws {
+        let source = try ideaFocusViewModelSource()
+
+        for function in ["func saveOnClose() {", "func flushForTermination() {"] {
+            guard let start = source.range(of: function) else {
+                XCTFail("Could not locate \(function)")
+                return
+            }
+            let body = String(source[start.lowerBound...].prefix(1_200))
+            XCTAssertTrue(
+                body.contains("guard hasRecordedEdit else { return }"),
+                "\(function) must not write for a model that never took an edit — that write is the pre-edit copy."
+            )
+        }
+    }
+
+    /// The termination flush belongs to the mounted view. `State(initialValue:)`
+    /// is not lazy, so subscribing in the model's initializer enrolls every
+    /// discarded duplicate as a writer.
+    func testTerminationFlushIsSubscribedOnTheViewNotInTheViewModelInitializer() throws {
+        XCTAssertFalse(
+            try ideaFocusViewModelSource().contains("publisher(for: .cosmoAppWillTerminate)"),
+            "The view model must not subscribe to termination: its initializer runs for every discarded duplicate model."
+        )
+        XCTAssertTrue(
+            try ideaFocusViewSource().contains(
+                ".onReceive(NotificationCenter.default.publisher(for: .cosmoAppWillTerminate))"
+            ),
+            "The mounted view owns the termination flush (the Content/Notes idiom)."
+        )
+    }
+
+    /// Loader I/O in `init` is what kept discarded models alive to quit time.
+    func testLoaderLadderRunsFromStartNotTheInitializer() throws {
+        let source = try ideaFocusViewModelSource()
+        guard let initRange = source.range(of: "    init(atom: Atom) {"),
+              let startRange = source.range(of: "    func start() {") else {
+            XCTFail("Could not locate init and start().")
+            return
+        }
+        XCTAssertTrue(
+            initRange.lowerBound < startRange.lowerBound,
+            "Expected init to precede start() in the file."
+        )
+
+        let initBody = String(source[initRange.lowerBound..<startRange.lowerBound])
+        for loader in ["loadRecommendedSwipes()", "loadLinkedSwipes()", "loadClientProfiles()", "loadScheduledTasks()"] {
+            XCTAssertFalse(
+                initBody.contains(loader),
+                "\(loader) must not run from init — every discarded duplicate model would run it and stay alive on the task."
+            )
+        }
+        XCTAssertTrue(
+            try ideaFocusViewSource().contains("viewModel.start()"),
+            "The mounted view must start the loader ladder."
+        )
+    }
+
+    /// This path writes raw SQL instead of going through AtomRepository, so it
+    /// has to snapshot the pre-image itself or the idea accumulates no history —
+    /// the gap that forced recovery from the sync queue on 2026-07-29.
+    func testRawWriteSnapshotsPreImageIntoRevisionHistory() throws {
+        let source = try ideaFocusViewModelSource()
+
+        XCTAssertTrue(
+            source.contains("AtomRevisionWriter.snapshotBeforeRawWrite("),
+            "The raw-SQL idea write must snapshot the pre-image in-transaction so a clobber stays recoverable."
+        )
+        guard let writeRange = source.range(of: "static func write(snapshot: IdeaFocusSaveSnapshot"),
+              let snapshotRange = source.range(of: "AtomRevisionWriter.snapshotBeforeRawWrite("),
+              let updateRange = source.range(of: "UPDATE atoms") else {
+            XCTFail("Could not locate the raw write.")
+            return
+        }
+        XCTAssertTrue(
+            writeRange.lowerBound < snapshotRange.lowerBound && snapshotRange.lowerBound < updateRange.lowerBound,
+            "The snapshot must be taken inside the write transaction and BEFORE the UPDATE overwrites the row."
+        )
+    }
+
     /// June 2026 Idea v2: the advanced outline (physics grid, element browser,
     /// drag items) was removed — only the simple outline remains.
     func testIdeaFocusViewDroppedAdvancedOutlineMode() throws {
@@ -150,11 +298,14 @@ final class IdeaFocusPersistenceRegressionTests: XCTestCase {
         XCTAssertFalse(source.contains("AdvancedElementBrowser"))
     }
 
+    /// The width class is column-count aware now — see
+    /// `IdeaWorkspaceLayoutPolicyTests` for the budget itself. This case only
+    /// guards the inspector toggle riding on top of it.
     @MainActor
     func testIdeaWorkspaceBreakpointAndInspectorToggle() {
-        XCTAssertEqual(IdeaWorkspaceBreakpoint(width: 1400), .regular)
-        XCTAssertEqual(IdeaWorkspaceBreakpoint(width: 1000), .regular)
-        XCTAssertEqual(IdeaWorkspaceBreakpoint(width: 999), .compact)
+        XCTAssertEqual(IdeaWorkspaceBreakpoint(width: 1400, columns: 1), .regular)
+        XCTAssertEqual(IdeaWorkspaceBreakpoint(width: 1000, columns: 1), .regular)
+        XCTAssertEqual(IdeaWorkspaceBreakpoint(width: 860, columns: 1), .compact)
 
         let model = IdeaWorkspaceModel()
         XCTAssertTrue(model.isInspectorShowing, "Inspector is a visible side column at full width")

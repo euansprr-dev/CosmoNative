@@ -11,17 +11,50 @@ import Observation
 
 // MARK: - Breakpoints
 
+/// The bench's own geometry. The threshold between width classes is DERIVED
+/// from what the sheet actually has to seat, never typed — a hardcoded number
+/// silently goes wrong the moment a column width or the manuscript's measure
+/// changes, and the failure is invisible in code and ugly on screen.
+enum IdeaWorkspaceMetrics {
+    /// Both bench columns ride the shared inspector width.
+    static let columnWidth: CGFloat = StudyMetrics.panelWidth
+
+    /// The narrowest the manuscript may be squeezed to while columns sit
+    /// beside it. Below this the sheet's columns HStack reports MORE width
+    /// than the sheet was given — and an oversized child of a `.frame(width:)`
+    /// is centred and clipped on both edges, not compressed. That is the
+    /// "text goes behind everything" state: the bench stops being a layout
+    /// and becomes a too-wide picture cropped down the middle.
+    static let minimumManuscriptMeasure: CGFloat = 560
+
+    /// `cosmoInnerWindow()` insets the sheet on both sides.
+    static let sheetInset: CGFloat = CosmoSurfaceMetrics.windowInset * 2
+
+    /// Can this width seat `count` columns AND leave the manuscript its
+    /// measure? Panel-count aware on purpose: the common setup is the
+    /// inspector alone, which fits beside the manuscript ~300pt sooner than
+    /// the inspector-plus-conversation pair does. One flat threshold has to
+    /// pick a side — too low and both columns crush the manuscript, too high
+    /// and the single column is thrown away for widths where it fits fine.
+    static func seatsColumns(count: Int, in width: CGFloat) -> Bool {
+        width - sheetInset - CGFloat(count) * columnWidth >= minimumManuscriptMeasure
+    }
+}
+
 /// Width classes for the idea workspace. The manuscript is a single column,
-/// so two classes suffice: at pane widths the inspector becomes an opt-in
-/// overlay instead of a side column.
+/// so two classes suffice: when the columns the user asked for don't fit
+/// beside it, they become opt-in overlays instead.
 enum IdeaWorkspaceBreakpoint: Equatable {
-    /// ≥1000pt: manuscript + inspector side by side.
+    /// Manuscript + the requested panels side by side.
     case regular
-    /// <1000pt: manuscript only; inspector slides over on demand.
+    /// Manuscript only; panels slide over on demand.
     case compact
 
-    init(width: CGFloat) {
-        self = width >= 1000 ? .regular : .compact
+    /// `columns` is what the user has ASKED for — the persisted intent flags,
+    /// not `isInspectorShowing`/`isConversationShowing`. Resolving against the
+    /// showing state would be circular, since those read the breakpoint back.
+    init(width: CGFloat, columns: Int) {
+        self = IdeaWorkspaceMetrics.seatsColumns(count: columns, in: width) ? .regular : .compact
     }
 }
 
@@ -52,35 +85,58 @@ final class IdeaWorkspaceModel {
         isConversationVisible = UserDefaults.standard.bool(forKey: Self.conversationDefaultsKey)
     }
 
-    var isInspectorShowing: Bool {
+    /// Columns the user has asked for. Feeds the breakpoint, so it must read
+    /// the intent flags only — never the resolved `…Showing` properties.
+    var requestedColumnCount: Int {
+        (isInspectorVisible ? 1 : 0) + (isConversationVisible ? 1 : 0)
+    }
+
+    var isInspectorShowing: Bool { isInspectorShowing(at: breakpoint) }
+
+    var isConversationShowing: Bool { isConversationShowing(at: breakpoint) }
+
+    /// The layout pass resolves the breakpoint from the width it was handed
+    /// and asks these directly, so the columns it draws match the width it
+    /// draws them at. `breakpoint` trails one pass behind and is only good
+    /// enough for the toolbar and the keyboard shortcuts.
+    func isInspectorShowing(at breakpoint: IdeaWorkspaceBreakpoint) -> Bool {
         breakpoint == .regular ? isInspectorVisible : isInspectorOverlayPresented
     }
 
-    var isConversationShowing: Bool {
+    func isConversationShowing(at breakpoint: IdeaWorkspaceBreakpoint) -> Bool {
         breakpoint == .regular ? isConversationVisible : isConversationOverlayPresented
     }
 
+    // MARK: Toggles
+
+    // A toggle raises BOTH the intent flag and the overlay flag, because
+    // asking for a panel can itself be what pushes the sheet out of `regular`
+    // — a second column may not fit where one did. Setting only the intent
+    // would answer the user's click by showing nothing at all.
+
     func toggleInspector() {
-        switch breakpoint {
-        case .regular:
-            isInspectorVisible.toggle()
-        case .compact:
-            // Compact overlays are exclusive — opening one closes the other
-            // (the Study's compact manner).
-            isInspectorOverlayPresented.toggle()
-            if isInspectorOverlayPresented { isConversationOverlayPresented = false }
+        if isInspectorShowing {
+            isInspectorVisible = false
+            isInspectorOverlayPresented = false
+        } else {
+            isInspectorVisible = true
+            isInspectorOverlayPresented = true
+            // Overlays are exclusive — opening one closes the other (the
+            // Study's compact manner). Inert while both are columns.
+            isConversationOverlayPresented = false
         }
     }
 
     func toggleConversation() {
-        switch breakpoint {
-        case .regular:
-            isConversationVisible.toggle()
-            UserDefaults.standard.set(isConversationVisible, forKey: Self.conversationDefaultsKey)
-        case .compact:
-            isConversationOverlayPresented.toggle()
-            if isConversationOverlayPresented { isInspectorOverlayPresented = false }
+        if isConversationShowing {
+            isConversationVisible = false
+            isConversationOverlayPresented = false
+        } else {
+            isConversationVisible = true
+            isConversationOverlayPresented = true
+            isInspectorOverlayPresented = false
         }
+        UserDefaults.standard.set(isConversationVisible, forKey: Self.conversationDefaultsKey)
     }
 }
 

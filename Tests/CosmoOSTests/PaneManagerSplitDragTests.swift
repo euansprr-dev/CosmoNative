@@ -1,11 +1,11 @@
 import XCTest
 @testable import CosmoOS
 
-/// The content-layout freeze exists because a heavy pane body re-laying-out
-/// per width event can wedge the main thread (July 28 assistant-pane resize
-/// livelock). Two continuous width streams feed it — the main-split divider
-/// drag and window live resize — and the deck consults one combined flag.
-/// Slots keep tracking the width; content re-lays once when the stream ends.
+/// Two continuous width streams feed one flag — the main-split divider drag
+/// and window live resize. The flag does NOT freeze the deck: it only tells
+/// `.tracksSteps` panes to follow the coarse width ladder, because a body
+/// that deep re-laying-out per width event can wedge the main thread (July 28
+/// assistant-pane resize livelock). Every other pane resizes live.
 @MainActor
 final class PaneManagerSplitDragTests: XCTestCase {
 
@@ -36,16 +36,16 @@ final class PaneManagerSplitDragTests: XCTestCase {
 
     func testWindowLiveResizeTogglesTheFreezeFlag() {
         let manager = PaneManager()
-        XCTAssertFalse(manager.isWindowLiveResizing)
-        XCTAssertFalse(manager.isPaneContentLayoutFrozen)
+        XCTAssertFalse(manager.isWidthStreamWindowResize)
+        XCTAssertFalse(manager.isWidthStreamActive)
 
         manager.beginWindowLiveResize()
-        XCTAssertTrue(manager.isWindowLiveResizing)
-        XCTAssertTrue(manager.isPaneContentLayoutFrozen)
+        XCTAssertTrue(manager.isWidthStreamWindowResize)
+        XCTAssertTrue(manager.isWidthStreamActive)
 
         manager.endWindowLiveResize()
-        XCTAssertFalse(manager.isWindowLiveResizing)
-        XCTAssertFalse(manager.isPaneContentLayoutFrozen)
+        XCTAssertFalse(manager.isWidthStreamWindowResize)
+        XCTAssertFalse(manager.isWidthStreamActive)
     }
 
     func testCombinedFreezeStaysOnWhileEitherStreamIsLive() {
@@ -54,14 +54,14 @@ final class PaneManagerSplitDragTests: XCTestCase {
         // Window resize begins, then a divider drag starts mid-resize.
         manager.beginWindowLiveResize()
         manager.beginMainSplitDrag()
-        XCTAssertTrue(manager.isPaneContentLayoutFrozen)
+        XCTAssertTrue(manager.isWidthStreamActive)
 
         // Ending one stream must not thaw while the other is still live.
         manager.endWindowLiveResize()
-        XCTAssertTrue(manager.isPaneContentLayoutFrozen, "divider drag still live")
+        XCTAssertTrue(manager.isWidthStreamActive, "divider drag still live")
 
         manager.endMainSplitDrag()
-        XCTAssertFalse(manager.isPaneContentLayoutFrozen)
+        XCTAssertFalse(manager.isWidthStreamActive)
     }
 
     func testEndWindowLiveResizeIsIdempotent() {
@@ -72,8 +72,8 @@ final class PaneManagerSplitDragTests: XCTestCase {
 
         manager.endWindowLiveResize()
         manager.endWindowLiveResize()
-        XCTAssertFalse(manager.isWindowLiveResizing)
-        XCTAssertFalse(manager.isPaneContentLayoutFrozen)
+        XCTAssertFalse(manager.isWidthStreamWindowResize)
+        XCTAssertFalse(manager.isWidthStreamActive)
     }
 
     func testUpdateMainSplitClampsToRatioBounds() {
@@ -88,5 +88,97 @@ final class PaneManagerSplitDragTests: XCTestCase {
 
         manager.updateMainSplit(delta: 50, totalWidth: 0)
         XCTAssertEqual(manager.mainSplitRatio, 0.75, "zero total width must be a no-op, not a NaN")
+    }
+
+    // MARK: - Width stream behavior
+
+    /// The regression the ladder was scoped to fix: a swipe/idea/browser pane
+    /// used to sit at a stale width for the whole drag and snap on drop. Only
+    /// the assistant family may ever do that.
+    func testOnlyTheAssistantFamilyStepsItsWidth() {
+        let live: [PaneContent] = [
+            .entity(EntitySelection(id: 1, type: .idea)),
+            .thinkspace(thinkspaceId: "ts"),
+            .commandCenter,
+            .swipeGallery,
+            .webBrowser(url: URL(string: "https://example.com")!, title: nil)
+        ]
+        for pane in live {
+            XCTAssertEqual(pane.widthStreamBehavior, .tracksLive, "\(pane.id) must resize live")
+        }
+
+        let target = CollaborationTarget(
+            source: .focusMode,
+            entityID: 1,
+            entityType: .idea,
+            atomUUID: "uuid",
+            title: "Idea"
+        )
+        let stepped: [PaneContent] = [
+            .cosmoWindow,
+            .inlineAssistant,
+            .collaborator(target: target, presetId: nil)
+        ]
+        for pane in stepped {
+            XCTAssertEqual(pane.widthStreamBehavior, .tracksSteps, "\(pane.id) must step")
+        }
+    }
+
+    /// Jitter inside one rung is the old livelock's worst case — hundreds of
+    /// events travelling almost no distance. It must cost zero re-layouts.
+    func testSteppedWidthHoldsItsRungUntilAFullStepIsTravelled() {
+        let step = PaneSlotPresentationPolicy.widthStreamStep
+
+        for delta in stride(from: CGFloat(0), to: step, by: 6) {
+            XCTAssertEqual(
+                PaneSlotPresentationPolicy.steppedWidth(live: 600 + delta, adopted: 600),
+                600,
+                "a \(delta)pt move inside the rung must not re-lay-out"
+            )
+            XCTAssertEqual(
+                PaneSlotPresentationPolicy.steppedWidth(live: 600 - delta, adopted: 600),
+                600,
+                "the deadband is symmetric"
+            )
+        }
+    }
+
+    func testSteppedWidthAdoptsTheLiveWidthOnceTheRungIsCrossed() {
+        let step = PaneSlotPresentationPolicy.widthStreamStep
+
+        XCTAssertEqual(PaneSlotPresentationPolicy.steppedWidth(live: 600 + step, adopted: 600), 600 + step)
+        XCTAssertEqual(PaneSlotPresentationPolicy.steppedWidth(live: 600 - step, adopted: 600), 600 - step)
+        // It lands on the live width, not on a quantized grid — so the rung a
+        // stream ends on is the width the body actually wants.
+        XCTAssertEqual(PaneSlotPresentationPolicy.steppedWidth(live: 723, adopted: 600), 723)
+    }
+
+    /// A pane opened mid-drag has no rung to hold, so it must lay out at the
+    /// live width rather than at some inherited neighbour's width.
+    func testSteppedWidthTakesTheLiveWidthWhenThereIsNoRungYet() {
+        XCTAssertEqual(PaneSlotPresentationPolicy.steppedWidth(live: 512, adopted: nil), 512)
+    }
+
+    /// Re-layouts are bounded by distance travelled, never by stream duration
+    /// — that is the property that stops a stream queueing work faster than
+    /// it retires it.
+    func testRelayoutCountIsBoundedByDistanceNotEventCount() {
+        let step = PaneSlotPresentationPolicy.widthStreamStep
+        let travel: CGFloat = 900
+        var adopted: CGFloat = 400
+        var relayouts = 0
+
+        // 1800 events (a slow, dense drag) covering 900pt.
+        for event in 1...1800 {
+            let live = 400 + travel * CGFloat(event) / 1800
+            let next = PaneSlotPresentationPolicy.steppedWidth(live: live, adopted: adopted)
+            if next != adopted {
+                relayouts += 1
+                adopted = next
+            }
+        }
+
+        XCTAssertLessThanOrEqual(relayouts, Int((travel / step).rounded(.up)))
+        XCTAssertGreaterThan(relayouts, 0, "the body must visibly move during the drag")
     }
 }

@@ -1,9 +1,7 @@
-// TEMP-DISABLED-BY-CLAUDE: references in-flight working-tree API changes (deep-study classifier/connection rework)
-// and does not compile. Wrapped so the rest of the test target can build+run. Remove #if false / #endif after realigning.
-#if false
 // CosmoOS/Tests/CosmoOSTests/ConnectionMergeTests.swift
 // Concept pages must accumulate knowledge idempotently: merging the same
 // proposed sections twice may never duplicate items or destroy user edits.
+// Realigned July 2026.
 
 import XCTest
 @testable import CosmoOS
@@ -44,18 +42,36 @@ final class ConnectionMergeTests: XCTestCase {
         XCTAssertTrue(claims.contains { $0.content == "New extract claim" })
     }
 
-    func testProvenanceMatchSkipsEvenWhenContentEdited() {
-        // User edited the item's text after the first merge — provenance still matches.
+    func testSharedProvenanceWithDistinctContentBothSurvive() {
+        // Dedup is on CONTENT, not provenance: the Concept Composer splits one
+        // capture into several bullets that all carry the origin extract's UUID,
+        // so a provenance-only skip would collapse the split back into one item.
+        // The user's own edit is never overwritten — the new bullet lands beside it.
         let existing = [
             section(.claims, items: [ConnectionItem(content: "Edited by the user", sourceAtomUUID: "extract-1")])
         ]
         let proposed = [
-            section(.claims, items: [ConnectionItem(content: "Original extract text", sourceAtomUUID: "extract-1")])
+            section(.claims, items: [ConnectionItem(content: "A second bullet off the same capture", sourceAtomUUID: "extract-1")])
         ]
         let merged = ConnectionPromotionService.mergedSections(existing: existing, proposed: proposed)
         let claims = merged.first { $0.type == .claims }?.items ?? []
-        XCTAssertEqual(claims.count, 1)
+        XCTAssertEqual(claims.count, 2)
         XCTAssertEqual(claims.first?.content, "Edited by the user")
+        XCTAssertTrue(claims.contains { $0.content == "A second bullet off the same capture" })
+    }
+
+    func testContentlessRowsStillCollapseOnProvenance() {
+        // The one path where provenance alone decides: a row with no text to
+        // distinguish by (a bare link row) may not be re-added for the same source.
+        let existing = [
+            section(.references, items: [ConnectionItem(content: "", sourceAtomUUID: "conn-2")])
+        ]
+        let proposed = [
+            section(.references, items: [ConnectionItem(content: "", sourceAtomUUID: "conn-2")])
+        ]
+        let merged = ConnectionPromotionService.mergedSections(existing: existing, proposed: proposed)
+        let refs = merged.first { $0.type == .references }?.items ?? []
+        XCTAssertEqual(refs.count, 1)
     }
 
     func testContentMatchSkipsAcrossSections() {
@@ -120,4 +136,3 @@ final class ConnectionMergeTests: XCTestCase {
         XCTAssertFalse(ConnectionPromotionService.connectionMentions(atom, names: ["one"]))   // Too short to count.
     }
 }
-#endif

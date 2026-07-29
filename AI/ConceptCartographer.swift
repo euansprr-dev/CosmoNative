@@ -23,6 +23,11 @@ struct ConceptCartographerProposal: Identifiable, Equatable, Sendable {
         case group(name: String, memberUUIDs: [String])
         /// Move an existing pillar under an existing concept.
         case nest(childUUID: String, parentUUID: String)
+        /// Fold micro-seedlings' mass into one umbrella seedling — the
+        /// seedbed's answer to fragmentation ("Pitch", "Pace", "Prosody" →
+        /// facets of "Vocal delivery"). memberKeys are seedling conceptKeys,
+        /// not connection UUIDs; nothing becomes a page.
+        case foldSeedlings(umbrellaName: String, memberKeys: [String])
     }
 
     /// Stable fingerprint: one ruling per structural change forever. Group
@@ -43,6 +48,7 @@ struct ConceptCartographerProposal: Identifiable, Equatable, Sendable {
         switch kind {
         case .group: return "Group"
         case .nest: return "Nest"
+        case .foldSeedlings: return "Fold"
         }
     }
 
@@ -50,6 +56,7 @@ struct ConceptCartographerProposal: Identifiable, Equatable, Sendable {
         switch kind {
         case .group(_, let members): return members
         case .nest(let child, _): return [child]
+        case .foldSeedlings: return []   // Seedling keys are not connection UUIDs.
         }
     }
 
@@ -59,6 +66,10 @@ struct ConceptCartographerProposal: Identifiable, Equatable, Sendable {
 
     static func nestKey(childUUID: String, parentUUID: String) -> String {
         "cartographer.nest:\(childUUID)~\(parentUUID)"
+    }
+
+    static func foldKey(memberKeys: [String]) -> String {
+        "cartographer.fold:" + memberKeys.sorted().joined(separator: "~")
     }
 }
 
@@ -82,6 +93,17 @@ enum ConceptCartographerSignals {
         var memberConnectionUUIDs: [String]
     }
 
+    /// One growing seedling as the Cartographer sees it. Facts mirror the
+    /// fold guards: pinned, developed, and page-tied seedlings never fold.
+    struct SeedlingFacts: Sendable, Equatable {
+        var conceptKey: String
+        var name: String
+        var pendingCount: Int
+        var parentConceptName: String?
+        var isPinned: Bool = false
+        var isFoldable: Bool = true   // incubating, unpinned, no page ties
+    }
+
     /// A draft before validation — from the LLM or from a canvas cluster.
     struct Draft: Equatable, Sendable {
         var kind: ConceptCartographerProposal.Kind
@@ -96,6 +118,13 @@ enum ConceptCartographerSignals {
         static let groupMinMembers = 2
         static let groupMaxMembers = 6
         static let maxProposalsPerPass = 3
+        /// The fragmentation signature that consults the model about
+        /// seedling folds: this many thin seedlings (≤ thinSeedlingMaxItems
+        /// captures each) growing at once.
+        static let foldMinThinSeedlings = 4
+        static let thinSeedlingMaxItems = 2
+        static let foldMinMembers = 2
+        static let foldMaxMembers = 6
     }
 
     /// Whether the top level is crowded enough to consult the model at all.
@@ -105,6 +134,47 @@ enum ConceptCartographerSignals {
         if topLevel.count >= Thresholds.organizeMinTopLevel { return true }
         let thin = topLevel.filter { $0.noteCount <= Thresholds.thinPillarMaxNotes }
         return thin.count >= Thresholds.organizeMinThinPillars
+    }
+
+    /// The seedbed fragmentation signature: many thin seedlings at once
+    /// (a video session that minted nine one-capture names) — worth
+    /// consulting the model about umbrella folds even when the page map is
+    /// quiet.
+    static func wantsSeedlingConsolidation(seedlings: [SeedlingFacts]) -> Bool {
+        let thin = seedlings.filter { $0.isFoldable && $0.pendingCount <= Thresholds.thinSeedlingMaxItems }
+        return thin.count >= Thresholds.foldMinThinSeedlings
+    }
+
+    /// Zero-LLM fold drafts from the resolver's own hierarchy: the tidy pass
+    /// stamps parentConceptName on seedlings, so siblings that share a parent
+    /// were ALREADY judged facets of one umbrella — formalizing that needs no
+    /// model, just consent. Deterministic order: parent name.
+    static func parentFoldDrafts(seedlings: [SeedlingFacts]) -> [Draft] {
+        let foldable = seedlings.filter { $0.isFoldable && !$0.isPinned }
+        let byParent = Dictionary(grouping: foldable.compactMap { seedling -> (parent: String, seedling: SeedlingFacts)? in
+            guard let parent = seedling.parentConceptName?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !parent.isEmpty,
+                  ConceptResolver.conceptKey(parent) != seedling.conceptKey else { return nil }
+            return (parent, seedling)
+        }, by: { ConceptResolver.conceptKey($0.parent) })
+        return byParent.values
+            .compactMap { members -> Draft? in
+                guard members.count >= Thresholds.foldMinMembers,
+                      members.count <= Thresholds.foldMaxMembers,
+                      let parentName = members.first?.parent else { return nil }
+                return Draft(
+                    kind: .foldSeedlings(
+                        umbrellaName: parentName,
+                        memberKeys: members.map(\.seedling.conceptKey).sorted()
+                    ),
+                    reason: "The debrief filed these as facets of \(parentName)"
+                )
+            }
+            .sorted { lhs, rhs in
+                guard case .foldSeedlings(let a, _) = lhs.kind,
+                      case .foldSeedlings(let b, _) = rhs.kind else { return false }
+                return a < b
+            }
     }
 
     /// A user-built canvas cluster holding ≥2 of the dive's pillars is already
@@ -132,9 +202,14 @@ enum ConceptCartographerSignals {
     /// ancestry cycles, undersized groups, members claimed by an earlier
     /// draft. A group named after an EXISTING concept converts into nest
     /// drafts under it (the section already exists — don't mint a twin).
+    /// Fold drafts climb their own rungs: every member must be a known,
+    /// foldable, unpinned seedling not claimed by an earlier fold, member
+    /// count within bounds, and the umbrella name must not collide with a
+    /// member's own key.
     static func validated(
         _ drafts: [Draft],
-        facts: [ConceptFacts]
+        facts: [ConceptFacts],
+        seedlings: [SeedlingFacts] = []
     ) -> [ConceptCartographerProposal] {
         let byUUID = Dictionary(facts.map { ($0.uuid, $0) }, uniquingKeysWith: { first, _ in first })
         let parentByUUID = facts.reduce(into: [String: String]()) { partial, fact in
@@ -148,10 +223,17 @@ enum ConceptCartographerSignals {
             uniquingKeysWith: { first, _ in first }
         )
 
+        let seedlingsByKey = Dictionary(
+            seedlings.map { ($0.conceptKey, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+
         var claimed = Set<String>()
+        var claimedSeedlingKeys = Set<String>()
         var seenKeys = Set<String>()
         var groups: [ConceptCartographerProposal] = []
         var nests: [ConceptCartographerProposal] = []
+        var folds: [ConceptCartographerProposal] = []
 
         func validNest(childUUID: String, parentUUID: String, reason: String) -> ConceptCartographerProposal? {
             guard let child = byUUID[childUUID],
@@ -218,11 +300,37 @@ enum ConceptCartographerSignals {
                     seenKeys.insert(nest.key)
                     claimed.insert(childUUID)
                 }
+
+            case .foldSeedlings(let umbrellaName, let memberKeys):
+                let trimmedName = umbrellaName.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmedName.isEmpty else { continue }
+                let umbrellaKey = ConceptResolver.conceptKey(trimmedName)
+                let members = memberKeys.filter { key in
+                    guard key != umbrellaKey,
+                          let seedling = seedlingsByKey[key] else { return false }
+                    return seedling.isFoldable
+                        && !seedling.isPinned
+                        && !claimedSeedlingKeys.contains(key)
+                }.sorted()
+                guard members.count >= Thresholds.foldMinMembers,
+                      members.count <= Thresholds.foldMaxMembers else { continue }
+                let key = ConceptCartographerProposal.foldKey(memberKeys: members)
+                guard !seenKeys.contains(key) else { continue }
+                seenKeys.insert(key)
+                claimedSeedlingKeys.formUnion(members)
+                folds.append(ConceptCartographerProposal(
+                    key: key,
+                    kind: .foldSeedlings(umbrellaName: trimmedName, memberKeys: members),
+                    reason: draft.reason,
+                    title: trimmedName,
+                    memberTitles: members.compactMap { seedlingsByKey[$0]?.name }
+                ))
             }
         }
 
-        // Groups first — they are the big structural wins — then nests.
-        return Array((groups + nests).prefix(Thresholds.maxProposalsPerPass))
+        // Groups first — the big structural wins — then folds (they stop
+        // fragmentation at the source), then nests.
+        return Array((groups + folds + nests).prefix(Thresholds.maxProposalsPerPass))
     }
 
     /// Concept pairs that keep getting captured together (shared extract
@@ -297,7 +405,13 @@ final class ConceptCartographer {
         } else {
             connections = (try? await InquiryRepository.shared.fetchConnections(forDeepDive: deepDive)) ?? []
         }
-        guard connections.count > ConceptCartographerSignals.Thresholds.groupMinMembers else { return [] }
+        let seedlingFacts = await Self.makeSeedlingFacts(deepDiveUUID: deepDive.uuid)
+        // A quiet page map with a fragmented seedbed still deserves a pass —
+        // the seedbed is where fragmentation starts.
+        guard connections.count > ConceptCartographerSignals.Thresholds.groupMinMembers
+            || ConceptCartographerSignals.wantsSeedlingConsolidation(seedlings: seedlingFacts)
+            || !ConceptCartographerSignals.parentFoldDrafts(seedlings: seedlingFacts).isEmpty
+        else { return [] }
         let extracts: [Atom]
         if let preloadedExtracts {
             extracts = preloadedExtracts
@@ -309,20 +423,35 @@ final class ConceptCartographer {
         let clusters = await canvasClusterFacts(deepDive: deepDive, connections: connections)
 
         var drafts = ConceptCartographerSignals.clusterDrafts(facts: facts, clusters: clusters)
-        if ConceptCartographerSignals.wantsOrganization(facts: facts) {
-            drafts += await llmDrafts(deepDive: deepDive, facts: facts, extracts: extracts)
+        drafts += ConceptCartographerSignals.parentFoldDrafts(seedlings: seedlingFacts)
+        if ConceptCartographerSignals.wantsOrganization(facts: facts)
+            || ConceptCartographerSignals.wantsSeedlingConsolidation(seedlings: seedlingFacts) {
+            drafts += await llmDrafts(deepDive: deepDive, facts: facts, extracts: extracts, seedlings: seedlingFacts)
         }
 
         let decided = await InquiryGardenerDecisionStore.shared.decidedKeys(deepDiveUUID: deepDive.uuid)
-        return ConceptCartographerSignals.validated(drafts, facts: facts)
+        return ConceptCartographerSignals.validated(drafts, facts: facts, seedlings: seedlingFacts)
             .filter { !decided.contains($0.key) }
     }
 
     /// Accepts a proposal: applies the structure (section mint + parent
-    /// writes + canvas mirror) and records the ruling. Returns the section
-    /// page's UUID for groups (the "Develop now?" moment) — nil for nests.
+    /// writes + canvas mirror; seedling folds go to the seedbed service —
+    /// they never touch pages or canvas) and records the ruling. Returns the
+    /// section page's UUID for groups (the "Develop now?" moment) — nil
+    /// otherwise.
     @discardableResult
     func accept(_ proposal: ConceptCartographerProposal, deepDive: Atom) async -> String? {
+        if case .foldSeedlings(let umbrellaName, let memberKeys) = proposal.kind {
+            await ConceptSeedbedService.shared.foldSeedlings(
+                deepDiveUUID: deepDive.uuid,
+                umbrellaName: umbrellaName,
+                memberKeys: memberKeys
+            )
+            await InquiryGardenerDecisionStore.shared.record(
+                key: proposal.key, decision: .accepted, deepDiveUUID: deepDive.uuid
+            )
+            return nil
+        }
         let sectionUUID = await ConnectionPromotionService.shared.applyCartographerProposal(
             proposal, deepDive: deepDive
         )
@@ -374,6 +503,30 @@ final class ConceptCartographer {
         }
     }
 
+    /// The dive's growing seedlings as fold candidates. Foldability mirrors
+    /// the reducer's guards exactly (GUARD-TWIN of
+    /// ConceptSeedbedReducer.foldSeedlings): incubating, unpinned, no page
+    /// ties.
+    @MainActor
+    static func makeSeedlingFacts(deepDiveUUID: String) async -> [ConceptCartographerSignals.SeedlingFacts] {
+        let seedbed = await ConceptSeedbedService.shared.seedbed(deepDiveUUID: deepDiveUUID)
+        return seedbed
+            .filter { $0.status != .dismissed }
+            .map { seedling in
+                ConceptCartographerSignals.SeedlingFacts(
+                    conceptKey: seedling.conceptKey,
+                    name: seedling.name,
+                    pendingCount: seedling.pendingItems.count,
+                    parentConceptName: seedling.parentConceptName,
+                    isPinned: seedling.pinnedAt != nil,
+                    isFoldable: seedling.status == .incubating
+                        && seedling.pinnedAt == nil
+                        && seedling.mergeTargetConnectionUUID == nil
+                        && seedling.developedConnectionUUID == nil
+                )
+            }
+    }
+
     /// User-created canvas clusters on the dive's thinkspaces that hold ≥2 of
     /// this dive's concept blocks (block ids → entity uuids via canvas_blocks).
     private func canvasClusterFacts(
@@ -420,10 +573,12 @@ final class ConceptCartographer {
 
     static let systemPrompt = """
     You are Cosmo's Cartographer. You look at the concept map of one research \
-    topic — a flat, ever-growing list of top-level concept pillars — and \
+    topic — a flat, ever-growing list of top-level concept pillars, plus the \
+    GROWING SEEDLINGS still accruing captures before they earn a page — and \
     propose a small amount of STRUCTURE: group sibling pillars under a new \
-    broader section, or nest a pillar under an existing concept it clearly \
-    belongs to.
+    broader section, nest a pillar under an existing concept it clearly \
+    belongs to, or fold several micro-seedlings into the one concept they are \
+    all facets of.
 
     RULES:
     - Propose at most 3 changes, and ONLY changes that clearly improve \
@@ -435,19 +590,30 @@ final class ConceptCartographer {
     - Groups take 2–6 members. Never group everything under one giant section.
     - A concept is nested only when the parent genuinely contains it — \
     thematic neighborhood is a GROUP, containment is a NEST.
-    - Use only the ids given. Respond with JSON only, no prose.
+    - FOLD is for seedlings only, and it is the encyclopedia-entry test in \
+    reverse: when several thin seedlings are ASPECTS of one topic a reader \
+    would look up ("Pitch", "Pace", "Prosody" are all facets of vocal \
+    delivery), fold them into that one umbrella concept. The umbrella may be \
+    a listed seedling's own name or a new plain name in the topic's \
+    vocabulary. Folds take 2–6 members. Never fold seedlings that are \
+    genuinely distinct topics just because they are small — a fold you are \
+    unsure of is a fold you do not propose.
+    - Use only the ids given (c… for concept pages, s… for seedlings). \
+    Respond with JSON only, no prose.
 
     FORMAT:
     {"proposals":[
       {"kind":"group","name":"<section name>","members":["c2","c3"],"reason":"<one calm sentence>"},
-      {"kind":"nest","child":"c9","parent":"c4","reason":"<one calm sentence>"}
+      {"kind":"nest","child":"c9","parent":"c4","reason":"<one calm sentence>"},
+      {"kind":"fold","umbrella":"<concept name>","members":["s1","s3"],"reason":"<one calm sentence>"}
     ]}
     """
 
     private func llmDrafts(
         deepDive: Atom,
         facts: [ConceptCartographerSignals.ConceptFacts],
-        extracts: [Atom]
+        extracts: [Atom],
+        seedlings: [ConceptCartographerSignals.SeedlingFacts] = []
     ) async -> [ConceptCartographerSignals.Draft] {
         // Stable aliases (c1, c2, …) — models mangle raw UUIDs.
         let ordered = facts.sorted { lhs, rhs in
@@ -490,10 +656,25 @@ final class ConceptCartographer {
             titleByUUID: titleByUUID
         )
 
+        // Seedling aliases (s1, s2, …) — foldable ones only; a pinned or
+        // page-tied seedling the model can't fold shouldn't tempt it.
+        let foldableSeedlings = seedlings.filter { $0.isFoldable && !$0.isPinned }
+        var seedlingKeyByAlias: [String: String] = [:]
+        var seedlingLines: [String] = []
+        for (index, seedling) in foldableSeedlings.enumerated() {
+            let alias = "s\(index + 1)"
+            seedlingKeyByAlias[alias] = seedling.conceptKey
+            let captures = seedling.pendingCount == 1 ? "1 capture" : "\(seedling.pendingCount) captures"
+            seedlingLines.append("\(alias) · \(seedling.name) · \(captures)")
+        }
+
         var prompt = "TOPIC: \(deepDive.title ?? "Deep Dive")\n\nTOP-LEVEL PILLARS:\n"
         prompt += lines.joined(separator: "\n")
         if !nestedLines.isEmpty {
             prompt += "\n\nALREADY NESTED:\n" + nestedLines.joined(separator: "\n")
+        }
+        if !seedlingLines.isEmpty {
+            prompt += "\n\nGROWING SEEDLINGS (fold candidates):\n" + seedlingLines.joined(separator: "\n")
         }
         if !pairs.isEmpty {
             prompt += "\n\nCAPTURED TOGETHER (shared notes):\n"
@@ -509,7 +690,7 @@ final class ConceptCartographer {
                 maxTokens: 900,
                 disableReasoning: true  // structured JSON on Sonnet 5: thinking would share this budget
             )
-            return Self.parseDrafts(raw: raw, uuidByAlias: uuidByAlias)
+            return Self.parseDrafts(raw: raw, uuidByAlias: uuidByAlias, seedlingKeyByAlias: seedlingKeyByAlias)
         } catch {
             print("[ConceptCartographer] LLM failed: \(error) — canvas-cluster drafts only")
             return []
@@ -518,7 +699,11 @@ final class ConceptCartographer {
 
     /// Defensive parse: iterate arrays, drop malformed entries and unknown
     /// aliases entry-by-entry. Never trusts model keys as dictionary keys.
-    static func parseDrafts(raw: String, uuidByAlias: [String: String]) -> [ConceptCartographerSignals.Draft] {
+    static func parseDrafts(
+        raw: String,
+        uuidByAlias: [String: String],
+        seedlingKeyByAlias: [String: String] = [:]
+    ) -> [ConceptCartographerSignals.Draft] {
         guard let object = ConceptResolver.jsonObject(from: raw),
               let entries = object["proposals"] as? [[String: Any]] else { return [] }
         var drafts: [ConceptCartographerSignals.Draft] = []
@@ -526,6 +711,16 @@ final class ConceptCartographer {
             let reason = (entry["reason"] as? String)?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             switch entry["kind"] as? String {
+            case "fold":
+                guard let umbrella = (entry["umbrella"] as? String)?
+                        .trimmingCharacters(in: .whitespacesAndNewlines), !umbrella.isEmpty,
+                      let aliases = entry["members"] as? [String] else { continue }
+                let members = aliases.compactMap { seedlingKeyByAlias[$0.trimmingCharacters(in: .whitespaces)] }
+                guard members.count == aliases.count, !members.isEmpty else { continue }
+                drafts.append(ConceptCartographerSignals.Draft(
+                    kind: .foldSeedlings(umbrellaName: umbrella, memberKeys: members),
+                    reason: reason.isEmpty ? "These seedlings are facets of one concept" : reason
+                ))
             case "group":
                 guard let name = (entry["name"] as? String)?
                         .trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty,

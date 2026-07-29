@@ -57,10 +57,10 @@ actor ConceptResolver {
             )
             let parsed = parse(raw: raw, input: input)
             if !parsed.isEmpty {
-                let backfill = preassigned.filter { assignment in
-                    if case .mergeInto = assignment.action { return true }
-                    return false
-                }
+                let backfill = Self.backfillAssignments(
+                    preassigned,
+                    covering: Set(parsed.flatMap(\.extractUUIDs))
+                )
                 return Self.consolidated(Self.merged(parsed, backfill))
             }
         } catch {
@@ -291,6 +291,25 @@ actor ConceptResolver {
         }
     }
 
+    /// The safety net behind the resolver's consolidation, scoped to what it
+    /// is actually for: an extract the model OMITTED entirely still reaches
+    /// its existing page via its capture-time tag. Extracts the model DID
+    /// place are excluded — the old name-level union resurrected every
+    /// fragmenting capture-time tag alongside the consolidated result, which
+    /// silently undid the granularity rubric. Merge-only stays law: the
+    /// backfill can never create a new page.
+    nonisolated static func backfillAssignments(
+        _ preassigned: [ConceptAssignment],
+        covering coveredExtractUUIDs: Set<String>
+    ) -> [ConceptAssignment] {
+        preassigned.compactMap { assignment in
+            guard case .mergeInto = assignment.action else { return nil }
+            var copy = assignment
+            copy.extractUUIDs = copy.extractUUIDs.filter { !coveredExtractUUIDs.contains($0) }
+            return copy.extractUUIDs.isEmpty ? nil : copy
+        }
+    }
+
     /// Merges two assignment lists by concept key: extract UUID sets union, and a
     /// merge target wins over create when either side found an existing page.
     nonisolated static func merged(
@@ -343,9 +362,7 @@ actor ConceptResolver {
             didFold = false
             outer: for i in result.indices {
                 for j in result.indices where i != j {
-                    let a = Set(result[i].conceptKey.split(separator: " ").map(String.init))
-                    let b = Set(result[j].conceptKey.split(separator: " ").map(String.init))
-                    guard !a.isEmpty, !b.isEmpty, a != b, a.isSubset(of: b) || b.isSubset(of: a) else { continue }
+                    guard keysAreTokenSubset(result[i].conceptKey, result[j].conceptKey) else { continue }
                     // Survivor = more material; a merge action always survives a create.
                     var survivorIdx = result[i].extractUUIDs.count >= result[j].extractUUIDs.count ? i : j
                     var otherIdx = survivorIdx == i ? j : i
@@ -479,6 +496,17 @@ actor ConceptResolver {
     }
 
     // MARK: - Shared helpers
+
+    /// True when one normalized key's token set is strictly contained in the
+    /// other's ("breathing" ⊂ "box breathing") — the near-duplicate signal.
+    /// GUARD-TWIN of ConceptSeedbedReducer's accrual resolution ladder: the
+    /// same rule decides folds here and attach-vs-mint there. Change together.
+    nonisolated static func keysAreTokenSubset(_ a: String, _ b: String) -> Bool {
+        let tokensA = Set(a.split(separator: " ").map(String.init))
+        let tokensB = Set(b.split(separator: " ").map(String.init))
+        guard !tokensA.isEmpty, !tokensB.isEmpty, tokensA != tokensB else { return false }
+        return tokensA.isSubset(of: tokensB) || tokensB.isSubset(of: tokensA)
+    }
 
     /// Normalizes a concept name into a stable dedup key.
     nonisolated static func conceptKey(_ name: String) -> String {

@@ -270,6 +270,9 @@ extension SwipeLibraryFilterState {
         if smartPreset != .all {
             tokens.append(.init(id: "preset", label: smartPreset.title))
         }
+        for genre in genres.sorted(by: { $0.rawValue < $1.rawValue }) {
+            tokens.append(.init(id: "genre:\(genre.rawValue)", label: genre.pluralName))
+        }
         for platform in platforms.sorted() {
             tokens.append(.init(id: "platform:\(platform)", label: platform))
         }
@@ -301,7 +304,11 @@ extension SwipeLibraryFilterState {
         case "unstudied": onlyUnstudied = false
         case "score": minimumHookScore = nil
         default:
-            if id.hasPrefix("platform:") {
+            if id.hasPrefix("genre:") {
+                if let value = SwipeGenre(rawValue: String(id.dropFirst("genre:".count))) {
+                    genres.remove(value)
+                }
+            } else if id.hasPrefix("platform:") {
                 platforms.remove(String(id.dropFirst("platform:".count)))
             } else if id.hasPrefix("hook:") {
                 if let value = SwipeHookType(rawValue: String(id.dropFirst("hook:".count))) {

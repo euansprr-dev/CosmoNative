@@ -1,11 +1,7 @@
-// TEMP-DISABLED-BY-CLAUDE: this file references the in-flight InquiryLiveRouter API rework
-// (parseBatch/CaptureInput/corrections were removed in AI/InquiryLiveRouter.swift working-tree
-// changes) and does not compile. Wrapped so the rest of the test target can build+run.
-// Remove the #if false / #endif pair after realigning these tests with the new router API.
-#if false
 // CosmoOS/Tests/CosmoOSTests/InquiryLiveRouterTests.swift
 // Pure-logic tests for the hybrid async router: payload parsing safety
-// (never trust invented UUIDs) and apply-plan computation.
+// (never trust invented UUIDs), prompt assembly (the seedbed block), and
+// apply-plan computation. Realigned July 2026 with the settled batch API.
 
 import XCTest
 @testable import CosmoOS
@@ -155,6 +151,40 @@ final class InquiryLiveRouterTests: XCTestCase {
         XCTAssertFalse(prompt.contains("heuristic guessed"))   // No anchor to rubber-stamp.
     }
 
+    func testPromptIncludesGrowingSeedlingsWithCountsAndAliases() {
+        var context = InquiryLiveRouter.ContextSnapshot(
+            deepDiveTitle: "Speaking skills",
+            activeQuestionUUID: "q-1",
+            activeQuestionTitle: "How to improve speaking skills?",
+            questions: [.init(uuid: "q-1", title: "How to improve speaking skills?", parentUUID: nil)],
+            lexiconTerms: [],
+            conceptNames: [],
+            recentCaptures: []
+        )
+        context.seedlings = [
+            .init(name: "Silence", aliases: ["Strategic pause"], pendingCount: 2),
+            .init(name: "Prosody", aliases: [], pendingCount: 1)
+        ]
+        let prompt = InquiryLiveRouter.buildPrompt(captures: [capture("c-1", "New capture")], context: context)
+        XCTAssertTrue(prompt.contains("GROWING SEEDLINGS"))
+        XCTAssertTrue(prompt.contains("- \"Silence\" · 2 captures (aka \"Strategic pause\")"))
+        XCTAssertTrue(prompt.contains("- \"Prosody\" · 1 capture"))
+    }
+
+    func testPromptOmitsSeedlingBlockWhenBedIsEmpty() {
+        let context = InquiryLiveRouter.ContextSnapshot(
+            deepDiveTitle: nil,
+            activeQuestionUUID: nil,
+            activeQuestionTitle: "Question",
+            questions: [],
+            lexiconTerms: [],
+            conceptNames: [],
+            recentCaptures: []
+        )
+        let prompt = InquiryLiveRouter.buildPrompt(captures: [capture("c-1", "x")], context: context)
+        XCTAssertFalse(prompt.contains("GROWING SEEDLINGS"))
+    }
+
     // MARK: - Apply plan
 
     private func refinement(_ units: [InquiryLiveRouter.RoutedUnit]) -> InquiryLiveRouter.Refinement {
@@ -173,6 +203,7 @@ final class InquiryLiveRouterTests: XCTestCase {
             kind: kind,
             targetQuestionUUID: target,
             newBranchTitle: branch,
+            newBranchParentUUID: nil,
             conceptNames: concepts,
             confidence: 0.8
         )
@@ -277,4 +308,3 @@ final class InquiryLiveRouterTests: XCTestCase {
         XCTAssertTrue(decoded.liveRoutingDecisions.isEmpty)
     }
 }
-#endif

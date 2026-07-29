@@ -46,6 +46,11 @@ struct SwipeInsightResponse: Codable {
     /// The artifact's structural recipe, written so someone could rebuild it.
     /// Artifact pass only; posts express this through `structuralRecipe`.
     var anatomy: String?
+    /// What the artifact IS (newsletter / salesPage / ad / …) — the browsing
+    /// axis. Artifact pass only, resolved through `SwipeGenre.resolve` so a
+    /// model answer can never mint a label. Posts never carry it (kind .post
+    /// derives genre .post unconditionally).
+    var genre: String?
 
     struct UnitRoleAssignment: Codable {
         /// 1-based, matching the numbering the prompt presents units under.

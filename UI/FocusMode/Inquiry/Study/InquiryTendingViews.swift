@@ -69,6 +69,12 @@ extension ConceptCartographerProposal {
             primary = "Move “\(title)” under “\(memberTitles.first ?? "its parent")”"
             secondary = nil
             help = "Files it inside the broader concept — pinned, never auto-moved again"
+        case .foldSeedlings:
+            primary = "Fold \(memberTitles.count) seedlings into “\(title)”"
+            let named = memberTitles.prefix(3).joined(separator: ", ")
+            let overflow = memberTitles.count - min(memberTitles.count, 3)
+            secondary = overflow > 0 ? "\(named) +\(overflow) more" : named
+            help = "Their captures merge into one growing concept — the old names still route to it"
         }
         return TendingRowModel(
             id: key,

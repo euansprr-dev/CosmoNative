@@ -31,6 +31,10 @@ struct TokenWashTextView: NSViewRepresentable {
     var maxLines: Int? = nil
     @Binding var isFocused: Bool
     var onSubmit: () -> Void = {}
+    /// ⇧⏎. nil keeps AppKit's default (a literal newline); set it and the
+    /// field gains a SECOND commit verb — the capture overlay uses it for
+    /// "send to the Swipe File instead of the Inbox".
+    var onShiftSubmit: (() -> Void)? = nil
     /// Optional Tab handler — hosts embedding the field in a form use this to
     /// move focus onward. nil keeps NSTextView's default (inserts a tab).
     var onTab: (() -> Void)? = nil
@@ -136,6 +140,13 @@ struct TokenWashTextView: NSViewRepresentable {
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
             if commandSelector == #selector(NSResponder.insertNewline(_:)) {
                 parent.onSubmit()
+                return true
+            }
+            // ⇧⏎ arrives as insertNewlineIgnoringFieldEditor, never as
+            // insertNewline with a modifier flag.
+            if commandSelector == #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)),
+               let onShiftSubmit = parent.onShiftSubmit {
+                onShiftSubmit()
                 return true
             }
             if commandSelector == #selector(NSResponder.insertTab(_:)), let onTab = parent.onTab {

@@ -68,16 +68,36 @@ export class SwipeExtractionError extends Error {
   }
 }
 
-/** The worker's scope: instagram / youtube / twitter. Everything else stays
- *  untouched for the Mac pipeline (websites etc. have richer local handling).
- *  Shared by fetchCandidates and processSwipe so the candidate list never
- *  contains swipes the pipeline would refuse — an out-of-scope pending swipe
- *  used to surface as a phantom "candidate" on every 15s tick, forever.
- *  The Mac mirrors this check (SwipeProcessingService.isCloudWorkerScoped)
- *  to decide which swipes to leave to this worker.
+/** Swipe kinds. Mirrors Swift `SwipeKind` (SwipeFile/Artifacts/SwipeKind.swift).
+ *  Only 'post' is cloud-processable — every other kind is captured AND
+ *  decomposed on the Mac (screenshots, captured web pages, funnels, pasted
+ *  copy), and this worker has no extractor for any of them. */
+export const CLOUD_PROCESSABLE_SWIPE_KIND = 'post';
+
+/** The worker's scope: instagram / youtube / twitter POST swipes. Everything
+ *  else stays untouched for the Mac pipeline (websites etc. have richer local
+ *  handling). Shared by fetchCandidates and processSwipe so the candidate list
+ *  never contains swipes the pipeline would refuse — an out-of-scope pending
+ *  swipe used to surface as a phantom "candidate" on every 15s tick, forever.
+ *
+ *  SCOPE-TWIN LAW: this function and the Mac's
+ *  SwipeProcessingService.isCloudWorkerScoped change TOGETHER. `swipeKind`
+ *  comes from atom.metadata.swipeKind, denormalised beside the artifact
+ *  envelope in structured.swipeArtifact so this check never has to decode the
+ *  structured column. If only one half of the twin learns to refuse a kind,
+ *  this worker claims the swipe, fails extraction, and burns its whole retry
+ *  ladder on something it can never process. The kind check runs FIRST and is
+ *  unconditional: a page swipe of a youtube.com URL is still a page swipe.
+ *
  *  A matching contentSource alone qualifies — candidates are scoped from
  *  metadata only, and some swipes carry their URL in structured.sourceUrl. */
-export function inWorkerScope(url: string, source: string): boolean {
+export function inWorkerScope(url: string, source: string, swipeKind?: string | null): boolean {
+  // Raw-string comparison on purpose. An UNRECOGNISED kind (a row written by a
+  // newer client) is Mac-owned too: the Mac is the fallback tier for
+  // everything, so "unknown ⇒ Mac" is the only direction that cannot strand a
+  // swipe with nobody processing it. The Swift twin is strict here for the
+  // same reason, even though its SwipeKind decoder is lenient elsewhere.
+  if (swipeKind && swipeKind !== CLOUD_PROCESSABLE_SWIPE_KIND) return false;
   const s = source.toLowerCase();
   return s.includes('instagram') || /instagram\.com/i.test(url)
     || s.includes('youtube') || /youtube\.com|youtu\.be/i.test(url)

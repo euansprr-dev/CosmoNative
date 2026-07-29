@@ -1301,6 +1301,9 @@ struct CommandKInstantSwipeCapture {
         }
 
         let saved = try await AtomRepository.shared.create(atom)
+        // Inherit the front door's completion: flow append + library refresh +
+        // a receipt naming the kind (⌘K has no toast of its own).
+        SwipeIntakeRouter.noteExternallyCreatedSwipe(saved)
 
         // Client tag: swipeToClient link + clientUUID in the swipe analysis —
         // the same contract the capture_swipe agent tool writes.

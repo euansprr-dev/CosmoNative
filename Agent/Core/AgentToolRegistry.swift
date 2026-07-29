@@ -178,6 +178,28 @@ class AgentToolRegistry {
                 ]
             ),
             LLMToolDefinition(
+                name: "find_swipe_units",
+                description: "Find the specific SECTIONS of saved swipes that play a given role — not whole swipes. Use this whenever the user asks for examples of a MOVE rather than a post: \"show me guarantees I've saved\", \"how do people open a sales page\", \"find pricing sections\", \"what proof blocks work\". Searches across every kind of swipe at once (social posts, captured sales pages, screenshot sets, funnels), because a guarantee reads the same whether it came from a landing page or a carousel slide. Prefer this over search_swipes when the user names a structural element. role values: hook, promise, problem, agitation, mechanism, story, teaching, demonstration, comparison, proof, credibility, testimonial, objection, guarantee, offer, deliverables, pricing, bonus, urgency, cta, footer, visual, other. kind values: post, page, frame, flow, note.",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "query": ["type": "string", "description": "What the section should be about. Omit to browse purely by role."] as [String: Any],
+                        "roles": [
+                            "type": "array",
+                            "items": ["type": "string"] as [String: Any],
+                            "description": "Role names to include. Omit for any role."
+                        ] as [String: Any],
+                        "kinds": [
+                            "type": "array",
+                            "items": ["type": "string"] as [String: Any],
+                            "description": "Swipe kinds to include. Omit for all kinds."
+                        ] as [String: Any],
+                        "limit": ["type": "integer", "description": "Max sections (default 8)"] as [String: Any]
+                    ] as [String: Any],
+                    "required": [] as [String]
+                ]
+            ),
+            LLMToolDefinition(
                 name: "list_all_swipes",
                 description: "List all swipe files with their analysis summary. Use this to browse the full swipe library when search returns empty results, or when the user asks 'what swipes do I have'. Returns hookText, hookType, frameworkType, emotion, and platform for each swipe.",
                 parametersSchema: [

@@ -10,6 +10,15 @@ struct SwipeLibraryFilterPanel: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                // PROGRESSIVE DISCLOSURE: a library of nothing but posts never
+                // sees this section — the facet appears the day a second kind
+                // exists, and only then. New kinds add facets, never sidebar rows.
+                if viewModel.availableKinds.count > 1 {
+                    SwipeFilterDisclosure(title: "Kind", isInitiallyExpanded: true) {
+                        kindRows
+                    }
+                    divider
+                }
                 SwipeFilterDisclosure(title: "Platforms", isInitiallyExpanded: true) {
                     platformRows
                 }
@@ -46,6 +55,25 @@ struct SwipeLibraryFilterPanel: View {
             .fill(DS.glassBorder)
             .frame(height: 0.5)
             .opacity(0.7)
+    }
+
+    /// Kind rows wear the kind's own glyph in the neutral muted tint — a kind
+    /// is a category, not a brand, so it never earns a colour the way a
+    /// platform mark does (Law 6: accent is punctuation).
+    private var kindRows: some View {
+        VStack(spacing: 2) {
+            ForEach(viewModel.availableKinds, id: \.rawValue) { kind in
+                SwipeFilterCheckRow(
+                    title: kind.pluralName,
+                    systemImage: kind.iconName,
+                    iconTint: DS.textMuted,
+                    trailingCount: viewModel.kindCount(kind),
+                    isOn: viewModel.filterState.kinds.contains(kind)
+                ) {
+                    withAnimation(ProMotionSprings.snappy) { viewModel.toggleKind(kind) }
+                }
+            }
+        }
     }
 
     private var platformRows: some View {

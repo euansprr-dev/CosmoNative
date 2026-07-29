@@ -39,6 +39,11 @@ final class SwipeStudyModel {
     // YouTube player
     var isPlayerActive = false
     var currentTimestamp: TimeInterval = 0
+    /// The artifact unit the stage and the manuscript are both pointed at.
+    /// Page swipes bind the two directions through this — clicking a section
+    /// in the manuscript scrolls the page, and clicking the page selects the
+    /// row. The reel's `currentTimestamp` plays exactly this role for video.
+    var focusedArtifactUnitID: String?
     var videoDuration: TimeInterval = 0
 
     // Plain transcript (YouTube / default sources)
@@ -2001,7 +2006,11 @@ final class SwipeStudyModel {
     /// (processing + polling now underway); false → caller falls back local.
     private func kickCloudRetranscribe(for atom: Atom) async -> Bool {
         guard let urlString = atom.url,
-              SwipeProcessingService.isCloudWorkerScoped(url: urlString, contentSource: nil) else {
+              SwipeProcessingService.isCloudWorkerScoped(
+                  url: urlString,
+                  contentSource: nil,
+                  swipeKind: atom.researchMetadata?.swipeKind
+              ) else {
             return false
         }
         guard await CloudSwipeAPI.kickProcessingAwaiting(swipeUUID: atom.uuid) else {

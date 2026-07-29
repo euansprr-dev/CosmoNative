@@ -43,6 +43,16 @@ final class CaptureOverlayViewModel {
         /// Where a lane-routed capture landed ("→ Groceries") — shown in
         /// place of the default "→ Inbox" trailing label.
         var destinationLabel: String? = nil
+        /// WHAT the uuid in `.captured` refers to, so Undo dismisses the right
+        /// record. A swipe row carries an ATOM uuid; sending that to
+        /// `InboxRepository.dismiss` would silently no-op while the row
+        /// cheerfully reported itself undone.
+        var undoTarget: UndoTarget = .inboxItem
+
+        enum UndoTarget {
+            case inboxItem
+            case swipeAtom
+        }
 
         enum State {
             /// A file promise is still streaming in.
@@ -83,6 +93,62 @@ final class CaptureOverlayViewModel {
         var isImage: Bool { kind == .image || kind == .screenshot }
     }
 
+    // MARK: - Staged destination
+
+    /// Where the staged tray is headed.
+    ///
+    /// This is the ONE place in the whole system that asks the user anything
+    /// kind-adjacent, and it earns the exception because staged files are
+    /// genuinely ambiguous: three ad screenshots and a PDF invoice arrive
+    /// through the identical gesture. Note it is a DESTINATION, not a kind —
+    /// picking Swipe still leaves the kind to `SwipeIntakeRouter`.
+    enum StagedDestination: String, CaseIterable, Identifiable {
+        case inbox
+        case swipe
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .inbox: return "Inbox"
+            case .swipe: return "Swipe"
+            }
+        }
+
+        var iconName: String {
+            switch self {
+            case .inbox: return "tray"
+            case .swipe: return SwipeKind.frame.iconName
+            }
+        }
+    }
+
+    var stagedDestination: StagedDestination = .inbox
+    /// Set the moment the user touches the control. Until then the default is
+    /// re-inferred on every staging change; after it, their choice sticks for
+    /// the rest of the tray's life — a picker that re-guesses under your hand
+    /// is worse than no picker.
+    private var stagedDestinationChosen = false
+
+    /// All-images ⇒ Swipe. A single document, or any mix, ⇒ Inbox.
+    /// Screenshots are what people drop on this panel to swipe; a PDF is not.
+    static func inferredStagedDestination(for staged: [StagedAttachment]) -> StagedDestination {
+        guard !staged.isEmpty, staged.allSatisfy(\.isImage) else { return .inbox }
+        return .swipe
+    }
+
+    func chooseStagedDestination(_ destination: StagedDestination) {
+        stagedDestination = destination
+        stagedDestinationChosen = true
+    }
+
+    /// Re-infer while the user hasn't overridden. Called after every staging
+    /// mutation.
+    private func refreshStagedDestination() {
+        guard !stagedDestinationChosen else { return }
+        stagedDestination = Self.inferredStagedDestination(for: stagedAttachments)
+    }
+
     // MARK: - Sources
 
     /// Bumped to pop the Continuity Camera device menu.
@@ -114,6 +180,8 @@ final class CaptureOverlayViewModel {
         captureText = ""
         sessionEntries = []
         stagedAttachments = []
+        stagedDestination = .inbox
+        stagedDestinationChosen = false
         errorLine = nil
         isDropTargeted = false
         dragPreview = nil
@@ -133,15 +201,46 @@ final class CaptureOverlayViewModel {
         }
     }
 
-    func submitText() async {
+    /// `swipe:` — the swipe alias, alongside the lane aliases. Checked before
+    /// the lane assist so a user can never shadow it by naming a lane "swipe".
+    static let swipeAliasPrefix = "swipe:"
+
+    /// Strip the alias and return what follows, or nil when it isn't one.
+    static func swipeAliasBody(in text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.lowercased().hasPrefix(swipeAliasPrefix) else { return nil }
+        let body = trimmed.dropFirst(swipeAliasPrefix.count)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return body.isEmpty ? nil : body
+    }
+
+    func submitText(asSwipe: Bool = false) async {
         // Staged files present — Enter sends the bundle: the thought and its
         // attachments leave as one linked capture.
         if !stagedAttachments.isEmpty {
+            if asSwipe { chooseStagedDestination(.swipe) }
             await sendStaged()
             return
         }
         let text = captureText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
+
+        // ⇧⏎ or the `swipe:` alias — the same destination, two ways of saying
+        // it. The alias is checked BEFORE the lane assist so naming a lane
+        // "swipe" can never shadow the verb.
+        if let body = Self.swipeAliasBody(in: text) {
+            captureText = ""
+            laneAssist.reset()
+            await captureAsSwipe(body)
+            return
+        }
+        if asSwipe {
+            captureText = ""
+            laneAssist.reset()
+            await captureAsSwipe(text)
+            return
+        }
+
         captureText = ""
         laneAssist.reset()
 
@@ -152,6 +251,32 @@ final class CaptureOverlayViewModel {
             return
         }
         await ingest([.text(text)])
+    }
+
+    /// ONE FRONT DOOR: the overlay decides WHERE, never WHAT. The router reads
+    /// the text and lands a page / post / note as appropriate.
+    private func captureAsSwipe(_ text: String) async {
+        let atom = await SwipeIntakeRouter.run(.text(text), captureMode: "capture_overlay")
+        let display = text.count > 40 ? "\u{201C}\(text.prefix(40))…\u{201D}" : "\u{201C}\(text)\u{201D}"
+        guard let atom else {
+            // Never drop the words: a failed swipe returns them to the field.
+            captureText = text
+            sessionEntries.append(SessionEntry(
+                displayName: display,
+                kind: nil,
+                state: .failed("Couldn't save that swipe"),
+                fingerprint: nil
+            ))
+            return
+        }
+        sessionEntries.append(SessionEntry(
+            displayName: display,
+            kind: nil,
+            state: .captured(itemUUID: atom.uuid),
+            fingerprint: nil,
+            destinationLabel: "→ Swipe File · \(atom.swipeKind.displayName)",
+            undoTarget: .swipeAtom
+        ))
     }
 
     private func routeToLane(text: String, match: LaneCaptureAssist.LaneMatch) async {
@@ -232,6 +357,7 @@ final class CaptureOverlayViewModel {
                 fingerprint: fingerprint
             )
             stagedAttachments.append(staged)
+            refreshStagedDestination()
             if staged.isImage { loadThumbnail(for: staged.id, source: .url(url)) }
 
         case .data(let data, let type, let suggestedName):
@@ -248,6 +374,7 @@ final class CaptureOverlayViewModel {
                 fingerprint: nil
             )
             stagedAttachments.append(staged)
+            refreshStagedDestination()
             if staged.isImage { loadThumbnail(for: staged.id, source: .data(data)) }
 
         case .text, .url:
@@ -257,10 +384,13 @@ final class CaptureOverlayViewModel {
 
     func removeStaged(_ id: UUID) {
         stagedAttachments.removeAll { $0.id == id }
+        refreshStagedDestination()
     }
 
     func clearStaged() {
         stagedAttachments = []
+        stagedDestinationChosen = false
+        refreshStagedDestination()
     }
 
     /// The send button: staged files plus whatever's in the thought field.
@@ -270,9 +400,17 @@ final class CaptureOverlayViewModel {
         let staged = stagedAttachments
         guard !staged.isEmpty else { return }
         let thought = captureText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let destination = stagedDestination
         stagedAttachments = []
+        stagedDestinationChosen = false
+        stagedDestination = .inbox
         captureText = ""
         laneAssist.reset()
+
+        if destination == .swipe {
+            await sendStagedAsSwipe(staged, note: thought.isEmpty ? nil : thought)
+            return
+        }
 
         guard !thought.isEmpty else {
             await ingest(staged.map(\.payload))
@@ -298,27 +436,100 @@ final class CaptureOverlayViewModel {
             captureText = thought
         }
         let display = thought.count > 40 ? "\u{201C}\(thought.prefix(40))…\u{201D}" : "\u{201C}\(thought)\u{201D}"
-        var destination: String?
+        var destinationLabel: String?
         if case .captured = combined.outcome {
-            destination = "→ Inbox · \(combined.attachedCount) attached"
+            destinationLabel = "→ Inbox · \(combined.attachedCount) attached"
         }
         sessionEntries.append(SessionEntry(
             displayName: display,
             kind: staged.first?.kind,
             state: state,
             fingerprint: nil,
-            destinationLabel: destination
+            destinationLabel: destinationLabel
         ))
     }
 
-    /// The panel is closing with unsent staged files — capture them
-    /// individually (the bare-drop path) rather than dropping bytes on the
-    /// floor. Esc never loses a capture; Clear is the explicit discard.
+    /// A staged tray headed for the Swipe File leaves as ONE frame swipe —
+    /// four ad screenshots dropped together are one artifact, because a set is
+    /// what the user dragged. The typed thought rides along as the note.
+    private func sendStagedAsSwipe(_ staged: [StagedAttachment], note: String?) async {
+        var payloads: [SwipeImagePayload] = []
+        var unreadable: [String] = []
+        for item in staged {
+            if let payload = await Self.swipeImagePayload(for: item) {
+                payloads.append(payload)
+            } else {
+                unreadable.append(item.displayName)
+            }
+        }
+        if !unreadable.isEmpty {
+            errorLine = "Couldn't read \(unreadable.joined(separator: ", "))"
+        }
+        guard !payloads.isEmpty else {
+            // Nothing readable — fall back to the Inbox path rather than
+            // silently discarding the drop.
+            await ingest(staged.map(\.payload))
+            return
+        }
+
+        let atom = await SwipeIntakeRouter.run(
+            .images(payloads), note: note, captureMode: "capture_overlay"
+        )
+        let label = SwipeKind.frame.unitCountLabel(payloads.count)
+        sessionEntries.append(SessionEntry(
+            displayName: note.map { $0.count > 40 ? "\u{201C}\($0.prefix(40))…\u{201D}" : "\u{201C}\($0)\u{201D}" }
+                ?? label,
+            kind: .screenshot,
+            state: atom.map { .captured(itemUUID: $0.uuid) } ?? .failed("Couldn't save that swipe"),
+            fingerprint: nil,
+            destinationLabel: atom == nil ? nil : "→ Swipe File · \(label)",
+            undoTarget: .swipeAtom
+        ))
+    }
+
+    /// Staged payload → image bytes. File payloads read from disk; data
+    /// payloads are already in hand.
+    private static func swipeImagePayload(for staged: StagedAttachment) async -> SwipeImagePayload? {
+        switch staged.payload {
+        case .file(let url, let suggestedName):
+            guard let data = try? Data(contentsOf: url) else { return nil }
+            let type = UTType(filenameExtension: url.pathExtension)
+            guard type?.conforms(to: .image) == true else { return nil }
+            return SwipeImagePayload(
+                data: data,
+                filename: suggestedName ?? url.lastPathComponent,
+                mimeType: type?.preferredMIMEType,
+                utType: type
+            )
+        case .data(let data, let type, let suggestedName):
+            guard type.conforms(to: .image) else { return nil }
+            return SwipeImagePayload(
+                data: data, filename: suggestedName,
+                mimeType: type.preferredMIMEType, utType: type
+            )
+        case .text, .url:
+            return nil
+        }
+    }
+
+    /// The panel is closing with unsent staged files — capture them rather
+    /// than dropping bytes on the floor. Esc never loses a capture; Clear is
+    /// the explicit discard. The chosen destination is honoured on the way
+    /// out: a tray headed for the Swipe File must not silently land in the
+    /// Inbox just because the user pressed Esc instead of the send button.
     func flushStagedOnClose() {
         let staged = stagedAttachments
         guard !staged.isEmpty else { return }
+        let destination = stagedDestination
+        let thought = captureText.trimmingCharacters(in: .whitespacesAndNewlines)
         stagedAttachments = []
-        Task { await ingest(staged.map(\.payload)) }
+        Task {
+            if destination == .swipe {
+                await sendStagedAsSwipe(staged, note: thought.isEmpty ? nil : thought)
+            } else {
+                await ingest(staged.map(\.payload))
+            }
+        }
     }
 
     // MARK: - Staged thumbnails
@@ -476,13 +687,23 @@ final class CaptureOverlayViewModel {
 
     // MARK: - Undo
 
-    /// Per-row Undo dismisses the inbox item (restorable from Recently
-    /// dismissed — never a hard delete).
+    /// Per-row Undo. An inbox capture is dismissed (restorable from Recently
+    /// dismissed — never a hard delete); a swipe is soft-deleted into the
+    /// Trash, which is that object's own equivalent. Routing by `undoTarget`
+    /// rather than by uuid shape is what keeps the two honest.
     func undo(_ entry: SessionEntry) async {
-        guard case .captured(let itemUUID) = entry.state, let itemUUID else { return }
+        guard case .captured(let uuid) = entry.state, let uuid else { return }
         guard let index = sessionEntries.firstIndex(where: { $0.id == entry.id }) else { return }
         do {
-            try await InboxRepository.shared.dismiss(uuid: itemUUID)
+            switch entry.undoTarget {
+            case .inboxItem:
+                try await InboxRepository.shared.dismiss(uuid: uuid)
+            case .swipeAtom:
+                try await AtomRepository.shared.delete(uuid: uuid)
+                NotificationCenter.default.post(
+                    name: CosmoNotification.SwipeFile.libraryDidChange, object: nil
+                )
+            }
             sessionEntries[index].state = .undone
         } catch {
             errorLine = "Couldn't undo — \(error.localizedDescription)"
@@ -506,6 +727,10 @@ struct CaptureDragPreview: Equatable {
     /// True when releasing will stage into the well (files/images over the
     /// panel) rather than capture instantly — the release line says "add".
     var stagesOnDrop: Bool = false
+    /// Every item is an image. Such a drop defaults to the Swipe File, so the
+    /// release line says so BEFORE the user lets go — a destination learned
+    /// from the receipt is a destination learned too late.
+    var isAllImages: Bool = false
 
     var summary: String {
         switch totalCount {

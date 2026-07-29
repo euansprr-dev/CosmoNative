@@ -530,6 +530,13 @@ final class SwipeFileEngine: ObservableObject {
                 SwipeProcessingService.shared.processSwipeInBackground(uuid: mutableItem.uuid)
             }
 
+            // The completion hook — this engine predates SwipeIntakeRouter and
+            // posts its own capture notification, so it takes only the flow
+            // append and the library refresh.
+            if mutableItem.isSwipeFile {
+                SwipeIntakeRouter.noteExternallyCreatedSwipe(mutableItem, publishesReceipt: false)
+            }
+
         } catch {
             print("SwipeFile: Failed to save item: \(error)")
             processingStatus = .error(error.localizedDescription)

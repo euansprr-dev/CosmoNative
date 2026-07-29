@@ -317,6 +317,14 @@ extension CaptureLanesViewModel: InboxInspectorHost {
         await triageModel?.fileAsSwipe(item)
     }
 
+    /// Delegated like every other atom-creating verb, so toasts, undo and the
+    /// override sheet stay one pipeline (see `InboxInspectorHost`).
+    var hasFlows: Bool { triageModel?.hasFlows ?? false }
+
+    func addCaptureToFlow(_ item: InboxItem) async {
+        await triageModel?.addCaptureToFlow(item)
+    }
+
     func growSeedling(_ item: InboxItem) async {
         await triageModel?.growSeedling(item)
     }

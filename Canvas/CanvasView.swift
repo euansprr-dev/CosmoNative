@@ -5758,6 +5758,12 @@ struct CanvasView: View {
         rebuildMediaContentCache()
         
 
+        if atom.isSwipeFileAtom {
+            // A swipe pasted onto a canvas is still a capture: it joins an open
+            // flow and refreshes the library. The block itself is the receipt.
+            SwipeIntakeRouter.noteExternallyCreatedSwipe(atom, publishesReceipt: false)
+        }
+
         print("📋 Pasted \(classification.sourceType.rawValue) URL → canvas block (uuid: \(atom.uuid))")
 
         // Trigger background processing

@@ -97,6 +97,7 @@ private struct SwipeCardMedia: View {
         .clipped()
         .overlay(alignment: .topLeading) { outlierBadge }
         .overlay(alignment: .bottomTrailing) { durationBadge }
+        .overlay(alignment: .bottomLeading) { unitBadge }
         .overlay(alignment: .topTrailing) {
             // Mounted only on hover: the glass container + Menu are the most
             // expensive views on the card, and a masonry keeps 30–80 cards
@@ -137,6 +138,29 @@ private struct SwipeCardMedia: View {
                 .background(.black.opacity(0.55), in: Capsule())
                 .padding(8)
                 .accessibilityLabel("Outlier \(outlier)")
+        }
+    }
+
+    /// "14 sections" / "3 images" — says a card holds more than the one frame
+    /// you can see. Same quiet register as the duration stamp (Law 6: accent is
+    /// punctuation, and this is metadata), with the kind's glyph so a page and
+    /// a screenshot set are distinguishable at a glance in a mixed masonry.
+    @ViewBuilder
+    private var unitBadge: some View {
+        if let badge = model.unitBadge {
+            HStack(spacing: 4) {
+                Image(systemName: model.kind.iconName)
+                    .font(DS.caption2.weight(.semibold))
+                Text(badge)
+                    .font(DS.caption2.weight(.medium).monospacedDigit())
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 7)
+            .frame(height: 18)
+            .background(.black.opacity(0.55), in: Capsule())
+            .padding(8)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(model.kind.displayName), \(badge)")
         }
     }
 

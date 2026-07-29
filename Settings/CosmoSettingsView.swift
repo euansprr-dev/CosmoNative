@@ -467,6 +467,13 @@ struct CosmoSettingsView: View {
             }
 
             settingsSection(
+                title: "CLOUD STORAGE",
+                detail: "Where finished work goes when it leaves Cosmo."
+            ) {
+                GoogleDriveConnectionCard()
+            }
+
+            settingsSection(
                 title: "RECALL INDEX",
                 detail: "The semantic index behind related-knowledge suggestions and recall search."
             ) {

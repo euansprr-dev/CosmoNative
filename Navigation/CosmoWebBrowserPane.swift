@@ -37,13 +37,33 @@ struct CosmoWebBrowserPane: View {
         .background(DS.bg)
         .task {
             BrowserPaneRegistry.shared.register(browserState, for: paneId)
+            registerSwipeContext()
             await browserState.loadPersistedPins()
+        }
+        .onChange(of: isPaneActive) { _, active in
+            // ⌘⇧S fires from anywhere in the app; the frontmost browser pane is
+            // what makes it mean "swipe this page". Registering on activation
+            // (rather than reaching into pane internals from the router) keeps
+            // that one seam explicit.
+            if active { registerSwipeContext() }
         }
         .onDisappear {
             BrowserPaneRegistry.shared.unregister(paneId: paneId)
+            CosmoBrowserSwipeContext.clear(paneId: paneId)
         }
         .sheet(item: $renamingPin) { pin in
             renameSheet(for: pin)
+        }
+    }
+
+    private func registerSwipeContext() {
+        CosmoBrowserSwipeContext.register(paneId: paneId) { [browserState] in
+            guard let url = browserState.currentURL, !browserState.showsStartPage else { return nil }
+            return CosmoBrowserSwipeContext.Page(
+                url: url.absoluteString,
+                title: browserState.displayTitle,
+                webView: browserState.liveWebView
+            )
         }
     }
 

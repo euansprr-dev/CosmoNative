@@ -165,6 +165,7 @@ struct LaneHighlightedCaptureField: View {
     let assist: LaneCaptureAssist
     @Binding var isFocused: Bool
     var onSubmit: () -> Void = {}
+    var onShiftSubmit: (() -> Void)? = nil
 
     var body: some View {
         TokenWashTextView(
@@ -177,7 +178,8 @@ struct LaneHighlightedCaptureField: View {
             ghostColor: NSColor((laneColor ?? DS.textMuted).opacity(0.45)),
             maxLines: maxLines,
             isFocused: $isFocused,
-            onSubmit: onSubmit
+            onSubmit: onSubmit,
+            onShiftSubmit: onShiftSubmit
         )
     }
 

@@ -181,6 +181,7 @@ class AgentToolExecutor {
         // Swipes
         case "search_by_client": return try await searchByClient(arguments)
         case "search_swipes": return try await searchSwipes(arguments)
+        case "find_swipe_units": return try await findSwipeUnits(arguments)
         case "list_all_swipes": return try await listAllSwipes(arguments)
         case "filter_swipes_by_taxonomy": return try await filterSwipesByTaxonomy(arguments)
         case "get_swipe_analysis": return try await getSwipeAnalysis(arguments)
@@ -802,6 +803,57 @@ class AgentToolExecutor {
 
     // MARK: - Swipes
 
+    /// Role-scoped retrieval across every swipe kind.
+    ///
+    /// The reference layer's front door for the agent: a section is the
+    /// retrievable unit, so "find me three guarantees" returns three
+    /// guarantees — from a sales page, a screenshot, and a carousel slide
+    /// alike — instead of three whole swipes to read through.
+    private func findSwipeUnits(_ args: [String: Any]) async throws -> String {
+        let query = (args["query"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let limit = args["limit"] as? Int ?? 8
+        let roles = Set((args["roles"] as? [String] ?? []).compactMap(SwipeUnitRole.init(rawValue:)))
+        let kinds = Set((args["kinds"] as? [String] ?? []).compactMap(SwipeKind.init(rawValue:)))
+
+        let hits: [SwipeUnitHit]
+        if query.isEmpty {
+            guard !roles.isEmpty else {
+                return jsonError("Provide a query, one or more roles, or both.")
+            }
+            hits = await SwipeReferenceQuery.units(withRoles: roles, kinds: kinds, limit: limit)
+        } else {
+            hits = await SwipeReferenceQuery.units(
+                matching: query, roles: roles, kinds: kinds, limit: limit
+            )
+        }
+
+        guard !hits.isEmpty else {
+            // An honest empty beats a silent one: the model should say the
+            // library has nothing of that shape, not invent an example.
+            let available = await SwipeReferenceQuery.availableRoles()
+                .map(\.rawValue).sorted()
+            return jsonEncode([
+                "results": [],
+                "count": 0,
+                "availableRoles": available,
+                "note": available.isEmpty
+                    ? "No swipes have been decomposed into sections yet."
+                    : "No sections matched. Roles present in this library are listed."
+            ])
+        }
+
+        let items: [[String: Any]] = hits.map { hit in
+            [
+                "swipeUUID": hit.swipeUUID,
+                "swipeTitle": hit.swipeTitle,
+                "kind": hit.kind.rawValue,
+                "role": hit.role?.rawValue ?? "",
+                "text": hit.text
+            ]
+        }
+        return jsonEncode(["results": items, "count": items.count])
+    }
+
     private func searchSwipes(_ args: [String: Any]) async throws -> String {
         guard let query = args["query"] as? String else {
             return jsonError("Missing required parameter: query")
@@ -1291,6 +1343,15 @@ class AgentToolExecutor {
             item.id = insertedId
         } catch {
             return jsonError("Failed to save swipe: \(error.localizedDescription)")
+        }
+
+        // The front door's completion hook. The agent builds this atom itself
+        // (it carries conversation-supplied notes and client tags), but the
+        // capture still joins an open flow and refreshes the library. No
+        // receipt: the agent answers in its own transcript, and a floating
+        // toast for something the user did not physically do reads as noise.
+        await MainActor.run {
+            SwipeIntakeRouter.noteExternallyCreatedSwipe(item, publishesReceipt: false)
         }
 
         // Generate embedding in background

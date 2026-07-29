@@ -15,11 +15,20 @@ struct RecallChunk: Sendable, Equatable {
     let text: String
     /// Optional locator (e.g. a PDF page) carried through to citations.
     let page: Int?
+    /// `SwipeUnitRole.rawValue` when this chunk IS a swipe's artifact unit.
+    /// Present ⇒ retrieval can filter by role, which is what turns the swipe
+    /// file from "a pile of saved things" into "show me three guarantees".
+    let role: String?
+    /// The artifact unit this chunk came from, so a hit can point AT the
+    /// section rather than at the swipe that contains it.
+    let unitID: String?
 
-    init(index: Int, text: String, page: Int? = nil) {
+    init(index: Int, text: String, page: Int? = nil, role: String? = nil, unitID: String? = nil) {
         self.index = index
         self.text = text
         self.page = page
+        self.role = role
+        self.unitID = unitID
     }
 }
 
@@ -55,7 +64,60 @@ enum RecallDocumentBuilder {
         var parts: [String] = []
         if !title.isEmpty { parts.append(title) }
         if !body.isEmpty { parts.append(body) }
+        // A swipe's substance is NOT its body. Until the reference layer, a
+        // swipe indexed as title + body — which for a reel is a title and an
+        // empty string. Every hook, every transcript, every page section and
+        // every screenshot's copy was invisible to recall.
+        if atom.isSwipeFileAtom {
+            parts.append(contentsOf: swipeParts(for: atom))
+        }
         return parts.joined(separator: "\n\n")
+    }
+
+    /// Everything a swipe knows, in the order a reader would want it.
+    /// Deliberately includes the ANALYSIS (insight, recipe) as well as the
+    /// content: "what does this do and how" is exactly what you search a swipe
+    /// file for, and it is the part a transcript alone never says.
+    static func swipeParts(for atom: Atom) -> [String] {
+        var parts: [String] = []
+        let analysis = atom.swipeAnalysis
+
+        if let hook = analysis?.hookText?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !hook.isEmpty { parts.append(hook) }
+        if let insight = analysis?.keyInsight?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !insight.isEmpty { parts.append(insight) }
+        if let recipe = analysis?.structuralRecipe?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !recipe.isEmpty { parts.append(recipe) }
+        if let anatomy = atom.swipeArtifact?.anatomy?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !anatomy.isEmpty { parts.append(anatomy) }
+
+        // Artifact units (page sections, screenshot copy, flow steps).
+        for unit in atom.swipeArtifactUnits where unit.hasSubstance {
+            parts.append(unitChunkText(unit, title: nil))
+        }
+        // Post transcripts.
+        let slides = (analysis?.transcriptSlides ?? [])
+            .map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        parts.append(contentsOf: slides)
+        if slides.isEmpty {
+            let speech = (analysis?.transcriptSpeechSegments ?? [])
+                .map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            if !speech.isEmpty { parts.append(speech.joined(separator: " ")) }
+        }
+        return parts
+    }
+
+    /// One unit's chunk text, role-prefixed. The prefix is what lets a match
+    /// announce WHAT it matched ("[guarantee] The Offer — Full refund inside
+    /// 60 days") instead of returning an anonymous paragraph.
+    static func unitChunkText(_ unit: SwipeArtifactUnit, title: String?) -> String {
+        var line = ""
+        if let role = unit.role { line += "[\(role.rawValue)] " }
+        if let title, !title.isEmpty { line += "\(title) — " }
+        line += unit.indexableText
+        return line
     }
 
     /// Stable content hash — when it matches the indexed row, the index is
@@ -72,6 +134,14 @@ enum RecallDocumentBuilder {
     /// from those documents are stamped with their page so recall citations
     /// can say "p. 12" and deep-link into the reader.
     static func chunks(for atom: Atom) -> [RecallChunk] {
+        // A swipe chunks by UNIT, not by paragraph window: the retrievable
+        // thing is the section, so a vector match points at "the guarantee on
+        // that page" rather than at a 1,000-character slice that happens to
+        // straddle three of them.
+        if atom.isSwipeFileAtom, !atom.swipeArtifactUnits.isEmpty {
+            return swipeUnitChunks(for: atom)
+        }
+
         let text = documentText(for: atom)
         guard !text.isEmpty else { return [] }
 
@@ -94,6 +164,43 @@ enum RecallDocumentBuilder {
                 : prefix + piece.text
             return RecallChunk(index: index, text: chunkText, page: piece.page)
         }
+    }
+
+    /// One chunk per artifact unit, plus a leading chunk carrying the swipe's
+    /// own summary (hook + insight + recipe) so a query about the WHOLE swipe
+    /// still lands. Units with nothing to say are skipped rather than embedded
+    /// as empty vectors.
+    static func swipeUnitChunks(for atom: Atom) -> [RecallChunk] {
+        let title = atom.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        var chunks: [RecallChunk] = []
+
+        let analysis = atom.swipeAnalysis
+        let summary = [
+            title,
+            analysis?.hookText,
+            analysis?.keyInsight,
+            analysis?.structuralRecipe,
+            atom.swipeArtifact?.anatomy
+        ]
+        .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+        .joined(separator: "\n\n")
+
+        if !summary.isEmpty {
+            chunks.append(RecallChunk(index: 0, text: summary))
+        }
+
+        for unit in atom.swipeArtifactUnits where unit.hasSubstance {
+            guard chunks.count < maxChunksPerAtom else { break }
+            chunks.append(RecallChunk(
+                index: chunks.count,
+                text: unitChunkText(unit, title: title),
+                page: nil,
+                role: unit.role?.rawValue,
+                unitID: unit.id
+            ))
+        }
+        return chunks
     }
 
     /// Split a page-marked body into per-page segments, stripping the markers

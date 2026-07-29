@@ -116,6 +116,10 @@ protocol InboxInspectorHost {
     func askInDeepDive(_ item: InboxItem) async
     func fileAsIdea(_ item: InboxItem) async
     func fileAsSwipe(_ item: InboxItem) async
+    /// True when at least one flow exists to add a step to. Gates the `→ Flow`
+    /// verb — an affordance with nothing to pick is worse than no affordance.
+    var hasFlows: Bool { get }
+    func addCaptureToFlow(_ item: InboxItem) async
     func growSeedling(_ item: InboxItem) async
     func connectCapture(_ item: InboxItem) async
     func showOverride(for item: InboxItem)
@@ -142,6 +146,11 @@ extension InboxRouteKind {
              .placeInExistingCluster, .createClusterAndPlace,
              .placeInThinkspace, .createThinkspaceAndPlace, .createStandaloneAtom:
             return DS.accent
+        case .fileAsSwipe, .addToFlow:
+            // The swipe file has its own entity colour throughout the app —
+            // a routed swipe must read as the same object here as it does on
+            // a canvas block or a Library row.
+            return DS.entitySwipe
         }
     }
 }

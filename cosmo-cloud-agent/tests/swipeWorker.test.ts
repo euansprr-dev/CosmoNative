@@ -398,6 +398,30 @@ assert.ok(!inWorkerScope('https://example.com/article', 'website'), 'websites st
 assert.ok(!inWorkerScope('https://www.tiktok.com/@u/video/1', 'tiktok'), 'tiktok stays with the Mac');
 assert.ok(inWorkerScope('', 'instagram_post'), 'contentSource alone qualifies (URL may live in structured.sourceUrl)');
 
+// SCOPE-TWIN parity with SwipeProcessingService.isCloudWorkerScoped (Swift):
+// every non-post kind is Mac-captured AND Mac-decomposed. This worker has no
+// extractor for a screenshot, a captured web page, a funnel or pasted copy —
+// claiming one means a failed extraction that burns the whole retry ladder.
+for (const kind of ['page', 'frame', 'flow', 'note']) {
+  assert.ok(
+    !inWorkerScope('https://www.instagram.com/p/Dalun2ODxrf/', 'instagram_post', kind),
+    `${kind} must be Mac-owned even when its URL and source look cloud-scoped`,
+  );
+}
+// The kind gate runs FIRST and unconditionally: a page swipe OF a YouTube URL
+// is still a page swipe.
+assert.ok(!inWorkerScope('https://www.youtube.com/@creator', 'youtube', 'page'));
+assert.ok(inWorkerScope('https://www.youtube.com/watch?v=abc123', 'youtube', 'post'),
+  'an explicit post kind must not narrow the existing scope');
+// Legacy rows carry no swipeKind key at all — their scope must be unchanged.
+assert.ok(inWorkerScope('https://www.instagram.com/reel/XYZ/', '', null));
+assert.ok(inWorkerScope('https://www.instagram.com/reel/XYZ/', '', undefined));
+assert.ok(!inWorkerScope('https://example.com/sales', '', null));
+// A kind from a newer build must not strand a swipe outside BOTH pipelines…
+// it is refused here, and the Mac picks it up (Swift decodes it as .post,
+// which is the safe direction: worse case is a Mac pass, never a dead swipe).
+assert.ok(!inWorkerScope('https://www.instagram.com/p/ABC/', 'instagram_post', 'some_future_kind'));
+
 console.log('✅ worker scope tests passed');
 
 // YouTube videos without captions fail PERMANENTLY (no retry churn)

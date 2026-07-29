@@ -192,12 +192,17 @@ final class CaptureDropTargetView: NSView {
         // Files, promises, and raw images stage in the panel ("Release to
         // add"); links and text always capture on release.
         var stagesOnDrop = false
+        var isAllImages = false
 
         if let urls = pasteboard.readObjects(
             forClasses: [NSURL.self],
             options: [.urlReadingFileURLsOnly: true]
         ) as? [URL], !urls.isEmpty {
             stagesOnDrop = stages
+            isAllImages = urls.allSatisfy { url in
+                guard let type = UTType(filenameExtension: url.pathExtension) else { return false }
+                return type.conforms(to: .image)
+            }
             items = urls.enumerated().map { index, url in
                 let isDirectory = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
                 return CaptureDragPreview.Item(
@@ -226,6 +231,7 @@ final class CaptureDropTargetView: NSView {
             items = [CaptureDragPreview.Item(id: 0, name: url.host ?? url.absoluteString, systemImage: "link")]
         } else if pasteboard.data(forType: .png) != nil || pasteboard.data(forType: .tiff) != nil {
             stagesOnDrop = stages
+            isAllImages = true
             items = [CaptureDragPreview.Item(id: 0, name: "Image", systemImage: "photo")]
         } else if let string = pasteboard.string(forType: .string) {
             let snippet = string.trimmingCharacters(in: .whitespacesAndNewlines).prefix(48)
@@ -235,7 +241,8 @@ final class CaptureDropTargetView: NSView {
         return CaptureDragPreview(
             items: Array(items.prefix(4)),
             totalCount: items.count,
-            stagesOnDrop: stagesOnDrop
+            stagesOnDrop: stagesOnDrop,
+            isAllImages: isAllImages && !items.isEmpty
         )
     }
 

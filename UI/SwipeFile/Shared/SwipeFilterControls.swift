@@ -61,6 +61,9 @@ struct SwipeFilterCheckRow: View {
     /// (SwipePlatformGlyph) instead of the SF symbol.
     var platformKey: String?
     var iconTint: Color = DS.textMuted
+    /// Live count for the facet, trailing and muted (the ledger voice).
+    /// Nil keeps the row exactly as it was before counts existed.
+    var trailingCount: Int?
     let isOn: Bool
     let action: () -> Void
 
@@ -86,6 +89,12 @@ struct SwipeFilterCheckRow: View {
                     .font(DS.callout.weight(.medium))
                     .foregroundStyle(DS.text)
                 Spacer(minLength: 0)
+                if let trailingCount {
+                    Text("\(trailingCount)")
+                        .font(DS.caption.monospacedDigit())
+                        .foregroundStyle(DS.textMuted)
+                        .contentTransition(.numericText())
+                }
             }
             .padding(.horizontal, 10)
             .frame(height: 34)
@@ -97,7 +106,8 @@ struct SwipeFilterCheckRow: View {
         }
         .buttonStyle(.plain)
         .onHover { value in withAnimation(ProMotionSprings.hover) { hovering = value } }
-        .accessibilityLabel(title)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(trailingCount.map { "\(title), \($0)" } ?? title)
         .accessibilityAddTraits(isOn ? .isSelected : [])
     }
 }

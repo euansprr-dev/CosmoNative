@@ -44,6 +44,7 @@ struct InboxInspector: View {
                 header
                 essenceSection
                 originalsSection
+                lensRow
                 suggestionSection
                 minimapSection
                 alternatesSection
@@ -231,6 +232,26 @@ struct InboxInspector: View {
         }
     }
 
+    // MARK: - Lens
+
+    /// The inferred lens with its reason, for a capture that carries a link.
+    /// Only a link is genuinely ambiguous — a screenshot is craft by
+    /// construction, and plain text has nothing to research.
+    @ViewBuilder
+    private var lensRow: some View {
+        if let url = item.detectedSwipeURL {
+            let verdict = SwipeLensRouter.inferLens(
+                .init(url: url, prose: item.rawText)
+            )
+            SwipeLensPill(verdict: verdict) { chosen in
+                SwipeLensRouter.recordDecision(lens: chosen, url: url)
+                if chosen == .swipe {
+                    Task { await viewModel.fileAsSwipe(item) }
+                }
+            }
+        }
+    }
+
     // MARK: - Suggestion
 
     @ViewBuilder
@@ -405,11 +426,23 @@ struct InboxInspector: View {
                 secondaryVerb(label: "Idea", icon: "lightbulb", shortcut: "I") {
                     Task { await viewModel.fileAsIdea(item) }
                 }
-                // A link capture can become a swipe — the command bar's own
-                // capture pipeline, offered right where the user is triaging.
-                if item.detectedSwipeURL != nil {
-                    secondaryVerb(label: "Swipe", icon: "rectangle.stack", shortcut: "S") {
+                // A link, an image, or a line of copy can become a swipe. The
+                // label NAMES what it will make ("Swipe · Page") because the
+                // user never chose the kind — the same contract the capture
+                // receipt keeps.
+                if item.canBecomeSwipe {
+                    let kind = item.predictedSwipeKind
+                    secondaryVerb(
+                        label: "Swipe · \(kind.displayName)",
+                        icon: kind.iconName,
+                        shortcut: "S"
+                    ) {
                         Task { await viewModel.fileAsSwipe(item) }
+                    }
+                }
+                if viewModel.hasFlows {
+                    secondaryVerb(label: "Flow", icon: SwipeKind.flow.iconName, shortcut: "F") {
+                        Task { await viewModel.addCaptureToFlow(item) }
                     }
                 }
             }

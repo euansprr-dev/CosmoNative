@@ -38,6 +38,23 @@ struct SwipeInsightResponse: Codable {
 
     var signatureCard: String?
 
+    /// Per-unit roles + mechanics, returned ONLY by the artifact craft pass
+    /// (`SwipeArtifactAnalyzer`) for page / frame / flow / note swipes.
+    /// Optional and absent from the post prompt, so adding it left the post
+    /// path byte-identical — a post response simply never carries the key.
+    var unitRoles: [UnitRoleAssignment]?
+    /// The artifact's structural recipe, written so someone could rebuild it.
+    /// Artifact pass only; posts express this through `structuralRecipe`.
+    var anatomy: String?
+
+    struct UnitRoleAssignment: Codable {
+        /// 1-based, matching the numbering the prompt presents units under.
+        var unit: Int
+        var role: String?
+        var headline: String?
+        var mechanic: String?
+    }
+
     struct InsightSection: Codable {
         var label: String
         var purpose: String

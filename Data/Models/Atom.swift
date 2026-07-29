@@ -3119,6 +3119,19 @@ struct ResearchMetadata: Codable, Sendable {
     var isSwipeFile: Bool?
     var contentSource: String?
     var swipeBoardIDs: [String]?
+    /// `SwipeKind.rawValue`, denormalised out of `structured.swipeArtifact` so
+    /// scope checks and SQL filters can read it without decoding the whole
+    /// structured column. `.post` writes nil — legacy rows carry no hint and
+    /// must keep deriving, so the key's ABSENCE has to stay meaningful.
+    /// Both halves of the SCOPE-TWIN (`SwipeProcessingService.isCloudWorkerScoped`
+    /// and the worker's `inWorkerScope`) read this, never the envelope.
+    var swipeKind: String?
+    /// True when this source carries the research lens — you care about what it
+    /// CLAIMS, not how it is built. `isSwipeFile` is the swipe lens; a source
+    /// can carry both and then appears in both libraries as ONE row.
+    /// Absent on a non-swipe research atom means "research lens" by derivation
+    /// (see `Atom.hasResearchLens`), so pre-lens rows need no migration.
+    var researchLens: Bool?
 }
 
 // MARK: - Knowledge Crystallization

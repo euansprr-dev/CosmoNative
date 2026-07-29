@@ -25,6 +25,9 @@ struct RecallVectorRow: Codable, FetchableRecord, PersistableRecord, Sendable {
     var text: String
     var embedding: Data
     var updatedAt: String
+    /// `SwipeUnitRole.rawValue` for chunks that ARE a swipe's artifact unit.
+    /// Nullable: every vector written before the reference layer stays valid.
+    var role: String?
 
     enum CodingKeys: String, ColumnExpression, CodingKey {
         case id
@@ -37,6 +40,7 @@ struct RecallVectorRow: Codable, FetchableRecord, PersistableRecord, Sendable {
         case text
         case embedding
         case updatedAt = "updated_at"
+        case role
     }
 
     mutating func didInsert(_ inserted: InsertionSuccess) {
@@ -53,6 +57,7 @@ struct RecallVectorHit: Sendable {
     let page: Int?
     let text: String
     let similarity: Float
+    let role: String?
 }
 
 // MARK: - Store
@@ -67,6 +72,7 @@ actor RecallStore {
         let page: Int?
         let text: String
         let embedding: [Float]
+        let role: String?
     }
 
     private var cache: [CachedVector]?
@@ -95,7 +101,8 @@ actor RecallStore {
                 page: chunk.page,
                 text: chunk.text,
                 embedding: Self.blob(from: vector),
-                updatedAt: now
+                updatedAt: now,
+                role: chunk.role
             )
         }
         try await CosmoDatabase.shared.asyncWrite { db in
@@ -155,11 +162,16 @@ actor RecallStore {
 
     /// Cosine sweep over the cached matrix (vectors stored normalized, so
     /// similarity = dot product). Optional type filter narrows the sweep.
+    ///
+    /// `roles` narrows to chunks that ARE artifact units of those roles —
+    /// "show me guarantee sections" is a role filter plus a semantic sweep,
+    /// not a text search for the word "guarantee".
     func search(
         embedding query: [Float],
         limit: Int,
         entityTypes: Set<String>? = nil,
-        minSimilarity: Float = 0
+        minSimilarity: Float = 0,
+        roles: Set<String>? = nil
     ) async -> [RecallVectorHit] {
         let vectors = await loadedCache()
         guard !vectors.isEmpty, !query.isEmpty else { return [] }
@@ -169,6 +181,9 @@ actor RecallStore {
 
         for (index, item) in vectors.enumerated() {
             if let entityTypes, !entityTypes.contains(item.entityType) { continue }
+            if let roles {
+                guard let role = item.role, roles.contains(role) else { continue }
+            }
             guard item.embedding.count == query.count else { continue }
             var similarity: Float = 0
             vDSP_dotpr(item.embedding, 1, query, 1, &similarity, vDSP_Length(query.count))
@@ -188,7 +203,8 @@ actor RecallStore {
                     chunkIndex: item.chunkIndex,
                     page: item.page,
                     text: item.text,
-                    similarity: similarity
+                    similarity: similarity,
+                    role: item.role
                 )
             }
     }
@@ -239,7 +255,8 @@ actor RecallStore {
                     chunkIndex: row.chunkIndex,
                     page: row.page,
                     text: row.text,
-                    embedding: Self.vector(from: row.embedding)
+                    embedding: Self.vector(from: row.embedding),
+                    role: row.role
                 )
             }
         }) ?? []

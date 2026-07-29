@@ -76,6 +76,13 @@ final class InboxActionExecutor {
         case .createStandaloneAtom:
             let atomType = AtomType(rawValue: recommendation.suggestedAtomType) ?? .connection
             return .atom(try await executeNew(item: item, atomType: atomType))
+        case .fileAsSwipe:
+            return .atom(try await executeSwipe(item: item))
+        case .addToFlow:
+            // The recommendation names no flow — the router never picks one.
+            // Accepting it opens the flow picker, which is a UI move, so the
+            // executor declines and the inspector's `→ Flow` verb takes over.
+            return nil
         }
     }
 
@@ -269,6 +276,15 @@ final class InboxActionExecutor {
     /// THIS action created.
     @discardableResult
     func executeSwipe(item: InboxItem) async throws -> Atom {
+        // A capture that carries images and NO link is a frame swipe: the
+        // pictures ARE what was saved. The link wins when both are present —
+        // the original post beats a screenshot of it — and the images then
+        // ride along as extra units rather than being stranded.
+        if item.detectedSwipeURL == nil, !item.attachmentUUIDs.isEmpty,
+           let framed = try await executeFrameSwipe(item: item) {
+            return framed
+        }
+
         let url = item.detectedSwipeURL
             ?? item.rawText.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -307,6 +323,7 @@ final class InboxActionExecutor {
         await reindex(atom: atom)
         try await inboxRepo.markActioned(uuid: item.uuid)
         CloudSwipeAPI.kickProcessing(swipeUUID: atom.uuid)
+        SwipeIntakeRouter.noteExternallyCreatedSwipe(atom, publishesReceipt: false)
 
         let createdAtom = atom
         let originalItem = item
@@ -323,6 +340,75 @@ final class InboxActionExecutor {
             }
         )
 
+        return atom
+    }
+
+    /// An image-only capture becomes a FRAME swipe, decomposed like any other.
+    ///
+    /// The attachments are re-homed onto the new atom (`adoptAttachments`)
+    /// rather than copied, so the bytes the phone already mirrored are the
+    /// same bytes the swipe reads — no second upload, no orphaned row.
+    /// Returns nil when nothing readable survives, so the caller falls through
+    /// to the link path rather than creating an empty swipe.
+    private func executeFrameSwipe(item: InboxItem) async throws -> Atom? {
+        let attachments = (try? await MediaAttachmentRepository.shared.fetch(uuids: item.attachmentUUIDs)) ?? []
+        let images = attachments.filter { $0.kind == .image || $0.kind == .screenshot }
+        guard !images.isEmpty else { return nil }
+
+        var atom = Atom.new(
+            type: .research,
+            title: images.count == 1 ? "Screenshot" : "\(images.count) screenshots"
+        )
+        atom.updateResearchMetadata { meta in
+            meta.isSwipeFile = true
+            meta.contentSource = SwipeKind.frame.rawValue
+            meta.processingStatus = "analyzing"
+        }
+        let note = item.rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !note.isEmpty { atom.body = note }
+
+        atom = atom.withSwipeArtifact(SwipeArtifact(
+            kind: .frame,
+            units: images.enumerated().map { index, attachment in
+                SwipeArtifactUnit(index: index, attachmentUUID: attachment.uuid)
+            },
+            captureMode: "inbox"
+        ))
+        if let thumbnail = images.first?.thumbnailPath {
+            atom.updateResearchMetadata { $0.thumbnailUrl = URL(fileURLWithPath: thumbnail).absoluteString }
+        }
+        atom = atom.mergingMetadataKeys(captureProvenance(for: item))
+        atom = try await atomRepo.create(atom)
+        await adoptAttachments(from: item, into: atom.uuid)
+        await reindex(atom: atom)
+        try await inboxRepo.markActioned(uuid: item.uuid)
+
+        // The front door's completion hook — flow append + library refresh.
+        // This executor owns its own undo (below) and the Inbox shows its own
+        // toast, so it takes neither from the router.
+        SwipeIntakeRouter.noteExternallyCreatedSwipe(atom, publishesReceipt: false)
+
+        // Decompose off the main path — the capture is already filed, and the
+        // vision + craft passes take seconds.
+        let uuid = atom.uuid
+        Task { @MainActor in
+            await SwipeFrameDecomposition.run(swipeUUID: uuid, note: note.isEmpty ? nil : note)
+        }
+
+        let createdAtom = atom
+        let originalItem = item
+        CosmoUndoManager.shared.register(
+            InlineUndoAction(actionDescription: "File Inbox Swipe") { [weak self] in
+                guard let self else { return }
+                try? await self.atomRepo.delete(uuid: createdAtom.uuid)
+                try? await self.inboxRepo.restore(originalItem)
+            } redo: { [weak self] in
+                guard let self else { return }
+                try? await self.restoreAtomSnapshot(createdAtom)
+                await self.reindex(atom: createdAtom)
+                try? await self.inboxRepo.markActioned(uuid: originalItem.uuid)
+            }
+        )
         return atom
     }
 

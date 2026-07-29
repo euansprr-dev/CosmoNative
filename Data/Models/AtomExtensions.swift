@@ -300,7 +300,12 @@ extension Atom {
     /// The old encode-replace silently deleted all of them on every Mac write,
     /// which reset the worker's retry backoff and turned one failing swipe
     /// into an endless cloud/Mac rewrite war.
-    private mutating func updateResearchMetadata(_ update: (inout ResearchMetadata) -> Void) {
+    ///
+    /// Internal (not file-private) on purpose: it is THE merge-preserving
+    /// writer for research metadata, and new code — the swipe artifact spine's
+    /// kind/lens writers included — must go through it rather than
+    /// reimplementing the merge and reintroducing the bug above.
+    mutating func updateResearchMetadata(_ update: (inout ResearchMetadata) -> Void) {
         let before = researchMetadata ?? ResearchMetadata()
         var after = before
         update(&after)

@@ -21,12 +21,20 @@ struct SwipeStudyInsightRail: View {
     /// manuscript / seeks the video to a structure beat.
     var onBeatTap: (SwipeSection) -> Void
 
+    @State private var isReadingFunnel = false
+
     private func shows(_ section: SwipeStudyRailSection) -> Bool {
         visibleSections.contains(section)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space24) {
+            // Artifact anatomy leads the rail for non-post kinds: a page's or
+            // a funnel's structural reading IS its insight, and it exists
+            // whether or not the post-shaped `sections` analysis ever ran.
+            if shows(.structure) {
+                artifactAnatomySection
+            }
             if model.isAnalyzing {
                 if shows(.insight) || shows(.structure) {
                     analysisSkeleton
@@ -54,6 +62,62 @@ struct SwipeStudyInsightRail: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    // MARK: - Artifact anatomy (page / frame / flow / note)
+
+    /// The artifact's own structural reading. For a flow this doubles as the
+    /// action surface: a funnel with no reading yet offers "Read this funnel",
+    /// which is one small Sonnet call over the members' signature cards.
+    @ViewBuilder
+    private var artifactAnatomySection: some View {
+        let kind = atom.swipeKind
+        if kind != .post, let artifact = atom.swipeArtifact {
+            VStack(alignment: .leading, spacing: DS.space10) {
+                SwipeStudyRailHeader(label: "ANATOMY", count: artifact.units.count)
+
+                if let anatomy = artifact.anatomy, !anatomy.isEmpty {
+                    Text(anatomy)
+                        .font(DS.footnote)
+                        .foregroundStyle(DS.textSecondary)
+                        .lineSpacing(4)
+                        .textSelection(.enabled)
+                } else if kind == .flow, artifact.units.count >= 2 {
+                    readFunnelButton
+                } else {
+                    // A teaching row, never a silently missing section.
+                    Text(kind == .flow
+                         ? "Add a second step, then Cosmo can read the ladder."
+                         : "Reading this \(kind.displayName.lowercased())…")
+                        .font(DS.caption)
+                        .foregroundStyle(DS.textMuted)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var readFunnelButton: some View {
+        Button {
+            isReadingFunnel = true
+            let uuid = atom.uuid
+            Task {
+                await SwipeFlowStore.readFunnel(flowUUID: uuid)
+                isReadingFunnel = false
+            }
+        } label: {
+            HStack(spacing: DS.space6) {
+                if isReadingFunnel {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: "sparkles").accessibilityHidden(true)
+                }
+                Text(isReadingFunnel ? "Reading…" : "Read this funnel")
+            }
+        }
+        .buttonStyle(DSPrimaryButtonStyle())
+        .disabled(isReadingFunnel)
+        .help("One pass over every step's summary — names the ladder this funnel walks the reader up")
     }
 
     // MARK: - Insight

@@ -220,6 +220,8 @@ private struct SwipeLibraryCardCell: View {
                 }
             }
         }
+        SwipeFlowMenu(swipeUUID: model.id)
+        SwipeLensMenuLoader(swipeUUID: model.id)
         Button("Add to Canvas", systemImage: "square.grid.2x2") { onAddToCanvas(model.id) }
     }
 

@@ -21,6 +21,8 @@ struct CosmoBrowserToolbarView: View {
             CosmoBrowserToolbarButton(icon: "xmark", help: "Close Browser", action: onClose)
             navigationCluster
             addressField
+            SwipeFlowRecordingPill(size: .compact)
+            swipeThisPageButton
             favoriteToggle
             CosmoBrowserOverflowMenu(browserState: browserState, fallbackURL: fallbackURL)
         }
@@ -188,6 +190,25 @@ struct CosmoBrowserToolbarView: View {
             .animation(ProMotionSprings.gentle, value: browserState.isLoading)
         }
         .clipShape(RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous))
+    }
+
+    // MARK: - Swipe this page
+
+    /// The page you are LOOKING at — your session, your scroll, past the
+    /// opt-in. This is the whole reason page capture reads a live webview
+    /// rather than re-fetching the URL anonymously: the funnels worth swiping
+    /// are the ones you had to sign up to see.
+    @ViewBuilder
+    private var swipeThisPageButton: some View {
+        if browserState.currentURL != nil, !browserState.showsStartPage {
+            CosmoBrowserToolbarButton(
+                icon: SwipeKind.page.iconName,
+                help: "Swipe this page (⌘⇧S)"
+            ) {
+                SwipeCaptureCommands.swipeThis()
+            }
+            .accessibilityLabel("Swipe this page")
+        }
     }
 
     // MARK: - Favorite toggle

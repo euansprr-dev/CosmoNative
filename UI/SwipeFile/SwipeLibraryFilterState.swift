@@ -219,6 +219,10 @@ struct SwipeLibraryFacetSummary: Equatable {
 
 struct SwipeLibraryFilterState: Equatable {
     var smartPreset: SwipeLibrarySmartPreset = .all
+    /// Artifact kind — posts, pages, screenshot sets, flows, saved copy.
+    /// First facet in the panel because it is the coarsest cut a mixed library
+    /// needs ("show me only the sales pages").
+    var kinds: Set<SwipeKind> = []
     var platforms: Set<String> = []
     var hookTypes: Set<SwipeHookType> = []
     var frameworks: Set<SwipeFrameworkType> = []
@@ -232,6 +236,7 @@ struct SwipeLibraryFilterState: Equatable {
 
     var hasActiveFilters: Bool {
         smartPreset != .all ||
+        !kinds.isEmpty ||
         !platforms.isEmpty ||
         !hookTypes.isEmpty ||
         !frameworks.isEmpty ||

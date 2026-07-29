@@ -467,6 +467,12 @@ final class SwipeDiscoverModel {
             SwipeProcessingService.shared.processSwipeInBackground(uuid: saved.uuid)
         }
 
+        // The completion hook, not the constructor: Discover already holds the
+        // post's fetched metadata, so routing it back through a URL would
+        // re-fetch what it has. It still joins an open flow and refreshes the
+        // library like every other capture. No receipt — the page shows its
+        // own save toast, and two confirmations for one action is noise.
+        SwipeIntakeRouter.noteExternallyCreatedSwipe(saved, publishesReceipt: false)
         return saved
     }
 

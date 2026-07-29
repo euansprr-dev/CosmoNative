@@ -42,6 +42,9 @@ actor InboxAtlasRouter {
         case feedSeedling
         case startSeedling
         case germinateDeepDive
+        /// The capture is CRAFT REFERENCE — saved for its form, not its claims.
+        /// It becomes a swipe; SwipeIntakeRouter decides page vs frame vs note.
+        case fileAsSwipe
     }
 
     struct RoutedMove: Sendable, Equatable {
@@ -232,6 +235,13 @@ actor InboxAtlasRouter {
     null unless one home is obvious.
     - "germinateDeepDive" — the capture opens a substantial research territory no listed topic covers. \
     newTitle = the topic name. Rare; prefer spawnQuestion under an existing topic when one fits.
+    - "fileAsSwipe" — the capture is CRAFT REFERENCE: the user saved it for its FORM — how it is \
+    written, laid out, or sold — rather than for what it claims. No targetKey. A sales page, a \
+    landing page, an ad, a screenshot of someone's post, a headline or a piece of copy with no \
+    question attached is a swipe. THE FORM TEST, applied literally: would the user open this again \
+    to COPY HOW IT IS BUILT, or to LEARN WHAT IT SAYS? Copy-how → fileAsSwipe. Learn-what → any \
+    other move. A capture that asks a question, states a fact worth remembering, or names something \
+    to do is NEVER a swipe, even when it carries a link.
 
     HOW TO DECIDE (in order):
     1. TYPE TEST — what is this capture? A task/reminder ("do X", "follow up", a deadline) → \
@@ -539,6 +549,12 @@ actor InboxAtlasRouter {
             if usedCreationMove { return nil }
             usedCreationMove = true
             targetKey = nil
+        case .fileAsSwipe:
+            // A swipe has no Atlas destination — the swipe file IS the
+            // destination, and which KIND of swipe is SwipeIntakeRouter's
+            // call, never the router's. Any key the model attached is noise.
+            targetKey = nil
+            section = nil
         }
 
         return RoutedMove(

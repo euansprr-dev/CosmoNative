@@ -69,6 +69,11 @@ final class CosmoWebBrowserState {
         update(from: webView)
     }
 
+    /// The live webview, for surfaces that must read the page AS RENDERED —
+    /// swipe page capture reads your session and your scroll, which a fresh
+    /// anonymous fetch of the same URL cannot reproduce.
+    var liveWebView: WKWebView? { webView }
+
     func goBack() {
         webView?.goBack()
     }

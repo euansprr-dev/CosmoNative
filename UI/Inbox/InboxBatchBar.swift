@@ -12,6 +12,7 @@ struct InboxBatchBar: View {
         HStack(spacing: DS.space12) {
             selectionCount
             Spacer()
+            swipeAllButton
             acceptAllButton
             dismissAllButton
             deselectButton
@@ -52,6 +53,36 @@ struct InboxBatchBar: View {
             Text("selected")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(DS.textSecondary)
+        }
+    }
+
+    /// Batch-file a selection of links and screenshots into the Swipe File.
+    /// Renders only when EVERY selected capture can become one — a partial
+    /// batch would silently skip rows, and a silent skip in a bulk action is
+    /// how captures get lost.
+    @ViewBuilder
+    private var swipeAllButton: some View {
+        if viewModel.selectionCanAllBecomeSwipes {
+            Button {
+                Task { await viewModel.swipeAllSelected() }
+            } label: {
+                HStack(spacing: DS.space4) {
+                    Image(systemName: SwipeKind.post.iconName)
+                        .font(.system(size: 10, weight: .bold))
+                    Text("Swipe All")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .foregroundStyle(DS.entitySwipe)
+                .padding(.horizontal, DS.space12)
+                .padding(.vertical, DS.space8)
+                .background(
+                    DS.entitySwipe.opacity(0.10),
+                    in: RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous)
+                )
+            }
+            .buttonStyle(.plain)
+            .help("File every selected capture into the Swipe File")
+            .accessibilityLabel("Swipe all selected captures")
         }
     }
 

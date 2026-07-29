@@ -188,9 +188,21 @@ final class InboxViewModel {
 
     // MARK: - Init
 
+    /// True when at least one flow exists — gates the `→ Flow` verb. Cached
+    /// rather than queried per render: the inspector reads it on every frame,
+    /// and the answer changes only when the library does.
+    private(set) var hasFlows = false
+
     init() {
         startObserving()
         loadEmptyStateData()
+        refreshFlowAvailability()
+    }
+
+    private func refreshFlowAvailability() {
+        Task { @MainActor in
+            hasFlows = await SwipeFlowStore.hasAnyFlow()
+        }
     }
 
     // MARK: - Observation
@@ -214,6 +226,15 @@ final class InboxViewModel {
                 Task { @MainActor in
                     self?.loadEmptyStateData()
                 }
+            }
+            .store(in: &cancellables)
+
+        // The first flow a user makes must light up the `→ Flow` verb without
+        // a relaunch.
+        NotificationCenter.default.publisher(for: CosmoNotification.SwipeFile.libraryDidChange)
+            .debounce(for: .milliseconds(400), scheduler: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.refreshFlowAvailability()
             }
             .store(in: &cancellables)
     }
@@ -548,6 +569,35 @@ final class InboxViewModel {
         }
     }
 
+    /// F — the capture is a step in a funnel being assembled. Appends to the
+    /// flow the user is recording into, or to the most recently touched one.
+    ///
+    /// The capture becomes a swipe first (through the one front door), then
+    /// joins the flow: a flow step IS a swipe, so there is no second object
+    /// type and no second capture path.
+    func addCaptureToFlow(_ item: InboxItem) async {
+        guard let flow = await SwipeFlowStore.flows().first else {
+            presentErrorToast("No flows yet — start one from a swipe's menu.")
+            return
+        }
+        processingItemIds.insert(item.uuid)
+        defer { processingItemIds.remove(item.uuid) }
+
+        do {
+            let swipe = try await executor.executeSwipe(item: item)
+            guard await SwipeFlowStore.append(swipeUUID: swipe.uuid, toFlow: flow.uuid) else {
+                presentErrorToast("Couldn't add that step — the swipe is in your Swipe File.")
+                return
+            }
+            presentUndoToast(for: item, verb: "Added to \(flow.title ?? "the flow")")
+            recordRoutingOutcome(for: item, chosenKind: "flow", chosenLabel: "Step in a flow")
+        } catch {
+            print("⚠️ [InboxVM] Add to flow failed: \(error)")
+            PersistenceHealth.note(.writeFailure, context: "InboxVM.addCaptureToFlow", detail: error.localizedDescription)
+            presentErrorToast("Couldn't add that step — the capture is still in your inbox.")
+        }
+    }
+
     /// A — the capture is a question: spin it into the most recent Deep Dive's
     /// inquiry queue, closing the capture → inquiry loop.
     func askInDeepDive(_ item: InboxItem) async {
@@ -644,6 +694,50 @@ final class InboxViewModel {
             await acceptSuggestion(for: item)
         }
         selectedItemIds.removeAll()
+    }
+
+    /// True when EVERY selected capture could become a swipe. All-or-nothing
+    /// on purpose: a bulk action that silently skips rows is how captures get
+    /// lost, so the affordance simply does not appear for a mixed selection.
+    var selectionCanAllBecomeSwipes: Bool {
+        let selected = items.filter { selectedItemIds.contains($0.uuid) }
+        guard selected.count > 1 else { return false }
+        return selected.allSatisfy(\.canBecomeSwipe)
+    }
+
+    /// Batch-file the selection into the Swipe File. Each capture goes through
+    /// `executeSwipe`, so each gets its own kind, its own undo, and its own
+    /// decomposition — the batch is a convenience, never a different pipeline.
+    func swipeAllSelected() async {
+        let selected = items.filter { selectedItemIds.contains($0.uuid) }
+        guard !selected.isEmpty else { return }
+        selectedItemIds.removeAll()
+
+        var filed = 0
+        for item in selected {
+            do {
+                _ = try await executor.executeSwipe(item: item)
+                filed += 1
+                recordRoutingOutcome(for: item, chosenKind: "swipe", chosenLabel: "Swipe File")
+            } catch {
+                print("⚠️ [InboxVM] Bulk swipe failed for \(item.uuid): \(error)")
+                PersistenceHealth.note(
+                    .writeFailure, context: "InboxVM.swipeAllSelected",
+                    detail: error.localizedDescription
+                )
+            }
+        }
+        let failed = selected.count - filed
+        if filed > 0 {
+            presentUndoToast(message: filed == 1
+                ? "Saved as swipe"
+                : "Saved \(filed) swipes")
+        }
+        if failed > 0 {
+            presentErrorToast(failed == selected.count
+                ? "Couldn't save those swipes — the captures are still in your inbox."
+                : "\(failed) couldn't be saved — they're still in your inbox.")
+        }
     }
 
     /// Bulk dismiss registers ONE undo action restoring every item and shows

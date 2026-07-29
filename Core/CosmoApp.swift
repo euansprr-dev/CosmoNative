@@ -619,6 +619,23 @@ struct CosmoCommands: Commands {
                 CaptureOverlayPanelController.shared.toggle()
             }
             .keyboardShortcut("c", modifiers: [.option])
+
+            Divider()
+
+            // ONE VERB: "Swipe this" never asks what kind. SwipeIntakeRouter
+            // reads the browser pane / pasteboard and decides — screenshots
+            // become a frame set, a sales page becomes a page, a platform link
+            // stays a post, loose text becomes a note. The receipt names the
+            // answer; the card's menu is where a wrong guess is corrected.
+            Button("Swipe This") {
+                SwipeCaptureCommands.swipeThis()
+            }
+            .keyboardShortcut("s", modifiers: [.command, .shift])
+
+            Button("Swipe a Region…") {
+                SwipeCaptureCommands.swipeRegion()
+            }
+            .keyboardShortcut("s", modifiers: [.command, .shift, .option])
         }
 
         // Native macOS View menu entries for the active Inquiry Workspace.

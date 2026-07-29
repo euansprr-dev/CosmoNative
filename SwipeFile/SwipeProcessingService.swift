@@ -243,12 +243,35 @@ final class SwipeProcessingService {
     /// See cosmo-cloud-agent/src/swipes/processor.ts.
     nonisolated static let statusNeedsManualRetry = "needs_manual_retry"
 
-    /// The Railway worker owns instagram / youtube / twitter swipes — the same
-    /// scope check as `inWorkerScope` in cosmo-cloud-agent/src/swipes/types.ts.
+    /// The Railway worker owns instagram / youtube / twitter POST swipes — the
+    /// same scope check as `inWorkerScope` in cosmo-cloud-agent/src/swipes/types.ts.
     /// Everything else (websites, tiktok, …) is Mac-only. A matching
     /// contentSource alone qualifies — some swipes carry their URL only in
     /// structured.sourceUrl, which the worker reads but metadata doesn't have.
-    nonisolated static func isCloudWorkerScoped(url: String?, contentSource: String?) -> Bool {
+    ///
+    /// SCOPE-TWIN LAW: this function and `inWorkerScope` change TOGETHER.
+    /// `swipeKind` reads `metadata.swipeKind` (denormalised beside the artifact
+    /// envelope). Every non-post kind is Mac-captured and Mac-decomposed — the
+    /// worker has no extractor for a screenshot or a sales page, so if only one
+    /// half of the twin learns to refuse them, the worker claims the swipe,
+    /// fails extraction, and burns the whole retry ladder on it. The kind check
+    /// runs FIRST and is unconditional: a page swipe of a youtube.com URL is
+    /// still a page swipe.
+    ///
+    /// The comparison is on the RAW STRING, deliberately — not on a decoded
+    /// `SwipeKind`. `SwipeKind` decodes an unrecognised value as `.post` so a
+    /// row from a newer build still renders; applying that leniency here would
+    /// make the Mac defer an unknown kind to a worker that refuses it, and the
+    /// swipe would sit pending forever. Unknown ⇒ Mac-owned is the only safe
+    /// direction, because the Mac is the fallback tier for everything.
+    nonisolated static func isCloudWorkerScoped(
+        url: String?,
+        contentSource: String?,
+        swipeKind: String? = nil
+    ) -> Bool {
+        if let swipeKind, !swipeKind.isEmpty, swipeKind != SwipeKind.post.rawValue {
+            return false
+        }
         let url = url ?? ""
         let source = (contentSource ?? "").lowercased()
         func urlMatches(_ pattern: String) -> Bool {
@@ -286,7 +309,8 @@ final class SwipeProcessingService {
         }
         guard isCloudWorkerScoped(
             url: meta["url"] as? String,
-            contentSource: meta["contentSource"] as? String
+            contentSource: meta["contentSource"] as? String,
+            swipeKind: meta["swipeKind"] as? String
         ) else {
             return true
         }

@@ -195,7 +195,11 @@ export async function fetchCandidates(): Promise<Atom[]> {
 
     // Out-of-scope swipes (websites, tiktok, …) belong to the Mac pipeline —
     // never surface them as candidates.
-    if (!inWorkerScope(meta.url ?? '', (meta.contentSource ?? '') as string)) return false;
+    if (!inWorkerScope(
+      meta.url ?? '',
+      (meta.contentSource ?? '') as string,
+      (meta.swipeKind ?? null) as string | null,
+    )) return false;
     // Already being worked on by this process (API kick in flight).
     if (inFlightUUIDs.has(atom.uuid)) return false;
 
@@ -271,7 +275,10 @@ async function processSwipeInner(uuid: string): Promise<void> {
   const url: string = meta.url ?? atom.structured?.sourceUrl ?? '';
   const source: string = (meta.contentSource ?? '').toLowerCase();
 
-  if (!url || !inWorkerScope(url, source)) return;
+  // The kind gate matters most HERE: POST /api/swipes/process bypasses
+  // fetchCandidates entirely, so an over-eager kick from a Mac capture surface
+  // is the one path that could hand this worker a page/frame/flow/note swipe.
+  if (!url || !inWorkerScope(url, source, (meta.swipeKind ?? null) as string | null)) return;
   const isInstagram = source.includes('instagram') || /instagram\.com/i.test(url);
   const isYouTube = source.includes('youtube') || /youtube\.com|youtu\.be/i.test(url);
 

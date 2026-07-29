@@ -45,6 +45,12 @@ struct SwipeCardModel: Identifiable, Equatable {
     let ageLabel: String?
     let isUnstudied: Bool
     let processing: SwipeCardProcessing
+    /// What kind of artifact this is. Drives the honest aspect and the unit
+    /// badge; `.post` behaves exactly as it did before the artifact spine.
+    var kind: SwipeKind = .post
+    /// "14 sections" / "3 images" — the badge that tells you a card is a whole
+    /// page or a set, not a single image. Nil for posts and single units.
+    var unitBadge: String?
     var boardIDs: Set<String> = []
     /// Recency shelves drop the footer hook line — the thumbnail already
     /// carries the hook, so printing it twice reads as a stutter. Paper
@@ -102,19 +108,39 @@ extension SwipeCardModel {
         let platform = SocialPlatform.fromLibraryKey(item.platform)
         let mediaURL = item.thumbnailUrl.flatMap(URL.init(string:))
 
+        // ASPECT TWINS: this switch and iOS `Atom.cardAspect`
+        // (CosmoCoreKit/Sources/Models/SwipeCapture.swift) change together.
         let aspect: SwipeCardAspect
-        if mediaURL == nil && item.instagramId == nil {
+        switch item.kind {
+        case .frame:
+            // A screenshot's honest shape is its own. We do not know it until
+            // the image loads, so the card claims the portrait slot — the
+            // safest bet for phone screenshots, which is most of them — and
+            // the media well letterboxes anything wider onto the warm fill.
+            aspect = mediaURL == nil ? .paper : .portrait
+        case .page:
+            // A page is tall by definition; the card shows its hero slice.
+            aspect = mediaURL == nil ? .paper : .portrait
+        case .flow:
+            // A flow's artwork is a mosaic of its steps — square reads as a
+            // container rather than as any one member.
+            aspect = mediaURL == nil ? .paper : .portrait
+        case .note:
             aspect = .paper
-        } else {
-            switch item.platform {
-            case "youtube":
-                aspect = .wide
-            case "youtubeShort", "youtube_short", "instagramReel", "instagram_reel", "tiktok":
-                aspect = .vertical
-            case "instagram", "instagramPost", "instagram_post", "instagramCarousel", "instagram_carousel":
-                aspect = .portrait
-            default:
-                aspect = mediaURL == nil ? .paper : .wide
+        case .post:
+            if mediaURL == nil && item.instagramId == nil {
+                aspect = .paper
+            } else {
+                switch item.platform {
+                case "youtube":
+                    aspect = .wide
+                case "youtubeShort", "youtube_short", "instagramReel", "instagram_reel", "tiktok":
+                    aspect = .vertical
+                case "instagram", "instagramPost", "instagram_post", "instagramCarousel", "instagram_carousel":
+                    aspect = .portrait
+                default:
+                    aspect = mediaURL == nil ? .paper : .wide
+                }
             }
         }
 
@@ -148,6 +174,10 @@ extension SwipeCardModel {
             ageLabel: ISO8601.date(from: item.createdAt).map { SwipeFormatting.compactAge(from: $0) },
             isUnstudied: !item.isStudied,
             processing: processing,
+            kind: item.kind,
+            // A single-image frame needs no badge — the card IS the image. The
+            // badge exists to say "there is more here than you can see".
+            unitBadge: item.unitCount > 1 ? item.kind.unitCountLabel(item.unitCount) : nil,
             boardIDs: Set(item.boardIDs)
         )
     }

@@ -52,6 +52,11 @@ final class SwipeLibraryViewModel {
     private(set) var availableCreators: [String] = []
     private(set) var availableNiches: [String] = []
     private(set) var availablePlatforms: [String] = []
+    /// Kinds actually present in the library, in canonical order.
+    /// PROGRESSIVE DISCLOSURE: the Kind facet renders only when there is more
+    /// than one — a library of nothing but posts must look exactly as it did
+    /// before the artifact spine shipped.
+    private(set) var availableKinds: [SwipeKind] = []
     private(set) var isLoading = false
     var errorMessage: String?
     var selectedItem: SwipeGalleryItem?
@@ -161,6 +166,10 @@ final class SwipeLibraryViewModel {
             next.minimumHookScore = 8
         }
         filterState = next
+    }
+
+    func toggleKind(_ kind: SwipeKind) {
+        toggle(kind, in: &filterState.kinds)
     }
 
     func togglePlatform(_ platform: String) {
@@ -302,6 +311,13 @@ final class SwipeLibraryViewModel {
         availablePlatforms = Array(Set(allItems.compactMap(\.platform))).sorted { lhs, rhs in
             platformName(lhs) < platformName(rhs)
         }
+        let present = Set(allItems.map(\.kind))
+        availableKinds = SwipeKind.allCases.filter(present.contains)
+    }
+
+    /// How many swipes of a kind the library holds — the facet row's live count.
+    func kindCount(_ kind: SwipeKind) -> Int {
+        allItems.reduce(into: 0) { $0 += ($1.kind == kind ? 1 : 0) }
     }
 
     /// Niche facet options: the exact strings present in the library (the

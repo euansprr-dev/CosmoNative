@@ -18,6 +18,7 @@ struct CaptureOverlayView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space12) {
             header
+            SwipeFlowRecordingPill()
             captureFieldRow
             dropWell
             sourceButtons
@@ -123,6 +124,9 @@ struct CaptureOverlayView: View {
                 isFocused: $isFieldFocused,
                 onSubmit: {
                     Task { await viewModel.submitText() }
+                },
+                onShiftSubmit: {
+                    Task { await viewModel.submitText(asSwipe: true) }
                 }
             )
             .frame(minHeight: 28)
@@ -140,7 +144,7 @@ struct CaptureOverlayView: View {
                 }
                 .buttonStyle(.plain)
                 .transition(.scale.combined(with: .opacity))
-                .help("Capture (⏎)")
+                .help("Capture (⏎) · ⇧⏎ saves it to the Swipe File instead")
                 .accessibilityLabel("Capture thought")
             }
         }
@@ -189,7 +193,7 @@ struct CaptureOverlayView: View {
             Text("Drop anything")
                 .font(DS.callout.weight(.semibold))
                 .foregroundStyle(DS.textSecondary)
-            Text("files · images · links · text")
+            Text("files · screenshots · links · text")
                 .font(DS.caption)
                 .foregroundStyle(DS.textMuted)
             if viewModel.clipboardHasContent {
@@ -234,8 +238,15 @@ struct CaptureOverlayView: View {
     }
 
     /// Files stage ("add") and leave with the send button; text and links
-    /// still capture the moment they land.
+    /// still capture the moment they land. An all-image drop says where it is
+    /// headed, because that drop will default to the Swipe File and the user
+    /// should learn that BEFORE release, not from the receipt.
     private func releaseLine(for preview: CaptureDragPreview) -> String {
+        if preview.stagesOnDrop, preview.isAllImages {
+            return preview.totalCount == 1
+                ? "Release to swipe"
+                : "Release to swipe \(preview.totalCount) screenshots"
+        }
         let verb = preview.stagesOnDrop ? "add" : "capture"
         return preview.totalCount == 1
             ? "Release to \(verb)"
@@ -277,6 +288,8 @@ struct CaptureOverlayView: View {
                 .foregroundStyle(DS.textSecondary)
                 .contentTransition(.numericText())
 
+            stagedDestinationControl
+
             Spacer(minLength: DS.space8)
 
             Button {
@@ -296,14 +309,77 @@ struct CaptureOverlayView: View {
                 HStack(spacing: DS.space6) {
                     Image(systemName: "arrow.up")
                         .accessibilityHidden(true)
-                    Text("Capture")
+                    Text(sendButtonLabel)
                 }
             }
             .buttonStyle(DSPrimaryButtonStyle())
             .keyboardShortcut(.return, modifiers: .command)
             .disabled(viewModel.isBusy)
-            .help("Capture — a typed thought and these files land together (⌘⏎)")
+            .help(sendButtonHelp)
         }
+        .animation(ProMotionSprings.snappy, value: viewModel.stagedDestination)
+    }
+
+    /// The ONE kind-adjacent choice in the system, and only because staged
+    /// files are genuinely ambiguous (three ad screenshots vs a PDF invoice
+    /// arrive through the identical gesture). Selection = soft tint wash +
+    /// hairline, never a solid fill (Law 11).
+    private var stagedDestinationControl: some View {
+        HStack(spacing: 2) {
+            ForEach(CaptureOverlayViewModel.StagedDestination.allCases) { destination in
+                destinationSegment(destination)
+            }
+        }
+        .padding(2)
+        .background(DS.glassInputFill, in: Capsule())
+        .overlay(Capsule().strokeBorder(DS.glassBorder, lineWidth: 0.5))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Destination")
+    }
+
+    private func destinationSegment(
+        _ destination: CaptureOverlayViewModel.StagedDestination
+    ) -> some View {
+        let isSelected = viewModel.stagedDestination == destination
+        return Button {
+            withAnimation(ProMotionSprings.snappy) {
+                viewModel.chooseStagedDestination(destination)
+            }
+        } label: {
+            HStack(spacing: DS.space4) {
+                Image(systemName: destination.iconName)
+                    .font(DS.caption2.weight(.semibold))
+                Text(destination.title)
+                    .font(DS.caption.weight(.medium))
+            }
+            .foregroundStyle(isSelected ? DS.accent : DS.textSecondary)
+            .padding(.horizontal, DS.space10)
+            .frame(height: 24)
+            .background {
+                if isSelected {
+                    Capsule()
+                        .fill(DS.accentSoft)
+                        .overlay(Capsule().strokeBorder(DS.accent.opacity(0.35), lineWidth: 0.5))
+                }
+            }
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(destination == .swipe
+              ? "Save these as one swipe — Cosmo reads them and works out the rest"
+              : "Send these to the Inbox for triage")
+        .accessibilityLabel(destination.title)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private var sendButtonLabel: String {
+        viewModel.stagedDestination == .swipe ? "Swipe" : "Capture"
+    }
+
+    private var sendButtonHelp: String {
+        viewModel.stagedDestination == .swipe
+            ? "Save as one swipe — a typed thought rides along as the note (⌘⏎)"
+            : "Capture — a typed thought and these files land together (⌘⏎)"
     }
 
     private var stagedCountLabel: String {

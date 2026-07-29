@@ -299,9 +299,11 @@ final class WritingContextExporter {
         // Full body
         let body = atom.body ?? ""
 
+        let kind = atom.swipeKind
         var md = """
         # \(title)
         **Type**: SWIPE EXAMPLE (reference content from another creator's library)
+        **Kind**: \(kind.displayName)
         **Format**: \(format)
         **Hook Type**: \(hookType)
         **Hook Score**: \(hookScore)/10
@@ -328,6 +330,32 @@ final class WritingContextExporter {
 
         if let fp = analysis?.beatFingerprint, !fp.isEmpty {
             md += "\n\n## Beat Fingerprint\n\(fp)"
+        }
+
+        // Artifact anatomy + units: a page's or a screenshot set's substance
+        // lives here, not in `body`. Without this block a captured sales page
+        // exports as a title and a hook — which is exactly the "wider library,
+        // no more usable" failure the reference layer exists to prevent.
+        if let artifact = atom.swipeArtifact, !artifact.units.isEmpty {
+            if let anatomy = artifact.anatomy, !anatomy.isEmpty {
+                md += "\n\n## Anatomy\n\(anatomy)"
+            }
+            let units = artifact.orderedUnits.filter(\.hasSubstance)
+            if !units.isEmpty {
+                let noun = kind.unitNoun.capitalized
+                let rendered = units.map { unit -> String in
+                    var line = "### \(noun) \(unit.index + 1)"
+                    if let role = unit.role { line += " — \(role.displayName)" }
+                    if let mechanic = unit.mechanic, !mechanic.isEmpty {
+                        line += "\n*\(mechanic)*"
+                    }
+                    if let copy = unit.copy, !copy.isEmpty {
+                        line += "\n\(copy)"
+                    }
+                    return line
+                }.joined(separator: "\n\n")
+                md += "\n\n## \(noun)-by-\(noun) Breakdown\n\(rendered)"
+            }
         }
 
         if !body.isEmpty {

@@ -254,6 +254,12 @@ struct MainView: View {
             }
             .zIndex(41)
 
+            // Swipe capture receipt. ⌘⇧S fires from anywhere in the app, so its
+            // confirmation is app-level rather than page-level — and it names
+            // the kind the router inferred, because the user never chose it.
+            SwipeIntakeReceiptOverlay()
+                .zIndex(42)
+
             // Data-safety guard rails: save-failure banner + Trash sheet.
             PersistenceGuardRailsOverlay()
                 .zIndex(70)

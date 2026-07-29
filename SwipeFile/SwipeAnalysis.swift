@@ -978,6 +978,17 @@ public struct SwipeGalleryItem: Identifiable, Sendable {
     public let boardIDs: [String]
     // Processing state (nil, "pending", "extracting", "extraction_failed", "complete")
     public let processingStatus: String?
+    /// What KIND of artifact this swipe is. Derived, never migrated — every
+    /// swipe that predates the artifact spine answers `.post` (see
+    /// `Atom.swipeKind`), so the card/filter/shelf code can switch on this
+    /// without a single legacy row having been touched.
+    public let kind: SwipeKind
+    /// Units in the artifact: a page's sections, a frame set's images, a
+    /// flow's steps. Zero for every post (their transcript is the unit list,
+    /// and it resolves through its own ladder).
+    public let unitCount: Int
+    /// Roles present across those units — the Role facet reads this.
+    public let roles: Set<SwipeUnitRole>
 
     /// Pre-lowercased concatenation of searchable fields for fast filtering
     public let searchableText: String
@@ -1008,7 +1019,10 @@ public struct SwipeGalleryItem: Identifiable, Sendable {
         viewsCount: Int? = nil,
         commentsCount: Int? = nil,
         boardIDs: [String] = [],
-        processingStatus: String? = nil
+        processingStatus: String? = nil,
+        kind: SwipeKind = .post,
+        unitCount: Int = 0,
+        roles: Set<SwipeUnitRole> = []
     ) {
         self.id = atomUUID
         self.atomUUID = atomUUID
@@ -1037,6 +1051,9 @@ public struct SwipeGalleryItem: Identifiable, Sendable {
         self.commentsCount = commentsCount
         self.boardIDs = boardIDs
         self.processingStatus = processingStatus
+        self.kind = kind
+        self.unitCount = unitCount
+        self.roles = roles
         self.searchableText = CommandKSearchMatcher.searchableText(
             from: [title, hookText, author, niche, creatorName]
         )
@@ -1208,6 +1225,9 @@ extension Atom {
 
         let analysis = swipeAnalysis
         let meta = researchMetadata
+        // One decode, memoized like the analysis — the grid asks every tile
+        // for this on each diff.
+        let artifact = swipeArtifact
 
         // Extract platform fields from rich content (memoized decode). The raw
         // autoMetadata parse below is a fallback for atoms whose richContent
@@ -1317,7 +1337,10 @@ extension Atom {
             viewsCount: analysis?.viewsCount,
             commentsCount: analysis?.commentsCount,
             boardIDs: meta?.swipeBoardIDs ?? [],
-            processingStatus: meta?.processingStatus
+            processingStatus: meta?.processingStatus,
+            kind: swipeKind,
+            unitCount: artifact?.units.count ?? 0,
+            roles: artifact?.roles ?? []
         )
     }
 

@@ -37,6 +37,15 @@ struct APIKeys {
         case apnsKeyId = "apns_key_id"
         case apnsPrivateKey = "apns_private_key_p8"
         case apnsBundleId = "apns_bundle_id"
+        // Google Drive (OAuth 2.0 + PKCE, installed-app flow). The client ID
+        // is public by design; the refresh token is the real secret and is the
+        // only thing that survives a quit.
+        case googleDriveClientId = "google_drive_client_id"
+        case googleDriveRefreshToken = "google_drive_refresh_token"
+        case googleDriveAccessToken = "google_drive_access_token"
+        case googleDriveTokenExpiry = "google_drive_token_expiry"
+        case googleDriveAccount = "google_drive_account_email"
+        case googleDriveScope = "google_drive_granted_scope"
     }
 
     // MARK: - In-Memory Cache (thread-safe via lock)
@@ -196,6 +205,50 @@ struct APIKeys {
         cachedValue(.discoveryApiKey, envKey: "DISCOVERY_API_KEY")
     }
 
+    // MARK: - Google Drive (OAuth)
+
+    /// Public OAuth client identifier — safe to ship, safe to log.
+    static var googleDriveClientID: String? {
+        cachedValue(.googleDriveClientId, envKey: "GOOGLE_DRIVE_CLIENT_ID")
+    }
+
+    static var googleDriveRefreshToken: String? { cachedValue(.googleDriveRefreshToken) }
+    static var googleDriveAccessToken: String? { cachedValue(.googleDriveAccessToken) }
+    static var googleDriveTokenExpiry: String? { cachedValue(.googleDriveTokenExpiry) }
+    static var googleDriveAccount: String? { cachedValue(.googleDriveAccount) }
+    static var googleDriveScope: String? { cachedValue(.googleDriveScope) }
+
+    /// A connection exists only if the durable half of it does. An access
+    /// token alone is a leftover, not a session.
+    static var hasGoogleDrive: Bool { googleDriveRefreshToken?.isEmpty == false }
+
+    /// Persist a freshly minted or refreshed session.
+    static func saveGoogleDriveSession(
+        refreshToken: String,
+        accessToken: String,
+        expiresAt: Date,
+        scope: String,
+        accountEmail: String?
+    ) {
+        save(refreshToken, identifier: "google_drive_refresh_token")
+        save(accessToken, identifier: "google_drive_access_token")
+        save(String(expiresAt.timeIntervalSince1970), identifier: "google_drive_token_expiry")
+        save(scope, identifier: "google_drive_granted_scope")
+        if let accountEmail, !accountEmail.isEmpty {
+            save(accountEmail, identifier: "google_drive_account_email")
+        }
+    }
+
+    /// Tear down the session. Deliberately leaves the client ID in place —
+    /// disconnecting an account should not un-configure the app.
+    static func clearGoogleDriveSession() {
+        delete(identifier: "google_drive_refresh_token")
+        delete(identifier: "google_drive_access_token")
+        delete(identifier: "google_drive_token_expiry")
+        delete(identifier: "google_drive_granted_scope")
+        delete(identifier: "google_drive_account_email")
+    }
+
     // MARK: - Supabase Project Configuration
     // Project: https://cskxozkzpzxyefqmgsgg.supabase.co
     // Publishable (anon) key for client-side auth + REST
@@ -321,6 +374,12 @@ struct APIKeys {
         case "apns_key_id": return .apnsKeyId
         case "apns_private_key_p8": return .apnsPrivateKey
         case "apns_bundle_id": return .apnsBundleId
+        case "google_drive_client_id": return .googleDriveClientId
+        case "google_drive_refresh_token": return .googleDriveRefreshToken
+        case "google_drive_access_token": return .googleDriveAccessToken
+        case "google_drive_token_expiry": return .googleDriveTokenExpiry
+        case "google_drive_account_email": return .googleDriveAccount
+        case "google_drive_granted_scope": return .googleDriveScope
         default: return nil
         }
     }

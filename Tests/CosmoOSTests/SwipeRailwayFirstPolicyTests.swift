@@ -36,6 +36,91 @@ final class SwipeRailwayFirstPolicyTests: XCTestCase {
         XCTAssertFalse(SwipeProcessingService.isCloudWorkerScoped(url: nil, contentSource: nil))
     }
 
+    // MARK: - SCOPE-TWIN: no non-post kind is ever worker-scoped
+
+    /// The worker has no extractor for a screenshot, a captured web page, a
+    /// funnel or a pasted headline. If it ever claims one it fails extraction
+    /// and burns the whole retry ladder — so the kind gate runs FIRST and
+    /// unconditionally, ahead of every URL and contentSource match.
+    func testNonPostKindsAreNeverWorkerScoped() {
+        for kind in SwipeKind.allCases where kind != .post {
+            XCTAssertFalse(
+                SwipeProcessingService.isCloudWorkerScoped(
+                    url: "https://www.instagram.com/p/Dalun2ODxrf/",
+                    contentSource: "instagram_post",
+                    swipeKind: kind.rawValue
+                ),
+                "\(kind.rawValue) must be Mac-owned even when its URL and source look cloud-scoped"
+            )
+            XCTAssertFalse(kind.isCloudProcessable, "\(kind.rawValue) must not be cloud-processable")
+        }
+    }
+
+    /// A page swipe OF a YouTube URL is still a page swipe. This is the exact
+    /// case the kind-first ordering exists for.
+    func testPageSwipeOfACloudScopedURLStaysWithTheMac() {
+        XCTAssertFalse(SwipeProcessingService.isCloudWorkerScoped(
+            url: "https://www.youtube.com/@creator",
+            contentSource: "youtube",
+            swipeKind: SwipeKind.page.rawValue))
+        XCTAssertTrue(SwipeProcessingService.isCloudWorkerScoped(
+            url: "https://www.youtube.com/watch?v=abc123",
+            contentSource: "youtube",
+            swipeKind: SwipeKind.post.rawValue),
+            "an explicit post kind must not narrow the worker's existing scope")
+    }
+
+    /// Legacy rows carry no `swipeKind` key at all. Their scope must be
+    /// byte-identical to what it was before the artifact spine existed.
+    func testLegacySwipesWithoutAKindKeepTheirScope() {
+        XCTAssertTrue(SwipeProcessingService.isCloudWorkerScoped(
+            url: "https://www.instagram.com/reel/XYZ/", contentSource: nil, swipeKind: nil))
+        XCTAssertFalse(SwipeProcessingService.isCloudWorkerScoped(
+            url: "https://example.com/sales", contentSource: nil, swipeKind: nil))
+    }
+
+    /// An unrecognised kind (a row from a newer build) is Mac-owned on BOTH
+    /// sides of the twin. The worker refuses it; if the Mac deferred to the
+    /// worker instead, the swipe would sit pending forever with nobody
+    /// processing it. Unknown ⇒ Mac is the only safe direction, because the
+    /// Mac is the fallback tier for everything.
+    ///
+    /// Note this is deliberately STRICTER than `SwipeKind`'s tolerant decode,
+    /// which reads an unknown kind as `.post` so the row still renders. The
+    /// scope check compares the raw string for exactly this reason.
+    func testUnknownKindIsMacOwnedOnBothSidesOfTheTwin() {
+        XCTAssertFalse(SwipeProcessingService.isCloudWorkerScoped(
+            url: "https://www.instagram.com/p/ABC/",
+            contentSource: "instagram_post",
+            swipeKind: "some_future_kind"))
+        XCTAssertEqual(SwipeKind(rawValue: "some_future_kind"), nil)
+    }
+
+    /// An empty-string kind is treated as absent, not as an unknown kind — a
+    /// blank JSON value must not strand a perfectly ordinary Instagram swipe.
+    func testEmptyKindStringIsTreatedAsAbsent() {
+        XCTAssertTrue(SwipeProcessingService.isCloudWorkerScoped(
+            url: "https://www.instagram.com/p/ABC/",
+            contentSource: "instagram_post",
+            swipeKind: ""))
+    }
+
+    /// macMayProcess reads the kind out of metadata — a page swipe is never
+    /// deferred to a worker that will not touch it.
+    func testMacMayProcessNonPostKindsImmediately() {
+        let json = metaJSON([
+            "isSwipeFile": true,
+            "url": "https://www.instagram.com/p/ABC/",
+            "contentSource": "instagram_post",
+            "swipeKind": SwipeKind.frame.rawValue,
+            "processingStatus": "pending"
+        ])
+        XCTAssertTrue(
+            SwipeProcessingService.macMayProcess(metadataJSON: json, updatedAt: Date()),
+            "a frame swipe is Mac-owned: no cloud grace window applies"
+        )
+    }
+
     // MARK: - Pending: worker gets a grace window
 
     func testFreshPendingInstagramSwipeBelongsToTheWorker() {

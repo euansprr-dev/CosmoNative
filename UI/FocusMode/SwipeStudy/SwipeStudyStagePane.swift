@@ -24,18 +24,37 @@ struct SwipeStudyStagePane: View {
 
     @ViewBuilder
     private var stage: some View {
-        let sourceType = model.detectSourceType(for: atom)
         Group {
-            switch sourceType {
-            case .youtube, .youtubeShort:
-                youtubeStage
-            case .instagram, .instagramReel, .instagramPost, .instagramCarousel:
-                instagramStage
+            // Artifact kinds claim the stage FIRST: a frame swipe's source type
+            // is meaningless (there is no platform), and a page swipe of a
+            // youtube.com URL must not open a video player.
+            switch atom.swipeKind {
+            case .frame:
+                SwipeStudyFrameStage(units: atom.swipeArtifactUnits)
+            case .page:
+                SwipeStudyPageStage(
+                    units: atom.swipeArtifactUnits,
+                    focusedUnitID: $model.focusedArtifactUnitID
+                )
+            case .flow:
+                SwipeStudyFlowStage(units: atom.swipeArtifactUnits, flowUUID: atom.uuid)
             default:
-                thumbnailStage
+                platformStage
             }
         }
         .frame(maxWidth: .infinity, alignment: .center)
+    }
+
+    @ViewBuilder
+    private var platformStage: some View {
+        switch model.detectSourceType(for: atom) {
+        case .youtube, .youtubeShort:
+            youtubeStage
+        case .instagram, .instagramReel, .instagramPost, .instagramCarousel:
+            instagramStage
+        default:
+            thumbnailStage
+        }
     }
 
     // MARK: - YouTube

@@ -68,6 +68,14 @@ struct SwipeHomePage: View {
         .animation(ProMotionSprings.bouncy, value: showFilters)
         .overlay(alignment: .bottom) { SwipeSaveToast(message: $viewModel.boardMessage) }
         .overlay(alignment: .bottom) { SwipeSaveToast(message: $discoverModel.saveMessage) }
+        // The recording pill rides every surface that can capture — a mode you
+        // can forget you are in is a mode that ruins a library.
+        .overlay(alignment: .topTrailing) {
+            SwipeFlowRecordingPill()
+                .padding(.trailing, DS.space24)
+                .padding(.top, DS.space16)
+        }
+        .swipeLibraryDropTarget()
     }
 
     // MARK: - Content

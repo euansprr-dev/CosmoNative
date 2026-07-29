@@ -129,6 +129,31 @@ struct InboxItem: Identifiable, Codable, Equatable, FetchableRecord, Persistable
         SwipeURLClassifier().firstURL(in: rawText)
     }
 
+    /// True when the Swipe verb has something to make. A link, an image, or a
+    /// line of quoted copy all qualify — the old URL-only gate hid the verb on
+    /// exactly the captures (a screenshot, a headline someone wrote) that the
+    /// artifact spine exists to handle.
+    var canBecomeSwipe: Bool {
+        if detectedSwipeURL != nil { return true }
+        if !attachmentUUIDs.isEmpty { return true }
+        return !rawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// What the Swipe verb WOULD make, so the button can name it. Mirrors
+    /// `SwipeIntakeRouter.resolve` — the router is still the one that decides
+    /// at execution time; this only predicts, for the label.
+    var predictedSwipeKind: SwipeKind {
+        if let url = detectedSwipeURL {
+            switch SwipeIntakeRouter.resolveURL(url) {
+            case .postURL: return .post
+            case .pageFromURL, .pageFromLiveWebPage: return .page
+            default: return .post
+            }
+        }
+        if !attachmentUUIDs.isEmpty { return .frame }
+        return .note
+    }
+
     // MARK: - Factory
 
     /// True when the item's predicted destination is a task atom.

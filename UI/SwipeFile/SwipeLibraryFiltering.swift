@@ -145,6 +145,10 @@ enum SwipeLibraryFiltering {
     }
 
     private static func matchesExplicitFilters(_ item: SwipeGalleryItem, filters: SwipeLibraryFilterState) -> Bool {
+        if !filters.kinds.isEmpty, !filters.kinds.contains(item.kind) {
+            return false
+        }
+
         if !filters.platforms.isEmpty, !filters.platforms.contains(item.platformName) {
             return false
         }

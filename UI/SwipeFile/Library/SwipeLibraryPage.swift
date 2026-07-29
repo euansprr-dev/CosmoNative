@@ -64,6 +64,7 @@ struct SwipeLibraryPage: View {
         .overlay(alignment: .bottom) {
             SwipeSaveToast(message: $viewModel.boardMessage)
         }
+        .swipeLibraryDropTarget()
     }
 
     // MARK: - Content

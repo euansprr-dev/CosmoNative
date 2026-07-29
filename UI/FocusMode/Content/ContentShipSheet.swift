@@ -43,7 +43,9 @@ struct ContentExportSheet: View {
             Divider().overlay(DS.borderSubtle)
             footer
         }
-        .frame(width: 640, height: 560)
+        // The Drive row adds a band to the footer; the extra height keeps the
+        // section list from losing a card's worth of room to it.
+        .frame(width: 640, height: 610)
         .background(DS.bg)
     }
 
@@ -177,6 +179,15 @@ struct ContentExportSheet: View {
 
     private var footer: some View {
         VStack(spacing: DS.space8) {
+            // The clipboard hands the draft to the user; Drive hands it to a
+            // place. Same sheet, same sections, one more destination.
+            ContentDriveExportBar(
+                atomUUID: atom.uuid,
+                title: atom.title?.isEmpty == false ? atom.title! : "Untitled",
+                platform: platform,
+                sections: sections
+            )
+            Divider().overlay(DS.borderSubtle)
             publishRow
             HStack {
                 Text(sections.count == 1 ? "1 section" : "\(sections.count) sections")

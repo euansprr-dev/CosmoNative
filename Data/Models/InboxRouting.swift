@@ -24,6 +24,13 @@ enum InboxRouteKind: String, Codable, CaseIterable, Sendable {
     // decodable for rows classified before the Seedbed shipped).
     case feedSeedling
     case startSeedling
+    /// The capture is a craft reference — a link, image, or piece of copy the
+    /// user saved for its FORM. It becomes a swipe (kind inferred by
+    /// SwipeIntakeRouter), never a canvas object.
+    case fileAsSwipe
+    /// The capture is a step in a funnel the user is assembling — it appends
+    /// to an existing flow swipe rather than landing loose.
+    case addToFlow
 
     /// What accepting this suggestion MAKES — the noun the pill and inspector
     /// lead with, so "what it becomes" is never implicit. Spatial kinds name
@@ -54,6 +61,10 @@ enum InboxRouteKind: String, Codable, CaseIterable, Sendable {
             return "Grows a concept"
         case .startSeedling, .germinateConnection:
             return "New concept"
+        case .fileAsSwipe:
+            return "Swipe file"
+        case .addToFlow:
+            return "Step in a flow"
         }
     }
 
@@ -77,6 +88,10 @@ enum InboxRouteKind: String, Codable, CaseIterable, Sendable {
             return "sparkle.magnifyingglass"
         case .feedSeedling, .startSeedling, .germinateConnection:
             return "leaf"
+        case .fileAsSwipe:
+            return SwipeKind.post.iconName
+        case .addToFlow:
+            return SwipeKind.flow.iconName
         }
     }
 
@@ -102,6 +117,10 @@ enum InboxRouteKind: String, Codable, CaseIterable, Sendable {
         case .placeInExistingCluster, .createClusterAndPlace,
              .placeInThinkspace, .createThinkspaceAndPlace, .createStandaloneAtom:
             return "Place"
+        case .fileAsSwipe:
+            return "Swipe"
+        case .addToFlow:
+            return "Add step"
         }
     }
 
@@ -123,7 +142,8 @@ enum InboxRouteKind: String, Codable, CaseIterable, Sendable {
         case .placeInExistingCluster, .createClusterAndPlace, .placeInThinkspace, .createThinkspaceAndPlace:
             return .place
         case .advanceQuestion, .spawnQuestion, .feedConnection, .attachClient,
-             .germinateConnection, .germinateDeepDive, .feedSeedling, .startSeedling:
+             .germinateConnection, .germinateDeepDive, .feedSeedling, .startSeedling,
+             .fileAsSwipe, .addToFlow:
             // Actionable destination suggestions — the pill renders like a place.
             return .place
         case .createStandaloneAtom:

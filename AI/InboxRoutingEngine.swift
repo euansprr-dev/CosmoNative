@@ -378,6 +378,19 @@ actor InboxRoutingEngine {
                     rationale: rationale,
                     atlasMove: InboxAtlasMove(germinateTitle: newTitle)
                 ))
+
+            case .fileAsSwipe:
+                // The swipe file IS the destination — there is no Atlas key to
+                // resolve and no placement to plan. The KIND stays unresolved
+                // here on purpose: SwipeIntakeRouter decides page vs frame vs
+                // note at execution time, from the capture itself.
+                results.append(InboxRecommendation(
+                    kind: .fileAsSwipe,
+                    confidence: move.confidence,
+                    suggestedAtomType: AtomType.research.rawValue,
+                    destinationPath: "Swipe File",
+                    rationale: rationale
+                ))
             }
         }
 

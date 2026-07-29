@@ -2579,6 +2579,20 @@ class CosmoDatabase: ObservableObject {
             print("✅ seedlings dive-scope fields added")
         }
 
+        // The reference layer: a recall chunk that came from a swipe's artifact
+        // unit remembers which ROLE it played, so retrieval can ask for
+        // "guarantee sections" rather than hoping the word appears in the text.
+        // Nullable — every existing vector stays valid and re-embeds with a
+        // role only when its atom next changes.
+        migrator.registerMigration("add_recall_chunk_role") { db in
+            try db.execute(sql: """
+                ALTER TABLE recall_vectors ADD COLUMN role TEXT;
+                CREATE INDEX IF NOT EXISTS idx_recall_vectors_role
+                    ON recall_vectors(role) WHERE role IS NOT NULL;
+            """)
+            print("✅ recall_vectors.role added")
+        }
+
         return migrator
     }
 

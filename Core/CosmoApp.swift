@@ -326,6 +326,9 @@ struct CosmoApp: App {
 
             try? await Task.sleep(for: .seconds(4))
             guard !Task.isCancelled else { return }
+            // Identity repair BEFORE the scan: repaired atoms become visible
+            // to the very scan that follows.
+            await SwipeProcessingService.shared.repairFlaglessPlatformSwipes()
             await MainActor.run {
                 SwipeProcessingService.shared.scanForPendingSwipes()
             }

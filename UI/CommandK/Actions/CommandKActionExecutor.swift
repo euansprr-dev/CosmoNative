@@ -205,7 +205,14 @@ struct CommandKActionExecutor {
             } else {
                 occurrenceDay = Calendar.current.startOfDay(for: today)
             }
+            // Habit credit only for a fresh completion — re-invoking Mark Done on an
+            // already-logged occurrence must not double-credit (the dashboard contract).
+            let occurrenceKey = RecurringSeriesEngine.dayKey(for: occurrenceDay)
+            let alreadyLogged = (meta.completedOccurrences ?? []).contains { $0.day == occurrenceKey }
             try await RecurringSeriesEngine.shared.complete(templateUUID: uuid, occurrenceDay: occurrenceDay)
+            if !alreadyLogged {
+                await CommandCenterHabitEngine.shared.recordTaskCompletion(taskUUID: uuid)
+            }
 
             NotificationCenter.default.post(
                 name: CosmoNotification.Gamification.taskCompleted,
@@ -224,12 +231,16 @@ struct CommandKActionExecutor {
         var applied = false
         guard let task = try await AtomRepository.shared.update(uuid: uuid, updates: { atom in
             guard var metadata = taskMetadataForCommandKWrite(atom, context: "CommandK.completeTask") else { return }
+            guard metadata.isCompleted != true else { return }
             metadata.isCompleted = true
             metadata.completedAt = completedAt
             guard let merged = atom.mergingTaskMetadata(metadata, context: "CommandK.completeTask(\(uuid.prefix(8)))") else { return }
             atom = merged
             applied = true
         }), applied else { return }
+
+        // Habit credit only after the completion actually persisted (dashboard contract).
+        await CommandCenterHabitEngine.shared.recordTaskCompletion(taskUUID: uuid)
 
         NotificationCenter.default.post(
             name: CosmoNotification.Gamification.taskCompleted,

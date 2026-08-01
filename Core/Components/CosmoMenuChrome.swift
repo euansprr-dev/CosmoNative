@@ -16,6 +16,7 @@ struct CosmoMenuChrome: ViewModifier {
     var darkMode: Bool = false
 
     @State private var menuAppeared = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
         // INVARIANT: the glass is a BACKDROP layer behind the content, never
@@ -35,10 +36,15 @@ struct CosmoMenuChrome: ViewModifier {
             }
             .scaleEffect(menuAppeared ? 1 : 0.95)
             .opacity(menuAppeared ? 1 : 0)
-            .blur(radius: menuAppeared ? 0 : 4)
+            // No animated blur: every entrance frame had to render the menu
+            // offscreen, Gaussian-blur it, and composite it over a glass
+            // backdrop that is itself re-sampling — the classic ProMotion
+            // frame-budget killer. Scale + opacity carry the entrance.
             .onAppear {
                 CosmicHaptics.shared.play(.menuAppear)
-                withAnimation(ProMotionSprings.bouncy) {
+                // Every menu in the app enters through this modifier — the
+                // Reduce Motion gate lives HERE so call sites inherit it.
+                withAnimation(reduceMotion ? nil : ProMotionSprings.bouncy) {
                     menuAppeared = true
                 }
             }

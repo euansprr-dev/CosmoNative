@@ -38,6 +38,8 @@ struct MarginaliaLabel: View {
     let label: String
     let countText: String?
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     init(_ label: String, countText: String? = nil) {
         self.label = label
         self.countText = countText
@@ -47,19 +49,23 @@ struct MarginaliaLabel: View {
         HStack(spacing: DS.space8) {
             Text(label)
                 .font(DS.smallCaps)
-                .tracking(1.6)
-                .foregroundStyle(DS.giltMuted)
+                .tracking(DS.smallCapsTracking)
+                // giltInk, not giltMuted: gilt CARRYING TEXT must clear AA;
+                // giltMuted stays ornament (rules, diamonds).
+                .foregroundStyle(DS.giltInk)
             Rectangle()
                 .fill(marginaliaRuleColor)
                 .frame(height: 0.5)
             if let countText {
                 // Counts are alive (the surface-system reward loop): they tick
                 // with the work instead of re-laying out.
+                // DS.keycap: the one mono voice — a hand-typed 9pt sat below
+                // the DS's own smallest-readable floor.
                 Text(countText)
-                    .font(.system(size: 9, weight: .regular, design: .monospaced))
-                    .foregroundStyle(DS.inkFaded)
+                    .font(DS.keycap)
+                    .foregroundStyle(DS.textMuted)
                     .contentTransition(.numericText())
-                    .animation(ProMotionSprings.gentle, value: countText)
+                    .animation(reduceMotion ? nil : ProMotionSprings.gentle, value: countText)
             }
         }
     }
@@ -330,6 +336,16 @@ struct WorkbenchShell<Leading: View, Center: View, Trailing: View>: View {
 
     /// At regular width the panels are true columns of the sheet — welded by
     /// their hairlines, clipped by the sheet's one rounded edge.
+    ///
+    /// LAW: the shell itself never animates panel insertion — the slide only
+    /// runs when the toggle site wraps its state change in `withAnimation`
+    /// (every bench's toolbar/keyboard/scrim site already does). An implicit
+    /// `.animation(value:)` here also animated BREAKPOINT-driven seats, and
+    /// the first width resolve after mount is one of those: the column
+    /// inserted inside the bench's own entrance transaction, whose teardown
+    /// orphaned the slide mid-flight — panel laid out and hit-testable but
+    /// never composited (the invisible idea inspector, July 2026). Breakpoint
+    /// seats are instant by design; only user toggles animate.
     private var columns: some View {
         HStack(spacing: 0) {
             if panelsDisplace, isLeadingShowing {
@@ -343,11 +359,10 @@ struct WorkbenchShell<Leading: View, Center: View, Trailing: View>: View {
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
-        .animation(ProMotionSprings.focusTransition, value: isLeadingShowing)
-        .animation(ProMotionSprings.focusTransition, value: isTrailingShowing)
     }
 
     /// Below regular width the panels slide OVER the center inside the sheet.
+    /// Same law as `columns`: the transaction comes from the toggle site.
     private var overlayPanels: some View {
         HStack(spacing: 0) {
             if isLeadingShowing {
@@ -360,8 +375,6 @@ struct WorkbenchShell<Leading: View, Center: View, Trailing: View>: View {
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
-        .animation(ProMotionSprings.focusTransition, value: isLeadingShowing)
-        .animation(ProMotionSprings.focusTransition, value: isTrailingShowing)
     }
 
     private var scrim: some View {

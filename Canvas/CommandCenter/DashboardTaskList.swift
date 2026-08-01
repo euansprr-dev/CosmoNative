@@ -60,7 +60,7 @@ struct DashboardTaskList: View {
                 // never at the window bottom where the assistant island owns
                 // the center.
                 DashboardShortcutBar(viewModel: viewModel)
-                    .padding(.horizontal, DS.space10)
+                    .padding(.horizontal, DS.space12)
                     .padding(.top, DS.space16)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -206,10 +206,18 @@ struct DashboardTaskList: View {
     @ViewBuilder
     private var completedTodaySection: some View {
         let completed = viewModel.completedTasksForSelectedDay
+        // A group gap genuinely wider than the intra-section rhythm (28pt vs
+        // 28pt was still a tie at space8 — space16 makes the record's break
+        // the largest vertical interval in the list, as a record deserves).
+        Spacer().frame(height: DS.space16)
+        // The day's earned register: when everything fell, the receipts
+        // header quietly takes the accent — the one visual payoff for a
+        // cleared day (the masthead line and dayClear bell already speak).
         sectionHeader(
             title: "Completed",
-            color: DS.textSecondary,
-            trailing: "\(completed.count)"
+            color: viewModel.isDayClear ? DS.accent : DS.textSecondary,
+            trailing: "\(completed.count)",
+            isSemantic: viewModel.isDayClear
         )
 
         band(tasks: completed, ordering: .fixed, band: nil)
@@ -356,7 +364,6 @@ struct DashboardTaskList: View {
                 contextHeadingUUID: heading.id,
                 placeholderText: "Add task to \(heading.title)…"
             )
-            .padding(.horizontal, 4)
         }
     }
 
@@ -437,6 +444,7 @@ struct DashboardTaskList: View {
             tint: isSemantic ? color : nil
         ) {
             if showReschedule {
+
                 CommandCenterComposerTrigger(composer: composer, alignment: .trailing) { anchor in
                     // Row ids ("uuid" or "uuid#day") so recurring occurrences reschedule via
                     // per-day overrides instead of rewriting their template's anchor.
@@ -454,7 +462,9 @@ struct DashboardTaskList: View {
                 }
             }
         }
-        .padding(.horizontal, DS.space10)
+        // The one content rail (x=12): section labels, keycaps, the checkbox
+        // slot, and the capture row all hang off the same left edge.
+        .padding(.horizontal, DS.space12)
         .padding(.top, DS.space12)
         .padding(.bottom, DS.space6)
     }
@@ -530,8 +540,10 @@ struct DashboardTaskList: View {
         .background(DS.surface, in: .rect(cornerRadius: DS.radiusSmall))
         .overlay(
             RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous)
-                .stroke(DS.accent.opacity(0.2), lineWidth: 1)
+                .strokeBorder(DS.accent.opacity(0.2), lineWidth: 0.5)
         )
+        // The bar's card edge meets the row-glass rail (x=8), not the column edge.
+        .padding(.horizontal, DS.space8)
         .animation(reduceMotion ? nil : ProMotionSprings.snappy, value: selectedTaskUUIDs.count)
     }
 
@@ -561,7 +573,7 @@ struct DashboardTaskList: View {
             subtitle: presentation.subtitle
         )
         .frame(maxWidth: .infinity)
-        .padding(.horizontal, DS.space10)
+        .padding(.horizontal, DS.space12)
         .padding(.vertical, DS.space16)
     }
 
@@ -640,6 +652,9 @@ struct CommandCenterAnimatedCheckbox: View {
     let isCompleted: Bool
     let completionState: CommandCenterTaskCompletionState?
     let size: CGFloat
+    /// Pointer-on-row preview: a faint fill that says "clicking completes"
+    /// before the click (Todoist's checkbox law). Off during choreography.
+    var isHovered: Bool = false
 
     private var ringProgress: CGFloat {
         if isCompleted { return 1 }
@@ -661,31 +676,38 @@ struct CommandCenterAnimatedCheckbox: View {
         return completionState?.checkProgress ?? 0
     }
 
+    // Completion wears the BRAND accent, not the status green: the one
+    // saturated hue on the ledger is spent on the one idea — achieved.
     var body: some View {
         ZStack {
+            Circle()
+                .fill(DS.accent.opacity(isHovered && !isCompleted && completionState == nil ? 0.10 : 0))
+                .frame(width: size, height: size)
+
             Circle()
                 .stroke(priorityColor.opacity(isCompleted ? 0 : 0.4), lineWidth: 1.5)
                 .frame(width: size, height: size)
 
             Circle()
-                .fill(DS.green)
+                .fill(DS.accent)
                 .frame(width: size, height: size)
                 .scaleEffect(fillScale)
                 .opacity(fillOpacity)
 
             Circle()
                 .trim(from: 0, to: ringProgress)
-                .stroke(DS.green, style: StrokeStyle(lineWidth: 1.8, lineCap: .round))
+                .stroke(DS.accent, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
                 .frame(width: size, height: size)
                 .rotationEffect(.degrees(-90))
                 .opacity(isCompleted || completionState != nil ? 1 : 0)
 
             CommandCenterCheckmarkShape()
                 .trim(from: 0, to: checkProgress)
-                .stroke(Color.white, style: StrokeStyle(lineWidth: 2.2, lineCap: .round, lineJoin: .round))
+                .stroke(DS.textOnAccent, style: StrokeStyle(lineWidth: 2.2, lineCap: .round, lineJoin: .round))
                 .frame(width: size * 0.52, height: size * 0.52)
         }
         .frame(width: size, height: size)
+        .animation(ProMotionSprings.hover, value: isHovered)
     }
 }
 
@@ -706,13 +728,18 @@ struct CommandCenterAnimatedTaskTitle: View {
         Text(title)
             .font(font)
             .foregroundStyle(isCompleted || completionState != nil ? completedColor : activeColor)
-            .strikethrough(isCompleted, color: completedColor)
+            // The rule belongs to the type: the text's own ink at reduced
+            // strength, so it disappears into the letterforms instead of
+            // crossing them at full weight (the row's 0.7 already dims once).
+            .strikethrough(isCompleted, color: completedColor.opacity(0.55))
             .overlay(alignment: .leading) {
                 if !isCompleted {
                     GeometryReader { geo in
+                        // 1.0, not 1.4: a strike heavier than the letterforms'
+                        // own stems reads as a redaction bar, not a check-off.
                         Rectangle()
                             .fill(completedColor)
-                            .frame(width: geo.size.width * strikeProgress, height: 1.4)
+                            .frame(width: geo.size.width * strikeProgress, height: 1.0)
                             .position(
                                 x: (geo.size.width * strikeProgress) / 2,
                                 y: geo.size.height * 0.54
@@ -768,7 +795,7 @@ private struct EveningPlanRow: View {
                 Image(systemName: "moon.stars")
                     .font(DS.caption)
                     .foregroundStyle(DS.gilt)
-                    .frame(width: 18)
+                    .frame(width: 28)
                     .accessibilityHidden(true)
 
                 VStack(alignment: .leading, spacing: 1) {
@@ -788,9 +815,11 @@ private struct EveningPlanRow: View {
                     .font(DS.caption2.weight(.semibold))
                     .foregroundStyle(isHovered ? DS.text : DS.textMuted)
             }
-            .padding(.horizontal, DS.space10)
+            // On the ledger's rails: content at x=12, icon in the 28pt
+            // checkbox slot → title lands at x=50 like every row above.
+            .padding(.horizontal, DS.space12)
             .padding(.vertical, DS.space8)
-            .frame(minHeight: 44)
+            .frame(minHeight: 40)
             .background(
                 RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous)
                     .fill(isHovered ? DS.glassCardFill : Color.clear)

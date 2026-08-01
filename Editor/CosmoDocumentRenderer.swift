@@ -352,13 +352,16 @@ struct CosmoDocumentRenderer: View {
     }
 
     private func font(for block: RichBlock) -> Font {
+        // Thumbnail sizes are deliberately floored for card legibility, but
+        // WEIGHTS follow the document ladder (H1 semibold / H3 medium) so the
+        // two surfaces never disagree about how heavy a heading is.
         switch block.kind {
         case .heading1:
-            return .system(size: max(28, fontSize + 12), weight: .bold)
+            return .system(size: max(28, fontSize + 12), weight: .semibold)
         case .heading2:
             return .system(size: max(22, fontSize + 8), weight: .semibold)
         case .heading3:
-            return .system(size: max(18, fontSize + 4), weight: .semibold)
+            return .system(size: max(18, fontSize + 4), weight: .medium)
         default:
             return .system(size: fontSize)
         }

@@ -119,7 +119,6 @@ struct BlockListView: View {
     /// drags here; frames come from the layout index (registered per row).
     @State private var ownedDragController = BlockDragSelectionController()
     @State private var selectionKeyMonitor = BlockSelectionKeyMonitor()
-    @State private var listSize: CGSize = .zero
     /// The list's frame in the hosting view's space, updated off the render
     /// path (see onGeometryChange) — read only by the outside-click monitor.
     @State private var listGeometry = BlockListGeometryBox()
@@ -131,74 +130,16 @@ struct BlockListView: View {
 
     var body: some View {
         let fingerprint = rowEnvironmentFingerprint
+        let listOrdinals = Self.numberedListOrdinals(for: document.blocks)
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(document.blocks.enumerated()), id: \.element.id) { index, block in
-                let path = BlockPath.root(index: index)
-                if progressiveHydration && index >= hydratedRowLimit {
-                    BlockStaticRowPlaceholder(
-                        block: block,
-                        topSpacing: BlockRhythmPolicy.topSpacing(
-                            for: block.kind,
-                            following: index > 0 ? document.blocks[index - 1].kind : nil,
-                            baseGap: blockGap
-                        ),
-                        fontSize: fingerprint.fontSize,
-                        fontDesign: fingerprint.fontDesign,
-                        darkMode: fingerprint.darkMode,
-                        overrideTextColor: fingerprint.overrideTextColor,
-                        onTap: {
-                            // A click on a not-yet-hydrated row hydrates up to
-                            // it and hands it the caret — the row registers
-                            // with the focus coordinator as it mounts.
-                            hydratedRowLimit = max(hydratedRowLimit, index + 1)
-                            resolvedFocusCoordinator.focus(block.id)
-                        }
-                    )
-                    .id(block.id)
-                } else {
-                    BlockRowContainer(
-                    block: block,
-                    path: path,
-                    topSpacing: BlockRhythmPolicy.topSpacing(
-                        for: block.kind,
-                        following: index > 0 ? document.blocks[index - 1].kind : nil,
-                        baseGap: blockGap
-                    ),
-                    isSelected: resolvedSelectionCoordinator.isSelected(block.id),
-                    landingActive: landingHighlightBlockID == block.id,
-                    dimsInactiveBlocks: dimsInactiveBlocks,
-                    environment: fingerprint,
-                    focusCoordinator: resolvedFocusCoordinator,
-                    selectionCoordinator: resolvedSelectionCoordinator,
-                    onMove: moveBlock,
-                    onInsertBelow: { insertParagraph(after: path) },
-                    onHandleClick: { handleClicked(block) },
-                    onHandleShiftClick: { resolvedSelectionCoordinator.selectRange(to: block.id, in: document) },
-                    handleMenu: { handleMenu(for: block) },
-                    onSelectionCatcherTap: { shiftPressed in
-                        if shiftPressed {
-                            resolvedSelectionCoordinator.selectRange(to: block.id, in: document)
-                        } else {
-                            resolvedSelectionCoordinator.clear()
-                            deactivateSelectionKeyboard()
-                            resolvedFocusCoordinator.focus(block.id)
-                        }
-                    }
-                ) {
-                    blockContent(for: block, at: path)
-                }
-                // The row's Equatable gate — a keystroke in one block must
-                // not rebuild and re-diff every row's chrome + editor subtree.
-                .equatable()
-                .id(block.id)
-                }
+                rowView(index: index, block: block, fingerprint: fingerprint, listOrdinals: listOrdinals)
             }
         }
         .onAppear { startHydrationPumpIfNeeded() }
-        .animation(
-            reduceMotion ? nil : ProMotionSprings.gentle,
-            value: dimsInactiveBlocks ? resolvedFocusCoordinator.focusedBlockID : nil
-        )
+        // Paragraph-focus dim animation lives on each row (scoped to its own
+        // rowOpacity) — animating on focusedBlockID here read the coordinator
+        // from the LIST body, re-running the whole list per focus move.
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .coordinateSpace(name: providesNavigationOrder
             ? EditorOverlayPresenter.coordinateSpaceName
@@ -214,7 +155,14 @@ struct BlockListView: View {
             }
         }
         .overlay(alignment: .topLeading) {
-            hoistedSlashMenuOverlay
+            // Invalidation firewall: the child view reads the presenter's
+            // sessions in ITS body, so a session write (every slash query
+            // keystroke, every highlight move) re-renders the small overlay
+            // — reading them here re-ran this whole list body, deep-comparing
+            // every block, to move a menu highlight one row.
+            if providesNavigationOrder {
+                BlockEditorHoistedOverlays(presenter: ownedOverlayPresenter, geometry: listGeometry)
+            }
         }
         .focusable(resolvedSelectionCoordinator.isActive)
         .focusEffectDisabled()
@@ -228,9 +176,13 @@ struct BlockListView: View {
             // Frame goes into a plain reference box — it changes every frame
             // during scrolling and must not invalidate the list body. Only a
             // real size change touches @State.
+            // Size also stays in the box: a split/merge always changes list
+            // height, and a `listSize` @State write here re-ran the whole
+            // list body once more per structural edit. The overlay clamp
+            // reads the box at menu-present time instead.
             listGeometry.globalFrame = newFrame
-            if listSize != newFrame.size {
-                listSize = newFrame.size
+            if listGeometry.lastPublishedSize != newFrame.size {
+                listGeometry.lastPublishedSize = newFrame.size
                 onContentHeightChange?(newFrame.size.height)
             }
         }
@@ -261,12 +213,101 @@ struct BlockListView: View {
         }
     }
 
+    /// One row of the list — extracted so the ForEach closure stays small
+    /// enough for the type checker and the row construction reads clearly.
+    @ViewBuilder
+    private func rowView(
+        index: Int,
+        block: RichBlock,
+        fingerprint: BlockRowEnvironmentFingerprint,
+        listOrdinals: [Int]
+    ) -> some View {
+        let path = BlockPath.root(index: index)
+        let topSpacing = BlockRhythmPolicy.topSpacing(
+            for: block.kind,
+            following: index > 0 ? document.blocks[index - 1].kind : nil,
+            baseGap: blockGap
+        )
+        if progressiveHydration && index >= hydratedRowLimit {
+            BlockStaticRowPlaceholder(
+                block: block,
+                topSpacing: topSpacing,
+                listOrdinal: listOrdinals[index],
+                fontSize: fingerprint.fontSize,
+                fontDesign: fingerprint.fontDesign,
+                darkMode: fingerprint.darkMode,
+                overrideTextColor: fingerprint.overrideTextColor,
+                onTap: {
+                    // A click on a not-yet-hydrated row hydrates up to
+                    // it and hands it the caret — the row registers
+                    // with the focus coordinator as it mounts.
+                    hydratedRowLimit = max(hydratedRowLimit, index + 1)
+                    resolvedFocusCoordinator.focus(block.id)
+                }
+            )
+            .id(block.id)
+        } else {
+            BlockRowContainer(
+                block: block,
+                path: path,
+                topSpacing: topSpacing,
+                listOrdinal: listOrdinals[index],
+                isSelected: resolvedSelectionCoordinator.isSelected(block.id),
+                landingActive: landingHighlightBlockID == block.id,
+                dimsInactiveBlocks: dimsInactiveBlocks,
+                environment: fingerprint,
+                focusCoordinator: resolvedFocusCoordinator,
+                selectionCoordinator: resolvedSelectionCoordinator,
+                onMove: moveBlock,
+                onInsertBelow: { insertParagraph(after: block.id, hint: path) },
+                onHandleClick: { handleClicked(block) },
+                onHandleShiftClick: { resolvedSelectionCoordinator.selectRange(to: block.id, in: document) },
+                handleMenu: { handleMenu(for: block) },
+                onSelectionCatcherTap: { shiftPressed in
+                    if shiftPressed {
+                        resolvedSelectionCoordinator.selectRange(to: block.id, in: document)
+                    } else {
+                        resolvedSelectionCoordinator.clear()
+                        deactivateSelectionKeyboard()
+                        resolvedFocusCoordinator.focus(block.id)
+                    }
+                }
+            ) {
+                blockContent(for: block, at: path, listOrdinal: listOrdinals[index])
+            }
+            // The row's Equatable gate — a keystroke in one block must
+            // not rebuild and re-diff every row's chrome + editor subtree.
+            .equatable()
+            .id(block.id)
+        }
+    }
+
     /// A flattened, pre-order list of every block ID (descending into element
     /// children) — the document's visual top-to-bottom order. Only the IDs
     /// change with structure, so `.onChange` fires on real structural edits,
     /// not on every keystroke.
     private var navigationOrderSignature: [UUID] {
         BlockNavigationOrder.flatten(document.blocks)
+    }
+
+    /// Per-block position within a contiguous numbered run (0 for the first
+    /// item and every non-numbered block) — the serializer seed each row needs
+    /// because it can only see its own single-block document. O(n) once per
+    /// body evaluation, same order as the ForEach itself.
+    static func numberedListOrdinals(for blocks: [RichBlock]) -> [Int] {
+        var ordinals: [Int] = []
+        ordinals.reserveCapacity(blocks.count)
+        var run = 0
+        for block in blocks {
+            if block.kind == .numberedList {
+                ordinals.append(run)
+                run += 1
+            } else {
+                ordinals.append(0)
+                run = 0
+            }
+        }
+        return ordinals
     }
 
     private func syncNavigationOrderIfNeeded() {
@@ -301,7 +342,7 @@ struct BlockListView: View {
     }
 
     @ViewBuilder
-    private func blockContent(for block: RichBlock, at path: BlockPath) -> some View {
+    private func blockContent(for block: RichBlock, at path: BlockPath, listOrdinal: Int = 0) -> some View {
         switch block.kind {
         case .divider:
             dividerRow
@@ -309,9 +350,12 @@ struct BlockListView: View {
             imageRow(for: block, at: path)
         case .element:
             ElementBlockView(
-                block: blockBinding(at: path, fallback: block),
+                block: blockBinding(for: block.id, hint: path, fallback: block),
                 focusCoordinator: resolvedFocusCoordinator,
                 fontSize: fontSize,
+                fontDesign: fontDesign,
+                lineSpacingAdjustment: lineSpacingAdjustment,
+                blockGap: blockGap,
                 darkMode: darkMode,
                 overrideTextColor: overrideTextColor,
                 allowSlashCommands: allowSlashCommands,
@@ -322,7 +366,7 @@ struct BlockListView: View {
                 editorTargetID: editorTargetID,
                 navigationTargetID: navigationTargetID,
                 onSelectionChanged: onSelectionChanged,
-                onExitBody: { insertParagraph(after: path) },
+                onExitBody: { insertParagraph(after: block.id, hint: path) },
                 onElementChange: emitDocumentChange
             )
         case .content, .research:
@@ -335,16 +379,21 @@ struct BlockListView: View {
                 style: block.callout ?? .default,
                 darkMode: darkMode,
                 onStyleChange: { newStyle in
-                    var updated = block
+                    guard let livePath = livePath(of: block.id, hint: path),
+                          var updated = try? BlockOperations.currentBlock(in: document, at: livePath) else { return }
                     updated.callout = newStyle
-                    replaceBlock(at: path, with: updated)
+                    replaceBlock(at: livePath, with: updated)
                 }
             ) {
                 textBlockRow(for: block, at: path)
             }
         case .code:
             CodeBlockRowView(
-                codeText: { (try? BlockOperations.currentBlock(in: document, at: path))?.plainInlineText ?? block.plainInlineText },
+                codeText: {
+                    livePath(of: block.id, hint: path)
+                        .flatMap { try? BlockOperations.currentBlock(in: document, at: $0) }?
+                        .plainInlineText ?? block.plainInlineText
+                },
                 darkMode: darkMode
             ) {
                 textBlockRow(for: block, at: path)
@@ -353,12 +402,12 @@ struct BlockListView: View {
             toggleRow(for: block, at: path)
         case .sketch:
             SketchBlockView(
-                block: blockBinding(at: path, fallback: block),
+                block: blockBinding(for: block.id, hint: path, fallback: block),
                 darkMode: darkMode,
                 onSketchChange: emitDocumentChange
             )
         default:
-            textBlockRow(for: block, at: path)
+            textBlockRow(for: block, at: path, listOrdinal: listOrdinal)
         }
     }
 
@@ -368,17 +417,18 @@ struct BlockListView: View {
             hasChildren: !block.children.isEmpty,
             darkMode: darkMode,
             onToggleCollapse: {
-                var updated = block
-                updated.toggleCollapsed = !(block.toggleCollapsed ?? false)
-                replaceBlock(at: path, with: updated)
+                guard let livePath = livePath(of: block.id, hint: path),
+                      var updated = try? BlockOperations.currentBlock(in: document, at: livePath) else { return }
+                updated.toggleCollapsed = !(updated.toggleCollapsed ?? false)
+                replaceBlock(at: livePath, with: updated)
             },
-            onAddFirstChild: { addFirstToggleChild(at: path, block: block) },
+            onAddFirstChild: { addFirstToggleChild(blockID: block.id, hint: path, block: block) },
             header: {
                 textBlockRow(for: block, at: path)
             },
             children: {
                 BlockListView(
-                    document: toggleChildrenBinding(at: path, fallback: block),
+                    document: toggleChildrenBinding(for: block.id, hint: path, fallback: block),
                     fontSize: fontSize,
                     fontDesign: fontDesign,
                     lineSpacingAdjustment: lineSpacingAdjustment,
@@ -397,7 +447,7 @@ struct BlockListView: View {
                     focusCoordinator: resolvedFocusCoordinator,
                     providesNavigationOrder: false,
                     onSelectionChanged: onSelectionChanged,
-                    onExitFinalEmptyTextRegion: { exitToggleBody(at: path) },
+                    onExitFinalEmptyTextRegion: { exitToggleBody(blockID: block.id, hint: path) },
                     onDocumentChange: { _, _ in emitDocumentChange() }
                 )
             }
@@ -405,15 +455,20 @@ struct BlockListView: View {
     }
 
     /// Binding into a toggle's children — the nested list edits them in
-    /// place, exactly like an element body.
-    private func toggleChildrenBinding(at path: BlockPath, fallback: RichBlock) -> Binding<RichDocument> {
+    /// place, exactly like an element body. ID-resolving: the captured path
+    /// is only a hint (rows skip re-renders across structural shifts).
+    private func toggleChildrenBinding(for blockID: UUID, hint: BlockPath, fallback: RichBlock) -> Binding<RichDocument> {
         Binding(
             get: {
-                let block = (try? BlockOperations.currentBlock(in: document, at: path)) ?? fallback
+                guard let path = livePath(of: blockID, hint: hint),
+                      let block = try? BlockOperations.currentBlock(in: document, at: path) else {
+                    return RichDocument(blocks: fallback.children)
+                }
                 return RichDocument(blocks: block.children)
             },
             set: { nextDocument in
-                guard var block = try? BlockOperations.currentBlock(in: document, at: path) else { return }
+                guard let path = livePath(of: blockID, hint: hint),
+                      var block = try? BlockOperations.currentBlock(in: document, at: path) else { return }
                 block.children = nextDocument.blocks
                 guard let result = try? BlockOperations.replaceBlock(in: document, at: path, with: block),
                       result.document != document else { return }
@@ -423,7 +478,8 @@ struct BlockListView: View {
         )
     }
 
-    private func addFirstToggleChild(at path: BlockPath, block: RichBlock) {
+    private func addFirstToggleChild(blockID: UUID, hint: BlockPath?, block: RichBlock) {
+        guard let path = livePath(of: blockID, hint: hint) else { return }
         var updated = (try? BlockOperations.currentBlock(in: document, at: path)) ?? block
         guard updated.children.isEmpty else { return }
         let paragraph = RichBlock.paragraph("")
@@ -435,8 +491,9 @@ struct BlockListView: View {
 
     /// Return on the empty final child of a toggle exits the toggle — the
     /// empty child is given up and the caret lands in a fresh paragraph below.
-    private func exitToggleBody(at path: BlockPath) -> Bool {
-        guard var block = try? BlockOperations.currentBlock(in: document, at: path),
+    private func exitToggleBody(blockID: UUID, hint: BlockPath?) -> Bool {
+        guard let path = livePath(of: blockID, hint: hint),
+              var block = try? BlockOperations.currentBlock(in: document, at: path),
               block.kind == .toggle else { return false }
         if let last = block.children.last,
            last.kind == .paragraph,
@@ -451,7 +508,7 @@ struct BlockListView: View {
         return true
     }
 
-    private func textBlockRow(for block: RichBlock, at path: BlockPath) -> some View {
+    private func textBlockRow(for block: RichBlock, at path: BlockPath, listOrdinal: Int = 0) -> some View {
         BlockTextEditorRow(
             document: $document,
             path: path,
@@ -461,6 +518,7 @@ struct BlockListView: View {
             fontSize: fontSize,
             fontDesign: fontDesign,
             lineSpacingAdjustment: lineSpacingAdjustment,
+            numberedListSeed: listOrdinal,
             placeholder: BlockPlaceholderPolicy.shouldShowBodyPlaceholder(
                 for: block,
                 at: path,
@@ -489,9 +547,10 @@ struct BlockListView: View {
     }
 
     private var dividerRow: some View {
+        // Border tokens, not raw white/ink alphas — the page's one rule weight.
         Rectangle()
-            .fill((darkMode ? Color.white : DS.documentTextSecondary).opacity(0.28))
-            .frame(height: 1)
+            .fill(darkMode ? DS.focusImmersiveBorder : DS.documentBorder)
+            .frame(height: 0.5)
             .padding(.vertical, 10)
     }
 
@@ -500,15 +559,19 @@ struct BlockListView: View {
             image: block.inlines.compactMap(\.image).first ?? RichImageReference(path: "", width: 1, height: 1),
             darkMode: darkMode,
             onCommitWidth: { newWidth in
-                setImageDisplayWidth(newWidth, at: path, block: block)
+                setImageDisplayWidth(newWidth, blockID: block.id, hint: path)
             }
         )
     }
 
     /// Persist a resized image's display width back into the block. One named undo step per
     /// gesture; never steals focus (image blocks have no text region to focus).
-    private func setImageDisplayWidth(_ width: CGFloat?, at path: BlockPath, block: RichBlock) {
-        guard let imageIndex = block.inlines.firstIndex(where: { $0.kind == .imageRef }),
+    /// ID-resolving: reads the LIVE block so a stale row snapshot can't
+    /// resurrect old inlines alongside the new width.
+    private func setImageDisplayWidth(_ width: CGFloat?, blockID: UUID, hint: BlockPath?) {
+        guard let path = livePath(of: blockID, hint: hint),
+              let block = try? BlockOperations.currentBlock(in: document, at: path),
+              let imageIndex = block.inlines.firstIndex(where: { $0.kind == .imageRef }),
               var image = block.inlines[imageIndex].image else { return }
         image.displayWidth = width
         var newBlock = block
@@ -537,68 +600,9 @@ struct BlockListView: View {
         selectionCoordinator ?? ownedSelectionCoordinator
     }
 
-    // MARK: - Hoisted Slash Menu
-
-    /// The single slash menu for every row in this list, rendered above all
-    /// row text views. Position is caret-anchored (published by the row) and
-    /// clamped against the list's own bounds — a row is only ~1 line tall, so
-    /// clamping there pins the menu to nonsense positions.
-    @ViewBuilder
-    private var hoistedSlashMenuOverlay: some View {
-        if providesNavigationOrder {
-            if let session = ownedOverlayPresenter.slashSession {
-                SlashCommandMenu(
-                    position: clampedOverlayPosition(for: session.anchorInList, menuSize: CGSize(width: 300, height: 380)),
-                    query: session.query,
-                    commands: session.commands,
-                    selectedIndex: session.selectedIndex,
-                    onHighlight: session.onHighlight,
-                    onSelect: session.onSelect,
-                    onDismiss: session.onDismiss,
-                    darkMode: session.darkMode
-                )
-                .zIndex(1000)
-                .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .topLeading)))
-            }
-            if let session = ownedOverlayPresenter.elementCreationSession {
-                ElementCreationMenu(
-                    position: clampedOverlayPosition(for: session.anchorInList, menuSize: CGSize(width: 320, height: 352)),
-                    onCreate: session.onCreate,
-                    onDismiss: session.onDismiss,
-                    darkMode: session.darkMode
-                )
-                .zIndex(1001)
-                .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .topLeading)))
-            }
-            if ownedOverlayPresenter.slashSession == nil,
-               let session = ownedOverlayPresenter.selectionSession {
-                SelectionFormattingMenu(
-                    anchor: session.anchorInList,
-                    container: listSize,
-                    traits: session.traits,
-                    compact: session.compact,
-                    darkMode: session.darkMode,
-                    onDismiss: session.onDismiss,
-                    onAIAction: session.onAIAction,
-                    onCustomPrompt: session.onCustomPrompt,
-                    onWritingAIRequest: session.onWritingAIRequest
-                )
-                .zIndex(990)
-                .transition(.opacity)
-            }
-        }
-    }
-
-    private func clampedOverlayPosition(for anchor: CGPoint, menuSize: CGSize) -> CGPoint {
-        // Clamp horizontally only. NEVER flip above the caret based on the
-        // list's own height: the list ends right after its last block, so a
-        // caret near the end flipped the menu ~370pt above the cursor — the
-        // user never saw it. Below the caret is always right in notes: the
-        // scroll-past-end padding leaves room, and overlays don't clip.
-        var origin = anchor
-        origin.x = max(0, min(origin.x, listSize.width - menuSize.width - 8))
-        return origin
-    }
+    // (Hoisted menus render through BlockEditorHoistedOverlays below — an
+    // invalidation firewall so presenter-session writes never re-run this
+    // list's body.)
 
     // MARK: - Cross-Block Drag Selection
 
@@ -1037,12 +1041,28 @@ struct BlockListView: View {
 
     // MARK: - Document Mutations
 
-    private func blockBinding(at path: BlockPath, fallback: RichBlock) -> Binding<RichBlock> {
+    /// A block's LIVE path, resolved by ID with the row's construction-time
+    /// path as a hint. Rows skip re-renders across structural shifts (their
+    /// `==` deliberately ignores `path`), so any captured BlockPath may be
+    /// stale — every closure that mutates the document MUST resolve through
+    /// this first or it can hit the wrong sibling after a split/merge above.
+    private func livePath(of blockID: UUID, hint: BlockPath?) -> BlockPath? {
+        if let hint,
+           let hinted = try? BlockOperations.currentBlock(in: document, at: hint),
+           hinted.id == blockID {
+            return hint
+        }
+        return BlockOperations.path(of: blockID, in: document)
+    }
+
+    private func blockBinding(for blockID: UUID, hint: BlockPath, fallback: RichBlock) -> Binding<RichBlock> {
         Binding(
             get: {
-                (try? BlockOperations.currentBlock(in: document, at: path)) ?? fallback
+                guard let path = livePath(of: blockID, hint: hint) else { return fallback }
+                return (try? BlockOperations.currentBlock(in: document, at: path)) ?? fallback
             },
             set: { nextBlock in
+                guard let path = livePath(of: blockID, hint: hint) else { return }
                 replaceBlock(at: path, with: nextBlock)
             }
         )
@@ -1056,11 +1076,20 @@ struct BlockListView: View {
         commit(result, undoActionName: "Edit Block")
     }
 
+    /// ID-resolving variant for closures captured by skippable rows.
+    private func replaceBlock(of blockID: UUID, hint: BlockPath?, with nextBlock: RichBlock) {
+        guard let path = livePath(of: blockID, hint: hint) else { return }
+        replaceBlock(at: path, with: nextBlock)
+    }
+
     private func emitDocumentChange() {
         onDocumentChange?(document, document.plainText)
     }
 
-    private func insertParagraph(after path: BlockPath) {
+    /// ID-resolving: `hint` may be stale (rows skip re-renders across
+    /// structural shifts), so the insertion point is re-derived by block ID.
+    private func insertParagraph(after blockID: UUID, hint: BlockPath?) {
+        guard let path = livePath(of: blockID, hint: hint) else { return }
         let paragraph = RichBlock.paragraph("")
         guard let result = try? BlockOperations.insertBlock(paragraph, in: document, after: path) else {
             return
@@ -1068,8 +1097,15 @@ struct BlockListView: View {
         commit(result, undoActionName: "Insert Text Block")
     }
 
-    private func moveBlock(_ payload: BlockDragPayload, target: BlockDropTarget) {
-        guard let result = try? BlockOperations.moveBlock(in: document, from: payload.sourcePath, to: target) else {
+    /// Drop commit. Source AND target positions are resolved by block ID at
+    /// commit time — the drag payload's `sourcePath` and the drop row's
+    /// captured path can both be stale by the time the drop lands.
+    private func moveBlock(_ payload: BlockDragPayload, position: BlockDropPosition, targetBlockID: UUID) {
+        guard let sourcePath = livePath(of: payload.blockID, hint: payload.sourcePath),
+              let targetPath = livePath(of: targetBlockID, hint: nil) else { return }
+        let target = BlockDropController.target(for: position, path: targetPath)
+        guard BlockDropController.canMove(from: sourcePath, to: target),
+              let result = try? BlockOperations.moveBlock(in: document, from: sourcePath, to: target) else {
             return
         }
         commit(result, undoActionName: "Move Block")
@@ -1149,6 +1185,75 @@ enum BlockHydrationPolicy {
 @MainActor
 final class BlockListGeometryBox {
     var globalFrame: CGRect = .zero
+    /// Last size published through onContentHeightChange — dedup lives here
+    /// so height reporting never touches @State (which would re-run the list
+    /// body once more per structural edit).
+    var lastPublishedSize: CGSize = .zero
+}
+
+/// The hoisted slash / new-element / selection menus for a block list.
+/// A separate view ON PURPOSE: it reads the presenter's sessions in its own
+/// body, so Observation invalidates just this overlay when a session changes
+/// (every slash query keystroke, every arrow/hover highlight move) — reading
+/// the sessions from BlockListView.body re-ran the entire list, rebuilding
+/// and deep-comparing every row, to move a menu highlight one row.
+private struct BlockEditorHoistedOverlays: View {
+    let presenter: EditorOverlayPresenter
+    let geometry: BlockListGeometryBox
+
+    var body: some View {
+        if let session = presenter.slashSession {
+            SlashCommandMenu(
+                position: clampedOverlayPosition(for: session.anchorInList, menuSize: CGSize(width: 300, height: 380)),
+                query: session.query,
+                commands: session.commands,
+                selectedIndex: session.selectedIndex,
+                onHighlight: session.onHighlight,
+                onSelect: session.onSelect,
+                onDismiss: session.onDismiss,
+                darkMode: session.darkMode
+            )
+            .zIndex(1000)
+            .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .topLeading)))
+        }
+        if let session = presenter.elementCreationSession {
+            ElementCreationMenu(
+                position: clampedOverlayPosition(for: session.anchorInList, menuSize: CGSize(width: 320, height: 352)),
+                onCreate: session.onCreate,
+                onDismiss: session.onDismiss,
+                darkMode: session.darkMode
+            )
+            .zIndex(1001)
+            .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .topLeading)))
+        }
+        if presenter.slashSession == nil,
+           let session = presenter.selectionSession {
+            SelectionFormattingMenu(
+                anchor: session.anchorInList,
+                container: geometry.globalFrame.size,
+                traits: session.traits,
+                compact: session.compact,
+                darkMode: session.darkMode,
+                onDismiss: session.onDismiss,
+                onAIAction: session.onAIAction,
+                onCustomPrompt: session.onCustomPrompt,
+                onWritingAIRequest: session.onWritingAIRequest
+            )
+            .zIndex(990)
+            .transition(.opacity)
+        }
+    }
+
+    private func clampedOverlayPosition(for anchor: CGPoint, menuSize: CGSize) -> CGPoint {
+        // Clamp horizontally only. NEVER flip above the caret based on the
+        // list's own height: the list ends right after its last block, so a
+        // caret near the end flipped the menu ~370pt above the cursor — the
+        // user never saw it. Below the caret is always right in notes: the
+        // scroll-past-end padding leaves room, and overlays don't clip.
+        var origin = anchor
+        origin.x = max(0, min(origin.x, geometry.globalFrame.size.width - menuSize.width - 8))
+        return origin
+    }
 }
 
 /// The static stand-in a not-yet-hydrated row renders during a progressive
@@ -1159,6 +1264,7 @@ final class BlockListGeometryBox {
 struct BlockStaticRowPlaceholder: View {
     let block: RichBlock
     let topSpacing: CGFloat
+    var listOrdinal: Int = 0
     let fontSize: CGFloat
     let fontDesign: NSFontDescriptor.SystemDesign
     let darkMode: Bool
@@ -1168,10 +1274,27 @@ struct BlockStaticRowPlaceholder: View {
     var body: some View {
         Group {
             if block.kind == .divider {
+                // GUARD-TWIN of dividerRow above — the same rule must not
+                // change weight when its row hydrates.
                 Rectangle()
-                    .fill(inkColor.opacity(0.28))
-                    .frame(height: 1)
+                    .fill(darkMode ? DS.focusImmersiveBorder : DS.documentBorder)
+                    .frame(height: 0.5)
                     .padding(.vertical, 10)
+            } else if block.kind == .quote {
+                // GUARD-TWIN of the serializer's quote prefix (semibold on
+                // border tokens) — the bar must not change voice at hydration.
+                // (Text interpolation, not `+` — deprecated on macOS 26.)
+                Text("\(quoteBarText)\(Text(block.plainInlineText).font(Font(editorFont)).foregroundStyle(inkColor))")
+                    .lineSpacing(6)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+            } else if block.kind == .checklist {
+                // GUARD-TWIN of the serializer's checklist styling — "done"
+                // must look done in every one of the three render paths.
+                Text("\(checklistGlyphText)\(checklistContentText)")
+                    .lineSpacing(6)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
             } else {
                 Text(displayText)
                     .font(Font(editorFont))
@@ -1191,13 +1314,34 @@ struct BlockStaticRowPlaceholder: View {
         Color(nsColor: overrideTextColor ?? (darkMode ? .white : NSColor(DS.documentText)))
     }
 
+    private var quoteBarText: Text {
+        Text("│ ")
+            .font(Font(NSFont.systemFont(ofSize: fontSize, weight: .semibold)))
+            .foregroundStyle(darkMode ? DS.focusImmersiveBorder : DS.documentBorder)
+    }
+
+    private var checklistGlyphText: Text {
+        Text((block.checked ?? false) ? "☑ " : "☐ ")
+            .font(Font(editorFont))
+            .foregroundStyle((block.checked ?? false) ? CosmoColors.cosmoAI : inkColor.opacity(0.55))
+    }
+
+    private var checklistContentText: Text {
+        Text(block.plainInlineText)
+            .font(Font(editorFont))
+            .strikethrough(block.checked ?? false)
+            .foregroundStyle((block.checked ?? false) ? inkColor.opacity(0.55) : inkColor)
+    }
+
     /// Mirrors the serializer's rendered line: list/quote prefixes at the
     /// head, heading text bare (size carries the hierarchy).
     private var displayText: String {
         let text = block.plainInlineText
         switch block.kind {
         case .bulletList: return "• " + text
-        case .numberedList: return "1. " + text
+        case .numberedList: return "\(listOrdinal + 1). " + text
+        // .quote and .checklist render as styled concatenations in body —
+        // these fallbacks are unreachable for them.
         case .checklist: return ((block.checked ?? false) ? "☑ " : "☐ ") + text
         case .quote: return "│ " + text
         case .toggle: return "▸ " + text
@@ -1210,11 +1354,23 @@ struct BlockStaticRowPlaceholder: View {
     /// Matches the serializer's heading/body font metrics so hydration does
     /// not shift layout noticeably.
     private var editorFont: NSFont {
+        // GUARD-TWIN of RichDocumentSerializer.blockFont's heading ladder
+        // (with TextKitCoordinator's applyHeading and
+        // seedTypingAttributesForEmptyRow) — change all FOUR together.
         switch block.kind.headingLevelInt {
-        case 1: return EditorFontPolicy.font(ofSize: max(32, fontSize + 16), weight: .bold, design: fontDesign)
-        case 2: return EditorFontPolicy.font(ofSize: max(24, fontSize + 8), weight: .semibold, design: fontDesign)
-        case 3: return EditorFontPolicy.font(ofSize: max(20, fontSize + 4), weight: .medium, design: fontDesign)
-        default: return EditorFontPolicy.font(ofSize: fontSize, weight: .regular, design: fontDesign)
+        case 1: return EditorFontPolicy.font(ofSize: min(34, (fontSize * 1.85).rounded()), weight: .semibold, design: fontDesign)
+        case 2: return EditorFontPolicy.font(ofSize: (fontSize * 1.45).rounded(), weight: .semibold, design: fontDesign)
+        case 3: return EditorFontPolicy.font(ofSize: (fontSize * 1.20).rounded(), weight: .medium, design: fontDesign)
+        default:
+            // Code and toggle placeholders match their serializer voices so
+            // hydration doesn't re-typeset the row.
+            if block.kind == .code {
+                return NSFont.monospacedSystemFont(ofSize: max(11, fontSize - 3), weight: .regular)
+            }
+            if block.kind == .toggle {
+                return EditorFontPolicy.font(ofSize: fontSize, weight: .medium, design: fontDesign)
+            }
+            return EditorFontPolicy.font(ofSize: fontSize, weight: .regular, design: fontDesign)
         }
     }
 }
@@ -1264,13 +1420,17 @@ struct BlockRowContainer<Content: View>: View, Equatable {
     let block: RichBlock
     let path: BlockPath
     let topSpacing: CGFloat
+    /// Numbered-run position — part of the render gate: transforming a block
+    /// ABOVE this row can change this row's number without touching its block
+    /// or path, and a skipped row would keep a stale "3.".
+    let listOrdinal: Int
     let isSelected: Bool
     let landingActive: Bool
     let dimsInactiveBlocks: Bool
     let environment: BlockRowEnvironmentFingerprint
     let focusCoordinator: BlockFocusCoordinator
     let selectionCoordinator: BlockSelectionCoordinator
-    let onMove: (BlockDragPayload, BlockDropTarget) -> Void
+    let onMove: (BlockDragPayload, BlockDropPosition, UUID) -> Void
     let onInsertBelow: () -> Void
     let onHandleClick: () -> Void
     let onHandleShiftClick: () -> Void
@@ -1279,10 +1439,17 @@ struct BlockRowContainer<Content: View>: View, Equatable {
     let onSelectionCatcherTap: (Bool) -> Void
     @ViewBuilder let content: () -> Content
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// `path` is deliberately NOT compared — it embeds the sibling index, so a
+    /// split/merge above would re-render every row below it. The stored path
+    /// is a lookup hint only; every consumer (row bindings, drag/drop, insert)
+    /// resolves the live position by block ID at call time.
     static func == (lhs: BlockRowContainer, rhs: BlockRowContainer) -> Bool {
-        lhs.block == rhs.block
-            && lhs.path == rhs.path
+        (lhs.block == rhs.block
+            || rhs.focusCoordinator.isSelfAuthoredEcho(previous: lhs.block, next: rhs.block))
             && lhs.topSpacing == rhs.topSpacing
+            && lhs.listOrdinal == rhs.listOrdinal
             && lhs.isSelected == rhs.isSelected
             && lhs.landingActive == rhs.landingActive
             && lhs.dimsInactiveBlocks == rhs.dimsInactiveBlocks
@@ -1308,18 +1475,23 @@ struct BlockRowContainer<Content: View>: View, Equatable {
         }
         .padding(.top, topSpacing)
         .opacity(rowOpacity)
+        // Scoped to this row's own dim value — the old list-level animation
+        // on focusedBlockID re-ran the whole list body per focus move.
+        .animation(reduceMotion ? nil : ProMotionSprings.gentle, value: rowOpacity)
         .overlay { landingWash }
     }
 
     /// Paragraph-focus dimming: 1.0 for the caret's block, faded-but-legible
     /// for the rest. Suspended while block selection is active so selected
     /// rows never fight their selection wash. Coordinator reads stay behind
-    /// the dims guard so the feature costs nothing when off.
+    /// the dims guard so the feature costs nothing when off — and they read
+    /// `hasFocusedBlock` + the row's OWN focus state, so a focus move re-dims
+    /// two rows instead of re-rendering every container.
     private var rowOpacity: Double {
         guard dimsInactiveBlocks,
               !selectionCoordinator.isActive,
-              let focusedID = focusCoordinator.focusedBlockID,
-              focusedID != block.id else {
+              focusCoordinator.hasFocusedBlock,
+              !focusCoordinator.rowState(for: block.id).isFocused else {
             return 1
         }
         return 0.4

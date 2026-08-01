@@ -9,6 +9,7 @@ import SwiftUI
 import AVFoundation
 import AVKit
 
+@MainActor
 struct MediaBlockView: View {
     let block: CanvasBlock
     let isViewportActive: Bool
@@ -18,6 +19,10 @@ struct MediaBlockView: View {
     @State private var isProcessing = false
     @State private var isHovered = false
     @Environment(\.canvasBlockSelectionSuppressed) private var selectionNotificationsSuppressed
+    /// Zoom LOD — poster/minimal shed chrome that is illegible at small
+    /// world scales. Set by the canvas blocks layer; defaults to .full so
+    /// cluster grid/list hosts render normally.
+    @Environment(\.canvasBlockRenderTier) private var renderTier
     @State private var isDropdownOpen = false
     @State private var isPlayerActive = false
     @State private var currentTimestamp: TimeInterval = 0
@@ -30,6 +35,12 @@ struct MediaBlockView: View {
     // Carousel items loaded from richContent
     @State private var carouselItems: [CarouselItem]?
     @State private var carouselIndex: Int = 0
+    // Transcript summary — the collapsed row shows only the count, so the
+    // card NEVER decodes transcript JSON during body evaluation (that decode
+    // used to run on every hover/selection re-render). The full text loads
+    // lazily when the dropdown opens.
+    @State private var transcriptCharCount: Int = 0
+    @State private var expandedTranscript: String?
     // Resizable block size
     @State private var blockSize: CGSize
     @State private var isSyncingBlockSizeFromModel = false
@@ -64,6 +75,26 @@ struct MediaBlockView: View {
         let hasThumbnailHint = block.metadata["thumbnail"] != nil
             || block.metadata["url"] != nil
         self._isLoading = State(initialValue: !hasThumbnailHint)
+
+        // Remount hydration: viewport culling unmounts/remounts this view
+        // continuously while panning — the warm store + media state cache make
+        // a remount render complete on its first frame with zero async work.
+        if let warmAtom = CanvasAtomWarmStore.shared.atom(id: block.entityId) {
+            self._atom = State(initialValue: warmAtom)
+            let status = warmAtom.processingStatus
+            self._isProcessing = State(initialValue: status != nil && status != "complete")
+            if let entry = CanvasMediaBlockStateCache.shared.entry(
+                forAtomUuid: block.entityUuid, matching: warmAtom
+            ) {
+                self._carouselItems = State(initialValue: entry.carouselItems)
+                self._localVideoURL = State(initialValue: entry.localVideoURL)
+                self._generatedThumbnail = State(initialValue: entry.generatedThumbnail)
+                self._transcriptCharCount = State(initialValue: entry.transcriptCharCount ?? 0)
+                if entry.mediaResolved {
+                    self._isLoading = State(initialValue: false)
+                }
+            }
+        }
     }
 
     /// Aspect ratio of the media area (width / height), 0 = no lock
@@ -136,11 +167,14 @@ struct MediaBlockView: View {
         isSwipeFile ? Color(hex: "FFD700") : DS.entityResearch
     }
 
-    private var transcriptText: String {
-        // Match SwipeStudyFocusModeView's transcript loading logic:
-        // 1. richContent.transcript (primary for Instagram/swipe)
-        // 2. atom.body as JSON-encoded TranscriptSegment array
-        // 3. atom.body as raw text
+    /// Full transcript resolution — potentially a multi-KB JSON decode, so it
+    /// must NEVER run from body. Called off the render path: once per atom
+    /// load for the char count, and lazily when the dropdown opens.
+    /// Matches SwipeStudyFocusModeView's loading logic:
+    /// 1. richContent.transcript (primary for Instagram/swipe)
+    /// 2. atom.body as JSON-encoded TranscriptSegment array
+    /// 3. atom.body as raw text
+    nonisolated static func resolveTranscriptText(atom: Atom?) -> String {
         if let transcript = atom?.richContent?.transcript, !transcript.isEmpty {
             return transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         }
@@ -159,52 +193,13 @@ struct MediaBlockView: View {
     // MARK: - Body
 
     var body: some View {
-        ZStack(alignment: .top) {
-            // Card + badge — selection tap on card, NO double-tap here
-            // (CanvasView already handles double-tap for focus mode)
-            // Removing count:2 eliminates disambiguation delay that blocks
-            // child interactions (play buttons, video pause, transcript toggle)
-            ZStack(alignment: .topTrailing) {
-                mainCard
-                swipeBadge
+        Group {
+            switch renderTier {
+            case .full:
+                fullCardBody
+            case .poster, .minimal:
+                posterCardBody
             }
-            .frame(width: blockSize.width, height: blockSize.height)
-            .onTapGesture {
-                guard !selectionNotificationsSuppressed else { return }
-                NotificationCenter.default.post(
-                    name: CosmoNotification.Canvas.blockSelected,
-                    object: nil,
-                    userInfo: ["blockId": block.id]
-                )
-            }
-
-            // Floating toolbar when selected — outside tap gesture scope
-            BlockSelectionToolbar(
-                blockCount: 1,
-                accentColor: accentColor,
-                onAIAssist: {},
-                onColorChange: {},
-                onSave: {},
-                onEdit: {},
-                onFocusMode: {
-                    CosmicHaptics.shared.play(.focusEnter)
-                    openFocusMode()
-                },
-                onDuplicate: {},
-                onDelete: {
-                    CosmicHaptics.shared.play(.delete)
-                    NotificationCenter.default.post(
-                        name: .removeBlock,
-                        object: nil,
-                        userInfo: ["blockId": block.id]
-                    )
-                }
-            )
-            .offset(y: block.isSelected ? -52 : -44)
-            .scaleEffect(block.isSelected ? 1.0 : 0.9)
-            .opacity(block.isSelected ? 1 : 0)
-            .allowsHitTesting(block.isSelected)
-            .animation(ProMotionSprings.snappy, value: block.isSelected)
         }
         .onAppear {
             syncViewportActivity()
@@ -228,6 +223,14 @@ struct MediaBlockView: View {
         .onDisappear {
             deactivateViewportContent()
         }
+        // Zooming out past the poster threshold drops the player VIEW —
+        // without this the AVPlayer kept playing audio into a static card.
+        .onChange(of: renderTier) { _, tier in
+            guard tier != .full else { return }
+            igPlayer?.pause()
+            igPlayer = nil
+            isPlayerActive = false
+        }
         // Enforce aspect ratio during resize for reel/carousel/youtube
         .onChange(of: blockSize) { _, newSize in
             guard !isSyncingBlockSizeFromModel else { return }
@@ -241,6 +244,162 @@ struct MediaBlockView: View {
             if abs(clamped - newSize.height) > 1 {
                 blockSize = CGSize(width: newSize.width, height: clamped)
             }
+        }
+    }
+
+    // MARK: - Full Card (tier .full)
+
+    private var fullCardBody: some View {
+        ZStack(alignment: .top) {
+            // Card + badge — selection tap on card, NO double-tap here
+            // (CanvasView already handles double-tap for focus mode)
+            // Removing count:2 eliminates disambiguation delay that blocks
+            // child interactions (play buttons, video pause, transcript toggle)
+            ZStack(alignment: .topTrailing) {
+                mainCard
+                swipeBadge
+            }
+            .frame(width: blockSize.width, height: blockSize.height)
+            .onTapGesture {
+                guard !selectionNotificationsSuppressed else { return }
+                NotificationCenter.default.post(
+                    name: CosmoNotification.Canvas.blockSelected,
+                    object: nil,
+                    userInfo: ["blockId": block.id]
+                )
+            }
+
+            // Floating toolbar — mounted ONLY while selected. Parked at
+            // opacity 0 it added ~30 views + hover trackers to EVERY card
+            // (the same pattern that dragged down the swipe masonry).
+            if block.isSelected {
+                BlockSelectionToolbar(
+                    blockCount: 1,
+                    accentColor: accentColor,
+                    onAIAssist: {},
+                    onColorChange: {},
+                    onSave: {},
+                    onEdit: {},
+                    onFocusMode: {
+                        CosmicHaptics.shared.play(.focusEnter)
+                        openFocusMode()
+                    },
+                    onDuplicate: {},
+                    onDelete: {
+                        CosmicHaptics.shared.play(.delete)
+                        NotificationCenter.default.post(
+                            name: .removeBlock,
+                            object: nil,
+                            userInfo: ["blockId": block.id]
+                        )
+                    }
+                )
+                .offset(y: -52)
+                .transition(
+                    .opacity
+                        .combined(with: .scale(scale: 0.9))
+                        .combined(with: .offset(y: 8))
+                )
+            }
+        }
+        // Drives the toolbar's insertion/removal transition (selection writes
+        // aren't wrapped in withAnimation at the canvas level).
+        .animation(ProMotionSprings.snappy, value: block.isSelected)
+    }
+
+    // MARK: - Poster Card (tiers .poster / .minimal)
+
+    /// Same silhouette as the full card — media on top, title strip below —
+    /// but static: no players, transcript row, hover states, resize zones or
+    /// toolbar, and a single soft shadow. `.minimal` additionally drops the
+    /// text and badge (sub-3pt at that scale). Tap still selects; the host's
+    /// double-tap still opens focus mode.
+    private var posterCardBody: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            posterMediaArea
+                .clipShape(
+                    UnevenRoundedRectangle(
+                        topLeadingRadius: DS.radiusMedium,
+                        bottomLeadingRadius: 0,
+                        bottomTrailingRadius: 0,
+                        topTrailingRadius: DS.radiusMedium
+                    )
+                )
+
+            if renderTier.showsText {
+                titleSection
+                    .padding(.horizontal, scaled(12))
+                    .padding(.top, scaled(8))
+                Spacer(minLength: 0)
+            } else {
+                Spacer(minLength: 0)
+            }
+        }
+        .frame(width: blockSize.width, height: blockSize.height)
+        .background(
+            RoundedRectangle(cornerRadius: DS.radiusMedium)
+                .fill(DS.surfaceElevated)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.radiusMedium)
+                .stroke(
+                    block.isSelected ? accentColor.opacity(0.5) : DS.border,
+                    lineWidth: block.isSelected ? 1.5 : 1
+                )
+        )
+        .overlay(alignment: .topTrailing) {
+            if renderTier.showsText {
+                swipeBadge
+            }
+        }
+        .shadow(color: Color.black.opacity(0.08), radius: 6, y: 2)
+        .contentShape(RoundedRectangle(cornerRadius: DS.radiusMedium))
+        .onTapGesture {
+            guard !selectionNotificationsSuppressed else { return }
+            NotificationCenter.default.post(
+                name: CosmoNotification.Canvas.blockSelected,
+                object: nil,
+                userInfo: ["blockId": block.id]
+            )
+        }
+    }
+
+    /// Static thumbnail for the poster tiers — first cached pixels win, no
+    /// play affordances (they'd render smaller than a cursor).
+    @ViewBuilder
+    private var posterMediaArea: some View {
+        if let items = carouselItems, !items.isEmpty {
+            CachedAsyncImage(url: items[min(carouselIndex, items.count - 1)].mediaURL) { phase in
+                posterImagePhase(phase)
+            }
+        } else if let thumbnail = generatedThumbnail {
+            Image(nsImage: thumbnail)
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .frame(maxWidth: .infinity)
+                .frame(height: mediaAreaHeight)
+                .clipped()
+        } else if let thumbURL = resolvedThumbnailURL {
+            CachedAsyncImage(url: thumbURL) { phase in
+                posterImagePhase(phase)
+            }
+        } else {
+            iconPlaceholder
+        }
+    }
+
+    @ViewBuilder
+    private func posterImagePhase(_ phase: CachedImagePhase) -> some View {
+        switch phase {
+        case .success(let image):
+            image
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .frame(maxWidth: .infinity)
+                .frame(height: mediaAreaHeight)
+                .clipped()
+        case .failure, .empty:
+            thumbnailFallback
         }
     }
 
@@ -302,13 +461,15 @@ struct MediaBlockView: View {
             radius: block.isSelected ? 12 : (isHovered ? 12 : 6),
             y: block.isSelected ? 0 : (isHovered ? 4 : 2)
         )
-        // Resize overlay (same as CosmoBlockWrapper)
+        // Resize overlay (same as CosmoBlockWrapper) — hit-zones exist only
+        // while the cursor is on the card or it is selected.
         .overlay {
             SimpleResizeOverlay(
                 size: $blockSize,
                 blockId: block.id,
                 minSize: CGSize(width: minWidth, height: minHeight),
-                maxSize: CGSize(width: maxWidth, height: maxHeight)
+                maxSize: CGSize(width: maxWidth, height: maxHeight),
+                isEnabled: isHovered || block.isSelected
             )
         }
         .onHover { hovering in
@@ -693,6 +854,9 @@ struct MediaBlockView: View {
                 withAnimation(ProMotionSprings.snappy) {
                     isDropdownOpen.toggle()
                 }
+                if isDropdownOpen {
+                    loadExpandedTranscriptIfNeeded()
+                }
             } label: {
                 transcriptToggleLabel
             }
@@ -720,15 +884,13 @@ struct MediaBlockView: View {
             Spacer()
 
             if isProcessing && !isDropdownOpen {
-                HStack(spacing: scaled(3)) {
-                    ProgressView()
-                        .controlSize(.mini)
-                    Text("Processing…")
-                        .font(.system(size: scaled(9)))
-                        .foregroundColor(DS.textMuted)
-                }
-            } else if !transcriptText.isEmpty {
-                let count = transcriptText.count
+                // Static label only — a spinning ProgressView here meant every
+                // stuck-"processing" card animated forever at rest.
+                Text("Processing…")
+                    .font(.system(size: scaled(9)))
+                    .foregroundColor(DS.textMuted)
+            } else if transcriptCharCount > 0 {
+                let count = transcriptCharCount
                 Text("\(count > 1000 ? "\(count / 1000)k+" : "\(count)") chars")
                     .font(.system(size: scaled(9)))
                     .foregroundColor(DS.textMuted)
@@ -740,7 +902,7 @@ struct MediaBlockView: View {
 
     @ViewBuilder
     private var transcriptContent: some View {
-        if isProcessing && transcriptText.isEmpty {
+        if isProcessing && transcriptCharCount == 0 {
             VStack(spacing: scaled(6)) {
                 CosmicShimmer(entityColor: accentColor, cornerRadius: 4)
                     .frame(height: scaled(16))
@@ -753,7 +915,7 @@ struct MediaBlockView: View {
                 }
             }
             .padding(.vertical, scaled(8))
-        } else if transcriptText.isEmpty {
+        } else if transcriptCharCount == 0 {
             HStack {
                 Spacer()
                 Text("No transcript available")
@@ -763,9 +925,9 @@ struct MediaBlockView: View {
                 Spacer()
             }
             .padding(.vertical, scaled(8))
-        } else {
+        } else if let expandedTranscript {
             ScrollView(.vertical, showsIndicators: true) {
-                Text(transcriptText)
+                Text(expandedTranscript)
                     .font(.system(size: scaled(10)))
                     .foregroundColor(DS.textSecondary)
                     .lineSpacing(scaled(3))
@@ -775,6 +937,24 @@ struct MediaBlockView: View {
             .frame(maxHeight: max(blockSize.height - mediaAreaHeight - scaled(80), scaled(60)))
             .padding(.top, scaled(2))
             .padding(.bottom, scaled(4))
+        } else {
+            // Full text is decoding off-main after the dropdown opened.
+            CosmicShimmer(entityColor: accentColor, cornerRadius: 4)
+                .frame(height: scaled(16))
+                .padding(.vertical, scaled(8))
+        }
+    }
+
+    /// Decode the full transcript once, off the render path, when the
+    /// dropdown opens. The decode can be a multi-KB JSON parse — it must
+    /// never run per body evaluation.
+    private func loadExpandedTranscriptIfNeeded() {
+        guard expandedTranscript == nil, let atom else { return }
+        Task.detached(priority: .userInitiated) {
+            let text = MediaBlockView.resolveTranscriptText(atom: atom)
+            await MainActor.run {
+                expandedTranscript = text
+            }
         }
     }
 
@@ -805,7 +985,7 @@ struct MediaBlockView: View {
 
         if forceReload || atom == nil {
             loadAtom(forceReload: forceReload)
-        } else if let atom, loadTask == nil, carouselItems == nil, localVideoURL == nil, generatedThumbnail == nil {
+        } else if let atom, loadTask == nil, !isMediaResolved(for: atom) {
             loadTask = Task {
                 defer {
                     Task { @MainActor in
@@ -815,6 +995,14 @@ struct MediaBlockView: View {
                 await loadMedia(atom: atom)
             }
         }
+    }
+
+    /// True when the media resolution ladder already completed for this atom
+    /// version — remounted cards skip loadMedia entirely.
+    private func isMediaResolved(for atom: Atom) -> Bool {
+        CanvasMediaBlockStateCache.shared
+            .entry(forAtomUuid: block.entityUuid, matching: atom)?
+            .mediaResolved == true
     }
 
     private func deactivateViewportContent() {
@@ -831,6 +1019,11 @@ struct MediaBlockView: View {
 
         loadTask?.cancel()
         isLoading = true
+        if forceReload {
+            // Callers demand fresh data — cached derived state is stale too.
+            CanvasMediaBlockStateCache.shared.invalidate(atomUuid: block.entityUuid)
+            expandedTranscript = nil
+        }
 
         loadTask = Task {
             defer {
@@ -869,33 +1062,56 @@ struct MediaBlockView: View {
     private func loadMedia(atom: Atom) async {
         let richContent = atom.richContent
 
+        // Transcript char count — decoded ONCE here (off the render path) so
+        // card bodies never touch the transcript JSON.
+        let transcriptCount = await Task.detached(priority: .utility) {
+            MediaBlockView.resolveTranscriptText(atom: atom).count
+        }.value
+        guard !Task.isCancelled else { return }
+        await MainActor.run {
+            transcriptCharCount = transcriptCount
+        }
+
+        var resolvedCarousel: [CarouselItem]?
+        var resolvedLocalVideoURL: URL?
+        var resolvedThumbnail: NSImage?
+
         // 1. Carousel: load items from stored richContent (same as focus mode fast path)
         if let igData = richContent?.instagramData,
            let items = igData.carouselItems, !items.isEmpty {
-            guard !Task.isCancelled else { return }
-            await MainActor.run { carouselItems = items }
-            return
+            resolvedCarousel = items
         }
-
         // 2. Instagram reel: check local video cache (same as focus mode fast path)
-        if isInstagramContent || richContent?.sourceType == .instagramReel || richContent?.sourceType == .instagram {
+        else if isInstagramContent || richContent?.sourceType == .instagramReel || richContent?.sourceType == .instagram {
             if let urlString = atom.url, let url = URL(string: urlString) {
                 let shortcode = InstagramExtractor.shared.extractShortcode(from: url)
                 if let shortcode, let localURL = InstagramVideoLocalCache.localVideoURL(forShortcode: shortcode) {
-                    // Generate thumbnail from local video
-                    let thumbnail = await generateVideoThumbnail(from: localURL)
-                    guard !Task.isCancelled else { return }
-                    await MainActor.run {
-                        localVideoURL = localURL
-                        generatedThumbnail = thumbnail
-                    }
-                    return
+                    resolvedLocalVideoURL = localURL
+                    // Generate thumbnail from local video — the cache makes
+                    // this a once-per-atom cost instead of once-per-remount.
+                    resolvedThumbnail = await generateVideoThumbnail(from: localURL)
                 }
             }
         }
-
         // 3. YouTube: thumbnail URL is already handled by resolvedThumbnailURL
         // 4. Other content: falls through to resolvedThumbnailURL or iconPlaceholder
+
+        guard !Task.isCancelled else { return }
+        let carousel = resolvedCarousel
+        let videoURL = resolvedLocalVideoURL
+        let thumbnail = resolvedThumbnail
+        await MainActor.run {
+            if let carousel { carouselItems = carousel }
+            if let videoURL { localVideoURL = videoURL }
+            if let thumbnail { generatedThumbnail = thumbnail }
+            CanvasMediaBlockStateCache.shared.update(forAtom: atom) { entry in
+                entry.carouselItems = carousel
+                entry.localVideoURL = videoURL
+                entry.generatedThumbnail = thumbnail
+                entry.transcriptCharCount = transcriptCount
+                entry.mediaResolved = true
+            }
+        }
     }
 
     /// Generate a thumbnail image from a local video file using AVAssetImageGenerator

@@ -326,11 +326,14 @@ struct DailyBriefCard: View {
     private func card(_ brief: DailyBrief) -> some View {
         VStack(alignment: .leading, spacing: DS.space6) {
             cardHeader
+            // A reading measure: serif lines are CONTENT, and content you
+            // read never runs a 1500pt group width (~68 chars at 14pt serif).
             VStack(alignment: .leading, spacing: DS.space4) {
                 ForEach(brief.lines) { line in
                     briefLine(line)
                 }
             }
+            .frame(maxWidth: 680, alignment: .leading)
         }
         .padding(.vertical, DS.space4)
         .contentShape(Rectangle())
@@ -341,14 +344,13 @@ struct DailyBriefCard: View {
 
     private var cardHeader: some View {
         HStack(spacing: DS.space6) {
-            Image(systemName: "sunrise")
-                .font(DS.caption2.weight(.medium))
-                .foregroundStyle(DS.gilt)
-                .accessibilityHidden(true)
-            Text("DAILY RETURN")
+            // No leading glyph: no other section label on the page wears an
+            // icon (the habit rail's own stated law). Sentence case:
+            // .smallCaps() on an uppercase string is a no-op.
+            Text("Daily return")
                 .font(DS.smallCaps)
-                .tracking(1.4)
-                .foregroundStyle(DS.giltMuted)
+                .tracking(DS.smallCapsTracking)
+                .foregroundStyle(DS.giltInk)
             Spacer()
             if isHovering {
                 Button {

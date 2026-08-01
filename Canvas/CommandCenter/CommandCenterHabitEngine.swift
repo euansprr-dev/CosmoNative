@@ -737,11 +737,17 @@ final class CommandCenterHabitEngine: ObservableObject {
     /// the habit fills for the day it was actually done (and its reversal
     /// subtracts from that same day).
     func recordTaskCompletion(taskUUID: String, on day: Date = Date()) async {
-        guard let resolution = await resolveTaskHabit(taskUUID: taskUUID) else { return }
+        guard let resolution = await resolveTaskHabit(taskUUID: taskUUID) else {
+            print("⚠️ HabitEngine: completed task \(taskUUID.prefix(8)) resolved to no habit — no credit written")
+            return
+        }
         // Time-based habits derive progress from deep-work blocks — never from
         // completion records (a count record here would be dead weight and
         // risks cross-device double-crediting if ever counted).
-        guard !resolution.definition.isTimeBased else { return }
+        guard !resolution.definition.isTimeBased else {
+            print("⚠️ HabitEngine: \(resolution.definition.title) is time-based — task \(taskUUID.prefix(8)) tick writes no count record")
+            return
+        }
         let taskMinutes = await totalTrackedMinutes(forTaskUUID: taskUUID)
         await persistCompletion(
             HabitCompletionRecord(
@@ -757,7 +763,10 @@ final class CommandCenterHabitEngine: ObservableObject {
     }
 
     func reverseTaskCompletion(taskUUID: String, on day: Date = Date()) async {
-        guard let resolution = await resolveTaskHabit(taskUUID: taskUUID) else { return }
+        guard let resolution = await resolveTaskHabit(taskUUID: taskUUID) else {
+            print("⚠️ HabitEngine: uncompleted task \(taskUUID.prefix(8)) resolved to no habit — no reversal written")
+            return
+        }
         guard !resolution.definition.isTimeBased else { return }
         let taskMinutes = await totalTrackedMinutes(forTaskUUID: taskUUID)
         await persistCompletion(

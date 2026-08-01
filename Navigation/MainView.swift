@@ -999,8 +999,16 @@ struct MainView: View {
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.navigateToCommandCenter)) { _ in
             currentDestination = .commandCenter
         }
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.openSwipeGallery)) { _ in
-            currentDestination = .swipeFile(section: .home)
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.openSwipeGallery)) { notification in
+            // The capture receipt (and anything else) can name the ROOM it
+            // wants: a "Swiped · Newsletter" click lands in Newsletters, not
+            // the posts home. Posts and unknown genres keep the old landing.
+            if let raw = notification.userInfo?["genre"] as? String,
+               let genre = SwipeGenre.resolve(raw), genre != .post {
+                currentDestination = .swipeFile(section: .genre(genre))
+            } else {
+                currentDestination = .swipeFile(section: .home)
+            }
             closeCommandK()
         }
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.openIdeas)) { notification in
@@ -1758,6 +1766,17 @@ struct MainView: View {
     private func focusModeOverlay(contentPushOffset: CGFloat) -> some View {
         if let focusEntity = appState.focusedEntity {
             let isStudy = focusEntity.type == .deepDive || focusEntity.type == .inquirySession
+            // The idea bench and concept workspace arrive as a plain
+            // crossfade, not the bloom: the scale transition over their hosted
+            // scroll panels makes macOS 26 drop the panel subtree's first
+            // compositor commit — the inspector came up fully laid out and
+            // hit-testable but never drew until it was manually closed and
+            // reopened (July 2026; the connection inspector is visible by
+            // default, so its first open always seats a panel). Study surfaces
+            // already crossfade; every other focus mode keeps the bloom.
+            let usesPlainFade = isStudy
+                || focusEntity.type == .idea
+                || focusEntity.type == .connection
             FocusModeView(entity: focusEntity)
                 .id(focusEntity)
                 .environmentObject(appState)
@@ -1766,7 +1785,7 @@ struct MainView: View {
                 // so the entrance doesn't slide sideways while it fades.
                 // Study surfaces arrive like a destination change (content
                 // crossfade); other focus modes bloom from the click point.
-                .transition(isStudy ? .opacity : focusModeBloomTransition)
+                .transition(usesPlainFade ? .opacity : focusModeBloomTransition)
         }
     }
 

@@ -1120,6 +1120,30 @@ class AgentToolExecutor {
         let classifier = SwipeURLClassifier()
         let classification = classifier.classify(input)
 
+        // Same link already swiped? Adopt the existing card — never a
+        // duplicate — and SAY so: the agent answers in its own transcript,
+        // so the honesty must ride the tool result. `captureSwipeWithIdea`
+        // then links the idea to the swipe the user already had (iOS parity).
+        if classifier.isURL(input),
+           let existing = await QuickCaptureProcessor.findExistingLiveSwipe(url: input) {
+            // The conversation's notes still land when the swipe has none.
+            if let notes, !notes.isEmpty, existing.body?.isEmpty != false {
+                var updated = existing
+                updated.body = notes
+                _ = try? await atomRepo.update(updated)
+            }
+            return jsonEncode([
+                "success": true,
+                "uuid": existing.uuid,
+                "title": existing.title ?? "Untitled",
+                "source": existing.sourceType?.displayName ?? "Swipe File",
+                "hook": existing.hook ?? "",
+                "processingStatus": existing.processingStatus ?? "complete",
+                "alreadyInLibrary": true,
+                "message": "This link is already in the Swipe File — adopted the existing swipe: \(existing.title ?? "Untitled"). Nothing was added twice."
+            ])
+        }
+
         var item: Atom
         var sourceLabel = classification.sourceType.displayName
 
@@ -3194,8 +3218,10 @@ class AgentToolExecutor {
             return jsonError("Missing required parameter: uuid")
         }
 
+        var wasCompleted = false
         guard let updated = try await atomRepo.update(uuid: uuid, updates: { atom in
             var metaDict = (atom.metadataDict ?? [:])
+            wasCompleted = (metaDict["isCompleted"] as? Bool) == true
             metaDict["isCompleted"] = true
             metaDict["completedAt"] = ISO8601.string(from: Date())
             metaDict["status"] = "completed"
@@ -3205,6 +3231,12 @@ class AgentToolExecutor {
             }
         }) else {
             return jsonError("Schedule block not found: \(uuid)")
+        }
+
+        // The tool takes any atom UUID; when it lands on an actual task, a fresh
+        // completion must credit its habit like every other completion surface.
+        if updated.type == .task, !wasCompleted {
+            await CommandCenterHabitEngine.shared.recordTaskCompletion(taskUUID: uuid)
         }
 
         return jsonEncode([

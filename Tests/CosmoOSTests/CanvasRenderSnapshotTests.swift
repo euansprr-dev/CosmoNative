@@ -148,7 +148,10 @@ final class CanvasRenderSnapshotTests: XCTestCase {
             isLiveGesture: true
         )
 
-        XCTAssertGreaterThan(
+        // LAW (mounting stability): gesture start/end must not change the
+        // preload inset — a live/idle split churned the mounted set at every
+        // gesture boundary.
+        XCTAssertEqual(
             CanvasViewportSnapshotPolicy.preloadInset(
                 viewportSize: baseTransform.viewportSize,
                 isLiveGesture: true,
@@ -162,6 +165,107 @@ final class CanvasRenderSnapshotTests: XCTestCase {
         )
         XCTAssertEqual(baseSnapshotTransform.contentOffset, nearbySnapshotTransform.contentOffset)
         XCTAssertNotEqual(baseSnapshotTransform.contentOffset, farSnapshotTransform.contentOffset)
+    }
+
+    /// Hysteresis: a mounted block just outside the enter rect (but inside the
+    /// exit rect) stays mounted after a pan; a block never mounted at that
+    /// position does not mount. Gesture boundaries can therefore never churn
+    /// the mounted set.
+    @MainActor
+    func testRenderPipelineRetainsMountedBlocksInsideExitBand() {
+        let inset: CGFloat = 400
+        // Viewport 1000×800 at origin: visible canvas x ∈ [0, 1000],
+        // enter rect x ∈ [-400, 1400], exit rect (×1.75) x ∈ [-700, 1700].
+        let block = CanvasBlock(
+            id: "frontier",
+            position: CGPoint(x: 1_000, y: 400),
+            size: CGSize(width: 60, height: 60),
+            entityType: .idea,
+            entityId: 1,
+            entityUuid: "frontier-uuid",
+            title: "Frontier"
+        )
+        let pipeline = CanvasRenderPipeline()
+        let originTransform = CanvasViewportTransform(
+            viewportSize: CGSize(width: 1_000, height: 800),
+            committedOffset: .zero
+        )
+        // Positive offset moves the world right, so the visible rect shifts
+        // LEFT to x ∈ [-600, 400]: enter reaches 800 (block at 970–1030 is
+        // out), exit reaches 1100 (block is still in).
+        let pannedTransform = CanvasViewportTransform(
+            viewportSize: CGSize(width: 1_000, height: 800),
+            committedOffset: CGSize(width: 600, height: 0)
+        )
+
+        let first = pipeline.snapshot(
+            blocks: [block],
+            blockDataRevision: 1,
+            transform: originTransform,
+            preloadInset: inset,
+            userClusters: [],
+            clusterDataRevision: 1,
+            selectedBlockId: nil,
+            selectedClusterId: nil,
+            draggingClusterId: nil,
+            resizingClusterId: nil
+        )
+        XCTAssertTrue(first.visibleBlockIds.contains("frontier"))
+
+        // Fresh pipeline at the panned position never mounted the block —
+        // whether it renders there depends only on the ENTER rect.
+        let freshPipeline = CanvasRenderPipeline()
+        let freshAtPanned = freshPipeline.snapshot(
+            blocks: [block],
+            blockDataRevision: 1,
+            transform: pannedTransform,
+            preloadInset: inset,
+            userClusters: [],
+            clusterDataRevision: 1,
+            selectedBlockId: nil,
+            selectedClusterId: nil,
+            draggingClusterId: nil,
+            resizingClusterId: nil
+        )
+
+        let retained = pipeline.snapshot(
+            blocks: [block],
+            blockDataRevision: 1,
+            transform: pannedTransform,
+            preloadInset: inset,
+            userClusters: [],
+            clusterDataRevision: 1,
+            selectedBlockId: nil,
+            selectedClusterId: nil,
+            draggingClusterId: nil,
+            resizingClusterId: nil
+        )
+
+        if freshAtPanned.visibleBlockIds.contains("frontier") {
+            XCTFail("Test geometry broken: block should be outside the enter rect after the pan")
+        }
+        XCTAssertTrue(
+            retained.visibleBlockIds.contains("frontier"),
+            "Previously mounted block inside the exit band must stay mounted"
+        )
+        XCTAssertEqual(retained.renderableBlocks.map(\.id), ["frontier"])
+    }
+
+    /// Zoom LOD thresholds sit BETWEEN the live 0.125 quantization buckets,
+    /// so a pinch flips tiers only at bucket crossings, never per frame.
+    func testBlockRenderTierThresholdsAlignWithZoomBuckets() {
+        XCTAssertEqual(CanvasBlockRenderTier.tier(forEffectiveScale: 1.0), .full)
+        XCTAssertEqual(CanvasBlockRenderTier.tier(forEffectiveScale: 0.5), .full)
+        XCTAssertEqual(CanvasBlockRenderTier.tier(forEffectiveScale: 0.375), .poster)
+        XCTAssertEqual(CanvasBlockRenderTier.tier(forEffectiveScale: 0.25), .poster)
+        XCTAssertEqual(CanvasBlockRenderTier.tier(forEffectiveScale: 0.125), .minimal)
+
+        // Thresholds must not coincide with a bucket value exactly — a bucket
+        // landing ON a threshold would make the tier at that bucket depend on
+        // floating-point noise.
+        let buckets: [CGFloat] = stride(from: 0.125, through: 3.0, by: 0.125).map { $0 }
+        XCTAssertFalse(buckets.contains(CanvasBlockRenderTier.posterThreshold))
+        XCTAssertFalse(buckets.contains(CanvasBlockRenderTier.minimalThreshold))
     }
 
     @MainActor
@@ -312,14 +416,65 @@ final class CanvasRenderSnapshotTests: XCTestCase {
         XCTAssertEqual(signature.blockKeys.first?.scale, 1_250)
     }
 
-    func testConnectionGeometryInvalidationKeyUsesScalarBlockRevision() {
-        let key = CanvasConnectionGeometryInvalidationKey(blockDataRevision: 42)
-        let sameKey = CanvasConnectionGeometryInvalidationKey(blockDataRevision: 42)
-        let changedKey = CanvasConnectionGeometryInvalidationKey(blockDataRevision: 43)
+    func testConnectionGeometryInvalidationKeyTracksBlockAndClusterRevisions() {
+        let key = CanvasConnectionGeometryInvalidationKey(blockDataRevision: 42, clusterDataRevision: 7)
+        let sameKey = CanvasConnectionGeometryInvalidationKey(blockDataRevision: 42, clusterDataRevision: 7)
+        let blockChangedKey = CanvasConnectionGeometryInvalidationKey(blockDataRevision: 43, clusterDataRevision: 7)
+        // Cluster changes (view-mode switches consume/release member blocks)
+        // must invalidate endpoints even when block data hasn't changed —
+        // otherwise lines keep pointing at canvas positions that no longer render.
+        let clusterChangedKey = CanvasConnectionGeometryInvalidationKey(blockDataRevision: 42, clusterDataRevision: 8)
 
         XCTAssertEqual(key, sameKey)
-        XCTAssertNotEqual(key, changedKey)
+        XCTAssertNotEqual(key, blockChangedKey)
+        XCTAssertNotEqual(key, clusterChangedKey)
         XCTAssertEqual(key.blockDataRevision, 42)
+        XCTAssertEqual(key.clusterDataRevision, 7)
+    }
+
+    func testConnectionDragSignatureTracksBlockAndClusterDrags() {
+        let idle = CanvasConnectionDragSignature(
+            blockDragId: nil, blockTranslation: .zero,
+            clusterDragId: nil, clusterTranslation: .zero
+        )
+        let blockDrag = CanvasConnectionDragSignature(
+            blockDragId: "block-1", blockTranslation: CGSize(width: 40, height: 12),
+            clusterDragId: nil, clusterTranslation: .zero
+        )
+        // Cluster-zone drags move member blocks live — endpoint recomputation
+        // must see them as a change, not just single-block drags.
+        let clusterDrag = CanvasConnectionDragSignature(
+            blockDragId: nil, blockTranslation: .zero,
+            clusterDragId: UUID(), clusterTranslation: CGSize(width: -25, height: 60)
+        )
+
+        XCTAssertNotEqual(idle, blockDrag)
+        XCTAssertNotEqual(idle, clusterDrag)
+        XCTAssertNotEqual(blockDrag, clusterDrag)
+        XCTAssertEqual(idle, CanvasConnectionDragSignature(
+            blockDragId: nil, blockTranslation: .zero,
+            clusterDragId: nil, clusterTranslation: .zero
+        ))
+    }
+
+    func testConnectionLinesLayerRendersInWorldWithConsumedBlocksExcluded() throws {
+        let canvasViewSource = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Canvas/CanvasView.swift"),
+            encoding: .utf8
+        )
+        let layerSource = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Canvas/CanvasConnectionLinesLayer.swift"),
+            encoding: .utf8
+        )
+
+        // The layer must be fed the filtered block set (no cluster-consumed
+        // blocks — their lines would point at empty canvas)…
+        XCTAssertTrue(canvasViewSource.contains("blocks: connectionLineBlocks(snapshot: snapshot)"))
+        XCTAssertTrue(canvasViewSource.contains("clusterConsumedBlockUUIDs"))
+        // …and live in the world layer (canvas space), not the screen-space
+        // transform reader that painted lines OVER every card.
+        XCTAssertFalse(layerSource.contains("transformEffect"))
+        XCTAssertTrue(layerSource.contains("dragOffset(forBlockId:"))
     }
 
     func testConnectionPulseTimerRunsOnlyWhenVisibleEdgesExist() throws {

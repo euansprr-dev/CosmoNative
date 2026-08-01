@@ -28,7 +28,9 @@ enum SharedTitleSurfaceStyle {
         case .noteCanvas:
             return 32
         case .noteFocus:
-            return 32
+            // 38: the page title must top the body's H1 (34 max) — at 32 the
+            // document's first heading outranked the document's name.
+            return 38
         case .connectionCanvas:
             return 26
         case .connectionFocus:

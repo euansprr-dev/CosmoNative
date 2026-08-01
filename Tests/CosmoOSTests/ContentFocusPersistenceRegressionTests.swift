@@ -165,15 +165,22 @@ final class ContentFocusPersistenceRegressionTests: XCTestCase {
         let editorURL = packageRoot.appendingPathComponent("Editor/CosmoDocumentEditor.swift")
         let source = try String(contentsOf: editorURL, encoding: .utf8)
 
+        // The content mirrors moved into DocumentEditorSyncBox (July 30 —
+        // per-keystroke @State writes re-ran the editor body chain), so the
+        // presentation-handler region now ends at .onDisappear and the
+        // mirrors read through syncBox. The CONTRACT is unchanged: Aa/style
+        // changes resync via the live-plain-text path, never from a stale
+        // RichDocument.
         let presentationHandlers = try XCTUnwrap(
             slice(
                 source,
                 from: ".onChange(of: fontSize)",
-                to: ".onChange(of: plainTextMirror)"
+                to: ".onDisappear"
             )
         )
 
-        XCTAssertEqual(presentationHandlers.components(separatedBy: "syncEditorForPresentationChange()").count - 1, 3)
+        // fontSize, fontDesign, lineSpacingAdjustment, numberedListSeed.
+        XCTAssertEqual(presentationHandlers.components(separatedBy: "syncEditorForPresentationChange()").count - 1, 4)
         XCTAssertFalse(
             presentationHandlers.contains("syncEditorFromDocument()"),
             "Aa/style changes must not repaint the focused editor from a stale RichDocument while the plain-text lane has newer edits."
@@ -183,7 +190,7 @@ final class ContentFocusPersistenceRegressionTests: XCTestCase {
             slice(
                 source,
                 from: "private func syncEditorForPresentationChange()",
-                to: "private func handlePlainTextMirrorChange"
+                to: "private func handleDirectPlainTextChange"
             )
         )
         XCTAssertTrue(presentationHelper.contains("preferLivePlainText: true"))
@@ -196,9 +203,9 @@ final class ContentFocusPersistenceRegressionTests: XCTestCase {
             )
         )
         XCTAssertTrue(presentationResolver.contains("liveDocumentForPresentationChange()"))
-        XCTAssertTrue(presentationResolver.contains("livePlainText == plainTextMirror"))
+        XCTAssertTrue(presentationResolver.contains("livePlainText == syncBox.plainTextMirror"))
         XCTAssertTrue(
-            source.contains("RichDocumentSerializer.document(from: attributedText)"),
+            source.contains("RichDocumentSerializer.document(from: syncBox.attributedText)"),
             "Aa/style changes should preserve the live rich editor buffer when it is already synchronized with the latest plain text."
         )
     }

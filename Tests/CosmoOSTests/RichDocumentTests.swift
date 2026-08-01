@@ -2,6 +2,39 @@ import XCTest
 @testable import CosmoOS
 
 final class RichDocumentTests: XCTestCase {
+
+    // MARK: - Numbered list seed (jury round 1)
+
+    /// A block row serializes a single-block document; the seed carries the
+    /// count of numbered siblings above so "2." can exist. Guard-twin note:
+    /// renderedPrefixLength measures digits by regex, so multi-digit
+    /// positions stay boundary-safe.
+    func testNumberedListSeedRendersTruePosition() {
+        let doc = RichDocument(blocks: [RichBlock(kind: .numberedList, inlines: [.text("beta")])])
+        let seeded = RichDocumentSerializer.attributedString(from: doc, numberedListSeed: 1)
+        XCTAssertTrue(seeded.string.hasPrefix("2. "), "seed 1 should render position 2, got: \(seeded.string.prefix(6))")
+
+        let unseeded = RichDocumentSerializer.attributedString(from: doc)
+        XCTAssertTrue(unseeded.string.hasPrefix("1. "))
+
+        let multiDigit = RichDocumentSerializer.attributedString(from: doc, numberedListSeed: 11)
+        XCTAssertTrue(multiDigit.string.hasPrefix("12. "))
+        XCTAssertEqual(RichBlockKind.numberedList.renderedPrefixLength(in: multiDigit.string), 4)
+    }
+
+    /// Interior blocks of a multi-block document only inherit the seed when
+    /// their run is unbroken from the document's first block.
+    func testNumberedListSeedOnlyReachesRunsTouchingDocumentStart() {
+        let doc = RichDocument(blocks: [
+            RichBlock(kind: .numberedList, inlines: [.text("one")]),
+            .paragraph("break"),
+            RichBlock(kind: .numberedList, inlines: [.text("restart")])
+        ])
+        let seeded = RichDocumentSerializer.attributedString(from: doc, numberedListSeed: 4)
+        XCTAssertTrue(seeded.string.hasPrefix("5. "), "first run continues the seed")
+        XCTAssertTrue(seeded.string.contains("\n1. restart"), "a run after a break restarts at 1")
+    }
+
     func testContentAndResearchBlocksRoundTripThroughCodable() throws {
         let document = RichDocument(blocks: [
             RichBlock(kind: .content, inlines: [.text("Draft the story")]),
@@ -126,6 +159,119 @@ final class RichDocumentTests: XCTestCase {
         // Already at the top — no wrap.
         XCTAssertFalse(coordinator.focusPrevious())
         XCTAssertEqual(coordinator.focusedBlockID, first)
+    }
+
+    // MARK: - Per-row focus states (invalidation granularity)
+
+    @MainActor
+    func testFocusChangeFlipsOnlyTheTwoAffectedRowStates() {
+        let first = UUID(), second = UUID(), third = UUID()
+        let coordinator = BlockFocusCoordinator()
+        coordinator.register(first)
+        coordinator.register(second)
+        coordinator.register(third)
+
+        coordinator.focus(first)
+        XCTAssertTrue(coordinator.rowState(for: first).isFocused)
+        XCTAssertFalse(coordinator.rowState(for: second).isFocused)
+
+        coordinator.focus(second)
+        XCTAssertFalse(coordinator.rowState(for: first).isFocused)
+        XCTAssertTrue(coordinator.rowState(for: second).isFocused)
+        XCTAssertFalse(coordinator.rowState(for: third).isFocused)
+        XCTAssertEqual(coordinator.focusedBlockID, second)
+        XCTAssertTrue(coordinator.hasFocusedBlock)
+    }
+
+    @MainActor
+    func testCaretRequestLandsOnlyOnTheTargetRowState() {
+        let first = UUID(), second = UUID()
+        let coordinator = BlockFocusCoordinator()
+        coordinator.register(first)
+        coordinator.register(second)
+
+        coordinator.focus(second, caretOffsetFromEnd: 3)
+        XCTAssertNil(coordinator.rowState(for: first).caretRequest)
+        XCTAssertEqual(coordinator.rowState(for: second).caretRequest?.utf16OffsetFromEnd, 3)
+        XCTAssertEqual(coordinator.rowState(for: second).caretRequest?.blockID, second)
+    }
+
+    @MainActor
+    func testCommandTargetFollowsFocusThenFallsBackToFirstRegistered() {
+        let first = UUID(), second = UUID()
+        let coordinator = BlockFocusCoordinator()
+        coordinator.register(first)
+        coordinator.register(second)
+
+        // Nothing focused: the first registered row routes commands.
+        XCTAssertTrue(coordinator.rowState(for: first).isCommandTarget)
+        XCTAssertFalse(coordinator.rowState(for: second).isCommandTarget)
+        XCTAssertEqual(coordinator.commandTargetID(for: first, baseTargetID: "note"), "note")
+        XCTAssertEqual(
+            coordinator.commandTargetID(for: second, baseTargetID: "note"),
+            "note:block:\(second.uuidString)"
+        )
+
+        coordinator.focus(second)
+        XCTAssertFalse(coordinator.rowState(for: first).isCommandTarget)
+        XCTAssertTrue(coordinator.rowState(for: second).isCommandTarget)
+
+        // Unregistering the focused row hands routing back to the first.
+        coordinator.unregister(second)
+        XCTAssertTrue(coordinator.rowState(for: first).isCommandTarget)
+        XCTAssertFalse(coordinator.hasFocusedBlock)
+    }
+
+    // MARK: - Self-authored ledger (typing echo skip)
+
+    @MainActor
+    func testSelfAuthoredEchoSkipsOnlyExactOwnWrites() {
+        let coordinator = BlockFocusCoordinator()
+        var block = RichBlock(kind: .paragraph, inlines: [.text("hell")])
+        let previous = block
+        block.inlines = [.text("hello")]
+
+        // Not in the ledger yet — an unknown change is external, re-render.
+        XCTAssertFalse(coordinator.isSelfAuthoredEcho(previous: previous, next: block))
+
+        // The row wrote it — the echo is safe to skip.
+        coordinator.noteSelfAuthoredBlock(block)
+        XCTAssertTrue(coordinator.isSelfAuthoredEcho(previous: previous, next: block))
+
+        // An external write differing from the ledger must re-render.
+        var external = block
+        external.inlines = [.text("hello there")]
+        XCTAssertFalse(coordinator.isSelfAuthoredEcho(previous: previous, next: external))
+    }
+
+    @MainActor
+    func testSelfAuthoredEchoNeverSkipsKindHeadingEmptinessOrChildrenChanges() {
+        let coordinator = BlockFocusCoordinator()
+        let id = UUID()
+
+        // Kind change (paragraph → heading) must re-render even if ledgered.
+        var previous = RichBlock(kind: .paragraph, inlines: [.text("title")])
+        previous.id = id
+        var next = previous
+        next.kind = .heading1
+        coordinator.noteSelfAuthoredBlock(next)
+        XCTAssertFalse(coordinator.isSelfAuthoredEcho(previous: previous, next: next))
+
+        // Emptiness flip (placeholder visibility) must re-render.
+        var emptyPrevious = RichBlock(kind: .paragraph, inlines: [.text("")])
+        emptyPrevious.id = id
+        var nonEmptyNext = emptyPrevious
+        nonEmptyNext.inlines = [.text("a")]
+        coordinator.noteSelfAuthoredBlock(nonEmptyNext)
+        XCTAssertFalse(coordinator.isSelfAuthoredEcho(previous: emptyPrevious, next: nonEmptyNext))
+
+        // Children (toggle bodies) render from the row snapshot — never skip.
+        var childPrevious = RichBlock(kind: .toggle, inlines: [.text("t")])
+        childPrevious.id = id
+        var childNext = childPrevious
+        childNext.children = [RichBlock(kind: .paragraph, inlines: [.text("child")])]
+        coordinator.noteSelfAuthoredBlock(childNext)
+        XCTAssertFalse(coordinator.isSelfAuthoredEcho(previous: childPrevious, next: childNext))
     }
 
     @MainActor

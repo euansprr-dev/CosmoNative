@@ -20,7 +20,7 @@ struct CommandCenterInboxChip: View {
                     Image(systemName: "tray")
                         .font(DS.caption2.weight(.semibold))
                     Text("\(inboxRepo.items.count) to triage")
-                        .font(DS.caption.weight(.medium))
+                        .font(DS.subheadline.weight(.medium))
                         .monospacedDigit()
                 }
                 .foregroundStyle(isHovered ? DS.text : DS.commandCenterSecondaryText)
@@ -56,7 +56,7 @@ struct CommandCenterRipeChip: View {
                     Image(systemName: "leaf.fill")
                         .font(DS.caption2.weight(.semibold))
                     Text("\(seedlings.ripeCount) ripe")
-                        .font(DS.caption.weight(.medium))
+                        .font(DS.subheadline.weight(.medium))
                         .monospacedDigit()
                 }
                 .foregroundStyle(isHovered ? DS.accent : DS.accent.opacity(0.85))
@@ -93,6 +93,11 @@ struct CommandCenterMasthead: View {
         // clearance so titles sit clear of the floating trail chrome.
         // Panes have no trail chrome, so they keep the tighter spacing.
         .padding(.top, isPaneContext ? 0 : DS.navChromeClearance - DS.space24)
+        // The masthead joins the page's two rails (x=12 / W−12): its title,
+        // date, and rule now hang off the same lines as every band below —
+        // a page rail distinct from the content rail read as three left
+        // edges, not composition.
+        .padding(.horizontal, DS.space12)
     }
 
     private var standardMasthead: some View {
@@ -117,9 +122,15 @@ struct CommandCenterMasthead: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 VStack(alignment: .trailing, spacing: DS.space6) {
+                    // The date is the page's orientation anchor — it carries
+                    // real ink; the chevrons beneath recede until hover. (It
+                    // was the faintest thing in the masthead, under bold
+                    // chevrons: the weight order was inverted.) Tabular
+                    // figures so paging days never reflows the block.
                     Text(dateContext)
                         .font(DS.dateSerif)
-                        .foregroundStyle(DS.giltMuted)
+                        .monospacedDigit()
+                        .foregroundStyle(DS.textSecondary)
                         .contentTransition(.numericText())
 
                     if viewModel.viewMode == .today {
@@ -130,9 +141,9 @@ struct CommandCenterMasthead: View {
             }
             .frame(minHeight: viewModel.viewMode == .today ? 68 : 46)
 
-            Rectangle()
-                .fill(DS.commandCenterSeparator)
-                .frame(height: 0.5)
+            // The one rule voice (anchor, then depart) — the masthead was the
+            // page's last hard-terminating hairline.
+            CosmoPageRule()
                 .padding(.top, DS.space4)
         }
     }
@@ -183,7 +194,8 @@ struct CommandCenterMasthead: View {
                 VStack(alignment: .trailing, spacing: DS.space6) {
                     Text(dateContext)
                         .font(DS.dateSerif)
-                        .foregroundStyle(DS.giltMuted)
+                        .monospacedDigit()
+                        .foregroundStyle(DS.textSecondary)
                         .contentTransition(.numericText())
 
                     upcomingRangeNavigation
@@ -283,7 +295,7 @@ private struct MastheadNavChevron: View {
         Button(action: action) {
             Image(systemName: direction == .left ? "chevron.left" : "chevron.right")
                 .font(DS.subheadline.weight(.semibold))
-                .foregroundStyle(isHovered ? DS.text : DS.textSecondary)
+                .foregroundStyle(isHovered ? DS.text : DS.textMuted)
                 .frame(width: 30, height: 30)
                 .background(
                     Circle().fill(isHovered ? DS.surfaceHover.opacity(0.5) : Color.clear)
@@ -313,11 +325,11 @@ private struct MastheadTodayButton: View {
                 .frame(height: 30)
                 .background(
                     isHovered ? DS.glassInputFillFocused : DS.glassInputFill,
-                    in: .rect(cornerRadius: 8)
+                    in: .rect(cornerRadius: DS.radiusSmall)
                 )
                 .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(DS.glassBorder, lineWidth: 0.5)
+                    RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous)
+                        .strokeBorder(DS.glassBorder, lineWidth: 0.5)
                 )
                 .contentShape(Rectangle())
         }

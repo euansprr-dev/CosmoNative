@@ -25,7 +25,7 @@ private struct SwipeLibraryDropTarget: ViewModifier {
     func body(content: Content) -> some View {
         content
             .overlay { dropWash }
-            .onDrop(of: [.image, .fileURL, .url, .png, .jpeg, .tiff], isTargeted: targetBinding) { providers in
+            .onDrop(of: [.image, .fileURL, .url, .png, .jpeg, .tiff, .pdf, .emailMessage], isTargeted: targetBinding) { providers in
                 Task { await handle(providers) }
                 return true
             }
@@ -57,6 +57,12 @@ private struct SwipeLibraryDropTarget: ViewModifier {
     }
 
     private func handle(_ providers: [NSItemProvider]) async {
+        // Emails and PDFs have their own front doors (Newsletter page,
+        // rendered frame set) — they must never degrade to "not an image,
+        // maybe a link".
+        if await SwipeCaptureCommands.captureSpecialFiles(from: providers, boardIDs: boardIDs) {
+            return
+        }
         let images = await SwipeCaptureCommands.imagePayloads(from: providers)
         if !images.isEmpty {
             await SwipeIntakeRouter.run(.images(images), boardIDs: boardIDs, captureMode: "drop")

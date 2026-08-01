@@ -274,15 +274,28 @@ final class InboxActionExecutor {
     /// misses. Dedups against the existing library so filing a known link
     /// adopts it instead of forking a duplicate; the undo removes only a swipe
     /// THIS action created.
+    /// What filing produced: the swipe, plus whether it pre-existed the
+    /// capture. Adoption is real news — the caller's toast must not claim
+    /// "Saved as swipe" over a no-op (iOS twin: InboxActionEngine's receipt).
+    struct SwipeFilingOutcome {
+        let atom: Atom
+        let adoptedExisting: Bool
+    }
+
     @discardableResult
     func executeSwipe(item: InboxItem) async throws -> Atom {
+        try await executeSwipeOutcome(item: item).atom
+    }
+
+    @discardableResult
+    func executeSwipeOutcome(item: InboxItem) async throws -> SwipeFilingOutcome {
         // A capture that carries images and NO link is a frame swipe: the
         // pictures ARE what was saved. The link wins when both are present —
         // the original post beats a screenshot of it — and the images then
         // ride along as extra units rather than being stranded.
         if item.detectedSwipeURL == nil, !item.attachmentUUIDs.isEmpty,
            let framed = try await executeFrameSwipe(item: item) {
-            return framed
+            return SwipeFilingOutcome(atom: framed, adoptedExisting: false)
         }
 
         let url = item.detectedSwipeURL
@@ -300,7 +313,7 @@ final class InboxActionExecutor {
                     try? await self?.inboxRepo.markActioned(uuid: originalItem.uuid)
                 }
             )
-            return existing
+            return SwipeFilingOutcome(atom: existing, adoptedExisting: true)
         }
 
         let classification = SwipeURLClassifier().classify(url)
@@ -340,7 +353,7 @@ final class InboxActionExecutor {
             }
         )
 
-        return atom
+        return SwipeFilingOutcome(atom: atom, adoptedExisting: false)
     }
 
     /// An image-only capture becomes a FRAME swipe, decomposed like any other.

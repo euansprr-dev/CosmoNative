@@ -269,12 +269,23 @@ final class CaptureOverlayViewModel {
             ))
             return
         }
+        // The router publishes its receipt synchronously (outside a flow
+        // recording) — an adoption receipt for THIS atom means the link was
+        // already in the library. That is `.consumed`, the same register as a
+        // same-session duplicate: muted, no Undo (undoing an adoption would
+        // delete a swipe that predates this capture).
+        let adopted = SwipeIntakeReceiptCenter.shared.receipt
+            .map { $0.atomUUID == atom.uuid && $0.alreadyInLibrary } ?? false
         sessionEntries.append(SessionEntry(
             displayName: display,
             kind: nil,
-            state: .captured(itemUUID: atom.uuid),
+            state: adopted
+                ? .consumed(reason: "already in your Swipe File")
+                : .captured(itemUUID: atom.uuid),
             fingerprint: nil,
-            destinationLabel: "→ Swipe File · \(atom.swipeKind.displayName)",
+            destinationLabel: adopted
+                ? "already in your Swipe File"
+                : "→ Swipe File · \(atom.swipeKind.displayName)",
             undoTarget: .swipeAtom
         ))
     }

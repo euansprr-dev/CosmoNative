@@ -15,14 +15,14 @@ struct CosmoKeyboardFooter: View {
 
             HStack {
                 Text("↑↓ Navigate")
-                    .font(.caption2)
+                    .font(DS.keycap)
                     .foregroundStyle(darkMode ? Color.white.opacity(0.5) : DS.textMuted)
                 Spacer()
                 Text("↵ \(selectLabel)")
-                    .font(.caption2)
+                    .font(DS.keycap)
                     .foregroundStyle(darkMode ? Color.white.opacity(0.5) : DS.textMuted)
                 Text("⎋ Cancel")
-                    .font(.caption2)
+                    .font(DS.keycap)
                     .foregroundStyle(darkMode ? Color.white.opacity(0.5) : DS.textMuted)
             }
             .padding(.horizontal, 12)

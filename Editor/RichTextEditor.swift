@@ -36,6 +36,16 @@ final class EditorOverlayEscapeCoordinator {
     }
 }
 
+/// Non-invalidating storage for editor geometry consumed only by imperative
+/// code (menu anchoring, height forwarding). Held in @State for identity but
+/// deliberately NOT observable: writing these per position/height change as
+/// @State cost a full body + updateNSView pass each, with no body readers.
+@MainActor
+final class EditorViewMetricsBox {
+    var measuredContentHeight: CGFloat = 0
+    var frameInOverlaySpace: CGRect = .zero
+}
+
 enum EditorHeightUpdatePolicy {
     static let defaultEpsilon: CGFloat = 1.0
 
@@ -260,7 +270,11 @@ struct RichTextEditor: View {
     @State private var slashMenuLocalAnchor: CGPoint = .zero
     /// This editor's frame in the block list's overlay coordinate space —
     /// converts local caret anchors into list space for the hoisted menu.
-    @State private var frameInOverlaySpace: CGRect = .zero
+    /// Geometry consumed only by imperative code (menu anchoring, session
+    /// publishing) — kept OUT of @State so row position shifts after a
+    /// split/merge don't re-render every row below (the write fired per row,
+    /// per position change).
+    @State private var viewMetrics = EditorViewMetricsBox()
     @Environment(\.blockEditorOverlayPresenter) private var overlayPresenter
     @Environment(\.blockDragSelectionController) private var dragSelectionController
     @State private var mentionMenuPosition: CGPoint = .zero
@@ -268,7 +282,6 @@ struct RichTextEditor: View {
     @State private var selectionTraits: SelectionFormattingTraits = .none
     @State private var elementCreationMenuPosition: CGPoint = .zero
     @State private var mentionSearchQuery = ""
-    @State private var cursorPosition: Int = 0
     @State private var shouldRefocusEditor = false
     @State private var overlayEscapeOwnerID = UUID()
     private var elementStore: DocumentElementStore { DocumentElementStore.shared }
@@ -317,6 +330,10 @@ struct RichTextEditor: View {
     var externalContentToken: Int = 0
     var onPlainTextDidChange: ((String) -> Void)? = nil
     var onStructuredDocumentChange: ((RichDocument, String) -> Void)? = nil
+    /// The coordinator committed the attributed buffer into the binding
+    /// (deferred sync / resign flush) — the host should parse it now. The
+    /// binding is box-backed, so no onChange can observe the write.
+    var onContentCommitted: (() -> Void)? = nil
     var autoFocus: Bool = false
     /// Mount-time content seed — see TextKitEditorRepresentable.initialContent.
     var initialContent: (() -> NSAttributedString)? = nil
@@ -325,7 +342,6 @@ struct RichTextEditor: View {
     @State private var containerSize: CGSize = .zero
     // Tracks measured text content height so the representable can be explicitly sized
     // (needed for non-scrolling mode inside a parent ScrollView)
-    @State private var measuredContentHeight: CGFloat = 0
 
     let placeholder: String
     let onSave: ((NSAttributedString) -> Void)?
@@ -405,6 +421,7 @@ struct RichTextEditor: View {
         externalContentToken: Int = 0,
         onPlainTextDidChange: ((String) -> Void)? = nil,
         onStructuredDocumentChange: ((RichDocument, String) -> Void)? = nil,
+        onContentCommitted: (() -> Void)? = nil,
         autoFocus: Bool = false,
         initialContent: (() -> NSAttributedString)? = nil,
         onSave: ((NSAttributedString) -> Void)? = nil
@@ -455,6 +472,7 @@ struct RichTextEditor: View {
         self.externalContentToken = externalContentToken
         self.onPlainTextDidChange = onPlainTextDidChange
         self.onStructuredDocumentChange = onStructuredDocumentChange
+        self.onContentCommitted = onContentCommitted
         self.autoFocus = autoFocus
         self.initialContent = initialContent
         self.onSave = onSave
@@ -466,7 +484,6 @@ struct RichTextEditor: View {
             TextKitEditorRepresentable(
                 attributedText: $text,
                 plainText: $plainText,
-                cursorPosition: $cursorPosition,
                 shouldRefocus: $shouldRefocusEditor,
                 fontSize: fontSize,
                 fontDesign: fontDesign,
@@ -521,7 +538,11 @@ struct RichTextEditor: View {
                                 publishSelectionSessionIfHoisted()
                             }
                         }
-                    } else {
+                    } else if showSelectionMenu {
+                        // Guarded: typing and plain clicks land here on every
+                        // caret move — an unconditional async write of an
+                        // already-false @State bought a whole extra body +
+                        // updateNSView pass per keystroke/click.
                         DispatchQueue.main.async {
                             showSelectionMenu = false
                             overlayPresenter?.clearSelectionSession(ownedBy: overlayEscapeOwnerID)
@@ -550,6 +571,7 @@ struct RichTextEditor: View {
                 onSlashCommandSelected: onSlashCommandSelected,
                 onPlainTextDidChange: onPlainTextDidChange,
                 onStructuredDocumentChange: onStructuredDocumentChange,
+                onContentCommitted: onContentCommitted,
                 splitsOnReturn: splitsOnReturn,
                 caretRequest: caretRequest,
                 externalContentToken: externalContentToken,
@@ -697,7 +719,7 @@ struct RichTextEditor: View {
                 ? .zero
                 : proxy.frame(in: .named(EditorOverlayPresenter.coordinateSpaceName))
         } action: { newValue in
-            frameInOverlaySpace = newValue
+            viewMetrics.frameInOverlaySpace = newValue
         }
         .onAppear {
             if autoFocus {
@@ -719,32 +741,36 @@ struct RichTextEditor: View {
                 shouldRefocusEditor = true
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .cosmoDismissEditorOverlays)) { _ in
+        .onReceive(Self.dismissOverlaysPublisher) { _ in
             dismissAllOverlays()
         }
-        .animation(.spring(response: 0.2, dampingFraction: 0.8), value: showSlashMenu)
-        .animation(.spring(response: 0.2, dampingFraction: 0.8), value: showMentionMenu)
-        .animation(.spring(response: 0.2, dampingFraction: 0.8), value: showSelectionMenu)
-        .animation(.spring(response: 0.2, dampingFraction: 0.8), value: showElementCreationMenu)
+        // No .animation(value: menu-flag) wrappers here: each one pushed an
+        // animated transaction over the ENTIRE editor ZStack every time a
+        // menu flag flipped (selection make/clear = every mouse selection),
+        // and the menus animate their own entrance via CosmoMenuChrome.
     }
+
+    /// Shared instance — building a fresh NotificationCenter publisher per
+    /// body evaluation churned the Combine subscription on every update.
+    private static let dismissOverlaysPublisher =
+        NotificationCenter.default.publisher(for: .cosmoDismissEditorOverlays)
 
     // MARK: - Overlay Helpers
 
     private func scheduleMeasuredContentHeightUpdate(_ height: CGFloat) {
         guard let nextHeight = EditorHeightUpdatePolicy.normalizedHeight(height),
-              EditorHeightUpdatePolicy.shouldPublish(current: measuredContentHeight, next: nextHeight) else {
+              EditorHeightUpdatePolicy.shouldPublish(current: viewMetrics.measuredContentHeight, next: nextHeight) else {
             return
         }
 
         DispatchQueue.main.async {
-            guard EditorHeightUpdatePolicy.shouldPublish(current: measuredContentHeight, next: nextHeight) else {
+            guard EditorHeightUpdatePolicy.shouldPublish(current: viewMetrics.measuredContentHeight, next: nextHeight) else {
                 return
             }
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction) {
-                measuredContentHeight = nextHeight
-            }
+            // Box write, not @State: the height is only forwarded to the
+            // callback — an @State here cost one extra body + updateNSView
+            // pass per height report with zero readers in body.
+            viewMetrics.measuredContentHeight = nextHeight
             onContentHeightChange?(visualHeight(forTextKitHeight: nextHeight))
         }
     }
@@ -787,8 +813,8 @@ struct RichTextEditor: View {
         guard let overlayPresenter else { return }
         overlayPresenter.selectionSession = EditorOverlayPresenter.SelectionMenuSession(
             anchorInList: selectionAnchor.offsetBy(
-                dx: frameInOverlaySpace.minX,
-                dy: frameInOverlaySpace.minY
+                dx: viewMetrics.frameInOverlaySpace.minX,
+                dy: viewMetrics.frameInOverlaySpace.minY
             ),
             traits: selectionTraits,
             compact: compact,
@@ -832,6 +858,9 @@ struct RichTextEditor: View {
             slashSelectedIndex = 0
         }
         slashQuery = query
+        // Computed ONCE per keystroke and passed through — the catalog build
+        // (element sort + localized filter + rank sort) used to run twice per
+        // keystroke (here and again in publishSlashSessionIfHoisted).
         let filtered = slashFilteredCommands
         guard !filtered.isEmpty else {
             // Nothing matches — retire the menu. Deleting back to a matching
@@ -851,29 +880,47 @@ struct RichTextEditor: View {
             in: containerSize
         )
         showSlashMenu = true
-        publishSlashSessionIfHoisted()
+        publishSlashSessionIfHoisted(filtered: filtered)
     }
 
     /// ↑/↓/Return/Esc routed from the coordinator while the menu is open.
     private func handleSlashMenuKey(_ event: SlashMenuKeyEvent) -> Bool {
         guard showSlashMenu else { return false }
-        let filtered = slashFilteredCommands
         switch event {
         case .up:
+            // Highlight moves never rebuild the catalog: the open session
+            // already holds the filtered commands (two full catalog builds
+            // per arrow key, before).
             slashSelectedIndex = max(0, slashSelectedIndex - 1)
-            publishSlashSessionIfHoisted()
+            updateHoistedSlashSelection()
             return true
         case .down:
-            slashSelectedIndex = min(max(0, filtered.count - 1), slashSelectedIndex + 1)
-            publishSlashSessionIfHoisted()
+            let count = overlayPresenter?.slashSession?.commands.count ?? slashFilteredCommands.count
+            slashSelectedIndex = min(max(0, count - 1), slashSelectedIndex + 1)
+            updateHoistedSlashSelection()
             return true
         case .commit:
-            guard let command = filtered[safe: slashSelectedIndex] else { return false }
+            let command = overlayPresenter?.slashSession?.commands[safe: slashSelectedIndex]
+                ?? slashFilteredCommands[safe: slashSelectedIndex]
+            guard let command else { return false }
             handleSlashMenuSelection(command)
             return true
         case .dismiss:
             dismissAllOverlays()
             return true
+        }
+    }
+
+    /// Moves the hoisted session's highlight without rebuilding the session
+    /// (and without re-filtering the catalog). Falls back to a full publish
+    /// when no session exists yet.
+    private func updateHoistedSlashSelection() {
+        guard let overlayPresenter else { return }
+        if var session = overlayPresenter.slashSession {
+            session.selectedIndex = slashSelectedIndex
+            overlayPresenter.slashSession = session
+        } else {
+            publishSlashSessionIfHoisted()
         }
     }
 
@@ -910,8 +957,8 @@ struct RichTextEditor: View {
         guard let overlayPresenter, showElementCreationMenu else { return }
         overlayPresenter.elementCreationSession = EditorOverlayPresenter.ElementCreationSession(
             anchorInList: CGPoint(
-                x: frameInOverlaySpace.minX + slashMenuLocalAnchor.x,
-                y: frameInOverlaySpace.minY + slashMenuLocalAnchor.y
+                x: viewMetrics.frameInOverlaySpace.minX + slashMenuLocalAnchor.x,
+                y: viewMetrics.frameInOverlaySpace.minY + slashMenuLocalAnchor.y
             ),
             darkMode: darkMode,
             onCreate: { title, icon, tintID in
@@ -924,21 +971,25 @@ struct RichTextEditor: View {
         )
     }
 
-    /// Publishes/updates the hoisted menu session for block rows.
-    private func publishSlashSessionIfHoisted() {
+    /// Publishes/updates the hoisted menu session for block rows. Pass
+    /// `filtered` when the caller already computed it — the catalog filter
+    /// is the expensive half of a slash keystroke.
+    private func publishSlashSessionIfHoisted(filtered: [SlashCommand]? = nil) {
         guard let overlayPresenter, showSlashMenu else { return }
         overlayPresenter.slashSession = EditorOverlayPresenter.SlashMenuSession(
             anchorInList: CGPoint(
-                x: frameInOverlaySpace.minX + slashMenuLocalAnchor.x,
-                y: frameInOverlaySpace.minY + slashMenuLocalAnchor.y
+                x: viewMetrics.frameInOverlaySpace.minX + slashMenuLocalAnchor.x,
+                y: viewMetrics.frameInOverlaySpace.minY + slashMenuLocalAnchor.y
             ),
             query: slashQuery,
-            commands: slashFilteredCommands,
+            commands: filtered ?? slashFilteredCommands,
             selectedIndex: slashSelectedIndex,
             darkMode: darkMode,
             onHighlight: { index in
                 slashSelectedIndex = index
-                publishSlashSessionIfHoisted()
+                // Selection-only update — republishing rebuilt the whole
+                // session (catalog filter included) per hover crossing.
+                updateHoistedSlashSelection()
             },
             onSelect: { command in
                 handleSlashMenuSelection(command)
@@ -1360,17 +1411,21 @@ enum SlashCommandCatalog {
     static func filteredCommands(matching query: String, commands: [SlashCommand]) -> [SlashCommand] {
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedQuery.isEmpty else { return commands }
-        return commands.filter { command in
-            command.title.localizedCaseInsensitiveContains(normalizedQuery)
-                || command.subtitle.localizedCaseInsensitiveContains(normalizedQuery)
-                || command.searchAliases.contains { $0.localizedCaseInsensitiveContains(normalizedQuery) }
-        }
-        .sorted {
-            matchRank(for: $0, query: normalizedQuery) < matchRank(for: $1, query: normalizedQuery)
-        }
+        // Rank once per command (Schwartzian transform) — computing it inside
+        // the sort comparator re-ran up to three ICU-localized compares per
+        // COMPARISON, ~600 localized string ops per keystroke.
+        let ranked: [(rank: Int, order: Int, command: SlashCommand)] = commands.enumerated()
+            .compactMap { order, command in
+                guard let rank = matchRank(for: command, query: normalizedQuery) else { return nil }
+                return (rank, order, command)
+            }
+        return ranked
+            .sorted { ($0.rank, $0.order) < ($1.rank, $1.order) }
+            .map(\.command)
     }
 
-    private static func matchRank(for command: SlashCommand, query: String) -> Int {
+    /// nil ⇒ no match (filtered out). Also serves as the sort rank.
+    private static func matchRank(for command: SlashCommand, query: String) -> Int? {
         if command.title.compare(query, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame {
             return 0
         }
@@ -1380,7 +1435,10 @@ enum SlashCommandCatalog {
         if command.subtitle.localizedCaseInsensitiveContains(query) {
             return 2
         }
-        return 3
+        if command.searchAliases.contains(where: { $0.localizedCaseInsensitiveContains(query) }) {
+            return 3
+        }
+        return nil
     }
 
     private static func activeElementDefinitions(from definitions: [DocumentElementDefinition]) -> [DocumentElementDefinition] {

@@ -45,6 +45,7 @@ enum SwipeReferenceQuery {
         matching prompt: String,
         roles: Set<SwipeUnitRole> = [],
         kinds: Set<SwipeKind> = [],
+        genre: SwipeGenre? = nil,
         limit: Int = 8
     ) async -> [SwipeUnitHit] {
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -59,7 +60,7 @@ enum SwipeReferenceQuery {
             minSimilarity: 0.05,
             roles: roles.isEmpty ? nil : Set(roles.map(\.rawValue))
         )
-        return await resolve(hits, kinds: kinds, limit: limit)
+        return await resolve(hits, kinds: kinds, genre: genre, limit: limit)
     }
 
     /// Role-only retrieval, no query — "every guarantee I have saved".
@@ -68,6 +69,7 @@ enum SwipeReferenceQuery {
     static func units(
         withRoles roles: Set<SwipeUnitRole>,
         kinds: Set<SwipeKind> = [],
+        genre: SwipeGenre? = nil,
         limit: Int = 8
     ) async -> [SwipeUnitHit] {
         guard !roles.isEmpty else { return [] }
@@ -79,6 +81,9 @@ enum SwipeReferenceQuery {
             guard !atom.isDeleted, atom.isSwipeFileAtom else { continue }
             let kind = atom.swipeKind
             if !kinds.isEmpty, !kinds.contains(kind) { continue }
+            // "Newsletter openers" = genre .newsletter + role .hook — the
+            // genre narrows by MEDIUM the way roles narrow by move.
+            if let genre, atom.swipeGenre != genre { continue }
             for unit in atom.swipeArtifactUnits {
                 guard let role = unit.role, wanted.contains(role.rawValue), unit.hasSubstance else { continue }
                 hits.append(SwipeUnitHit(
@@ -113,6 +118,7 @@ enum SwipeReferenceQuery {
     private static func resolve(
         _ hits: [RecallVectorHit],
         kinds: Set<SwipeKind>,
+        genre: SwipeGenre? = nil,
         limit: Int
     ) async -> [SwipeUnitHit] {
         var resolved: [SwipeUnitHit] = []
@@ -124,6 +130,7 @@ enum SwipeReferenceQuery {
                   !atom.isDeleted, atom.isSwipeFileAtom else { continue }
             let kind = atom.swipeKind
             if !kinds.isEmpty, !kinds.contains(kind) { continue }
+            if let genre, atom.swipeGenre != genre { continue }
 
             // At most two units from any one swipe: eight sections of the same
             // sales page is not eight references, it is one.

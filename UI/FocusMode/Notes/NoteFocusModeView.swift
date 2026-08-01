@@ -14,9 +14,14 @@ enum NoteFocusTitleChromeMode: Equatable {
 
 enum NoteFocusHeaderLayoutPolicy {
     static func chromeMode(titlePlainText: String, plainContent: String) -> NoteFocusTitleChromeMode {
-        let hasTitle = !titlePlainText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let hasContent = !plainContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        return hasTitle || hasContent ? .documentHeader : .emptyEditableTitle
+        // contains(where:), not trimmingCharacters: trimming COPIES the whole
+        // body string, and this runs ~10× per body evaluation (i.e. per
+        // keystroke) through titleChromeMode/isEmptyNote. The short-circuit
+        // also means the body is never scanned when the title has content.
+        let hasTitle = titlePlainText.contains(where: { !$0.isWhitespace })
+        return hasTitle || plainContent.contains(where: { !$0.isWhitespace })
+            ? .documentHeader
+            : .emptyEditableTitle
     }
 
     static func chromeMode(
@@ -43,6 +48,13 @@ enum NoteFocusHeaderLayoutPolicy {
 struct NoteHeadingEntry: Equatable, Sendable {
     let level: Int
     let text: String
+}
+
+/// Non-invalidating storage for the body editor's live selection — read only
+/// by escaping closures (assistant selection refs), never by body.
+@MainActor
+final class NoteSelectionBox {
+    var selectedText: String = ""
 }
 
 struct NoteFocusTextAnalysis: Equatable, Sendable {
@@ -252,7 +264,10 @@ struct NoteFocusModeView: View {
     @State private var inlineReviewScrollKeeper = CosmoInlineReviewScrollPositionKeeper()
     @State private var titlePlainText: String = ""
     @State private var plainContent: String = ""
-    @State private var selectedText: String = ""
+    /// Selection text is consumed only by escaping closures (assistant
+    /// context refs) — as @State, every caret move re-rendered this entire
+    /// view for a value body never reads.
+    @State private var selectionBox = NoteSelectionBox()
     @State private var tags: [String] = []
     @State private var createdAt: Date = Date()
     @State private var showTagEditor = false
@@ -387,6 +402,7 @@ struct NoteFocusModeView: View {
                         .padding(.top, noteToolbarClearance)
                         .padding(.bottom, DS.space16)
                         .opacity(railRestOpacity)
+                        .animation(reduceMotion ? nil : ProMotionSprings.gentle, value: railRestOpacity)
                         .onHover { hovering in
                             if hovering { wakeChrome() }
                         }
@@ -403,13 +419,17 @@ struct NoteFocusModeView: View {
                         .padding(.top, noteToolbarClearance)
                         .padding(.bottom, DS.space16)
                         .opacity(railRestOpacity)
+                        .animation(reduceMotion ? nil : ProMotionSprings.gentle, value: railRestOpacity)
                         .onHover { hovering in
                             if hovering { wakeChrome() }
                         }
                         .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
             }
-            .animation(reduceMotion ? nil : ProMotionSprings.gentle, value: isActivelyTyping)
+            // Rail fades animate on the rails themselves (value: railRestOpacity)
+            // — animating on isActivelyTyping HERE opened an animated
+            // transaction over the entire manuscript at every typing-burst
+            // start/stop, capturing any in-flight editor geometry with it.
             .animation(reduceMotion ? nil : ProMotionSprings.gentle, value: showsRightRail)
             .overlay(alignment: .top) {
                 topBar
@@ -473,7 +493,7 @@ struct NoteFocusModeView: View {
             scheduleTextAnalysis(for: plainContent)
             titleEditorHeight = titleMinHeight
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                withAnimation(ProMotionSprings.cardEntrance) {
+                withAnimation(reduceMotion ? nil : ProMotionSprings.cardEntrance) {
                     contentAppeared = true
                 }
             }
@@ -483,7 +503,7 @@ struct NoteFocusModeView: View {
                 titleRef: { [self] in self.titlePlainText },
                 contentRef: { [self] in self.plainContent },
                 tagsRef: { [self] in self.tags },
-                selectedTextRef: { [self] in self.selectedText },
+                selectedTextRef: { [self] in self.selectionBox.selectedText },
                 applyBodyEdit: { [self] operation in
                     try await self.applyInlineAssistantBodyEdit(operation)
                 }
@@ -782,13 +802,20 @@ struct NoteFocusModeView: View {
             Image(systemName: "note.text")
                 .font(DS.caption2)
                 .accessibilityLabel("Note")
-            Text("NOTE")
+            // Sentence-case source: .smallCaps() on "NOTE" was a no-op.
+            Text("Note")
                 .font(DS.smallCaps)
+                .tracking(DS.smallCapsTracking)
             if !isEmptyNote {
+                // The interpunct inherited 13pt body between 10/11pt runs.
                 Text("·")
+                    .font(DS.rowMeta)
                     .foregroundStyle(focusTextMuted)
                 Text("\(wordCount) words · \(estimatedReadingMinutes) min")
-                    .font(DS.caption)
+                    .font(DS.rowMeta)
+                    .monospacedDigit()
+                    .contentTransition(.numericText())
+                    .animation(reduceMotion ? nil : ProMotionSprings.gentle, value: wordCount)
                     .foregroundStyle(focusTextMuted)
             }
         }
@@ -867,10 +894,16 @@ struct NoteFocusModeView: View {
     /// toolbar — but slides *under* the glass once scrolling.
     private var noteToolbarClearance: CGFloat { 76 }
 
+    /// The note's reading measure — tracks the chosen text size so line
+    /// length stays ~78–80 characters at Compact, Standard, and Large.
+    private var readingMeasure: CGFloat {
+        noteStyle.pageWidth.readingWidth(for: noteStyle.textSize)
+    }
+
     /// The block column = reading measure + the block gutter (＋ / ⋮⋮ controls).
     /// Title and metadata are inset by the gutter so all text shares one left edge.
     private var bodyColumnWidth: CGFloat {
-        noteStyle.pageWidth.readingWidth + BlockInteractionPolicy.gutterWidth
+        readingMeasure + BlockInteractionPolicy.gutterWidth
     }
 
     /// Base page margin: generous on a full screen, tighter in narrow
@@ -917,22 +950,42 @@ struct NoteFocusModeView: View {
         if noteStyle.cover != .none {
             NotePageCoverBand(style: noteStyle, darkMode: DS.usesImmersiveFocusAppearance)
                 .clipShape(.rect(cornerRadius: 12, style: .continuous))
+                // The chosen emblem straddles the band's bottom edge (Craft
+                // grammar) — cover, icon, and title read as one composed
+                // identity instead of three padded siblings.
+                .overlay(alignment: .bottomLeading) {
+                    if let pageIcon = noteStyle.pageIcon {
+                        NotePageIconView(
+                            icon: pageIcon,
+                            style: noteStyle,
+                            darkMode: DS.usesImmersiveFocusAppearance,
+                            size: 30,
+                            seated: true
+                        )
+                        .offset(y: 22)
+                        .padding(.leading, DS.space16)
+                        .help("Page icon")
+                    }
+                }
                 // Align the band with the text measure (not the gutter-inclusive
                 // column) so it shares the title's left edge and sits centered.
                 .padding(.leading, BlockInteractionPolicy.gutterWidth)
                 .frame(maxWidth: bodyColumnWidth)
                 .padding(.top, DS.space8)
+                // Clear the seat's overhang so the title never collides.
+                .padding(.bottom, noteStyle.pageIcon != nil ? 22 : 0)
         }
-        if let pageIcon = noteStyle.pageIcon {
+        if noteStyle.cover == .none, let pageIcon = noteStyle.pageIcon {
             NotePageIconView(
                 icon: pageIcon,
                 style: noteStyle,
                 darkMode: DS.usesImmersiveFocusAppearance,
-                size: 30
+                size: 30,
+                seated: true
             )
             .padding(.leading, BlockInteractionPolicy.gutterWidth)
             .frame(maxWidth: bodyColumnWidth, alignment: .leading)
-            .padding(.top, noteStyle.cover != .none ? DS.space12 : DS.space24)
+            .padding(.top, DS.space24)
             .help("Page icon")
         }
     }
@@ -954,7 +1007,7 @@ struct NoteFocusModeView: View {
                         titleSection
                     }
                         .padding(.top, DS.space48)
-                        .frame(maxWidth: CosmoTypography.optimalReadingWidth)
+                        .frame(maxWidth: readingMeasure)
                         // The page margins run one gutter wider on the trailing
                         // side (see below); re-center this centered composition.
                         .padding(.leading, BlockInteractionPolicy.gutterWidth)
@@ -1021,7 +1074,15 @@ struct NoteFocusModeView: View {
                             progressiveHydration: true,
                             landingHighlightBlockID: landingHighlightBlockID,
                             onSelectionChanged: { snapshot in
-                                selectedText = snapshot.text
+                                // Every caret move (keystroke, click) lands here
+                                // with an empty selection. Nothing in body reads
+                                // the selection — it flows to escaping closures
+                                // via the box — and an empty→empty transition
+                                // has nothing new to report, so skip the store
+                                // call and the debounce Task churn entirely.
+                                let wasEmpty = selectionBox.selectedText.isEmpty
+                                selectionBox.selectedText = snapshot.text
+                                if snapshot.text.isEmpty && wasEmpty { return }
                                 let trimmed = snapshot.text.trimmingCharacters(in: .whitespacesAndNewlines)
                                 CosmoInlineAssistantStore.shared.reportSelection(
                                     trimmed.isEmpty ? nil : CosmoEditableSelection(text: trimmed, containingLine: nil),
@@ -1080,11 +1141,13 @@ struct NoteFocusModeView: View {
             withAnimation(reduceMotion ? nil : ProMotionSprings.gentle) {
                 proxy.scrollTo(blockID, anchor: .center)
             }
-            withAnimation(.easeInOut(duration: 0.45)) {
+            // Springs, not raw curves — one motion dialect with the scroll
+            // they accompany.
+            withAnimation(reduceMotion ? nil : ProMotionSprings.gentle) {
                 landingHighlightBlockID = blockID
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) {
-                withAnimation(.easeOut(duration: 0.8)) {
+                withAnimation(reduceMotion ? nil : ProMotionSprings.gentle) {
                     landingHighlightBlockID = nil
                 }
             }
@@ -1101,19 +1164,21 @@ struct NoteFocusModeView: View {
     }
 
     private var giltDivider: some View {
+        // Ornament ink is ONE rung (giltMuted) — gilt arrived at four
+        // unrelated alphas on this page before round 1.
         HStack(spacing: DS.space12) {
             Rectangle()
-                .fill(DS.gilt.opacity(0.3))
+                .fill(DS.giltMuted)
                 .frame(height: 0.5)
             Image(systemName: "diamond.fill")
                 .font(DS.caption2)
-                .foregroundStyle(DS.gilt.opacity(0.5))
+                .foregroundStyle(DS.giltMuted)
                 .accessibilityHidden(true)
             Rectangle()
-                .fill(DS.gilt.opacity(0.3))
+                .fill(DS.giltMuted)
                 .frame(height: 0.5)
         }
-        .frame(maxWidth: CosmoTypography.optimalReadingWidth * 0.6)
+        .frame(maxWidth: readingMeasure * 0.6)
         // Center on the text measure, matching the page's optical centering.
         .padding(.leading, BlockInteractionPolicy.gutterWidth)
     }
@@ -1171,13 +1236,16 @@ struct NoteFocusModeView: View {
             maxHeight: contentHeight.wrappedValue > 0 ? contentHeight.wrappedValue : .infinity,
             alignment: .top
         )
+        // Dark chrome only: anchors the rail glass so it doesn't read as
+        // loose text on black (the token resolves to .clear on light paper).
+        .background(DS.commandCenterRailStabilizingFill, in: .rect(cornerRadius: 22, style: .continuous))
         .cosmoGlassPanel(role: .focusSidebar, cornerRadius: 22)
         .animation(reduceMotion ? nil : ProMotionSprings.snappy, value: contentHeight.wrappedValue)
     }
 
     private var noteOutlineSection: some View {
         MarginaliaDisclosureSection(
-            "ON THIS NOTE",
+            "On this note",
             countText: bodyHeadingOutline.isEmpty ? nil : "\(bodyHeadingOutline.count)",
             storageKey: "note.outline",
             defaultExpanded: true
@@ -1186,12 +1254,16 @@ struct NoteFocusModeView: View {
                 Text(isEmptyNote ? "no headings yet" : "headings create sections")
                     .font(DS.dateSerif)
                     .italic()
-                    .foregroundStyle(focusTextMuted.opacity(0.7))
+                    .foregroundStyle(focusTextMuted)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
+                // Hoisted: activeBodyHeadingID is O(blocks) — evaluating it
+                // once per outline ROW made the rail O(headings × blocks)
+                // per keystroke.
+                let activeID = activeBodyHeadingID
                 VStack(alignment: .leading, spacing: DS.space6) {
                     ForEach(bodyHeadingOutline) { entry in
-                        outlineEntryRow(entry, isActive: entry.id == activeBodyHeadingID)
+                        outlineEntryRow(entry, isActive: entry.id == activeID)
                     }
                 }
             }
@@ -1200,7 +1272,7 @@ struct NoteFocusModeView: View {
 
     private var noteLinksSection: some View {
         MarginaliaDisclosureSection(
-            "LINKS",
+            "Links",
             countText: "\(inLinkCount + outLinkCount)",
             storageKey: "note.links"
         ) {
@@ -1213,7 +1285,7 @@ struct NoteFocusModeView: View {
 
     private var noteTagsSection: some View {
         MarginaliaDisclosureSection(
-            "TAGS",
+            "Tags",
             countText: "\(tags.count)",
             storageKey: "note.tags"
         ) {
@@ -1235,11 +1307,13 @@ struct NoteFocusModeView: View {
                 } else {
                     Text(entry.level == 1 ? "¶" : "›")
                         .font(DS.caption2)
-                        .foregroundStyle(DS.gilt.opacity(0.6))
+                        .foregroundStyle(DS.giltMuted)
                         .frame(width: 10, alignment: .leading)
                 }
                 Text(entry.title)
-                    .font(entry.level == 1 ? DS.subheadline : DS.caption)
+                    // rowTitleCompact/rowMeta: the old 12-regular-over-11-medium
+                    // pair ran the weight ladder backwards.
+                    .font(entry.level == 1 ? DS.rowTitleCompact : DS.rowMeta)
                     .foregroundStyle(isActive ? focusText : (entry.level == 1 ? focusTextSecondary : focusTextMuted))
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
@@ -1257,12 +1331,15 @@ struct NoteFocusModeView: View {
     private func linkCountRow(label: String, count: Int, tint: Color) -> some View {
         HStack(spacing: DS.space6) {
             Text("\(count)")
-                .font(DS.callout)
+                // The numeral must outweigh its own label (it was 13 regular
+                // under an 11 medium label — data quieter than caption).
+                .font(DS.rowTitle)
                 .foregroundStyle(count > 0 ? tint : focusTextMuted)
                 .monospacedDigit()
                 .contentTransition(.numericText())
+                .animation(reduceMotion ? nil : ProMotionSprings.gentle, value: count)
             Text(label)
-                .font(DS.caption)
+                .font(DS.rowMeta)
                 .foregroundStyle(focusTextMuted)
             Spacer(minLength: 0)
         }
@@ -1281,7 +1358,7 @@ struct NoteFocusModeView: View {
 
     private var backlinksSection: some View {
         MarginaliaDisclosureSection(
-            "BACKLINKS",
+            "Backlinks",
             countText: "\(inLinkCount)",
             storageKey: "note.backlinks",
             defaultExpanded: true
@@ -1290,7 +1367,7 @@ struct NoteFocusModeView: View {
                 Text("no backlinks yet")
                     .font(DS.dateSerif)
                     .italic()
-                    .foregroundStyle(focusTextMuted.opacity(0.7))
+                    .foregroundStyle(focusTextMuted)
             } else {
                 VStack(spacing: DS.space8) {
                     ForEach(Array(backlinkPreviews.prefix(8).enumerated()), id: \.element.atomUUID) { index, preview in
@@ -1305,7 +1382,7 @@ struct NoteFocusModeView: View {
 
     private var mentionedInSection: some View {
         MarginaliaDisclosureSection(
-            "MENTIONED IN",
+            "Mentioned in",
             countText: mentionedInTotal > 0 ? "\(mentionedInTotal)" : nil,
             storageKey: "note.mentions",
             spacing: DS.space8
@@ -1314,7 +1391,7 @@ struct NoteFocusModeView: View {
                 Text("not yet referenced")
                     .font(DS.dateSerif)
                     .italic()
-                    .foregroundStyle(focusTextMuted.opacity(0.7))
+                    .foregroundStyle(focusTextMuted)
             } else {
                 VStack(alignment: .leading, spacing: DS.space4) {
                     ForEach(Array(mentionedInCounts.keys.sorted(by: { $0.rawValue < $1.rawValue })), id: \.self) { type in
@@ -1324,9 +1401,17 @@ struct NoteFocusModeView: View {
                                     .font(DS.caption2)
                                     .foregroundStyle(focusTextSecondary)
                                     .accessibilityLabel(type.displayName)
-                                Text("\(count) \(type.pluralDisplayName.lowercased())")
-                                    .font(DS.caption)
+                                // One count grammar rail-wide: numeral slot
+                                // first (rowTitle), label in the meta voice.
+                                Text("\(count)")
+                                    .font(DS.rowTitle)
+                                    .monospacedDigit()
+                                    .contentTransition(.numericText())
+                                    .animation(reduceMotion ? nil : ProMotionSprings.gentle, value: count)
                                     .foregroundStyle(focusTextSecondary)
+                                Text(type.pluralDisplayName.lowercased())
+                                    .font(DS.rowMeta)
+                                    .foregroundStyle(focusTextMuted)
                             }
                         }
                     }
@@ -1341,7 +1426,7 @@ struct NoteFocusModeView: View {
 
     private var resonanceSection: some View {
         MarginaliaDisclosureSection(
-            "RESONANCE",
+            "Resonance",
             countText: resonantThemes.isEmpty ? nil : "\(resonantThemes.count)",
             storageKey: "note.resonance",
             spacing: DS.space8
@@ -1350,7 +1435,7 @@ struct NoteFocusModeView: View {
                 Text("tag this note to surface resonances")
                     .font(DS.dateSerif)
                     .italic()
-                    .foregroundStyle(focusTextMuted.opacity(0.7))
+                    .foregroundStyle(focusTextMuted)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 VStack(alignment: .leading, spacing: DS.space4) {
@@ -1358,12 +1443,11 @@ struct NoteFocusModeView: View {
                         HStack(spacing: DS.space6) {
                             Image(systemName: "sparkle")
                                 .font(DS.caption2)
-                                .foregroundStyle(DS.gilt.opacity(0.7))
+                                .foregroundStyle(DS.giltMuted)
                                 .accessibilityHidden(true)
                             Text(theme)
-                                .font(DS.caption)
+                                .font(DS.rowMeta)
                                 .foregroundStyle(focusText)
-                                .italic()
                         }
                     }
                 }
@@ -1389,10 +1473,10 @@ struct NoteFocusModeView: View {
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Ask Cosmo")
-                        .font(DS.subheadline.weight(.semibold))
+                        .font(DS.rowTitleCompact)
                         .foregroundStyle(focusText)
                     Text("scoped to this note + backlinks")
-                        .font(DS.caption2)
+                        .font(DS.rowMeta)
                         .foregroundStyle(focusTextMuted)
                 }
                 Spacer(minLength: 0)
@@ -1408,7 +1492,7 @@ struct NoteFocusModeView: View {
                     .fill(DS.accent.opacity(0.08))
                     .overlay(
                         RoundedRectangle(cornerRadius: DS.radiusMedium)
-                            .stroke(DS.accent.opacity(0.2), lineWidth: 0.5)
+                            .strokeBorder(DS.accent.opacity(0.2), lineWidth: 0.5)
                     )
             )
             .clipShape(.rect(cornerRadius: DS.radiusMedium))
@@ -1446,7 +1530,7 @@ struct NoteFocusModeView: View {
             titleRef: { [self] in self.titlePlainText },
             contentRef: { [self] in self.plainContent },
             tagsRef: { [self] in self.tags },
-            selectedTextRef: { [self] in self.selectedText },
+            selectedTextRef: { [self] in self.selectionBox.selectedText },
             applyBodyEdit: { [self] operation in
                 try await self.applyInlineAssistantBodyEdit(operation)
             }
@@ -1513,7 +1597,11 @@ struct NoteFocusModeView: View {
         if bodyDocument != document {
             bodyDocument = document
         }
-        plainContent = plainText
+        // Same-value @State writes still invalidate — and this fires per
+        // keystroke (plus once more per structural edit).
+        if plainContent != plainText {
+            plainContent = plainText
+        }
         updateBodyHeadingOutline(from: document)
         scheduleCosmoContextRefresh()
         scheduleTextAnalysis(for: plainText)
@@ -1530,7 +1618,12 @@ struct NoteFocusModeView: View {
     /// Marks the user as actively writing; chrome fades until typing pauses
     /// (~1.4s) or the pointer touches the toolbar.
     private func registerTypingActivity() {
-        isActivelyTyping = true
+        // Guarded: this runs per keystroke and Bool @State writes are not
+        // deduped by SwiftUI — an unconditional `= true` re-rendered the
+        // whole page every keystroke of a burst.
+        if !isActivelyTyping {
+            isActivelyTyping = true
+        }
         typingActivityTask?.cancel()
         typingActivityTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 1_400_000_000)
@@ -1541,7 +1634,10 @@ struct NoteFocusModeView: View {
 
     private func wakeChrome() {
         typingActivityTask?.cancel()
-        isActivelyTyping = false
+        // Guarded: hover handlers call this repeatedly while idle.
+        if isActivelyTyping {
+            isActivelyTyping = false
+        }
     }
 
     // MARK: - Text Analysis
@@ -1616,7 +1712,9 @@ struct NoteFocusModeView: View {
     }
 
     private var titleSectionMaxWidth: CGFloat {
-        titleChromeMode == .emptyEditableTitle ? 420 : CosmoTypography.optimalReadingWidth
+        // The title rides the note's own measure — at Wide it was stranded
+        // at 680 while the body ran 940 (header furniture law).
+        titleChromeMode == .emptyEditableTitle ? 420 : readingMeasure
     }
 
     private var titleSection: some View {
@@ -1626,6 +1724,7 @@ struct NoteFocusModeView: View {
                     CosmoDocumentEditor(
                         document: $titleDocument,
                         fontSize: titleFontSize,
+                        fontDesign: noteStyle.fontFamily.design,
                         compact: titleStyle.compact,
                         placeholder: titlePlaceholder,
                         darkMode: DS.usesImmersiveFocusAppearance,
@@ -1647,7 +1746,10 @@ struct NoteFocusModeView: View {
                         onPlainTextChange: { plainText in
                             titlePlainText = plainText
                             refreshCosmoContextIfActive()
-                            withAnimation(ProMotionSprings.bouncy) {
+                            // snappy, not bouncy: this fires per keystroke —
+                            // the vocabulary's bounciest spring on the page's
+                            // highest-frequency event read as jitter.
+                            withAnimation(reduceMotion ? nil : ProMotionSprings.snappy) {
                                 titleUnderlineProgress = plainText.isEmpty ? 0.28 : 1
                             }
                         },
@@ -1663,7 +1765,7 @@ struct NoteFocusModeView: View {
                             titleDocument = document
                             titlePlainText = plainText
                             refreshCosmoContextIfActive()
-                            withAnimation(ProMotionSprings.bouncy) {
+                            withAnimation(reduceMotion ? nil : ProMotionSprings.snappy) {
                                 titleUnderlineProgress = plainText.isEmpty ? 0.28 : 1
                             }
                             if changed {
@@ -1680,6 +1782,9 @@ struct NoteFocusModeView: View {
                 } else {
                     Text(titlePlainText.isEmpty ? titlePlaceholder : titlePlainText)
                         .font(titleStyle.swiftUIFont)
+                        // The title speaks the note's own voice — a serif
+                        // note must not wear a sans title.
+                        .fontDesign(noteStyle.fontFamily.swiftUIDesign)
                         .foregroundStyle(titlePlainText.isEmpty ? focusTextMuted : focusText)
                         .lineLimit(titleStyle.previewLineLimit)
                         .truncationMode(.tail)
@@ -1697,13 +1802,15 @@ struct NoteFocusModeView: View {
 
             // Animated underline
             if NoteFocusHeaderLayoutPolicy.showsTitleUnderline(for: titleChromeMode) {
+                // No glow: a colored halo under a text field was the most
+                // template-looking artifact on the page (jury round 1).
                 GeometryReader { geo in
                     Rectangle()
                         .fill(
                             LinearGradient(
                                 colors: [
-                                    DS.entityNote.opacity(titleUnderlineVisualProgress * 0.8),
-                                    DS.entityNote.opacity(titleUnderlineVisualProgress * 0.4),
+                                    DS.entityNote.opacity(titleUnderlineVisualProgress * 0.5),
+                                    DS.entityNote.opacity(titleUnderlineVisualProgress * 0.22),
                                     DS.entityNote.opacity(0)
                                 ],
                                 startPoint: .leading,
@@ -1712,11 +1819,6 @@ struct NoteFocusModeView: View {
                         )
                         .frame(width: geo.size.width * max(0.16, titleUnderlineVisualProgress), height: 2)
                         .frame(maxWidth: .infinity, alignment: titleUnderlineAlignment)
-                        .shadow(
-                            color: DS.entityNote.opacity(titleUnderlineVisualProgress * 0.4),
-                            radius: 4,
-                            y: 2
-                        )
                 }
                 .frame(height: 2)
             }
@@ -1731,12 +1833,14 @@ struct NoteFocusModeView: View {
 
     private var dateTagsRow: some View {
         HStack(spacing: 16) {
-            // Date
+            // Date — the one chrome line that has earned serif (DS.dateSerif
+            // is minted for date lines; the Today page speaks it too).
             Text(createdAt, format: .dateTime.month(.wide).day().year())
-                .font(DS.body)
+                .font(DS.dateSerif)
                 .foregroundStyle(focusTextSecondary)
 
-            // Tags
+            // Tags — passive chips are quiet outlines; only the interactive
+            // Edit control wears a fill (state, not decoration).
             if !tags.isEmpty {
                 HStack(spacing: 6) {
                     ForEach(tags.prefix(3), id: \.self) { tag in
@@ -1745,44 +1849,39 @@ struct NoteFocusModeView: View {
                             .foregroundStyle(focusTextSecondary)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 3)
-                            .background(focusBorder, in: Capsule())
+                            .overlay(Capsule().strokeBorder(focusBorder, lineWidth: 1))
                     }
                     if tags.count > 3 {
                         Text("+\(tags.count - 3)")
                             .font(DS.caption)
+                            .monospacedDigit()
                             .foregroundStyle(focusTextMuted)
                     }
                 }
             }
 
-            Button(action: {
+            NoteTagEditButton(
+                label: tags.isEmpty ? "Add tags" : "Edit",
+                fill: focusBorder,
+                ink: focusTextMuted,
+                bounceToken: showTagEditor
+            ) {
                 showTagEditor = true
-            }) {
-                HStack(spacing: DS.space4) {
-                    Image(systemName: "tag")
-                        .font(DS.footnote)
-                        .symbolEffect(.bounce, value: showTagEditor)
-                    Text(tags.isEmpty ? "Add tags" : "Edit")
-                        .font(DS.caption)
-                }
-                .foregroundStyle(focusTextMuted)
-                .padding(.horizontal, DS.space8)
-                .padding(.vertical, DS.space4)
-                .background(focusBorder, in: Capsule())
             }
-            .buttonStyle(.plain)
 
             Spacer()
         }
-        .frame(maxWidth: CosmoTypography.optimalReadingWidth, alignment: .leading)
+        .frame(maxWidth: readingMeasure, alignment: .leading)
         .opacity(contentAppeared ? 1 : 0)
         .offset(y: contentAppeared ? 0 : 8)
-        .animation(ProMotionSprings.staggered(index: 1), value: contentAppeared)
+        .animation(reduceMotion ? nil : ProMotionSprings.staggered(index: 1), value: contentAppeared)
     }
 
     // MARK: - Save Badge
 
     private var noteSaveBadge: some View {
+        // Fixed slots — a live-state chip must never resize its container
+        // (the island stepped three widths per save cycle).
         HStack(spacing: 4) {
             Group {
                 switch saveState {
@@ -1798,13 +1897,16 @@ struct NoteFocusModeView: View {
                 }
             }
             .font(DS.caption)
+            .frame(width: 12)
 
             Text(saveState == .saving ? "Saving…" : "Saved")
-                .font(DS.caption)
+                .font(DS.rowMeta)
+                .frame(width: 46, alignment: .leading)
         }
+        .frame(width: 62, alignment: .leading)
         .foregroundStyle(saveState == .saved ? DS.entityNote.opacity(0.85) : focusTextMuted)
         .contentTransition(.opacity)
-        .animation(ProMotionSprings.gentle, value: saveState)
+        .animation(reduceMotion ? nil : ProMotionSprings.gentle, value: saveState)
     }
 
     // MARK: - Computed Properties
@@ -2787,7 +2889,7 @@ fileprivate struct BacklinkCardView: View {
                     .frame(width: 14, alignment: .leading)
                     .accessibilityLabel(preview.type.displayName)
                 Text(preview.title)
-                    .font(DS.subheadline.weight(.semibold))
+                    .font(DS.rowTitleCompact)
                     .foregroundStyle(DS.focusImmersiveText)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
@@ -2795,33 +2897,32 @@ fileprivate struct BacklinkCardView: View {
                 Spacer(minLength: 0)
             }
             if !preview.excerpt.isEmpty {
+                // No synthetic sans oblique — italic on this page means the
+                // New York editorial voice, nothing else.
                 Text(preview.excerpt)
-                    .font(DS.caption)
+                    .font(DS.rowMeta)
                     .foregroundStyle(DS.focusImmersiveTextSecondary)
-                    .italic()
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: DS.space4) {
-                Text(preview.type.displayName.uppercased())
+                // smallCaps() needs a lowercase source to render small caps.
+                Text(preview.type.displayName)
                     .font(DS.smallCaps)
+                    .tracking(DS.smallCapsTracking)
                     .foregroundStyle(entityTint.opacity(0.8))
                 Spacer(minLength: 0)
             }
         }
-        .padding(DS.space10)
+        .padding(.vertical, DS.space6)
+        .padding(.horizontal, DS.space8)
         .frame(maxWidth: .infinity, alignment: .leading)
+        // Rail rows are typography, not mini-cards — one container grammar
+        // per panel; hover speaks through a quiet wash alone.
         .background(
             RoundedRectangle(cornerRadius: DS.radiusSmall)
-                .fill(isHovered ? DS.focusImmersiveSurface : DS.focusImmersiveSurface.opacity(0.6))
-                .overlay(
-                    RoundedRectangle(cornerRadius: DS.radiusSmall)
-                        .stroke(DS.sepiaBorder.opacity(0.5), lineWidth: 0.5)
-                )
+                .fill(isHovered ? DS.focusImmersiveSurface.opacity(0.55) : Color.clear)
         )
-        .clipShape(.rect(cornerRadius: DS.radiusSmall))
-        .shadow(color: DS.inkWash.opacity(isHovered ? 0.08 : 0.04), radius: isHovered ? 6 : 3, y: isHovered ? 3 : 1)
-        .scaleEffect(isHovered ? 1.012 : 1.0)
         .onHover { hovering in
             withAnimation(ProMotionSprings.hover) { isHovered = hovering }
         }
@@ -2851,7 +2952,7 @@ fileprivate struct FlowTagCloud: View {
             ForEach(tags.prefix(10), id: \.self) { tag in
                 HStack(spacing: DS.space4) {
                     Circle()
-                        .fill(DS.gilt.opacity(0.5))
+                        .fill(DS.giltMuted)
                         .frame(width: 4, height: 4)
                     Text(tag)
                         .font(DS.caption)
@@ -2864,6 +2965,39 @@ fileprivate struct FlowTagCloud: View {
 }
 
 // MARK: - Empty State
+
+/// The one interactive chip on the date row — hover feedback + tooltip are
+/// what tell it apart from the passive tag outlines beside it.
+fileprivate struct NoteTagEditButton: View {
+    let label: String
+    let fill: Color
+    let ink: Color
+    let bounceToken: Bool
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: DS.space4) {
+                Image(systemName: "tag")
+                    .font(DS.footnote)
+                    .symbolEffect(.bounce, value: bounceToken)
+                Text(label)
+                    .font(DS.caption)
+            }
+            .foregroundStyle(ink)
+            .padding(.horizontal, DS.space8)
+            .padding(.vertical, DS.space4)
+            .background(fill.opacity(isHovered ? 1 : 0.6), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+        }
+        .help(label == "Edit" ? "Edit tags" : "Add tags")
+    }
+}
 
 fileprivate struct NoteChromeIconButton: View {
     let systemName: String
@@ -2902,6 +3036,7 @@ fileprivate struct NoteChromeIconButton: View {
 fileprivate struct NoteFocusEmptyStateView<Title: View>: View {
     let title: Title
     @State private var appeared = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(@ViewBuilder title: () -> Title) {
         self.title = title()
@@ -2910,8 +3045,10 @@ fileprivate struct NoteFocusEmptyStateView<Title: View>: View {
     var body: some View {
         VStack(spacing: DS.space20) {
             Image(systemName: "diamond")
-                .font(DS.display.weight(.ultraLight))
-                .foregroundStyle(DS.gilt.opacity(0.6))
+                // Glyphs sized by glyph registers; ornament ink is a rung
+                // (giltMuted), never an alpha.
+                .font(DS.emptyStateGlyph)
+                .foregroundStyle(DS.giltMuted)
                 .accessibilityHidden(true)
                 .rotationEffect(.degrees(appeared ? 0 : -8))
                 .opacity(appeared ? 1 : 0)
@@ -2927,9 +3064,9 @@ fileprivate struct NoteFocusEmptyStateView<Title: View>: View {
                 .padding(.top, DS.space8)
 
             HStack(spacing: DS.space12) {
-                emptyStatePill(icon: "command", label: "⌘K capture")
-                emptyStatePill(icon: "slash.circle", label: "/ insert")
-                emptyStatePill(icon: "link", label: "⌥⌘L link")
+                emptyStatePill(icon: "command", key: "⌘K", label: "capture")
+                emptyStatePill(icon: "slash.circle", key: "/", label: "insert")
+                emptyStatePill(icon: "link", key: "⌥⌘L", label: "link")
             }
             .padding(.top, DS.space8)
         }
@@ -2937,17 +3074,20 @@ fileprivate struct NoteFocusEmptyStateView<Title: View>: View {
         .opacity(appeared ? 1 : 0)
         .offset(y: appeared ? 0 : 12)
         .onAppear {
-            withAnimation(ProMotionSprings.cardEntrance.delay(0.1)) {
+            withAnimation(reduceMotion ? nil : ProMotionSprings.cardEntrance.delay(0.1)) {
                 appeared = true
             }
         }
     }
 
-    private func emptyStatePill(icon: String, label: String) -> some View {
+    private func emptyStatePill(icon: String, key: String, label: String) -> some View {
         HStack(spacing: DS.space4) {
             Image(systemName: icon)
                 .font(DS.caption2)
                 .accessibilityHidden(true)
+            // The chord speaks the ONE keycap dialect; the word stays caption.
+            Text(key)
+                .font(DS.keycap)
             Text(label)
                 .font(DS.caption)
         }
@@ -2958,7 +3098,7 @@ fileprivate struct NoteFocusEmptyStateView<Title: View>: View {
         .background(
             Capsule()
                 .fill(DS.focusImmersiveSurface.opacity(0.6))
-                .overlay(Capsule().stroke(DS.sepiaBorder.opacity(0.5), lineWidth: 0.5))
+                .overlay(Capsule().strokeBorder(DS.sepiaBorder.opacity(0.5), lineWidth: 0.5))
         )
     }
 }

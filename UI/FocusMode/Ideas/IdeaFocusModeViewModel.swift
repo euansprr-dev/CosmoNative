@@ -969,6 +969,13 @@ final class IdeaFocusModeViewModel {
     /// legacy `.reel` classifications back-fill reel-family formats. Ranked
     /// by real performance — views, then engagement rate — and never by
     /// hookScore (all swipes are curated; scores are not quality gates).
+    ///
+    /// The shelf shows 4 drawn from the top 12, seeded by (idea, day): a
+    /// plain global top-4 rendered the identical shelf on every idea forever,
+    /// which reads as "recommendations stopped running". Seeding keeps it
+    /// deterministic — stable while you work an idea today, different on the
+    /// next idea and again tomorrow — while everything offered is still a
+    /// proven performer.
     func loadRecommendedSwipes() async {
         guard let format = selectedFormat else {
             recommendedSwipes = []
@@ -1002,14 +1009,37 @@ final class IdeaFocusModeViewModel {
             return (atom, tier, analysis.viewsCount ?? 0, analysis.engagementRate ?? 0)
         }
 
-        recommendedSwipes = ranked
+        let pool = ranked
             .sorted { lhs, rhs in
                 if lhs.tier != rhs.tier { return lhs.tier < rhs.tier }
                 if lhs.views != rhs.views { return lhs.views > rhs.views }
                 return lhs.engagement > rhs.engagement
             }
-            .prefix(4)
-            .map(\.atom)
+            .prefix(12)
+
+        guard pool.count > 4 else {
+            recommendedSwipes = pool.map(\.atom)
+            return
+        }
+
+        let dayOrdinal = Calendar.current.ordinality(of: .day, in: .era, for: Date()) ?? 0
+        var rng = SeededShelfGenerator(seed: Self.shelfSeed(ideaUUID: idea.uuid, dayOrdinal: dayOrdinal))
+        let picked = Set(pool.shuffled(using: &rng).prefix(4).map(\.atom.uuid))
+        // Present the pick in performance order — the shelf still reads
+        // best-first even though membership rotates.
+        recommendedSwipes = pool.filter { picked.contains($0.atom.uuid) }.map(\.atom)
+    }
+
+    /// Deterministic within a day for one idea, different across ideas and
+    /// days (FNV-1a — `Hasher` is salted per launch and would reshuffle the
+    /// shelf on every app restart).
+    static func shelfSeed(ideaUUID: String, dayOrdinal: Int) -> UInt64 {
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in "\(ideaUUID)#\(dayOrdinal)".utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x0000_0100_0000_01b3
+        }
+        return hash
     }
 
     /// Format edits route through here so the recommendation shelf follows
@@ -1484,5 +1514,25 @@ final class IdeaFocusModeViewModel {
         }
 
         return factors > 0 ? score / Double(factors) : 0
+    }
+}
+
+// MARK: - Seeded shelf shuffle
+
+/// SplitMix64 — the recommended-shelf pick must be reproducible from its
+/// seed, which `SystemRandomNumberGenerator` can never be.
+private struct SeededShelfGenerator: RandomNumberGenerator {
+    private var state: UInt64
+
+    init(seed: UInt64) {
+        state = seed == 0 ? 0x9e37_79b9_7f4a_7c15 : seed
+    }
+
+    mutating func next() -> UInt64 {
+        state &+= 0x9e37_79b9_7f4a_7c15
+        var z = state
+        z = (z ^ (z >> 30)) &* 0xbf58_476d_1ce4_e5b9
+        z = (z ^ (z >> 27)) &* 0x94d0_49bb_1331_11eb
+        return z ^ (z >> 31)
     }
 }

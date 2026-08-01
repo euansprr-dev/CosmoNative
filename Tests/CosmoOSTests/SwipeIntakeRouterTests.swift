@@ -15,6 +15,10 @@ final class SwipeIntakeRouterTests: XCTestCase {
         for url in [
             "https://www.instagram.com/reel/Dalun2ODxrf/",
             "https://www.instagram.com/p/ABC123/",
+            // Username-prefixed permalinks — the form the address bar and
+            // profile-grid anchors carry (what browser-pane drag-out hands us).
+            "https://www.instagram.com/some.creator/p/ABC123/",
+            "https://www.instagram.com/some.creator/reel/Dalun2ODxrf/",
             "https://youtu.be/NgeyFln7RGk",
             "https://www.youtube.com/watch?v=abc12345678",
             "https://x.com/user/status/1234567890",
@@ -154,6 +158,29 @@ final class SwipeIntakeRouterTests: XCTestCase {
     func testFlowReceiptSaysWhereItWent() {
         XCTAssertEqual(
             SwipeIntakeReceipt(kind: .page, unitCount: 8, atomUUID: "u", flowName: "Client X funnel").message,
+            "Added to Client X funnel · Page")
+    }
+
+    /// A dedup adopted an existing swipe — the receipt says so instead of
+    /// claiming a capture happened. Unit count is suppressed: the news is
+    /// the adoption, not the anatomy of a card the user already has.
+    func testAdoptionReceiptSaysAlreadyInLibrary() {
+        XCTAssertEqual(
+            SwipeIntakeReceipt(kind: .post, unitCount: 0, atomUUID: "u", alreadyInLibrary: true).message,
+            "Already in your Swipe File · Post")
+        XCTAssertEqual(
+            SwipeIntakeReceipt(kind: .page, unitCount: 14, atomUUID: "u", alreadyInLibrary: true).message,
+            "Already in your Swipe File · Page")
+    }
+
+    /// Joining a flow outranks the adoption note: the flow append DID happen,
+    /// and that is the receipt's one message.
+    func testFlowJoinOutranksAdoptionNote() {
+        XCTAssertEqual(
+            SwipeIntakeReceipt(
+                kind: .page, unitCount: 8, atomUUID: "u",
+                flowName: "Client X funnel", alreadyInLibrary: true
+            ).message,
             "Added to Client X funnel · Page")
     }
 }

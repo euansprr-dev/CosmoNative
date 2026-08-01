@@ -116,16 +116,30 @@ final class CosmicHaptics: @unchecked Sendable {
     // PUBLIC API
     // ═══════════════════════════════════════════════════════════════
 
+    /// Compiled players memoized per pattern — `makePlayer` compiles the
+    /// pattern and crosses to the haptic daemon on every call, and callers
+    /// fire these on hot paths (menu open, arrow-key highlight moves).
+    private var patternPlayers: [Pattern: CHHapticPatternPlayer] = [:]
+
     /// Play a pre-defined haptic pattern
     func play(_ pattern: Pattern) {
         guard supportsHaptics, let engine = engine else { return }
 
         do {
-            let events = createEvents(for: pattern)
-            let hapticPattern = try CHHapticPattern(events: events, parameters: [])
-            let player = try engine.makePlayer(with: hapticPattern)
+            let player: CHHapticPatternPlayer
+            if let cached = patternPlayers[pattern] {
+                player = cached
+            } else {
+                let events = createEvents(for: pattern)
+                let hapticPattern = try CHHapticPattern(events: events, parameters: [])
+                player = try engine.makePlayer(with: hapticPattern)
+                patternPlayers[pattern] = player
+            }
             try player.start(atTime: CHHapticTimeImmediate)
         } catch {
+            // A stale player (engine reset) fails to start — drop the cache
+            // so the next call recompiles against the live engine.
+            patternPlayers.removeValue(forKey: pattern)
             print("CosmicHaptics: Failed to play pattern: \(error)")
         }
     }

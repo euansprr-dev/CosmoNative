@@ -21,8 +21,10 @@ struct CommandCenterRail<Content: View>: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(DS.surface)
             .overlay(alignment: .leading) {
+                // The page's one hairline family (warm) — borderSubtle is the
+                // cool sibling and reads as a different app's rule.
                 Rectangle()
-                    .fill(DS.borderSubtle)
+                    .fill(DS.commandCenterSeparator)
                     .frame(width: 0.5)
             }
     }
@@ -90,50 +92,10 @@ extension View {
     }
 }
 
-struct CommandCenterLedgerSectionHeader: View {
-    let title: String
-    let count: String?
-    let tint: Color
-    var actionTitle: String?
-    var actionIcon: String?
-    var action: (() -> Void)?
-
-    var body: some View {
-        HStack(spacing: DS.space6) {
-            Text(title)
-                .font(DS.caption).fontWeight(.semibold)
-                .foregroundStyle(tint)
-
-            if let count {
-                Text(count)
-                    .font(DS.caption2).fontWeight(.medium)
-                    .foregroundStyle(tint.opacity(0.62))
-                    .monospacedDigit()
-            }
-
-            Rectangle()
-                .fill(DS.commandCenterSeparator)
-                .frame(height: 0.5)
-                .padding(.leading, DS.space8)
-
-            Spacer(minLength: 0)
-
-            if let actionTitle, let actionIcon, let action {
-                Button(action: action) {
-                    Label(actionTitle, systemImage: actionIcon)
-                        .font(DS.caption)
-                        .foregroundStyle(tint.opacity(0.9))
-                        .padding(.horizontal, DS.space6)
-                        .padding(.vertical, DS.space4)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.horizontal, DS.space10)
-        .padding(.top, DS.space12)
-        .padding(.bottom, DS.space6)
-    }
-}
+// (CommandCenterLedgerSectionHeader deleted July 2026: zero call sites, and
+// it carried a competing header dialect — 11pt semibold, x=10 rail, hard
+// rule — that the next feature would have reached for. CosmoSectionHeader
+// is the one header voice.)
 
 /// The ledger row's resting/hover/selected chrome.
 ///
@@ -148,25 +110,29 @@ struct CommandCenterRowGlass: View {
     let tint: Color
 
     var body: some View {
-        RoundedRectangle(cornerRadius: 8, style: .continuous)
+        RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous)
             .fill(fill)
             .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(stroke, lineWidth: isSelected ? 1 : 0.5)
+                // strokeBorder, not stroke: a centered 0.5pt hairline renders
+                // as two half-covered pixels; inset renders as one cut line.
+                RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous)
+                    .strokeBorder(stroke, lineWidth: isSelected ? 1 : 0.5)
             }
             .shadow(color: shadowColor, radius: shadowRadius, x: 0, y: shadowY)
     }
 
     private var fill: Color {
         if isActive { return DS.glassInputFillFocused }
-        if isSelected { return tint.opacity(0.10) }
+        // Selection is wayfinding, not metadata: one stable app-wide wash
+        // (the ↑↓ cursor must never change hue row to row with priority).
+        if isSelected { return DS.selectionWash }
         if isHovered { return DS.glassCardFill }
         return Color.clear
     }
 
     private var stroke: Color {
         if isActive { return tint.opacity(0.36) }
-        if isSelected { return tint.opacity(0.26) }
+        if isSelected { return DS.selectionHairline }
         if isHovered { return DS.glassBorder }
         return Color.clear
     }
@@ -195,7 +161,7 @@ struct CommandCenterEmptyPane: View {
     var body: some View {
         VStack(spacing: DS.space8) {
             Image(systemName: icon)
-                .font(.system(size: 30, weight: .light))
+                .font(DS.emptyStateGlyph)
                 .foregroundStyle(DS.textMuted)
                 .frame(width: 44, height: 44)
 

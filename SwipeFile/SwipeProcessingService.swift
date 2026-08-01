@@ -111,6 +111,50 @@ final class SwipeProcessingService {
         }
     }
 
+    /// One-shot repair for the Aug 1 2026 capture-identity hole: the V2
+    /// instant-capture savers in QuickCaptureProcessor landed platform posts
+    /// WITHOUT the isSwipeFile/contentSource stamps, leaving the atoms
+    /// invisible to this scanner's SQL, to URL dedup and to the Swipe
+    /// library, and routing their double-click to the Research view. The
+    /// savers are fixed; this stamps the atoms created through the hole so
+    /// already-placed canvas blocks heal in place instead of being re-dragged.
+    /// Writes go through AtomRepository so sync bookkeeping stays intact —
+    /// never raw SQL on a synced table. Self-terminating: candidacy is empty
+    /// once stamped. Safe to delete after a few releases.
+    func repairFlaglessPlatformSwipes() async {
+        let uuids: [String] = (try? await CosmoDatabase.shared.asyncRead { db in
+            try Row.fetchAll(db, sql: """
+                SELECT uuid FROM atoms
+                WHERE type = 'research'
+                AND is_deleted = 0
+                AND created_at >= '2026-08-01'
+                AND metadata LIKE '%"researchType":"instagram%'
+                AND metadata NOT LIKE '%"isSwipeFile":true%'
+                """).compactMap { $0["uuid"] as? String }
+        }) ?? []
+        guard !uuids.isEmpty else { return }
+
+        var repaired = 0
+        for uuid in uuids {
+            guard var atom = try? await AtomRepository.shared.fetch(uuid: uuid) else { continue }
+            atom.isSwipeFile = true
+            atom.contentSource = "instagram"
+            do {
+                _ = try await AtomRepository.shared.update(atom)
+            } catch {
+                print("SwipeProcessingService: repair failed for \(uuid.prefix(8)): \(error)")
+                continue
+            }
+            // Re-kick the worker: the original kick fired against an atom the
+            // swipe pipeline could not recognize as its own.
+            CloudSwipeAPI.kickProcessing(swipeUUID: uuid)
+            repaired += 1
+        }
+        guard repaired > 0 else { return }
+        print("SwipeProcessingService: repaired \(repaired) flag-less platform swipes")
+        NotificationCenter.default.post(name: CosmoNotification.SwipeFile.libraryDidChange, object: nil)
+    }
+
     private nonisolated func fetchPendingSwipeCandidates() async -> [PendingSwipeCandidate] {
         do {
             return try await CosmoDatabase.shared.asyncRead { db in
@@ -1224,6 +1268,12 @@ enum SwipeMediaMirrorCoordinator {
             // Once per launch: weave pending swipes into the pattern library
             // (batched — runs only when enough swipes accumulated or weekly).
             await SwipePatternWeaver.runIfNeeded()
+            // Every kick: heal stranded artifact swipes — failed page/frame
+            // decompositions, and iPhone-captured pages/frames that have no
+            // decomposer of their own (state-gated, attempts-bounded, cheap
+            // no-op when healthy). Riding the kick means an iPhone capture is
+            // processed within one sync cycle of arriving.
+            await SwipeArtifactHealSweep.runPassIfNeeded()
             while !Task.isCancelled {
                 let before = attemptCounts()
                 await SwipeThumbnailCloudMirror.runBackfillPassIfNeeded()

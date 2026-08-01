@@ -787,7 +787,8 @@ enum RichDocumentSerializer {
         darkMode: Bool = false,
         singleLine: Bool = false,
         baseFontWeight: NSFont.Weight = .regular,
-        titleMode: Bool = false
+        titleMode: Bool = false,
+        numberedListSeed: Int = 0
     ) -> NSAttributedString {
         attributedString(
             from: document,
@@ -796,7 +797,8 @@ enum RichDocumentSerializer {
             darkMode: darkMode,
             singleLine: singleLine,
             baseFontWeight: baseFontWeight,
-            titleMode: titleMode
+            titleMode: titleMode,
+            numberedListSeed: numberedListSeed
         )
     }
 
@@ -807,7 +809,8 @@ enum RichDocumentSerializer {
         darkMode: Bool,
         singleLine: Bool,
         baseFontWeight: NSFont.Weight,
-        titleMode: Bool
+        titleMode: Bool,
+        numberedListSeed: Int = 0
     ) -> NSAttributedString {
         let result = NSMutableAttributedString()
         let textColor = darkMode ? NSColor.white : NSColor(DS.documentText)
@@ -828,13 +831,20 @@ enum RichDocumentSerializer {
 
             let blockStart = result.length
 
-            // Compute list-relative position for numbered lists
+            // Compute list-relative position for numbered lists. When the
+            // run reaches the document's first block, the seed carries the
+            // count of numbered blocks BEFORE this document — a block row
+            // serializes a single-block document and can't see its siblings
+            // (every item rendered "1." without it).
             var listPosition = 1
             if block.kind == .numberedList {
                 var j = index - 1
                 while j >= 0 && document.blocks[j].kind == .numberedList {
                     listPosition += 1
                     j -= 1
+                }
+                if j < 0 {
+                    listPosition += numberedListSeed
                 }
             }
             let prefix = blockPrefix(for: block, listPosition: listPosition)
@@ -1378,8 +1388,11 @@ enum RichDocumentSerializer {
         paragraphStyle.headIndent = titleInset
 
         var attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 13.5, weight: .medium),
-            .foregroundColor: (darkMode ? NSColor.white : NSColor(DS.documentText)).withAlphaComponent(darkMode ? 0.95 : 0.88),
+            // The card's title must outrank the body it introduces (it sat at
+            // 13.5 medium under 17pt body — the block set's clearest
+            // hierarchy inversion). Full ink: rungs, never alphas.
+            .font: NSFont.systemFont(ofSize: 15, weight: .semibold),
+            .foregroundColor: darkMode ? NSColor.white : NSColor(DS.documentText),
             .paragraphStyle: paragraphStyle,
             RichDocumentAttributeKeys.elementDepth: depth
         ]
@@ -1478,12 +1491,13 @@ enum RichDocumentSerializer {
         baseFontWeight: NSFont.Weight,
         titleMode: Bool
     ) -> [NSAttributedString.Key: Any] {
-        let color = darkMode ? NSColor.white : NSColor(DS.documentText)
         switch block.kind {
         case .quote:
+            // The bar speaks the page's one rule voice (border tokens at
+            // real weight) — a light-weight 0.7-alpha pipe read as a typo.
             return [
-                .font: NSFont.systemFont(ofSize: fontSize, weight: .light),
-                .foregroundColor: color.withAlphaComponent(0.7)
+                .font: NSFont.systemFont(ofSize: fontSize, weight: .semibold),
+                .foregroundColor: darkMode ? NSColor(DS.focusImmersiveBorder) : NSColor(DS.documentBorder)
             ]
         case .checklist:
             var attributes = baseAttributes(
@@ -1569,9 +1583,8 @@ enum RichDocumentSerializer {
             attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
         }
 
-        if block.kind == .quote {
-            attributes[.foregroundColor] = (attributes[.foregroundColor] as? NSColor)?.withAlphaComponent(0.9)
-        }
+        // Quote content keeps full ink — the inset bar alone marks the kind
+        // (the 0.9 alpha was the last stack on an ink rung).
 
         // Code reads as a compact mono column — tight leading, no paragraph
         // air (soft-break lines inside the block should sit close).
@@ -1586,7 +1599,8 @@ enum RichDocumentSerializer {
         // at render time. The parser strips this strikethrough on checked
         // lines so toggling never bakes a persistent mark into the content.
         if block.kind == .checklist, block.checked == true {
-            attributes[.foregroundColor] = (attributes[.foregroundColor] as? NSColor)?.withAlphaComponent(0.45)
+            // Dim once, but stay legible — 0.45 sat under 3:1 on parchment.
+            attributes[.foregroundColor] = (attributes[.foregroundColor] as? NSColor)?.withAlphaComponent(0.55)
             attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
         }
 
@@ -1633,12 +1647,19 @@ enum RichDocumentSerializer {
             return NSFont.systemFont(ofSize: fontSize, weight: baseFontWeight)
         }
         switch block.kind {
+        // Modular heading ladder (~1.24 scale, jury round 1): 31/25/20 at the
+        // 17pt default, monotone under the page title (38) at every text size.
+        // H1 is SEMIBOLD so weight, not just size, separates it from the bold
+        // title (at Large they sit 38/34). GUARD-TWINS: applyHeading and
+        // seedTypingAttributesForEmptyRow (TextKitCoordinator) and
+        // BlockStaticRowPlaceholder.editorFont duplicate this table — change
+        // all FOUR together.
         case .heading1:
-            return NSFont.systemFont(ofSize: max(32, fontSize + 16), weight: .bold)
+            return NSFont.systemFont(ofSize: min(34, (fontSize * 1.85).rounded()), weight: .semibold)
         case .heading2:
-            return NSFont.systemFont(ofSize: max(24, fontSize + 8), weight: .semibold)
+            return NSFont.systemFont(ofSize: (fontSize * 1.45).rounded(), weight: .semibold)
         case .heading3:
-            return NSFont.systemFont(ofSize: max(20, fontSize + 4), weight: .medium)
+            return NSFont.systemFont(ofSize: (fontSize * 1.20).rounded(), weight: .medium)
         case .code:
             return NSFont.monospacedSystemFont(ofSize: max(11, fontSize - 3), weight: .regular)
         case .toggle:

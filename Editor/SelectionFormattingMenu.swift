@@ -185,13 +185,15 @@ struct SelectionFormattingMenu: View {
                     EditorCommandBus.shared.toggleFormatting(headingType(for: level))
                 }
             }
-            styleRow("Heading 1", active: traits.headingLevel == 1, glyphFont: DS.headline) {
+            // Specimen ladder mirrors the document's real ladder order —
+            // H3 rendered BELOW body size in the old picker.
+            styleRow("Heading 1", active: traits.headingLevel == 1, glyphFont: DS.title2) {
                 EditorCommandBus.shared.toggleFormatting(.heading1)
             }
-            styleRow("Heading 2", active: traits.headingLevel == 2, glyphFont: DS.callout.weight(.semibold)) {
+            styleRow("Heading 2", active: traits.headingLevel == 2, glyphFont: DS.headline) {
                 EditorCommandBus.shared.toggleFormatting(.heading2)
             }
-            styleRow("Heading 3", active: traits.headingLevel == 3, glyphFont: DS.subheadline.weight(.medium)) {
+            styleRow("Heading 3", active: traits.headingLevel == 3, glyphFont: DS.rowTitle) {
                 EditorCommandBus.shared.toggleFormatting(.heading3)
             }
 

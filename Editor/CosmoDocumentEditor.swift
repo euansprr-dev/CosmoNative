@@ -53,7 +53,10 @@ enum EditorFontPolicy {
     }
 
     static func designed(_ font: NSFont, design: NSFontDescriptor.SystemDesign) -> NSFont {
+        // Code stays code: a serif/rounded note must not convert its
+        // monospaced runs (code blocks) out of monospace.
         guard design != .default,
+              !font.fontDescriptor.symbolicTraits.contains(.monoSpace),
               let descriptor = font.fontDescriptor.withDesign(design),
               let next = NSFont(descriptor: descriptor, size: font.pointSize) else {
             return font
@@ -218,18 +221,53 @@ struct EditorCaretRequest: Equatable {
     var token: Int
 }
 
+/// Non-invalidating sync bookkeeping for CosmoDocumentEditor. Held in @State
+/// for identity but deliberately not observable — nothing here is read in
+/// body, so writes (per keystroke and per async flag reset) must not
+/// invalidate the view.
+@MainActor
+final class DocumentEditorSyncBox {
+    /// The editor's content channel. NOT @State: the coordinator writes the
+    /// plain mirror on every keystroke and the attributed text on every
+    /// deferred (50ms) commit — as @State each write re-ran the editor's
+    /// whole body chain (CosmoDocumentEditor → RichTextEditor → representable
+    /// → full stack re-layout) for content the NSTextView already displays.
+    /// External applies invalidate through `externalContentToken` instead.
+    var attributedText = NSAttributedString()
+    var plainTextMirror = ""
+    var isApplyingExternalUpdate = false
+    var isSyncingFromEditor = false
+    var documentSyncWorkItem: DispatchWorkItem?
+    var lastEmittedPlainText = ""
+    /// The last document value THIS editor wrote to the binding. Guards
+    /// `.onChange(of: document)` against echoes of our own writes — the
+    /// async-reset `isSyncingFromEditor` flag alone has a one-tick dead
+    /// window, and an echo slipping through re-serialized and force-replaced
+    /// the row's storage per keystroke. Cleared when external content is
+    /// applied so a later external revert to this value is not mistaken for
+    /// an echo.
+    var lastSelfWrittenDocument: RichDocument?
+}
+
 struct CosmoDocumentEditor: View {
     @Binding var document: RichDocument
 
-    @State private var attributedText = NSAttributedString()
-    @State private var plainTextMirror = ""
-    @State private var isApplyingExternalUpdate = false
-    @State private var isSyncingFromEditor = false
-    @State private var documentSyncWorkItem: DispatchWorkItem?
-    @State private var lastEmittedPlainText = ""
+    /// Sync bookkeeping + the content channel — flags, debounce item, dedup
+    /// text, and the attributed/plain mirrors. Lives in a box, not @State:
+    /// none of it is read in body, and as @State every write (once or twice
+    /// per keystroke, plus every async flag reset) bought a full extra body +
+    /// updateNSView pass for the active row.
+    @State private var syncBox = DocumentEditorSyncBox()
+    /// The ONE piece of per-keystroke state the body genuinely renders from:
+    /// whether the content is empty (drives the placeholder). Flips rarely.
+    @State private var isTextEmptyFlag = true
 
     var fontSize: CGFloat = 16
     var fontDesign: NSFontDescriptor.SystemDesign = .default
+    /// Count of consecutive numbered-list blocks immediately BEFORE this
+    /// editor's document — block rows serialize a single-block document, so
+    /// without the seed every numbered item renders "1.".
+    var numberedListSeed: Int = 0
     var compact: Bool = false
     /// Per-document line-spacing delta from the Aa menu (Compact/Standard/Airy).
     var lineSpacingAdjustment: CGFloat = 0
@@ -284,10 +322,37 @@ struct CosmoDocumentEditor: View {
     /// EXTERNAL change — tells the text view to apply it even while focused.
     @State private var externalContentToken = 0
 
+    /// Box-backed bindings for the representable. Reads are always live;
+    /// writes never invalidate (the coordinator writes per keystroke) —
+    /// except the plain-text setter, which flips the empty flag when
+    /// emptiness changes so the placeholder shows/hides.
+    private var attributedTextBinding: Binding<NSAttributedString> {
+        Binding(
+            get: { syncBox.attributedText },
+            set: { syncBox.attributedText = $0 }
+        )
+    }
+
+    private var plainTextBinding: Binding<String> {
+        Binding(
+            get: { syncBox.plainTextMirror },
+            set: { setMirror($0) }
+        )
+    }
+
+    /// The one writer of the plain mirror — keeps the placeholder's empty
+    /// flag in sync without re-rendering on every keystroke.
+    private func setMirror(_ newValue: String) {
+        syncBox.plainTextMirror = newValue
+        if isTextEmptyFlag != newValue.isEmpty {
+            isTextEmptyFlag = newValue.isEmpty
+        }
+    }
+
     var body: some View {
         RichTextEditor(
-            text: $attributedText,
-            plainText: $plainTextMirror,
+            text: attributedTextBinding,
+            plainText: plainTextBinding,
             fontSize: fontSize,
             fontDesign: fontDesign,
             compact: compact,
@@ -339,6 +404,13 @@ struct CosmoDocumentEditor: View {
                 handleDirectPlainTextChange(plainText)
             },
             onStructuredDocumentChange: handleDirectStructuredDocumentChange,
+            onContentCommitted: {
+                // The coordinator committed the attributed buffer into the
+                // (box-backed) binding — parse it into the document. This
+                // replaces the old .onChange(of: attributedText) trigger,
+                // which died with the box migration.
+                syncDocumentFromEditor()
+            },
             autoFocus: autoFocus,
             initialContent: { serializedEditorContent() },
             onSave: { _ in syncDocumentFromEditor() }
@@ -346,8 +418,14 @@ struct CosmoDocumentEditor: View {
         .onAppear {
             syncEditorFromDocument()
         }
-        .onChange(of: document) { _, _ in
-            guard !isApplyingExternalUpdate, !isSyncingFromEditor else { return }
+        .onChange(of: document) { _, newValue in
+            // Echo guard by VALUE: the async-reset flags below have a
+            // one-tick dead window, and a self-write echo slipping through
+            // re-serialized + force-replaced the storage per keystroke.
+            if let selfWritten = syncBox.lastSelfWrittenDocument, selfWritten == newValue {
+                return
+            }
+            guard !syncBox.isApplyingExternalUpdate, !syncBox.isSyncingFromEditor else { return }
             syncEditorFromDocument()
         }
         .onChange(of: fontSize) { _, _ in
@@ -359,12 +437,15 @@ struct CosmoDocumentEditor: View {
         .onChange(of: lineSpacingAdjustment) { _, _ in
             syncEditorForPresentationChange()
         }
-        .onChange(of: plainTextMirror) { _, newValue in
-            handlePlainTextMirrorChange(newValue)
+        .onChange(of: numberedListSeed) { _, _ in
+            // A sibling inserted above leaves this row's own document
+            // value-identical, so onChange(of: document) can't re-number it.
+            syncEditorForPresentationChange()
         }
-        .onChange(of: attributedText) { _, _ in
-            syncDocumentFromEditor()
-        }
+        // No .onChange on the content mirrors: they live in the box now
+        // (per-keystroke writes must not re-run this body). The coordinator
+        // reports keystrokes through onPlainTextDidChange and commits the
+        // attributed buffer through onContentCommitted below.
         .onDisappear {
             flushPendingSync()
         }
@@ -385,22 +466,26 @@ struct CosmoDocumentEditor: View {
                     darkMode: darkMode,
                     singleLine: singleLine,
                     baseFontWeight: baseFontWeight,
-                    titleMode: titleConfiguration != nil
+                    titleMode: titleConfiguration != nil,
+                    numberedListSeed: numberedListSeed
                 )
             )
         )
     }
 
     private func syncEditorFromDocument(preferLivePlainText: Bool = false) {
-        isApplyingExternalUpdate = true
+        syncBox.isApplyingExternalUpdate = true
+        // External content now owns the view — a later external revert to a
+        // previously self-written value must not be mistaken for an echo.
+        syncBox.lastSelfWrittenDocument = nil
         let resolved = resolvedDocumentForEditor(preferLivePlainText: preferLivePlainText)
-        attributedText = serializedEditorContent(preferLivePlainText: preferLivePlainText)
+        syncBox.attributedText = serializedEditorContent(preferLivePlainText: preferLivePlainText)
         let resolvedPlainText = resolvedPlainTextForCallbacks(from: resolved)
-        plainTextMirror = resolvedPlainText
-        lastEmittedPlainText = resolvedPlainText
+        setMirror(resolvedPlainText)
+        syncBox.lastEmittedPlainText = resolvedPlainText
         externalContentToken += 1
         DispatchQueue.main.async {
-            isApplyingExternalUpdate = false
+            syncBox.isApplyingExternalUpdate = false
         }
     }
 
@@ -408,33 +493,21 @@ struct CosmoDocumentEditor: View {
         syncEditorFromDocument(preferLivePlainText: true)
     }
 
-    private func handlePlainTextMirrorChange(_ plainText: String) {
-        // NO guards on isSyncingFromEditor or isApplyingExternalUpdate.
-        // Both flags use async resets that create one-tick dead windows where
-        // keystrokes are silently dropped. The lastEmittedPlainText dedup below
-        // is sufficient to prevent echo loops.
-        let resolvedPlainText = resolvedPlainTextForCallbacks(from: plainText)
-        guard resolvedPlainText != lastEmittedPlainText else { return }
-        lastEmittedPlainText = resolvedPlainText
-        onPlainTextChange?(resolvedPlainText)
-        // Don't fire onDocumentChange here — it's handled by handleDirectPlainTextChange
-        // with throttling. Firing it here too would double the callbacks and cause jitter.
-    }
-
-    /// Direct per-keystroke callback from the NSTextView coordinator.
-    /// This is the PRIMARY path for propagating text changes to consumers.
-    /// The SwiftUI @Binding→onChange chain (handlePlainTextMirrorChange) is unreliable
-    /// because SwiftUI can coalesce/skip onChange when @Binding is mutated from AppKit.
+    /// Direct per-keystroke callback from the NSTextView coordinator — the
+    /// ONE path for propagating text changes to consumers (the old
+    /// @Binding→onChange fallback died with the box migration: the mirror is
+    /// no longer @State, and the direct callback was already primary because
+    /// SwiftUI could coalesce/skip onChange for AppKit-driven mutations).
     private func handleDirectPlainTextChange(_ plainText: String) {
-        // NO guards on isSyncingFromEditor or isApplyingExternalUpdate here.
+        // NO guards on syncBox.isSyncingFromEditor or syncBox.isApplyingExternalUpdate here.
         // Both flags use async resets (DispatchQueue.main.async) which create
         // one-tick dead windows where keystrokes arriving from the NSTextView
-        // delegate are silently dropped. The lastEmittedPlainText dedup below
+        // delegate are silently dropped. The syncBox.lastEmittedPlainText dedup below
         // is sufficient to prevent echo loops.
         let resolvedPlainText = resolvedPlainTextForCallbacks(from: plainText)
-        guard resolvedPlainText != lastEmittedPlainText else { return }
-        lastEmittedPlainText = resolvedPlainText
-        plainTextMirror = resolvedPlainText
+        guard resolvedPlainText != syncBox.lastEmittedPlainText else { return }
+        syncBox.lastEmittedPlainText = resolvedPlainText
+        setMirror(resolvedPlainText)
         // Fire onPlainTextChange per-keystroke — it's lightweight (sets a String @State).
         // This keeps noteText/newItemText accurate for saves.
         onPlainTextChange?(resolvedPlainText)
@@ -450,26 +523,31 @@ struct CosmoDocumentEditor: View {
     /// stays on the lightweight path to avoid forcing the enclosing SwiftUI scroll
     /// view to relayout from inside AppKit's key handling.
     private func handleDirectStructuredDocumentChange(_ updated: RichDocument, plainText: String) {
-        guard !isApplyingExternalUpdate else { return }
+        guard !syncBox.isApplyingExternalUpdate else { return }
 
-        documentSyncWorkItem?.cancel()
+        syncBox.documentSyncWorkItem?.cancel()
         let resolvedPlainText = resolvedPlainTextForCallbacks(from: plainText)
-        lastEmittedPlainText = resolvedPlainText
-        plainTextMirror = resolvedPlainText
+        syncBox.lastEmittedPlainText = resolvedPlainText
+        setMirror(resolvedPlainText)
 
         guard updated != document else { return }
 
-        isSyncingFromEditor = true
+        syncBox.isSyncingFromEditor = true
+        syncBox.lastSelfWrittenDocument = updated
         document = updated
+        // The row reconciles IDs/kinds on the way in (BlockRowSyncPolicy) —
+        // re-read the binding so the echo guard compares against the value
+        // that will actually come back through onChange.
+        syncBox.lastSelfWrittenDocument = document
         onStructuredDocumentChange?(updated, resolvedPlainText)
         onDocumentChange?(updated, resolvedPlainText)
         DispatchQueue.main.async {
-            isSyncingFromEditor = false
+            syncBox.isSyncingFromEditor = false
         }
     }
 
     private func syncDocumentFromEditor() {
-        guard !isApplyingExternalUpdate else { return }
+        guard !syncBox.isApplyingExternalUpdate else { return }
 
         if titleConfiguration != nil {
             syncTitleDocumentFromEditor()
@@ -477,13 +555,18 @@ struct CosmoDocumentEditor: View {
         }
 
         // Debounce expensive RichDocument serialization (parses every line)
-        documentSyncWorkItem?.cancel()
-        let capturedText = attributedText
+        syncBox.documentSyncWorkItem?.cancel()
+        let capturedText = syncBox.attributedText
         let workItem = DispatchWorkItem {
             let updated = RichDocumentSerializer.document(from: capturedText)
             guard updated != document else { return }
-            isSyncingFromEditor = true
+            syncBox.isSyncingFromEditor = true
+            syncBox.lastSelfWrittenDocument = updated
             document = updated
+            // Re-read: the row's splice reconciles IDs (a parsed block carries
+            // a fresh UUID) — without this, every deferred commit read as an
+            // EXTERNAL change and re-serialized + replaced the row's storage.
+            syncBox.lastSelfWrittenDocument = document
             onStructuredDocumentChange?(updated, updated.plainText)
             onDocumentChange?(updated, updated.plainText)
             // Self-heal for block rows: a row should only ever hold ONE
@@ -494,7 +577,7 @@ struct CosmoDocumentEditor: View {
             // from the row's (single-block) document once the split lands.
             let needsRowRebuild = splitsOnReturn && updated.blocks.count > 1
             DispatchQueue.main.async {
-                isSyncingFromEditor = false
+                syncBox.isSyncingFromEditor = false
                 if needsRowRebuild {
                     syncEditorFromDocument()
                 }
@@ -503,15 +586,15 @@ struct CosmoDocumentEditor: View {
         if immediateDocumentSync {
             workItem.perform()
         } else {
-            documentSyncWorkItem = workItem
+            syncBox.documentSyncWorkItem = workItem
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: workItem)
         }
     }
 
     private func syncTitleDocumentFromEditor() {
-        documentSyncWorkItem?.cancel()
+        syncBox.documentSyncWorkItem?.cancel()
 
-        let payload = TitleDocumentChangePayloadFactory.payload(from: attributedText)
+        let payload = TitleDocumentChangePayloadFactory.payload(from: syncBox.attributedText)
         let normalizedAttributedText = RichDocumentSerializer.attributedString(
             from: payload.document,
             fontSize: fontSize,
@@ -520,24 +603,26 @@ struct CosmoDocumentEditor: View {
             titleMode: true
         )
 
-        if !normalizedAttributedText.isEqual(to: attributedText) {
-            isApplyingExternalUpdate = true
-            attributedText = normalizedAttributedText
-            plainTextMirror = payload.plainText
-            lastEmittedPlainText = payload.plainText
+        if !normalizedAttributedText.isEqual(to: syncBox.attributedText) {
+            syncBox.isApplyingExternalUpdate = true
+            syncBox.attributedText = normalizedAttributedText
+            setMirror(payload.plainText)
+            syncBox.lastEmittedPlainText = payload.plainText
             DispatchQueue.main.async {
-                isApplyingExternalUpdate = false
+                syncBox.isApplyingExternalUpdate = false
             }
         }
 
         guard payload.document != document else { return }
 
-        isSyncingFromEditor = true
+        syncBox.isSyncingFromEditor = true
+        syncBox.lastSelfWrittenDocument = payload.document
         document = payload.document
+        syncBox.lastSelfWrittenDocument = document
         onStructuredDocumentChange?(payload.document, payload.plainText)
         onDocumentChange?(payload.document, payload.plainText)
         DispatchQueue.main.async {
-            isSyncingFromEditor = false
+            syncBox.isSyncingFromEditor = false
         }
     }
 
@@ -548,44 +633,55 @@ struct CosmoDocumentEditor: View {
     /// is stale while `plainTextMirror` is current. We use `plainTextMirror` as the
     /// authoritative plain-text source to avoid losing the last keystrokes.
     private func flushPendingSync() {
-        documentSyncWorkItem?.cancel()
-        guard !isApplyingExternalUpdate else { return }
+        syncBox.documentSyncWorkItem?.cancel()
+        guard !syncBox.isApplyingExternalUpdate else { return }
+
+        // Dead-row guard: a block row whose block was merged/deleted away
+        // tears down AFTER the document already dropped it — its binding
+        // resolves to an empty document. Flushing then re-parses the dead
+        // row's stale text and emits a full-document change for nothing
+        // (a live block row always holds exactly one block).
+        if splitsOnReturn && document.blocks.isEmpty { return }
 
         // plainTextMirror is synced immediately from NSTextView on every keystroke.
         // attributedText may be 50ms stale (deferred sync for performance).
-        let latestPlainText = plainTextMirror
+        let latestPlainText = syncBox.plainTextMirror
 
         if titleConfiguration != nil {
-            let payload = TitleDocumentChangePayloadFactory.payload(from: attributedText)
+            let payload = TitleDocumentChangePayloadFactory.payload(from: syncBox.attributedText)
             // Also check if plain text diverged from what attributedText reports
-            let plainTextDiverged = latestPlainText != payload.plainText && latestPlainText != lastEmittedPlainText
+            let plainTextDiverged = latestPlainText != payload.plainText && latestPlainText != syncBox.lastEmittedPlainText
             guard payload.document != document || plainTextDiverged else { return }
-            isSyncingFromEditor = true
+            syncBox.isSyncingFromEditor = true
+            syncBox.lastSelfWrittenDocument = payload.document
             document = payload.document
+            syncBox.lastSelfWrittenDocument = document
             let emitPlainText = plainTextDiverged ? latestPlainText : payload.plainText
-            plainTextMirror = emitPlainText
+            setMirror(emitPlainText)
             onStructuredDocumentChange?(payload.document, emitPlainText)
             onDocumentChange?(payload.document, emitPlainText)
-            isSyncingFromEditor = false
+            syncBox.isSyncingFromEditor = false
             return
         }
 
-        let updated = RichDocumentSerializer.document(from: attributedText)
+        let updated = RichDocumentSerializer.document(from: syncBox.attributedText)
         // Check if plain text advanced beyond what attributedText contains
         // (i.e. user typed but the 50ms deferred sync hasn't fired yet)
-        let plainTextDiverged = latestPlainText != updated.plainText && latestPlainText != lastEmittedPlainText
+        let plainTextDiverged = latestPlainText != updated.plainText && latestPlainText != syncBox.lastEmittedPlainText
         guard updated != document || plainTextDiverged else { return }
-        isSyncingFromEditor = true
+        syncBox.isSyncingFromEditor = true
+        syncBox.lastSelfWrittenDocument = updated
         document = updated
+        syncBox.lastSelfWrittenDocument = document
         let emitPlainText = plainTextForEmission(
             latestPlainText: latestPlainText,
             parsedDocument: updated,
             plainTextDiverged: plainTextDiverged
         )
-        plainTextMirror = emitPlainText
+        setMirror(emitPlainText)
         onStructuredDocumentChange?(updated, emitPlainText)
         onDocumentChange?(updated, emitPlainText)
-        isSyncingFromEditor = false
+        syncBox.isSyncingFromEditor = false
     }
 
     private func resolvedDocumentForEditor(preferLivePlainText: Bool = false) -> RichDocument {
@@ -608,15 +704,15 @@ struct CosmoDocumentEditor: View {
             let liveDocument = liveDocumentForPresentationChange()
             let livePlainText = resolvedPlainTextForCallbacks(from: liveDocument)
 
-            if livePlainText == plainTextMirror, !(liveDocument.isEmpty && !document.isEmpty) {
+            if livePlainText == syncBox.plainTextMirror, !(liveDocument.isEmpty && !document.isEmpty) {
                 resolved = liveDocument
-            } else if documentPlainText != plainTextMirror {
-                resolved = RichDocument.migrateLegacy(plainTextMirror)
+            } else if documentPlainText != syncBox.plainTextMirror {
+                resolved = RichDocument.migrateLegacy(syncBox.plainTextMirror)
             } else {
                 resolved = document
             }
-        } else if document.isEmpty && !plainTextMirror.isEmpty {
-            resolved = RichDocument.migrateLegacy(plainTextMirror)
+        } else if document.isEmpty && !syncBox.plainTextMirror.isEmpty {
+            resolved = RichDocument.migrateLegacy(syncBox.plainTextMirror)
         } else {
             resolved = document
         }
@@ -628,9 +724,9 @@ struct CosmoDocumentEditor: View {
 
     private func liveDocumentForPresentationChange() -> RichDocument {
         if titleConfiguration != nil {
-            return TitleDocumentChangePayloadFactory.payload(from: attributedText).document
+            return TitleDocumentChangePayloadFactory.payload(from: syncBox.attributedText).document
         }
-        return RichDocumentSerializer.document(from: attributedText)
+        return RichDocumentSerializer.document(from: syncBox.attributedText)
     }
 
     private func resolvedPlainTextForCallbacks(from document: RichDocument) -> String {

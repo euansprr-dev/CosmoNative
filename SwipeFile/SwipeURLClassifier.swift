@@ -49,14 +49,19 @@ struct SwipeURLClassifier {
         options: .caseInsensitive
     )
 
-    // Instagram patterns
+    // Instagram patterns. One optional path segment before the kind covers
+    // every permalink shape IG serves: bare (/p/X), share links (/share/p/X)
+    // and the username-prefixed form (/username/p/X) the address bar and
+    // profile-grid anchors use — the form drag-out and address-bar copies
+    // hand us. `[\w.]+` cannot cross "/", so /stories/user/123 stays with the
+    // stories pattern below.
     private let instagramReelPattern = try! NSRegularExpression(
-        pattern: #"instagram\.com/(?:(?:reel|reels)|(?:share/reel))/([a-zA-Z0-9_-]+)"#,
+        pattern: #"instagram\.com/(?:[\w.]+/)?(?:reel|reels)/([a-zA-Z0-9_-]+)"#,
         options: .caseInsensitive
     )
 
     private let instagramPostPattern = try! NSRegularExpression(
-        pattern: #"instagram\.com/(?:(?:p)|(?:share/p))/([a-zA-Z0-9_-]+)"#,
+        pattern: #"instagram\.com/(?:[\w.]+/)?p/([a-zA-Z0-9_-]+)"#,
         options: .caseInsensitive
     )
 

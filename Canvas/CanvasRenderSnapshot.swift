@@ -66,9 +66,19 @@ struct CanvasRenderDataSnapshot {
         selectedClusterId: UUID?,
         draggingClusterId: UUID?,
         resizingClusterId: UUID?,
-        preloadInset: CGFloat = 320
+        preloadInset: CGFloat = 320,
+        retainedBlockIds: Set<String> = []
     ) -> CanvasRenderSnapshot {
-        let visibility = CanvasVisibilityIndex(transform: transform, preloadInset: preloadInset)
+        // Hysteresis band: a block MOUNTS when it enters the preload (enter)
+        // rect, but an already-mounted block only UNMOUNTS once it leaves the
+        // larger exit rect. Without the band, every bucket crossing (and any
+        // preload-inset change) churned the mounted set at the frontier —
+        // each churned media card re-ran atom + media loads on remount.
+        let enterVisibility = CanvasVisibilityIndex(transform: transform, preloadInset: preloadInset)
+        let exitVisibility = CanvasVisibilityIndex(
+            transform: transform,
+            preloadInset: preloadInset * CanvasViewportSnapshotPolicy.retainInsetMultiplier
+        )
 
         var visibleIDs = Set<String>()
         var renderable: [CanvasBlock] = []
@@ -80,7 +90,11 @@ struct CanvasRenderDataSnapshot {
         )
 
         for block in sortedBlocks {
-            guard visibility.isBlockVisible(block) else { continue }
+            let entersNow = enterVisibility.isBlockVisible(block)
+            let staysRetained = !entersNow
+                && retainedBlockIds.contains(block.id)
+                && exitVisibility.isBlockVisible(block)
+            guard entersNow || staysRetained else { continue }
             visibleIDs.insert(block.id)
 
             let isClusterGestureMember = activeClusterBlockUUIDs.contains(block.entityUuid)
@@ -221,9 +235,21 @@ final class CanvasRenderPipeline {
     private var viewportSnapshot: CanvasRenderSnapshot = .empty
 
     private(set) var lastRenderableBlocks: [CanvasBlock] = []
+    /// Ids of the currently mounted block hosts — fed back into the next
+    /// viewport rebuild as the hysteresis retained set.
+    private var lastRenderableBlockIds: Set<String> = []
     private(set) var hasResolvedSnapshot = false
     private(set) var debugDataSnapshotBuildCount = 0
     private(set) var debugViewportSnapshotBuildCount = 0
+    /// Debug telemetry for the perf HUD: how often the canvas body asked for a
+    /// snapshot (≈ body evaluations) and how many block hosts each viewport
+    /// rebuild mounted/unmounted. Plain counters — reading them is never
+    /// observable-tracked, so the HUD can poll without invalidating anything.
+    private(set) var debugSnapshotRequestCount = 0
+    private(set) var debugTotalMounts = 0
+    private(set) var debugTotalUnmounts = 0
+    private(set) var debugLastSwapMounts = 0
+    private(set) var debugLastSwapUnmounts = 0
 
     func snapshot(
         blocks: [CanvasBlock],
@@ -237,6 +263,7 @@ final class CanvasRenderPipeline {
         draggingClusterId: UUID?,
         resizingClusterId: UUID?
     ) -> CanvasRenderSnapshot {
+        debugSnapshotRequestCount &+= 1
         let shouldRebuildData: Bool
         if let blockDataRevision, let clusterDataRevision {
             let nextRevisionSignature = CanvasRenderDataRevisionSignature(
@@ -281,16 +308,34 @@ final class CanvasRenderPipeline {
                 selectedClusterId: selectedClusterId,
                 draggingClusterId: draggingClusterId,
                 resizingClusterId: resizingClusterId,
-                preloadInset: preloadInset
+                preloadInset: preloadInset,
+                retainedBlockIds: lastRenderableBlockIds
             )
             viewportSignature = nextViewportSignature
+            recordMountChurn(from: lastRenderableBlocks, to: viewportSnapshot.renderableBlocks)
             lastRenderableBlocks = viewportSnapshot.renderableBlocks
+            lastRenderableBlockIds = Set(viewportSnapshot.renderableBlocks.map(\.id))
             hasResolvedSnapshot = true
             debugViewportSnapshotBuildCount += 1
             CanvasPerformanceInstrumentation.signposter.endInterval("render-viewport-snapshot", signpost)
         }
 
         return viewportSnapshot
+    }
+
+    /// Track how many block hosts a viewport swap mounted/unmounted — the
+    /// number the perf HUD watches to prove gesture start/end no longer
+    /// churns the mounted set.
+    private func recordMountChurn(from previous: [CanvasBlock], to next: [CanvasBlock]) {
+        guard hasResolvedSnapshot else { return }
+        let previousIds = Set(previous.map(\.id))
+        let nextIds = Set(next.map(\.id))
+        let mounts = nextIds.subtracting(previousIds).count
+        let unmounts = previousIds.subtracting(nextIds).count
+        debugLastSwapMounts = mounts
+        debugLastSwapUnmounts = unmounts
+        debugTotalMounts &+= mounts
+        debugTotalUnmounts &+= unmounts
     }
 }
 

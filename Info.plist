@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Cosmo reads the address of your browser's current tab when you press ⌘⇧S, so it can capture the page you're looking at into your Swipe File.</string>
     <key>CFBundleExecutable</key>
     <string>CosmoOS</string>
     <key>CFBundleIdentifier</key>

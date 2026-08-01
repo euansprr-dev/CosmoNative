@@ -559,8 +559,13 @@ final class InboxViewModel {
         defer { processingItemIds.remove(item.uuid) }
 
         do {
-            _ = try await executor.executeSwipe(item: item)
-            presentUndoToast(for: item, verb: "Saved as swipe")
+            let outcome = try await executor.executeSwipeOutcome(item: item)
+            // Adoption is different news than creation — "Saved as swipe"
+            // over a dedup reads as the library eating the capture.
+            presentUndoToast(
+                for: item,
+                verb: outcome.adoptedExisting ? "Already in your Swipe File" : "Saved as swipe"
+            )
             recordRoutingOutcome(for: item, chosenKind: "swipe", chosenLabel: "Swipe File")
         } catch {
             print("⚠️ [InboxVM] File as swipe failed: \(error)")

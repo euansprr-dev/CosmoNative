@@ -67,9 +67,11 @@ struct ElementBlockHeader: View {
     }
 
     private var titleField: some View {
+        // DS.headline (15 semibold): the card's title outranks the 17pt body
+        // it introduces — 13pt read as an afterthought (jury round 1, 4 seats).
         TextField("Untitled", text: $title)
             .textFieldStyle(.plain)
-            .font(DS.callout.weight(.semibold))
+            .font(DS.headline)
             .foregroundStyle(titleColor)
             .lineLimit(1)
             .onSubmit(onSubmitTitle)

@@ -44,6 +44,54 @@ final class CosmoBrowserSystemAuthenticationCoordinator: NSObject, ASWebAuthenti
     }
 }
 
+/// The out-of-band lane for a link dragged out of a browser pane. The drag
+/// PASTEBOARD cannot be trusted to carry it: WebKit bundles page-authored
+/// drag types into org.webkit.custom-pasteboard-data (unreadable to AppKit),
+/// and sites like Instagram rewrite the drag data anyway — the observed drop
+/// arrives as plain text at best. So the drag bridge mirrors the permalink
+/// here at dragstart, and the canvas drop consults it only when the drop's
+/// own providers carried no web URL (⌘K precedent: session-driven placement
+/// when the pasteboard is too weak). macOS runs ONE drag at a time, so a
+/// fresh session IS the drag being dropped; dragend plus a short grace
+/// window retires it so a later unrelated drop can never adopt a stale link.
+enum BrowserPaneLinkDragSession {
+    private static var url: String?
+    private static var armedAt: Date?
+    private static var endedAt: Date?
+
+    /// Grace after dragend: the canvas drop's async provider loading runs a
+    /// beat AFTER the page already saw dragend — clearing instantly would
+    /// re-lose the very drop this session exists to save.
+    private static let postEndGrace: TimeInterval = 3
+    /// A webview that dies mid-drag never sends dragend; staleness caps it.
+    private static let maxAge: TimeInterval = 30
+
+    static var isArmed: Bool { currentURL(now: Date()) != nil }
+
+    static func arm(url: String) {
+        self.url = url
+        armedAt = Date()
+        endedAt = nil
+    }
+
+    static func noteDragEnded() {
+        endedAt = Date()
+    }
+
+    static func consume() -> String? {
+        defer { url = nil; armedAt = nil; endedAt = nil }
+        return currentURL(now: Date())
+    }
+
+    /// Exposed for tests — the freshness ladder with an injectable clock.
+    static func currentURL(now: Date) -> String? {
+        guard let url, let armedAt else { return nil }
+        guard now.timeIntervalSince(armedAt) < maxAge else { return nil }
+        if let endedAt, now.timeIntervalSince(endedAt) > postEndGrace { return nil }
+        return url
+    }
+}
+
 struct CosmoBrowserWebView: NSViewRepresentable {
     let state: CosmoWebBrowserState
     var paneId: String? = nil
@@ -95,6 +143,7 @@ struct CosmoBrowserWebView: NSViewRepresentable {
             self.userContentController = WKUserContentController()
             super.init()
             installSelectionBridge()
+            installDragBridge()
         }
 
         deinit {
@@ -103,6 +152,7 @@ struct CosmoBrowserWebView: NSViewRepresentable {
             }
             webViewObservations.forEach { $0.invalidate() }
             userContentController.removeScriptMessageHandler(forName: "cosmoSelection")
+            userContentController.removeScriptMessageHandler(forName: "cosmoLinkDrag")
         }
 
         private func installSelectionBridge() {
@@ -132,7 +182,78 @@ struct CosmoBrowserWebView: NSViewRepresentable {
             userContentController.add(self, name: "cosmoSelection")
         }
 
+        /// Instagram fights drag-out: grid tiles and post media are marked
+        /// undraggable, and when an image drag does start it carries the CDN
+        /// asset URL, not the post. This bridge makes the post PERMALINK the
+        /// drag payload — mousedown re-arms dragging on the tile's anchor,
+        /// and dragstart stamps the permalink into the drag pasteboard
+        /// (WebKit maps text/uri-list to public.url, which the canvas drop
+        /// delegate reads). Gated to instagram.com; every other site's native
+        /// drag behaviour is untouched.
+        private func installDragBridge() {
+            let script = WKUserScript(
+                source: """
+                (function() {
+                    if (!/(^|\\.)instagram\\.com$/.test(location.hostname)) { return; }
+                    const POST_ANCHOR = 'a[href*="/p/"], a[href*="/reel/"]';
+                    function permalink(node) {
+                        const anchor = node instanceof Element ? node.closest(POST_ANCHOR) : null;
+                        if (anchor && anchor.href) { return anchor.href; }
+                        // An open post rewrites the location to its permalink —
+                        // dragging the lightbox media falls back to that.
+                        if (/^\\/(?:[^/]+\\/)?(p|reel)\\//.test(location.pathname)) { return location.href; }
+                        return null;
+                    }
+                    document.addEventListener('mousedown', function(event) {
+                        const anchor = event.target instanceof Element ? event.target.closest(POST_ANCHOR) : null;
+                        if (!anchor) { return; }
+                        anchor.draggable = true;
+                        anchor.style.webkitUserDrag = 'element';
+                    }, true);
+                    document.addEventListener('dragstart', function(event) {
+                        const url = permalink(event.target);
+                        // Mirror out-of-band: WebKit may not surface these
+                        // dataTransfer entries to AppKit (custom-pasteboard
+                        // bundling), and the page may rewrite them.
+                        try {
+                            window.webkit.messageHandlers.cosmoLinkDrag.postMessage({
+                                phase: 'start',
+                                url: url || null,
+                                tag: event.target.tagName || '?'
+                            });
+                        } catch (e) {}
+                        if (!url || !event.dataTransfer) { return; }
+                        event.dataTransfer.setData('text/uri-list', url);
+                        event.dataTransfer.setData('text/plain', url);
+                    }, true);
+                    document.addEventListener('dragend', function(event) {
+                        try {
+                            window.webkit.messageHandlers.cosmoLinkDrag.postMessage({ phase: 'end' });
+                        } catch (e) {}
+                    }, true);
+                })();
+                """,
+                injectionTime: .atDocumentEnd,
+                forMainFrameOnly: false
+            )
+            userContentController.addUserScript(script)
+            userContentController.add(self, name: "cosmoLinkDrag")
+        }
+
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            if message.name == "cosmoLinkDrag", let body = message.body as? [String: Any] {
+                let phase = body["phase"] as? String
+                if phase == "start" {
+                    if let url = body["url"] as? String, !url.isEmpty {
+                        BrowserPaneLinkDragSession.arm(url: url)
+                    }
+                    CanvasDropDebugLog.note("browser bridge: dragstart tag=\(body["tag"] as? String ?? "?") permalink=\(body["url"] as? String ?? "NONE")")
+                } else if phase == "end" {
+                    BrowserPaneLinkDragSession.noteDragEnded()
+                    CanvasDropDebugLog.note("browser bridge: dragend")
+                }
+                return
+            }
             guard message.name == "cosmoSelection", let text = message.body as? String else { return }
             Task { @MainActor in
                 state.updateSelectedText(text)

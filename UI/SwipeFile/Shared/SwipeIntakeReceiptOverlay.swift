@@ -20,7 +20,6 @@ struct SwipeIntakeReceiptOverlay: View {
             content
         }
         .padding(.bottom, DS.space24)
-        .allowsHitTesting(false)
         .animation(reduceMotion ? .none : ProMotionSprings.bouncy, value: center.receipt)
         .animation(reduceMotion ? .none : ProMotionSprings.bouncy, value: center.errorMessage)
     }
@@ -29,10 +28,40 @@ struct SwipeIntakeReceiptOverlay: View {
     private var content: some View {
         if let error = center.errorMessage {
             capsule(icon: "exclamationmark.triangle", text: error, tint: DS.orange)
+                .allowsHitTesting(false)
                 .task(id: error) { await dismiss(after: .milliseconds(2600)) }
         } else if let receipt = center.receipt {
-            capsule(icon: receipt.kind.iconName, text: receipt.message, tint: DS.accent)
-                .task(id: receipt.id) { await dismiss(after: .milliseconds(1800)) }
+            // A dedup wears the swipe library's own identity (bronze stack),
+            // never the capture-success accent — the iOS twin's law: a
+            // success mark over a no-op is a lie.
+            //
+            // The capsule is a DOOR, not just a confirmation: clicking it
+            // opens the room the capture filed into. The receipt is how the
+            // user learns the spaces exist; the click is how they arrive.
+            Button {
+                open(receipt)
+            } label: {
+                capsule(
+                    icon: receipt.alreadyInLibrary ? "rectangle.stack.fill" : receipt.kind.iconName,
+                    text: receipt.message,
+                    tint: receipt.alreadyInLibrary ? DS.entitySwipe : DS.accent
+                )
+            }
+            .buttonStyle(.plain)
+            .help("Open \((receipt.genre ?? SwipeGenre.defaultGenre(for: receipt.kind)).pluralName)")
+            .task(id: receipt.id) { await dismiss(after: .milliseconds(1800)) }
+        }
+    }
+
+    private func open(_ receipt: SwipeIntakeReceipt) {
+        let genre = receipt.genre ?? SwipeGenre.defaultGenre(for: receipt.kind)
+        NotificationCenter.default.post(
+            name: CosmoNotification.Navigation.openSwipeGallery,
+            object: nil,
+            userInfo: ["genre": genre.rawValue]
+        )
+        withAnimation(reduceMotion ? .none : ProMotionSprings.gentle) {
+            center.receipt = nil
         }
     }
 

@@ -45,7 +45,7 @@ class CanvasClusterEngine {
     private let debounceInterval: TimeInterval = 5.0
     private let maxBlocks = 50
     private let mergeThreshold: Double = 0.55
-    private let boundingPadding: CGFloat = 40
+    nonisolated private static let boundingPadding: CGFloat = 40
 
     private struct ModeSizing {
         let minWidth: CGFloat
@@ -66,7 +66,11 @@ class CanvasClusterEngine {
         }
     }
 
-    /// Immediately recompute clusters.
+    /// Immediately recompute clusters. The affinity matrix (pairwise
+    /// NLEmbedding sentence distances — 1,225 pairs at 50 blocks) and the
+    /// agglomerative pass run OFF the main actor; only the final publish
+    /// touches main. Inline, this was a multi-hundred-ms main-thread stall
+    /// five seconds after any block-count change.
     func recompute(blocks: [CanvasBlock]) async {
         guard isEnabled, blocks.count >= 2, blocks.count <= maxBlocks else {
             clusters = []
@@ -91,6 +95,29 @@ class CanvasClusterEngine {
 
         guard !Task.isCancelled else { return }
 
+        let threshold = mergeThreshold
+        let frozenEdges = edgeSet
+        let result = await Task.detached(priority: .utility) {
+            Self.computeAutoClusters(
+                uuids: uuids,
+                blocksByUUID: blocksByUUID,
+                edgeSet: frozenEdges,
+                mergeThreshold: threshold
+            )
+        }.value
+
+        guard !Task.isCancelled else { return }
+        clusters = result
+    }
+
+    /// Pure clustering pipeline — steps 2–5. Nonisolated so the caller can
+    /// run it detached; everything it touches is value-typed.
+    nonisolated private static func computeAutoClusters(
+        uuids: [String],
+        blocksByUUID: [String: CanvasBlock],
+        edgeSet: Set<String>,
+        mergeThreshold: Double
+    ) -> [CanvasCluster] {
         // Step 2: Build affinity matrix using graph edges + NL title similarity
         // Prefer sentence embedding (handles multi-word titles), fallback to word embedding
         let sentenceEmb = NLEmbedding.sentenceEmbedding(for: .english)
@@ -133,8 +160,6 @@ class CanvasClusterEngine {
             }
         }
 
-        guard !Task.isCancelled else { return }
-
         // Step 3: Agglomerative clustering (average linkage)
         var clusterMembers: [[String]] = uuids.map { [$0] }
 
@@ -161,8 +186,6 @@ class CanvasClusterEngine {
             clusterMembers.remove(at: bestJ)
         }
 
-        guard !Task.isCancelled else { return }
-
         // Step 4: Discard singletons
         let multiMember = clusterMembers.filter { $0.count > 1 }
 
@@ -183,12 +206,12 @@ class CanvasClusterEngine {
             ))
         }
 
-        clusters = result
+        return result
     }
 
     // MARK: - Average Linkage
 
-    private func averageLinkage(clusterA: [String], clusterB: [String], affinity: [String: Double]) -> Double {
+    nonisolated private static func averageLinkage(clusterA: [String], clusterB: [String], affinity: [String: Double]) -> Double {
         var sum: Double = 0
         var count: Int = 0
         for a in clusterA {
@@ -203,7 +226,7 @@ class CanvasClusterEngine {
 
     // MARK: - Cluster Naming
 
-    private func extractClusterName(members: [String], blocksByUUID: [String: CanvasBlock], index: Int) -> String {
+    nonisolated private static func extractClusterName(members: [String], blocksByUUID: [String: CanvasBlock], index: Int) -> String {
         let titles = members.compactMap { blocksByUUID[$0]?.title }
         let combined = titles.joined(separator: " ")
 
@@ -239,7 +262,7 @@ class CanvasClusterEngine {
 
     // MARK: - Bounding Rect
 
-    private func computeBoundingRect(members: [String], blocksByUUID: [String: CanvasBlock]) -> CGRect {
+    nonisolated private static func computeBoundingRect(members: [String], blocksByUUID: [String: CanvasBlock]) -> CGRect {
         let blocks = members.compactMap { blocksByUUID[$0] }
         guard !blocks.isEmpty else { return .zero }
 
@@ -633,10 +656,15 @@ class CanvasClusterEngine {
                 let repo = AtomRepository.shared
                 guard var atom = try await repo.fetch(uuid: blockUUID) else { return }
 
+                // Habit credit/reversal fires only on an actual completion transition,
+                // after the write persists (dashboard contract).
+                var completionTransition: Bool? = nil
+
                 // Determine what to update based on atom type
                 switch atom.type {
                 case .task:
                     var taskMeta = atom.metadataValue(as: TaskMetadata.self) ?? TaskMetadata()
+                    let wasCompleted = taskMeta.isCompleted == true
                     let canonical = Self.normalizedBoardColumnValue(for: .task, rawValue: newValue)
                     taskMeta.status = canonical
                     if canonical == "completed" {
@@ -645,6 +673,10 @@ class CanvasClusterEngine {
                     } else {
                         taskMeta.isCompleted = false
                         taskMeta.completedAt = nil
+                    }
+                    let nowCompleted = taskMeta.isCompleted == true
+                    if wasCompleted != nowCompleted {
+                        completionTransition = nowCompleted
                     }
                     atom = atom.withMetadata(taskMeta)
 
@@ -673,6 +705,14 @@ class CanvasClusterEngine {
 
                 atom.updatedAt = ISO8601.string(from: Date())
                 try await repo.update(atom)
+
+                if let nowCompleted = completionTransition {
+                    if nowCompleted {
+                        await CommandCenterHabitEngine.shared.recordTaskCompletion(taskUUID: blockUUID)
+                    } else {
+                        await CommandCenterHabitEngine.shared.reverseTaskCompletion(taskUUID: blockUUID)
+                    }
+                }
             } catch {
                 print("CanvasClusterEngine: updateBlockColumnValue failed: \(error)")
             }

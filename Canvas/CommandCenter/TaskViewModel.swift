@@ -470,12 +470,16 @@ public enum TaskPriority: String, Codable, CaseIterable, Sendable {
         }
     }
 
+    // Neutral rungs for the non-signal priorities: .medium is the DEFAULT for
+    // every task, so its color is the ledger's most-repeated mark — it must be
+    // ink, never a hue (system .blue painted every checkbox on the page).
+    // Color stays reserved for the priorities that ARE a signal.
     public var color: Color {
         switch self {
-        case .low: return .secondary
-        case .medium: return .blue
-        case .high: return .orange
-        case .critical: return .red
+        case .low: return DS.textMuted
+        case .medium: return DS.textSecondary
+        case .high: return DS.orange
+        case .critical: return DS.red
         }
     }
 

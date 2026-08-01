@@ -1,12 +1,25 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// Row-scoped hover signal. The hover REGION is the whole row, but the only
+/// thing that changes on hover is the gutter chrome — routing the flag
+/// through an observable box means a pointer crossing re-renders just the
+/// small gutter subview instead of the row's full overlay/drop-zone tree.
+@MainActor
+@Observable
+final class BlockRowHoverBox {
+    var isHovered = false
+}
+
 struct BlockRowView<Content: View>: View {
     let block: RichBlock
     let path: BlockPath
     var darkMode: Bool = false
     var isSelected: Bool = false
-    var onMove: (BlockDragPayload, BlockDropTarget) -> Void
+    /// Drop commit: payload + the drop position relative to THIS row's block.
+    /// Positions are resolved by block ID at commit time — the payload's
+    /// sourcePath and this row's captured path may both be stale by then.
+    var onMove: (BlockDragPayload, BlockDropPosition, UUID) -> Void
     var onInsertBelow: (() -> Void)? = nil
     /// Plain click on the six-dot handle — the list selects the block before
     /// the menu opens. Shift+click extends the selection instead.
@@ -15,13 +28,23 @@ struct BlockRowView<Content: View>: View {
     var handleMenu: (() -> BlockHandleMenuView)? = nil
     @ViewBuilder var content: Content
 
-    @State private var isHovered = false
-    @State private var isMenuPresented = false
+    @State private var hoverBox = BlockRowHoverBox()
     @State private var highlightedDropPosition: BlockDropPosition?
 
     var body: some View {
         HStack(alignment: .top, spacing: 4) {
-            gutter
+            BlockRowGutter(
+                block: block,
+                path: path,
+                darkMode: darkMode,
+                isSelected: isSelected,
+                highlightedDropPosition: highlightedDropPosition,
+                hoverBox: hoverBox,
+                onInsertBelow: onInsertBelow,
+                onHandleClick: onHandleClick,
+                onHandleShiftClick: onHandleShiftClick,
+                handleMenu: handleMenu
+            )
             content
                 .frame(maxWidth: .infinity, alignment: .topLeading)
                 .background(selectionWash)
@@ -30,26 +53,101 @@ struct BlockRowView<Content: View>: View {
         .overlay(alignment: .bottom) { dropZone(.below) }
         .overlay(alignment: .top) { dropIndicator(for: .above) }
         .overlay(alignment: .bottom) { dropIndicator(for: .below) }
-        .onHover { isHovered = $0 }
+        .onHover { hovering in
+            if hoverBox.isHovered != hovering {
+                hoverBox.isHovered = hovering
+            }
+        }
     }
 
-    // MARK: - Gutter (＋ and ⋮⋮)
+    // MARK: - Selection
 
-    private var gutter: some View {
+    @ViewBuilder
+    private var selectionWash: some View {
+        if isSelected {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(DS.accentSoft.opacity(0.55))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(DS.accent.opacity(0.22), lineWidth: 1)
+                )
+                .padding(.vertical, -2)
+                .padding(.horizontal, -4)
+                .transition(.opacity)
+                .allowsHitTesting(false)
+        }
+    }
+
+    // MARK: - Drop Targets
+
+    private func dropZone(_ position: BlockDropPosition) -> some View {
+        Rectangle()
+            .fill(Color.clear)
+            .frame(height: 14)
+            .contentShape(Rectangle())
+            .onDrop(
+                of: [UTType.json.identifier],
+                delegate: BlockRowDropDelegate(
+                    targetBlockID: block.id,
+                    position: position,
+                    highlightedDropPosition: $highlightedDropPosition,
+                    onMove: onMove
+                )
+            )
+    }
+
+    @ViewBuilder
+    private func dropIndicator(for position: BlockDropPosition) -> some View {
+        if highlightedDropPosition == position {
+            // Reading the hover box here is safe: this branch only exists
+            // while a drag highlight is active, so the row body tracks hover
+            // only during drags, never in the steady state.
+            let chrome = BlockInteractionPolicy.chrome(
+                isHovered: hoverBox.isHovered,
+                isDropTarget: true,
+                darkMode: darkMode
+            )
+            Rectangle()
+                .fill(DS.accent.opacity(darkMode ? 0.86 : 0.72))
+                .frame(height: chrome.dropIndicatorHeight)
+                .padding(.leading, chrome.reservedLeadingWidth)
+                .opacity(chrome.dropIndicatorOpacity)
+                .transition(.opacity)
+                .accessibilityHidden(true)
+        }
+    }
+}
+
+/// The ＋ / ⋮⋮ gutter. Owns the hover read and the menu-presented state so a
+/// pointer crossing (or menu toggle) re-renders only this small subtree.
+private struct BlockRowGutter: View {
+    let block: RichBlock
+    let path: BlockPath
+    let darkMode: Bool
+    let isSelected: Bool
+    let highlightedDropPosition: BlockDropPosition?
+    let hoverBox: BlockRowHoverBox
+    let onInsertBelow: (() -> Void)?
+    let onHandleClick: (() -> Void)?
+    let onHandleShiftClick: (() -> Void)?
+    let handleMenu: (() -> BlockHandleMenuView)?
+
+    @State private var isMenuPresented = false
+
+    var body: some View {
         let metrics = BlockInteractionPolicy.handleMetrics(for: block.kind)
-        return HStack(alignment: .top, spacing: 2) {
+        HStack(alignment: .top, spacing: 2) {
             insertButton(metrics: metrics)
             dragHandle(metrics: metrics)
         }
         .opacity(gutterOpacity)
-        .animation(.spring(response: BlockMotionPolicy.chromeResponse, dampingFraction: BlockMotionPolicy.chromeDampingFraction), value: isHovered)
-        .animation(.spring(response: BlockMotionPolicy.dropResponse, dampingFraction: BlockMotionPolicy.dropDampingFraction), value: highlightedDropPosition)
+        .animation(.spring(response: BlockMotionPolicy.chromeResponse, dampingFraction: BlockMotionPolicy.chromeDampingFraction), value: gutterOpacity)
     }
 
     private var gutterOpacity: Double {
         let chrome = BlockInteractionPolicy.chrome(
             isHovered: BlockInteractionPolicy.revealsHandleChrome(
-                isHovered: isHovered,
+                isHovered: hoverBox.isHovered,
                 isSelected: isSelected,
                 isMenuPresented: isMenuPresented,
                 isDropTarget: highlightedDropPosition != nil
@@ -136,67 +234,16 @@ struct BlockRowView<Content: View>: View {
             }
         }
     }
-
-    // MARK: - Selection
-
-    @ViewBuilder
-    private var selectionWash: some View {
-        if isSelected {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(DS.accentSoft.opacity(0.55))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .strokeBorder(DS.accent.opacity(0.22), lineWidth: 1)
-                )
-                .padding(.vertical, -2)
-                .padding(.horizontal, -4)
-                .transition(.opacity)
-                .allowsHitTesting(false)
-        }
-    }
-
-    // MARK: - Drop Targets
-
-    private func dropZone(_ position: BlockDropPosition) -> some View {
-        Rectangle()
-            .fill(Color.clear)
-            .frame(height: 14)
-            .contentShape(Rectangle())
-            .onDrop(
-                of: [UTType.json.identifier],
-                delegate: BlockRowDropDelegate(
-                    path: path,
-                    position: position,
-                    highlightedDropPosition: $highlightedDropPosition,
-                    onMove: onMove
-                )
-            )
-    }
-
-    @ViewBuilder
-    private func dropIndicator(for position: BlockDropPosition) -> some View {
-        if highlightedDropPosition == position {
-            let chrome = BlockInteractionPolicy.chrome(
-                isHovered: isHovered,
-                isDropTarget: true,
-                darkMode: darkMode
-            )
-            Rectangle()
-                .fill(DS.accent.opacity(darkMode ? 0.86 : 0.72))
-                .frame(height: chrome.dropIndicatorHeight)
-                .padding(.leading, chrome.reservedLeadingWidth)
-                .opacity(chrome.dropIndicatorOpacity)
-                .transition(.opacity)
-                .accessibilityHidden(true)
-        }
-    }
 }
 
 private struct BlockRowDropDelegate: DropDelegate {
-    let path: BlockPath
+    /// The block this drop zone belongs to — the drop TARGET is resolved from
+    /// this ID at commit time, never from a captured path (rows can skip
+    /// re-renders across structural shifts, so captured paths go stale).
+    let targetBlockID: UUID
     let position: BlockDropPosition
     @Binding var highlightedDropPosition: BlockDropPosition?
-    var onMove: (BlockDragPayload, BlockDropTarget) -> Void
+    var onMove: (BlockDragPayload, BlockDropPosition, UUID) -> Void
 
     func dropEntered(info: DropInfo) {
         highlightedDropPosition = position
@@ -222,12 +269,8 @@ private struct BlockRowDropDelegate: DropDelegate {
                   let payload = BlockDropController.decodedPayload(data) else {
                 return
             }
-            let target = BlockDropController.target(for: position, path: path)
-            guard BlockDropController.canMove(from: payload.sourcePath, to: target) else {
-                return
-            }
             DispatchQueue.main.async {
-                onMove(payload, target)
+                onMove(payload, position, targetBlockID)
             }
         }
         return true

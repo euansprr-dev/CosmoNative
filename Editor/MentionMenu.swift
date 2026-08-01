@@ -12,6 +12,8 @@ struct MentionMenu: View {
     @State private var isLoading = true
     @State private var appearedRows: Set<String> = []
     @State private var searchTask: Task<Void, Never>?
+    @State private var scrollMetrics = CortexScrollMetricsStore()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let provider = MentionSearchProvider.shared
     private let menuWidth: CGFloat = 280
@@ -38,7 +40,10 @@ struct MentionMenu: View {
             loadEntities()
         }
         .onChange(of: searchQuery) { _, _ in
-            appearedRows.removeAll()
+            // Keep appearedRows: clearing it replayed the staggered entrance
+            // cascade (opacity+offset+scale per row) on EVERY query
+            // character. The cascade is a menu-open delight, not a filter
+            // effect — rows already seen stay seen.
             loadEntities()
         }
         .onDisappear {
@@ -59,17 +64,17 @@ struct MentionMenu: View {
                     .frame(width: 30, height: 30)
 
                 Image(systemName: "at")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(DS.rowTitle)
                     .foregroundStyle(DS.accent)
             }
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("Link Item")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(DS.headline)
                     .foregroundStyle(textPrimary)
 
                 Text(searchQuery.isEmpty ? "Recent and relevant items" : "Results for @\(searchQuery)")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(DS.rowMeta)
                     .foregroundStyle(textSecondary)
                     .lineLimit(1)
             }
@@ -77,12 +82,13 @@ struct MentionMenu: View {
             Spacer(minLength: 0)
 
             if !isLoading {
+                // Counts are data, not actions — the one keycap/count voice,
+                // no accent capsule (accent is punctuation).
                 Text("\(entities.count)")
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(DS.accent)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(DS.accentSoft, in: Capsule())
+                    .font(DS.keycap)
+                    .monospacedDigit()
+                    .contentTransition(.numericText())
+                    .foregroundStyle(textSecondary)
             }
         }
         .padding(.horizontal, 16)
@@ -96,7 +102,7 @@ struct MentionMenu: View {
         } else if entities.isEmpty {
             emptyView
         } else {
-            ScrollView {
+            ScrollView(showsIndicators: false) {
                 LazyVStack(spacing: 6) {
                     ForEach(Array(entities.enumerated()), id: \.element.id) { index, entity in
                         mentionRowView(index: index, entity: entity)
@@ -104,7 +110,9 @@ struct MentionMenu: View {
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 10)
+                .background(CortexScrollViewIntrospector { scrollMetrics.publish($0) })
             }
+            .cortexThinScrollbar(store: scrollMetrics)
             .background(darkMode ? DS.bg : Color.clear)
         }
     }
@@ -117,7 +125,9 @@ struct MentionMenu: View {
             hasAppeared: appearedRows.contains(entity.id),
             darkMode: darkMode
         )
-        .id(index)
+        // Identity = the entity, not its position — index identity destroyed
+        // and recreated every row when filtering shifted results.
+        .id(entity.id)
         .onTapGesture {
             CosmicHaptics.shared.play(.selection)
             onSelect(entity)
@@ -128,8 +138,9 @@ struct MentionMenu: View {
             }
         }
         .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + (Double(index) * 0.015)) {
-                withAnimation(ProMotionSprings.cardEntrance) {
+            // Cascade caps at ~8 and gates on Reduce Motion (peakui).
+            DispatchQueue.main.asyncAfter(deadline: .now() + (Double(min(index, 8)) * 0.015)) {
+                withAnimation(reduceMotion ? nil : ProMotionSprings.cardEntrance) {
                     _ = appearedRows.insert(entity.id)
                 }
             }
@@ -162,15 +173,15 @@ struct MentionMenu: View {
     private var emptyView: some View {
         VStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 22, weight: .medium))
+                .font(DS.railAccessoryGlyph)
                 .foregroundStyle(textMuted)
 
             Text("No items found")
-                .font(.system(size: 13, weight: .semibold))
+                .font(DS.rowTitle)
                 .foregroundStyle(textPrimary)
 
             Text("Try a different name or keyword.")
-                .font(.system(size: 11, weight: .medium))
+                .font(DS.rowMeta)
                 .foregroundStyle(textSecondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -178,7 +189,13 @@ struct MentionMenu: View {
 
     private func loadEntities() {
         searchTask?.cancel()
-        isLoading = true
+        // Only the FIRST load shows the shimmer skeleton. Flipping isLoading
+        // per query keystroke swapped the whole ScrollView out for the
+        // skeleton and back — full view-identity churn, twice per character.
+        // Refetches keep the previous results visible until new ones land.
+        if entities.isEmpty {
+            isLoading = true
+        }
         selectedIndex = 0
 
         searchTask = Task {
@@ -260,19 +277,19 @@ struct MentionRow: View {
                 .frame(width: 34, height: 34)
                 .overlay(
                     Image(systemName: entity.type.icon)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(DS.rowTitle)
                         .foregroundStyle(entityColor)
                 )
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(entity.title)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(DS.rowTitle)
                     .foregroundStyle(textPrimary)
                     .lineLimit(1)
 
                 if let subtitle = entity.subtitle {
                     Text(subtitle)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(DS.rowMeta)
                         .foregroundStyle(textSecondary)
                         .lineLimit(1)
                 }
@@ -281,13 +298,14 @@ struct MentionRow: View {
             Spacer(minLength: 8)
 
             Text(entity.typeLabel)
-                .font(.system(size: 10, weight: .medium))
+                .font(DS.smallCaps)
+                .tracking(DS.smallCapsTracking)
                 .foregroundStyle(textSecondary)
                 .lineLimit(1)
 
             if isSelected {
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(DS.caption2.weight(.semibold))
                     .foregroundStyle(entityColor)
                     .transition(.scale.combined(with: .opacity))
             }
@@ -300,12 +318,14 @@ struct MentionRow: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(isSelected ? entityColor.opacity(0.22) : Color.clear, lineWidth: 1)
+                .strokeBorder(isSelected ? entityColor.opacity(0.22) : Color.clear, lineWidth: 1)
         )
         .contentShape(Rectangle())
         .opacity(hasAppeared ? 1 : 0)
         .offset(x: hasAppeared ? 0 : -12)
-        .blur(radius: hasAppeared ? 0 : 2)
+        // No animated blur in the cascade: up to 8 rows animating Gaussian
+        // blur concurrently over a glass backdrop was a ProMotion killer.
+        // Opacity + offset + scale carry the entrance.
         .scaleEffect(x: hasAppeared ? 1 : 0.98, y: 1, anchor: .leading)
     }
 }

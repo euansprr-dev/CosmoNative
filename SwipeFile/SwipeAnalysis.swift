@@ -1067,10 +1067,13 @@ public struct SwipeGalleryItem: Identifiable, Sendable {
         self.unitCount = unitCount
         self.roles = roles
         self.memberSwipeUUIDs = memberSwipeUUIDs
-        // Genre rides the search text so "newsletter" finds the newsletters
-        // even from a scope that would otherwise hide them.
+        // Genre AND unit roles ride the search text: "newsletter" finds the
+        // newsletters, "guarantee" finds swipes carrying a guarantee unit —
+        // from ⌘K's gallery and every scope that would otherwise hide them.
+        let roleWords = roles.map(\.displayName).sorted().joined(separator: " ")
         self.searchableText = CommandKSearchMatcher.searchableText(
-            from: [title, hookText, author, niche, creatorName, resolvedGenre.pluralName]
+            from: [title, hookText, author, niche, creatorName, resolvedGenre.pluralName,
+                   roleWords.isEmpty ? nil : roleWords]
         )
     }
 

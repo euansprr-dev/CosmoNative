@@ -168,11 +168,13 @@ final class SwipeGenreTests: XCTestCase {
         XCTAssertEqual(SwipeGenreSeed.infer(url: "https://www.beehiiv.com/some/issue"), .newsletter)
         XCTAssertEqual(SwipeGenreSeed.infer(url: "https://mailchi.mp/brand/campaign-123"), .newsletter)
         XCTAssertEqual(SwipeGenreSeed.infer(url: "https://us1.campaign-archive.com/?u=abc"), .newsletter)
+        XCTAssertEqual(SwipeGenreSeed.infer(url: "https://mail.google.com/mail/u/0/#inbox/abc123"), .newsletter)
     }
 
     func testAdLibrariesSeedAd() {
         XCTAssertEqual(SwipeGenreSeed.infer(url: "https://www.facebook.com/ads/library/?id=123"), .ad)
         XCTAssertEqual(SwipeGenreSeed.infer(url: "https://adstransparency.google.com/advertiser/AR1"), .ad)
+        XCTAssertEqual(SwipeGenreSeed.infer(url: "https://www.linkedin.com/ad-library/detail/123"), .ad)
     }
 
     func testCommercePathsSeedSalesPageNarrowly() {

@@ -22,12 +22,25 @@ struct SlashCommandMenu: View {
     var darkMode: Bool = false  // Dark glass mode for Thinkspace blocks
 
     @State private var appeared = false
+    @State private var scrollMetrics = CortexScrollMetricsStore()
 
     private let menuWidth: CGFloat = 300
     private let menuHeight: CGFloat = 380
+    private let footerHeight: CGFloat = 34
 
     private var isSearching: Bool {
         !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Browsing keeps the full catalog box; a narrowed search hugs its
+    /// results instead of towing 300pt of empty glass under two rows.
+    /// Quantized to 4-row steps: resizing the frame per keystroke made the
+    /// glass backdrop + shadow compositor re-layout on every character (see
+    /// glass_layer_animated_frame_latch for why glass resizes are hostile).
+    private var resolvedHeight: CGFloat {
+        guard isSearching else { return menuHeight }
+        let rows = ceil(CGFloat(max(1, commands.count)) / 4) * 4 * 32
+        return min(menuHeight, rows + footerHeight + DS.space6 * 2)
     }
 
     var body: some View {
@@ -35,11 +48,12 @@ struct SlashCommandMenu: View {
             commandListView
             CosmoKeyboardFooter(darkMode: darkMode)
         }
-        .frame(width: menuWidth, height: menuHeight, alignment: .top)
+        .frame(width: menuWidth, height: resolvedHeight, alignment: .top)
         .cosmoMenuChrome(cornerRadius: 14, darkMode: darkMode)
-        .position(x: position.x + (menuWidth / 2), y: position.y + (menuHeight / 2))
+        .position(x: position.x + (menuWidth / 2), y: position.y + (resolvedHeight / 2))
         .onAppear {
-            CosmicHaptics.shared.play(.menuAppear)
+            // No haptic here — cosmoMenuChrome already plays .menuAppear;
+            // this fired the entrance buzz twice on the same frame.
             withAnimation(ProMotionSprings.menuAppear) { appeared = true }
         }
     }
@@ -48,7 +62,7 @@ struct SlashCommandMenu: View {
 
     private var commandListView: some View {
         ScrollViewReader { proxy in
-            ScrollView {
+            ScrollView(showsIndicators: false) {
                 LazyVStack(spacing: 0) {
                     ForEach(Array(commands.enumerated()), id: \.element.id) { index, command in
                         // While browsing, a section header introduces each
@@ -61,14 +75,19 @@ struct SlashCommandMenu: View {
                     }
                 }
                 .padding(.vertical, DS.space6)
+                // Kill the legacy fat scroller ("always show scroll bars")
+                // and draw the app's thin capsule chrome instead.
+                .background(CortexScrollViewIntrospector { scrollMetrics.publish($0) })
             }
-            .frame(maxHeight: menuHeight - 34)
+            .frame(maxHeight: resolvedHeight - footerHeight)
             .scrollBounceBehavior(.basedOnSize)
+            .cortexThinScrollbar(store: scrollMetrics)
             .onChange(of: selectedIndex) { _, newIndex in
                 CosmicHaptics.shared.play(.threshold)
-                withAnimation(.easeOut(duration: 0.12)) {
-                    proxy.scrollTo(newIndex)
-                }
+                // Unanimated: an animated scroll inside a ScrollView whose
+                // content just changed (filter keystroke resets the index)
+                // fought the fresh layout every character.
+                proxy.scrollTo(commands[safe: newIndex]?.id)
             }
         }
     }
@@ -80,10 +99,14 @@ struct SlashCommandMenu: View {
     }
 
     private func sectionHeader(_ section: SlashCommandSection) -> some View {
-        Text(section.rawValue)
-            .font(DS.caption2.weight(.semibold))
-            .tracking(0.8)
-            .foregroundStyle(darkMode ? Color.white.opacity(0.42) : DS.textMuted)
+        // Capitalized source + smallCaps() — .smallCaps() on an UPPERCASE raw
+        // value is a no-op; ONE small-caps dialect app-wide.
+        Text(section.rawValue.capitalized)
+            .font(DS.smallCaps)
+            .tracking(DS.smallCapsTracking)
+            // 0.62 clears AA on the dark chrome (0.42 sat at ~3.3:1 on a
+            // 10pt tracked label).
+            .foregroundStyle(darkMode ? Color.white.opacity(0.62) : DS.textMuted)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, DS.space12)
             .padding(.top, DS.space8)
@@ -97,7 +120,10 @@ struct SlashCommandMenu: View {
             isSelected: index == selectedIndex,
             darkMode: darkMode
         )
-        .id(index)
+        // Identity = the command, not its position: with `.id(index)`,
+        // filtering shifted commands between indices and SwiftUI destroyed/
+        // recreated every row (and its gesture recognizers) per keystroke.
+        .id(command.id)
         .onTapGesture {
             CosmicHaptics.shared.play(.selection)
             onSelect(command)
@@ -141,7 +167,7 @@ struct SlashCommandRow: View {
 
             if let shortcut = command.shortcut {
                 Text(shortcut)
-                    .font(DS.caption.monospaced())
+                    .font(DS.keycap)
                     .foregroundStyle(hintColor)
             }
         }
@@ -184,6 +210,7 @@ struct ElementCreationMenu: View {
     @State private var icon = NoteElementIconCatalog.curated.first?.symbol ?? "square.dashed"
     @State private var toneID = NoteInkPalette.defaultToneID
     @State private var iconQuery = ""
+    @State private var iconScrollMetrics = CortexScrollMetricsStore()
     @FocusState private var titleFocused: Bool
 
     private let menuWidth: CGFloat = 320
@@ -234,8 +261,10 @@ struct ElementCreationMenu: View {
                         .font(DS.caption.weight(.medium))
                         .foregroundStyle(tone.ink(darkMode: darkMode))
                 )
+            // DS.headline — the card this preview promises now renders its
+            // title at 15 semibold ("what you see is what you insert").
             Text(title.isEmpty ? "New Element" : title)
-                .font(DS.callout.weight(.semibold))
+                .font(DS.headline)
                 .foregroundStyle(title.isEmpty ? textSecondary : textPrimary)
                 .lineLimit(1)
             Spacer(minLength: 0)
@@ -312,15 +341,17 @@ struct ElementCreationMenu: View {
                 .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(fieldFill))
                 .accessibilityLabel("Search icons")
 
-            ScrollView {
+            ScrollView(showsIndicators: false) {
                 LazyVGrid(columns: Array(repeating: GridItem(.fixed(30), spacing: DS.space6), count: 8), spacing: DS.space6) {
                     ForEach(NoteElementIconCatalog.matching(iconQuery), id: \.symbol) { option in
                         iconCell(option)
                     }
                 }
+                .background(CortexScrollViewIntrospector { iconScrollMetrics.publish($0) })
             }
             .frame(height: 108)
             .scrollBounceBehavior(.basedOnSize)
+            .cortexThinScrollbar(store: iconScrollMetrics)
         }
     }
 

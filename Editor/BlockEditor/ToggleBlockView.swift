@@ -14,6 +14,7 @@ struct ToggleBlockRowView<Header: View, Children: View>: View {
     @ViewBuilder var children: Children
 
     @State private var chevronHovered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private static var childIndent: CGFloat { 22 }
 
@@ -30,7 +31,7 @@ struct ToggleBlockRowView<Header: View, Children: View>: View {
                     .padding(.top, DS.space2)
             }
         }
-        .animation(ProMotionSprings.snappy, value: isCollapsed)
+        .animation(reduceMotion ? nil : ProMotionSprings.snappy, value: isCollapsed)
     }
 
     private var chevron: some View {

@@ -133,6 +133,7 @@ struct SwipePreviewSidebar: View {
                 SwipeConceptBacklinks(atomUUID: item.atomUUID)
                     .padding(.horizontal, 14)
                     .padding(.vertical, DS.space6)
+                artifactRetryRow
                 footer
             }
             .id(item.id)
@@ -408,6 +409,60 @@ struct SwipePreviewSidebar: View {
         .padding(10)
         .help("Close (Esc)")
         .accessibilityLabel("Close preview")
+    }
+
+    /// The artifact kinds' Retry seat — the manual twin of the heal sweep.
+    /// Posts have their own Railway-first Retry in Study; a page or frame
+    /// whose decomposition failed used to be a silent dead end.
+    @ViewBuilder
+    private var artifactRetryRow: some View {
+        let status = item.processingStatus ?? ""
+        if item.kind == .page || item.kind == .frame,
+           status == "partial" || status == "extraction_failed" {
+            HStack(spacing: DS.space8) {
+                Image(systemName: "exclamationmark.arrow.circlepath")
+                    .font(DS.caption.weight(.semibold))
+                    .foregroundStyle(DS.textMuted)
+                    .accessibilityHidden(true)
+                Text(status == "extraction_failed" ? "Couldn't capture this one" : "Reading didn't finish")
+                    .font(DS.caption)
+                    .foregroundStyle(DS.textSecondary)
+                Spacer(minLength: DS.space8)
+                Button("Retry") { retryArtifact() }
+                    .buttonStyle(.plain)
+                    .font(DS.caption.weight(.semibold))
+                    .foregroundStyle(DS.accent)
+                    .help("Re-run the capture and analysis")
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, DS.space6)
+            .overlay(alignment: .top) {
+                Rectangle().fill(DS.borderSubtle).frame(height: 0.5)
+            }
+        }
+    }
+
+    private func retryArtifact() {
+        let uuid = item.id
+        let kind = item.kind
+        Task { @MainActor in
+            // A manual retry always runs: erase the sweep's strikes first.
+            var ledger = SwipeHealLedger.load()
+            ledger.clear(uuid)
+            ledger.save()
+            guard let atom = try? await AtomRepository.shared.fetch(uuid: uuid) else { return }
+            let note = atom.body?.trimmed
+            switch kind {
+            case .page:
+                let url = atom.swipeArtifact?.capturedURL ?? atom.researchMetadata?.url
+                guard let url, let pageURL = URL(string: url) else { return }
+                await SwipePageDecomposition.run(swipeUUID: uuid, url: pageURL, note: note)
+            case .frame:
+                await SwipeFrameDecomposition.run(swipeUUID: uuid, note: note)
+            default:
+                break
+            }
+        }
     }
 
     private var footer: some View {

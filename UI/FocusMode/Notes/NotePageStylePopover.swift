@@ -43,8 +43,10 @@ struct NotePageStylePopover: View {
                 Button {
                     withAnimation(ProMotionSprings.snappy) { segment = option }
                 } label: {
+                    // Constant weight — a selection must not re-typeset the
+                    // capsule; the wash and ink carry the state.
                     Text(option.rawValue)
-                        .font(DS.caption.weight(isSelected ? .semibold : .regular))
+                        .font(DS.caption)
                         .foregroundStyle(isSelected ? DS.accent : DS.textSecondary)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, DS.space6)
@@ -83,15 +85,16 @@ private struct NotePageStylePageSection: View {
     @Binding var rightRailVisible: Bool
 
     @State private var iconQuery = ""
+    @State private var iconScrollMetrics = CortexScrollMetricsStore()
     @Environment(\.colorScheme) private var colorScheme
 
     private var darkMode: Bool { DS.usesImmersiveFocusAppearance }
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space12) {
-            section("PAPER") { paperRow }
-            section("PAGE ICON") { iconPicker }
-            section("COVER") { coverRow }
+            section("Paper") { paperRow }
+            section("Page icon") { iconPicker }
+            section("Cover") { coverRow }
             Divider()
             panelsRows
         }
@@ -99,9 +102,11 @@ private struct NotePageStylePageSection: View {
 
     private func section(_ title: String, @ViewBuilder content: () -> some View) -> some View {
         VStack(alignment: .leading, spacing: DS.space6) {
+            // Sentence-case source + smallCaps() — the ONE small-caps dialect
+            // (.smallCaps() on an UPPERCASE string is a no-op).
             Text(title)
-                .font(DS.caption2.weight(.semibold))
-                .tracking(0.8)
+                .font(DS.smallCaps)
+                .tracking(DS.smallCapsTracking)
                 .foregroundStyle(DS.textMuted)
             content()
         }
@@ -157,15 +162,19 @@ private struct NotePageStylePageSection: View {
                     .onSubmit { adoptEmojiIfTyped() }
                     .accessibilityLabel("Search page icons")
             }
-            ScrollView {
+            ScrollView(showsIndicators: false) {
                 LazyVGrid(columns: Array(repeating: GridItem(.fixed(28), spacing: DS.space6), count: 8), spacing: DS.space6) {
                     ForEach(NoteElementIconCatalog.matching(iconQuery), id: \.symbol) { option in
                         iconCell(option.symbol, help: option.suggestedName)
                     }
                 }
+                // Thin capsule chrome — the legacy scroller ate a quarter of
+                // this 66pt viewport under "always show scroll bars".
+                .background(CortexScrollViewIntrospector { iconScrollMetrics.publish($0) })
             }
             .frame(height: 66)
             .scrollBounceBehavior(.basedOnSize)
+            .cortexThinScrollbar(store: iconScrollMetrics)
         }
         .onChange(of: iconQuery) { _, _ in adoptEmojiIfTyped() }
     }
@@ -281,6 +290,7 @@ private struct NotePageStylePageSection: View {
             Spacer(minLength: DS.space12)
             Toggle("", isOn: binding)
                 .toggleStyle(.switch)
+                .tint(DS.accent)
                 .controlSize(.small)
                 .labelsHidden()
                 .accessibilityLabel(label)
@@ -298,8 +308,26 @@ struct NotePageIconView: View {
     var style: NoteDocumentStyle = .default
     var darkMode: Bool = false
     var size: CGFloat = 24
+    /// Seated: the chosen emblem rides a paper-tone disc (Craft grammar) so
+    /// it reads as the page's mark, not stray chrome — used on the focus page
+    /// where it straddles the cover band.
+    var seated: Bool = false
 
     var body: some View {
+        if seated {
+            glyph
+                .frame(width: size + 14, height: size + 14)
+                .background(
+                    Circle().fill(style.paperTone.swatchColor(darkMode: darkMode))
+                )
+                .overlay(Circle().strokeBorder(DS.glassBorder, lineWidth: 1))
+        } else {
+            glyph
+        }
+    }
+
+    @ViewBuilder
+    private var glyph: some View {
         if NSImage(systemSymbolName: icon, accessibilityDescription: nil) != nil {
             Image(systemName: icon)
                 .font(.system(size: size * 0.82, weight: .medium))
@@ -327,7 +355,9 @@ struct PaperToneBloomPulse: View {
         GeometryReader { geo in
             let reach = max(geo.size.width, geo.size.height) * 1.3
             RadialGradient(
-                colors: [Color.white.opacity(darkMode ? 0.10 : 0.28), .clear],
+                // 0.20 dark: the one earned delight was 2.8× fainter in the
+                // theme the owner actually lives in.
+                colors: [Color.white.opacity(darkMode ? 0.20 : 0.28), .clear],
                 center: UnitPoint(x: 0.9, y: 0.04),
                 startRadius: 0,
                 endRadius: max(1, reach * progress)

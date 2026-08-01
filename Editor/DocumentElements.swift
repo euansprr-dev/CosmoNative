@@ -5,10 +5,30 @@ import Foundation
 enum DocumentElementSymbol {
     static let fallback = "square.grid.2x2"
 
+    /// Validation memo — symbol availability can't change at runtime, and
+    /// the unmemoized check allocated an NSImage per visible menu row per
+    /// render (every slash-menu keystroke, arrow key, and hover). Lock, not
+    /// actor isolation: decode paths call this off the main actor.
+    private static let cacheLock = NSLock()
+    nonisolated(unsafe) private static var validated: [String: String] = [:]
+
     static func validName(_ rawValue: String) -> String {
+        cacheLock.lock()
+        let cached = validated[rawValue]
+        cacheLock.unlock()
+        if let cached { return cached }
+
         let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return fallback }
-        return NSImage(systemSymbolName: trimmed, accessibilityDescription: nil) == nil ? fallback : trimmed
+        let resolved: String
+        if trimmed.isEmpty {
+            resolved = fallback
+        } else {
+            resolved = NSImage(systemSymbolName: trimmed, accessibilityDescription: nil) == nil ? fallback : trimmed
+        }
+        cacheLock.lock()
+        validated[rawValue] = resolved
+        cacheLock.unlock()
+        return resolved
     }
 }
 
@@ -603,12 +623,22 @@ final class DocumentElementStore {
             .appendingPathComponent("Elements.json")
     }
 
+    /// Memoized — the ICU-collated sort ran on every read, and the slash
+    /// menu reads this on every query keystroke. The source compare hits the
+    /// array buffer-identity fast path when definitions haven't changed.
+    @ObservationIgnored private var activeDefinitionsCache: (source: [DocumentElementDefinition], active: [DocumentElementDefinition])?
+
     var activeDefinitions: [DocumentElementDefinition] {
-        definitions
+        if let cache = activeDefinitionsCache, cache.source == definitions {
+            return cache.active
+        }
+        let active = definitions
             .filter(\.isEnabled)
             .sorted { lhs, rhs in
                 lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
             }
+        activeDefinitionsCache = (definitions, active)
+        return active
     }
 
     @discardableResult

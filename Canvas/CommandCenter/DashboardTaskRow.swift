@@ -87,9 +87,27 @@ struct DashboardTaskRow: View {
             rowContent
                 .padding(.trailing, DS.space8)
         }
-        .padding(.vertical, DS.space6)
+        .padding(.vertical, DS.space4)
+        // Two HONEST heights on the 8pt grid (a single minHeight floor let
+        // two-line rows land at ~45): 40 plain, 48 with a meta line. The 40
+        // also phase-locks to the timeline's 40pt hour pitch.
+        .frame(minHeight: hasMetaLine ? 48 : 40)
     }
 
+    /// Whether this row renders a second (meta) line — drives the row's
+    /// height step so mixed lists sit on the grid instead of near it.
+    private var hasMetaLine: Bool {
+        task.timeInfo != nil
+            || task.isRecurring
+            || viewModel.resolvedHabit(for: task) != nil
+            || task.blockTitle != nil
+            || task.projectName != nil
+            || task.timeGoalMinutes != nil
+            || task.sessionCount > 0
+    }
+
+    // Both branches measure EXACTLY 12 — the diamond branch used to total
+    // 11.5, shifting the whole content rail 0.5pt left on high/critical rows.
     @ViewBuilder
     private var priorityLead: some View {
         if task.priority == .high || task.priority == .critical {
@@ -97,8 +115,7 @@ struct DashboardTaskRow: View {
                 .fill(task.priority.color.opacity(0.36))
                 .frame(width: 3.5, height: 3.5)
                 .rotationEffect(.degrees(45))
-                .padding(.leading, 6)
-                .padding(.trailing, 2)
+                .frame(width: 12)
                 .accessibilityHidden(true)
         } else {
             Spacer().frame(width: 12)
@@ -119,9 +136,15 @@ struct DashboardTaskRow: View {
         }
     }
 
+    // Baseline-locked: the checkbox belongs to the title's FIRST line, never
+    // the row's block center — on a two-line row a centered circle sits ~7pt
+    // below the title it checks (the Things law). The guides re-declare each
+    // non-text element's baseline so its center lands on the title's cap
+    // center (13pt SF cap height ≈ 9.2 → baseline − 4.6).
     private var rowContent: some View {
-        HStack(spacing: DS.space10) {
+        HStack(alignment: .firstTextBaseline, spacing: DS.space10) {
             checkbox
+                .alignmentGuide(.firstTextBaseline) { d in d[VerticalAlignment.center] + 4.6 }
 
             taskContent
 
@@ -135,6 +158,7 @@ struct DashboardTaskRow: View {
                     actionButton
                 }
                 .opacity(showsInlineActions ? 1 : 0)
+                .alignmentGuide(.firstTextBaseline) { d in d[VerticalAlignment.center] + 4.6 }
             }
         }
     }
@@ -157,18 +181,22 @@ struct DashboardTaskRow: View {
             HStack(spacing: 3) {
                 if overdue {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 8))
+                        .font(DS.microIcon)
                         .foregroundStyle(DS.red)
                         .accessibilityHidden(true)
                 }
                 Text(dueInfo)
-                    .font(DS.caption2)
+                    .font(DS.rowMeta)
+                    .monospacedDigit()
                     .foregroundStyle(overdue ? DS.red : DS.commandCenterMutedText)
             }
             .frame(width: 76, alignment: .trailing)
         } else {
+            // Zero, not 76: reserving an empty due column on every row gave
+            // ~22% of the ledger's width to nothing (Things reserves nothing
+            // on the right — the trailing edge is deliberately ragged).
             Color.clear
-                .frame(width: 76, height: 1)
+                .frame(width: 0, height: 1)
         }
     }
 
@@ -182,7 +210,8 @@ struct DashboardTaskRow: View {
                 priorityColor: task.priority.color,
                 isCompleted: task.isCompleted,
                 completionState: completion,
-                size: 18
+                size: 18,
+                isHovered: showsHover
             )
             // The glyph stays 18pt (ledger density) but the target is a real
             // one — an 18pt circle is a dart board for a mouse.
@@ -217,7 +246,7 @@ struct DashboardTaskRow: View {
                     TaskTitleWithMentions(
                         title: task.title,
                         mentions: task.titleMentions,
-                        font: DS.callout
+                        font: DS.rowTitle
                     ) { mention in
                         NotificationCenter.default.post(
                             name: .init("com.cosmo.navigateToAtom"),
@@ -230,11 +259,17 @@ struct DashboardTaskRow: View {
                         title: task.title,
                         isCompleted: task.isCompleted,
                         completionState: completion,
-                        font: DS.callout,
+                        font: DS.rowTitle,
                         activeColor: DS.text,
-                        completedColor: DS.textMuted
+                        // Full ink: the row's 0.7 dims ONCE (textSecondary ×
+                        // 0.7 composited to 3.4:1 — the one state that read
+                        // broken rather than receded).
+                        completedColor: DS.text
                     )
                     .lineLimit(1)
+                    // A completed title is a receipt, not a sentence: cap its
+                    // measure so a 100-char strike never runs the full ledger.
+                    .frame(maxWidth: task.isCompleted ? 480 : .infinity, alignment: .leading)
                 }
             }
 
@@ -242,56 +277,97 @@ struct DashboardTaskRow: View {
         }
     }
 
+    // The second line speaks 11pt (the 13/11 Reminders ratio) and chains its
+    // clauses with interpuncts — a run of same-size tokens separated by air
+    // alone has no parse order. The repeat glyph is a MARK, not a clause: it
+    // rides unpunctuated beside its neighbor.
     @ViewBuilder
     private func metaLine(resolvedHabit: HabitDefinition?) -> some View {
+        let hasTime = task.timeInfo != nil
+        let hasHabit = resolvedHabit != nil
+        let hasBlock = task.blockTitle != nil
+        let hasProject = task.projectName != nil
+        let hasFocus = task.timeGoalMinutes != nil || task.sessionCount > 0
+
         HStack(spacing: DS.space6) {
             if let timeInfo = task.timeInfo {
                 Label(timeInfo, systemImage: "clock")
-                    .font(DS.caption2)
+                    .font(DS.rowMeta)
+                    .monospacedDigit()
                     .foregroundStyle(DS.textMuted)
             }
 
             if task.isRecurring {
-                Label("Repeats", systemImage: "repeat")
-                    .font(DS.caption2)
+                // Glyph only: "Repeats" spelled out beside a repeat glyph says
+                // it twice; the word lives in the tooltip and context menu
+                // (the timeline card's own stated rule).
+                Image(systemName: "repeat")
+                    .font(DS.rowMeta)
                     .foregroundStyle(DS.textMuted)
+                    .help("Repeats")
+                    .accessibilityLabel("Repeats")
             }
 
-            if let resolvedHabit {
-                Label(resolvedHabit.title, systemImage: resolvedHabit.icon)
-                    .font(DS.caption2)
+            if hasHabit, let resolvedHabit {
+                if hasTime || task.isRecurring { metaDot }
+                // displayTitle, never title: the raw title carries its emoji
+                // mark, and glyph + emoji + label in one token is three
+                // metaphors for one fact (the habit engine's own law).
+                Label(resolvedHabit.displayTitle, systemImage: resolvedHabit.icon)
+                    .font(DS.rowMeta)
                     .foregroundStyle(isActiveSession ? resolvedHabit.accent : DS.textMuted)
             }
 
-            blockBadge
+            if hasBlock {
+                if hasTime || task.isRecurring || hasHabit { metaDot }
+                blockBadge
+            }
 
             if let projectName = task.projectName {
+                if hasTime || task.isRecurring || hasHabit || hasBlock { metaDot }
                 Text(projectName)
-                    .font(DS.caption2)
+                    .font(DS.rowMeta)
                     .foregroundStyle(DS.textMuted)
             }
 
-            focusMeta
+            if hasFocus {
+                if hasTime || task.isRecurring || hasHabit || hasBlock || hasProject { metaDot }
+                focusMeta
+            }
         }
     }
 
+    // Full-strength ink: a separator at half its neighbors' contrast reads
+    // as dust, and the line reverts to tokens-separated-by-air. A 2pt glyph
+    // cannot shout (Reminders sets its "·" in the clauses' own color).
+    private var metaDot: some View {
+        Text("·")
+            .font(DS.rowMeta)
+            .foregroundStyle(DS.textMuted)
+            .accessibilityHidden(true)
+    }
+
+    // No timer glyph: "clock" already marks time on this line, and two
+    // clock-family glyphs in one sentence is a toolbar, not metadata — the
+    // noun ("tracked", "goal") is in the string.
     @ViewBuilder
     private var focusMeta: some View {
         if let goal = task.timeGoalMinutes {
             // Timed task: progress toward the goal (recurring per-day progress is
             // session-scoped, so template rows show the goal itself). A met goal
             // is a live achievement — the one meta accent.
-            Label(
+            Text(
                 task.isRecurring
                     ? "\(DashboardTaskList.durationLabel(goal)) goal"
-                    : "\(DashboardTaskList.durationLabel(min(task.totalFocusMinutes, goal))) of \(DashboardTaskList.durationLabel(goal))",
-                systemImage: "timer"
+                    : "\(DashboardTaskList.durationLabel(min(task.totalFocusMinutes, goal))) of \(DashboardTaskList.durationLabel(goal))"
             )
-            .font(DS.caption2)
+            .font(DS.rowMeta)
+            .monospacedDigit()
             .foregroundStyle(!task.isRecurring && task.totalFocusMinutes >= goal ? DS.accent : DS.textMuted)
         } else if task.sessionCount > 0 {
-            Label("\(DashboardTaskList.durationLabel(task.totalFocusMinutes)) tracked", systemImage: "timer")
-                .font(DS.caption2)
+            Text("\(DashboardTaskList.durationLabel(task.totalFocusMinutes)) tracked")
+                .font(DS.rowMeta)
+                .monospacedDigit()
                 .foregroundStyle(DS.textMuted)
         }
     }
@@ -309,16 +385,21 @@ struct DashboardTaskRow: View {
             HStack(spacing: 3) {
                 if isLive {
                     Image(systemName: "play.circle.fill")
-                        .font(.system(size: 9))
+                        .font(DS.microBadge)
                         .foregroundStyle(tint)
                 } else {
-                    RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                    // A dot, not a 1.5pt-radius square (neither square nor
+                    // round at 6pt): dot + name is the membership grammar.
+                    Circle()
                         .fill(tint)
                         .frame(width: 6, height: 6)
                 }
+                // The meta line's subject — where this task lives — steps one
+                // INK rung up; one axis per distinction (weight + color at
+                // once was emphasis said twice).
                 Text(blockTitle)
-                    .font(DS.caption2)
-                    .foregroundStyle(isLive ? tint : DS.textMuted)
+                    .font(DS.rowMeta)
+                    .foregroundStyle(isLive ? tint : DS.textSecondary)
                     .lineLimit(1)
             }
             .help(isLive ? "In block \(blockTitle) — happening now" : "In block \(blockTitle)")
@@ -337,10 +418,12 @@ struct DashboardTaskRow: View {
                 viewModel.startFocusSession(for: task)
             }
         } label: {
-            // iOS-parity time-tracking affordance: dusty-rose task accent.
+            // Ink at rest, accent only when THIS row's session runs — the
+            // hover reveal must not be the largest colored mark in the row
+            // (color means state, never category).
             Image(systemName: isActiveSession ? "pause.circle.fill" : "play.circle")
-                .font(.system(size: 20))
-                .foregroundStyle(DS.entityTask)
+                .font(DS.rowActionGlyph)
+                .foregroundStyle(isActiveSession ? DS.accent : DS.textSecondary)
                 .frame(width: 26, height: 26)
                 .contentShape(Circle())
         }
@@ -363,9 +446,9 @@ struct DashboardTaskRow: View {
                 )
                 .overlay(
                     Circle()
-                        .stroke(
+                        .strokeBorder(
                             composer.isShowingTaskAction(for: task.uuid) ? DS.accent.opacity(0.22) : Color.clear,
-                            lineWidth: 0.8
+                            lineWidth: 0.5
                         )
                 )
         }
@@ -461,7 +544,10 @@ struct DashboardTaskRow: View {
         Sound.taskCompletion(timings: timings)
         completion = .initial
 
-        withAnimation(.easeInOut(duration: timings.ringDuration)) {
+        // Duration-based springs preserve the settle points the sound
+        // keyframes are cued to while restoring the app's one motion dialect
+        // (this was the page's last easeInOut).
+        withAnimation(.spring(duration: timings.ringDuration, bounce: 0.15)) {
             update { state in
                 state.ringProgress = 1
                 state.fillScale = 1
@@ -476,12 +562,12 @@ struct DashboardTaskRow: View {
             }
 
             try? await Task.sleep(for: .seconds(timings.strikeDelay - timings.checkDelay))
-            withAnimation(.easeInOut(duration: timings.strikeDuration)) {
+            withAnimation(.spring(duration: timings.strikeDuration, bounce: 0)) {
                 update { $0.strikeProgress = 1 }
             }
 
             try? await Task.sleep(for: .seconds(timings.fadeDelay - timings.strikeDelay))
-            withAnimation(.easeInOut(duration: timings.fadeDuration)) {
+            withAnimation(.spring(duration: timings.fadeDuration, bounce: 0)) {
                 update { state in
                     // Settle into the receded "completed" look (0.7, matching the
                     // Completed section) and drift downward — the row files
@@ -510,7 +596,7 @@ struct DashboardTaskRow: View {
                 // row comes back instead of silently vanishing while the task
                 // stays incomplete. Habit/XP credit was withheld inside
                 // completeTask.
-                withAnimation(.easeOut(duration: 0.2)) {
+                withAnimation(.spring(duration: 0.2, bounce: 0)) {
                     update { $0 = .initial }
                 }
                 try? await Task.sleep(for: .milliseconds(250))

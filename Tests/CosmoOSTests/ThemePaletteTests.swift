@@ -218,7 +218,11 @@ final class ThemePaletteTests: XCTestCase {
         assertColor(DashboardReportChrome.border, equalsHex: "DDD5C8")
         assertColor(DashboardReportChrome.subtleBorder, equalsHex: "E8E1D6")
         assertColor(DashboardReportChrome.primaryText, equalsHex: "2C2A26")
-        assertColor(DashboardReportChrome.mutedText, equalsHex: "7A7568")
+        // 757165, not the old 7A7568: the July 30 jury retune collapsed
+        // inkFaded onto textMuted's rung — document ink and UI ink are ONE
+        // warm ladder now (a due chip must never sit at a different grey
+        // than a meta line of the same rank).
+        assertColor(DashboardReportChrome.mutedText, equalsHex: "757165")
         assertColor(DashboardReportChrome.heatmapEmptyFill, equalsHex: "EDE5D8")
         assertColor(DashboardReportChrome.heatmapLowFill, equalsHex: "F5EDD8")
     }

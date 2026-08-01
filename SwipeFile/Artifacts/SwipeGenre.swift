@@ -232,10 +232,13 @@ public enum SwipeGenreSeed {
             return .newsletter
         }
         if host.hasSuffix("campaign-archive.com") { return .newsletter }
+        // A captured Gmail view is overwhelmingly an email being saved.
+        if host == "mail.google.com" { return .newsletter }
 
         // Ad libraries.
         if host == "facebook.com", path.hasPrefix("/ads/library") { return .ad }
         if host == "adstransparency.google.com" { return .ad }
+        if host == "linkedin.com", path.hasPrefix("/ad-library") { return .ad }
 
         // Commerce paths. Deliberately narrow — a blog post ABOUT pricing has
         // "/pricing" nowhere in its path; these match the page's own address.

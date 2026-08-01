@@ -71,6 +71,9 @@ struct BlockTextEditorRow: View, Equatable {
     var fontSize: CGFloat
     var fontDesign: NSFontDescriptor.SystemDesign = .default
     var lineSpacingAdjustment: CGFloat = 0
+    /// Position of this row's block within a numbered run (count of numbered
+    /// blocks immediately above) — the serializer seed that lets "2." exist.
+    var numberedListSeed: Int = 0
     var placeholder: String
     var darkMode: Bool
     var overrideTextColor: NSColor?
@@ -101,13 +104,28 @@ struct BlockTextEditorRow: View, Equatable {
     /// stay correct. Focus/caret/selection state is NOT compared here — row
     /// bodies read those from @Observable coordinators, and Observation
     /// invalidates the affected rows directly, bypassing this gate.
+    /// `path` is deliberately NOT compared: it embeds the row's sibling index,
+    /// so a split/merge above would fail the gate for every row below and
+    /// re-render the whole tail of the note. The stored path is only a lookup
+    /// HINT — `currentPath` verifies it against `blockID` and falls back to an
+    /// ID search, so a stale hint costs one search per access, never a wrong
+    /// block. Anything that must re-render on structural shifts (topSpacing,
+    /// listOrdinal) is compared explicitly.
+    ///
+    /// The block compare accepts a SELF-AUTHORED ECHO as equal: a keystroke
+    /// writes this row's content into the whole-document binding, and without
+    /// the ledger check the row re-rendered its entire editor subtree per
+    /// keystroke just to re-derive the content its text view already shows.
+    /// Kind/heading/emptiness changes and every external write still fail
+    /// the gate (see BlockFocusCoordinator.isSelfAuthoredEcho).
     static func == (lhs: BlockTextEditorRow, rhs: BlockTextEditorRow) -> Bool {
         lhs.blockID == rhs.blockID
-            && lhs.path == rhs.path
-            && lhs.block == rhs.block
+            && (lhs.block == rhs.block
+                || rhs.focusCoordinator.isSelfAuthoredEcho(previous: lhs.block, next: rhs.block))
             && lhs.fontSize == rhs.fontSize
             && lhs.fontDesign == rhs.fontDesign
             && lhs.lineSpacingAdjustment == rhs.lineSpacingAdjustment
+            && lhs.numberedListSeed == rhs.numberedListSeed
             && lhs.placeholder == rhs.placeholder
             && lhs.darkMode == rhs.darkMode
             && lhs.overrideTextColor == rhs.overrideTextColor
@@ -124,10 +142,15 @@ struct BlockTextEditorRow: View, Equatable {
     }
 
     var body: some View {
-        CosmoDocumentEditor(
+        // Per-row focus signals: reading these (instead of the coordinator's
+        // focusedBlockID/caretRequest) means a focus change or caret request
+        // invalidates only the rows it concerns, not every mounted row.
+        let rowFocus = focusCoordinator.rowState(for: blockID)
+        return CosmoDocumentEditor(
             document: blockDocumentBinding,
             fontSize: fontSize,
             fontDesign: fontDesign,
+            numberedListSeed: numberedListSeed,
             lineSpacingAdjustment: lineSpacingAdjustment,
             placeholder: placeholder,
             darkMode: darkMode,
@@ -153,8 +176,8 @@ struct BlockTextEditorRow: View, Equatable {
             splitsOnReturn: true,
             rowBlockID: blockID,
             immediateDocumentSync: true,
-            caretRequest: editorCaretRequest,
-            autoFocus: autoFocus || focusCoordinator.focusedBlockID == blockID
+            caretRequest: editorCaretRequest(from: rowFocus),
+            autoFocus: autoFocus || rowFocus.isFocused
         )
         .onAppear {
             focusCoordinator.register(blockID)
@@ -168,9 +191,10 @@ struct BlockTextEditorRow: View, Equatable {
         return try? BlockOperations.currentBlock(in: document, at: currentPath)
     }
 
-    /// The coordinator's one-shot caret request, narrowed to this block.
-    private var editorCaretRequest: EditorCaretRequest? {
-        guard let request = focusCoordinator.caretRequest, request.blockID == blockID else { return nil }
+    /// The row's one-shot caret request. Reads the per-row focus state (not
+    /// the coordinator-wide property) so only the target row re-renders.
+    private func editorCaretRequest(from rowFocus: BlockRowFocusState) -> EditorCaretRequest? {
+        guard let request = rowFocus.caretRequest, request.blockID == blockID else { return nil }
         return EditorCaretRequest(utf16OffsetFromEnd: request.utf16OffsetFromEnd, token: request.token)
     }
 
@@ -244,6 +268,13 @@ struct BlockTextEditorRow: View, Equatable {
             return document
         }
 
+        // Ledger BEFORE the write: the document write re-runs the list body
+        // synchronously, and the row's == consults the ledger to recognize
+        // this row's own content coming back (and skip re-rendering a text
+        // view that is already showing it).
+        if let written = stableBlocks.first {
+            focusCoordinator.noteSelfAuthoredBlock(written)
+        }
         // A single-block content sync must NOT move focus: right after a
         // Return-split this row re-syncs its (unchanged) block and, by
         // re-focusing itself, would yank the caret back out of the freshly

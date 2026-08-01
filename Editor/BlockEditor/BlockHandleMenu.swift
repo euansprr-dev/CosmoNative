@@ -39,6 +39,7 @@ struct BlockHandleMenuView: View {
     var onDelete: () -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var hoveredID: String?
     @State private var appeared = false
 
@@ -59,9 +60,11 @@ struct BlockHandleMenuView: View {
     }
 
     private var sectionLabel: some View {
-        Text(selectionCount > 1 ? "TURN \(selectionCount) BLOCKS INTO" : "TURN INTO")
-            .font(DS.caption2.weight(.semibold))
-            .tracking(0.8)
+        // Sentence-case source + smallCaps() — .smallCaps() on an UPPERCASE
+        // string is a no-op; ONE small-caps dialect app-wide.
+        Text(selectionCount > 1 ? "Turn \(selectionCount) blocks into" : "Turn into")
+            .font(DS.smallCaps)
+            .tracking(DS.smallCapsTracking)
             .foregroundStyle(DS.textMuted)
             .padding(.horizontal, DS.space12)
             .padding(.top, DS.space6)
@@ -136,8 +139,10 @@ struct BlockHandleMenuView: View {
                     .frame(width: 18)
                     .accessibilityHidden(true)
 
+                // Constant weight — a row must not re-typeset under the
+                // pointer; hover speaks through the wash alone.
                 Text(label)
-                    .font(DS.callout.weight(isHovered ? .medium : .regular))
+                    .font(DS.callout)
                     .foregroundStyle(isDestructive ? DS.red : DS.text)
                     .padding(.leading, DS.space10)
 
@@ -163,7 +168,8 @@ struct BlockHandleMenuView: View {
         }
         .opacity(appeared ? 1 : 0)
         .offset(y: appeared ? 0 : 4)
-        .animation(ProMotionSprings.cascade(index: index), value: appeared)
+        // Cascade caps at ~8 (peakui) and gates on Reduce Motion.
+        .animation(reduceMotion ? nil : ProMotionSprings.cascade(index: min(index, 8)), value: appeared)
     }
 
     @ViewBuilder
@@ -177,9 +183,11 @@ struct BlockHandleMenuView: View {
                 .foregroundStyle(DS.accent)
                 .accessibilityLabel("Current type")
         case .shortcut(let hint):
+            // ONE keycap dialect app-wide; keycap ink = SECONDARY (an opacity
+            // on the ink ladder broke AA on the Today pass).
             Text(hint)
-                .font(DS.caption)
-                .foregroundStyle(DS.text.opacity(0.45))
+                .font(DS.keycap)
+                .foregroundStyle(DS.textSecondary)
                 .padding(.trailing, 2)
         }
     }

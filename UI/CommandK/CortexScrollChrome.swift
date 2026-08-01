@@ -88,6 +88,13 @@ struct CortexScrollViewIntrospector: NSViewRepresentable {
 
     func updateNSView(_ nsView: NSView, context: Context) {
         context.coordinator.onMetricsChange = onMetricsChange
+        // Already attached to this scroll view — skip the main-queue hop and
+        // the scroller re-configure (this runs on every render of menus that
+        // re-render per query keystroke).
+        if let scrollView = nsView.enclosingScrollView,
+           context.coordinator.isAttached(to: scrollView) {
+            return
+        }
         DispatchQueue.main.async {
             if let scrollView = nsView.enclosingScrollView {
                 context.coordinator.attach(to: scrollView)
@@ -111,6 +118,10 @@ struct CortexScrollViewIntrospector: NSViewRepresentable {
 
         deinit {
             observers.forEach(NotificationCenter.default.removeObserver)
+        }
+
+        func isAttached(to scrollView: NSScrollView) -> Bool {
+            self.scrollView === scrollView
         }
 
         func attach(to scrollView: NSScrollView) {

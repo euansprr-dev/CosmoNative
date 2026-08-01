@@ -79,9 +79,17 @@ struct NoteDocumentStyle: Codable, Equatable {
         }
 
         var readingWidth: CGFloat {
+            readingWidth(for: .standard)
+        }
+
+        /// The measure follows the type size (ems, not points): a fixed 680
+        /// ran 98 characters per line at Compact and 80 at Large — the preset
+        /// picked to fit more read worst. ×36 holds ~78–80 CPL at every size
+        /// (jury round 1, typography chair); Wide keeps its meaning at ×46.
+        func readingWidth(for size: TextSize) -> CGFloat {
             switch self {
-            case .standard: return CosmoTypography.optimalReadingWidth
-            case .wide: return 940
+            case .standard: return (size.pointSize * 36).rounded()
+            case .wide: return (size.pointSize * 46).rounded()
             }
         }
     }
@@ -354,16 +362,16 @@ struct DocumentStyleMenuView<WidthOption: Identifiable & Equatable>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space12) {
-            section("FONT") { fontFamilyGrid }
-            section("TEXT SIZE") {
+            section("Font") { fontFamilyGrid }
+            section("Text size") {
                 segmentedRow(NoteDocumentStyle.TextSize.allCases, selection: $textSize) { $0.label }
             }
             if let lineSpacing {
-                section("LINE SPACING") {
+                section("Line spacing") {
                     segmentedRow(NoteDocumentStyle.LineSpacing.allCases, selection: lineSpacing) { $0.label }
                 }
             }
-            section("PAGE WIDTH") {
+            section("Page width") {
                 segmentedRow(widthOptions, selection: $widthSelection, label: widthLabel)
             }
             Divider()
@@ -378,9 +386,11 @@ struct DocumentStyleMenuView<WidthOption: Identifiable & Equatable>: View {
 
     private func section(_ title: String, @ViewBuilder content: () -> some View) -> some View {
         VStack(alignment: .leading, spacing: DS.space6) {
+            // Sentence-case source + smallCaps() — the ONE small-caps dialect
+            // (.smallCaps() on an UPPERCASE string is a no-op).
             Text(title)
-                .font(DS.caption2.weight(.semibold))
-                .tracking(0.8)
+                .font(DS.smallCaps)
+                .tracking(DS.smallCapsTracking)
                 .foregroundStyle(DS.textMuted)
             content()
         }
@@ -441,8 +451,10 @@ struct DocumentStyleMenuView<WidthOption: Identifiable & Equatable>: View {
                         selection.wrappedValue = option
                     }
                 } label: {
+                    // Constant weight — selection must not re-typeset the
+                    // capsule row (the labels shifted width on every pick).
                     Text(label(option))
-                        .font(DS.caption.weight(isSelected ? .semibold : .regular))
+                        .font(DS.caption)
                         .foregroundStyle(isSelected ? DS.accent : DS.textSecondary)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, DS.space6)
@@ -473,6 +485,7 @@ struct DocumentStyleMenuView<WidthOption: Identifiable & Equatable>: View {
             Spacer(minLength: DS.space12)
             Toggle("", isOn: $typewriterMode)
                 .toggleStyle(.switch)
+                .tint(DS.accent)
                 .controlSize(.small)
                 .labelsHidden()
                 .accessibilityLabel("Typewriter mode")
@@ -491,6 +504,7 @@ struct DocumentStyleMenuView<WidthOption: Identifiable & Equatable>: View {
             Spacer(minLength: DS.space12)
             Toggle("", isOn: binding)
                 .toggleStyle(.switch)
+                .tint(DS.accent)
                 .controlSize(.small)
                 .labelsHidden()
                 .accessibilityLabel("Paragraph focus")

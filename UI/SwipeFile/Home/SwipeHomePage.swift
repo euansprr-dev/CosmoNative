@@ -163,6 +163,9 @@ struct SwipeHomePage: View {
                         onNavigate(.swipeFile(section: .genre(genre)))
                     }
                 }
+                // The door to every room that doesn't exist yet — the guide
+                // is reachable BEFORE a first capture makes a space real.
+                SwipeCaptureGuideTile()
             }
         } else {
             spacesTeachingRow

@@ -414,6 +414,14 @@ final class CosmoTextView: NSTextView {
     /// blocks by AppKit hit-testing (exact) instead of coordinate-space
     /// conversion between AppKit and SwiftUI (offset-prone).
     var rowBlockID: UUID?
+    /// The row's block kind (block-row mode) — gates per-event hit-tests:
+    /// a paragraph row must not pay checklist-glyph layout queries on every
+    /// click and mouse-move.
+    var rowBlockKind: RichBlockKind?
+    /// Whether this row's heading can collapse — gates the heading hit-test
+    /// (a full line walk + forced layout) out of clicks/mouse-moves on the
+    /// overwhelming majority of rows.
+    var rowHeadingIsCollapsible: Bool = false
     private var disclosureTrackingArea: NSTrackingArea?
 
     override func draw(_ dirtyRect: NSRect) {
@@ -430,6 +438,9 @@ final class CosmoTextView: NSTextView {
     /// serialization, block mapping, and click hit-testing all key off them —
     /// but render clear; this draws the visible checkbox in their rect.
     private func drawChecklistCheckboxes(in dirtyRect: NSRect) {
+        // Block rows know their kind — the active row redraws on every
+        // keystroke, and non-checklist rows have no boxes to paint.
+        if blockRowMode, rowBlockKind != .checklist { return }
         guard let layoutManager, let textContainer else { return }
         let nsText = string as NSString
         guard nsText.length > 0 else { return }
@@ -467,23 +478,15 @@ final class CosmoTextView: NSTextView {
 
             let font = textStorage?.attribute(.font, at: lineRange.location, effectiveRange: nil) as? NSFont
                 ?? NSFont.systemFont(ofSize: 16)
-            let configuration = NSImage.SymbolConfiguration(pointSize: font.pointSize + 1, weight: .regular)
-            guard let base = NSImage(
-                systemSymbolName: checked ? "checkmark.circle.fill" : "circle",
-                accessibilityDescription: checked ? "Checked" : "Unchecked"
-            )?.withSymbolConfiguration(configuration) else { continue }
-
-            // Monochrome tint, not paletteColors — palette rendering paints
-            // the checkmark as its own colored layer, while iOS's
-            // foregroundStyle keeps it a cutout so the paper shows through.
             let color = checklistSymbolColor(checked: checked, lineRange: lineRange)
-            let tint = color.withAlphaComponent(1)
-            let symbol = NSImage(size: base.size, flipped: false) { drawInto in
-                base.draw(in: drawInto)
-                tint.set()
-                drawInto.fill(using: .sourceAtop)
-                return true
-            }
+            // Memoized: symbol lookup + tint compositing allocated two
+            // NSImages per glyph per draw — and the active row redraws
+            // every keystroke.
+            guard let symbol = CosmoTextView.checklistSymbol(
+                checked: checked,
+                pointSize: font.pointSize,
+                tint: color
+            ) else { continue }
 
             let size = symbol.size
             let drawRect = NSRect(
@@ -503,6 +506,50 @@ final class CosmoTextView: NSTextView {
         }
     }
 
+    private struct ChecklistSymbolKey: Hashable {
+        let checked: Bool
+        let pointSize: CGFloat
+        let red: CGFloat
+        let green: CGFloat
+        let blue: CGFloat
+    }
+
+    @MainActor private static var checklistSymbolCache: [ChecklistSymbolKey: NSImage] = [:]
+
+    /// The tinted checkbox image for a glyph — memoized by (state, size,
+    /// tint). Monochrome tint, not paletteColors: palette rendering paints
+    /// the checkmark as its own colored layer, while iOS's foregroundStyle
+    /// keeps it a cutout so the paper shows through. Alpha is applied at
+    /// draw time (`fraction:`), so the cache keys on the opaque tint only.
+    @MainActor
+    fileprivate static func checklistSymbol(checked: Bool, pointSize: CGFloat, tint: NSColor) -> NSImage? {
+        let srgb = tint.usingColorSpace(.sRGB) ?? tint
+        let key = ChecklistSymbolKey(
+            checked: checked,
+            pointSize: pointSize,
+            red: (srgb.redComponent * 255).rounded(),
+            green: (srgb.greenComponent * 255).rounded(),
+            blue: (srgb.blueComponent * 255).rounded()
+        )
+        if let cached = checklistSymbolCache[key] { return cached }
+
+        let configuration = NSImage.SymbolConfiguration(pointSize: pointSize + 1, weight: .regular)
+        guard let base = NSImage(
+            systemSymbolName: checked ? "checkmark.circle.fill" : "circle",
+            accessibilityDescription: checked ? "Checked" : "Unchecked"
+        )?.withSymbolConfiguration(configuration) else { return nil }
+
+        let opaqueTint = srgb.withAlphaComponent(1)
+        let symbol = NSImage(size: base.size, flipped: false) { drawInto in
+            base.draw(in: drawInto)
+            opaqueTint.set()
+            drawInto.fill(using: .sourceAtop)
+            return true
+        }
+        checklistSymbolCache[key] = symbol
+        return symbol
+    }
+
     /// Checked boxes take the app accent at full strength (matching iOS
     /// DS.accent exactly); unchecked boxes ride the line's own ink at low
     /// alpha so they sit right on any paper tone in light or dark mode.
@@ -518,7 +565,9 @@ final class CosmoTextView: NSTextView {
            let color = storage.attribute(.foregroundColor, at: contentIndex, effectiveRange: nil) as? NSColor {
             base = color
         }
-        return base.withAlphaComponent(0.4)
+        // 0.55, not 0.4 — the most-repeated interactive mark on the page was
+        // near-invisible on dark paper (jury round 1, three seats).
+        return base.withAlphaComponent(0.55)
     }
 
     override func paste(_ sender: Any?) {
@@ -698,25 +747,47 @@ final class CosmoTextView: NSTextView {
 
         window.makeFirstResponder(self)
         setSelectedRange(NSRange(location: anchor, length: 0))
-        _ = dragController.handleDrag?(event.locationInWindow, .began, self)
 
+        // `.began` (whose handler walks the WHOLE window's view tree to
+        // snapshot drag candidates) is deferred until the pointer actually
+        // moves — the overwhelming majority of these gestures are plain
+        // clicks, which used to pay the full walk plus 20Hz periodic ticks
+        // and a redundant finalizing setSelectedRange, all inside mouseDown.
+        var began = false
         var escalated = false
-        NSEvent.startPeriodicEvents(afterDelay: 0.1, withPeriod: 0.05)
-        defer { NSEvent.stopPeriodicEvents() }
+        var periodicStarted = false
         var lastWindowPoint = event.locationInWindow
+        var lastProcessedPoint = NSPoint(x: CGFloat.infinity, y: CGFloat.infinity)
+        defer {
+            if periodicStarted { NSEvent.stopPeriodicEvents() }
+        }
 
         while true {
             guard let next = window.nextEvent(matching: [.leftMouseDragged, .leftMouseUp, .periodic]) else { break }
             if next.type == .leftMouseUp {
-                let resolution = dragController.handleDrag?(next.locationInWindow, .ended, self) ?? .textLocal
-                if resolution == .textLocal {
-                    setSelectedRange(selectedRange(), affinity: .downstream, stillSelecting: false)
+                if began {
+                    let resolution = dragController.handleDrag?(next.locationInWindow, .ended, self) ?? .textLocal
+                    if resolution == .textLocal {
+                        setSelectedRange(selectedRange(), affinity: .downstream, stillSelecting: false)
+                    }
                 }
                 break
             }
             if next.type == .leftMouseDragged {
                 lastWindowPoint = next.locationInWindow
             }
+            if !began {
+                let dx = abs(lastWindowPoint.x - event.locationInWindow.x)
+                let dy = abs(lastWindowPoint.y - event.locationInWindow.y)
+                guard dx > 2 || dy > 2 else { continue }
+                began = true
+                _ = dragController.handleDrag?(event.locationInWindow, .began, self)
+            }
+            // A motionless pointer produces no new geometry — only escalated
+            // drags keep processing (edge autoscroll must keep stepping).
+            if lastWindowPoint == lastProcessedPoint, !escalated { continue }
+            lastProcessedPoint = lastWindowPoint
+
             let resolution = dragController.handleDrag?(lastWindowPoint, .changed, self) ?? .textLocal
             if resolution == .escalated {
                 if !escalated {
@@ -724,6 +795,12 @@ final class CosmoTextView: NSTextView {
                     // Whole-block selection owns the gesture — collapse the
                     // partial text selection (Notion behavior).
                     setSelectedRange(NSRange(location: anchor, length: 0))
+                    // Periodic ticks exist solely for edge autoscroll while
+                    // an escalated drag hovers near the viewport edges.
+                    if !periodicStarted {
+                        periodicStarted = true
+                        NSEvent.startPeriodicEvents(afterDelay: 0.1, withPeriod: 0.05)
+                    }
                 }
                 autoscrollAncestorScrollView(towardWindowPoint: lastWindowPoint)
                 continue
@@ -773,6 +850,9 @@ final class CosmoTextView: NSTextView {
     fileprivate func checklistGlyphHit(at point: NSPoint) -> Int? {
         guard isEditable, onToggleChecklistItem != nil,
               let layoutManager, let textContainer else { return nil }
+        // Block rows know their kind — non-checklist rows skip the glyph
+        // layout query on every click, mouse-move, and cursor update.
+        if blockRowMode, rowBlockKind != .checklist { return nil }
         let nsText = string as NSString
         guard nsText.length > 0 else { return nil }
 
@@ -803,6 +883,9 @@ final class CosmoTextView: NSTextView {
     /// reveal the resize handles. Nil for any other click.
     fileprivate func imageAttachmentHit(at point: NSPoint) -> NSRange? {
         guard isEditable, let layoutManager, let textContainer, let textStorage else { return nil }
+        // No attachments ⇒ no hit — skips the glyph/attribute queries on the
+        // per-click path for ordinary text rows.
+        guard textStorage.containsAttachments else { return nil }
         let nsText = string as NSString
         guard nsText.length > 0 else { return nil }
 
@@ -1036,6 +1119,10 @@ final class CosmoTextView: NSTextView {
 
     override func resetCursorRects() {
         super.resetCursorRects()
+        // Rows without disclosure chrome have no custom cursor rects — skip
+        // the forced layout + full line walk (this is scheduled by every
+        // invalidateCursorRects, i.e. per keystroke on the active row).
+        if blockRowMode, !rowHeadingIsCollapsible, !rendersElementChrome { return }
         guard let storage = textStorage,
               storage.length > 0,
               let layoutManager,
@@ -1123,6 +1210,10 @@ final class CosmoTextView: NSTextView {
     }
 
     private func drawHeadingDecorations(in dirtyRect: NSRect) {
+        // No disclosure chrome ⇒ nothing to draw — skips the line walk on
+        // every draw of every non-collapsible row (the active row redraws
+        // per keystroke).
+        if blockRowMode, !rowHeadingIsCollapsible { return }
         guard let storage = textStorage,
               storage.length > 0,
               let layoutManager,
@@ -1171,6 +1262,9 @@ final class CosmoTextView: NSTextView {
     }
 
     private func headingHitTest(at point: NSPoint) -> HeadingHit? {
+        // Block rows know their kind up front — skip the forced layout +
+        // full line walk unless this row actually renders a disclosure.
+        if blockRowMode && !rowHeadingIsCollapsible { return nil }
         guard let storage = textStorage,
               storage.length > 0,
               let layoutManager,
@@ -1666,7 +1760,6 @@ private func viewContentSnapshot(_ textView: NSTextView) -> NSAttributedString {
 struct TextKitEditorRepresentable: NSViewRepresentable {
     @Binding var attributedText: NSAttributedString
     @Binding var plainText: String
-    @Binding var cursorPosition: Int
     @Binding var shouldRefocus: Bool
 
     var fontSize: CGFloat = 16
@@ -1728,6 +1821,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     /// Direct structured callback for edits that change block topology and need
     /// SwiftUI block views to update immediately.
     var onStructuredDocumentChange: ((RichDocument, String) -> Void)?
+    /// Fired after this coordinator writes the attributed buffer into the
+    /// (box-backed) binding — the host parses the document then.
+    var onContentCommitted: (() -> Void)?
     /// Block-row mode: Return splits the block (boundary command) instead of
     /// inserting a newline into this text view.
     var splitsOnReturn: Bool = false
@@ -1787,6 +1883,8 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         var scrollsInternally: Bool
         var splitsOnReturn: Bool
         var rowBlockID: UUID?
+        var rowBlockKind: RichBlockKind?
+        var rowHeadingIsCollapsible: Bool
         var dragControllerID: ObjectIdentifier?
     }
 
@@ -1820,6 +1918,8 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             scrollsInternally: scrollsInternally,
             splitsOnReturn: splitsOnReturn,
             rowBlockID: rowBlockID,
+            rowBlockKind: rowBlockKind,
+            rowHeadingIsCollapsible: rowHeadingIsCollapsible,
             dragControllerID: dragSelectionController.map(ObjectIdentifier.init)
         )
     }
@@ -1902,8 +2002,15 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         // the document (the classic merge-corruption bug).
         let hasFreshExternalContent = context.coordinator.lastAppliedContentToken != externalContentToken
         guard (!context.coordinator.isUpdatingFromTextView && !isFirstResponder) || hasFreshExternalContent else {
-            applyStorageOverrides(textView.textStorage)
-            context.coordinator.lastStorageOverrideSignature = storageOverrideSignature
+            // Stamp only when an edit may have introduced un-overridden runs
+            // (paste heal) or the override inputs changed. Unconditional, this
+            // ran two full-range attribute scans on the ACTIVE editor for
+            // every update — O(document) per keystroke in continuous editors.
+            if context.coordinator.viewContentDirty
+                || context.coordinator.lastStorageOverrideSignature != storageOverrideSignature {
+                applyStorageOverrides(textView.textStorage)
+                context.coordinator.lastStorageOverrideSignature = storageOverrideSignature
+            }
             context.coordinator.applyPolishHighlights(to: textView)
             context.coordinator.applyFocusBand(to: textView)
             if shouldRefocus {
@@ -1948,10 +2055,21 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 // per-view undo stack so a later ⌘Z can't message a freed undo target.
                 replaceStorageDroppingUndo(textView, with: attributedText)
                 storageWasReplaced = true
+                // The view now mirrors the binding — nothing left to flush.
+                context.coordinator.viewContentDirty = false
                 applyStorageOverrides(textView.textStorage)
-                let safeLocation = min(selectedRange.location, textView.string.count)
-                let safeLength = min(selectedRange.length, textView.string.count - safeLocation)
-                textView.setSelectedRange(NSRange(location: safeLocation, length: safeLength))
+                // Skip the selection restore when a caret request is about to
+                // place the caret anyway (merge seam, split landing) — the
+                // restore fired a full extra selection-change fan-out only
+                // for placeCaretWhenReady to move the caret again one tick
+                // later.
+                let caretRequestPending = caretRequest != nil
+                    && caretRequest?.token != context.coordinator.lastAppliedCaretToken
+                if !caretRequestPending {
+                    let safeLocation = min(selectedRange.location, textView.string.count)
+                    let safeLength = min(selectedRange.length, textView.string.count - safeLocation)
+                    textView.setSelectedRange(NSRange(location: safeLocation, length: safeLength))
+                }
                 context.coordinator.normalizeSingleLineViewport(for: textView)
                 context.coordinator.notifyContentHeightChange(for: textView)
             }
@@ -2024,14 +2142,22 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             // Skipped while awaiting external content: after a split/merge the
             // text view is the stale side, and flushing it here would write
             // pre-split text back over the rebuilt block (duplication bug).
+            // Also skipped when the view is CLEAN (no edits since the last
+            // sync): the flush is only there to rescue keystrokes inside the
+            // 50ms deferral window, and running it on every blur re-parsed
+            // untouched rows synchronously inside mouseDown.
             if let coordinator, let tv = coordinator.textViewReference,
-               !coordinator.awaitingExternalContent {
+               !coordinator.awaitingExternalContent,
+               coordinator.viewContentDirty {
                 coordinator.deferredSyncWorkItem?.cancel()
                 let flushed = viewContentSnapshot(tv)
                 coordinator.parent.attributedText = flushed
                 // Binding now mirrors the view — no compare/replace needed.
                 coordinator.lastReconciledBindingText = flushed
                 coordinator.isUpdatingFromTextView = false
+                coordinator.viewContentDirty = false
+                // Box-backed binding: no onChange fires — parse the flush.
+                coordinator.parent.onContentCommitted?()
             }
             coordinator?.parent.onDeactivate?()
         }
@@ -2039,6 +2165,10 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         textView.blockRowMode = splitsOnReturn
         textView.blockDragSelectionController = splitsOnReturn ? dragSelectionController : nil
         textView.rowBlockID = rowBlockID
+        // Hit-test gates: these are in EditorConfigSignature, so a kind or
+        // collapsibility change re-runs this config and reaches the view.
+        textView.rowBlockKind = rowBlockKind
+        textView.rowHeadingIsCollapsible = rowHeadingIsCollapsible
         textView.onBlockPaste = { [weak coordinator = context.coordinator] pastedText in
             guard let coordinator, let textView = coordinator.textViewReference else { return false }
             return coordinator.performBlockPaste(pastedText, in: textView)
@@ -2151,7 +2281,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     /// the typing attributes for the row's kind so the first character is
     /// styled correctly AND round-trips through the serializer with the
     /// right kind (an empty heading typed with plain attributes parses back
-    /// as a paragraph). Mirrors RichDocumentSerializer's heading styling.
+    /// as a paragraph). GUARD-TWIN: this is the FOURTH copy of the heading
+    /// ladder — RichDocumentSerializer.blockFont, applyHeading (below), and
+    /// BlockStaticRowPlaceholder.editorFont must all change together.
     func seedTypingAttributesForEmptyRow(in textView: CosmoTextView) {
         guard let level = rowBlockKind?.headingLevelInt else {
             textView.typingAttributes = defaultTypingAttributes()
@@ -2161,13 +2293,13 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         let weight: NSFont.Weight
         switch level {
         case 1:
-            size = max(32, fontSize + 16)
-            weight = .bold
+            size = min(34, (fontSize * 1.85).rounded())
+            weight = .semibold
         case 2:
-            size = max(24, fontSize + 8)
+            size = (fontSize * 1.45).rounded()
             weight = .semibold
         default:
-            size = max(20, fontSize + 4)
+            size = (fontSize * 1.20).rounded()
             weight = .medium
         }
         let paragraph = NSMutableParagraphStyle()
@@ -2263,7 +2395,19 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         /// UTF-16 offset of the "/" that opened the slash menu. Tracked like
         /// mentionStartIndex so the query filters live and the trigger can be
         /// removed by exact range on commit (never by guessing at the last "/").
-        private var slashStartIndex: Int?
+        private var slashStartIndex: Int? {
+            didSet {
+                // The anchor is a function of the "/" position — any session
+                // change (open, close, re-open elsewhere) invalidates it.
+                if slashStartIndex != oldValue { slashSessionAnchor = nil }
+            }
+        }
+        /// Cached menu anchor for the live slash session. `firstRect(for:)`
+        /// forces TextKit layout plus a screen-coordinate round trip, and the
+        /// "/" never moves while the session is open — computing it per query
+        /// keystroke was pure waste. Row-local coordinates, so scrolling
+        /// can't stale it (the publisher re-adds the row's frame each time).
+        private var slashSessionAnchor: CGPoint?
         private var isInHeadingMode = false
 
         private enum ActiveBlockMode {
@@ -2277,6 +2421,12 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         private var hasAppliedHighlights = false
         /// Guards against updateNSView round-trip when change originated from user typing
         var isUpdatingFromTextView = false
+        /// Whether the text view holds edits that have not yet reached the
+        /// attributedText binding. Gates the resign-first-responder flush:
+        /// clicking OUT of an untouched row used to write the storage back
+        /// anyway (storage carries override stamps, so it never compares
+        /// equal), re-parsing the row synchronously inside mouseDown.
+        var viewContentDirty = false
         /// Guards against delegate callbacks writing bindings during SwiftUI's layout pass
         var isUpdatingFromSwiftUI = false
         /// Guards structural edits that call didChangeText only for TextKit/undo
@@ -2680,7 +2830,6 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             textView.setSelectedRange(NSRange(location: headingRange.location, length: 0))
             scrollRangeIntoAncestorViewport(headingRange, in: textView)
             textView.showFindIndicator(for: headingRange)
-            parent.cursorPosition = headingRange.location
         }
 
         // MARK: - Shortcut Delegate
@@ -2988,7 +3137,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             // during view update" and layout thrashing.
             guard !isUpdatingFromSwiftUI else { return }
 
-            parent.cursorPosition = selectedRange.location
+            // No cursor-position binding write here: it was write-only state
+            // on RichTextEditor, costing a full body + updateNSView pass per
+            // caret move (every keystroke AND every click).
             applyFocusBand(to: textView)
             updateImageResizeOverlay(in: textView)
 
@@ -3018,7 +3169,11 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 activeBlockMode = .bulletList
             } else if lineText.hasPrefix("☐ ") || lineText.hasPrefix("☑ ") {
                 activeBlockMode = .checklist
-            } else if lineText.range(of: #"^\d+\.\s"#, options: .regularExpression) != nil {
+            } else if lineText.first?.isNumber == true,
+                      lineText.range(of: #"^\d+\.\s"#, options: .regularExpression) != nil {
+                // Digit guard first: String.range(of:.regularExpression)
+                // compiles a fresh NSRegularExpression per call, and this
+                // runs on EVERY selection change (every keystroke + click).
                 activeBlockMode = .numberedList
             } else {
                 activeBlockMode = .none
@@ -3679,7 +3834,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                     dismissMenus()
                     return
                 }
-                parent.onSlashCommand?(caretPosition(for: startIndex, in: textView), query)
+                let anchor = slashSessionAnchor ?? caretPosition(for: startIndex, in: textView)
+                slashSessionAnchor = anchor
+                parent.onSlashCommand?(anchor, query)
                 return
             }
 
@@ -3964,9 +4121,12 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                     )
                     updatedLine.enumerateAttribute(.foregroundColor, in: contentRange, options: []) { value, range, _ in
                         guard let color = value as? NSColor else { return }
+                        // GUARD-TWIN of the serializer's checked-content dim
+                        // (0.55) — the live click must render the same state
+                        // the same way a reload does.
                         updatedLine.addAttribute(
                             .foregroundColor,
-                            value: color.withAlphaComponent(0.45),
+                            value: color.withAlphaComponent(0.55),
                             range: range
                         )
                     }
@@ -4350,13 +4510,16 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         private func applyHeading(level: Int, collapsible: Bool, textView: NSTextView) {
             let font: NSFont
 
+            // GUARD-TWIN of RichDocumentSerializer.blockFont's heading ladder
+            // (with seedTypingAttributesForEmptyRow and
+            // BlockStaticRowPlaceholder.editorFont) — change all FOUR together.
             switch level {
             case 1:
-                font = EditorFontPolicy.font(ofSize: max(32, parent.fontSize + 16), weight: .bold, design: parent.fontDesign)
+                font = EditorFontPolicy.font(ofSize: min(34, (parent.fontSize * 1.85).rounded()), weight: .semibold, design: parent.fontDesign)
             case 2:
-                font = EditorFontPolicy.font(ofSize: max(24, parent.fontSize + 8), weight: .semibold, design: parent.fontDesign)
+                font = EditorFontPolicy.font(ofSize: (parent.fontSize * 1.45).rounded(), weight: .semibold, design: parent.fontDesign)
             default:
-                font = EditorFontPolicy.font(ofSize: max(20, parent.fontSize + 4), weight: .medium, design: parent.fontDesign)
+                font = EditorFontPolicy.font(ofSize: (parent.fontSize * 1.20).rounded(), weight: .medium, design: parent.fontDesign)
             }
 
             let lineRange = currentLineRange(in: textView)
@@ -5197,9 +5360,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
         private func syncBindings(from textView: NSTextView) {
             // Lightweight per-keystroke sync: plain text + cursor position only
+            viewContentDirty = true
             let currentString = plainTextForBinding(from: textView)
             parent.plainText = currentString
-            parent.cursorPosition = textView.selectedRange().location
             // Fire direct callback immediately — SwiftUI's @Binding→onChange chain
             // can coalesce/skip when mutations come from AppKit outside the update cycle.
             parent.onPlainTextDidChange?(currentString)
@@ -5226,11 +5389,25 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 self.parent.attributedText = synced
                 // Binding now mirrors the view — no compare/replace needed.
                 self.lastReconciledBindingText = synced
+                self.viewContentDirty = false
                 self.notifyContentHeightChange(for: textView)
+                // Box-backed binding: no onChange fires — tell the host to
+                // parse the committed buffer into the document.
+                self.parent.onContentCommitted?()
                 DispatchQueue.main.async { self.isUpdatingFromTextView = false }
             }
             deferredSyncWorkItem = workItem
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: workItem)
+            // Block rows coalesce typing commits at ~250ms of idle: each
+            // commit runs the whole-document pipeline (parse → binding →
+            // list re-diff → stack re-layout), so committing per keystroke
+            // burned ~a frame of work per character. Everything that needs
+            // the text sooner reads the LIVE view (boundary ops carry
+            // livePlainText; resign/disappear flush; slash reads storage),
+            // and the plain mirror + onPlainTextDidChange stay per-keystroke.
+            // Continuous editors keep the tighter 50ms (their consumers pull
+            // from the document more aggressively).
+            let commitDelay = parent.splitsOnReturn ? 0.25 : 0.05
+            DispatchQueue.main.asyncAfter(deadline: .now() + commitDelay, execute: workItem)
         }
 
         private func syncStructuralEditBindings(from textView: NSTextView) {
@@ -5248,7 +5425,6 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             textView.window?.invalidateCursorRects(for: textView)
 
             parent.plainText = currentString
-            parent.cursorPosition = textView.selectedRange().location
             parent.onPlainTextDidChange?(currentString)
 
             let currentDocument = RichDocumentSerializer.document(from: currentAttributedText)
@@ -5256,6 +5432,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             parent.attributedText = currentAttributedText
             // Binding now mirrors the view — no compare/replace needed.
             lastReconciledBindingText = currentAttributedText
+            viewContentDirty = false
 
             DispatchQueue.main.async { [weak self] in
                 self?.isUpdatingFromTextView = false
@@ -5267,6 +5444,12 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             attributedText providedAttributedText: NSAttributedString? = nil
         ) -> String {
             guard parent.titleConfiguration == nil else {
+                return textView.string
+            }
+            // Hidden content (collapsed headings/elements) can only exist in
+            // rows that render disclosure chrome — plain block rows skip the
+            // full-range attribute enumeration on every keystroke.
+            if parent.splitsOnReturn, !parent.rowHeadingIsCollapsible, !parent.rendersElementChrome {
                 return textView.string
             }
             let attributedText = providedAttributedText ?? textView.attributedString()
@@ -5449,6 +5632,32 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             if !parent.scrollsInternally,
                let scrollView = textView.enclosingScrollView as? CosmoScrollView {
                 let targetWidth = max(scrollView.contentSize.width, 1)
+                // Unmeasured mount (a freshly split row's scroll view is born
+                // at zero width): measuring at ~1pt word-wraps the whole
+                // block one word per line and seeds a PAGE-TALL intrinsic —
+                // the "Return leaves a big gap" bug, previously band-aided
+                // after the fact by scheduleIntrinsicHeightReconcile. Seed a
+                // single provisional line instead; handleFrameChange
+                // re-measures at the real width one layout tick later.
+                if !parent.singleLine, targetWidth <= 2 {
+                    if scrollView.intrinsicHeight == nil {
+                        let font = textView.font ?? NSFont.systemFont(ofSize: parent.fontSize)
+                        let provisional = ceil(
+                            NSLayoutManager().defaultLineHeight(for: font)
+                                + textView.textContainerInset.height * 2
+                        )
+                        scrollView.intrinsicHeight = provisional
+                        lastReportedHeight = provisional
+                        if isUpdatingFromSwiftUI {
+                            DispatchQueue.main.async {
+                                scrollView.invalidateIntrinsicContentSize()
+                            }
+                        } else {
+                            scrollView.invalidateIntrinsicContentSize()
+                        }
+                    }
+                    return
+                }
                 // For singleLine editors, override container width to prevent wrapping.
                 // For multi-line editors, widthTracksTextView handles the container width
                 // automatically — do NOT set it manually (the double-change breaks layout).

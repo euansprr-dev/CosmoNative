@@ -10,11 +10,73 @@ struct BlockCaretRequest: Equatable {
     var token: Int
 }
 
+/// Per-row focus signals. Row bodies read ONLY their own instance, so a focus
+/// change invalidates the two affected rows instead of every mounted row —
+/// Observation tracks whole properties, and a `focusedBlockID` read from every
+/// row body made each click/split/merge re-render O(rows) text editors.
+/// Instances are created on demand and NEVER removed: a mounted row's tracked
+/// dependency is on the instance, so replacing it would silently orphan the
+/// row from future focus writes.
+@MainActor
+@Observable
+final class BlockRowFocusState {
+    var isFocused = false
+    /// Whether commands with no explicit target route to this row (it is
+    /// focused, or it is the first registered row while nothing is focused).
+    var isCommandTarget = false
+    /// One-shot caret placement narrowed to this row.
+    var caretRequest: BlockCaretRequest?
+}
+
 @MainActor
 @Observable
 final class BlockFocusCoordinator {
     private(set) var focusedBlockID: UUID?
-    private(set) var caretRequest: BlockCaretRequest?
+    /// Whether ANY block is focused. Tracked separately so row chrome that
+    /// only cares about the nil transition (paragraph-focus dimming) doesn't
+    /// re-render on every focus MOVE — that signal rides the per-row states.
+    private(set) var hasFocusedBlock = false
+    @ObservationIgnored private(set) var caretRequest: BlockCaretRequest?
+    /// Per-row focus signals keyed by block ID — see `BlockRowFocusState`.
+    @ObservationIgnored private var rowStates: [UUID: BlockRowFocusState] = [:]
+    /// The row currently flagged `isCommandTarget` (focused ?? first registered).
+    @ObservationIgnored private var commandTargetBlockID: UUID?
+    /// Self-authored content ledger: the last block value each ROW ITSELF
+    /// wrote into the document (per-keystroke content syncs). The row
+    /// Equatable gates consult it so a row's own write echoing back through
+    /// the whole-document binding does not re-render that row — its text
+    /// view is already showing the content it just produced. External writes
+    /// never pass through here, so they always fail the gate and re-render.
+    @ObservationIgnored private var selfAuthoredBlocks: [UUID: RichBlock] = [:]
+
+    func noteSelfAuthoredBlock(_ block: RichBlock) {
+        selfAuthoredBlocks[block.id] = block
+    }
+
+    func selfAuthoredBlock(for blockID: UUID) -> RichBlock? {
+        selfAuthoredBlocks[blockID]
+    }
+
+    /// Whether a block-value change between two row snapshots is the row's
+    /// own per-keystroke write echoing back through the document binding —
+    /// safe to skip re-rendering (the row's text view already shows it).
+    /// Deliberately conservative: any change of kind, heading, children, or
+    /// emptiness re-renders (those drive row chrome, typing-attribute seeds,
+    /// and placeholder visibility), as does anything not EXACTLY equal to
+    /// the last self-written value (i.e. every external write).
+    func isSelfAuthoredEcho(previous: RichBlock, next: RichBlock) -> Bool {
+        guard previous.id == next.id,
+              previous.kind == next.kind,
+              next.kind != .element,
+              previous.heading == next.heading,
+              previous.children.isEmpty, next.children.isEmpty,
+              previous.plainInlineText.isEmpty == next.plainInlineText.isEmpty,
+              let written = selfAuthoredBlocks[next.id],
+              written == next else {
+            return false
+        }
+        return true
+    }
     /// Blocks that currently have a live editor row (membership). Maintained by
     /// register/unregister on row appear/disappear. Order here reflects AppKit
     /// onAppear timing, NOT document order — do not navigate by it directly.
@@ -23,20 +85,32 @@ final class BlockFocusCoordinator {
     /// made each registration invalidate every mounted row (quadratic open).
     @ObservationIgnored private var registeredBlockIDs: [UUID] = []
     /// The first registered row — the command-routing default while nothing is
-    /// focused. Tracked separately from `registeredBlockIDs` so row bodies
-    /// depend on a value that changes rarely (first mount, first-row delete)
-    /// instead of on every registration.
-    private(set) var firstRegisteredBlockID: UUID?
+    /// focused. Observation-ignored: rows learn about command routing through
+    /// their own `BlockRowFocusState.isCommandTarget`, so this changing (first
+    /// mount, first-row delete) touches at most two row states instead of
+    /// invalidating every row body.
+    @ObservationIgnored private(set) var firstRegisteredBlockID: UUID?
     /// The document's visual (top-to-bottom) block order, supplied by the block
     /// list. Keyboard navigation walks THIS order so ⬆/⬇ always match what the
     /// user sees, regardless of the order rows happened to mount in.
     @ObservationIgnored private var navigationOrder: [UUID] = []
+
+    /// The per-row focus signal for `blockID`. Stable identity for the
+    /// coordinator's lifetime — row bodies read their own instance so focus
+    /// writes invalidate only the rows they concern.
+    func rowState(for blockID: UUID) -> BlockRowFocusState {
+        if let state = rowStates[blockID] { return state }
+        let state = BlockRowFocusState()
+        rowStates[blockID] = state
+        return state
+    }
 
     func register(_ blockID: UUID?) {
         guard let blockID, !registeredBlockIDs.contains(blockID) else { return }
         registeredBlockIDs.append(blockID)
         if firstRegisteredBlockID == nil {
             firstRegisteredBlockID = blockID
+            refreshCommandTarget()
         }
     }
 
@@ -47,7 +121,45 @@ final class BlockFocusCoordinator {
             firstRegisteredBlockID = registeredBlockIDs.first
         }
         if focusedBlockID == blockID {
-            focusedBlockID = nil
+            setFocusedBlockID(nil)
+        } else {
+            refreshCommandTarget()
+        }
+    }
+
+    /// The one writer of `focusedBlockID` — keeps the per-row `isFocused`
+    /// flags and the command-target flag in lockstep with the tracked value.
+    private func setFocusedBlockID(_ newValue: UUID?) {
+        guard focusedBlockID != newValue else { return }
+        let previous = focusedBlockID
+        focusedBlockID = newValue
+        if hasFocusedBlock != (newValue != nil) {
+            hasFocusedBlock = (newValue != nil)
+        }
+        if let previous, let state = rowStates[previous], state.isFocused {
+            state.isFocused = false
+        }
+        if let newValue {
+            let state = rowState(for: newValue)
+            if !state.isFocused {
+                state.isFocused = true
+            }
+        }
+        refreshCommandTarget()
+    }
+
+    private func refreshCommandTarget() {
+        let target = focusedBlockID ?? firstRegisteredBlockID
+        guard target != commandTargetBlockID else { return }
+        if let previous = commandTargetBlockID, let state = rowStates[previous], state.isCommandTarget {
+            state.isCommandTarget = false
+        }
+        commandTargetBlockID = target
+        if let target {
+            let state = rowState(for: target)
+            if !state.isCommandTarget {
+                state.isCommandTarget = true
+            }
         }
     }
 
@@ -63,11 +175,9 @@ final class BlockFocusCoordinator {
     func focus(_ blockID: UUID?) {
         guard let blockID else { return }
         register(blockID)
-        // Same-value writes still notify Observation — skip them so the
-        // per-keystroke focus reaffirmation doesn't re-render every row.
-        if focusedBlockID != blockID {
-            focusedBlockID = blockID
-        }
+        // setFocusedBlockID dedups same-value writes so the per-keystroke
+        // focus reaffirmation doesn't notify Observation.
+        setFocusedBlockID(blockID)
     }
 
     /// Focus with an explicit caret placement (used after structural edits).
@@ -80,13 +190,18 @@ final class BlockFocusCoordinator {
             utf16OffsetFromEnd: caretOffsetFromEnd,
             token: (caretRequest?.token ?? 0) + 1
         )
+        // Only the target row observes its own request — placing the caret
+        // after a split must not re-render every other mounted row.
+        rowState(for: blockID).caretRequest = caretRequest
     }
 
     func commandTargetID(for blockID: UUID?, baseTargetID: String?) -> String? {
         guard let baseTargetID, !baseTargetID.isEmpty else { return nil }
         guard let blockID else { return baseTargetID }
 
-        if focusedBlockID == blockID || (focusedBlockID == nil && firstRegisteredBlockID == blockID) {
+        // Reads the per-row flag so a body calling this depends on its own
+        // row state, not on the coordinator-wide focus properties.
+        if rowState(for: blockID).isCommandTarget {
             return baseTargetID
         }
 
@@ -109,7 +224,7 @@ final class BlockFocusCoordinator {
 
     func focusOutOf(elementID: UUID?) {
         if focusedBlockID == elementID {
-            focusedBlockID = nil
+            setFocusedBlockID(nil)
         }
     }
 
@@ -123,7 +238,7 @@ final class BlockFocusCoordinator {
 
         let nextIndex = currentIndex + offset
         guard order.indices.contains(nextIndex) else { return false }
-        self.focusedBlockID = order[nextIndex]
+        setFocusedBlockID(order[nextIndex])
         return true
     }
 

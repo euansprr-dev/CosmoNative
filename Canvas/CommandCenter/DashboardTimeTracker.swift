@@ -27,12 +27,20 @@ struct DashboardTimeTracker: View {
     /// straddle the horizontal (stroke centers on the path).
     private static var arcBandHeight: CGFloat { arcDiameter / 2 + arcStroke }
 
+    // Left anchor (gauge) → quiet middle (label, dots, streak) → terminal
+    // right anchor (the one primary action): the same left/right tension the
+    // masthead above already uses. The action at the group's trailing edge
+    // turns the hero row's dead right half into structure — an interval
+    // between two anchors, not a leak.
     var body: some View {
         HStack(alignment: .center, spacing: DS.space24) {
             gauge
             rightColumn
+                .fixedSize(horizontal: true, vertical: false)
+            Spacer(minLength: DS.space24)
+            actionRow
         }
-        .padding(.horizontal, DS.space16)
+        .padding(.horizontal, DS.space12)
         .padding(.vertical, DS.space12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .animation(ProMotionSprings.focusTransition, value: sessionEngine.activeSession != nil)
@@ -77,10 +85,13 @@ struct DashboardTimeTracker: View {
                 // DS.border, not borderSubtle: this gauge sits directly on the
                 // page (the iPhone's sits in a white container) — the subtle
                 // rung disappears against DS.bg.
+                // Warm track (sepia, the page's own neutral family), vivid
+                // sweep: at a 9pt stroke the base accent crushes toward ink —
+                // the hero arc is where the brand hue must actually read.
                 gaugeCircle(trim: Self.arcSpan)
-                    .stroke(DS.border, style: StrokeStyle(lineWidth: Self.arcStroke, lineCap: .round))
+                    .stroke(DS.sepiaBorder, style: StrokeStyle(lineWidth: Self.arcStroke, lineCap: .round))
                 gaugeCircle(trim: Self.arcSpan * arcProgress)
-                    .stroke(DS.accent, style: StrokeStyle(lineWidth: Self.arcStroke, lineCap: .round))
+                    .stroke(DS.accentVivid, style: StrokeStyle(lineWidth: Self.arcStroke, lineCap: .round))
                     .animation(reduceMotion ? nil : ProMotionSprings.gentle, value: arcProgress)
 
                 centerContent
@@ -119,9 +130,10 @@ struct DashboardTimeTracker: View {
                 }
                 // At zero the numeral recedes to muted — the morning must
                 // greet as an invitation, not a deficit scoreboard.
-                Text(formattedLiveTotal)
-                    .font(DS.gaugeTitleSerif)
-                    .monospacedDigit()
+                // Quantity-unit typesetting: digits carry the mass, the "h"/
+                // "m" step down to unit scale. Tabular figures only while the
+                // clock ticks — on a static "2h 5m" they just loosen the fit.
+                gaugeFigure
                     .foregroundStyle(liveTotalSeconds == 0 ? DS.textMuted : DS.text)
                     .contentTransition(.numericText())
                 if liveGoalMet {
@@ -143,7 +155,7 @@ struct DashboardTimeTracker: View {
                     Image(systemName: "chevron.right")
                         .font(DS.caption2.weight(.semibold))
                 }
-                .font(DS.caption)
+                .font(DS.subheadline)
                 .foregroundStyle(DS.textSecondary)
                 .contentShape(.rect)
             }
@@ -158,6 +170,29 @@ struct DashboardTimeTracker: View {
         .allowsTightening(true)
         .frame(maxWidth: Self.arcDiameter - 68)
         .offset(y: -Self.arcDiameter * 0.15)
+    }
+
+    /// The gauge figure as ranked runs: digit clusters at display scale,
+    /// unit letters ("h", "m") at unit scale, joined by thin spaces. While a
+    /// session runs the string is pure digits+colons and stays one run with
+    /// tabular figures (the Books / Timer convention).
+    private var gaugeFigure: Text {
+        if sessionEngine.isTimerRunning {
+            return Text(formattedLiveTotal)
+                .font(DS.gaugeTitleSerif)
+                .monospacedDigit()
+        }
+        var result: Text? = nil
+        for cluster in formattedLiveTotal.split(separator: " ") {
+            let digits = cluster.prefix { $0.isNumber || $0 == ":" }
+            let unit = cluster.dropFirst(digits.count)
+            let digitsText = Text(String(digits)).font(DS.gaugeTitleSerif)
+            let piece: Text = unit.isEmpty
+                ? digitsText
+                : Text("\(digitsText)\(Text(String(unit)).font(DS.gaugeUnitSerif))")
+            result = result.map { prev in Text("\(prev)\u{2009}\(piece)") } ?? piece
+        }
+        return result ?? Text(verbatim: "")
     }
 
     private var goalLabel: String {
@@ -184,23 +219,23 @@ struct DashboardTimeTracker: View {
 
     private var rightColumn: some View {
         VStack(alignment: .leading, spacing: DS.space10) {
-            // "Deep Work", not "Today's Deep Work" — the page title already
-            // says Today; a section label must never echo it.
-            Text("Deep Work")
+            // "Deep work", not "Deep Work": small caps leave capitals at full
+            // height, so a second cap mid-label breaks the run's rhythm. And
+            // never "Today's deep work" — a label must not echo the page title.
+            Text("Deep work")
                 .font(DS.smallCaps)
-                .foregroundStyle(DS.giltMuted)
+                .tracking(DS.smallCapsTracking)
+                .foregroundStyle(DS.giltInk)
 
             HStack(spacing: DS.space8) {
                 weekDots
                 Text(streakLine)
-                    .font(DS.caption)
+                    .font(DS.subheadline)
+                    .monospacedDigit()
                     .foregroundStyle(DS.textMuted)
                     .contentTransition(.numericText())
             }
-
-            actionRow
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var weekDots: some View {
@@ -225,9 +260,11 @@ struct DashboardTimeTracker: View {
                 .clipShape(.circle)
                 .overlay {
                     if isToday && !met {
-                        Circle().stroke(DS.text.opacity(0.5), lineWidth: 1)
+                        Circle().strokeBorder(DS.text.opacity(0.5), lineWidth: 1)
                     } else if !met {
-                        Circle().stroke(DS.borderSubtle, lineWidth: 0.5)
+                        // Warm ring from the page's own ink family — the cool
+                        // borderSubtle is a UI-kit grey on a parchment hero.
+                        Circle().strokeBorder(DS.giltMuted.opacity(0.35), lineWidth: 0.5)
                     }
                 }
         }
@@ -273,21 +310,31 @@ struct DashboardTimeTracker: View {
             guard let task = focusCandidate else { return }
             viewModel.startFocusSession(for: task)
         } label: {
+            // The page's primary CTA speaks ABOVE the metadata band, never
+            // below it (it was 11pt — smaller than a task title). The soft
+            // color-matched glow is how a dark accent still reads as a hue
+            // instead of ink on a flat page.
             HStack(spacing: DS.space6) {
                 Image(systemName: "play.fill")
-                    .font(DS.caption2)
+                    .font(DS.caption)
+                // The page's primary action speaks at the TITLE rung (13),
+                // never below a task's own name.
                 Text(focusCandidate == nil ? "Select a task" : "Start focus")
-                    .font(DS.caption.weight(.semibold))
+                    .font(DS.callout.weight(.semibold))
             }
             .foregroundStyle(focusCandidate == nil ? DS.textSecondary : DS.textOnAccent)
-            .padding(.horizontal, DS.space12)
+            .padding(.horizontal, DS.space16)
             .padding(.vertical, DS.space8)
-            .background(focusCandidate == nil ? DS.glassInputFill : DS.accent, in: Capsule())
+            .background(focusCandidate == nil ? DS.glassInputFill : DS.accentVivid, in: Capsule())
             .overlay(
-                Capsule().stroke(
-                    focusCandidate == nil ? DS.glassBorder : DS.accent.opacity(0.25),
+                Capsule().strokeBorder(
+                    focusCandidate == nil ? DS.glassBorder : DS.accentVivid.opacity(0.25),
                     lineWidth: 0.5
                 )
+            )
+            .shadow(
+                color: focusCandidate == nil ? .clear : DS.accentGlow,
+                radius: 10, x: 0, y: 4
             )
             .scaleEffect(startHovered && focusCandidate != nil ? 1.02 : 1)
         }
@@ -332,6 +379,7 @@ struct DashboardTimeTracker: View {
                         .frame(width: 5, height: 5)
                     Text("\(Int(sessionEngine.focusScore))%")
                         .font(DS.caption2)
+                        .monospacedDigit()
                         .foregroundStyle(DS.textSecondary)
                 }
             }

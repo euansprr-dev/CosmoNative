@@ -46,6 +46,9 @@ struct SwipeLibraryControlBar: View {
 
     var body: some View {
         HStack(spacing: 8) {
+            // The capture verb, finally visible — every page that browses
+            // swipes can also make one. Leading: capture outranks arranging.
+            SwipeCaptureMenuButton()
             sortMenu
             displayModeToggle
             SwipeLibraryFiltersButton(

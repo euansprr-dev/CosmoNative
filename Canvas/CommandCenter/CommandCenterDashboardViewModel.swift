@@ -787,6 +787,11 @@ final class CommandCenterDashboardViewModel {
     /// Arrival cascade plays once per app session (view-local state reset on
     /// every remount and re-ran the entrance on each revisit).
     var hasPlayedArrivalCascade = false
+
+    /// The habit rail's ring sweep is an ARRIVAL, and you only arrive once —
+    /// @State on the panel reset every time the Habits/Reports tab switch
+    /// remounted it, replaying all five rings (a decorative loop).
+    var hasPlayedHabitRingSweep = false
     @ObservationIgnored private var hasLoadedAreas = false
     @ObservationIgnored private var hasLoadedAnytime = false
     @ObservationIgnored private var hasLoadedSomeday = false

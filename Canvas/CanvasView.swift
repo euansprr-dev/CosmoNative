@@ -134,6 +134,114 @@ enum CanvasImageDropController {
             }
         }
     }
+
+    /// First http(s) URL in the drop. File URLs are the image/portal path's
+    /// business and never count as web links here. Falls back to URL-shaped
+    /// plain text: a browser-pane drag arrives as text only (WebKit keeps
+    /// page-authored drag types in its private custom-pasteboard format).
+    static func firstWebURL(from providers: [NSItemProvider]) async -> String? {
+        for provider in providers {
+            guard provider.canLoadObject(ofClass: URL.self) else { continue }
+            let url: URL? = await withCheckedContinuation { continuation in
+                _ = provider.loadObject(ofClass: URL.self) { value, _ in
+                    continuation.resume(returning: value)
+                }
+            }
+            if let url, url.scheme?.hasPrefix("http") == true { return url.absoluteString }
+        }
+        for provider in providers {
+            guard provider.hasItemConformingToTypeIdentifier(UTType.text.identifier) else { continue }
+            let text: String? = await withCheckedContinuation { continuation in
+                _ = provider.loadObject(ofClass: NSString.self) { value, _ in
+                    continuation.resume(returning: value as? String)
+                }
+            }
+            if let text, let link = webLink(inDraggedText: text) { return link }
+        }
+        return nil
+    }
+
+    /// A text drop is a link ONLY when it is nothing but the link (the
+    /// text/uri-list shape: URL lines, `#` comments) — prose that merely
+    /// contains a URL is not a link drag.
+    nonisolated static func webLink(inDraggedText text: String) -> String? {
+        let candidates = text.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && !$0.hasPrefix("#") }
+        guard candidates.count == 1, let candidate = candidates.first else { return nil }
+        let lower = candidate.lowercased()
+        guard lower.hasPrefix("http://") || lower.hasPrefix("https://"),
+              !candidate.contains(where: \.isWhitespace) else { return nil }
+        return candidate
+    }
+
+    /// Whether the drop carries actual image content (registered image UTIs,
+    /// or a file URL pointing at an image) — without loading payload bytes.
+    static func carriesImagePayload(_ providers: [NSItemProvider]) async -> Bool {
+        if providers.contains(where: { provider in
+            provider.registeredTypeIdentifiers
+                .compactMap(UTType.init)
+                .contains { $0.conforms(to: .image) }
+        }) {
+            return true
+        }
+        for url in await fileURLs(from: providers) {
+            if let type = try? url.resourceValues(forKeys: [.contentTypeKey]).contentType,
+               type.conforms(to: .image) {
+                return true
+            }
+        }
+        return false
+    }
+}
+
+// TEMPORARY DEBUG — remove once browser-pane→canvas drag-out is verified.
+// NSLog is dead on this machine; print() goes nowhere in a Finder-launched
+// app. Appends to /tmp/cosmo-drop-debug.log (sandbox is off).
+enum CanvasDropDebugLog {
+    static func note(_ message: String) {
+        let line = "\(ISO8601DateFormatter().string(from: Date())) \(message)\n"
+        guard let data = line.data(using: .utf8) else { return }
+        let url = URL(fileURLWithPath: "/tmp/cosmo-drop-debug.log")
+        if let handle = try? FileHandle(forWritingTo: url) {
+            defer { try? handle.close() }
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: data)
+        } else {
+            try? data.write(to: url)
+        }
+    }
+}
+
+/// Decides what an external drop becomes, before any payload bytes load. Pure
+/// so the ladder is test-pinned: an Instagram tile drag carries BOTH the post
+/// permalink and its thumbnail image and must become a post swipe — while a
+/// random image dragged off a webpage (which also names its source URL) must
+/// KEEP landing as a plain image block.
+enum CanvasExternalDropRouter {
+    enum Decision: Equatable {
+        /// Route through the swipe front door; the returned atom's block
+        /// lands at the drop point.
+        case swipeCapture(url: String)
+        /// No usable web link — the existing image / file-portal pipeline.
+        case imageOrFile
+    }
+
+    nonisolated static func decision(webURL: String?, carriesImage: Bool) -> Decision {
+        guard let webURL else { return .imageOrFile }
+        switch SwipeIntakeRouter.resolveURL(webURL) {
+        case .postURL:
+            // A known-platform permalink IS the artifact; a thumbnail riding
+            // the same drag is just its preview.
+            return .swipeCapture(url: webURL)
+        case .pageFromURL:
+            // A bare link becomes a page swipe; an image drag that merely
+            // names where it came from stays an image drop.
+            return carriesImage ? .imageOrFile : .swipeCapture(url: webURL)
+        default:
+            return .imageOrFile
+        }
+    }
 }
 
 struct CanvasView: View {
@@ -294,15 +402,20 @@ struct CanvasView: View {
         viewportState.transform
     }
 
-    private func renderSnapshot(for blocks: [CanvasBlock]) -> CanvasRenderSnapshot {
-        let signpost = CanvasPerformanceInstrumentation.signposter.beginInterval("render-snapshot")
-        // During a resize session the preview geometries replace block frames,
-        // so fold the resize tick into the revision — the pipeline rebuilds
-        // its data snapshot per preview change but never falls back to the
-        // expensive full-signature path (which copies every metadata dict).
-        let blockRevision = clusterResizeSession == nil
+    /// Block revision with the cluster-resize preview tick folded in. During
+    /// a resize session the preview geometries replace block frames, so every
+    /// geometry consumer (render snapshot, connection lines) must rebuild per
+    /// preview change — but never fall back to the expensive full-signature
+    /// path (which copies every metadata dict).
+    private var geometryEffectiveBlockRevision: Int {
+        clusterResizeSession == nil
             ? spatialEngine.blocksDataRevision
             : spatialEngine.blocksDataRevision &+ (clusterResizeRevision &* 1_000_000_007)
+    }
+
+    private func renderSnapshot(for blocks: [CanvasBlock]) -> CanvasRenderSnapshot {
+        let signpost = CanvasPerformanceInstrumentation.signposter.beginInterval("render-snapshot")
+        let blockRevision = geometryEffectiveBlockRevision
         let snapshot = renderPipeline.snapshot(
             blocks: blocks,
             blockDataRevision: blockRevision,
@@ -355,18 +468,6 @@ struct CanvasView: View {
                 // prevent frame clipping at non-100% zoom). The reader hands
                 // them the live transform so only their bodies track it.
                 CanvasLiveTransformReader(viewportState: viewportState) { liveTransform in
-                    // Connection lines layer
-                    CanvasConnectionLinesLayer(
-                        blocks: currentRenderedBlocks,
-                        geometryInvalidationKey: CanvasConnectionGeometryInvalidationKey(
-                            blockDataRevision: spatialEngine.blocksDataRevision
-                        ),
-                        transform: liveTransform,
-                        interaction: interactionState,
-                        isActive: canvasIsActive,
-                        isLiveGesture: viewportState.isLiveGesture
-                    )
-
                     // Drawing elements layer
                     CanvasDrawingsLayer(
                         drawingState: drawingState,
@@ -379,10 +480,10 @@ struct CanvasView: View {
                         transform: liveTransform
                     )
                 }
-                // These layers render WORLD content (ink, connection lines) in
-                // screen space — they must exit/enter with the world fade. Left
-                // at full opacity, the outgoing space's drawings visibly hung
-                // over the incoming one until its own drawings loaded.
+                // These layers render WORLD content (ink) in screen space —
+                // they must exit/enter with the world fade. Left at full
+                // opacity, the outgoing space's drawings visibly hung over
+                // the incoming one until its own drawings loaded.
                 .opacity(canvasContentOpacity)
                 .allowsHitTesting(thinkspaceMode == .canvas)
 
@@ -416,7 +517,8 @@ struct CanvasView: View {
                         }
                 }
             }
-            // Accept blocks dragged out of cluster grid/list/board views and images from Finder/desktop/apps.
+            // Accept blocks dragged out of cluster grid/list/board views, images
+            // from Finder/desktop/apps, and web links dragged out of a browser pane.
             .onDrop(of: CanvasDropDelegate.supportedTypes, delegate: CanvasDropDelegate(
                 // Never place things on the canvas from an overlay mode — a
                 // drop released over the library must not fall through here.
@@ -425,8 +527,8 @@ struct CanvasView: View {
                 onClusterDrop: { [self] blockUUID, canvasPosition in
                     handleClusterToCanvasDrop(blockUUID: blockUUID, canvasPosition: canvasPosition)
                 },
-                onImageDrop: { [self] providers, canvasPosition in
-                    handleCanvasImageDrop(providers: providers, canvasPosition: canvasPosition)
+                onExternalDrop: { [self] providers, canvasPosition in
+                    handleCanvasExternalDrop(providers: providers, canvasPosition: canvasPosition)
                 }
             ))
             .overlay(alignment: .bottomTrailing) {
@@ -438,7 +540,8 @@ struct CanvasView: View {
                         transform: liveTransform,
                         blockCount: spatialEngine.blocks.count,
                         visibleBlockCount: snapshot.visibleBlockCount,
-                        activeDragLabel: interactionState.activeBlockDragId ?? draggingClusterId?.uuidString
+                        activeDragLabel: interactionState.activeBlockDragId ?? draggingClusterId?.uuidString,
+                        pipeline: renderPipeline
                     )
                 }
             }
@@ -972,6 +1075,22 @@ struct CanvasView: View {
             // (the action closures above are excluded from equality).
             .equatable()
 
+            // Knowledge connection lines — above zone fills, under every
+            // card. Blocks consumed by list/board/grid clusters render inside
+            // the cluster's own UI, not at their canvas positions, so they
+            // are excluded (their lines would point at empty canvas).
+            CanvasConnectionLinesLayer(
+                blocks: connectionLineBlocks(snapshot: snapshot),
+                geometryInvalidationKey: CanvasConnectionGeometryInvalidationKey(
+                    blockDataRevision: geometryEffectiveBlockRevision,
+                    clusterDataRevision: clusterEngine.userClustersDataRevision
+                ),
+                interaction: interactionState,
+                effectiveScale: viewportState.quantizedTransform.effectiveScale,
+                isActive: canvasIsActive,
+                isLiveGesture: viewportState.isLiveGesture
+            )
+
             // Flows — ink lines from clusters to their outputs (Living Workflows)
             FlowLineLayer(
                 flows: canvasFlows,
@@ -1240,6 +1359,17 @@ struct CanvasView: View {
         return spatialEngine.blocks.map(renderedBlock(for:))
     }
 
+    /// Blocks eligible for connection-line endpoints: everything that renders
+    /// at its canvas position. NOT viewport-culled — lines to offscreen blocks
+    /// must keep their visible segment while panning — but cluster-consumed
+    /// blocks are excluded, mirroring `CanvasBlockFrameTracker`'s invariant
+    /// that geometry consumers agree with what the canvas actually renders.
+    private func connectionLineBlocks(snapshot: CanvasRenderSnapshot) -> [CanvasBlock] {
+        let consumed = snapshot.clusterConsumedBlockUUIDs
+        guard !consumed.isEmpty else { return renderedBlocks }
+        return renderedBlocks.filter { !consumed.contains($0.entityUuid) }
+    }
+
     private func renderedBlock(for block: CanvasBlock) -> CanvasBlock {
         guard let geometry = clusterResizeSession?.previewGeometries[block.id] else {
             return block
@@ -1252,6 +1382,19 @@ struct CanvasView: View {
     }
 
     private func blocksLayer(snapshot: CanvasRenderSnapshot) -> some View {
+        // Zoom LOD rides the environment: only views that READ the tier
+        // re-render when it flips (at quantized 0.125 buckets), and the
+        // Equatable host boundary stays untouched.
+        blocksForEach(snapshot: snapshot)
+            .environment(
+                \.canvasBlockRenderTier,
+                CanvasBlockRenderTier.tier(
+                    forEffectiveScale: viewportState.quantizedTransform.effectiveScale
+                )
+            )
+    }
+
+    private func blocksForEach(snapshot: CanvasRenderSnapshot) -> some View {
         ForEach(snapshot.renderableBlocks, id: \.id) { block in
             CanvasBlockTransformHost(
                 block: block,
@@ -2338,10 +2481,15 @@ struct CanvasView: View {
                         // Use scrollingDeltaY for zoom
                         let delta = event.scrollingDeltaY
                         if abs(delta) > 0.1 {  // Threshold to avoid micro-zooms
+                            // A wheel streak rides the LIVE gesture path:
+                            // writing the committed scale per tick re-ran the
+                            // whole canvas body on every tick (momentum
+                            // included). The engine commits once when the
+                            // streak goes quiet.
                             let zoomFactor = 1.0 + (delta * zoomSensitivity)
-                            let newScale = canvasScale * zoomFactor
-
-                            canvasScale = min(max(newScale, minScale), maxScale)
+                            viewportState.applyWheelZoomTick(factor: zoomFactor) { finalScale in
+                                canvasScale = finalScale
+                            }
 
                             // Consume the event when zooming
                             return nil
@@ -5774,11 +5922,29 @@ struct CanvasView: View {
         }
     }
 
-    /// Handles dropping external content onto the canvas. Images keep the
-    /// native image-block pipeline; every other file becomes a file portal.
-    private func handleCanvasImageDrop(providers: [NSItemProvider], canvasPosition: CGPoint) {
+    /// Handles dropping external content onto the canvas. A web link routes
+    /// through the swipe front door and its block lands at the drop point;
+    /// images keep the native image-block pipeline; every other file becomes
+    /// a file portal.
+    private func handleCanvasExternalDrop(providers: [NSItemProvider], canvasPosition: CGPoint) {
         Task {
+            var webURL = await CanvasImageDropController.firstWebURL(from: providers)
+            var viaSession = false
+            if webURL == nil, let sessionURL = BrowserPaneLinkDragSession.consume() {
+                // The pasteboard lost the link but the drag bridge kept it.
+                webURL = sessionURL
+                viaSession = true
+            }
+            let carriesImage = await CanvasImageDropController.carriesImagePayload(providers)
+            let decision = CanvasExternalDropRouter.decision(webURL: webURL, carriesImage: carriesImage)
+            CanvasDropDebugLog.note("handleExternalDrop: webURL=\(webURL ?? "nil") viaSession=\(viaSession) carriesImage=\(carriesImage) decision=\(decision)")
+            if case .swipeCapture(let url) = decision {
+                await createSwipeBlockFromDroppedURL(url, position: canvasPosition)
+                return
+            }
+
             if let image = await CanvasImageDropController.firstImage(from: providers) {
+                CanvasDropDebugLog.note("handleExternalDrop: image path, \(image.data.count) bytes")
                 await createImageBlock(
                     data: image.data,
                     originalFilename: image.originalFilename,
@@ -5790,11 +5956,31 @@ struct CanvasView: View {
             let fileURLs = await CanvasImageDropController.fileURLs(from: providers)
                 .filter { FilePortalImportService.acceptsFileURL($0) }
             guard !fileURLs.isEmpty else {
-                print("⚠️ [CanvasView] Drop contained neither image data nor portal-able files")
+                CanvasDropDebugLog.note("handleExternalDrop: DEAD END — no web link, image data or portal-able files")
+                print("⚠️ [CanvasView] Drop contained no web link, image data or portal-able files")
                 return
             }
             await createFilePortalBlocks(fileURLs: fileURLs, position: canvasPosition)
         }
+    }
+
+    /// A link dropped onto the canvas is a capture AND a placement: the swipe
+    /// is created through the ONE FRONT DOOR (dedup, receipt, undo, flow,
+    /// analysis kick) and its block lands where the drag was released. Dedup
+    /// adoption still places a block — dropping a post already in the library
+    /// puts THAT swipe on the canvas rather than silently doing nothing.
+    private func createSwipeBlockFromDroppedURL(_ url: String, position: CGPoint) async {
+        CanvasDropDebugLog.note("createSwipeBlock: running front door for \(url)")
+        guard let atom = await SwipeIntakeRouter.run(.url(url), captureMode: "canvas_drop") else {
+            CanvasDropDebugLog.note("createSwipeBlock: front door returned NIL (capture failed) — error=\(SwipeIntakeReceiptCenter.shared.errorMessage ?? "none published")")
+            return
+        }
+        let block = CanvasBlock.fromAtom(atom, position: position)
+        await spatialEngine.addBlock(block, persist: true)
+        selectedBlockId = block.id
+        rebuildMediaContentCache()
+        CanvasDropDebugLog.note("createSwipeBlock: placed block \(block.id) for atom \(atom.uuid) at \(position)")
+        print("🔗 Dropped link → swipe canvas block (uuid: \(atom.uuid))")
     }
 
     /// Imports files through the portal choke point and lays their blocks at
@@ -6434,28 +6620,43 @@ private struct ActiveClusterResizeSession {
 
 // MARK: - Canvas Drop Delegate
 
-/// Accepts internal cluster block drops and external image drops onto the canvas background.
+/// Accepts internal cluster block drops, external image drops and web-link
+/// drops (a post dragged out of a browser pane) onto the canvas background.
 private struct CanvasDropDelegate: DropDelegate {
-    static let supportedTypes: [UTType] = [.text] + CanvasImageDropController.supportedTypes
+    static let supportedTypes: [UTType] = [.text, .url] + CanvasImageDropController.supportedTypes
 
     let isEnabled: () -> Bool
     let screenToCanvas: (CGPoint) -> CGPoint
     let onClusterDrop: (String, CGPoint) -> Void
-    let onImageDrop: ([NSItemProvider], CGPoint) -> Void
+    let onExternalDrop: ([NSItemProvider], CGPoint) -> Void
 
     func validateDrop(info: DropInfo) -> Bool {
-        guard isEnabled() else { return false }
+        guard isEnabled() else {
+            CanvasDropDebugLog.note("validateDrop: REJECTED — canvas not enabled (overlay mode)")
+            return false
+        }
         if ClusterViewDragSession.sourceClusterId != nil && info.hasItemsConforming(to: [.text]) {
+            CanvasDropDebugLog.note("validateDrop: accepted as CLUSTER drag (sourceClusterId set)")
             return true
         }
         // Accept a ⌘K retrieve drag purely for the drop-cursor affordance —
         // actual placement is driven by CommandKDragSession's release poll
         // (the single source of truth), so performDrop only consumes here.
         if CommandKDragSession.shared.isActive && info.hasItemsConforming(to: [.text]) {
+            CanvasDropDebugLog.note("validateDrop: accepted as ⌘K drag")
             return true
         }
 
-        return info.hasItemsConforming(to: CanvasImageDropController.supportedTypes)
+        // Text is accepted because a browser-pane link drag reaches AppKit as
+        // plain text at best (WebKit custom-pasteboard bundling) — and
+        // sometimes as nothing readable at all, which is what the armed drag
+        // session covers. Non-link text drops dead-end harmlessly downstream.
+        let acceptsImage = info.hasItemsConforming(to: CanvasImageDropController.supportedTypes)
+        let acceptsURL = info.hasItemsConforming(to: [.url])
+        let acceptsText = info.hasItemsConforming(to: [.text])
+        let sessionArmed = BrowserPaneLinkDragSession.isArmed
+        CanvasDropDebugLog.note("validateDrop: image=\(acceptsImage) url=\(acceptsURL) text=\(acceptsText) sessionArmed=\(sessionArmed)")
+        return acceptsImage || acceptsURL || acceptsText || sessionArmed
     }
 
     /// A ⌘K drag hovering back over the palette reads as "changed my mind":
@@ -6491,11 +6692,15 @@ private struct CanvasDropDelegate: DropDelegate {
             return true
         }
 
-        let imageProviders = info.itemProviders(for: CanvasImageDropController.supportedTypes)
-        guard !imageProviders.isEmpty else {
+        let externalProviders = info.itemProviders(for: [.url, .text] + CanvasImageDropController.supportedTypes)
+        CanvasDropDebugLog.note("performDrop: \(externalProviders.count) provider(s); types=\(externalProviders.map(\.registeredTypeIdentifiers))")
+        // Zero readable providers can still be a browser-pane link drag whose
+        // payload only survived out-of-band (the armed session).
+        guard !externalProviders.isEmpty || BrowserPaneLinkDragSession.isArmed else {
+            CanvasDropDebugLog.note("performDrop: REJECTED — no matching providers, no armed session")
             return false
         }
-        onImageDrop(imageProviders, canvasPosition)
+        onExternalDrop(externalProviders, canvasPosition)
         return true
     }
 }

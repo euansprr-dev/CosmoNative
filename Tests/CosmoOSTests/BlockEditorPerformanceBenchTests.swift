@@ -200,6 +200,70 @@ final class BlockEditorPerformanceBenchTests: XCTestCase {
         window.contentView = nil
     }
 
+    private func firstTextView(withBlockID blockID: UUID, in root: NSView?) -> CosmoTextView? {
+        guard let root else { return nil }
+        var stack: [NSView] = [root]
+        while let view = stack.popLast() {
+            if let textView = view as? CosmoTextView, textView.rowBlockID == blockID {
+                return textView
+            }
+            stack.append(contentsOf: view.subviews)
+        }
+        return nil
+    }
+
+    /// The REAL live-typing path: keystrokes inserted through the focused
+    /// row's NSTextView, exactly like typing (textDidChange → bindings →
+    /// immediate document sync → self-authored ledger → row Equatable gates
+    /// recognize the echo). This is the pass that must fit a frame budget.
+    func testLiveTypingThroughTextViewStaysCheap() throws {
+        let document = Self.makeLongNoteDocument()
+        let targetBlockID = document.blocks[100].id
+        let model = BenchDocumentModel(document: document)
+        let focusCoordinator = BlockFocusCoordinator()
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 760, height: 900),
+            styleMask: [.borderless], backing: .buffered, defer: false
+        )
+        let hosting = NSHostingView(
+            rootView: BenchNoteBody(model: model, focusCoordinator: focusCoordinator)
+        )
+        hosting.frame = NSRect(x: 0, y: 0, width: 760, height: 900)
+        window.contentView = hosting
+        hosting.layoutSubtreeIfNeeded()
+        pump(2.0) // settle fully first
+
+        let textView = try XCTUnwrap(
+            firstTextView(withBlockID: targetBlockID, in: window.contentView),
+            "target row's text view not found"
+        )
+        window.makeFirstResponder(textView)
+        textView.setSelectedRange(NSRange(location: (textView.string as NSString).length, length: 0))
+        pump(0.1)
+
+        var typingSamplesMS: [Double] = []
+        for _ in 0..<10 {
+            let typeTimer = PhaseTimer()
+            textView.insertText("x", replacementRange: NSRange(location: (textView.string as NSString).length, length: 0))
+            pump(0.06) // covers the 50ms deferred attributedText sync too
+            typingSamplesMS.append(typeTimer.elapsedMS())
+        }
+
+        print("""
+        [BLOCK-BENCH] live typing slices (60ms pump included): \
+        \(typingSamplesMS.map { String(format: "%.1f", $0) }.joined(separator: ", "))
+        """)
+
+        // Typing commits coalesce at ~250ms idle, so MOST keystrokes are
+        // AppKit-only (a few ms); the occasional slice absorbs a document
+        // commit. Assert on the median — the felt cadence — with headroom.
+        let sorted = typingSamplesMS.dropFirst(2).sorted()
+        let median = sorted[sorted.count / 2] - 60
+        XCTAssertLessThan(median, 25, "median live keystroke regressed — typing is no longer AppKit-only")
+
+        window.contentView = nil
+    }
+
     /// The note-focus open path: progressive hydration on. First layout is
     /// the blocking freeze the user feels; hydration then completes across
     /// runloop ticks without blocking input.
@@ -268,6 +332,42 @@ final class BlockEditorPerformanceBenchTests: XCTestCase {
             pump(1.5)
             window.contentView = nil
         }
+    }
+
+    /// Mounts once, then loops SELF-AUTHORED single-block edits for ~15s
+    /// (ledger recorded before each write, like a real keystroke).
+    /// Enable with BLOCK_BENCH_SAMPLE=selftyping.
+    func testSelfTypingSampleLoop() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["BLOCK_BENCH_SAMPLE"] == "selftyping")
+        let model = BenchDocumentModel(document: Self.makeLongNoteDocument())
+        let focusCoordinator = BlockFocusCoordinator()
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 760, height: 900),
+            styleMask: [.borderless], backing: .buffered, defer: false
+        )
+        let hosting = NSHostingView(
+            rootView: BenchNoteBody(model: model, focusCoordinator: focusCoordinator)
+        )
+        hosting.frame = NSRect(x: 0, y: 0, width: 760, height: 900)
+        window.contentView = hosting
+        hosting.layoutSubtreeIfNeeded()
+        pump(3.0)
+
+        let targetBlockID = model.document.blocks[100].id
+        guard let textView = firstTextView(withBlockID: targetBlockID, in: window.contentView) else {
+            window.contentView = nil
+            return
+        }
+        window.makeFirstResponder(textView)
+        textView.setSelectedRange(NSRange(location: (textView.string as NSString).length, length: 0))
+        pump(0.1)
+
+        let deadline = Date().addingTimeInterval(15)
+        while Date() < deadline {
+            textView.insertText("x", replacementRange: NSRange(location: (textView.string as NSString).length, length: 0))
+            pump(0.06)
+        }
+        window.contentView = nil
     }
 
     /// Mounts once, then loops external single-block edits for ~15s.

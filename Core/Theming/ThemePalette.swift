@@ -30,6 +30,13 @@ protocol ThemePalette {
     var accentGlow: Color { get }
     var accentSoft: Color { get }
 
+    /// The accent at hero-surface chroma (large arcs, the day's primary CTA).
+    /// MUST be a protocol requirement: extension-only members dispatch
+    /// statically through `any ThemePalette`, so Greenhouse's vivid hex was
+    /// shadowed by the `{ accent }` default and never rendered (iOS R2 jury
+    /// find, July 2026 — same bug both repos).
+    var accentVivid: Color { get }
+
     // MARK: - Status
 
     var green: Color { get }
@@ -75,4 +82,11 @@ protocol ThemePalette {
     var name: String { get }
     var icon: String { get }
     var isDark: Bool { get }
+}
+
+extension ThemePalette {
+    /// The accent at hero-surface chroma (large arcs, the day's primary CTA).
+    /// Themes whose accent already survives at stroke scale — including the
+    /// mono palettes, whose accent IS ink — simply inherit `accent`.
+    var accentVivid: Color { accent }
 }

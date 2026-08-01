@@ -17,6 +17,7 @@ import Foundation
 import AppKit
 import WebKit
 import UniformTypeIdentifiers
+import UserNotifications
 
 // MARK: - Payloads
 
@@ -57,6 +58,14 @@ struct SwipeIntakeReceipt: Equatable, Identifiable {
     /// What the capture was FILED AS — the space it landed in. Defaults to the
     /// kind's structural fallback so every existing call site stays honest.
     var genre: SwipeGenre?
+    /// The captured item's title, for surfaces that name WHAT was captured
+    /// (the native notification). Optional so pre-title captures stay honest.
+    var title: String? = nil
+    /// The capture matched a swipe already in the library — the existing atom
+    /// was adopted, nothing new was created. The receipt must say so: a
+    /// "Swiped ·" confirmation over a no-op reads as the library silently
+    /// eating the capture (iOS twin: SwipeCaptureSheet's dedup state).
+    var alreadyInLibrary = false
 
     /// "Swiped · Newsletter · 14 sections" — what it IS is always NAMED,
     /// because the user never chose it and silently guessing would make the
@@ -66,6 +75,9 @@ struct SwipeIntakeReceipt: Equatable, Identifiable {
         let noun = (genre ?? SwipeGenre.defaultGenre(for: kind)).displayName
         if let flowName {
             return "Added to \(flowName) · \(noun)"
+        }
+        if alreadyInLibrary {
+            return "Already in your Swipe File · \(noun)"
         }
         if unitCount > 0 {
             return "Swiped · \(noun) · \(kind.unitCountLabel(unitCount))"
@@ -90,11 +102,68 @@ final class SwipeIntakeReceiptCenter {
     func publish(_ receipt: SwipeIntakeReceipt) {
         errorMessage = nil
         self.receipt = receipt
+        // Every successful capture also confirms through the SYSTEM voice —
+        // the in-app toast only renders on swipe surfaces, and ⌘⇧S fires from
+        // anywhere. Errors stay in-app: a system banner for "nothing to swipe"
+        // would be noise.
+        SwipeCaptureNotifier.notify(receipt)
     }
 
     func publishError(_ message: String) {
         receipt = nil
         errorMessage = message
+    }
+}
+
+// MARK: - Native capture confirmation
+
+/// The system-notification voice of a capture: "she sells — Captured to Swipe
+/// File · Newsletter", top-right, where every Mac app confirms background
+/// work. The in-app receipt remains the undo seat; this banner is what makes
+/// ⌘⇧S trustworthy from any focus mode, where no receipt toast renders.
+///
+/// Reuses SwipeFileEngine's notification plumbing wholesale — its category
+/// (an "Open" action that navigates to the atom via openAtomFromCommandK) and
+/// its delegate (which presents banners while the app is frontmost). One
+/// notification system, not a parallel one.
+@MainActor
+enum SwipeCaptureNotifier {
+
+    static func notify(_ receipt: SwipeIntakeReceipt) {
+        // Touching the engine registers the category, installs the delegate,
+        // and requests authorization on first use — all idempotent.
+        _ = SwipeFileEngine.shared
+
+        let content = UNMutableNotificationContent()
+        let noun = (receipt.genre ?? SwipeGenre.defaultGenre(for: receipt.kind)).displayName
+        if let title = receipt.title?.trimmed, !title.isEmpty {
+            content.title = title
+        } else {
+            content.title = "Swipe captured"
+        }
+        content.body = receipt.flowName.map { "Added to \($0) · \(noun)" }
+            ?? (receipt.alreadyInLibrary
+                ? "Already in your Swipe File · \(noun)"
+                : "Captured to Swipe File · \(noun)")
+        // Deliberately silent: capture is a background confirmation, not an
+        // alert. The banner carries the message; a sound would make ⌘⇧S loud.
+        content.categoryIdentifier = SwipeFileEngine.captureNotificationCategory
+        content.userInfo = ["atomUUID": receipt.atomUUID]
+
+        let request = UNNotificationRequest(
+            identifier: "swipe-capture-\(receipt.atomUUID)",
+            content: content,
+            trigger: nil
+        )
+        Task {
+            let center = UNUserNotificationCenter.current()
+            // First capture ever: wait out the permission prompt so THIS
+            // capture's confirmation isn't the one that gets dropped.
+            if await center.notificationSettings().authorizationStatus == .notDetermined {
+                _ = try? await center.requestAuthorization(options: [.alert, .sound])
+            }
+            try? await center.add(request)
+        }
     }
 }
 
@@ -115,6 +184,9 @@ enum SwipeIntakeRouter {
         /// the opt-in. The webview rides along so the capture reads the page
         /// the user is actually looking at, not a fresh anonymous render.
         case liveWebPage(url: String, title: String?, webView: WKWebView? = nil)
+        /// A parsed email file (.eml/.emlx dragged out of Mail) — the
+        /// Newsletters front door. Newsletters live in inboxes, not at URLs.
+        case email(SwipeEmailPayload)
     }
 
     /// What the router decided to make.
@@ -122,6 +194,8 @@ enum SwipeIntakeRouter {
         case frames(count: Int)
         case pageFromLiveWebPage(url: String, title: String?)
         case pageFromURL(String)
+        /// A page rendered from a parsed email's HTML (no URL exists).
+        case pageFromEmail(subject: String?)
         /// The existing platform pipeline, untouched.
         case postURL(String)
         case note(String)
@@ -131,7 +205,7 @@ enum SwipeIntakeRouter {
         var kind: SwipeKind? {
             switch self {
             case .frames: return .frame
-            case .pageFromLiveWebPage, .pageFromURL: return .page
+            case .pageFromLiveWebPage, .pageFromURL, .pageFromEmail: return .page
             case .postURL: return .post
             case .note: return .note
             case .nothing: return nil
@@ -162,6 +236,9 @@ enum SwipeIntakeRouter {
                 return resolveURL(url)
             }
             return .note(trimmed)
+
+        case .email(let payload):
+            return .pageFromEmail(subject: payload.subject)
 
         case .pasteboard:
             return resolvePasteboard()
@@ -274,6 +351,9 @@ enum SwipeIntakeRouter {
                 url: url, title: title, note: note, boardIDs: boardIDs,
                 captureMode: captureMode, liveWebView: liveWebView
             )
+        case .pageFromEmail:
+            guard case .email(let payload) = source else { return nil }
+            return await captureEmail(payload, note: note, boardIDs: boardIDs, captureMode: captureMode)
         case .postURL(let url):
             return await capturePost(url: url, note: note, boardIDs: boardIDs, captureMode: captureMode)
         case .note(let text):
@@ -281,6 +361,53 @@ enum SwipeIntakeRouter {
         case .nothing:
             return nil
         }
+    }
+
+    // MARK: Email
+
+    /// A dragged-in email lands instantly as a Newsletter page swipe; the
+    /// render + slicing + reading happen behind it, exactly like a URL page —
+    /// except the source HTML is already in hand, so there is nothing to
+    /// re-fetch and no dedup URL to check.
+    private static func captureEmail(
+        _ payload: SwipeEmailPayload,
+        note: String?,
+        boardIDs: [String],
+        captureMode: String
+    ) async -> Atom? {
+        let subject = payload.subject?.trimmed
+        var atom = Atom.newSwipeFile(
+            url: "", hook: nil, sourceType: .website, contentSource: .clipboard
+        )
+        atom.title = (subject?.isEmpty == false ? subject! : "Email")
+        atom.updateResearchMetadata { meta in
+            meta.contentSource = SwipeKind.page.rawValue
+            meta.processingStatus = "extracting"
+            meta.swipeBoardIDs = boardIDs.isEmpty ? nil : boardIDs
+            meta.url = nil
+            meta.swipeGenre = SwipeGenre.newsletter.rawValue
+        }
+        if let note = note?.trimmed, !note.isEmpty { atom.body = note }
+        var artifact = SwipeArtifact(
+            kind: .page, units: [], genre: .newsletter,
+            captureMode: captureMode, pageTitle: subject
+        )
+        // The sender is the artifact's provenance — the same seat a
+        // screenshotted post's detected author uses.
+        if payload.senderName != nil || payload.senderAddress != nil {
+            artifact.detectedSource = DetectedSource(
+                platform: "email", handle: payload.senderAddress ?? payload.senderName
+            )
+        }
+        atom = atom.withSwipeArtifact(artifact)
+
+        guard let created = await persist(atom, attachments: []) else { return nil }
+        finish(created, kind: .page, unitCount: 0, genre: .newsletter)
+
+        let uuid = created.uuid
+        let html = payload.html
+        Task { await SwipePageDecomposition.run(swipeUUID: uuid, htmlString: html, note: note) }
+        return created
     }
 
     // MARK: Frames
@@ -388,12 +515,33 @@ enum SwipeIntakeRouter {
         liveWebView: WKWebView? = nil
     ) async -> Atom? {
         if let existing = await QuickCaptureProcessor.findExistingLiveSwipe(url: url) {
+            // Adopt, never duplicate — but the re-capture's input still lands:
+            // a note rides in when the existing swipe has none (the post
+            // path's policy), and boards union rather than clobber.
+            var updated = existing
+            var changed = false
+            if let note = note?.trimmed, !note.isEmpty, updated.body?.isEmpty != false {
+                updated.body = note
+                changed = true
+            }
+            if !boardIDs.isEmpty {
+                var boards = updated.researchMetadata?.swipeBoardIDs ?? []
+                for id in boardIDs where !boards.contains(id) { boards.append(id) }
+                if boards != updated.researchMetadata?.swipeBoardIDs {
+                    updated.updateResearchMetadata { $0.swipeBoardIDs = boards }
+                    changed = true
+                }
+            }
+            if changed {
+                _ = try? await AtomRepository.shared.update(updated)
+            }
             finish(
-                existing, kind: existing.swipeKind,
-                unitCount: existing.swipeArtifactUnits.count,
-                genre: existing.swipeGenre
+                updated, kind: updated.swipeKind,
+                unitCount: updated.swipeArtifactUnits.count,
+                genre: updated.swipeGenre,
+                isExisting: true
             )
-            return existing
+            return updated
         }
 
         // Genre seed from the URL alone — a Substack issue files under
@@ -443,11 +591,15 @@ enum SwipeIntakeRouter {
     ) async -> Atom? {
         // The existing pipeline owns this entirely — dedup, instant thumbnail,
         // cloud kick. The router only adds the receipt and the board stamp.
+        // The pipeline's dedup is internal, so probe first: adoption of a
+        // pre-existing swipe must reach the receipt as such.
+        let preExistingUUID = await QuickCaptureProcessor.findExistingLiveSwipe(url: url)?.uuid
         guard let research = await QuickCaptureProcessor.shared.captureURLReturningUUID(url),
               let created = try? await AtomRepository.shared.fetch(uuid: research) else {
             SwipeIntakeReceiptCenter.shared.publishError("Couldn't save that link.")
             return nil
         }
+        let adoptedExisting = preExistingUUID == created.uuid
         var updated = created
         var changed = false
         if !boardIDs.isEmpty {
@@ -461,7 +613,7 @@ enum SwipeIntakeRouter {
         if changed {
             _ = try? await AtomRepository.shared.update(updated)
         }
-        finish(updated, kind: .post, unitCount: 0)
+        finish(updated, kind: .post, unitCount: 0, isExisting: adoptedExisting)
         return updated
     }
 
@@ -476,13 +628,32 @@ enum SwipeIntakeRouter {
         atom.updateResearchMetadata { meta in
             meta.swipeBoardIDs = boardIDs.isEmpty ? nil : boardIDs
         }
+        // A pasted VSL script is not "a note" — it has beats. The slicer
+        // splits real long-form into paragraph units; a single-line hook
+        // stays one unit and never spends a model call.
+        let units = SwipeTextSlicer.units(from: text)
         atom = atom.withSwipeArtifact(SwipeArtifact(
             kind: .note,
-            units: [SwipeArtifactUnit(index: 0, headline: firstLine(of: text), copy: text)],
+            units: units,
             captureMode: captureMode
         ))
+        if units.count > 1 {
+            atom.updateResearchMetadata { $0.processingStatus = "analyzing" }
+        }
         guard let created = await persist(atom, attachments: []) else { return nil }
-        finish(created, kind: .note, unitCount: 1)
+        finish(created, kind: .note, unitCount: units.count)
+
+        // Multi-block text earns the full read: roles per beat, structural
+        // recipe, and the genre verdict that separates `script` from `copy`.
+        if units.count > 1 {
+            let uuid = created.uuid
+            Task {
+                guard let live = try? await AtomRepository.shared.fetch(uuid: uuid),
+                      let artifact = live.swipeArtifact else { return }
+                let result = await SwipeArtifactAnalyzer.analyze(atom: live, artifact: artifact, userNote: nil)
+                await SwipeArtifactPersistence.apply(result, toAtomWithUUID: uuid, artifact: artifact)
+            }
+        }
         return created
     }
 
@@ -519,31 +690,41 @@ enum SwipeIntakeRouter {
         _ atom: Atom,
         kind: SwipeKind,
         unitCount: Int,
-        genre: SwipeGenre? = nil
+        genre: SwipeGenre? = nil,
+        isExisting: Bool = false
     ) {
         // A recording session claims the capture before the receipt is
         // published, so the receipt can say "Added to Client X funnel" rather
         // than "Swiped" followed by a second, contradicting message.
         if SwipeFlowRecorder.shared.isRecording {
             let uuid = atom.uuid
+            let title = atom.title
             Task { @MainActor in
                 if let session = await SwipeFlowRecorder.shared.appendCapturedSwipe(uuid: uuid) {
                     SwipeIntakeReceiptCenter.shared.publish(SwipeIntakeReceipt(
                         kind: kind, unitCount: unitCount, atomUUID: uuid,
-                        flowName: session.name, genre: genre
+                        flowName: session.name, genre: genre, title: title,
+                        alreadyInLibrary: isExisting
                     ))
                 } else {
                     SwipeIntakeReceiptCenter.shared.publish(SwipeIntakeReceipt(
-                        kind: kind, unitCount: unitCount, atomUUID: uuid, genre: genre
+                        kind: kind, unitCount: unitCount, atomUUID: uuid, genre: genre,
+                        title: title, alreadyInLibrary: isExisting
                     ))
                 }
             }
         } else {
             SwipeIntakeReceiptCenter.shared.publish(SwipeIntakeReceipt(
-                kind: kind, unitCount: unitCount, atomUUID: atom.uuid, genre: genre
+                kind: kind, unitCount: unitCount, atomUUID: atom.uuid, genre: genre,
+                title: atom.title, alreadyInLibrary: isExisting
             ))
         }
         NotificationCenter.default.post(name: CosmoNotification.SwipeFile.libraryDidChange, object: nil)
+
+        // A dedup adopted a swipe that predates this capture — there is
+        // nothing to undo, and registering one would let ⌘Z DELETE a
+        // pre-existing library object.
+        guard !isExisting else { return }
 
         let snapshot = atom
         CosmoUndoManager.shared.register(InlineUndoAction(
@@ -582,17 +763,19 @@ enum SwipeIntakeRouter {
 
         if SwipeFlowRecorder.shared.isRecording {
             let uuid = atom.uuid
+            let title = atom.title
             Task { @MainActor in
                 let session = await SwipeFlowRecorder.shared.appendCapturedSwipe(uuid: uuid)
                 guard publishesReceipt else { return }
                 SwipeIntakeReceiptCenter.shared.publish(SwipeIntakeReceipt(
                     kind: kind, unitCount: unitCount, atomUUID: uuid,
-                    flowName: session?.name, genre: genre
+                    flowName: session?.name, genre: genre, title: title
                 ))
             }
         } else if publishesReceipt {
             SwipeIntakeReceiptCenter.shared.publish(SwipeIntakeReceipt(
-                kind: kind, unitCount: unitCount, atomUUID: atom.uuid, genre: genre
+                kind: kind, unitCount: unitCount, atomUUID: atom.uuid, genre: genre,
+                title: atom.title
             ))
         }
 
@@ -642,6 +825,22 @@ enum SwipeFrameDecomposition {
             return
         }
 
+        // Fast filing, in parallel: the cheap classifier names the room in
+        // about a second; the craft pass judges behind it (and its verdict
+        // refines the filing when it lands). Fill-only — a seed or a human
+        // choice is never overwritten from here.
+        if artifact.genre == nil, artifact.genreLockedByUser != true {
+            let classifierImages = images
+            let copy = artifact.orderedUnits.compactMap(\.copy)
+            let body = live.body
+            Task {
+                let verdict = await SwipeGenreClassifier.classify(
+                    images: classifierImages, note: body, unitCopy: copy
+                )
+                await SwipeGenreClassifier.fill(verdict, intoAtomWithUUID: swipeUUID)
+            }
+        }
+
         let result = await SwipeFrameAnalyzer.analyze(
             atom: live, artifact: artifact, images: images, userNote: note
         )
@@ -650,7 +849,8 @@ enum SwipeFrameDecomposition {
 
     /// Unit-ordered bytes. A unit whose attachment hasn't mirrored down yet is
     /// skipped rather than failing the batch; the retry picks it up later.
-    private static func imageBytes(for artifact: SwipeArtifact) async -> [Data] {
+    /// Internal: the heal sweep's genre-classify arm reads the same bytes.
+    static func imageBytes(for artifact: SwipeArtifact) async -> [Data] {
         let uuids = artifact.orderedUnits.compactMap(\.attachmentUUID)
         guard !uuids.isEmpty else { return [] }
         let rows = (try? await MediaAttachmentRepository.shared.fetch(uuids: uuids)) ?? []
@@ -688,6 +888,18 @@ enum SwipePageDecomposition {
 
     static func run(swipeUUID: String, url: URL, note: String?) async {
         guard let capture = await SwipePageCapture.capture(url: url, swipeUUID: swipeUUID) else {
+            await failCapture(swipeUUID: swipeUUID)
+            return
+        }
+        await finish(capture, swipeUUID: swipeUUID, note: note)
+    }
+
+    /// The email path: the HTML is already in hand (SwipeEmailCapture), so
+    /// the render starts from the string, not a fetch.
+    static func run(swipeUUID: String, htmlString: String, note: String?) async {
+        guard let capture = await SwipePageCapture.capture(
+            htmlString: htmlString, baseURL: nil, swipeUUID: swipeUUID
+        ) else {
             await failCapture(swipeUUID: swipeUUID)
             return
         }
@@ -735,6 +947,22 @@ enum SwipePageDecomposition {
         _ = try? await AtomRepository.shared.update(staged)
         NotificationCenter.default.post(name: CosmoNotification.SwipeFile.libraryDidChange, object: nil)
 
+        // Third filing tier: both seeds said nothing, so the cheap classifier
+        // reads the sliced text and names the room — in parallel with (and
+        // surviving the failure of) the craft pass behind it. Fill-only.
+        if artifact.genre == nil, artifact.genreLockedByUser != true {
+            let probeText = ([capture.probe.title ?? ""] + capture.units.compactMap(\.copy))
+                .joined(separator: "\n")
+            let url = staged.researchMetadata?.url
+            let body = staged.body
+            Task {
+                let verdict = await SwipeGenreClassifier.classify(
+                    pageText: probeText, url: url, note: body
+                )
+                await SwipeGenreClassifier.fill(verdict, intoAtomWithUUID: swipeUUID)
+            }
+        }
+
         let result = await SwipeArtifactAnalyzer.analyze(
             atom: staged, artifact: artifact, userNote: note
         )
@@ -773,6 +1001,14 @@ enum SwipeArtifactPersistence {
         guard let live = try? await AtomRepository.shared.fetch(uuid: uuid) else { return }
 
         var updated = artifact
+        // Never regress the filing: `artifact` is a snapshot from schedule
+        // time, and the cheap classifier (or a "File under →") may have
+        // written genre onto the LIVE row while the craft pass was in
+        // flight. Carry the live filing forward before the verdict applies.
+        if updated.genre == nil { updated.genre = live.swipeArtifact?.genre }
+        if updated.genreLockedByUser != true {
+            updated.genreLockedByUser = live.swipeArtifact?.genreLockedByUser
+        }
         if let result {
             updated.units = result.units
             updated.anatomy = result.anatomy

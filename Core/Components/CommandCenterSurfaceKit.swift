@@ -21,23 +21,45 @@ struct CosmoSectionHeader<Trailing: View>: View {
 
     var body: some View {
         HStack(spacing: DS.space6) {
+            // Tracked: 10pt small caps jam without letterspace. giltInk, not
+            // giltMuted: a header carrying TEXT must clear AA and must never
+            // be quieter than the metadata it introduces.
             Text(label)
                 .font(DS.smallCaps)
-                .foregroundStyle(tint ?? DS.giltMuted)
+                .tracking(DS.smallCapsTracking)
+                .foregroundStyle(tint ?? DS.giltInk)
                 .lineLimit(1)
 
             if let detail {
+                // Full strength, no alpha: subordination is already carried
+                // by size and case — an opacity on top pushed the SEMANTIC
+                // counts (Overdue's number) to 2.4:1, the faintest integers
+                // on the page. Rungs, never alphas.
                 Text(detail)
                     .font(DS.caption2.weight(.medium))
                     .monospacedDigit()
-                    .foregroundStyle((tint ?? DS.textMuted).opacity(tint == nil ? 1 : 0.62))
+                    .foregroundStyle(tint ?? DS.giltInk)
                     .contentTransition(.numericText())
             }
 
-            // The ledger rule — the Mac's anchoring line to the right edge.
+            // The ledger rule — anchors the label, then DEPARTS over a FIXED
+            // 64pt terminus (a fractional fade dissolved over ~500pt in the
+            // ledger and ~110pt in the timeline, side by side — the same
+            // voice must end the same way at every width).
             Rectangle()
                 .fill(DS.commandCenterSeparator)
                 .frame(height: 0.5)
+                .mask(
+                    HStack(spacing: 0) {
+                        Rectangle()
+                        LinearGradient(
+                            colors: [.black, .clear],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                        .frame(width: 64)
+                    }
+                )
                 .padding(.leading, DS.space8)
 
             trailing()
@@ -49,6 +71,31 @@ struct CosmoSectionHeader<Trailing: View>: View {
 extension CosmoSectionHeader where Trailing == EmptyView {
     init(label: String, detail: String? = nil, tint: Color? = nil) {
         self.init(label: label, detail: detail, tint: tint, trailing: { EmptyView() })
+    }
+}
+
+// MARK: - Page rule
+
+/// The page's ONE structural rule voice: 0.5pt `commandCenterSeparator` that
+/// anchors on the left and departs over a fixed 64pt terminus — the same
+/// ending at every width. Used by the masthead and the hero/ledger seam;
+/// `CosmoSectionHeader` draws the identical anatomy inline beside its label.
+struct CosmoPageRule: View {
+    var body: some View {
+        Rectangle()
+            .fill(DS.commandCenterSeparator)
+            .frame(height: 0.5)
+            .mask(
+                HStack(spacing: 0) {
+                    Rectangle()
+                    LinearGradient(
+                        colors: [.black, .clear],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    .frame(width: 64)
+                }
+            )
     }
 }
 

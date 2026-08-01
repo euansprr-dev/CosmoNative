@@ -1,6 +1,6 @@
 // CosmoOS/Canvas/AutomationFlowLine.swift
 // Animated bezier flow line between clusters that have automation rules connecting them
-// Reuses KnowledgePulseLineView visual pattern — glow + gradient energy flow
+// Same visual pattern as the canvas connection lines — glow + gradient energy flow
 // Lines are derived from rules at render time, not stored separately
 
 import SwiftUI

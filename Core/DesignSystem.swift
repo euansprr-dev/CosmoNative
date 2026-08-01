@@ -120,10 +120,12 @@ enum DS {
         return documentInkWash
     }
 
-    /// Secondary Command Center text on app chrome.
+    /// Secondary Command Center text on app chrome. Light themes speak the
+    /// palette's rung-2 ink (one ladder — secondary must sit ABOVE muted, and
+    /// documentInkFaded now IS the muted rung); dark-paper behavior unchanged.
     static var commandCenterSecondaryText: Color {
         if usesDarkChrome { return palette.textSecondary }
-        return documentInkFaded
+        return palette.isDark ? Color(hex: "7A7568") : palette.textSecondary
     }
 
     /// Muted Command Center metadata text on app chrome.
@@ -137,6 +139,19 @@ enum DS {
         if usesDarkChrome { return palette.textMuted }
         return documentGiltMuted
     }
+
+    /// Gilt CARRYING TEXT (section labels): a darker rung of the gilt family
+    /// that clears AA (#6F6A55 = 5.1:1 on parchment). `giltMuted` stays the
+    /// ornament/line register — a header must never be quieter than the
+    /// metadata it introduces.
+    static var giltInk: Color {
+        if usesDarkChrome { return palette.giltMuted }
+        return palette.isDark ? Color(hex: "D4C9A8") : Color(hex: "6F6A55")
+    }
+
+    /// The one small-caps letterspace — bake it in via `cosmoSectionLabel()`;
+    /// hand-typed 1.4s drift.
+    static let smallCapsTracking: CGFloat = 1.4
 
     /// Command Center hairline separators on chrome, distinct from document paper
     /// separators so Black Mono does not draw white paper rules on black UI.
@@ -332,6 +347,12 @@ enum DS {
     /// Primary accent color
     static var accent: Color { palette.accent }
 
+    /// The accent at hero-surface chroma: the gauge arc and the day's one
+    /// primary CTA. #2D6A4F is correct at text/selection scale but crushes
+    /// toward ink at a 9pt stroke — hero surfaces get the vivid sibling.
+    /// Mono palettes resolve it to their plain accent (no drift).
+    static var accentVivid: Color { palette.accentVivid }
+
     /// Accent hover/pressed state
     static var accentHover: Color { palette.accentHover }
 
@@ -344,6 +365,19 @@ enum DS {
     /// The one selection wash (peakui law: selection = tint wash + hairline,
     /// never a solid fill). Paired token — same values in the iOS DS.
     static var selectionWash: Color { palette.accent.opacity(0.14) }
+
+    /// Synced-calendar tints, tamed into the app's register (the Notion
+    /// Calendar law: never show a source calendar's raw hex — a garish
+    /// user-picked hue must not be the most saturated mark on a page).
+    /// Caps saturation ~0.58 and brightness ~0.80; hue is preserved so the
+    /// calendar stays recognizable. For EXTERNAL colors only — app-owned
+    /// palettes are already in register and never pass through this.
+    static func mutedCalendarTint(_ raw: NSColor) -> Color {
+        guard let srgb = raw.usingColorSpace(.sRGB) else { return Color(nsColor: raw) }
+        var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        srgb.getHue(&h, saturation: &s, brightness: &b, alpha: &a)
+        return Color(hue: h, saturation: min(s, 0.58), brightness: min(b, 0.80))
+    }
 
     /// The hairline that rings a selected surface. Paired with the iOS DS.
     static var selectionHairline: Color { palette.accent.opacity(0.42) }
@@ -743,6 +777,20 @@ enum DS {
     /// Callout — 13pt regular, secondary content, descriptions
     static let callout = Font.system(size: 13, weight: .regular)
 
+    /// Row title — 13pt medium: the name of a thing in a ledger row (the
+    /// list's ink spine; regular reads as body text, semibold as a header).
+    static let rowTitle = Font.system(size: 13, weight: .medium)
+
+    /// Row title, compact — 12pt medium: the same voice in narrow columns
+    /// (302pt timeline, 280pt rail). A smaller container takes a smaller
+    /// rung of the SAME ladder — never a third unrelated size.
+    static let rowTitleCompact = Font.system(size: 12, weight: .medium)
+
+    /// Row meta — 11pt regular: the ledger's second line (13/11 is the
+    /// Reminders ratio; a 13→10 jump starved the read layer while 10pt grew
+    /// four weights doing every job). Narrow columns keep caption2.
+    static let rowMeta = Font.system(size: 11, weight: .regular)
+
     /// Subheadline — 12pt regular, metadata, timestamps
     static let subheadline = Font.system(size: 12, weight: .regular)
 
@@ -783,6 +831,15 @@ enum DS {
     /// Gauge numerals — the deep-work gauge's serif display figures (paired
     /// name in the iOS DS; sizes are platform-tuned: 19pt phone, 36pt desktop).
     static let gaugeTitleSerif = Font.system(size: 36, weight: .medium, design: .serif)
+
+    /// Gauge units — the "h"/"m" beside the gauge figures. Quantity-unit
+    /// typesetting: units never carry the digits' mass.
+    static let gaugeUnitSerif = Font.system(size: 19, weight: .regular, design: .serif)
+
+    /// Keycap — shortcut-bar key tiles. Monospaced so chords and single
+    /// letters share one glyph width; medium, matching CortexKeycap (⌘K) —
+    /// ONE keycap dialect app-wide.
+    static let keycap = Font.system(size: 10, weight: .medium, design: .monospaced)
 
     /// Dossier title serif — the Deep Dive topic name (a content hero, so it
     /// speaks serif). Paired token in the iOS DS.
@@ -832,6 +889,27 @@ enum DS {
 
     /// Micro icon — 8pt semibold, smallest ornament glyphs (disclosure chevrons)
     static let microIcon = Font.system(size: 8, weight: .semibold)
+
+    // Glyph registers — icons sized by NAME, never by borrowing text tokens
+    // (a type-scale retune must not resize icons, and a completing habit must
+    // not shrink its accessory glyph).
+
+    /// Row-trailing action glyphs (play/pause circles in ledger rows)
+    static let rowActionGlyph = Font.system(size: 20)
+
+    /// Rail accessory glyphs (habit check-in plus, done seal) — ONE size so
+    /// the slot's mark never jumps when state flips
+    static let railAccessoryGlyph = Font.system(size: 20)
+
+    /// Empty-state hero glyphs
+    static let emptyStateGlyph = Font.system(size: 30, weight: .light)
+
+    /// Identity marks inside rings/wells (habit ring emoji or SF fallback) —
+    /// ONE size for the slot regardless of which mark resolves. Weight is
+    /// applied at the call site (emoji ignore it). iOS-paired name (16 there,
+    /// the one-register platform step); adopt when the Mac habit ring drops
+    /// its per-path sizes.
+    static let ringMarkGlyph = Font.system(size: 15)
 
     // ═══════════════════════════════════════════════════════════════
     // RADII — 5 values covering all use cases
@@ -1158,10 +1236,10 @@ extension View {
     /// Translucent card for material panels — white fill + fine border
     func dsGlassCard(cornerRadius: CGFloat = DS.radiusSmall) -> some View {
         self
-            .background(DS.glassCardFill, in: RoundedRectangle(cornerRadius: cornerRadius))
+            .background(DS.glassCardFill, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius)
-                    .stroke(DS.glassBorder, lineWidth: 0.5)
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(DS.glassBorder, lineWidth: 0.5)
             )
     }
 
@@ -1324,6 +1402,10 @@ extension View {
 
 /// Double-line divider replacing gradient dividers — two parallel 0.5px lines, 2px apart
 struct AkashicSectionDivider: View {
+    /// Horizontal inset — pass the page's content rail so the divider's ends
+    /// land on the same edges as the sections it separates.
+    var inset: CGFloat = 16
+
     var body: some View {
         VStack(spacing: 2) {
             Rectangle()
@@ -1333,7 +1415,7 @@ struct AkashicSectionDivider: View {
                 .fill(DS.commandCenterSeparator.opacity(0.5))
                 .frame(height: 0.5)
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, inset)
     }
 }
 

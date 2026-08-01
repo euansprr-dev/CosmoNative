@@ -106,7 +106,7 @@ struct ResizableImageBlockView: View {
             .fill(DS.accent)
             .overlay {
                 RoundedRectangle(cornerRadius: 3, style: .continuous)
-                    .stroke(.white, lineWidth: 1.5)
+                    .strokeBorder(.white, lineWidth: 1.5)
             }
             .frame(width: 11, height: 11)
             .shadow(color: .black.opacity(0.18), radius: 1.5, y: 0.5)

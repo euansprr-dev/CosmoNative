@@ -270,6 +270,8 @@ final class QuickCaptureProcessor: ObservableObject {
         )
 
         research.processingStatus = "complete"
+        research.isSwipeFile = true
+        research.contentSource = "instagram"
 
         var richContent = research.richContent ?? ResearchRichContent()
         richContent.sourceType = igType == .reel ? .instagramReel : (igType == .carousel ? .instagramCarousel : .instagramPost)
@@ -315,6 +317,13 @@ final class QuickCaptureProcessor: ObservableObject {
         )
 
         research.processingStatus = "pending" // the cloud worker (or scan fallback) takes it from here
+        // Swipe identity is CAPTURE-TIME, never worker-granted: without this
+        // stamp the pending atom is invisible to scanForPendingSwipes (its
+        // SQL filters on isSwipeFile), to dedup, to the Swipe library, and
+        // double-click routes it to the Research view. Twin of
+        // Atom.swipeFromInstagram's stamps.
+        research.isSwipeFile = true
+        research.contentSource = "instagram"
 
         var richContent = research.richContent ?? ResearchRichContent()
         richContent.sourceType = igType == .reel ? .instagramReel : (igType == .carousel ? .instagramCarousel : .instagramPost)
@@ -367,6 +376,8 @@ final class QuickCaptureProcessor: ObservableObject {
         )
 
         research.processingStatus = "pending"
+        research.isSwipeFile = true
+        research.contentSource = "threads"
 
         var richContent = research.richContent ?? ResearchRichContent()
         richContent.sourceType = .threads

@@ -269,12 +269,17 @@ struct TaskTitleWithMentions: View {
                         .font(font)
                         .foregroundStyle(DS.text)
                 case .mention(let text, let mention):
+                    // A linked entity is typeset as TEXT with a quiet accent
+                    // underline — never a third hue + weight jump inside a
+                    // title (entity color belongs to identity surfaces; a
+                    // ledger title stays ink).
                     Button {
                         onMentionTap?(mention)
                     } label: {
                         Text(text)
-                            .font(font.weight(.semibold))
-                            .foregroundStyle(CosmoMentionColors.color(for: mention.entityType))
+                            .font(font)
+                            .foregroundStyle(DS.text)
+                            .underline(true, color: DS.accent.opacity(0.35))
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Open \(mention.titleSnapshot)")

@@ -35,8 +35,13 @@ struct DashboardDayTimeline: View {
     @AppStorage("schedule.dayEndHour") private var dayEndHour = 22
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    // spacing 0 + 6pt canvas headroom (below): the canvas origin lands at
+    // y=30 from the column top — EXACTLY the ledger's first row top (12
+    // header pad + 12 label + 6 bottom pad). The page's two 40pt ladders
+    // (row minHeight in DashboardTaskRow, hourHeight below) are phase-locked
+    // — change either origin and re-derive the other.
     var body: some View {
-        VStack(alignment: .leading, spacing: DS.space8) {
+        VStack(alignment: .leading, spacing: 0) {
             CosmoSectionHeader(
                 label: "Schedule",
                 detail: itemCount > 0 ? "\(itemCount)" : nil
@@ -127,6 +132,11 @@ struct DashboardDayTimeline: View {
                     ScrollView(.vertical, showsIndicators: false) {
                         VStack(alignment: .leading, spacing: DS.space8) {
                             canvas(width: proxy.size.width)
+                                // 6 = exactly the first hour label's −6
+                                // optical offset, so it cannot clip — and the
+                                // canvas origin phase-locks to the ledger's
+                                // first row top (see header comment).
+                                .padding(.top, DS.space6)
                             // The connect affordance lives at the day's end —
                             // a quiet footnote, never a banner above the morning.
                             accessAffordanceIfNeeded
@@ -209,9 +219,14 @@ struct DashboardDayTimeline: View {
         return starts.count { metrics.y(for: $0) > visibleBottom - 8 }
     }
 
+    // Eased, not linear: most of the dissolve happens in the fade's final
+    // third, so a live card stays legible longer and the fold reads composed
+    // rather than mechanically ramped.
     private func edgeFade(_ edge: VerticalAlignment) -> some View {
         LinearGradient(
-            colors: edge == .top ? [DS.bg, DS.bg.opacity(0)] : [DS.bg.opacity(0), DS.bg],
+            stops: edge == .top
+                ? [.init(color: DS.bg, location: 0), .init(color: DS.bg.opacity(0.55), location: 0.35), .init(color: DS.bg.opacity(0), location: 1)]
+                : [.init(color: DS.bg.opacity(0), location: 0), .init(color: DS.bg.opacity(0.55), location: 0.65), .init(color: DS.bg, location: 1)],
             startPoint: .top,
             endPoint: .bottom
         )
@@ -307,7 +322,9 @@ struct DashboardDayTimeline: View {
     ) -> DayTimelineCardGeometry {
         let placement = placements[id] ?? CalendarOverlapPlacement(lane: 0, laneCount: 1)
         let gutter: CGFloat = 4
-        let usable = contentWidth - CommandCenterCalendarLayout.timeRailWidth - DS.space8
+        // Flush to the rules' own terminus: cards, hour rules, and the
+        // now-line all end at ONE right edge (they ended at W−8, W, and W−4).
+        let usable = contentWidth - CommandCenterCalendarLayout.timeRailWidth
         let laneWidth = (usable - gutter * CGFloat(max(0, placement.laneCount - 1))) / CGFloat(placement.laneCount)
         let x = CommandCenterCalendarLayout.timeRailWidth
             + CGFloat(placement.lane) * (laneWidth + gutter)
@@ -497,21 +514,38 @@ private struct DayTimelineHourGrid: View {
             // A grid you feel, not read (Things' spacing law applied to a
             // calendar): the ladder of full-strength hairlines beside the
             // line-free task list was the texture clash — whisper it.
-            HStack(spacing: 0) {
-                Text(String(format: "%02d:00", hour % 24))
-                    .font(DS.caption2).monospacedDigit()
-                    .foregroundStyle(DS.textMuted.opacity(0.7))
-                    .frame(width: CommandCenterCalendarLayout.timeRailWidth - DS.space8, alignment: .trailing)
-                    .padding(.trailing, DS.space8)
-
+            //
+            // REGISTRATION: the rule is drawn at EXACTLY the hour's y (the
+            // same origin the cards and now-line compute from) — the old
+            // centered HStack floated the rule ~6.5pt below its own hour, so
+            // every card read as starting before its label. The label is then
+            // optically centered on the rule, never the reverse.
+            ZStack(alignment: .topLeading) {
                 Rectangle()
-                    .fill(DS.borderSubtle.opacity(hour == metrics.startHour ? 0.25 : 0.5))
+                    .fill(DS.commandCenterSeparator.opacity(hour == metrics.startHour ? 0.25 : 0.5))
                     .frame(width: contentWidth - CommandCenterCalendarLayout.timeRailWidth, height: 0.5)
+                    .offset(x: CommandCenterCalendarLayout.timeRailWidth)
+
+                // The rail speaks the same clock as the cards: locale-aware
+                // bare hour (never a hardcoded 24h "07:00" beside a locale
+                // "7:00 – 8:00" range on the card one gutter away).
+                Text(hourLabel(hour))
+                    .font(DS.caption2).monospacedDigit()
+                    .foregroundStyle(DS.textMuted)
+                    .frame(width: CommandCenterCalendarLayout.timeRailWidth - DS.space8, alignment: .trailing)
+                    .offset(y: -6)
             }
             .offset(y: CGFloat(hour - metrics.startHour) * DayLaneMetrics.hourHeight)
             .id("day-timeline-hour-\(hour)")
             .accessibilityHidden(true)
         }
+    }
+
+    private func hourLabel(_ hour: Int) -> String {
+        let date = Calendar.current.date(
+            bySettingHour: hour % 24, minute: 0, second: 0, of: Date()
+        ) ?? Date()
+        return date.formatted(.dateTime.hour())
     }
 }
 
@@ -530,7 +564,7 @@ private struct DayTimelineNowMarker: View {
                     .frame(width: 6, height: 6)
                 Rectangle()
                     .fill(DS.accent.opacity(0.9))
-                    .frame(width: contentWidth - CommandCenterCalendarLayout.timeRailWidth - DS.space4, height: 1.5)
+                    .frame(width: contentWidth - CommandCenterCalendarLayout.timeRailWidth, height: 1.5)
             }
             .offset(x: CommandCenterCalendarLayout.timeRailWidth - 3, y: y - 3)
             .accessibilityHidden(true)
@@ -546,10 +580,10 @@ private struct DayTimelineCreateGhost: View {
     let contentWidth: CGFloat
 
     var body: some View {
-        RoundedRectangle(cornerRadius: 6, style: .continuous)
+        RoundedRectangle(cornerRadius: DS.radiusXSmall, style: .continuous)
             .fill(DS.accentSoft.opacity(0.6))
             .overlay(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                RoundedRectangle(cornerRadius: DS.radiusXSmall, style: .continuous)
                     .strokeBorder(DS.accent.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
             )
             .overlay(alignment: .topLeading) {
@@ -561,7 +595,7 @@ private struct DayTimelineCreateGhost: View {
                     .padding(.top, DS.space4)
             }
             .frame(
-                width: contentWidth - CommandCenterCalendarLayout.timeRailWidth - DS.space8,
+                width: contentWidth - CommandCenterCalendarLayout.timeRailWidth,
                 height: metrics.height(from: ghost.start, to: ghost.end)
             )
             .offset(
@@ -582,7 +616,10 @@ private struct DayTimelineEventCard: View {
 
     @State private var isHovered = false
 
-    private var tint: Color { Color(nsColor: event.calendarColor) }
+    // Tamed, never raw: EventKit hands us whatever hex the user picked in
+    // macOS Calendar — unfiltered, it was the most saturated element in an
+    // otherwise whisper-quiet column. Block cards keep their app-owned hex.
+    private var tint: Color { DS.mutedCalendarTint(event.calendarColor) }
 
     private var isNow: Bool {
         (event.startDate...event.endDate).contains(now)
@@ -693,7 +730,7 @@ private struct DayTimelineBlockCard: View {
             invited: viewModel.isTaskDragInFlight && !isDropTargeted,
             struck: block.isCompleted,
             showsSeal: block.isCompleted,
-            detail: openCount > 0 ? "· \(openCount)" : nil
+            detail: openCount > 0 ? "\(openCount)" : nil
         )
         .overlay(alignment: .bottom) { resizeHandle }
         .frame(width: geometry.width, height: liveHeight)
@@ -889,19 +926,24 @@ private struct DayTimelineCardBody: View {
         return isHovered ? DS.border : DS.borderSubtle
     }
 
+    /// A 15-minute slot is 10pt tall — its padding collapses and its title
+    /// steps down a rung so the text never escapes the card's silhouette.
+    private var isCompactSlot: Bool { height < 18 }
+
     var body: some View {
         HStack(alignment: .top, spacing: DS.space6) {
-            // A TICK, not a stripe: the iOS bar weight (~18pt beside a row).
-            // Full-height bars at timeline scale stacked into a barcode.
+            // A TICK, not a stripe — but one that breathes with duration: a
+            // 3-hour block and a 20-minute one are visibly different marks
+            // (capped at ~25% of a tall card, never Notion's full-height bar).
             RoundedRectangle(cornerRadius: 1.5)
                 .fill(tint)
-                .frame(width: 3, height: min(18, max(height - 6, 8)))
-                .padding(.top, 3)
+                .frame(width: 3, height: min(28, max(height * 0.25, 8)))
+                .padding(.top, isCompactSlot ? 1 : 3)
 
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: DS.space4) {
                     Text(title)
-                        .font(DS.caption.weight(.medium))
+                        .font(isCompactSlot ? DS.caption2.weight(.medium) : DS.rowTitleCompact)
                         .foregroundStyle(struck ? DS.textMuted : DS.text)
                         .strikethrough(struck, color: DS.textMuted)
                         .lineLimit(1)
@@ -917,35 +959,49 @@ private struct DayTimelineCardBody: View {
                     metaLine
                 }
             }
-            .padding(.vertical, DS.space2)
+            .padding(.vertical, isCompactSlot ? 0 : DS.space2)
         }
         .padding(.horizontal, DS.space4)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
+            RoundedRectangle(cornerRadius: DS.radiusXSmall, style: .continuous)
                 .fill(fill)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
+            RoundedRectangle(cornerRadius: DS.radiusXSmall, style: .continuous)
                 .strokeBorder(border, lineWidth: 0.5)
         )
+        // Overflow truncates inside the card's own silhouette — a short
+        // event's title must never bleed into the row below.
+        .clipShape(.rect(cornerRadius: DS.radiusXSmall))
+        // The page's most document-like objects get a whisper of resting
+        // elevation (Craft's law: cards are objects, not table cells).
+        .shadow(color: .black.opacity(0.04), radius: 3, x: 0, y: 1)
         .contentShape(Rectangle())
     }
 
     // No repeat glyph here on purpose: when every block repeats, the mark
     // says nothing — recurrence lives in the tooltip and the context menu.
+    // DS.rowMeta: the ONE second-line voice — the card's range spoke 10pt
+    // beside the ledger's 11pt one gutter away.
     private var metaLine: some View {
         HStack(spacing: DS.space4) {
             Text("\(start.formatted(.dateTime.hour().minute())) – \(end.formatted(.dateTime.hour().minute()))")
-                .font(DS.caption2)
+                .font(DS.rowMeta)
                 .foregroundStyle(DS.textMuted)
                 .monospacedDigit()
                 .contentTransition(.numericText())
             if let detail {
-                Text(detail)
-                    .font(DS.caption2)
-                    .foregroundStyle(DS.textMuted)
-                    .monospacedDigit()
+                // A glyph names what's counted — a bare "· 1" is never
+                // legible cold. checkmark.circle is the app's own task mark.
+                HStack(spacing: 2) {
+                    Image(systemName: "checkmark.circle")
+                        .font(DS.microBadge)
+                    Text(detail)
+                        .font(DS.rowMeta)
+                        .monospacedDigit()
+                }
+                .foregroundStyle(DS.textMuted)
             }
         }
         .lineLimit(1)

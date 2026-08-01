@@ -10,10 +10,14 @@ struct SmartTaskCaptureRow: View {
     @Bindable var viewModel: CommandCenterDashboardViewModel
     var contextProjectUUID: String? = nil
     var contextHeadingUUID: String? = nil
-    var placeholderText: String = "Add task... (try \"Write at 6pm every Tue\")"
+    // One register, no meta-commentary: the verb, then a live example of the
+    // parser's grammar — never "(try …)" scaffolding narrating that a demo
+    // exists (the Todoist placeholder law).
+    var placeholderText: String = "Add task…  Write at 6pm every Tue"
     @State private var parsedInput = ParsedTaskInput(title: "")
     @State private var parseDebounce: AnyCancellable?
     @State private var isFocused = false
+    @State private var isRowHovered = false
 
     // Mention state
     @State private var capturedMentions: [RichMention] = []
@@ -50,11 +54,16 @@ struct SmartTaskCaptureRow: View {
 
     // MARK: - Input Row
 
+    // The row you type IS the row you get: the plus occupies the checkbox's
+    // exact 28pt slot so the ghost text lands on the title rail (x=50) with
+    // zero jump on commit — and it wears the same row chrome (hover fill,
+    // focus fill) as every ledger row above it.
     private var inputRow: some View {
-        HStack(spacing: DS.space8) {
+        HStack(spacing: DS.space10) {
             Image(systemName: "plus")
-                .font(DS.cardMeta)
-                .foregroundStyle(isFocused ? DS.accent : DS.textMuted)
+                .font(DS.footnote)
+                .foregroundStyle(isFocused ? DS.accent : DS.textMuted.opacity(0.7))
+                .frame(width: 28)
 
             // The ⌥C capture treatment: recognized qualifiers (habit keywords,
             // intent, dates, times, durations, recurrence, priority, tags)
@@ -62,7 +71,9 @@ struct SmartTaskCaptureRow: View {
             TokenWashTextView(
                 text: $viewModel.newTaskTitle,
                 placeholder: placeholderText,
-                font: .systemFont(ofSize: 13),
+                // Medium, matching DS.rowTitle: the row you type IS the row
+                // you get — weight included, not just the x-position.
+                font: .systemFont(ofSize: 13, weight: .medium),
                 ink: NSColor(DS.text),
                 segments: TaskCaptureWash.segments(for: viewModel.newTaskTitle, mentions: capturedMentions),
                 maxLines: 1,
@@ -86,10 +97,26 @@ struct SmartTaskCaptureRow: View {
                         .foregroundStyle(DS.textMuted)
                 }
                 .buttonStyle(.plain)
+                .help("Clear")
             }
         }
-        .padding(.horizontal, DS.space10)
-        .padding(.vertical, DS.space8)
+        .padding(.horizontal, DS.space12)
+        .padding(.vertical, DS.space6)
+        .frame(minHeight: 40)
+        .background(
+            CommandCenterRowGlass(
+                isActive: isFocused,
+                isSelected: false,
+                isHovered: isRowHovered && !isFocused,
+                tint: DS.accent
+            )
+            .padding(.horizontal, DS.space8)
+        )
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) { isRowHovered = hovering }
+        }
+        .help("Add a task (N)")
     }
 
     // MARK: - Mention Search Overlay
@@ -110,6 +137,7 @@ struct SmartTaskCaptureRow: View {
                 if !mentionResults.isEmpty {
                     Text("\(mentionResults.prefix(5).count) results")
                         .font(DS.caption2)
+                        .monospacedDigit()
                         .foregroundStyle(DS.textMuted)
                 }
 
@@ -121,6 +149,7 @@ struct SmartTaskCaptureRow: View {
                         .foregroundStyle(DS.textMuted)
                 }
                 .buttonStyle(.plain)
+                .help("Close mention search (Esc)")
             }
 
             if mentionResults.isEmpty && !mentionQuery.isEmpty {
@@ -134,10 +163,13 @@ struct SmartTaskCaptureRow: View {
                 }
             }
         }
-        .padding(8)
-        .background(DS.surfaceElevated, in: .rect(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(DS.borderSubtle, lineWidth: 1))
-        .padding(.horizontal, DS.space10)
+        .padding(DS.space8)
+        .background(DS.surfaceElevated, in: .rect(cornerRadius: DS.radiusSmall))
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.radiusSmall, style: .continuous)
+                .strokeBorder(DS.borderSubtle, lineWidth: 0.5)
+        )
+        .padding(.horizontal, DS.space12)
     }
 
     @ViewBuilder
@@ -147,7 +179,23 @@ struct SmartTaskCaptureRow: View {
         Button {
             insertMention(result)
         } label: {
-            HStack(spacing: 6) {
+            MentionResultRowLabel(result: result, color: color)
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Mention Logic
+
+    /// Candidate row with real hover feedback — scanning results must show
+    /// which one the pointer is on (every sibling row on the page does).
+    private struct MentionResultRowLabel: View {
+        let result: MentionSearchResult
+        let color: Color
+
+        @State private var isHovered = false
+
+        var body: some View {
+            HStack(spacing: DS.space6) {
                 Image(systemName: result.entityType.icon)
                     .font(DS.caption2)
                     .foregroundStyle(color)
@@ -163,18 +211,22 @@ struct SmartTaskCaptureRow: View {
                 Text(result.typeLabel)
                     .font(DS.caption2)
                     .foregroundStyle(color)
-                    .padding(.horizontal, 4)
+                    .padding(.horizontal, DS.space4)
                     .padding(.vertical, 1)
                     .background(CosmoMentionColors.pillBackground(for: result.entityType), in: Capsule())
             }
-            .padding(.vertical, 4)
-            .padding(.horizontal, 4)
-            .contentShape(.rect(cornerRadius: 4))
+            .padding(.vertical, DS.space4)
+            .padding(.horizontal, DS.space4)
+            .background(
+                RoundedRectangle(cornerRadius: DS.radiusXSmall, style: .continuous)
+                    .fill(isHovered ? DS.surfaceHover : Color.clear)
+            )
+            .contentShape(.rect(cornerRadius: DS.radiusXSmall))
+            .onHover { hovering in
+                withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+            }
         }
-        .buttonStyle(.plain)
     }
-
-    // MARK: - Mention Logic
 
     private func detectMentionTrigger(in text: String) {
         guard let atIndex = text.lastIndex(of: "@") else {
@@ -257,10 +309,13 @@ struct SmartTaskCaptureRow: View {
                 }
 
                 if let time = parsedInput.scheduledTime {
+                    // Accent, not DS.info: this was the last system blue
+                    // reachable from Today ("at 6pm" summoned a cobalt chip
+                    // beside an accent date chip).
                     metadataChip(
                         icon: "clock",
                         label: time.formatted(.dateTime.hour().minute()),
-                        color: DS.info
+                        color: DS.accent
                     )
                 }
 
@@ -302,10 +357,12 @@ struct SmartTaskCaptureRow: View {
                 }
 
                 if let timeOfDay = parsedInput.timeOfDay {
+                    // Evening speaks gilt (the moon's register on this page —
+                    // EveningPlanRow's own glyph), never the retired violet.
                     metadataChip(
                         icon: timeOfDay == "morning" ? "sun.horizon" : "moon.stars",
                         label: timeOfDay.capitalized,
-                        color: timeOfDay == "morning" ? DS.orange : DS.entityIdea
+                        color: timeOfDay == "morning" ? DS.orange : DS.gilt
                     )
                 }
 
@@ -313,7 +370,7 @@ struct SmartTaskCaptureRow: View {
                     metadataChip(
                         icon: state == "someday" ? "archivebox" : "tray.full",
                         label: state.capitalized,
-                        color: DS.entityIdea
+                        color: DS.textSecondary
                     )
                 }
 

@@ -176,7 +176,10 @@ struct CommandCenterDashboard: View {
                 CommandCenterMasthead(viewModel: viewModel)
 
                 if viewModel.viewMode == .today {
+                    // On the content rail like every sibling band — the brief
+                    // was the page's only element still at x=0.
                     DailyBriefCard()
+                        .padding(.horizontal, DS.space12)
                         .cascadeIn(hasAppeared, index: 0)
 
                     // The deep-work gauge is Today's hero — Anytime/Someday/
@@ -198,6 +201,10 @@ struct CommandCenterDashboard: View {
                         .frame(width: 302)
                         .cascadeIn(hasAppeared, index: 3)
                     }
+                    // The page's ONE trailing rail (x = W−12): the schedule
+                    // rule now terminates on the same line as the masthead
+                    // date and the Start-focus pill above it.
+                    .padding(.trailing, DS.space12)
                     .frame(maxHeight: .infinity)
                 } else {
                     selectingTaskList
@@ -572,10 +579,12 @@ struct CommandCenterDashboard: View {
 
     // MARK: - Gradient Divider
 
-    // The rule stops at the group's edges — it frames the columns below,
-    // never bleeds past them.
+    // The one rule voice at the page's most structural seam — the doubled
+    // Akashic hairline was a third rule dialect inside 200 vertical points
+    // (the premium ornament register spent on a plain divider).
     private var gradientDivider: some View {
-        AkashicSectionDivider()
+        CosmoPageRule()
+            .padding(.horizontal, DS.space12)
     }
 
 }

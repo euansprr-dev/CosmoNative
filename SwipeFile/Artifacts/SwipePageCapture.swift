@@ -66,6 +66,20 @@ enum SwipePageCapture {
         return await capture(webView: webView, swipeUUID: swipeUUID)
     }
 
+    /// Render an HTML STRING and capture it — the email path. The string
+    /// arrives from SwipeEmailCapture with `cid:` inline images already
+    /// rewritten to `data:` URIs, so the render isn't holey; remote https
+    /// images load normally. Same settle → probe → slice → read pipeline.
+    static func capture(htmlString: String, baseURL: URL?, swipeUUID: String) async -> Capture? {
+        let webView = makeHeadlessWebView()
+        webView.loadHTMLString(htmlString, baseURL: baseURL)
+        for _ in 0..<40 {
+            try? await Task.sleep(for: .milliseconds(250))
+            if !webView.isLoading { break }
+        }
+        return await capture(webView: webView, swipeUUID: swipeUUID)
+    }
+
     // MARK: - Webview
 
     private static func makeHeadlessWebView() -> WKWebView {

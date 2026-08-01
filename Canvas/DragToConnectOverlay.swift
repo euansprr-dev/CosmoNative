@@ -1,7 +1,7 @@
 // CosmoOS/Canvas/DragToConnectOverlay.swift
 // Visual overlay during Option+drag connection gesture
 // Renders inside the scaleEffect container (canvas coordinates) so it matches
-// the final KnowledgePulseLineView connections exactly.
+// the final CanvasConnectionLinesLayer connections exactly.
 
 import SwiftUI
 
@@ -9,7 +9,7 @@ struct DragToConnectOverlay: View {
     var connectManager: DragToConnectManager
     let blocks: [CanvasBlock]
 
-    // MARK: - Bezier Control Point (matches KnowledgePulseLineView / CanvasConnectionLinesLayer)
+    // MARK: - Bezier Control Point (matches CanvasConnectionLinesLayer.bezierControl)
 
     /// Perpendicular offset from midpoint — same algorithm as the final rendered lines
     private func bezierControl(from: CGPoint, to: CGPoint) -> CGPoint {
@@ -40,7 +40,7 @@ struct DragToConnectOverlay: View {
                     let to = connectManager.currentDragPoint
                     let control = bezierControl(from: from, to: to)
 
-                    // Glow layer — matches KnowledgePulseLineView glow
+                    // Glow layer — matches the rendered connection lines' glow
                     var glowPath = Path()
                     glowPath.move(to: from)
                     glowPath.addQuadCurve(to: to, control: control)

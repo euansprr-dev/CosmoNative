@@ -36,13 +36,16 @@ struct CortexKeycap: View {
         Group {
             if isLetter {
                 Text(symbol.uppercased())
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .font(DS.keycap)
             } else {
                 Image(systemName: symbol)
                     .font(.system(size: 9, weight: .medium))
             }
         }
-        .foregroundStyle(DS.commandCenterMutedText)
+        // Secondary, not muted: keycap ink sits on the darker vellum fill,
+        // where the muted rung drops below AA (shared spec with the ledger's
+        // shortcut bar — ONE keycap dialect).
+        .foregroundStyle(DS.commandCenterSecondaryText)
         .frame(width: 18, height: 18)
         .background(DS.commandChromeControlFill, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
         .overlay(

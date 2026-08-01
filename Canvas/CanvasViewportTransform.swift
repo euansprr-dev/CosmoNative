@@ -479,11 +479,51 @@ final class CanvasViewportEngine {
         refreshDerived()
     }
 
+    // MARK: Wheel-zoom streak
+
+    /// A run of Option+scroll wheel ticks treated as ONE live gesture.
+    /// Writing the committed scale per tick made every tick (momentum
+    /// included) a full canvas body re-evaluation; riding
+    /// `gestureMagnification` instead means ticks invalidate only the
+    /// transform hosts, and world content re-culls on 0.125 buckets.
+    /// The caller commits once when the streak goes quiet.
+    @ObservationIgnored private var wheelStreakCommitTask: Task<Void, Never>?
+
+    /// Apply one wheel tick's zoom factor. `commit` runs on the MainActor
+    /// after ~90ms of silence with the final effective scale — the caller
+    /// writes it to the committed value exactly once per streak.
+    func applyWheelZoomTick(factor: CGFloat, commit: @escaping @MainActor (CGFloat) -> Void) {
+        let proposed = gestureMagnification * factor
+        // Clamp at the magnification level so the streak can't wind up
+        // beyond the scale limits and "unwind" invisibly on the way back.
+        let clamped = min(max(proposed * committedScale, minScale), maxScale) / committedScale
+        setGestureMagnification(clamped)
+
+        wheelStreakCommitTask?.cancel()
+        wheelStreakCommitTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(90))
+            guard !Task.isCancelled, let self else { return }
+            self.wheelStreakCommitTask = nil
+            // An interruption (canvas switch, deactivate) already reset the
+            // gesture — committing now would stamp a stale scale.
+            guard abs(self.gestureMagnification - 1) > 0.0001 else { return }
+            let finalScale = min(max(self.committedScale * self.gestureMagnification, self.minScale), self.maxScale)
+            // Same order as the pinch gesture's onEnded: commit the scale,
+            // then clear the magnification — both land in the same runloop
+            // turn, so the rendered transform never shows an intermediate.
+            commit(finalScale)
+            self.setGestureMagnification(1.0)
+        }
+    }
+
     /// Clears every live gesture field. Replaces `@GestureState` auto-reset:
     /// called on gesture end and from the interruption paths (canvas
     /// deactivation, thinkspace switch, unmount) so a cancelled gesture can
     /// never leave the world stuck mid-pan.
     func resetLiveGesture() {
+        // A pending wheel-streak commit must not fire after an interruption.
+        wheelStreakCommitTask?.cancel()
+        wheelStreakCommitTask = nil
         guard gesturePanOffset != .zero ||
                 spacePanOffset != .zero ||
                 gestureMagnification != 1.0 ||
@@ -628,8 +668,13 @@ struct CanvasLiveTransformReader<Content: View>: View {
 enum CanvasViewportSnapshotPolicy {
     private static let livePanBucketSize: CGFloat = 640
     private static let liveScaleBucketSize: CGFloat = 0.125
-    private static let idleMinimumPreloadInset: CGFloat = 640
-    private static let liveMinimumPreloadInset: CGFloat = 1_500
+    private static let minimumPreloadInset: CGFloat = 1_000
+
+    /// Hysteresis: an already-mounted block stays mounted until it leaves
+    /// preloadInset × this multiplier. Mounting churn at the preload frontier
+    /// (bucket crossings, gesture start/end) was re-running media loads on
+    /// every remount.
+    static let retainInsetMultiplier: CGFloat = 1.75
 
     static func snapshotTransform(
         for transform: CanvasViewportTransform,
@@ -653,21 +698,22 @@ enum CanvasViewportSnapshotPolicy {
         )
     }
 
+    /// ONE inset for live gestures and idle. The old live-1.5×/idle-0.75×
+    /// split meant every gesture start mounted a band of blocks and every
+    /// gesture end unmounted it — pure churn with zero user-visible benefit.
+    /// `isLiveGesture` stays in the signature so call sites keep reading
+    /// naturally, but it no longer changes the value.
     static func preloadInset(
         viewportSize: CGSize,
         isLiveGesture: Bool,
         blockCount: Int
     ) -> CGFloat {
         let maxViewportDimension = max(viewportSize.width, viewportSize.height)
-        let fallbackInset = isLiveGesture ? liveMinimumPreloadInset : idleMinimumPreloadInset
         guard maxViewportDimension.isFinite, maxViewportDimension > 0 else {
-            return fallbackInset
+            return minimumPreloadInset
         }
 
-        let requestedInset = isLiveGesture
-            ? max(maxViewportDimension * 1.5, liveMinimumPreloadInset)
-            : max(maxViewportDimension * 0.75, idleMinimumPreloadInset)
-
+        let requestedInset = max(maxViewportDimension, minimumPreloadInset)
         return min(requestedInset, preloadCap(forBlockCount: blockCount))
     }
 

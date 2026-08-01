@@ -6,6 +6,9 @@ struct ElementBlockView: View {
 
     let focusCoordinator: BlockFocusCoordinator
     var fontSize: CGFloat = 17
+    var fontDesign: NSFontDescriptor.SystemDesign = .default
+    var lineSpacingAdjustment: CGFloat = 0
+    var blockGap: CGFloat = DS.space6
     var darkMode: Bool = false
     var overrideTextColor: NSColor? = nil
     var allowSlashCommands: Bool = true
@@ -32,7 +35,9 @@ struct ElementBlockView: View {
                 collapsedChildCount: block.children.count,
                 titleColor: titleColor,
                 chevronColor: chevronColor,
-                autoFocusTitle: focusCoordinator.focusedBlockID == block.id,
+                // Per-row focus read — the whole-coordinator focusedBlockID
+                // would re-render this element on every focus change anywhere.
+                autoFocusTitle: focusCoordinator.rowState(for: block.id).isFocused,
                 onToggleCollapse: toggleCollapse,
                 onSubmitTitle: focusBody,
                 onTitleFocusChange: handleTitleFocusChange
@@ -57,6 +62,9 @@ struct ElementBlockView: View {
         BlockListView(
             document: childDocumentBinding,
             fontSize: fontSize,
+            fontDesign: fontDesign,
+            lineSpacingAdjustment: lineSpacingAdjustment,
+            blockGap: blockGap,
             placeholder: "Add details...",
             darkMode: darkMode,
             overrideTextColor: overrideTextColor,
@@ -126,10 +134,11 @@ struct ElementBlockView: View {
     }
 
     private var titleColor: Color {
+        // Full ink — the card's title must not whisper under its own body.
         if let overrideTextColor {
-            return Color(nsColor: overrideTextColor).opacity(0.92)
+            return Color(nsColor: overrideTextColor)
         }
-        return darkMode ? DS.focusImmersiveText.opacity(0.92) : DS.documentText.opacity(0.92)
+        return darkMode ? DS.focusImmersiveText : DS.documentText
     }
 
     private var chevronColor: Color {

@@ -416,7 +416,9 @@ private struct CosmoInlineDiffLineView: View {
     private var styledFont: Font {
         switch formatMark {
         case .bold: return .system(size: 15, weight: .bold)
-        case .heading1: return .system(size: 22, weight: .bold)
+        // Semibold — the document's H1 is semibold (bold is the title's);
+        // the preview chip must not promise a weight the accept won't insert.
+        case .heading1: return .system(size: 22, weight: .semibold)
         case .heading2: return .system(size: 18, weight: .semibold)
         case .heading3: return .system(size: 16, weight: .medium)
         default: return .system(size: 15)

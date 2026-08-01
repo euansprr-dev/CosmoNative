@@ -61,6 +61,14 @@ struct ConnectionWorkspaceView: View {
 
     // MARK: - Columns
 
+    /// LAW (shared with WorkbenchShell): the shell never animates panel
+    /// insertion itself — an implicit `.animation(value:)` here also animated
+    /// breakpoint- and mount-driven seats, and on macOS 26 a seat riding a
+    /// transaction it doesn't own gets its slide orphaned: the panel commits
+    /// layout but never composites (invisible-but-hit-testable inspector,
+    /// stale board raster clipped at the new width — July 2026). Toggle sites
+    /// supply the transaction via `withAnimation`; breakpoint seats are
+    /// instant by design.
     private func columns(breakpoint: ConnectionWorkspaceBreakpoint) -> some View {
         HStack(spacing: 0) {
             if breakpoint == .regular {
@@ -83,8 +91,6 @@ struct ConnectionWorkspaceView: View {
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
-        .animation(ProMotionSprings.focusTransition, value: workspace.isInspectorVisible)
-        .animation(ProMotionSprings.focusTransition, value: workspace.isNavigatorCollapsed)
     }
 
     @ViewBuilder

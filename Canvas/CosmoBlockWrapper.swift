@@ -50,6 +50,20 @@ enum CanvasCardTextExcerpt {
     }
 }
 
+/// Session-scoped memory of which blocks already played their entrance
+/// animation. Viewport culling remounts block hosts constantly while panning —
+/// without this gate every remount replayed the fade+rise spring, so cards
+/// visibly faded in at the pan frontier.
+@MainActor
+enum CanvasBlockEntranceRegistry {
+    private static var played: Set<String> = []
+
+    /// True exactly once per block id per app session.
+    static func shouldPlayEntrance(blockId: String) -> Bool {
+        played.insert(blockId).inserted
+    }
+}
+
 /// Akashic canvas wrapper — vellum surface, gilt corner ornament, tiered shadow
 /// and accent-glow selection. Shared chrome for all floating block types.
 struct CosmoBlockWrapper<Content: View>: View {
@@ -98,6 +112,12 @@ struct CosmoBlockWrapper<Content: View>: View {
     @State private var hasAppeared = false
 
     @Environment(\.canvasBlockSelectionSuppressed) private var selectionNotificationsSuppressed
+    /// Zoom LOD — below the poster threshold the card sheds chrome that is
+    /// illegible at that world scale: the triple-shadow stack collapses to a
+    /// single soft shadow, the gilt bracket disappears, and hover tracking
+    /// stands down (hover depth-change is invisible on a 90pt card, but 50
+    /// tracking areas make every mouse-move event more expensive).
+    @Environment(\.canvasBlockRenderTier) private var renderTier
 
     // Selection is read from block, not a binding
     private var isSelected: Bool { block.isSelected }
@@ -219,7 +239,7 @@ struct CosmoBlockWrapper<Content: View>: View {
                 }
             }
             .overlay(alignment: .topLeading) {
-                if !suppressGiltCorner {
+                if !suppressGiltCorner && renderTier.showsText {
                     GiltCornerBracket()
                         .stroke(DS.gilt, lineWidth: 0.8)
                         .frame(width: 12, height: 12)
@@ -228,18 +248,23 @@ struct CosmoBlockWrapper<Content: View>: View {
                         .allowsHitTesting(false)
                 }
             }
-            // Simple edge resize overlay (safe implementation)
+            // Simple edge resize overlay (safe implementation) — hit-zones
+            // exist only while the cursor is on the card or it is selected.
             .overlay {
                 SimpleResizeOverlay(
                     size: $blockSize,
                     blockId: block.id,
                     minSize: CGSize(width: minWidth, height: minHeight),
                     maxSize: CGSize(width: maxWidth, height: maxHeight),
-                    aspectRatio: preservesAspectRatio ? fixedLayoutSize.map { $0.width / max($0.height, 1) } : nil
+                    aspectRatio: preservesAspectRatio ? fixedLayoutSize.map { $0.width / max($0.height, 1) } : nil,
+                    isEnabled: isHovered || isSelected
                 )
             }
             // PERF: Fixed shadow during drag — avoids GPU shadow recomputation per frame.
             // Resting / hover / drag tiers use soft natural-light shadow pair.
+            // Poster/minimal zoom tiers collapse to the first shadow alone —
+            // the layered pair is invisible on a sub-135pt card, and shadow
+            // passes are the wrapper's main compositing cost at overview zoom.
             .shadow(
                 color: .black.opacity(isDragging ? 0.10 : (isHovered ? 0.06 : 0.04)),
                 radius: isDragging ? 20 : (isHovered ? 16 : 8),
@@ -247,15 +272,17 @@ struct CosmoBlockWrapper<Content: View>: View {
                 y: isDragging ? 8 : (isHovered ? 4 : 2)
             )
             .shadow(
-                color: .black.opacity(isDragging ? 0.05 : (isHovered ? 0.03 : 0.02)),
-                radius: isDragging ? 4 : (isHovered ? 4 : 2),
+                color: renderTier.isFull
+                    ? .black.opacity(isDragging ? 0.05 : (isHovered ? 0.03 : 0.02))
+                    : .clear,
+                radius: renderTier.isFull ? (isDragging ? 4 : (isHovered ? 4 : 2)) : 0,
                 x: 0,
-                y: isDragging ? 2 : (isHovered ? 2 : 1)
+                y: renderTier.isFull ? (isDragging ? 2 : (isHovered ? 2 : 1)) : 0
             )
             // Accent glow layer — lights up on selection to echo CommandCenter affordance
             .shadow(
-                color: isSelected ? DS.accentGlow.opacity(0.6) : .clear,
-                radius: isSelected ? 14 : 0,
+                color: isSelected && renderTier.isFull ? DS.accentGlow.opacity(0.6) : .clear,
+                radius: isSelected && renderTier.isFull ? 14 : 0,
                 x: 0,
                 y: 0
             )
@@ -302,11 +329,19 @@ struct CosmoBlockWrapper<Content: View>: View {
             blockSize = newSize
         }
         .onHover { hovering in
+            // Hover depth-change is imperceptible below the poster threshold;
+            // skipping the write keeps cursor sweeps from re-rendering cards.
+            guard renderTier.isFull || isHovered else { return }
             isHovered = hovering
         }
         .onAppear {
             guard !hasAppeared else { return }
-            withAnimation(ProMotionSprings.cardEntrance) {
+            if CanvasBlockEntranceRegistry.shouldPlayEntrance(blockId: block.id) {
+                withAnimation(ProMotionSprings.cardEntrance) {
+                    hasAppeared = true
+                }
+            } else {
+                // Culling remount — appear instantly, no replayed entrance.
                 hasAppeared = true
             }
         }
@@ -527,6 +562,11 @@ struct SimpleResizeOverlay: View {
     let minSize: CGSize
     let maxSize: CGSize
     var aspectRatio: CGFloat? = nil
+    /// Callers gate this on hover/selection so resting cards carry zero
+    /// resize hit-zones or cursor trackers. While a drag is live the zones
+    /// stay mounted even if the flag flips false — unmounting mid-gesture
+    /// would cancel the resize.
+    var isEnabled: Bool = true
 
     @State private var isDragging = false
     @State private var dragStartSize: CGSize = .zero
@@ -534,6 +574,13 @@ struct SimpleResizeOverlay: View {
     private let handleSize: CGFloat = 20
 
     var body: some View {
+        if isEnabled || isDragging {
+            resizeZones
+        }
+    }
+
+    @ViewBuilder
+    private var resizeZones: some View {
         // Bottom-right corner resize handle
         VStack {
             Spacer()

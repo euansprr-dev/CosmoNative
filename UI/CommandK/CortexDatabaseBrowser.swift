@@ -29,8 +29,6 @@ struct CommandKLibraryThumbnail: View {
     private var thumbnailContent: some View {
         if let thumbnailURL = item.thumbnailURL, !thumbnailURL.isEmpty {
             SpotlightImageContent(urlString: thumbnailURL)
-        } else if item.atomType == .connection {
-            SpotlightConnectionPreview(preview: item.preview, accentColor: item.color)
         } else if let preview = item.preview, !preview.isEmpty,
                   item.atomType != .project, item.atomType != .thinkspace {
             SpotlightPageContent(text: preview, accentColor: item.color)
@@ -45,9 +43,10 @@ struct CommandKLibraryThumbnail: View {
         isDocumentPreview ? CommandKPreviewPaper.fill : DS.glassCardFill.opacity(0.50)
     }
 
+    // Connections never reach this thumbnail — CortexPreviewBlock intercepts
+    // them with the manuscript preview before the .library dispatch.
     private var isDocumentPreview: Bool {
-        let hasImage = item.thumbnailURL?.isEmpty == false
-        return !hasImage && item.atomType != .connection
+        item.thumbnailURL?.isEmpty != false
     }
 }
 
@@ -118,80 +117,6 @@ struct SpotlightPageContent: View {
                 .fill(CommandKPreviewPaper.fill)
         )
         .padding(4)
-    }
-}
-
-// MARK: - Connection Preview (miniature section cards)
-
-struct SpotlightConnectionPreview: View {
-    let preview: String?
-    let accentColor: Color
-
-    // Section definitions matching the connection focus mode
-    private static let sectionDefs: [(key: String, label: String, color: Color)] = [
-        ("IDEA", "Idea", Color(hex: "#6B6EA8")),
-        ("BELIEF", "Belief", Color(hex: "#5B84B0")),
-        ("GOAL", "Goal", Color(hex: "#38B764")),
-        ("PROBLEMS", "Problems", Color(hex: "#D97706")),
-        ("BENEFIT", "Benefits", Color(hex: "#38B764").opacity(0.8)),
-        ("OBJECTIONS", "Objections", Color(hex: "#8B6BAB")),
-        ("EXAMPLE", "Examples", Color(hex: "#D17B4F")),
-        ("PROCESS", "Process", Color(hex: "#5B84B0").opacity(0.8)),
-        ("NOTES", "Notes", Color(hex: "#9B8A6E")),
-    ]
-
-    private var sections: [(label: String, color: Color, hasContent: Bool)] {
-        guard let preview, !preview.isEmpty else {
-            // No data — show all sections as empty
-            return Self.sectionDefs.map { ($0.label, $0.color, false) }
-        }
-        // Section headers live at the top of the text; never scan an
-        // unbounded body on the render path.
-        let scanText = String(preview.prefix(4000))
-        let blocks = Set(scanText.components(separatedBy: "\n\n").compactMap {
-            $0.components(separatedBy: "\n").first
-        })
-        return Self.sectionDefs.map { def in
-            (def.label, def.color, blocks.contains(def.key))
-        }
-    }
-
-    var body: some View {
-        VStack(spacing: 2) {
-            ForEach(Array(sections.enumerated()), id: \.offset) { _, section in
-                sectionBar(section)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(5)
-        .background(
-            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                .fill(Color(white: 0.12))
-        )
-        .padding(4)
-    }
-
-    private func sectionBar(_ section: (label: String, color: Color, hasContent: Bool)) -> some View {
-        HStack(spacing: 3) {
-            Circle()
-                .fill(section.color)
-                .frame(width: 3, height: 3)
-            Text(section.label)
-                .font(.system(size: 3.5, weight: .medium))
-                .foregroundStyle(Color.white.opacity(0.7))
-            Spacer(minLength: 0)
-            if section.hasContent {
-                RoundedRectangle(cornerRadius: 1, style: .continuous)
-                    .fill(section.color.opacity(0.3))
-                    .frame(width: 8, height: 3)
-            }
-        }
-        .padding(.horizontal, 3)
-        .padding(.vertical, section.hasContent ? 3 : 2)
-        .background(
-            RoundedRectangle(cornerRadius: 2, style: .continuous)
-                .fill(Color.white.opacity(section.hasContent ? 0.08 : 0.04))
-        )
     }
 }
 

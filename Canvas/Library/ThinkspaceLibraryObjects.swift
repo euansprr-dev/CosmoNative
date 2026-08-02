@@ -180,8 +180,23 @@ struct LibraryDocumentObject: View {
             } else {
                 LibraryPagePreview(title: model.item.title, text: text, pageStyle: notePageStyle)
             }
-        case .connection(let preview):
-            LibraryConnectionPreview(preview: preview, miniature: miniature)
+        case .connection(let sections, let conceptTypeName):
+            // Same law as pages: the concept's actual manuscript, typeset once
+            // at design size for miniatures and readable at gallery scale.
+            if miniature {
+                LibraryManuscriptThumbnail(
+                    title: model.item.title,
+                    conceptTypeName: conceptTypeName,
+                    sections: sections,
+                    size: objectSize
+                )
+            } else {
+                LibraryManuscriptPreview(
+                    title: model.item.title,
+                    conceptTypeName: conceptTypeName,
+                    sections: sections
+                )
+            }
         case .objectMotif(let icon, let tint):
             LibraryObjectMotifWell(icon: icon, tint: tint)
         }
@@ -200,8 +215,10 @@ struct LibraryDocumentObject: View {
     }
 
     private var isPage: Bool {
-        if case .page = model.previewKind { return true }
-        return false
+        switch model.previewKind {
+        case .page, .connection: return true
+        case .media, .objectMotif: return false
+        }
     }
 
     private var edgeColor: Color {
@@ -318,76 +335,131 @@ struct LibraryPagePreview: View {
     }
 }
 
-// MARK: - Connection Preview
+// MARK: - Manuscript Preview (connections — the concept as its printed page)
 
-/// Miniature of the connection workspace — its section stack at object scale.
-/// Section colors mirror the connection focus mode's editorial palette. The
-/// miniature variant drops labels: at thumbnail size the board's *shape* is
-/// the identity.
-struct LibraryConnectionPreview: View {
-    let preview: String?
-    var miniature: Bool = false
+/// The concept's manuscript face: the serif document from the Connection
+/// workspace's manuscript mode, miniaturized as the library object. Vellum
+/// paper, filigree masthead, chapters with accent dots — the real sections
+/// from `atom.structured`, never a stand-in mock. An empty concept renders
+/// as a blank vellum page carrying only its masthead, which is the honest
+/// state of an unwritten manuscript.
+struct LibraryManuscriptPreview: View {
+    let title: String
+    let conceptTypeName: String?
+    let sections: [ConnectionSection]
 
-    private static let sectionDefs: [(key: String, label: String, hex: String)] = [
-        ("IDEA", "Idea", "#6B6EA8"),
-        ("BELIEF", "Belief", "#5B84B0"),
-        ("GOAL", "Goal", "#38B764"),
-        ("PROBLEMS", "Problems", "#D97706"),
-        ("BENEFIT", "Benefits", "#34A36A"),
-        ("OBJECTIONS", "Objections", "#8B6BAB"),
-        ("EXAMPLE", "Examples", "#D17B4F"),
-        ("PROCESS", "Process", "#5E8BB5"),
-        ("NOTES", "Notes", "#9B8A6E"),
-    ]
+    /// Bounded before layout (the ⌘K freeze lesson — Text typesets its whole
+    /// string even when clipped): a page this size shows a handful of
+    /// chapters, so sections, items, and characters are capped up front.
+    private static let maxChapters = 7
+    private static let maxItemsPerChapter = 3
+    private static let maxItemCharacters = 160
 
-    private var sections: [(label: String, color: Color, hasContent: Bool)] {
-        let filledKeys: Set<String>
-        if let preview, !preview.isEmpty {
-            filledKeys = Set(preview.components(separatedBy: "\n\n").compactMap {
-                $0.components(separatedBy: "\n").first
-            })
-        } else {
-            filledKeys = []
-        }
-        let defs = miniature ? Array(Self.sectionDefs.prefix(6)) : Self.sectionDefs
-        return defs.map { def in
-            (def.label, Color(hex: def.hex), filledKeys.contains(def.key))
-        }
+    private var chapters: [ConnectionSection] {
+        Array(
+            sections
+                .filter { !$0.items.isEmpty }
+                .sorted { $0.type.sortOrder < $1.type.sortOrder }
+                .prefix(Self.maxChapters)
+        )
     }
 
     var body: some View {
-        VStack(spacing: miniature ? 3 : 4) {
-            ForEach(Array(sections.enumerated()), id: \.offset) { _, section in
-                sectionRow(section)
-            }
-            Spacer(minLength: 0)
+        VStack(alignment: .leading, spacing: DS.space16) {
+            masthead
+            ForEach(chapters) { chapter(for: $0) }
         }
-        .padding(miniature ? DS.space6 : DS.space10)
-        .background(Color(white: 0.13))
+        .padding(DS.space16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(DS.vellum)
         .accessibilityHidden(true)
     }
 
-    private func sectionRow(_ section: (label: String, color: Color, hasContent: Bool)) -> some View {
+    private var masthead: some View {
+        VStack(spacing: DS.space8) {
+            filigree
+            Text(title.isEmpty ? "Untitled Framework" : title)
+                .font(DS.compactTitleSerif)
+                .foregroundStyle(DS.inkWash)
+                .multilineTextAlignment(.center)
+                .lineLimit(3)
+            if let conceptTypeName {
+                Text(conceptTypeName.uppercased())
+                    .font(DS.smallCaps)
+                    .tracking(1.8)
+                    .foregroundStyle(DS.giltMuted)
+            }
+            filigree
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var filigree: some View {
+        HStack(spacing: DS.space6) {
+            Rectangle().fill(DS.gilt.opacity(0.6)).frame(height: 0.5)
+            Rectangle()
+                .fill(DS.gilt.opacity(0.75))
+                .frame(width: 3.5, height: 3.5)
+                .rotationEffect(.degrees(45))
+            Rectangle().fill(DS.gilt.opacity(0.6)).frame(height: 0.5)
+        }
+        .frame(maxWidth: 120)
+    }
+
+    private func chapter(for section: ConnectionSection) -> some View {
+        VStack(alignment: .leading, spacing: DS.space6) {
+            chapterHeader(section)
+            ForEach(Array(section.items.prefix(Self.maxItemsPerChapter))) { item in
+                HStack(alignment: .top, spacing: DS.space6) {
+                    Circle()
+                        .fill(section.type.accentColor.opacity(0.65))
+                        .frame(width: 2.5, height: 2.5)
+                        .padding(.top, 5)
+                    Text(String(item.resolvedPlainText.prefix(Self.maxItemCharacters)))
+                        .font(DS.excerptSerif)
+                        .foregroundStyle(DS.inkWash.opacity(0.9))
+                        .lineSpacing(2)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                }
+            }
+        }
+    }
+
+    private func chapterHeader(_ section: ConnectionSection) -> some View {
         HStack(spacing: DS.space6) {
             Circle()
-                .fill(section.color)
-                .frame(width: miniature ? 3.5 : 5, height: miniature ? 3.5 : 5)
-            if !miniature {
-                Text(section.label)
-                    .font(DS.caption)
-                    .foregroundStyle(Color.white.opacity(0.72))
-            }
-            Spacer(minLength: 0)
-            RoundedRectangle(cornerRadius: 2, style: .continuous)
-                .fill(section.color.opacity(section.hasContent ? 0.45 : 0.10))
-                .frame(width: miniature ? 12 : 18, height: miniature ? 3.5 : 5)
+                .fill(section.type.accentColor)
+                .frame(width: 4, height: 4)
+            Text(section.type.displayName.uppercased())
+                .font(DS.smallCaps)
+                .tracking(1.6)
+                .foregroundStyle(section.type.accentColor)
+                .lineLimit(1)
+            Rectangle().fill(section.type.accentColor.opacity(0.3)).frame(height: 0.5)
         }
-        .padding(.horizontal, miniature ? DS.space4 : DS.space8)
-        .padding(.vertical, miniature ? 2.5 : DS.space4)
-        .background(
-            RoundedRectangle(cornerRadius: miniature ? 3 : 5, style: .continuous)
-                .fill(Color.white.opacity(section.hasContent ? 0.09 : 0.04))
-        )
+    }
+}
+
+/// The manuscript scaled to object size, exactly the page-thumbnail trick:
+/// typeset ONCE at design size (where the type scale is honest), then
+/// GPU-scaled — so icon cells and filmstrip tiles show the real document.
+struct LibraryManuscriptThumbnail: View {
+    let title: String
+    let conceptTypeName: String?
+    let sections: [ConnectionSection]
+    let size: CGSize
+
+    /// Matches the page aspect 90:116, same as LibraryPageThumbnail.
+    private static let designSize = CGSize(width: 200, height: 258)
+
+    var body: some View {
+        LibraryManuscriptPreview(title: title, conceptTypeName: conceptTypeName, sections: sections)
+            .frame(width: Self.designSize.width, height: Self.designSize.height)
+            .scaleEffect(size.width / Self.designSize.width, anchor: .topLeading)
+            .frame(width: size.width, height: size.height, alignment: .topLeading)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
     }
 }
 

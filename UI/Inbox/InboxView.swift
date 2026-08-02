@@ -42,17 +42,17 @@ struct InboxView: View {
             queuePage
         case .captureLanes:
             VStack(spacing: 0) {
-                masthead
+                masthead(rail: DS.pageTitleRail)
                 CaptureLanesView(showsLaneSidebar: false, triageModel: viewModel)
             }
         case .captureLane(let id):
             VStack(spacing: 0) {
-                masthead
+                masthead(rail: DS.pageTitleRail)
                 CaptureLanesView(showsLaneSidebar: false, selectedDestinationId: id, triageModel: viewModel)
             }
         case .manageCommands:
             VStack(spacing: 0) {
-                masthead
+                masthead(rail: DS.pageTitleRail)
                 CaptureLanesView(showsLaneSidebar: false, showsCommandRegistryOnly: true, triageModel: viewModel)
             }
         }
@@ -60,18 +60,39 @@ struct InboxView: View {
 
     private var queuePage: some View {
         ZStack(alignment: .topTrailing) {
+            // ONE composed ledger column (masthead, capture, queue) anchored
+            // on the shared page rail — hairlines and rows stop at the
+            // column's edge instead of running to the window, and the
+            // trailing band stays clear for the inspector (the same seat
+            // Today gives its timeline). Anchored, not centered: centering
+            // the cap would push the title off the rail Today's title sits
+            // on, which is the misalignment this column exists to fix.
             VStack(spacing: 0) {
-                masthead
+                masthead(rail: DS.space12)
                 captureHero
                 queueOrEmptyState
             }
+            .frame(maxWidth: Self.ledgerColumnWidth, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, DS.pageTitleRail - DS.space12)
             inspectorOverlay
         }
     }
 
+    /// Today's task list at full stretch: its composed group caps at 1500
+    /// and the list takes what's left beside the fixed 302pt timeline, the
+    /// space24 column gap, and the space12 trailing rail (1500 − 302 − 24
+    /// − 12). The queue is the same ledger anatomy, so it caps at the same
+    /// measure — derived, not invented.
+    private static let ledgerColumnWidth: CGFloat = 1162
+
     // MARK: - Masthead (Command Center grammar)
 
-    private var masthead: some View {
+    /// `rail` is the title's leading inset. The queue page passes
+    /// `DS.space12` because its ledger column already carries the outer
+    /// gutters (rail composition mirrors the Command Center masthead);
+    /// flat lane pages pass `DS.pageTitleRail` whole.
+    private func masthead(rail: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: DS.space6) {
             HStack(alignment: .firstTextBaseline) {
                 Text("Inbox")
@@ -92,7 +113,7 @@ struct InboxView: View {
         // Same breathing room as the Command Center masthead — the shared
         // clearance keeps the title below the floating back/forward trail
         // chrome and the sidebar toggle at the window's top-left.
-        .padding(.horizontal, DS.space32)
+        .padding(.horizontal, rail)
         .padding(.top, DS.navChromeClearance)
         .padding(.bottom, DS.space10)
     }
@@ -169,7 +190,9 @@ struct InboxView: View {
 
     private var captureHero: some View {
         InboxCaptureBar(viewModel: viewModel)
-            .padding(.horizontal, DS.space32)
+            // On the title rail within the ledger column, like Today's
+            // brief card on its content rail.
+            .padding(.horizontal, DS.space12)
             .padding(.top, DS.space6)
             .padding(.bottom, DS.space10)
     }
@@ -196,9 +219,9 @@ struct InboxView: View {
                     }
                 }
             }
-            // Rows sit slightly inside the masthead margin — the same
-            // title-to-content rhythm as the Today page's task list.
-            .padding(.horizontal, DS.space24)
+            // Rows run to the ledger column's edges, outdenting the title
+            // by the space12 rail — the same title-to-content rhythm as
+            // the Today page's task list against its masthead.
             .padding(.bottom, viewModel.isMultiSelectActive ? 88 : DS.space24)
         }
         .scrollEdgeEffectStyle(.soft, for: .all)

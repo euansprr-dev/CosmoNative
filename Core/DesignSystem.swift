@@ -848,6 +848,10 @@ enum DS {
     /// Compact title serif — 15pt semibold New York, condensed manuscript title headers
     static let compactTitleSerif = Font.system(size: 15, weight: .semibold, design: .serif)
 
+    /// Excerpt serif — 11pt regular New York, manuscript prose at page-thumbnail
+    /// scale (library object previews of concepts)
+    static let excerptSerif = Font.system(size: 11, weight: .regular, design: .serif)
+
     /// Crucible masthead — connection page titles, light serif with air
     /// (paired token in the iOS DS; keep in lockstep)
     static let crucibleTitle = Font.system(size: 30, weight: .light, design: .serif)
@@ -981,6 +985,12 @@ enum DS {
     /// back/forward trail chrome hovers at the window's top-left (8pt top
     /// padding + ~32pt capsule). Titles start below it with room to breathe.
     static let navChromeClearance: CGFloat = 56
+
+    /// 52pt — the shared leading rail for root-page titles. The Command
+    /// Center composes it structurally (space24 page gutter + space16
+    /// column gutter + space12 masthead rail); flat pages (Inbox) apply it
+    /// directly so sibling titles never jump when switching destinations.
+    static let pageTitleRail: CGFloat = space24 + space16 + space12
 
     // Legacy aliases
     static let sectionSpacing: CGFloat = 36

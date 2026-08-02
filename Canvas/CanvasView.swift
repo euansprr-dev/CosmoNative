@@ -799,27 +799,17 @@ struct CanvasView: View {
                         userInfo: ["type": selectedBlock.entityType, "id": selectedBlock.entityId]
                     )
                 },
-                onAskCosmo: {
-                    NotificationCenter.default.post(
-                        name: CosmoNotification.Canvas.createCosmoAIBlock,
-                        object: nil,
-                        userInfo: [
-                            "position": CGPoint(x: selectedBlock.position.x + 360, y: selectedBlock.position.y),
-                            "contextBlockId": selectedBlock.id
-                        ]
-                    )
-                },
                 onConnectTo: {
                     // Placeholder — connect-to interaction
                 },
                 onAIAssist: {
+                    // Hand the block to the inline assistant as a context mention
+                    // rather than spawning a block — the bar opens focused with
+                    // the pill already seated, and the pill is removable.
                     NotificationCenter.default.post(
-                        name: CosmoNotification.Canvas.createCosmoAIBlock,
+                        name: CosmoNotification.Navigation.attachInlineAssistantContext,
                         object: nil,
-                        userInfo: [
-                            "position": CGPoint(x: selectedBlock.position.x + 360, y: selectedBlock.position.y),
-                            "contextBlockId": selectedBlock.id
-                        ]
+                        userInfo: ["atomUuid": selectedBlock.entityUuid]
                     )
                 },
                 onSave: {

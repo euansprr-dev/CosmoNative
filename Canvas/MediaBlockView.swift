@@ -201,6 +201,10 @@ struct MediaBlockView: View {
                 posterCardBody
             }
         }
+        // A tier flip swaps the whole card subtree; letting an ambient
+        // animation interpolate between the two layouts leaves media and
+        // chrome frames mid-flight when the transaction is interrupted.
+        .animation(nil, value: renderTier)
         .onAppear {
             syncViewportActivity()
         }
@@ -231,9 +235,13 @@ struct MediaBlockView: View {
             igPlayer = nil
             isPlayerActive = false
         }
-        // Enforce aspect ratio during resize for reel/carousel/youtube
+        // Enforce aspect ratio during resize for reel/carousel/youtube.
+        // Only for USER resizes (newSize != model size) and only once the
+        // atom is loaded — before that, mediaType is a URL guess (Instagram
+        // posts read as reels) and the enforcement would restamp the card
+        // to 9:16 on a model-echo write.
         .onChange(of: blockSize) { _, newSize in
-            guard !isSyncingBlockSizeFromModel else { return }
+            guard !isSyncingBlockSizeFromModel, atom != nil, newSize != block.size else { return }
             let ratio = mediaAspectRatio
             guard ratio > 0 else { return }
             // Width-primary: compute ideal height from width
@@ -336,6 +344,9 @@ struct MediaBlockView: View {
             }
         }
         .frame(width: blockSize.width, height: blockSize.height)
+        // Hard clip at the card boundary: whatever the media/text inside
+        // measures, a poster card can never paint outside its own frame.
+        .clipShape(RoundedRectangle(cornerRadius: DS.radiusMedium))
         .background(
             RoundedRectangle(cornerRadius: DS.radiusMedium)
                 .fill(DS.surfaceElevated)
@@ -718,8 +729,13 @@ struct MediaBlockView: View {
                     }
                 }
 
-                Color.black.opacity(0.2)
-                playButtonOverlay
+                // Play affordance only when a tap can actually play video —
+                // posts and carousels were wearing a scrim + play glyph that
+                // just opened the browser.
+                if hasPlayableVideo {
+                    Color.black.opacity(0.2)
+                    playButtonOverlay
+                }
             }
             .frame(maxWidth: .infinity)
             .frame(height: mediaAreaHeight)
@@ -728,6 +744,12 @@ struct MediaBlockView: View {
     }
 
     // MARK: - Play Button Overlay
+
+    /// True when tapping the thumbnail starts actual video playback (inline
+    /// YouTube, cached reel video, or reel content) rather than opening a URL.
+    private var hasPlayableVideo: Bool {
+        isYouTubeContent || localVideoURL != nil || mediaType == .reel
+    }
 
     private var playButtonOverlay: some View {
         ZStack {

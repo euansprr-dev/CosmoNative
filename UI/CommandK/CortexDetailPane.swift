@@ -358,8 +358,41 @@ struct CortexDetailPane: View {
     }
 }
 
-/// Per-type preview: media → image, connection → section map, text → a
-/// serif reading excerpt, otherwise a faux page.
+/// The concept as its manuscript page — the same real-content preview the
+/// Library renders (vellum, filigree masthead, chapters from the atom's
+/// structured sections). Decoded once per atom version via task(id:), never
+/// on the render path; the sections cap inside LibraryManuscriptPreview
+/// bounds the typesetting.
+private struct CortexConnectionManuscriptPreview: View {
+    let title: String
+    let atom: Atom?
+
+    @State private var sections: [ConnectionSection] = []
+    @State private var conceptTypeName: String?
+
+    var body: some View {
+        LibraryManuscriptPreview(title: title, conceptTypeName: conceptTypeName, sections: sections)
+            .task(id: decodeKey) { decode() }
+    }
+
+    private var decodeKey: String {
+        "\(atom?.uuid ?? "")#\(atom?.updatedAt ?? "")"
+    }
+
+    private func decode() {
+        guard let atom else {
+            sections = []
+            conceptTypeName = nil
+            return
+        }
+        let structured = atom.structured.flatMap(ConnectionStructuredData.fromJSON)
+        sections = structured?.sections.filter { !$0.items.isEmpty } ?? []
+        conceptTypeName = ConnectionFocusModeState.load(atomUUID: atom.uuid)?.conceptType.displayName
+    }
+}
+
+/// Per-type preview: media → image, connection → its manuscript page, text →
+/// a serif reading excerpt, otherwise a faux page.
 private struct CortexPreviewBlock: View {
     let subject: CortexDetailSubject
     let atom: Atom?
@@ -378,6 +411,10 @@ private struct CortexPreviewBlock: View {
             // Link-backed research is a captured page/video, not a wall of
             // transcript JSON: thumbnail stage + source line, Raycast-quiet.
             CortexResearchDomainPreview(model: research)
+        } else if subject.isConnection {
+            // A concept previews as its real manuscript (the Library's law) —
+            // the blank vellum masthead stands in while the atom hydrates.
+            CortexConnectionManuscriptPreview(title: subject.title, atom: atom)
         } else {
             switch subject {
             case .library(let item):
@@ -431,8 +468,6 @@ private struct CortexPreviewBlock: View {
     private var genericPreview: some View {
         if let url = subject.thumbnailURL, !url.isEmpty {
             SpotlightImageContent(urlString: url)
-        } else if subject.isConnection {
-            SpotlightConnectionPreview(preview: subject.previewText, accentColor: subject.accentColor)
         } else if let text = readingText, !text.isEmpty {
             readingCard(text)
         } else {

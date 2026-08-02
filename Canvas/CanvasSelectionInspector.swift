@@ -8,7 +8,6 @@ struct CanvasSelectionInspector: View {
     // Action callbacks
     var onFocusMode: (() -> Void)?
     var onOpenAsPane: (() -> Void)?
-    var onAskCosmo: (() -> Void)?
     var onConnectTo: (() -> Void)?
     var onAIAssist: (() -> Void)?
     var onSave: (() -> Void)?
@@ -76,6 +75,11 @@ struct CanvasSelectionInspector: View {
                         }
                     }
                     .padding(18)
+                    // `.scrollIndicators(.hidden)` alone still leaves a legacy
+                    // scroller drawn when the system is set to "Show scroll bars:
+                    // Always" — reach the NSScrollView and turn the scroller off
+                    // outright so the panel never grows a rail, only scrolls.
+                    .background(CortexScrollViewIntrospector { _ in })
                 }
                 .scrollIndicators(.hidden)
                 .frame(maxHeight: 600)
@@ -330,10 +334,6 @@ struct CanvasSelectionInspector: View {
         let supportsPane: [EntityType] = [.idea, .content, .research, .connection, .cosmoAI, .note]
         if supportsPane.contains(block.entityType), let onOpenAsPane {
             actions.append(InspectorAction(id: "pane", icon: "rectangle.split.2x1", label: "Pane", tint: DS.accent, handler: onOpenAsPane))
-        }
-
-        if block.entityType != .cosmoAI, let onAskCosmo {
-            actions.append(InspectorAction(id: "askCosmo", icon: "sparkle", label: "Cosmo", tint: DS.accent, handler: onAskCosmo))
         }
 
         if let onConnectTo {

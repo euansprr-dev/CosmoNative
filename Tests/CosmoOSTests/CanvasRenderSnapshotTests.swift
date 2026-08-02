@@ -167,6 +167,64 @@ final class CanvasRenderSnapshotTests: XCTestCase {
         XCTAssertNotEqual(baseSnapshotTransform.contentOffset, farSnapshotTransform.contentOffset)
     }
 
+    // LAW (pan keeps the world scale): a pan-only gesture has a constant
+    // scale, so the snapshot must pass it through EXACTLY. Bucketing it
+    // rounded 0.44 → 0.5 at pan start, crossing the poster/full render-tier
+    // threshold and remounting every visible card's chrome twice per pan.
+    func testPanOnlyGestureSnapshotKeepsExactScale() {
+        let panningAt44Percent = CanvasViewportTransform(
+            viewportSize: CGSize(width: 1_000, height: 800),
+            committedOffset: .zero,
+            gesturePanOffset: CGSize(width: 200, height: 40),
+            committedScale: 0.44
+        )
+        let snapshot = CanvasViewportSnapshotPolicy.snapshotTransform(
+            for: panningAt44Percent,
+            isLiveGesture: true
+        )
+        XCTAssertEqual(snapshot.effectiveScale, 0.44, accuracy: 0.0001)
+        XCTAssertEqual(
+            CanvasBlockRenderTier.tier(forEffectiveScale: snapshot.effectiveScale),
+            .poster
+        )
+    }
+
+    // LAW (zoom still rate-limits): while magnification is live the scale
+    // rides 0.125 buckets so a pinch never invalidates the world per frame.
+    func testLiveMagnificationSnapshotStillQuantizesScale() {
+        let pinchingNear44Percent = CanvasViewportTransform(
+            viewportSize: CGSize(width: 1_000, height: 800),
+            committedOffset: .zero,
+            committedScale: 0.4,
+            gestureMagnification: 1.1
+        )
+        let snapshot = CanvasViewportSnapshotPolicy.snapshotTransform(
+            for: pinchingNear44Percent,
+            isLiveGesture: true
+        )
+        // 0.44 quantizes to the 0.5 bucket during a live zoom.
+        XCTAssertEqual(snapshot.effectiveScale, 0.5, accuracy: 0.0001)
+    }
+
+    // Instagram /p/ posts and carousels are square media; only /reel/ and
+    // /tv/ are 9:16. The old blanket .reel default stamped every post and
+    // carousel block with reel proportions at creation AND drove the resize
+    // aspect enforcement to restamp them 9:16.
+    func testInstagramURLMediaTypeDistinguishesPostsFromReels() {
+        XCTAssertEqual(
+            CanvasBlock.detectMediaTypeFromURL("https://www.instagram.com/p/abc123/"),
+            .carousel
+        )
+        XCTAssertEqual(
+            CanvasBlock.detectMediaTypeFromURL("https://www.instagram.com/reel/xyz789/"),
+            .reel
+        )
+        XCTAssertEqual(
+            CanvasBlock.detectMediaTypeFromURL("https://www.instagram.com/tv/longform/"),
+            .reel
+        )
+    }
+
     /// Hysteresis: a mounted block just outside the enter rect (but inside the
     /// exit rect) stays mounted after a pan; a block never mounted at that
     /// position does not mount. Gesture boundaries can therefore never churn

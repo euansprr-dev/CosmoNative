@@ -208,6 +208,9 @@ enum CosmoNotification {
         static let openCollaboratorPane = Notification.Name("com.cosmo.nav.openCollaboratorPane")
         static let openInlineAssistant = Notification.Name("com.cosmo.navigation.openInlineAssistant")
         static let openInlineAssistantPane = Notification.Name("com.cosmo.navigation.openInlineAssistantPane")
+        /// Open the inline assistant bar with an atom already seated as a
+        /// removable @-mention. userInfo: ["atomUuid": String]
+        static let attachInlineAssistantContext = Notification.Name("com.cosmo.navigation.attachInlineAssistantContext")
 
         // UI
         static let showSettings = Notification.Name("com.cosmo.nav.showSettings")

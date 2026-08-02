@@ -219,6 +219,15 @@ struct ThinkspaceLibraryFolder: Identifiable, Equatable {
     var identityEmoji: String? {
         CollectionEmoji.resolve(name: title).emoji
     }
+
+    /// The name with its leading identity mark lifted out — same law as the
+    /// sidebar's capture lanes: an emoji typed into the name IS the badge, so
+    /// the label sheds it and never prints the mark twice. Keyword-matched
+    /// badges leave the name untouched, and `title` stays the editable truth
+    /// (rename fields bind to it so the mark remains changeable).
+    var displayLabel: String {
+        CollectionEmoji.resolve(name: title).label
+    }
 }
 
 struct ThinkspaceLibrarySnapshot: Equatable {
@@ -307,6 +316,13 @@ final class ThinkspaceLibraryPreviewStore {
         var metadata: [String: String]
         var updatedAt: Date?
         var createdAt: Date?
+        /// A concept's populated board sections, decoded from `atom.structured`
+        /// so connection objects render their real manuscript. nil for every
+        /// other atom kind.
+        var connectionSections: [ConnectionSection]?
+        /// The concept's framework type ("Mental Model", …) for the manuscript
+        /// masthead's small-caps line.
+        var conceptTypeName: String?
 
         static let empty = AtomPreview(body: nil, metadata: [:], updatedAt: nil, createdAt: nil)
     }
@@ -330,11 +346,20 @@ final class ThinkspaceLibraryPreviewStore {
                     }
                 }
                 let body = (atom.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                var connectionSections: [ConnectionSection]?
+                var conceptTypeName: String?
+                if atom.type == .connection {
+                    let structured = atom.structured.flatMap(ConnectionStructuredData.fromJSON)
+                    connectionSections = structured?.sections.filter { !$0.items.isEmpty } ?? []
+                    conceptTypeName = ConnectionFocusModeState.load(atomUUID: atom.uuid)?.conceptType.displayName
+                }
                 loaded[atom.uuid] = AtomPreview(
                     body: body.isEmpty ? nil : body,
                     metadata: metadata,
                     updatedAt: ISO8601.date(from: atom.updatedAt),
-                    createdAt: ISO8601.date(from: atom.createdAt)
+                    createdAt: ISO8601.date(from: atom.createdAt),
+                    connectionSections: connectionSections,
+                    conceptTypeName: conceptTypeName
                 )
             }
             // Unresolved uuids still get an entry so they aren't refetched forever.
@@ -360,7 +385,9 @@ final class ThinkspaceLibraryPreviewStore {
 enum ThinkspaceLibraryPreviewKind: Equatable {
     case media(source: String)
     case page(text: String?)
-    case connection(preview: String?)
+    /// A concept rendered as its manuscript page — real sections from
+    /// `atom.structured`, never a mock board.
+    case connection(sections: [ConnectionSection], conceptTypeName: String?)
     /// Non-document objects (portals, the live Cosmo block): an object motif
     /// well — a blank white "page" for something that isn't a page reads
     /// broken, not empty.
@@ -376,6 +403,8 @@ struct ThinkspaceLibraryCardModel {
     let bodyText: String?
     let updatedAt: Date?
     let createdAt: Date?
+    let connectionSections: [ConnectionSection]?
+    let conceptTypeName: String?
 
     init(item: ThinkspaceLibraryItem, preview: ThinkspaceLibraryPreviewStore.AtomPreview?) {
         self.item = item
@@ -389,6 +418,8 @@ struct ThinkspaceLibraryCardModel {
         self.bodyText = blockText.isEmpty ? preview?.body : blockText
         self.updatedAt = preview?.updatedAt
         self.createdAt = preview?.createdAt
+        self.connectionSections = preview?.connectionSections
+        self.conceptTypeName = preview?.conceptTypeName
     }
 
     /// Remote URL or local path for a visual preview; derives YouTube thumbnails from the source URL.
@@ -402,7 +433,9 @@ struct ThinkspaceLibraryCardModel {
     }
 
     var previewKind: ThinkspaceLibraryPreviewKind {
-        if item.entityType == .connection { return .connection(preview: bodyText) }
+        if item.entityType == .connection {
+            return .connection(sections: connectionSections ?? [], conceptTypeName: conceptTypeName)
+        }
         if let source = thumbnailSource { return .media(source: source) }
         switch item.entityType {
         case .portal:
@@ -419,8 +452,10 @@ struct ThinkspaceLibraryCardModel {
     var previewAspect: CGFloat {
         switch previewKind {
         case .media: return mediaAspect
-        case .page: return 90.0 / 116.0
-        case .connection, .objectMotif: return 4.0 / 5.0
+        // A concept's manuscript is a page — it stands on the same shelf
+        // baseline as every other document.
+        case .page, .connection: return 90.0 / 116.0
+        case .objectMotif: return 4.0 / 5.0
         }
     }
 

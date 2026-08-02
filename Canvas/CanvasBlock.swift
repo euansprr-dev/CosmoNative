@@ -593,6 +593,14 @@ extension CanvasBlock {
             return .reel
         }
 
+        // Square-media Instagram content that carries no slides array —
+        // single-image posts and carousels whose items live in richContent.
+        // Without this they fell through to the URL fallback and came back
+        // as 9:16 reels.
+        if sourceType == "instagram_post" || sourceType == "instagram_carousel" || sourceType == "instagram" {
+            return .carousel
+        }
+
         // URL-based detection
         let url = json["url"] as? String ?? json["resolvedURL"] as? String ?? json["source_url"] as? String ?? atom.url ?? ""
         return detectMediaTypeFromURL(url)
@@ -608,7 +616,13 @@ extension CanvasBlock {
             return .reel
         }
         if lower.contains("instagram.com") {
-            return .reel  // Default IG to reel unless carousel detected above
+            // Only /reel/ and /tv/ paths are 9:16 video; /p/ posts and
+            // carousels are square media. Defaulting ALL of Instagram to
+            // .reel stamped every post/carousel card with reel proportions.
+            if lower.contains("/reel") || lower.contains("/tv/") {
+                return .reel
+            }
+            return .carousel
         }
         return .generic
     }

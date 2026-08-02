@@ -682,16 +682,26 @@ enum CanvasViewportSnapshotPolicy {
     ) -> CanvasViewportTransform {
         guard isLiveGesture else { return transform }
 
-        return CanvasViewportTransform(
-            viewportSize: transform.viewportSize,
-            committedOffset: quantizedOffset(transform.contentOffset, bucketSize: livePanBucketSize),
-            gesturePanOffset: .zero,
-            committedScale: quantizedScale(
+        // Scale buckets exist to rate-limit invalidation while the scale is
+        // actually MOVING (pinch / wheel streak). A pan-only gesture has a
+        // constant scale — bucketing it would CHANGE the world scale at pan
+        // start (0.44 → 0.5 crosses the poster/full render-tier threshold),
+        // remounting every visible card's chrome twice per pan for nothing.
+        let isScaleGestureLive = abs(transform.gestureMagnification - 1) > 0.0001
+        let snapshotScale = isScaleGestureLive
+            ? quantizedScale(
                 transform.effectiveScale,
                 bucketSize: liveScaleBucketSize,
                 minScale: transform.minScale,
                 maxScale: transform.maxScale
-            ),
+            )
+            : transform.effectiveScale
+
+        return CanvasViewportTransform(
+            viewportSize: transform.viewportSize,
+            committedOffset: quantizedOffset(transform.contentOffset, bucketSize: livePanBucketSize),
+            gesturePanOffset: .zero,
+            committedScale: snapshotScale,
             gestureMagnification: 1,
             minScale: transform.minScale,
             maxScale: transform.maxScale

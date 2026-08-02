@@ -87,6 +87,10 @@ struct SwipeLibraryControlBar: View {
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
+        // Capsule chips never wrap: without this the HStack squeezes the Menu
+        // first and "Most Recent" breaks across two lines. The search field is
+        // the one flexible member — it yields the width instead.
+        .fixedSize()
         .help("Sort swipes")
         .accessibilityLabel("Sort: \(viewModel.sortMode.displayName)")
     }
@@ -150,7 +154,11 @@ struct SwipeLibrarySearchField: View {
             }
         }
         .padding(.horizontal, 12)
-        .frame(width: 220, height: 32)
+        // The one flexible member of the control row: every capsule chip is
+        // fixedSize, so when the header runs out of room the search field
+        // narrows instead of the chips' labels wrapping mid-word.
+        .frame(minWidth: 120, idealWidth: 220, maxWidth: 220)
+        .frame(height: 32)
         .dsGlassInput(isFocused: isFocused.wrappedValue, cornerRadius: 16)
         .help("Find in swipes (⌘F)")
     }
@@ -189,6 +197,7 @@ struct SwipeLibraryFiltersButton: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .fixedSize()
         .onHover { value in withAnimation(ProMotionSprings.hover) { hovering = value } }
         .background(
             GeometryReader { proxy in

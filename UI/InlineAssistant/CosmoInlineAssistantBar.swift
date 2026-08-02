@@ -202,6 +202,14 @@ struct CosmoInlineAssistantBar: View {
                 syncComposerMenus(text: text)
                 store.refreshSkillSuggestion()
             }
+            .onReceive(
+                NotificationCenter.default.publisher(
+                    for: CosmoNotification.Navigation.attachInlineAssistantContext
+                )
+            ) { notification in
+                guard let uuid = notification.userInfo?["atomUuid"] as? String, !uuid.isEmpty else { return }
+                attachContext(uuid: uuid)
+            }
             .onAppear {
                 installMouseDownMonitorIfNeeded()
                 installKeyDownMonitorIfNeeded()
@@ -823,6 +831,27 @@ struct CosmoInlineAssistantBar: View {
             return activeMention.query == title
                 || activeMention.query.hasPrefix("\(title) ")
                 || activeMention.query.hasPrefix("\(title)\t")
+        }
+    }
+
+    /// Someone elsewhere in the app (the canvas inspector's AI Assist) handed us
+    /// an atom. Open focused with it already seated as the same removable pill
+    /// the @-menu produces, so the user starts typing the ask, not the context.
+    private func attachContext(uuid: String) {
+        isHoverSuppressed = false
+        isPinnedOpen = true
+
+        Task { @MainActor in
+            guard let atom = try? await AtomRepository.shared.fetch(uuid: uuid) else {
+                focusComposerSoon()
+                return
+            }
+            // Clicking through twice shouldn't stack a second identical pill.
+            guard !store.selectedContextAtoms.contains(where: { $0.uuid == atom.uuid }) else {
+                focusComposerSoon()
+                return
+            }
+            selectContext(atom)
         }
     }
 

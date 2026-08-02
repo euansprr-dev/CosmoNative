@@ -174,7 +174,7 @@ struct LibraryFolderCell: View {
             }
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
-            .accessibilityLabel("\(folder.title) folder, \(folder.items.count) items. Drop a document here to file it.")
+            .accessibilityLabel("\(folder.displayLabel) folder, \(folder.items.count) items. Drop a document here to file it.")
     }
 
     private var cell: some View {
@@ -200,7 +200,7 @@ struct LibraryFolderCell: View {
         // contextMenu must wrap the drop destination — the other way round,
         // the drop machinery swallows right-clicks and the menu never appears.
         .contextMenu { menuItems }
-        .help("Open \(folder.title) — \(folder.items.count) item\(folder.items.count == 1 ? "" : "s")")
+        .help("Open \(folder.displayLabel) — \(folder.items.count) item\(folder.items.count == 1 ? "" : "s")")
     }
 
     private var iconWell: some View {
@@ -234,7 +234,7 @@ struct LibraryFolderCell: View {
                     onCancel: { context.selection.renamingID = nil }
                 )
             } else {
-                Text(folder.title)
+                Text(folder.displayLabel)
                     .font(scale.labelFont.weight(.medium))
                     .foregroundStyle(isSelected ? .white : DS.text)
                     .lineLimit(2)

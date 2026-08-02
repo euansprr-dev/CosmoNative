@@ -1105,6 +1105,27 @@ enum SwipeThumbnailCloudMirror {
     /// then the thumbnail URL's cache key), then a direct CDN fetch for URLs
     /// that are still live — and upload it.
     private static func mirror(atom: Atom, client: SupabaseClient, userId: String) async -> Bool {
+        // Artifact swipes (frames, pages) carry their bytes as media
+        // attachments, and AttachmentCloudStore mirrored those to
+        // `capture-media` at capture. Point thumbnailStorageURL at that blob
+        // instead of re-uploading: metadata.thumbnailUrl on these swipes is a
+        // DEVICE-LOCAL file path (an iPhone-captured frame's path is dead on
+        // this Mac, and vice versa) — the blob is the copy every device can
+        // render. Not yet mirrored up → fall through; a later pass finds it.
+        if let attachmentUUID = atom.swipeArtifact?.orderedUnits
+            .first(where: { $0.attachmentUUID != nil })?.attachmentUUID,
+           let attachment = try? await MediaAttachmentRepository.shared.fetch(uuid: attachmentUUID) {
+            let blob = AttachmentCloudStore.metadataValue(attachment.metadata, key: "thumbBlobReference")
+                ?? attachment.blobReference
+            if let blob, !blob.isEmpty {
+                return await SwipeCloudMirrorSupport.mergeMetadata(
+                    atom: atom,
+                    entries: ["thumbnailStorageURL": blob],
+                    context: "SwipeThumbnailCloudMirror"
+                )
+            }
+        }
+
         var keys: [String] = []
         if let instagramId = atom.richContent?.instagramId {
             keys.append("ig-carousel-\(instagramId)-0")

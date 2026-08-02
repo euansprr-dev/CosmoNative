@@ -15,6 +15,18 @@ struct SplitPaneContainer<MainContent: View>: View {
     @ObservedObject var paneManager: PaneManager
     let mainContent: MainContent
 
+    /// The width the main slot's CONTENT is laid out at — the seat. It follows
+    /// the model's target width through a `disablesAnimations` transaction, so
+    /// a pane open/close spring only ever animates the clip window around it.
+    ///
+    /// LAW (macOS 26): never let an animated `.frame` drive layout of a
+    /// GeometryReader-fed subtree. The animated frame can commit ONE mid-flight
+    /// proposal and then stop updating — the subtree latches at an intermediate
+    /// width and renders centred-and-clipped forever (the Idea bench sat at
+    /// 1111pt inside a 960pt slot until the next divider drag re-proposed).
+    /// Seats are layout; springs are clips.
+    @State private var seatedMainWidth: CGFloat?
+
     init(paneManager: PaneManager, @ViewBuilder mainContent: () -> MainContent) {
         self.paneManager = paneManager
         self.mainContent = mainContent()
@@ -28,16 +40,25 @@ struct SplitPaneContainer<MainContent: View>: View {
 
     // MARK: - Split Layout
 
+    private func mainTargetWidth(in totalWidth: CGFloat) -> CGFloat {
+        (totalWidth * paneManager.mainSplitRatio).rounded()
+    }
+
     @ViewBuilder
     private func splitLayout(geo: GeometryProxy) -> some View {
         let dividerWidth: CGFloat = paneManager.isActive ? 6 : 0
-        let mainWidth = geo.size.width * paneManager.mainSplitRatio
+        let mainWidth = mainTargetWidth(in: geo.size.width)
         let paneColumnWidth = max(0, geo.size.width - mainWidth - dividerWidth)
 
         HStack(spacing: 0) {
-            // LEFT: Main content (always rendered)
+            // LEFT: Main content (always rendered). The inner frame is the
+            // seat (un-animated layout at the target width); the outer frame
+            // is the clip window the open/close spring slides. Leading-aligned
+            // so mid-spring the content stays anchored at the left edge and
+            // only the trailing edge is revealed/covered.
             mainContent
-                .frame(width: mainWidth, height: geo.size.height)
+                .frame(width: seatedMainWidth ?? mainWidth, height: geo.size.height, alignment: .leading)
+                .frame(width: mainWidth, height: geo.size.height, alignment: .leading)
                 .clipped()
 
             // Vertical divider between main and pane column
@@ -51,12 +72,28 @@ struct SplitPaneContainer<MainContent: View>: View {
                 }
             }
 
-            // RIGHT: Pane deck
+            // RIGHT: Pane deck. Not seated like the main slot: an animated
+            // split ratio only ever coincides with the deck's insertion or
+            // removal (first pane open / last pane close), where the fresh
+            // mount and the move transition commit final layout — the deck is
+            // never resized by a spring while it stays alive.
             if paneManager.isActive {
                 PaneDeckView(paneManager: paneManager)
                     .frame(width: paneColumnWidth, height: geo.size.height)
                     .clipped()
                     .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
+        }
+        // The seat adopts every new target in a transaction of its own with
+        // animations disabled: divider drags and window resizes are already
+        // discrete streams (unchanged), and a pane open/close lands the seat
+        // in one un-animated layout pass while the clip window springs.
+        .onChange(of: mainTargetWidth(in: geo.size.width), initial: true) { _, target in
+            guard seatedMainWidth != target else { return }
+            var seat = Transaction()
+            seat.disablesAnimations = true
+            withTransaction(seat) {
+                seatedMainWidth = target
             }
         }
     }

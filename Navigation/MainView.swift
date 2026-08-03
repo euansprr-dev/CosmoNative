@@ -682,7 +682,28 @@ struct MainView: View {
             ZStack(alignment: .topLeading) {
                 SplitPaneContainer(paneManager: paneManager) {
                     ZStack {
-                        destinationContent(contentPushOffset: contentPushOffset)
+                        // LAYOUT-INERT LAW: the destination layer renders
+                        // inside a GeometryReader window that always reports
+                        // the proposal. A ZStack sizes to its children's
+                        // UNION and re-proposes it to every sibling, so any
+                        // destination with an incompressible minimum wider
+                        // than a squeezed main slot (the Today dashboard's
+                        // two-column ~1111pt, the warm canvas) was forcing
+                        // the focus overlay to lay out wider than its slot
+                        // and render centred-and-clipped beside an open
+                        // pane deck. Oversized destinations clip at the
+                        // trailing edge instead — the same visual they had
+                        // when the slot clipped the inflated union, but the
+                        // overflow no longer poisons siblings.
+                        GeometryReader { destinationWindow in
+                            destinationContent(contentPushOffset: contentPushOffset)
+                                .frame(
+                                    width: destinationWindow.size.width,
+                                    height: destinationWindow.size.height,
+                                    alignment: .topLeading
+                                )
+                                .clipped()
+                        }
                         focusModeOverlay(contentPushOffset: contentPushOffset)
                     }
                 }
@@ -1337,15 +1358,31 @@ struct MainView: View {
             // Canvas layer — ALWAYS alive, hidden when a non-canvas destination is active.
             // Preserves all @StateObject engines, loaded blocks, zoom/pan state, and
             // notification observers so returning to a thinkspace is instant.
+            //
+            // LAYOUT-INERT LAW: the keep-alive canvas renders inside a
+            // GeometryReader window that always reports the proposal. The
+            // canvas's own incompressible minimum (~1111pt of chrome) must
+            // never reach this ZStack: a ZStack sizes to its children's
+            // union and re-proposes it to EVERY sibling, so a hidden canvas
+            // wider than a squeezed main slot (open pane deck, narrow
+            // window) was forcing destinations and focus modes to lay out
+            // hundreds of points wider than their slot and get clipped.
             if canvasThinkspaceId != nil {
-                CanvasView(thinkspaceId: canvasThinkspaceId, isActive: isCanvasDestination)
-                    .environmentObject(appState)
-                    .environmentObject(database)
-                    .environmentObject(blockFrameTracker)
-                    .environmentObject(crossDragManager)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .opacity(isCanvasDestination && appState.focusedEntity == nil ? 1.0 : 0)
-                    .allowsHitTesting(isCanvasDestination && appState.focusedEntity == nil)
+                GeometryReader { canvasWindow in
+                    CanvasView(thinkspaceId: canvasThinkspaceId, isActive: isCanvasDestination)
+                        .environmentObject(appState)
+                        .environmentObject(database)
+                        .environmentObject(blockFrameTracker)
+                        .environmentObject(crossDragManager)
+                        .frame(
+                            width: canvasWindow.size.width,
+                            height: canvasWindow.size.height,
+                            alignment: .topLeading
+                        )
+                        .clipped()
+                }
+                .opacity(isCanvasDestination && appState.focusedEntity == nil ? 1.0 : 0)
+                .allowsHitTesting(isCanvasDestination && appState.focusedEntity == nil)
             }
 
             // Non-canvas destinations rendered on top when active

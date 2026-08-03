@@ -52,6 +52,36 @@ final class SplitPaneSeatRegressionTests: XCTestCase {
         )
     }
 
+    // MARK: - The destination layer is layout-inert
+
+    /// August 3 2026, the real root cause of the pane-open clipping: a ZStack
+    /// sizes to its children's UNION and re-proposes it to every sibling.
+    /// The main slot's ZStack holds the always-alive canvas, the active
+    /// destination, and the focus overlay — and both the warm canvas and the
+    /// Today dashboard have ~1111pt incompressible minimums. With a pane open
+    /// (slot ~700-960pt) the hidden wide layer inflated the union and the
+    /// focus overlay laid out hundreds of points wider than its slot,
+    /// rendering centred-and-clipped. The law: destination layers render
+    /// inside GeometryReader windows that always report the proposal, so a
+    /// hidden layer can never shape the stack.
+    func testDestinationLayerIsWrappedInAProposalWindow() throws {
+        let source = try mainViewSource()
+        let code = codeLines(of: source)
+
+        XCTAssertTrue(
+            code.contains("GeometryReader { destinationWindow in"),
+            "destinationContent must render inside a GeometryReader window — without it, a destination's incompressible minimum inflates the main-slot ZStack union and every sibling (including the focus overlay) is re-proposed the inflated width."
+        )
+        XCTAssertTrue(
+            code.contains("width: destinationWindow.size.width"),
+            "The destination window must pin the destination layer to the proposal width and clip its overflow."
+        )
+        XCTAssertTrue(
+            code.contains("GeometryReader { canvasWindow in"),
+            "The keep-alive CanvasView must render inside its own GeometryReader window so its minimum cannot inflate the destination ZStack for sibling destination pages."
+        )
+    }
+
     // MARK: - Helpers
 
     /// Comment lines narrate the law and may name banned patterns; only code counts.
@@ -66,6 +96,14 @@ final class SplitPaneSeatRegressionTests: XCTestCase {
         try String(
             contentsOf: repositoryRoot()
                 .appendingPathComponent("Navigation/SplitPaneContainer.swift"),
+            encoding: .utf8
+        )
+    }
+
+    private func mainViewSource() throws -> String {
+        try String(
+            contentsOf: repositoryRoot()
+                .appendingPathComponent("Navigation/MainView.swift"),
             encoding: .utf8
         )
     }

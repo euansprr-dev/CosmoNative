@@ -307,14 +307,20 @@ final class SidebarLayoutPolicyTests: XCTestCase {
             contentsOf: repositoryRoot.appendingPathComponent("Navigation/MainView.swift"),
             encoding: .utf8
         )
+        let notificationRouter = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Navigation/MainNotificationRouter.swift"),
+            encoding: .utf8
+        )
         let ideaInspectorView = try String(
             contentsOf: repositoryRoot.appendingPathComponent("UI/FocusMode/Ideas/IdeaInspectorView.swift"),
             encoding: .utf8
         )
 
-        XCTAssertTrue(mainView.contains("let shouldOpenAsPane = notification.userInfo?[\"asPane\"] as? Bool == true"))
+        // The router decodes the asPane flag and must forward it verbatim to
+        // MainView's handler, whose pane branch does the actual open.
+        XCTAssertTrue(notificationRouter.contains("let shouldOpenAsPane = notification.userInfo?[\"asPane\"] as? Bool == true"))
+        XCTAssertTrue(notificationRouter.contains("actions.openBlockInFocusMode(atomUUID, shouldOpenAsPane, shouldRestoreCommandK)"))
         XCTAssertTrue(mainView.contains("handleOpenBlockInFocusMode("))
-        XCTAssertTrue(mainView.contains("asPane: shouldOpenAsPane"))
         XCTAssertTrue(mainView.contains("if asPane {"))
         XCTAssertTrue(mainView.contains("paneManager.openPane(.entity(EntitySelection(id: entityId, type: entityType)))"))
         // Idea v3 (July 2026): the blueprint panel was removed with the
@@ -325,27 +331,40 @@ final class SidebarLayoutPolicyTests: XCTestCase {
     }
 
     func testBrowserPaneOpenDismissesCommandK() throws {
-        let mainView = try String(
-            contentsOf: repositoryRoot.appendingPathComponent("Navigation/MainView.swift"),
+        let notificationRouter = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Navigation/MainNotificationRouter.swift"),
             encoding: .utf8
         )
-        guard let observerRange = mainView.range(of: "CosmoNotification.Navigation.openWebBrowserPane") else {
-            XCTFail("MainView must observe browser pane requests")
+        guard let observerRange = notificationRouter.range(of: "CosmoNotification.Navigation.openWebBrowserPane") else {
+            XCTFail("MainNotificationRouter must observe browser pane requests")
             return
         }
-        guard let nextObserverRange = mainView[observerRange.upperBound...].range(of: ".onReceive") else {
+        guard let nextObserverRange = notificationRouter[observerRange.upperBound...].range(of: ".onReceive") else {
             XCTFail("Browser pane observer should be followed by another notification observer")
             return
         }
 
-        let observerBody = mainView[observerRange.lowerBound..<nextObserverRange.lowerBound]
+        let observerBody = notificationRouter[observerRange.lowerBound..<nextObserverRange.lowerBound]
 
-        XCTAssertTrue(observerBody.contains("showCommandK || commandKBehindFocusMode"))
-        XCTAssertTrue(observerBody.contains("closeCommandK()"))
-        XCTAssertFalse(
-            observerBody.contains("if didOpenOrActivateBrowserPane, showCommandK || commandKBehindFocusMode"),
+        XCTAssertTrue(
+            observerBody.contains("actions.closeCommandKIfOpen()"),
             "Browser pane requests from Command-K must always dismiss Command-K; missed pane activation should not leave an invisible overlay/focus trap."
         )
+        XCTAssertFalse(observerBody.contains("if didOpenOrActivateBrowserPane"))
+
+        // The guarded twin in MainView owns the actual dismissal check.
+        let mainView = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Navigation/MainView.swift"),
+            encoding: .utf8
+        )
+        let closeIfOpen = try XCTUnwrap(
+            mainView.slice(
+                from: "private func closeCommandKIfOpen()",
+                to: "private func isCommandKShortcut"
+            )
+        )
+        XCTAssertTrue(closeIfOpen.contains("if showCommandK || commandKBehindFocusMode {"))
+        XCTAssertTrue(closeIfOpen.contains("closeCommandK()"))
     }
 
     func testCloseCommandKClearsFocusedCommandKResponderBeforeDismissal() throws {
@@ -426,8 +445,8 @@ final class SidebarLayoutPolicyTests: XCTestCase {
 
         let thinkspaceSwitch = try XCTUnwrap(
             mainView.slice(
-                from: ".onReceive(NotificationCenter.default.publisher(for: .switchToThinkspace))",
-                to: ".onReceive(NotificationCenter.default.publisher(for: Notification.Name(\"openCreatorDatabase\")))"
+                from: "private func handleSwitchToThinkspace(atomID: Int64)",
+                to: "private func handleOpenCreatorProfile(creatorUUID: String)"
             )
         )
         XCTAssertTrue(thinkspaceSwitch.contains("thinkspaceSwitchTask?.cancel()"))
@@ -437,8 +456,8 @@ final class SidebarLayoutPolicyTests: XCTestCase {
 
         let creatorProfile = try XCTUnwrap(
             mainView.slice(
-                from: ".onReceive(NotificationCenter.default.publisher(for: Notification.Name(\"openCreatorProfile\")))",
-                to: ".animation(.spring(response: 0.25, dampingFraction: 0.85), value: showCreatorDatabase)"
+                from: "private func handleOpenCreatorProfile(creatorUUID: String)",
+                to: "private func fileAtomIntoThinkspace"
             )
         )
         XCTAssertTrue(creatorProfile.contains("creatorProfileLoadTask?.cancel()"))
@@ -510,7 +529,7 @@ final class SidebarLayoutPolicyTests: XCTestCase {
         let destinationChange = try XCTUnwrap(
             mainView.slice(
                 from: ".onChange(of: currentDestination)",
-                to: ".onReceive(NotificationCenter.default.publisher(for: .addSwipeToCanvas))"
+                to: ".animation(.spring(response: 0.25, dampingFraction: 0.85), value: showCreatorDatabase)"
             )
         )
         XCTAssertTrue(destinationChange.contains("switchToThinkspaceForDestination(id: id)"))

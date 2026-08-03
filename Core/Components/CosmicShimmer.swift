@@ -196,39 +196,6 @@ struct CosmicShimmerCard: View {
     }
 }
 
-// MARK: - CosmicPulse
-/// Subtle pulsing effect for loading states (alternative to shimmer)
-struct CosmicPulse: View {
-    var entityColor: Color
-    var minOpacity: CGFloat
-    var maxOpacity: CGFloat
-
-    @State private var isPulsing = false
-
-    init(
-        entityColor: Color = CosmoColors.glassGrey,
-        minOpacity: CGFloat = 0.3,
-        maxOpacity: CGFloat = 0.7
-    ) {
-        self.entityColor = entityColor
-        self.minOpacity = minOpacity
-        self.maxOpacity = maxOpacity
-    }
-
-    var body: some View {
-        Rectangle()
-            .fill(entityColor.opacity(isPulsing ? maxOpacity : minOpacity))
-            .onAppear {
-                withAnimation(
-                    .easeInOut(duration: 1.0)
-                    .repeatForever(autoreverses: true)
-                ) {
-                    isPulsing = true
-                }
-            }
-    }
-}
-
 // MARK: - AsyncImage with Shimmer
 /// Drop-in replacement for AsyncImage that uses CosmicShimmer for loading
 struct CosmicAsyncImage<Content: View, Placeholder: View>: View {

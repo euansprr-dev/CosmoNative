@@ -419,9 +419,6 @@ struct BlockAnimations {
     /// Hover lift - quick and subtle (0.15s response)
     static let hover = Animation.spring(response: 0.15, dampingFraction: 0.9)
 
-    /// Glow pulse - slow and gentle
-    static let glowPulse = Animation.easeInOut(duration: 2.0).repeatForever(autoreverses: true)
-
     /// Content fade - for expansion content transitions
     static let contentFade = Animation.easeInOut(duration: 0.2)
 
@@ -779,15 +776,6 @@ extension View {
             )
     }
 
-    /// Pulsing effect for processing states
-    func pulsingOpacity(isActive: Bool) -> some View {
-        self
-            .opacity(isActive ? 0.7 : 1.0)
-            .animation(
-                isActive ? .easeInOut(duration: 0.8).repeatForever(autoreverses: true) : .default,
-                value: isActive
-            )
-    }
 }
 
 // MARK: - Button Styles

@@ -133,7 +133,7 @@ struct IdeaFocusModeView: View {
             // Assistant scope and window context follow presence: leaving the
             // idea releases both.
             if let owned = ownedContextProvider {
-                CosmoEditableSurfaceRegistry.shared.unregister(surfaceID: owned.surfaceID)
+                CosmoEditableSurfaceRegistry.shared.unregister(owned)
                 CosmoWindowViewModel.shared.releaseContext(provider: owned)
                 ownedContextProvider = nil
             }

@@ -1785,6 +1785,83 @@ final class CosmoInlineAssistantStore: ObservableObject {
         return registry.activeSurface?.editableSnapshot()
     }
 
+    /// The snapshot a submission rides on — `activeEditableSnapshot()` plus a
+    /// shield against the stale-provider family (Aug 3, Begin Writing: the
+    /// registry served a twin of the content editor whose dead @State read an
+    /// EMPTY draft while the real editor held 470 words; the model saw a titled
+    /// surface with no text and asked the user to paste the draft):
+    /// - a scoped session with NO live provider hydrates from the persisted atom
+    /// - a live snapshot whose text reads empty while the persisted atom has
+    ///   substance takes the persisted text (a genuinely empty document is empty
+    ///   in both places, so the fallback is a no-op there; a just-cleared editor
+    ///   converges on the next autosave)
+    func submissionEditableSnapshot(
+        registry: CosmoEditableSurfaceRegistry = .shared,
+        persistedTextLoader: ((String) async -> String?)? = nil
+    ) async -> CosmoEditableSourceSnapshot? {
+        let live = activeEditableSnapshot(registry: registry)
+        if let live, !live.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return live
+        }
+
+        // A pinned "General" session already returned nil above by choice.
+        let scopedSurfaceID = currentScopeSurfaceID != CosmoInlineAssistantSessionScope.globalSurfaceID
+            ? currentScopeSurfaceID
+            : nil
+        guard let surfaceID = live?.surfaceID ?? scopedSurfaceID else { return live }
+
+        let loader = persistedTextLoader ?? Self.persistedAtomText
+        guard let persistedText = await loader(surfaceID),
+              !persistedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return live
+        }
+
+        print("[INLINE-ASSISTANT] submission snapshot hydrated from persisted atom — surface=\(surfaceID) liveLen=\(live?.text.count ?? -1) persistedLen=\(persistedText.count)")
+        return Self.atomHydratedSnapshot(surfaceID: surfaceID, text: persistedText, live: live)
+    }
+
+    /// The persisted body text for an atom-backed surface ("note:", "idea:",
+    /// "content:"). Content drafts mirror into `atoms.body` on every autosave,
+    /// so the body field is authoritative for all three.
+    private static func persistedAtomText(forSurfaceID surfaceID: String) async -> String? {
+        let parts = surfaceID.split(separator: ":", maxSplits: 1).map(String.init)
+        guard parts.count == 2, ["note", "idea", "content"].contains(parts[0]),
+              let atom = try? await AtomRepository.shared.fetch(uuid: parts[1]) else { return nil }
+        return RichDocumentPersistence.loadAtomDocument(
+            field: .body,
+            metadata: atom.metadata,
+            fallbackPlainText: atom.body,
+            atomUUID: atom.uuid
+        ).plainText
+    }
+
+    /// Builds the hydrated snapshot, preserving the live snapshot's identity
+    /// fields (surfaceID/targetID/anchor id) so staged operations still bind to
+    /// the real editor; with no live snapshot, per-entity conventions apply
+    /// (content targets ":draft" like ContentContextProvider, note/idea ":body").
+    private static func atomHydratedSnapshot(
+        surfaceID: String,
+        text: String,
+        live: CosmoEditableSourceSnapshot?
+    ) -> CosmoEditableSourceSnapshot {
+        let entity = surfaceID.split(separator: ":").first.map(String.init)
+        let fallbackTargetID = entity == "content" ? "\(surfaceID):draft" : "\(surfaceID):body"
+        let anchorID = live?.anchors.first?.id ?? (entity == "content" ? "draft" : "body")
+        let anchorLabel = live?.anchors.first?.label ?? (entity == "content" ? "Draft" : "Body")
+        return CosmoEditableSourceSnapshot(
+            surfaceID: surfaceID,
+            targetID: live?.targetID ?? fallbackTargetID,
+            kind: live?.kind ?? .text,
+            title: live?.title ?? "Untitled",
+            text: text,
+            sourceHash: CosmoEditableSurfaceHasher.hash(text),
+            anchors: [
+                .init(id: anchorID, label: anchorLabel, utf16Start: 0, utf16Length: text.utf16.count)
+            ],
+            selection: nil
+        )
+    }
+
     /// True when the user pinned the session to "General — no document".
     var isPinnedToGeneralScope: Bool {
         pinnedScopeSurfaceID == CosmoInlineAssistantSessionScope.globalSurfaceID

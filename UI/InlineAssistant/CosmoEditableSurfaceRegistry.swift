@@ -102,6 +102,36 @@ final class CosmoEditableSurfaceRegistry {
         activate(surfaceID: surfaceID)
     }
 
+    /// Typing heartbeat with the provider in hand: a keystroke is proof of
+    /// which instance the user is actually editing, so this re-seats the
+    /// registry entry when it points at a stale twin of the same surface.
+    /// (Begin Writing, Aug 3: a remount left the entry on an instance whose
+    /// dead @State served the right title but an EMPTY draft — Cosmo answered
+    /// "I need to see the draft" with 470 words on screen.)
+    func activateIfNeeded(_ provider: any CosmoEditableSurfaceProvider) {
+        let surfaceID = provider.surfaceID
+        if providers[surfaceID]?.provider !== provider {
+            providers[surfaceID] = WeakEditableSurfaceProvider(provider)
+            if !activationOrder.contains(surfaceID) {
+                activationOrder.insert(surfaceID, at: 0)
+            }
+        }
+        activateIfNeeded(surfaceID: surfaceID)
+    }
+
+    /// Instance-guarded teardown: removes the surface only while the registry
+    /// still points at THIS provider. A departing host must never evict a
+    /// newer registration under the same surfaceID — with two hosts of one
+    /// document (focus overlay + pane, or a remount's animated-out twin), the
+    /// stale one's onDisappear used to tear down the live one's entry.
+    func unregister(_ provider: any CosmoEditableSurfaceProvider) {
+        let surfaceID = provider.surfaceID
+        if let current = providers[surfaceID]?.provider, current !== provider {
+            return
+        }
+        unregister(surfaceID: surfaceID)
+    }
+
     func unregister(surfaceID: String) {
         // A closing document settles its learning episodes against its final
         // text — grabbed now, before the provider is released.

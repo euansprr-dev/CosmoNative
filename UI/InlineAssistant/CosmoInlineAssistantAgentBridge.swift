@@ -32,7 +32,11 @@ struct CosmoInlineAssistantAgentBridge {
     ) async throws -> Void
 
     static let live = CosmoInlineAssistantAgentBridge { prompt, route, store in
-        let snapshot = store.activeEditableSnapshot()
+        // Hydrating variant of activeEditableSnapshot(): falls back to the
+        // persisted atom when the registered surface is missing or serves an
+        // empty text for a document that has substance on disk — the model
+        // must see what the user sees, not what a stale provider remembers.
+        let snapshot = await store.submissionEditableSnapshot()
 
         // Craft skills (/review, /riff) bypass the agent tool loop entirely:
         // comparables and stats are computed in Swift, then ONE structured

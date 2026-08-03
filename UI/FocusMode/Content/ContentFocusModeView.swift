@@ -582,9 +582,10 @@ struct ContentFocusModeView: View {
             polishDebounceTask?.cancel()
             persistCurrentEditorSnapshot(reason: "onDisappear")
             // Assistant scope and window context follow presence: leaving the
-            // doc releases both.
+            // doc releases both. Instance-guarded — a stale host's teardown
+            // must never evict a newer registration of the same surface.
             if let owned = ownedContextProvider {
-                CosmoEditableSurfaceRegistry.shared.unregister(surfaceID: owned.surfaceID)
+                CosmoEditableSurfaceRegistry.shared.unregister(owned)
                 CosmoWindowViewModel.shared.releaseContext(provider: owned)
                 ownedContextProvider = nil
             }
@@ -2771,8 +2772,14 @@ struct ContentFocusModeView: View {
         print("[FOCUS-CONTENT] onPlainTextChange(draft) — len=\(plainText.count) preview=\"\(String(plainText.prefix(60)))\" uuid=\(atom.uuid)")
         localDraftContent = plainText
         draftEditedLocally = true
-        // Typing is the strongest "this is what I'm working on" signal.
-        CosmoEditableSurfaceRegistry.shared.activateIfNeeded(surfaceID: "content:\(atom.uuid)")
+        // Typing is the strongest "this is what I'm working on" signal — and
+        // proof of which INSTANCE is real: passing the provider re-seats the
+        // registry entry if a stale remount twin is shadowing this editor.
+        if let owned = ownedContextProvider {
+            CosmoEditableSurfaceRegistry.shared.activateIfNeeded(owned)
+        } else {
+            CosmoEditableSurfaceRegistry.shared.activateIfNeeded(surfaceID: "content:\(atom.uuid)")
+        }
         markTypingActive()
         updateFocusBand()
         scheduleTypewriterScroll()

@@ -590,7 +590,7 @@ struct NoteFocusModeView: View {
             // Assistant scope and window context follow presence: leaving the
             // note releases both.
             if let owned = ownedContextProvider {
-                CosmoEditableSurfaceRegistry.shared.unregister(surfaceID: owned.surfaceID)
+                CosmoEditableSurfaceRegistry.shared.unregister(owned)
                 CosmoWindowViewModel.shared.releaseContext(provider: owned)
                 ownedContextProvider = nil
             }

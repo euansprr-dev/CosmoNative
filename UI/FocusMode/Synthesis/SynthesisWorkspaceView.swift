@@ -63,9 +63,13 @@ struct SynthesisWorkspaceView: View {
             }
         }
         .onDisappear {
-            CosmoEditableSurfaceRegistry.shared.unregister(
-                surfaceID: SynthesisEditableSurface.surfaceIdentifier
-            )
+            if let surface = editableSurface {
+                CosmoEditableSurfaceRegistry.shared.unregister(surface)
+            } else {
+                CosmoEditableSurfaceRegistry.shared.unregister(
+                    surfaceID: SynthesisEditableSurface.surfaceIdentifier
+                )
+            }
             editableSurface = nil
         }
         .onExitCommand {

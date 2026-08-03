@@ -4523,7 +4523,7 @@ struct CanvasView: View {
             return
         }
         if let previous = thinkspaceEditableSurface {
-            CosmoEditableSurfaceRegistry.shared.unregister(surfaceID: previous.surfaceID)
+            CosmoEditableSurfaceRegistry.shared.unregister(previous)
         }
         let surface = ThinkspaceEditableSurface(
             thinkspaceId: surfaceId,
@@ -4664,7 +4664,7 @@ struct CanvasView: View {
                   // Guard against a selection change racing the fetch.
                   selectedBlockId == blockId else { return }
             if let previous = selectedBlockEditableSurface {
-                CosmoEditableSurfaceRegistry.shared.unregister(surfaceID: previous.surfaceID)
+                CosmoEditableSurfaceRegistry.shared.unregister(previous)
             }
             let surface = CanvasBlockEditableSurface(atom: atom)
             selectedBlockEditableSurface = surface

@@ -1675,7 +1675,10 @@ enum CosmoInlineAssistantSurfaceTint {
 
 /// Slim pane receipt for concept-collaborator proposals. The real review
 /// happens as ghost rows inside the board/outline sections, so the pane keeps
-/// only a one-line pointer plus a whole-batch shortcut — not the full diff card.
+/// only a one-line pointer plus a whole-batch shortcut — not the full diff
+/// card. The wording resolves against the LIVE board (via the surface
+/// provider), so a capture the board changed under is named and dismissible
+/// instead of being counted while rendering nowhere.
 private struct CosmoInlineAssistantPaneConceptReceiptCard: View {
     @ObservedObject var store: CosmoInlineAssistantStore
     let proposal: CosmoAssistantProposal
@@ -1692,7 +1695,41 @@ private struct CosmoInlineAssistantPaneConceptReceiptCard: View {
         proposal.operations.filter { $0.status == .applied || $0.status == .accepted }.count
     }
 
+    /// Live placements against the open board; nil when the board surface
+    /// isn't registered (e.g. the receipt of a closed session) — the copy
+    /// then falls back to the stage-time truth.
+    private var receiptState: ConnectionCaptureReceiptState? {
+        guard pendingCount > 0,
+              let provider = CosmoEditableSurfaceRegistry.shared
+                  .provider(surfaceID: proposal.surfaceID) as? ConnectionContextProvider else {
+            return nil
+        }
+        return provider.captureReceiptState(for: proposal)
+    }
+
     var body: some View {
+        let state = receiptState
+        let copy = ConceptCaptureReceiptCopy.make(
+            pendingCount: pendingCount,
+            resolvedCount: resolvedCount,
+            state: state
+        )
+        VStack(alignment: .leading, spacing: DS.space8) {
+            headerRow(copy)
+            if let state, !state.orphans.isEmpty {
+                orphanRows(state.orphans, notice: copy.orphanNotice)
+            }
+        }
+        .padding(DS.space10)
+        .background(DS.surfaceCard, in: .rect(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(DS.borderSubtle, lineWidth: 1)
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private func headerRow(_ copy: ConceptCaptureReceiptCopy) -> some View {
         HStack(alignment: .center, spacing: DS.space10) {
             Image(systemName: pendingCount > 0 ? "sparkles" : "checkmark.circle.fill")
                 .font(DS.callout.weight(.semibold))
@@ -1702,12 +1739,12 @@ private struct CosmoInlineAssistantPaneConceptReceiptCard: View {
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(headline)
+                Text(copy.headline)
                     .font(DS.callout.weight(.medium))
                     .foregroundStyle(DS.text)
                     .lineLimit(1)
-                if pendingCount > 0 {
-                    Text("Review each in its section, then ✓ or ✗ there.")
+                if let subtitle = copy.subtitle {
+                    Text(subtitle)
                         .font(DS.caption)
                         .foregroundStyle(DS.textMuted)
                         .lineLimit(1)
@@ -1716,10 +1753,12 @@ private struct CosmoInlineAssistantPaneConceptReceiptCard: View {
 
             Spacer(minLength: DS.space8)
 
-            if pendingCount > 0 {
+            if copy.showsDismissAll {
                 CosmoPanePillButton(label: "Dismiss all", icon: nil, help: "Dismiss every pending capture") {
                     Task { await store.rejectAll(proposalID: proposal.id) }
                 }
+            }
+            if copy.showsAcceptAll {
                 CosmoPanePillButton(
                     label: "Accept all",
                     icon: "checkmark",
@@ -1730,21 +1769,59 @@ private struct CosmoInlineAssistantPaneConceptReceiptCard: View {
                 }
             }
         }
-        .padding(DS.space10)
-        .background(DS.surfaceCard, in: .rect(cornerRadius: 12))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(DS.borderSubtle, lineWidth: 1)
-        }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(headline)
+        .accessibilityLabel(copy.headline)
     }
 
-    private var headline: String {
-        if pendingCount > 0 {
-            return pendingCount == 1 ? "1 capture waiting in your board" : "\(pendingCount) captures waiting in your board"
+    /// Orphaned captures stay visible and individually dismissible — a
+    /// capture is never auto-deleted, and never counted while invisible.
+    private func orphanRows(_ orphans: [ConnectionOrphanedCapture], notice: String?) -> some View {
+        VStack(alignment: .leading, spacing: DS.space4) {
+            if let notice {
+                Text(notice)
+                    .font(DS.caption)
+                    .foregroundStyle(DS.orange)
+            }
+            ForEach(orphans) { orphan in
+                HStack(spacing: DS.space8) {
+                    Text(orphan.summary)
+                        .font(DS.caption)
+                        .foregroundStyle(DS.textSecondary)
+                        .lineLimit(1)
+                        .help(orphan.summary)
+                    Spacer(minLength: DS.space8)
+                    CosmoPaneOrphanDismissButton {
+                        Task { await store.reject(operationID: orphan.operationID) }
+                    }
+                }
+            }
         }
-        return resolvedCount > 0 ? "Added to your board" : "Nothing captured"
+        // Aligns under the headline's text column (28pt icon + space10 gap).
+        .padding(.leading, 28 + DS.space10)
+    }
+}
+
+private struct CosmoPaneOrphanDismissButton: View {
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "xmark")
+                .font(DS.caption2.weight(.semibold))
+                .foregroundStyle(isHovered ? DS.text : DS.textMuted)
+                .frame(width: 22, height: 22)
+                .background(isHovered ? AnyShapeStyle(DS.surfaceHover) : AnyShapeStyle(.clear), in: Circle())
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .cosmoClickCursor()
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.snappy) { isHovered = hovering }
+        }
+        .help("Dismiss this capture")
+        .accessibilityLabel("Dismiss capture")
     }
 }
 

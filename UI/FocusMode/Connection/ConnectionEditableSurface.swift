@@ -397,13 +397,239 @@ enum ConnectionSurfaceSerializer {
         return nil
     }
 
+    // MARK: - Stage-time gate (guard-twin of apply)
+
+    /// Model-facing guidance for edits that touch a handled objection's
+    /// read-only `↳ handled:` line — shared verbatim by the stage-time gate
+    /// and the apply path so the two can never explain the refusal
+    /// differently.
+    static let handledLineGuidance = "the '↳ handled:' line under an objection is read-only. To add or change how an objection is handled, call handle_objection quoting the objection's bullet text verbatim (a still-staged objection must be accepted onto the board first). To insert new bullets after a handled objection, anchor the objection's own bullet line, never its handling line."
+
+    /// Issues for operations this surface's apply would deterministically
+    /// refuse (read-only lines, unlocatable anchors, cross-section spans) —
+    /// the guard-twin of `ConnectionContextProvider.applyInsertion` /
+    /// `applyReplacement`; change both together. The executor runs this while
+    /// the model is still in the tool loop, so a doomed operation bounces
+    /// back as a structured error instead of entering pending state, where
+    /// the receipt banner would count it while the board ghost-renders it
+    /// nowhere. Operations that pass may still skip ghost rows (title/type
+    /// edits review in the Manuscript diff) — legitimate pending state,
+    /// never bounced here.
+    static func stagingIssues(
+        operations: [CosmoAssistantProposalOperation],
+        in model: ConnectionSurfaceModel
+    ) -> [String] {
+        var issues: [String] = []
+        for (index, operation) in operations.enumerated() {
+            if let issue = stagingIssue(for: operation, in: model) {
+                issues.append("Operation \(index + 1): \(issue)")
+            }
+        }
+        return issues
+    }
+
+    private static func stagingIssue(
+        for operation: CosmoAssistantProposalOperation,
+        in model: ConnectionSurfaceModel
+    ) -> String? {
+        switch operation.kind {
+        case .textInsertion:
+            return insertionStagingIssue(for: operation, in: model)
+        case .textReplacement, .structuredFieldReplacement:
+            return replacementStagingIssue(for: operation, in: model)
+        case .formatMarks, .canvasPlan:
+            // Apply handles these honestly (skip / conflict) and they never
+            // count as board captures — not this gate's concern.
+            return nil
+        }
+    }
+
+    private static func insertionStagingIssue(
+        for operation: CosmoAssistantProposalOperation,
+        in model: ConnectionSurfaceModel
+    ) -> String? {
+        let proposed = operation.proposedText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !proposed.isEmpty else { return "proposedText is empty — nothing to insert." }
+
+        // Mirror locateAnchorLine: verbatim originalText first, then the
+        // structured section anchorID.
+        let anchorText = operation.originalText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        var anchorLine: ConnectionSurfaceModel.Line?
+        if !anchorText.isEmpty,
+           let range = CosmoInlineDiffLocator.range(of: operation.originalText ?? "", in: model.text) {
+            anchorLine = model.line(at: range.upperBound)
+        } else if let anchorID = operation.anchorID, anchorID.hasPrefix("section:"),
+                  let type = ConnectionSectionType(rawValue: String(anchorID.dropFirst("section:".count))) {
+            anchorLine = model.lines.first {
+                if case .header(let lineType) = $0.kind { return lineType == type }
+                return false
+            }
+        }
+        guard let anchorLine else {
+            return "the insertion anchor matches nothing on the board. Set originalText to a section header or an existing bullet copied verbatim, or pass anchorID \"section:<sectionID>\"."
+        }
+        switch anchorLine.kind {
+        case .header(let type), .empty(let type), .item(let type, _), .itemContinuation(let type, _):
+            guard let items = parseItems(from: proposed, targetSection: type) else {
+                return "the proposed text names another section — stage one operation per section."
+            }
+            guard !items.isEmpty else { return "no bullet content found in proposedText." }
+            return nil
+        case .title, .meta, .blank:
+            if isHandledObjectionLine(anchorLine, in: model) { return handledLineGuidance }
+            return "the anchor lands on a read-only line — insertions must anchor a section header or a bullet line."
+        }
+    }
+
+    private static func replacementStagingIssue(
+        for operation: CosmoAssistantProposalOperation,
+        in model: ConnectionSurfaceModel
+    ) -> String? {
+        let original = operation.originalText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !original.isEmpty else {
+            return "replacements need originalText copied verbatim from the board."
+        }
+        guard let range = CosmoInlineDiffLocator.range(of: operation.originalText ?? "", in: model.text) else {
+            return "originalText matches nothing on the board — copy the target line(s) verbatim from the surface text."
+        }
+        let touched = model.lines(intersecting: range).filter {
+            if case .blank = $0.kind { return false }
+            return true
+        }
+        guard !touched.isEmpty else { return "the located range covers no editable line." }
+
+        if touched.allSatisfy({ if case .title = $0.kind { return true }; return false }) {
+            return nil // Title edit — reviewed in the Manuscript diff.
+        }
+        if touched.allSatisfy({ if case .meta = $0.kind { return true }; return false }) {
+            if touched.allSatisfy({ isConceptTypeLine($0, in: model) }) { return nil } // Type edit.
+            if touched.contains(where: { isHandledObjectionLine($0, in: model) }) { return handledLineGuidance }
+            return "that line is read-only board metadata and can't be edited."
+        }
+
+        var sectionTypes = Set<ConnectionSectionType>()
+        var coversHeader = false
+        for line in touched {
+            switch line.kind {
+            case .header(let type):
+                coversHeader = true
+                sectionTypes.insert(type)
+            case .empty(let type), .item(let type, _), .itemContinuation(let type, _):
+                sectionTypes.insert(type)
+            case .title, .meta, .blank:
+                if isHandledObjectionLine(line, in: model) { return handledLineGuidance }
+                return "edits can't span the title or metadata lines together with section content — quote only the bullet line(s) being rewritten."
+            }
+        }
+        guard sectionTypes.count == 1, let type = sectionTypes.first else {
+            return "the quoted lines span multiple sections — stage one operation per section."
+        }
+        guard let items = parseItems(from: operation.proposedText ?? "", targetSection: type) else {
+            return "the proposed text names another section — stage one operation per section."
+        }
+        if coversHeader, items.isEmpty || !(operation.proposedText ?? "").localizedCaseInsensitiveContains(type.displayName) {
+            return "section headers can't be renamed or removed — quote only the bullets, not the '## \(type.displayName)' header line."
+        }
+        return nil
+    }
+
+    /// True for a handled objection's `↳ handled:` rebuttal line.
+    static func isHandledObjectionLine(
+        _ line: ConnectionSurfaceModel.Line,
+        in model: ConnectionSurfaceModel
+    ) -> Bool {
+        String(model.text[line.range]).trimmingCharacters(in: .whitespaces).hasPrefix("↳ handled")
+    }
+
+    /// True for the one `.meta` line that IS editable: the `Type:` line.
+    static func isConceptTypeLine(
+        _ line: ConnectionSurfaceModel.Line,
+        in model: ConnectionSurfaceModel
+    ) -> Bool {
+        String(model.text[line.range]).hasPrefix("Type:")
+    }
+
+    // MARK: - Render-time placement (the receipt's honesty)
+
+    /// Where one still-reviewable operation renders for review against the
+    /// given live model — the ONE verdict behind the board's ghost rows, the
+    /// receipt's counts, and the orphan list, so no consumer can disagree
+    /// with another (or with apply, whose refusals `stagingIssue` mirrors).
+    private enum ResolvedCapture {
+        case section(ConnectionPendingInsert)
+        case manuscript
+        case orphaned(ConnectionOrphanedCapture)
+    }
+
+    private static func resolveCapture(
+        _ operation: CosmoAssistantProposalOperation,
+        proposalID: UUID,
+        in model: ConnectionSurfaceModel
+    ) -> ResolvedCapture {
+        if let resolved = pendingInsert(for: operation, in: model) {
+            return .section(ConnectionPendingInsert(
+                proposalID: proposalID,
+                operationID: operation.id,
+                section: resolved.section,
+                bullets: resolved.bullets,
+                revisesText: resolved.revisesText,
+                afterText: resolved.afterText
+            ))
+        }
+        if stagingIssue(for: operation, in: model) != nil {
+            return .orphaned(ConnectionOrphanedCapture(
+                proposalID: proposalID,
+                operationID: operation.id,
+                summary: orphanSummary(for: operation)
+            ))
+        }
+        return .manuscript
+    }
+
+    /// First line of the capture's content, mention tokens projected to their
+    /// "@Title" form — a dismiss must be an informed one, so the orphan row
+    /// shows WHAT would be let go.
+    private static func orphanSummary(for operation: CosmoAssistantProposalOperation) -> String {
+        let firstLine = (operation.proposedText ?? "")
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .first { !$0.isEmpty } ?? ""
+        guard !firstLine.isEmpty else { return operation.rationale }
+        return ConceptMentionToken.displayText(strippingBulletPrefix(firstLine))
+    }
+
+    /// Classifies a proposal's still-reviewable operations for the pane
+    /// receipt: how many ghost-render in sections, how many review in the
+    /// Manuscript woven diff, and which resolve NOWHERE because the board
+    /// changed under them after staging. Same resolution as `stagedInserts`.
+    static func captureReceiptState(
+        operations: [CosmoAssistantProposalOperation],
+        proposalID: UUID,
+        in model: ConnectionSurfaceModel
+    ) -> ConnectionCaptureReceiptState {
+        var state = ConnectionCaptureReceiptState()
+        for operation in operations
+        where operation.status == .pending || operation.status == .conflicted {
+            switch resolveCapture(operation, proposalID: proposalID, in: model) {
+            case .section: state.sectionCount += 1
+            case .manuscript: state.manuscriptCount += 1
+            case .orphaned(let capture): state.orphans.append(capture)
+            }
+        }
+        return state
+    }
+
     /// Shared by every host that renders a connection's staged edits (the
     /// Connection focus mode and the Study's Concept Desk): filters the store's
     /// proposals to this connection, resolves still-pending operations into
     /// per-section ghost rows against the LIVE serialized surface — so
     /// accepting one and re-resolving the rest can never disagree with the
     /// apply path — and returns the last matching proposal for the
-    /// Manuscript's full-screen diff.
+    /// Manuscript's full-screen diff. Operations that stopped resolving
+    /// (the board changed under them) come back as `orphaned` so a host can
+    /// settle them — they must never be silently dropped while the receipt
+    /// still counts them.
     @MainActor
     static func stagedInserts(
         from proposals: [CosmoAssistantProposal],
@@ -411,7 +637,11 @@ enum ConnectionSurfaceSerializer {
         title: String,
         conceptType: ConceptFrameworkType,
         sections: [ConnectionSection]
-    ) -> (manuscript: CosmoAssistantProposal?, bySection: [ConnectionSectionType: [ConnectionPendingInsert]]) {
+    ) -> (
+        manuscript: CosmoAssistantProposal?,
+        bySection: [ConnectionSectionType: [ConnectionPendingInsert]],
+        orphaned: [ConnectionOrphanedCapture]
+    ) {
         let matching = proposals.filter { proposal in
             proposal.hasReviewableOperations && proposal.matches(
                 surfaceID: "connection:\(atomUUID)",
@@ -421,23 +651,124 @@ enum ConnectionSurfaceSerializer {
         }
         let model = serialize(title: title, conceptType: conceptType, sections: sections)
         var grouped: [ConnectionSectionType: [ConnectionPendingInsert]] = [:]
+        var orphaned: [ConnectionOrphanedCapture] = []
         for proposal in matching {
             for operation in proposal.operations
             where operation.status == .pending || operation.status == .conflicted {
-                guard let resolved = pendingInsert(for: operation, in: model) else { continue }
-                grouped[resolved.section, default: []].append(
-                    ConnectionPendingInsert(
-                        proposalID: proposal.id,
-                        operationID: operation.id,
-                        section: resolved.section,
-                        bullets: resolved.bullets,
-                        revisesText: resolved.revisesText,
-                        afterText: resolved.afterText
-                    )
-                )
+                switch resolveCapture(operation, proposalID: proposal.id, in: model) {
+                case .section(let insert):
+                    grouped[insert.section, default: []].append(insert)
+                case .orphaned(let capture):
+                    orphaned.append(capture)
+                case .manuscript:
+                    break
+                }
             }
         }
-        return (matching.last, grouped)
+        return (matching.last, grouped, orphaned)
+    }
+}
+
+// MARK: - Orphaned captures + receipt truth
+
+/// A staged capture that no longer resolves ANYWHERE on the board — the user
+/// edited or deleted the line its anchor quoted while it was still pending.
+/// It renders in the pane receipt (content visible, individually dismissible)
+/// instead of silently inflating the "captures waiting" count while the board
+/// ghost-renders nothing.
+struct ConnectionOrphanedCapture: Identifiable, Equatable {
+    let proposalID: UUID
+    let operationID: UUID
+    /// First line of the capture's content, so dismissing is an informed act.
+    let summary: String
+
+    var id: UUID { operationID }
+}
+
+/// Render-time truth for one proposal's receipt, resolved against the live
+/// board.
+struct ConnectionCaptureReceiptState: Equatable {
+    var sectionCount: Int = 0
+    var manuscriptCount: Int = 0
+    var orphans: [ConnectionOrphanedCapture] = []
+
+    /// Operations that still render somewhere reviewable.
+    var placedCount: Int { sectionCount + manuscriptCount }
+}
+
+/// The concept receipt's wording, derived from where its operations actually
+/// review right now — never from the raw pending count alone. Pure so tests
+/// can pin every bucket's copy.
+struct ConceptCaptureReceiptCopy: Equatable {
+    var headline: String
+    var subtitle: String?
+    /// Caption above the orphan rows when placeable captures also exist
+    /// (when nothing is placeable, the headline itself carries the news).
+    var orphanNotice: String?
+    var showsAcceptAll: Bool
+    var showsDismissAll: Bool
+
+    /// `state` is nil when the board surface isn't open to resolve against —
+    /// the stage-time gate vouched for these once, so the historical
+    /// review-in-sections copy is the honest default there.
+    static func make(
+        pendingCount: Int,
+        resolvedCount: Int,
+        state: ConnectionCaptureReceiptState?
+    ) -> ConceptCaptureReceiptCopy {
+        guard pendingCount > 0 else {
+            return ConceptCaptureReceiptCopy(
+                headline: resolvedCount > 0 ? "Added to your board" : "Nothing captured",
+                subtitle: nil,
+                orphanNotice: nil,
+                showsAcceptAll: false,
+                showsDismissAll: false
+            )
+        }
+        guard let state else {
+            return ConceptCaptureReceiptCopy(
+                headline: waitingHeadline(pendingCount),
+                subtitle: "Review each in its section, then ✓ or ✗ there.",
+                orphanNotice: nil,
+                showsAcceptAll: true,
+                showsDismissAll: true
+            )
+        }
+        let orphanCount = state.orphans.count
+        if state.placedCount == 0, orphanCount > 0 {
+            return ConceptCaptureReceiptCopy(
+                headline: orphanCount == 1
+                    ? "1 capture can't be placed"
+                    : "\(orphanCount) captures can't be placed",
+                subtitle: orphanCount == 1
+                    ? "The board changed under it. Dismiss it, or ask me to restage."
+                    : "The board changed under them. Dismiss them, or ask me to restage.",
+                orphanNotice: nil,
+                showsAcceptAll: false,
+                showsDismissAll: true
+            )
+        }
+        let subtitle: String
+        if state.manuscriptCount == 0 {
+            subtitle = "Review each in its section, then ✓ or ✗ there."
+        } else if state.sectionCount == 0 {
+            subtitle = "Review in the Manuscript view, then ✓ or ✗ there."
+        } else {
+            subtitle = "Review in the sections and the Manuscript, then ✓ or ✗ there."
+        }
+        return ConceptCaptureReceiptCopy(
+            headline: waitingHeadline(state.placedCount),
+            subtitle: subtitle,
+            orphanNotice: orphanCount == 0 ? nil : orphanCount == 1
+                ? "1 more can't be placed: the board changed under it."
+                : "\(orphanCount) more can't be placed: the board changed under them.",
+            showsAcceptAll: true,
+            showsDismissAll: true
+        )
+    }
+
+    private static func waitingHeadline(_ count: Int) -> String {
+        count == 1 ? "1 capture waiting in your board" : "\(count) captures waiting in your board"
     }
 }
 
@@ -531,6 +862,26 @@ final class ConnectionContextProvider: CosmoContextProvider, CosmoEditableSurfac
             // Concept boards live in the concept skill: no writing/review skill
             // may auto-route here — only an explicit slash/picker choice can.
             residentSkillID: CosmoInlineAssistantSkillID.concept.rawValue
+        )
+    }
+
+    /// Stage-time gate for `propose_workspace_edit`: issues for operations
+    /// this surface's apply would deterministically refuse. Read-only —
+    /// resolves against the LIVE board, never mutates.
+    func stagingIssues(for operations: [CosmoAssistantProposalOperation]) -> [String] {
+        ConnectionSurfaceSerializer.stagingIssues(operations: operations, in: currentModel())
+    }
+
+    /// Render-time truth for the pane receipt: where each still-reviewable
+    /// operation reviews RIGHT NOW (section ghost rows, the Manuscript diff,
+    /// or nowhere because the board changed under it since staging).
+    /// Read-only — resolves against the same live model the stage gate and
+    /// apply use, never mutates.
+    func captureReceiptState(for proposal: CosmoAssistantProposal) -> ConnectionCaptureReceiptState {
+        ConnectionSurfaceSerializer.captureReceiptState(
+            operations: proposal.operations,
+            proposalID: proposal.id,
+            in: currentModel()
         )
     }
 
@@ -673,6 +1024,16 @@ final class ConnectionContextProvider: CosmoContextProvider, CosmoEditableSurfac
             return replaceTitle(with: proposed, operation: operation, viewModel: viewModel)
         }
         if touched.allSatisfy({ if case .meta = $0.kind { return true }; return false }) {
+            // `.meta` carries more than the Type line (handling rebuttals,
+            // gallery rows) — only the Type line may route to a type edit,
+            // or a staged rebuttal rewrite whose text happens to contain a
+            // framework name would silently change the concept type.
+            guard touched.allSatisfy({ ConnectionSurfaceSerializer.isConceptTypeLine($0, in: model) }) else {
+                let reason = touched.contains(where: { ConnectionSurfaceSerializer.isHandledObjectionLine($0, in: model) })
+                    ? "Can't edit that line — \(ConnectionSurfaceSerializer.handledLineGuidance)"
+                    : "That line is read-only board metadata and can't be edited"
+                return result(operation, .conflicted, reason)
+            }
             return replaceConceptType(with: proposed, operation: operation, viewModel: viewModel)
         }
         return replaceSectionLines(touched, with: proposed, operation: operation, viewModel: viewModel)

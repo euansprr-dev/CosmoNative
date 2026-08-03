@@ -36,6 +36,9 @@ final class StudyConceptDeskController {
     let connectionVM: ConnectionFocusModeViewModel
     let workspace = ConnectionWorkspaceModel()
     private(set) var pendingInsertsBySection: [ConnectionSectionType: [ConnectionPendingInsert]] = [:]
+    /// Captures that stopped resolving anywhere on the board (it changed
+    /// under them) — tracked so an abandoned page still settles them.
+    private(set) var orphanedCaptures: [ConnectionOrphanedCapture] = []
     private(set) var evidence: [StudyEvidenceItem] = []
     private(set) var isPreparingEvidence = false
     /// True when this development created the page — an untouched page is
@@ -103,9 +106,15 @@ final class StudyConceptDeskController {
 
         let hasContent = connectionVM.state.sections.contains { !$0.items.isEmpty }
         if !hasContent, createdFreshPage {
-            // Orphaned staged proposals must not dangle after the page dies.
+            // Staged proposals must not dangle after the page dies — the
+            // placeable ghost rows AND the captures the board already
+            // changed under (those render nowhere, so nothing else would
+            // ever settle them).
             for insert in pendingInsertsBySection.values.flatMap({ $0 }) {
                 await CosmoInlineAssistantStore.shared.reject(operationID: insert.operationID)
+            }
+            for orphan in orphanedCaptures {
+                await CosmoInlineAssistantStore.shared.reject(operationID: orphan.operationID)
             }
             await ConceptSeedbedService.shared.abandonEmptyDevelopment(
                 deepDiveUUID: deepDive.uuid,
@@ -132,13 +141,15 @@ final class StudyConceptDeskController {
     }
 
     func syncStagedInserts(from proposals: [CosmoAssistantProposal]) {
-        pendingInsertsBySection = ConnectionSurfaceSerializer.stagedInserts(
+        let staged = ConnectionSurfaceSerializer.stagedInserts(
             from: proposals,
             atomUUID: atom.uuid,
             title: connectionVM.editableTitle,
             conceptType: connectionVM.state.conceptType,
             sections: connectionVM.state.sections
-        ).bySection
+        )
+        pendingInsertsBySection = staged.bySection
+        orphanedCaptures = staged.orphaned
     }
 
     var boardActions: ConnectionWorkspaceActions {

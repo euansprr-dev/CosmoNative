@@ -215,6 +215,11 @@ struct MainView: View {
             // Main layout: sidebar + content area
             mainContentLayout
 
+            // App-wide NotificationCenter routing subscribes on this zero-size
+            // host, so an arriving notification diffs a Color.clear leaf
+            // instead of this whole shell (perf audit W14).
+            notificationRouter
+
 
             // Glass overlay for search results, clarifications, proactive suggestions
             if glassCenter.isVisible {
@@ -531,155 +536,7 @@ struct MainView: View {
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: glassCenter.isVisible)
         .animation(.spring(response: 0.25, dampingFraction: 0.85), value: swipeFileEngine.showInstagramModal)
         .animation(.spring(response: 0.25, dampingFraction: 0.85), value: showSettings)
-        // onReceive, not onChange: MainView deliberately does NOT observe the
-        // assistant store (its composerText publishes per keystroke and its
-        // run state per stream event — each would re-run this whole body).
-        .onReceive(CosmoInlineAssistantStore.shared.$isPaneRequested.removeDuplicates()) { isRequested in
-            guard isRequested else { return }
-            openInlineAssistantPane()
-            CosmoInlineAssistantStore.shared.dismissPaneRequest()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Canvas.thinkspaceModeChanged)) { notification in
-            let isLibrary = notification.userInfo?["isLibrary"] as? Bool ?? false
-            withAnimation(ProMotionSprings.gentle) {
-                isThinkspaceLibraryActive = isLibrary
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .showCommandPalette)) { _ in
-            presentCommandK()
-        }
-        // ⌥⌘N — jump to the inbox with the capture field focused (InboxView
-        // focuses the field when it receives the same notification).
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Inbox.focusCaptureField)) { _ in
-            inboxRoute = .global
-            currentDestination = .inbox
-        }
-        // Command Center "to triage" chip and other deep links into the queue.
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Inbox.open)) { _ in
-            inboxRoute = .global
-            currentDestination = .inbox
-        }
-        // NodeGraph Command-K atom opening handler
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.NodeGraph.openAtomFromCommandK)) { notification in
-            guard let atomUUID = notification.userInfo?["atomUUID"] as? String else { return }
-            handleOpenAtomFromCommandK(atomUUID: atomUUID)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.NodeGraph.goToObjectFromCommandK)) { notification in
-            guard let atomUUID = notification.userInfo?["atomUUID"] as? String else { return }
-            handleGoToObjectFromCommandK(atomUUID: atomUUID)
-        }
-        // Command-K close handler (from background tap or escape in CommandKView)
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.NodeGraph.closeCommandK)) { _ in
-            closeCommandK()
-        }
-        // Command-K hide handler — keeps view alive but hidden behind focus mode
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.NodeGraph.hideCommandK)) { _ in
-            preserveCommandKBehindFocusMode()
-        }
-        // Legacy Cosmo toggle requests now open the inline assistant surface.
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.CosmoWindow.toggle)) { _ in
-            CosmoAssistantHotkeyRouter.openFromOptionA()
-        }
-        // Atom Window toggle + open (floating atom viewer)
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.AtomWindow.toggle)) { _ in
-            AtomWindowPanelController.shared.toggle()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.AtomWindow.openAtom)) { notification in
-            if let uuid = notification.userInfo?["uuid"] as? String {
-                AtomWindowPanelController.shared.show(atomUUID: uuid)
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .showSettings)) { _ in
-            FocusModeEditorBlur.clearFirstResponder(in: NSApp.keyWindow)
-            showSettings = true
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .enterFocusMode)) { notification in
-            if let type = notification.userInfo?["type"] as? EntityType,
-               let id = notification.userInfo?["id"] as? Int64 {
-                // Track if this focus mode was opened from Command K
-                if let tabString = notification.userInfo?["commandKTab"] as? String {
-                    switch tabString {
-                    case "swipeGallery": commandKReturnTab = .swipeGallery
-                    case "ideas": commandKReturnTab = .ideas
-                    case "library": commandKReturnTab = .database
-                    default: commandKReturnTab = nil
-                    }
-                } else {
-                    commandKReturnTab = nil
-                }
-                let sourceFrame = (notification.userInfo?["sourceFrame"] as? NSValue)?.rectValue
-                FocusNavigationCoordinator.shared.open(
-                    entity: EntitySelection(id: id, type: type),
-                    sourceFrame: sourceFrame
-                )
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .exitFocusMode)) { _ in
-            FocusNavigationCoordinator.shared.close()
-        }
-        // UUID-keyed navigation from Command Center surfaces: task play routes
-        // its primary linked atom here, and task-title mention pills post the
-        // same name. The coordinator owns the actual open.
-        .onReceive(NotificationCenter.default.publisher(for: .init("com.cosmo.navigateToAtom"))) { notification in
-            guard let uuid = notification.userInfo?["uuid"] as? String else { return }
-            FocusNavigationCoordinator.shared.open(atomUUID: uuid)
-            // Secondary linked atoms ride along as panes (play-task fan-out).
-            guard let paneUUIDs = notification.userInfo?["paneAtomUUIDs"] as? [String],
-                  !paneUUIDs.isEmpty else { return }
-            Task { @MainActor in
-                for paneUUID in paneUUIDs {
-                    guard let atom = try? await AtomRepository.shared.fetch(uuid: paneUUID),
-                          let atomId = atom.id else { continue }
-                    NotificationCenter.default.post(
-                        name: CosmoNotification.Navigation.openAsPane,
-                        object: nil,
-                        userInfo: [
-                            "id": atomId,
-                            "type": AtomWindowViewModel.entityType(for: atom.type)
-                        ]
-                    )
-                }
-            }
-        }
         // MARK: - Workbenches
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.applyWorkbench)) { notification in
-            guard let uuid = notification.userInfo?["uuid"] as? String else { return }
-            Task { @MainActor in
-                await WorkbenchStore.shared.loadIfNeeded()
-                guard let bench = WorkbenchStore.shared.workbenches.first(where: { $0.uuid == uuid }) else { return }
-                applyWorkbench(bench)
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.composeWorkbench)) { _ in
-            showWorkbenchComposer = true
-        }
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.trailStepBack)) { _ in
-            // Esc/back from a study surface: retrace the trail like the back
-            // arrow; with no history left, settle back onto the canvas.
-            if NavigationTrail.shared.canGoBack {
-                navigateTrailBack()
-            } else {
-                FocusNavigationCoordinator.shared.close()
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.trailStepForward)) { _ in
-            navigateTrailForward()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.trailJump)) { notification in
-            guard let momentId = notification.userInfo?["momentId"] as? String,
-                  let uuid = UUID(uuidString: momentId),
-                  let moment = NavigationTrail.shared.backStack.first(where: { $0.id == uuid }) else { return }
-            jumpTrail(to: moment)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.compileSpokes)) { notification in
-            guard let entityId = notification.userInfo?["id"] as? Int64 else { return }
-            Task { @MainActor in
-                guard let atom = try? await AtomRepository.shared.fetch(id: entityId) else { return }
-                withAnimation(ProMotionSprings.modal) {
-                    spokesPillar = atom
-                }
-            }
-        }
         .sheet(isPresented: $showWorkbenchComposer) {
             WorkbenchComposerView(
                 snapshot: WorkspaceSnapshot.capture(destination: currentDestination, paneManager: paneManager),
@@ -691,95 +548,6 @@ struct MainView: View {
                 },
                 onCancel: { showWorkbenchComposer = false }
             )
-        }
-        // MARK: - Peek
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.peekEntity)) { notification in
-            let anchor = (notification.userInfo?["anchor"] as? NSValue)?.rectValue
-
-            if let entityType = notification.userInfo?["type"] as? EntityType,
-               let entityId = notification.userInfo?["id"] as? Int64 {
-                PeekController.shared.peek(
-                    .entity(EntitySelection(id: entityId, type: entityType)),
-                    from: anchor
-                )
-                return
-            }
-
-            // String-payload variant (Command-K actions post [String: String])
-            if let uuid = notification.userInfo?["uuid"] as? String {
-                Task { @MainActor in
-                    guard let atom = try? await AtomRepository.shared.fetch(uuid: uuid),
-                          let atomId = atom.id else { return }
-                    let entityType = mapAtomTypeToEntityType(atom.type)
-                    PeekController.shared.peek(
-                        .entity(EntitySelection(id: atomId, type: entityType)),
-                        from: anchor
-                    )
-                }
-            }
-        }
-        // MARK: - Open as Pane
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.openAsPane)) { notification in
-            if let entityType = notification.userInfo?["type"] as? EntityType,
-               let entityId = notification.userInfo?["id"] as? Int64 {
-                guard paneManager.canOpen(entityId: entityId, appState: appState) else { return }
-                withAnimation(ProMotionSprings.snappy) {
-                    paneManager.openPane(.entity(EntitySelection(id: entityId, type: entityType)))
-                }
-            } else if let thinkspaceId = notification.userInfo?["thinkspaceId"] as? String {
-                guard paneManager.canOpenThinkspace(thinkspaceId: thinkspaceId) else { return }
-                withAnimation(ProMotionSprings.snappy) {
-                    paneManager.openPane(.thinkspace(thinkspaceId: thinkspaceId))
-                }
-            } else if notification.userInfo?["commandCenter"] as? Bool == true {
-                guard paneManager.canOpenCommandCenter() else { return }
-                withAnimation(ProMotionSprings.snappy) {
-                    paneManager.openPane(.commandCenter)
-                }
-            } else if notification.userInfo?["swipeGallery"] as? Bool == true {
-                withAnimation(ProMotionSprings.snappy) {
-                    if paneManager.canOpenSwipeGallery() {
-                        paneManager.openPane(.swipeGallery)
-                    } else {
-                        paneManager.activatePane(PaneContent.swipeGallery.id)
-                    }
-                }
-            }
-            // Dismiss Command-K if it's open
-            if showCommandK || commandKBehindFocusMode {
-                closeCommandK()
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.openWebBrowserPane)) { notification in
-            let url = (notification.userInfo?["url"] as? URL)
-                ?? (notification.userInfo?["urlString"] as? String).flatMap(URL.init(string:))
-            guard let url else { return }
-
-            let title = notification.userInfo?["title"] as? String
-            let disposition = (notification.userInfo?["disposition"] as? String)
-                .flatMap(BrowserOpenDisposition.init(rawValue:)) ?? .reuse
-            openBrowserURL(url, title: title, disposition: disposition)
-            if showCommandK || commandKBehindFocusMode {
-                closeCommandK()
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.openCosmoWindowPane)) { _ in
-            withAnimation(ProMotionSprings.snappy) {
-                paneManager.openOrActivateCosmoWindow()
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.openCollaboratorPane)) { notification in
-            guard let payload = CosmoNotification.Navigation.CollaboratorPanePayload(from: notification) else { return }
-            handleOpenCollaboratorPane(atomUUID: payload.atomUUID, presetId: payload.presetId)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.openInlineAssistant)) { _ in
-            openInlineAssistantPane()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.openInlineAssistantPane)) { _ in
-            openInlineAssistantPane()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.toggleSidebar)) { _ in
-            handleGlobalSidebarToggle()
         }
         .onChange(of: appState.focusedEntity) { _, newValue in
             if let newValue {
@@ -849,130 +617,6 @@ struct MainView: View {
             }
             recordTrailArrival(for: newDest)
         }
-        .onReceive(NotificationCenter.default.publisher(for: .addSwipeToCanvas)) { notification in
-            guard let atomUUID = notification.userInfo?["atomUUID"] as? String else { return }
-
-            closeCommandK()
-
-            navigateToLastThinkspace()
-            // Queued placement: delivered the moment the canvas is mounted, active,
-            // and observing — posts immediately when it already is (no timer race).
-            CanvasPendingPlacementQueue.shared.enqueue(
-                name: .openEntityOnCanvas,
-                userInfo: ["atomUUID": atomUUID]
-            )
-        }
-        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("addIdeaToCanvas"))) { notification in
-            guard let atomUUID = notification.userInfo?["atomUUID"] as? String else { return }
-
-            closeCommandK()
-
-            navigateToLastThinkspace()
-            CanvasPendingPlacementQueue.shared.enqueue(
-                name: .openEntityOnCanvas,
-                userInfo: ["atomUUID": atomUUID]
-            )
-        }
-        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("addIdeaBoardToCanvas"))) { notification in
-            let clientUUID = notification.userInfo?["clientUUID"] as? String ?? ""
-            let clientName = notification.userInfo?["clientName"] as? String ?? "Client"
-
-            closeCommandK()
-
-            navigateToLastThinkspace()
-            CanvasPendingPlacementQueue.shared.enqueue(
-                name: Notification.Name("createIdeaBoardBlock"),
-                userInfo: [
-                    "clientUUID": clientUUID,
-                    "clientName": clientName
-                ]
-            )
-        }
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.NodeGraph.addToCanvas)) { notification in
-            guard let atomUUID = notification.userInfo?["atomUUID"] as? String else { return }
-
-            closeCommandK()
-
-            navigateToLastThinkspace()
-            CanvasPendingPlacementQueue.shared.enqueue(
-                name: .openEntityOnCanvas,
-                userInfo: ["atomUUID": atomUUID]
-            )
-        }
-        // Cmd+K single-click: add item to current canvas (Thinkspace fallback)
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.NodeGraph.addItemToCurrentCanvas)) { notification in
-            guard let atomUUID = notification.userInfo?["atomUUID"] as? String else { return }
-            // Research/Connection focus modes host their own canvases and
-            // consume this notification themselves. Every other focus mode has
-            // no canvas, so fall through to the thinkspace placement below —
-            // the verb must never silently no-op.
-            if let focused = appState.focusedEntity,
-               focused.type == .research || focused.type == .connection {
-                return
-            }
-
-            closeCommandK()
-
-            // Fetch atom and add to Thinkspace canvas
-            Task { @MainActor in
-                if let atom = try? await AtomRepository.shared.fetch(uuid: atomUUID) {
-                    let entityType = mapAtomTypeToEntityType(atom.type)
-                    navigateToLastThinkspace()
-                    CanvasPendingPlacementQueue.shared.enqueue(
-                        name: .openEntityOnCanvas,
-                        userInfo: ["type": entityType, "id": atom.id ?? Int64(0)]
-                    )
-                }
-            }
-        }
-        // ⌘K filing verb: drop an atom onto a thinkspace result — moves its
-        // block there (or creates one) WITHOUT navigating. The user is filing,
-        // not visiting.
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Canvas.moveAtomToThinkspace)) { notification in
-            guard let atomUUID = notification.userInfo?["atomUUID"] as? String,
-                  let targetThinkspaceId = notification.userInfo?["targetThinkspaceId"] as? String else { return }
-            Task { @MainActor in
-                await fileAtomIntoThinkspace(atomUUID: atomUUID, targetThinkspaceId: targetThinkspaceId)
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .switchToThinkspace)) { notification in
-            // Switch to the selected Thinkspace from Command-K
-            if let id = notification.userInfo?["id"] as? Int64 {
-                thinkspaceSwitchTask?.cancel()
-                let requestID = UUID()
-                thinkspaceSwitchRequestID = requestID
-                thinkspaceSwitchTask = Task { @MainActor in
-                    if let atom = try? await AtomRepository.shared.fetch(id: id),
-                       let thinkspace = ThinkspaceManager.shared.thinkspaces.first(where: { $0.id == atom.uuid }) {
-                        guard thinkspaceSwitchRequestID == requestID, !Task.isCancelled else { return }
-                        await ThinkspaceManager.shared.switchTo(thinkspace)
-                        guard thinkspaceSwitchRequestID == requestID, !Task.isCancelled else { return }
-                        lastThinkspaceId = atom.uuid
-                        currentDestination = .thinkspace(id: atom.uuid)
-                    }
-                }
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("openCreatorDatabase"))) { _ in
-            withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
-                showCreatorDatabase = true
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("openCreatorProfile"))) { notification in
-            guard let creatorUUID = notification.userInfo?["creatorUUID"] as? String else { return }
-            creatorProfileLoadTask?.cancel()
-            let requestID = UUID()
-            creatorProfileLoadRequestID = requestID
-            creatorProfileLoadTask = Task { @MainActor in
-                if let atom = try? await AtomRepository.shared.fetch(uuid: creatorUUID) {
-                    guard creatorProfileLoadRequestID == requestID, !Task.isCancelled else { return }
-                    creatorProfileAtom = atom
-                    withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
-                        showCreatorProfile = true
-                    }
-                }
-            }
-        }
         .animation(.spring(response: 0.25, dampingFraction: 0.85), value: showCreatorDatabase)
         .animation(.spring(response: 0.25, dampingFraction: 0.85), value: showCreatorProfile)
         .onAppear {
@@ -990,47 +634,54 @@ struct MainView: View {
             creatorProfileLoadTask?.cancel()
             commandKNavigationTask?.cancel()
         }
-        // Voice navigation handler
-        .onReceive(NotificationCenter.default.publisher(for: .voiceNavigationRequested)) { notification in
-            guard let destination = notification.userInfo?["destination"] as? String else { return }
-            handleVoiceNavigation(to: destination)
-        }
-        // Command Center navigation (from other systems)
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.navigateToCommandCenter)) { _ in
-            currentDestination = .commandCenter
-        }
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.openSwipeGallery)) { notification in
-            // The capture receipt (and anything else) can name the ROOM it
-            // wants: a "Swiped · Newsletter" click lands in Newsletters, not
-            // the posts home. Posts and unknown genres keep the old landing.
-            if let raw = notification.userInfo?["genre"] as? String,
-               let genre = SwipeGenre.resolve(raw), genre != .post {
-                currentDestination = .swipeFile(section: .genre(genre))
-            } else {
-                currentDestination = .swipeFile(section: .home)
-            }
-            closeCommandK()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.openIdeas)) { notification in
-            ideasBoardRequest = notification.userInfo?["clientUUID"] as? String
-            currentDestination = .ideas
-            closeCommandK()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.navigateToThinkspaceById)) { notification in
-            guard let payload = CosmoNotification.Navigation.ThinkspacePayload(from: notification) else { return }
-            currentDestination = .thinkspace(id: payload.thinkspaceId)
-        }
-        // Open block in focus mode by UUID (used by promoteToContent, context panels, etc.)
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.openBlockInFocusMode)) { notification in
-            guard let atomUUID = notification.userInfo?["atomUUID"] as? String else { return }
-            let shouldOpenAsPane = notification.userInfo?["asPane"] as? Bool == true
-            let shouldRestoreCommandK = notification.userInfo?["restoreCommandKOnFocusClose"] as? Bool ?? true
-            handleOpenBlockInFocusMode(
-                atomUUID: atomUUID,
-                asPane: shouldOpenAsPane,
-                restoreCommandKOnFocusClose: shouldRestoreCommandK
-            )
-        }
+    }
+
+    // MARK: - Notification Router
+
+    private var notificationRouter: some View {
+        MainNotificationRouter(
+            appState: appState,
+            paneManager: paneManager,
+            currentDestination: $currentDestination,
+            inboxRoute: $inboxRoute,
+            ideasBoardRequest: $ideasBoardRequest,
+            commandKReturnTab: $commandKReturnTab,
+            showSettings: $showSettings,
+            showWorkbenchComposer: $showWorkbenchComposer,
+            spokesPillar: $spokesPillar,
+            isThinkspaceLibraryActive: $isThinkspaceLibraryActive,
+            showCreatorDatabase: $showCreatorDatabase,
+            actions: notificationRouterActions
+        )
+    }
+
+    private var notificationRouterActions: MainNotificationRouter.Actions {
+        .init(
+            presentCommandK: presentCommandK,
+            preserveCommandKBehindFocusMode: preserveCommandKBehindFocusMode,
+            openAtomFromCommandK: handleOpenAtomFromCommandK(atomUUID:),
+            goToObjectFromCommandK: handleGoToObjectFromCommandK(atomUUID:),
+            closeCommandK: { closeCommandK() },
+            closeCommandKIfOpen: closeCommandKIfOpen,
+            applyWorkbench: applyWorkbench(_:),
+            navigateTrailBack: navigateTrailBack,
+            navigateTrailForward: navigateTrailForward,
+            jumpTrail: jumpTrail(to:),
+            openBlockInFocusMode: { handleOpenBlockInFocusMode(atomUUID: $0, asPane: $1, restoreCommandKOnFocusClose: $2) },
+            handleVoiceNavigation: handleVoiceNavigation(to:),
+            toggleSidebar: handleGlobalSidebarToggle,
+            openBrowserURL: openBrowserURL(_:title:disposition:),
+            openCollaboratorPane: handleOpenCollaboratorPane(atomUUID:presetId:),
+            openInlineAssistantPane: openInlineAssistantPane,
+            navigateToLastThinkspace: navigateToLastThinkspace,
+            fileAtomIntoThinkspace: { atomUUID, targetThinkspaceId in
+                Task { @MainActor in
+                    await fileAtomIntoThinkspace(atomUUID: atomUUID, targetThinkspaceId: targetThinkspaceId)
+                }
+            },
+            switchToThinkspace: handleSwitchToThinkspace(atomID:),
+            openCreatorProfile: handleOpenCreatorProfile(creatorUUID:)
+        )
     }
 
     // MARK: - Main Content Layout (extracted to avoid type-checker timeout)
@@ -2111,6 +1762,40 @@ struct MainView: View {
         }
     }
 
+    /// ⌘K thinkspace pick: task-juggled so a rapid second pick cancels the
+    /// first fetch and stale results never land.
+    private func handleSwitchToThinkspace(atomID: Int64) {
+        thinkspaceSwitchTask?.cancel()
+        let requestID = UUID()
+        thinkspaceSwitchRequestID = requestID
+        thinkspaceSwitchTask = Task { @MainActor in
+            if let atom = try? await AtomRepository.shared.fetch(id: atomID),
+               let thinkspace = ThinkspaceManager.shared.thinkspaces.first(where: { $0.id == atom.uuid }) {
+                guard thinkspaceSwitchRequestID == requestID, !Task.isCancelled else { return }
+                await ThinkspaceManager.shared.switchTo(thinkspace)
+                guard thinkspaceSwitchRequestID == requestID, !Task.isCancelled else { return }
+                lastThinkspaceId = atom.uuid
+                currentDestination = .thinkspace(id: atom.uuid)
+            }
+        }
+    }
+
+    /// Creator profile open by UUID — same cancel-and-stale-guard recipe.
+    private func handleOpenCreatorProfile(creatorUUID: String) {
+        creatorProfileLoadTask?.cancel()
+        let requestID = UUID()
+        creatorProfileLoadRequestID = requestID
+        creatorProfileLoadTask = Task { @MainActor in
+            if let atom = try? await AtomRepository.shared.fetch(uuid: creatorUUID) {
+                guard creatorProfileLoadRequestID == requestID, !Task.isCancelled else { return }
+                creatorProfileAtom = atom
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
+                    showCreatorProfile = true
+                }
+            }
+        }
+    }
+
     /// Files an atom into a thinkspace without navigating there (⌘K
     /// drop-on-result). Moves the atom's existing canvas block when one
     /// exists anywhere; otherwise inserts a fresh block row directly into
@@ -2197,6 +1882,15 @@ struct MainView: View {
 
     private func preserveCommandKBehindFocusMode() {
         applyCommandKPresentation(.preserveBehindFocusMode)
+    }
+
+    /// Guarded twin for notification-driven dismissal: closing an
+    /// already-closed palette would still clear its view model, losing
+    /// preserved search state.
+    private func closeCommandKIfOpen() {
+        if showCommandK || commandKBehindFocusMode {
+            closeCommandK()
+        }
     }
 
     private func isCommandKShortcut(_ event: NSEvent) -> Bool {
@@ -2812,31 +2506,10 @@ struct MainView: View {
         }
     }
 
-    /// Maps AtomType to EntityType for navigation
+    /// Maps AtomType to EntityType for navigation (shared with the
+    /// notification router).
     private func mapAtomTypeToEntityType(_ atomType: AtomType) -> EntityType {
-        switch atomType {
-        case .idea:
-            return .idea
-        case .task, .scheduleBlock:
-            return .task
-        case .content, .contentDraft:
-            return .content
-        case .research:
-            return .research
-        case .connection, .clientProfile:
-            return .connection
-        case .project:
-            return .project
-        case .note:
-            return .note
-        case .extract, .question:
-            // Inquiry captures open the peek reader — the old .idea fallback
-            // dumped them into the Idea workbench, which even wrote idea
-            // metadata onto extract atoms.
-            return .extract
-        default:
-            return .idea  // Default fallback
-        }
+        MainAtomEntityTypeMap.entityType(for: atomType)
     }
 
     // MARK: - ProMotion Configuration (120Hz)

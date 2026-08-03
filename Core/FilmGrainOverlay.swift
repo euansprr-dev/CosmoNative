@@ -101,6 +101,15 @@ struct FilmGrainOverlay: View {
         .onAppear {
             generateGrainTexture()
         }
+        // The grain's base/dot polarity is keyed on the palette's isDark, read
+        // here in a closure — an untracked read, so Observation never
+        // invalidates us. This used to refresh via the app-root theme nuke
+        // re-running onAppear; with in-place theme re-rendering it must listen
+        // itself. (The tile cache stays keyed on isDark: the bitmap is a pure
+        // function of it, so entries never go stale — only this @State did.)
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Theme.changed)) { _ in
+            generateGrainTexture()
+        }
     }
 
     /// Fetch the shared grain tile (built once per palette mode, then cached).

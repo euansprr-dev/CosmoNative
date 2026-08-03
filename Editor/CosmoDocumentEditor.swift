@@ -459,6 +459,12 @@ struct CosmoDocumentEditor: View {
         .onDisappear {
             flushPendingSync()
         }
+        // TextKitCoordinator sets textColor/insertionPointColor only at
+        // initial setup, and hydration passes are diff-aware no-ops — a theme
+        // swap can't restyle a live editor in place. Recreate this editor
+        // (onDisappear flushes, the new instance re-seeds via initialContent),
+        // which re-bakes every palette-derived attribute.
+        .recreateOnThemeChange()
     }
 
     /// The fully styled editor content for the current document — the one

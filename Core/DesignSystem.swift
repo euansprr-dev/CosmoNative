@@ -5,6 +5,21 @@
 
 import SwiftUI
 
+// MARK: - Theme Palette Store (Observable)
+
+/// The observable box behind `DS.palette`. Reading any DS color token during
+/// a SwiftUI body evaluation registers a dependency on `palette`, so a theme
+/// swap re-renders exactly the views that wear tokens — in place, keeping
+/// their identity and @State. This replaced the app-root `.id(themeRefreshID)`
+/// nuke that unmounted the whole tree on every theme change.
+/// (`@unchecked Sendable`: main-thread writes with any-thread reads — the same
+/// contract the previous `nonisolated(unsafe)` static var acknowledged.)
+@Observable
+final class ThemePaletteStore: @unchecked Sendable {
+    static let shared = ThemePaletteStore()
+    fileprivate(set) var palette: ThemePalette = GreenhousePalette()
+}
+
 // MARK: - Design System (Dynamic Tokens)
 
 /// Single source of truth for all visual tokens in CosmoOS.
@@ -13,8 +28,12 @@ import SwiftUI
 enum DS {
 
     /// The active palette — swapped by ThemeManager on theme change.
-    /// All color properties below are computed from this.
-    nonisolated(unsafe) static var palette: ThemePalette = GreenhousePalette()
+    /// All color properties below are computed from this; reads route through
+    /// ThemePaletteStore so SwiftUI bodies pick up swaps via Observation.
+    static var palette: ThemePalette {
+        get { ThemePaletteStore.shared.palette }
+        set { ThemePaletteStore.shared.palette = newValue }
+    }
 
     private static var usesMonoMaterial: Bool {
         palette.name == "Codex Mono" || palette.name == "Black Mono"
@@ -1405,6 +1424,27 @@ extension View {
         self
             .font(DS.smallCaps)
             .foregroundStyle(DS.giltMuted)
+    }
+}
+
+// MARK: - Scoped Theme Recreation
+
+/// Rebuilds the subtree when the theme palette swaps. The scoped successor to
+/// the retired app-root `.id(themeRefreshID)` nuke: apply ONLY to AppKit-backed
+/// editors that bake palette colors at creation time (NSTextView chrome,
+/// attributed-string hydration behind diff guards). SwiftUI-drawn chrome
+/// re-renders in place without this — never widen it back to a container.
+private struct RecreateOnThemeChangeModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        // Reading the palette name here registers the Observation dependency;
+        // a swap changes the id, tearing down and remaking the AppKit view.
+        content.id(DS.palette.name)
+    }
+}
+
+extension View {
+    func recreateOnThemeChange() -> some View {
+        modifier(RecreateOnThemeChangeModifier())
     }
 }
 

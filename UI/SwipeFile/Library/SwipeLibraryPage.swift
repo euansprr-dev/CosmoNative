@@ -57,6 +57,8 @@ struct SwipeLibraryPage: View {
             // list); the shared catalog scopes keep the user's last choice.
             viewModel.applyRoomDefaultDisplayMode(for: section)
         }
+        .onAppear { viewModel.surfaceDidAppear() }
+        .onDisappear { viewModel.surfaceDidDisappear() }
         .onChange(of: viewModel.visibleItemsIdentity) { revealDate = Date() }
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.swipeStudyDidAppear)) { _ in
             relieveHeroAfterStudyAppears()
@@ -277,7 +279,7 @@ struct SwipeLibraryPage: View {
         // Arrow browsing should never wait on media — warm the neighbors so
         // the next retarget (preview rail or Study) lands on full caches.
         for neighbor in [target - 1, target + 1] where items.indices.contains(neighbor) {
-            SwipeStudyPrewarmer.shared.prewarm(uuid: items[neighbor].id)
+            SwipeStudyPrewarmer.shared.prewarm(uuid: items[neighbor].id, includeHeavyMedia: true)
         }
     }
 
@@ -314,7 +316,7 @@ struct SwipeLibraryPage: View {
         guard viewModel.dateSections.isEmpty,
               viewModel.displayMode == .grid else { return }
         // Poster models — the grid renders posters, so the height math must too.
-        let models = viewModel.visibleCardModels.map { $0.poster() }
+        let models = viewModel.visiblePosterModels
         guard index < models.count else { return }
 
         let metrics = SwipeWaterfallLayout.columnMetrics(

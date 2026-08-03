@@ -26,6 +26,8 @@ struct SwipeBoardsHubPage: View {
             await SwipeBoardStore.shared.loadIfNeeded()
             await viewModel.loadIfNeeded(section: .boards)
         }
+        .onAppear { viewModel.surfaceDidAppear() }
+        .onDisappear { viewModel.surfaceDidDisappear() }
     }
 
     private var masthead: some View {

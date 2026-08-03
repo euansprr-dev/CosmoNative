@@ -513,24 +513,37 @@ struct SwipePreviewSidebar: View {
     private func loadWords() async {
         // Belt-and-braces: card onAppear normally prewarmed this swipe's
         // media already; entry points that skip the grid (hero Preview,
-        // shelf clicks) kick it here so the stage finds warm caches.
-        SwipeStudyPrewarmer.shared.prewarm(uuid: item.id)
+        // shelf clicks) kick it here so the stage finds warm caches. A
+        // previewed swipe is one Return from Study — heavy media included.
+        SwipeStudyPrewarmer.shared.prewarm(uuid: item.id, includeHeavyMedia: true)
         words = .empty
         isLoadingWords = true
         defer { isLoadingWords = false }
         caption = nil
         originalURL = nil
         seekRequest = nil
-        guard let atom = try? await AtomRepository.shared.fetch(uuid: item.id) else { return }
-        words = SwipePreviewTranscript.resolve(
-            analysis: atom.swipeAnalysis,
-            richTranscript: atom.richContent?.transcript,
-            richSegments: atom.richContent?.transcriptSegments,
-            body: atom.body
-        )
-        caption = atom.richContent?.instagramData?.caption
-        originalURL = atom.url.flatMap(URL.init(string:))
-            ?? atom.richContent?.instagramData?.originalURL
+        // The analysis/richContent decodes are per-swipe JSON blobs — resolve
+        // off the main actor; `.task(id: item.id)` cancellation covers
+        // retargeting, and only the finished tuple hops back.
+        let itemID = item.id
+        let loaded = await Task.detached(priority: .userInitiated) {
+            () -> (words: SwipePreviewTranscript, caption: String?, originalURL: URL?)? in
+            guard let atom = try? await AtomRepository.shared.fetch(uuid: itemID) else { return nil }
+            let words = SwipePreviewTranscript.resolve(
+                analysis: atom.swipeAnalysis,
+                richTranscript: atom.richContent?.transcript,
+                richSegments: atom.richContent?.transcriptSegments,
+                body: atom.body
+            )
+            let caption = atom.richContent?.instagramData?.caption
+            let originalURL = atom.url.flatMap(URL.init(string:))
+                ?? atom.richContent?.instagramData?.originalURL
+            return (words, caption, originalURL)
+        }.value
+        guard let loaded else { return }
+        words = loaded.words
+        caption = loaded.caption
+        originalURL = loaded.originalURL
     }
 }
 
@@ -739,7 +752,7 @@ private struct SwipePreviewReelStage: View {
             start(with: localURL)
             return
         }
-        let source = SwipeStudyPrewarmer.videoStorageURL(from: atom.metadata)
+        let source = SwipeStudyPrewarmer.videoStorageURL(of: atom)
             ?? atom.richContent?.instagramData?.extractedMediaURL
         guard let source else {
             resolveFailed = true

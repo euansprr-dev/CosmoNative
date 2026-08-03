@@ -253,13 +253,10 @@ struct DashboardTaskList: View {
         let calendar = Calendar.current
         if calendar.isDateInToday(date) { return "Today" }
         if calendar.isDateInYesterday(date) { return "Yesterday" }
-        let formatter = DateFormatter()
         if calendar.isDate(date, equalTo: Date(), toGranularity: .year) {
-            formatter.dateFormat = "EEEE, MMM d"
-        } else {
-            formatter.dateFormat = "EEEE, MMM d, yyyy"
+            return CosmoDateFormatters.fullWeekdayAbbrevMonthDay.string(from: date)
         }
-        return formatter.string(from: date)
+        return CosmoDateFormatters.fullWeekdayAbbrevMonthDayYear.string(from: date)
     }
 
     // MARK: - Anytime View
@@ -612,7 +609,6 @@ struct CommandCenterTaskCompletionState: Equatable {
     var rowOpacity: Double = 1
     var rowScale: CGFloat = 1
     var rowOffsetY: CGFloat = 0
-    var blurRadius: CGFloat = 0
 
     static let initial = CommandCenterTaskCompletionState()
 }

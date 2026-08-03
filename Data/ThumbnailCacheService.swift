@@ -516,7 +516,10 @@ enum InstagramCarouselImageCache {
         cacheDirectory.appendingPathComponent("thumb-\(stableKey).jpg")
     }
 
-    private static func imageSourceURL(for item: CarouselItem) -> URL {
+    /// Internal (not private): surfaces that hand `CachedAsyncImage` the raw
+    /// source + stable key (so ITS detached path probes disk) need the exact
+    /// URL the cache keys derive from — a drifted copy would fork the key.
+    static func imageSourceURL(for item: CarouselItem) -> URL {
         if item.mediaType == .video {
             return item.thumbnailURL ?? item.mediaURL
         }

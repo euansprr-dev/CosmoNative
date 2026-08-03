@@ -66,6 +66,43 @@ enum PaneTabStripLayoutPolicy {
     }
 }
 
+// MARK: - Title Cache
+
+/// Pane titles, keyed by pane id, OUTLIVING the strip. The strip is
+/// structurally destroyed and rebuilt on every focus switch (it lives inside
+/// the focused pane's own chrome row) — when titles were strip `@State`,
+/// every switch flashed the generic fallback ("Idea", "Note") while N
+/// sequential DB fetches re-resolved names that were already known.
+/// @Observable so a freshly resolved title re-renders the one strip on
+/// screen.
+@MainActor
+@Observable
+final class PaneTitleCache {
+    static let shared = PaneTitleCache()
+
+    private(set) var titles: [String: String] = [:]
+
+    private init() {}
+
+    func title(for paneId: String) -> String? {
+        titles[paneId]
+    }
+
+    func store(_ title: String, for paneId: String) {
+        guard !title.isEmpty, titles[paneId] != title else { return }
+        titles[paneId] = title
+    }
+
+    /// Panes are transient — drop entries for closed panes.
+    func retainOnly(paneIds: Set<String>) {
+        let stale = titles.keys.filter { !paneIds.contains($0) }
+        guard !stale.isEmpty else { return }
+        for key in stale {
+            titles.removeValue(forKey: key)
+        }
+    }
+}
+
 // MARK: - Strip
 
 struct PaneDeckTabStrip: View {
@@ -76,6 +113,15 @@ struct PaneDeckTabStrip: View {
 
     @Namespace private var selectionNamespace
 
+    /// Measured tab widths live in a plain reference box, not `@State`: they
+    /// are read only inside the drag handler (never in body), and the
+    /// `onGeometryChange` writes fired a strip re-render per tab per real
+    /// width change (title arriving, rung flip) for nothing.
+    @MainActor
+    final class TabWidthBox {
+        var widths: [String: CGFloat] = [:]
+    }
+
     // Drag-to-reorder (the Safari gesture): the dragged tab follows the
     // pointer rigidly while its neighbors spring around it. Reorders commit
     // one slot per crossing, using the displaced neighbor's real width —
@@ -84,12 +130,11 @@ struct PaneDeckTabStrip: View {
     @State private var dragIsTracking = false
     @State private var dragTranslation: CGFloat = 0
     @State private var dragBaseline: CGFloat = 0
-    @State private var measuredTabWidths: [String: CGFloat] = [:]
+    @State private var measuredTabWidths = TabWidthBox()
 
-    /// Resolved atom/thinkspace titles, keyed by pane id. Resolved centrally
-    /// so the overflow menu can name every hidden pane without running its
-    /// own async work inside a lazily-built Menu.
-    @State private var resolvedTitles: [String: String] = [:]
+    /// Titles resolve through PaneTitleCache (above) so a rebuilt strip
+    /// mounts with every name already known — no fallback flash, no
+    /// re-fetch latency gating the paint.
 
     private var budget: CGFloat {
         PaneTabStripLayoutPolicy.budget(paneWidth: context.paneWidth, hostReserve: hostReserve)
@@ -134,11 +179,22 @@ struct PaneDeckTabStrip: View {
         context.tabs.map(\.id).joined(separator: "|")
     }
 
+    /// Re-resolves every tab in PARALLEL (was one awaited DB fetch per tab,
+    /// serialized) and stores into the shared cache. The cache serves the
+    /// synchronous first paint; this pass only corrects renames.
     private func resolveTitles() async {
-        for tab in context.tabs {
-            let title = await PaneInfo.title(for: tab.content)
-            resolvedTitles[tab.id] = title
+        let tabs = context.tabs
+        await withTaskGroup(of: (String, String).self) { group in
+            for tab in tabs {
+                group.addTask { @MainActor in
+                    (tab.id, await PaneInfo.title(for: tab.content))
+                }
+            }
+            for await (paneId, title) in group {
+                PaneTitleCache.shared.store(title, for: paneId)
+            }
         }
+        PaneTitleCache.shared.retainOnly(paneIds: Set(tabs.map(\.id)))
     }
 
     private func displayTitle(for tab: PaneDeckTab) -> String {
@@ -149,8 +205,8 @@ struct PaneDeckTabStrip: View {
            !liveTitle.isEmpty {
             return liveTitle
         }
-        if let resolved = resolvedTitles[tab.id], !resolved.isEmpty {
-            return resolved
+        if let cached = PaneTitleCache.shared.title(for: tab.id), !cached.isEmpty {
+            return cached
         }
         return PaneInfo.fallbackTitle(for: tab.content)
     }
@@ -178,7 +234,7 @@ struct PaneDeckTabStrip: View {
         .onGeometryChange(for: CGFloat.self) { proxy in
             proxy.size.width
         } action: { width in
-            measuredTabWidths[tab.id] = width
+            measuredTabWidths.widths[tab.id] = width
         }
         .offset(x: tab.id == draggedPaneId ? dragTranslation : 0)
         .zIndex(tab.id == draggedPaneId ? 1 : 0)
@@ -221,7 +277,7 @@ struct PaneDeckTabStrip: View {
 
         if offset > 0, index < context.tabs.count - 1 {
             let neighborId = context.tabs[index + 1].id
-            let step = (measuredTabWidths[neighborId] ?? fallbackWidth) + gap
+            let step = (measuredTabWidths.widths[neighborId] ?? fallbackWidth) + gap
             if offset > step / 2 {
                 context.actions.move(tabId, 1)
                 dragBaseline += step
@@ -229,7 +285,7 @@ struct PaneDeckTabStrip: View {
             }
         } else if offset < 0, index > 0 {
             let neighborId = context.tabs[index - 1].id
-            let step = (measuredTabWidths[neighborId] ?? fallbackWidth) + gap
+            let step = (measuredTabWidths.widths[neighborId] ?? fallbackWidth) + gap
             if offset < -step / 2 {
                 context.actions.move(tabId, -1)
                 dragBaseline -= step

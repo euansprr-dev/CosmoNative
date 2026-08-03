@@ -132,7 +132,6 @@ struct IdeaEditorView: View {
                 // Staggered entrance (only in focus mode)
                 .opacity(presentation == .focus ? (contentAppeared ? 1 : 0) : 1)
                 .offset(y: presentation == .focus ? (contentAppeared ? 0 : 12) : 0)
-                .blur(radius: presentation == .focus ? (contentAppeared ? 0 : 4) : 0)
 
                 // MARK: - Date + Tags Row (only in focus mode)
                 if presentation.showsDateAndTags {
@@ -254,8 +253,10 @@ struct IdeaEditorView: View {
         .onAppear {
             startObservingIdea()
 
-            // Trigger entrance animation
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            // Trigger entrance animation. One settled frame, then the flip —
+            // in the same update, the content would mount already-visible.
+            Task {
+                try? await Task.sleep(for: .milliseconds(16))
                 withAnimation(ProMotionSprings.cardEntrance) {
                     contentAppeared = true
                 }
@@ -606,19 +607,36 @@ struct InlineSaveBadge: View {
         .scaleEffect(pulseScale)
         .onAppear {
             if state == .saving {
-                withAnimation(
-                    .easeInOut(duration: 0.6)
-                    .repeatForever(autoreverses: true)
-                ) {
-                    pulseScale = 1.03
-                }
+                startPulse()
             }
         }
-        .onChange(of: state) { _, newState in
+        .onChange(of: state) { oldState, newState in
+            // Pulse follows .saving in both directions — appear-time-only
+            // start missed late saves, and a non-.saved exit orphaned the
+            // repeatForever animation.
+            if newState == .saving {
+                startPulse()
+            } else if oldState == .saving {
+                stopPulse()
+            }
             if newState == .saved {
-                pulseScale = 1.0
                 checkmarkBounce.toggle()
             }
+        }
+    }
+
+    private func startPulse() {
+        withAnimation(
+            .easeInOut(duration: 0.6)
+            .repeatForever(autoreverses: true)
+        ) {
+            pulseScale = 1.03
+        }
+    }
+
+    private func stopPulse() {
+        withAnimation(nil) {
+            pulseScale = 1.0
         }
     }
 }

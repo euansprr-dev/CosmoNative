@@ -63,9 +63,6 @@ struct CommandCenterDashboard: View {
                 ))
             }
             .task {
-                // Warm the sound graph so the first completion of the session
-                // is as tight as the tenth.
-                SoundEngine.shared.prewarm()
                 // First visit: migrations + refreshAll (moved out of the VM's
                 // init so app launch no longer pays them); revisits hit the
                 // loadIfNeeded guards and render the warm data instantly.
@@ -80,6 +77,15 @@ struct CommandCenterDashboard: View {
                     try? await Task.sleep(for: .milliseconds(16))
                     viewModel.hasPlayedArrivalCascade = true
                 }
+                // Warm the sound graph so the first completion of the session
+                // is as tight as the tenth — but AFTER the entrance settles:
+                // prewarm() decodes 33 CAF files and starts AVAudioEngine on
+                // the main actor, which used to land inside the destination
+                // crossfade on the very first Today open. Sound call sites
+                // already startIfNeeded() lazily, so a completion inside this
+                // window still plays.
+                try? await Task.sleep(for: .milliseconds(400))
+                SoundEngine.shared.prewarm()
             }
             .onAppear(perform: publishCommandCenterContext)
             .onChange(of: isPaneContextOwner) { _, _ in publishCommandCenterContext() }

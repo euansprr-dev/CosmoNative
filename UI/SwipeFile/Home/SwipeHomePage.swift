@@ -59,6 +59,8 @@ struct SwipeHomePage: View {
             viewModel.setSection(.home)
             await discoverModel.loadIfNeeded()
         }
+        .onAppear { viewModel.surfaceDidAppear() }
+        .onDisappear { viewModel.surfaceDidDisappear() }
         .onChange(of: viewModel.visibleItemsIdentity) { revealDate = Date() }
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.swipeStudyDidAppear)) { _ in
             relieveHeroAfterStudyAppears()
@@ -117,7 +119,12 @@ struct SwipeHomePage: View {
 
     @ViewBuilder
     private var editorial: some View {
-        if let (item, model) = heroPick {
+        // Each computed shelf binds ONCE — reading them per branch re-ran the
+        // whole zip/filter/map pipeline several times per body.
+        let hero = heroPick
+        let week = newThisWeek
+        let month = newThisMonth
+        if let (item, model) = hero {
             SwipeHeroCard(
                 kicker: item.isStudied ? "LATEST SAVE" : "UP NEXT",
                 model: model,
@@ -128,11 +135,11 @@ struct SwipeHomePage: View {
                 openStudy(item: item, model: model)
             }
         }
-        if !newThisWeek.isEmpty {
-            librarySwipeShelf(label: "NEW THIS WEEK", count: newThisWeek.count, models: newThisWeek)
+        if !week.isEmpty {
+            librarySwipeShelf(label: "NEW THIS WEEK", count: week.count, models: week)
         }
-        if !newThisMonth.isEmpty {
-            librarySwipeShelf(label: "NEW THIS MONTH", count: newThisMonth.count, models: newThisMonth)
+        if !month.isEmpty {
+            librarySwipeShelf(label: "NEW THIS MONTH", count: month.count, models: month)
         }
         boardsShelf
         collectionsShelf
@@ -149,6 +156,9 @@ struct SwipeHomePage: View {
     private var collectionsShelf: some View {
         let spaces = SwipeSpaceStore.shared.visibleSpaces
         if !spaces.isEmpty {
+            // Cover mosaics from ONE pass over allItems — per-tile filtering
+            // rescanned the whole library once per genre.
+            let coversByGenre = genreCoverIndex(for: spaces)
             SwipeShelfRow(
                 label: "COLLECTIONS",
                 count: spaces.count,
@@ -157,7 +167,7 @@ struct SwipeHomePage: View {
                 ForEach(spaces, id: \.rawValue) { genre in
                     SwipeHomeSpaceTile(
                         genre: genre,
-                        coverItems: spaceCoverItems(genre),
+                        coverItems: coversByGenre[genre] ?? [],
                         count: SwipeSpaceStore.shared.counts[genre] ?? 0
                     ) {
                         onNavigate(.swipeFile(section: .genre(genre)))
@@ -191,16 +201,18 @@ struct SwipeHomePage: View {
         .accessibilityElement(children: .combine)
     }
 
-    /// Newest four of a genre — `allItems` is load-sorted newest-first, and
+    /// Newest four per genre — `allItems` is load-sorted newest-first, and
     /// non-post models aren't in the visible cache (the stream is posts-only),
     /// so misses build their model directly.
-    private func spaceCoverItems(_ genre: SwipeGenre) -> [SwipeCardModel] {
-        Array(
-            viewModel.allItems
-                .filter { $0.genre == genre }
-                .prefix(4)
-                .map { viewModel.cardModelsByID[$0.id] ?? SwipeCardModel(item: $0) }
-        )
+    private func genreCoverIndex(for genres: [SwipeGenre]) -> [SwipeGenre: [SwipeCardModel]] {
+        let wanted = Set(genres)
+        var index: [SwipeGenre: [SwipeCardModel]] = [:]
+        for item in viewModel.allItems where wanted.contains(item.genre) {
+            if (index[item.genre]?.count ?? 0) >= 4 { continue }
+            index[item.genre, default: []]
+                .append(viewModel.cardModelsByID[item.id] ?? SwipeCardModel(item: item))
+        }
+        return index
     }
 
     /// The complete catalog, inline — header voice + the library's tool cluster,
@@ -269,14 +281,16 @@ struct SwipeHomePage: View {
     /// Every save in the window belongs on its shelf — a capped shelf silently
     /// drops the overflow into Everything and the header count lies.
     private var newThisWeek: [SwipeCardModel] {
-        SwipeLibraryDateBucket.lastWeekModels(items: viewModel.visibleItems, models: viewModel.visibleCardModels)
-            .filter { $0.id != heroPick?.1.id }
+        let heroID = heroPick?.1.id
+        return SwipeLibraryDateBucket.lastWeekModels(items: viewModel.visibleItems, models: viewModel.visibleCardModels)
+            .filter { $0.id != heroID }
             .map { $0.poster().hookless() }
     }
 
     private var newThisMonth: [SwipeCardModel] {
-        SwipeLibraryDateBucket.lastMonthModels(items: viewModel.visibleItems, models: viewModel.visibleCardModels)
-            .filter { $0.id != heroPick?.1.id }
+        let heroID = heroPick?.1.id
+        return SwipeLibraryDateBucket.lastMonthModels(items: viewModel.visibleItems, models: viewModel.visibleCardModels)
+            .filter { $0.id != heroID }
             .map { $0.poster().hookless() }
     }
 
@@ -321,6 +335,8 @@ struct SwipeHomePage: View {
     private var boardsShelf: some View {
         let boards = SwipeBoardStore.shared.boards
         if !boards.isEmpty {
+            // Same one-pass cover index as the collections shelf.
+            let coversByBoard = boardCoverIndex(for: boards)
             SwipeShelfRow(
                 label: "BOARDS",
                 count: boards.count,
@@ -329,7 +345,7 @@ struct SwipeHomePage: View {
                 ForEach(boards) { board in
                     SwipeHomeBoardTile(
                         board: board,
-                        coverItems: boardCoverItems(board),
+                        coverItems: coversByBoard[board.uuid] ?? [],
                         count: SwipeBoardStore.shared.counts[board.uuid] ?? 0
                     ) {
                         onNavigate(.swipeFile(section: .board(board.uuid)))
@@ -400,14 +416,15 @@ struct SwipeHomePage: View {
 
     @ViewBuilder
     private var outliersShelf: some View {
-        if topOutliers.isEmpty {
+        let outliers = topOutliers
+        if outliers.isEmpty {
             discoverTeachingRow
         } else {
             SwipeShelf(
                 label: "OUTLIERS FROM YOUR CREATORS",
-                count: topOutliers.count,
+                count: outliers.count,
                 onSeeAll: { onNavigate(.discover(section: .discover)) },
-                models: topOutliers,
+                models: outliers,
                 hiddenItemID: postQuickLookID,
                 frameStore: frameStore
             ) { model in
@@ -447,13 +464,18 @@ struct SwipeHomePage: View {
         .accessibilityLabel("Add creators to see their outlier posts here")
     }
 
-    private func boardCoverItems(_ board: SwipeBoard) -> [SwipeCardModel] {
-        Array(
-            viewModel.allItems
-                .filter { $0.boardIDs.contains(board.uuid) }
-                .compactMap { viewModel.cardModelsByID[$0.id] ?? SwipeCardModel(item: $0) }
-                .prefix(4)
-        )
+    /// Newest four per board, one pass over allItems.
+    private func boardCoverIndex(for boards: [SwipeBoard]) -> [String: [SwipeCardModel]] {
+        let wanted = Set(boards.map(\.uuid))
+        var index: [String: [SwipeCardModel]] = [:]
+        for item in viewModel.allItems {
+            for boardID in item.boardIDs where wanted.contains(boardID) {
+                if (index[boardID]?.count ?? 0) >= 4 { continue }
+                index[boardID, default: []]
+                    .append(viewModel.cardModelsByID[item.id] ?? SwipeCardModel(item: item))
+            }
+        }
+        return index
     }
 
     // MARK: - Preview rail (saved swipes)

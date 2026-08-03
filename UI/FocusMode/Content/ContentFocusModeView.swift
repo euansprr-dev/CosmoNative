@@ -481,7 +481,8 @@ struct ContentFocusModeView: View {
             titleDocument = RichDocumentPersistence.loadAtomDocument(
                 field: .title,
                 metadata: atom.metadata,
-                fallbackPlainText: atom.title
+                fallbackPlainText: atom.title,
+                atomUUID: atom.uuid
             )
             editableTitle = RichDocumentPersistence.titlePlainText(from: titleDocument)
             viewModel.startObservingState()

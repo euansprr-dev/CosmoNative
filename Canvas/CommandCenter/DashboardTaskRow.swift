@@ -65,7 +65,6 @@ struct DashboardTaskRow: View {
             .scaleEffect(completion?.rowScale ?? 1)
             .opacity(completion?.rowOpacity ?? 1)
             .offset(y: completion?.rowOffsetY ?? 0)
-            .blur(radius: completion?.blurRadius ?? 0)
             .contentShape(Rectangle())
             .onTapGesture { handleTap() }
             .onHover { isHovered = $0 }

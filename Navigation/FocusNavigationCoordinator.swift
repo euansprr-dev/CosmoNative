@@ -47,6 +47,17 @@ final class FocusNavigationCoordinator {
         // on the trigger at this instant.
         let anchor = anchorOverride ?? Self.anchor(for: sourceFrame)
 
+        // Warm-store fast path: the canvas batch-fetch already holds this
+        // atom, so present synchronously — no async hop, no loading frame.
+        // The focused view's observation delivers a fresh row on subscribe,
+        // so a marginally stale warm copy self-corrects.
+        if entity.id > 0, let warmAtom = CanvasAtomWarmStore.shared.atom(id: entity.id) {
+            AppPerformanceInstrumentation.trace("FOCUS warm-store hit \(entity.type.rawValue)#\(entity.id)")
+            preloadedAtoms[entity] = warmAtom
+            present(entity, anchor: anchor)
+            return
+        }
+
         openTask = Task { @MainActor in
             AppPerformanceInstrumentation.trace("FOCUS open task started \(entity.type.rawValue)#\(entity.id)")
             var target = entity

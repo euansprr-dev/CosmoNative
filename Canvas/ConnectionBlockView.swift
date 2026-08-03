@@ -429,12 +429,13 @@ struct ConnectionBlockView: View {
                 receiveCompletion: { _ in },
                 receiveValue: { atom in
                     guard let atom else { return }
-                    print("[BLOCK-CONN] 🔔 GRDB observation fired — uuid=\(atom.uuid) isEditingTitle=\(self.isEditingTitle) sectionsModifiedLocally=\(self.sectionsModifiedLocally) dbBodyLen=\(atom.body?.count ?? 0) dbStructuredLen=\(atom.structured?.count ?? 0)")
+                    ConsoleLog.verbose("[BLOCK-CONN] 🔔 GRDB observation fired — uuid=\(atom.uuid) isEditingTitle=\(self.isEditingTitle) sectionsModifiedLocally=\(self.sectionsModifiedLocally) dbBodyLen=\(atom.body?.count ?? 0) dbStructuredLen=\(atom.structured?.count ?? 0)", subsystem: .canvas)
                     self.atom = atom
                     let newTitleDocument = RichDocumentPersistence.loadAtomDocument(
                         field: .title,
                         metadata: atom.metadata,
-                        fallbackPlainText: atom.title
+                        fallbackPlainText: atom.title,
+                        atomUUID: atom.uuid
                     )
                     if self.isEditingTitle {
                         if newTitleDocument != self.titleDocument {
@@ -479,7 +480,8 @@ struct ConnectionBlockView: View {
             titleDocument = RichDocumentPersistence.loadBlockDocument(
                 key: RichDocumentMetadataKeys.titleDocument,
                 metadata: block.metadata,
-                fallbackPlainText: editableTitle
+                fallbackPlainText: editableTitle,
+                atomUUID: block.id
             )
             editableTitle = RichDocumentPersistence.titlePlainText(from: titleDocument)
 
@@ -530,7 +532,8 @@ struct ConnectionBlockView: View {
             titleDocument = RichDocumentPersistence.loadAtomDocument(
                 field: .title,
                 metadata: loaded.metadata,
-                fallbackPlainText: loaded.title ?? block.title
+                fallbackPlainText: loaded.title ?? block.title,
+                atomUUID: loaded.uuid
             )
             editableTitle = RichDocumentPersistence.titlePlainText(from: titleDocument)
         }
@@ -863,9 +866,7 @@ struct ConnectionBlockView: View {
 
     private func formatTimestamp(_ timestamp: String) -> String {
         if let date = ISO8601.date(from: timestamp) {
-            let formatter = RelativeDateTimeFormatter()
-            formatter.unitsStyle = .abbreviated
-            return formatter.localizedString(for: date, relativeTo: Date())
+            return CosmoDateFormatters.relative.localizedString(for: date, relativeTo: Date())
         }
         return timestamp
     }

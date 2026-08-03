@@ -202,16 +202,53 @@ struct NoteFocusInitialDocuments: Equatable {
     let tags: [String]
     let createdAt: Date
 
+    /// Single-entry memo: NoteFocusModeView.init runs `from(atom:)` on every
+    /// SwiftUI re-init of the focus view, re-parsing both rich-document
+    /// fields from metadata each time. Keyed by (uuid, updatedAt,
+    /// localVersion) so any persisted change re-derives; all stored values
+    /// are Sendable structs. Lock-guarded (call sites include nonisolated
+    /// test contexts), mirroring Atom.DecodedColumnCache's shape.
+    private final class DerivationMemo: @unchecked Sendable {
+        static let shared = DerivationMemo()
+        private let lock = NSLock()
+        private var last: (uuid: String, updatedAt: String, localVersion: Int64, result: NoteFocusInitialDocuments)?
+
+        func result(for atom: Atom, derive: () -> NoteFocusInitialDocuments) -> NoteFocusInitialDocuments {
+            lock.lock()
+            if let last,
+               last.uuid == atom.uuid,
+               last.updatedAt == atom.updatedAt,
+               last.localVersion == atom.localVersion {
+                let hit = last.result
+                lock.unlock()
+                return hit
+            }
+            lock.unlock()
+
+            let derived = derive()
+            lock.lock()
+            last = (atom.uuid, atom.updatedAt, atom.localVersion, derived)
+            lock.unlock()
+            return derived
+        }
+    }
+
     static func from(atom: Atom) -> NoteFocusInitialDocuments {
+        DerivationMemo.shared.result(for: atom) { derive(from: atom) }
+    }
+
+    private static func derive(from atom: Atom) -> NoteFocusInitialDocuments {
         let titleDocument = RichDocumentPersistence.loadAtomDocument(
             field: .title,
             metadata: atom.metadata,
-            fallbackPlainText: atom.title
+            fallbackPlainText: atom.title,
+            atomUUID: atom.uuid
         )
         let bodyDocument = RichDocumentPersistence.loadAtomDocument(
             field: .body,
             metadata: atom.metadata,
-            fallbackPlainText: atom.body
+            fallbackPlainText: atom.body,
+            atomUUID: atom.uuid
         )
         let titlePlainText = RichDocumentPersistence.titlePlainText(from: titleDocument)
         let plainContent = bodyDocument.plainText
@@ -492,7 +529,10 @@ struct NoteFocusModeView: View {
             updateBodyHeadingOutline(from: bodyDocument)
             scheduleTextAnalysis(for: plainContent)
             titleEditorHeight = titleMinHeight
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            Task {
+                // One settled frame, then the entrance — flipped in the same
+                // update, the content would mount already-visible.
+                try? await Task.sleep(for: .milliseconds(16))
                 withAnimation(reduceMotion ? nil : ProMotionSprings.cardEntrance) {
                     contentAppeared = true
                 }
@@ -1826,7 +1866,6 @@ struct NoteFocusModeView: View {
         .frame(maxWidth: titleSectionMaxWidth, alignment: titleFrameAlignment)
         .opacity(contentAppeared ? 1 : 0)
         .offset(y: contentAppeared ? 0 : 12)
-        .blur(radius: contentAppeared ? 0 : 4)
     }
 
     // MARK: - Date + Tags Row
@@ -2053,12 +2092,14 @@ struct NoteFocusModeView: View {
                     let nextTitleDocument = RichDocumentPersistence.loadAtomDocument(
                         field: .title,
                         metadata: fetchedAtom.metadata,
-                        fallbackPlainText: fetchedAtom.title
+                        fallbackPlainText: fetchedAtom.title,
+                        atomUUID: fetchedAtom.uuid
                     )
                     let nextBodyDocument = RichDocumentPersistence.loadAtomDocument(
                         field: .body,
                         metadata: fetchedAtom.metadata,
-                        fallbackPlainText: fetchedAtom.content
+                        fallbackPlainText: fetchedAtom.content,
+                        atomUUID: fetchedAtom.uuid
                     )
                     let nextTitlePlainText = RichDocumentPersistence.titlePlainText(from: nextTitleDocument)
                     let nextBodyPlainText = nextBodyDocument.plainText
@@ -2769,12 +2810,14 @@ struct NoteFocusModeView: View {
         let restoredTitleDocument = RichDocumentPersistence.loadAtomDocument(
             field: .title,
             metadata: restored.metadata,
-            fallbackPlainText: restored.title
+            fallbackPlainText: restored.title,
+            atomUUID: restored.uuid
         )
         let restoredBodyDocument = RichDocumentPersistence.loadAtomDocument(
             field: .body,
             metadata: restored.metadata,
-            fallbackPlainText: restored.content
+            fallbackPlainText: restored.content,
+            atomUUID: restored.uuid
         )
 
         applyObservedTitleDocument(restoredTitleDocument)

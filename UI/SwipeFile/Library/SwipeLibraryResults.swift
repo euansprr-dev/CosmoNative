@@ -29,7 +29,7 @@ struct SwipeLibraryDateBucket: Equatable, Identifiable {
         }
 
         for (item, model) in zip(items, models) {
-            let date = ISO8601.date(from: item.createdAt) ?? .distantPast
+            let date = item.createdAtDate ?? .distantPast
             let title: String
             if date > weekFloor {
                 title = "This Week"
@@ -52,7 +52,7 @@ struct SwipeLibraryDateBucket: Equatable, Identifiable {
     static func lastWeekModels(items: [SwipeGalleryItem], models: [SwipeCardModel]) -> [SwipeCardModel] {
         let weekFloor = Date().addingTimeInterval(-7 * 24 * 3600)
         return zip(items, models).compactMap { item, model in
-            (ISO8601.date(from: item.createdAt) ?? .distantPast) > weekFloor ? model : nil
+            (item.createdAtDate ?? .distantPast) > weekFloor ? model : nil
         }
     }
 
@@ -63,7 +63,7 @@ struct SwipeLibraryDateBucket: Equatable, Identifiable {
         let weekFloor = now.addingTimeInterval(-7 * 24 * 3600)
         let monthFloor = now.addingTimeInterval(-30 * 24 * 3600)
         return zip(items, models).compactMap { item, model in
-            let date = ISO8601.date(from: item.createdAt) ?? .distantPast
+            let date = item.createdAtDate ?? .distantPast
             return date > monthFloor && date <= weekFloor ? model : nil
         }
     }
@@ -100,19 +100,28 @@ struct SwipeLibraryResults: View {
         } else if !viewModel.dateSections.isEmpty {
             bucketedGrids
         } else {
-            grid(models: viewModel.visibleCardModels, indexOffset: 0)
+            grid(models: viewModel.visiblePosterModels, indexOffset: 0)
         }
     }
 
     private var bucketedGrids: some View {
         VStack(alignment: .leading, spacing: DS.space20) {
             ForEach(viewModel.dateSections) { bucket in
+                let offset = bucketOffset(for: bucket)
                 VStack(alignment: .leading, spacing: DS.space12) {
                     bucketHeader(bucket)
-                    grid(models: bucket.models, indexOffset: bucketOffset(for: bucket))
+                    grid(models: posterModels(at: offset, count: bucket.models.count), indexOffset: offset)
                 }
             }
         }
+    }
+
+    /// Buckets slice the precomputed poster array — their models concatenate
+    /// to exactly `visibleCardModels` (both come out of the same recompute).
+    private func posterModels(at offset: Int, count: Int) -> [SwipeCardModel] {
+        let posters = viewModel.visiblePosterModels
+        guard offset < posters.count else { return [] }
+        return Array(posters[offset..<min(offset + count, posters.count)])
     }
 
     private func bucketHeader(_ bucket: SwipeLibraryDateBucket) -> some View {
@@ -130,9 +139,14 @@ struct SwipeLibraryResults: View {
 
     /// The catalog is a uniform grid: every model renders as a poster (4:5 crop),
     /// so rows and footers align — the waterfall engine degenerates to a grid.
+    /// Callers pass PRE-POSTERED models (`viewModel.visiblePosterModels`).
     private func grid(models: [SwipeCardModel], indexOffset: Int) -> some View {
-        SwipeWaterfallGrid(
-            items: models.map { $0.poster() },
+        // Captured once per grid construction — reading them per cell walked
+        // the observation machinery for every mounted card.
+        let selectedID = viewModel.selectedItem?.id
+        let boards = SwipeBoardStore.shared.boards
+        return SwipeWaterfallGrid(
+            items: models,
             targetColumnWidth: 208,
             spacing: 20,
             itemHeight: { model, width in model.height(forWidth: width) },
@@ -142,12 +156,12 @@ struct SwipeLibraryResults: View {
                     model: model,
                     width: width,
                     index: index + indexOffset,
-                    isSelected: viewModel.selectedItem?.id == model.id,
+                    isSelected: selectedID == model.id,
                     isHidden: hiddenItemID == model.id,
                     revealDate: revealDate,
                     frameStore: frameStore,
                     boardMenu: SwipeCardBoardMenu(
-                        boards: SwipeBoardStore.shared.boards,
+                        boards: boards,
                         memberIDs: model.boardIDs,
                         onToggle: { board in viewModel.toggleBoard(board, itemID: model.id) }
                     ),

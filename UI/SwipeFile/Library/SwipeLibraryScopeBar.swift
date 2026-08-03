@@ -56,17 +56,19 @@ struct SwipeLibraryScopeBar: View {
 
     private func apply(_ triage: Triage) {
         withAnimation(ProMotionSprings.snappy) {
-            switch triage {
-            case .all:
-                viewModel.filterState.onlyUnstudied = false
-                viewModel.filterState.minimumHookScore = nil
-            case .unstudied:
-                viewModel.filterState.onlyUnstudied = true
-                viewModel.filterState.onlyStudied = false
-                viewModel.filterState.minimumHookScore = nil
-            case .highScore:
-                viewModel.filterState.minimumHookScore = 7.5
-                viewModel.filterState.onlyUnstudied = false
+            viewModel.withFilterBatch {
+                switch triage {
+                case .all:
+                    viewModel.filterState.onlyUnstudied = false
+                    viewModel.filterState.minimumHookScore = nil
+                case .unstudied:
+                    viewModel.filterState.onlyUnstudied = true
+                    viewModel.filterState.onlyStudied = false
+                    viewModel.filterState.minimumHookScore = nil
+                case .highScore:
+                    viewModel.filterState.minimumHookScore = 7.5
+                    viewModel.filterState.onlyUnstudied = false
+                }
             }
         }
     }

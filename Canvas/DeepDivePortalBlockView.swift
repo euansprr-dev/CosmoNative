@@ -129,9 +129,7 @@ struct DeepDivePortalBlockView: View {
         let dateString = atom?.deepDiveMetadata?.lastInquiryAt ?? atom?.updatedAt
         guard let dateString,
               let date = ISO8601.date(from: dateString) else { return nil }
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return "Updated \(formatter.localizedString(for: date, relativeTo: Date()))"
+        return "Updated \(CosmoDateFormatters.relative.localizedString(for: date, relativeTo: Date()))"
     }
 
     private var actionRow: some View {

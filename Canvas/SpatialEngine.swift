@@ -263,19 +263,19 @@ class SpatialEngine {
             switch atom.type {
             case .note:
                 _ = RichDocumentPersistence.loadAtomDocument(
-                    field: .title, metadata: atom.metadata, fallbackPlainText: atom.title
+                    field: .title, metadata: atom.metadata, fallbackPlainText: atom.title, atomUUID: atom.uuid
                 )
                 _ = RichDocumentPersistence.loadAtomDocument(
-                    field: .body, metadata: atom.metadata, fallbackPlainText: atom.body
+                    field: .body, metadata: atom.metadata, fallbackPlainText: atom.body, atomUUID: atom.uuid
                 )
             case .content:
                 _ = RichDocumentMetadataStorage.readDocument(
-                    from: atom.metadata, key: RichDocumentMetadataKeys.contentDraftDocument
+                    from: atom.metadata, key: RichDocumentMetadataKeys.contentDraftDocument, atomUUID: atom.uuid
                 )
                 _ = atom.metadataValue(as: ContentAtomMetadata.self)
             case .connection:
                 _ = RichDocumentPersistence.loadAtomDocument(
-                    field: .title, metadata: atom.metadata, fallbackPlainText: atom.title
+                    field: .title, metadata: atom.metadata, fallbackPlainText: atom.title, atomUUID: atom.uuid
                 )
             default:
                 break

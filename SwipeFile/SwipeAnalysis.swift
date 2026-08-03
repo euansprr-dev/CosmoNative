@@ -1001,6 +1001,12 @@ public struct SwipeGalleryItem: Identifiable, Sendable {
     /// Pre-lowercased concatenation of searchable fields for fast filtering
     public let searchableText: String
 
+    /// `createdAt` parsed ONCE at init — every recompute pass (sorting, date
+    /// buckets, age labels) reads this instead of re-running the ISO8601
+    /// parse per item. Nil when the string doesn't parse, mirroring
+    /// `ISO8601.date(from:)`.
+    public let createdAtDate: Date?
+
     public init(
         atomUUID: String,
         title: String,
@@ -1047,6 +1053,7 @@ public struct SwipeGalleryItem: Identifiable, Sendable {
         self.author = author
         self.duration = duration
         self.createdAt = createdAt
+        self.createdAtDate = ISO8601.date(from: createdAt)
         self.isStudied = isStudied
         self.entityId = entityId
         self.primaryNarrative = primaryNarrative
@@ -1292,12 +1299,9 @@ extension Atom {
 
         // Prefer the durable Supabase mirror (SwipeThumbnailCloudMirror writes
         // metadata.thumbnailStorageURL) over the expiring CDN URL — Instagram
-        // links die within weeks; the mirror is forever.
-        if let metadata = self.metadata,
-           let metadataData = metadata.data(using: .utf8),
-           let metadataDict = try? JSONSerialization.jsonObject(with: metadataData) as? [String: Any],
-           let storageURL = metadataDict["thumbnailStorageURL"] as? String,
-           !storageURL.isEmpty {
+        // links die within weeks; the mirror is forever. Read through the
+        // memoized `researchMetadata` decode, never a raw re-parse.
+        if let storageURL = meta?.thumbnailStorageURL, !storageURL.isEmpty {
             thumbnailUrl = storageURL
         }
 

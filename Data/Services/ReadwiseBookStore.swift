@@ -61,10 +61,14 @@ class ReadwiseBookStore: ObservableObject {
     }
 
     nonisolated static func matchesSearch(_ book: ReadwiseLibraryBook, query: String) -> Bool {
-        CommandKSearchMatcher.matches(query, in: book.title) ||
-        CommandKSearchMatcher.matches(query, in: book.author) ||
+        matchesSearch(book, normalizedQuery: CommandKSearchMatcher.normalizeQuery(query))
+    }
+
+    nonisolated static func matchesSearch(_ book: ReadwiseLibraryBook, normalizedQuery: String) -> Bool {
+        CommandKSearchMatcher.matches(normalizedQuery: normalizedQuery, in: book.title) ||
+        CommandKSearchMatcher.matches(normalizedQuery: normalizedQuery, in: book.author) ||
         book.highlights.contains { highlight in
-            ReadwiseLibraryTab.matchesSearch(highlight, query: query)
+            ReadwiseLibraryTab.matchesSearch(highlight, normalizedQuery: normalizedQuery)
         }
     }
 

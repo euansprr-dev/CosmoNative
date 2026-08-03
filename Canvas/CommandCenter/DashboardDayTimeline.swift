@@ -154,10 +154,18 @@ struct DashboardDayTimeline: View {
                             visibleBottomBucket: Int((geo.contentOffset.y + geo.containerSize.height) / 20)
                         )
                     }) { _, edges in
-                        withAnimation(ProMotionSprings.gentle) {
-                            scrolledFromTop = edges.scrolledFromTop
-                            moreBelowFold = edges.moreBelow
-                            visibleBottom = CGFloat(edges.visibleBottomBucket) * 20
+                        // visibleBottom feeds the later-count, not a fade —
+                        // keep it out of the spring.
+                        visibleBottom = CGFloat(edges.visibleBottomBucket) * 20
+                        if edges.scrolledFromTop != scrolledFromTop {
+                            withAnimation(ProMotionSprings.gentle) {
+                                scrolledFromTop = edges.scrolledFromTop
+                            }
+                        }
+                        if edges.moreBelow != moreBelowFold {
+                            withAnimation(ProMotionSprings.gentle) {
+                                moreBelowFold = edges.moreBelow
+                            }
                         }
                     }
                     .overlay(alignment: .top) {

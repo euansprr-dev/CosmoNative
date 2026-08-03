@@ -12,7 +12,7 @@ import AppKit
 /// Top-level container that optionally splits the view into main content (left) and pane deck (right).
 /// Always renders main content to preserve view identity/state across pane open/close.
 struct SplitPaneContainer<MainContent: View>: View {
-    @ObservedObject var paneManager: PaneManager
+    let paneManager: PaneManager
     let mainContent: MainContent
 
     /// The width the main slot's CONTENT is laid out at — the seat. It follows
@@ -158,7 +158,7 @@ enum PaneSlotPresentationPolicy {
 /// shell's standalone row) renders the tab strip, so tabs and mode tools
 /// share one row of islands instead of stacking two bars.
 struct PaneDeckView: View {
-    @ObservedObject var paneManager: PaneManager
+    let paneManager: PaneManager
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -175,6 +175,9 @@ struct PaneDeckView: View {
         GeometryReader { geo in
             let layout = deckLayout(columnWidth: geo.size.width)
             slotRow(layout: layout)
+                // Canvas panes bucket their viewport-size snapshot while the
+                // stream runs (once per 64pt instead of once per frame).
+                .environment(\.isPaneWidthStreaming, paneManager.isWidthStreamActive)
                 .animation(deckSpring, value: deckSignature)
                 .onChange(of: layout.contentWidths) { _, widths in
                     guard paneManager.isWidthStreamActive else { return }
@@ -469,6 +472,10 @@ private struct PaneSlotView: View {
             onClose: onClose
         )
         .environment(\.paneDeckChrome, deckChrome)
+        // Collapsed panes stay mounted (state survives), but continuous work
+        // — media playback, per-token scrolls, periodic timelines — consults
+        // this to go quiet while off-slot. Pinned panes are expanded.
+        .environment(\.isPaneExpanded, isExpanded)
         .frame(width: contentWidth)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         // NSView-backed editors and scroll views can keep painting through

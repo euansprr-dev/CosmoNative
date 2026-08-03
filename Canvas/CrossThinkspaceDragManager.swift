@@ -14,6 +14,18 @@ struct ThinkspaceRowFrameKey: PreferenceKey {
     }
 }
 
+// MARK: - Spring-Load Pulse Host
+
+/// The 60Hz spring-load pulse behind @Observable so per-tick writes invalidate
+/// ONLY the row chrome that reads it, never the whole sidebar section body
+/// (CortexScrollMetricsStore isolation pattern). Keeping it @Published on the
+/// ObservableObject manager re-evaluated every observer per timer tick.
+@MainActor
+@Observable
+final class SpringLoadPulseHost {
+    var pulse: CGFloat = 0
+}
+
 // MARK: - Cross-Thinkspace Drag Manager
 
 @MainActor
@@ -26,8 +38,7 @@ class CrossThinkspaceDragManager: ObservableObject {
 
     // Sidebar hover state
     @Published var hoveredThinkspaceId: String?
-    @Published var hoverProgress: CGFloat = 0
-    @Published var springLoadPulse: CGFloat = 0
+    let springLoadPulseHost = SpringLoadPulseHost()
     @Published var hasThinkspaceSwitched = false
     @Published var targetThinkspaceId: String?
 
@@ -73,8 +84,7 @@ class CrossThinkspaceDragManager: ObservableObject {
         hasThinkspaceSwitched = false
         targetThinkspaceId = nil
         hoveredThinkspaceId = nil
-        hoverProgress = 0
-        springLoadPulse = 0
+        springLoadPulseHost.pulse = 0
     }
 
     // MARK: - Enter/Exit Sidebar
@@ -90,8 +100,7 @@ class CrossThinkspaceDragManager: ObservableObject {
         isOverSidebar = false
         cancelHoverTimer()
         hoveredThinkspaceId = nil
-        hoverProgress = 0
-        springLoadPulse = 0
+        springLoadPulseHost.pulse = 0
         stopEventMonitors()
     }
 
@@ -115,8 +124,7 @@ class CrossThinkspaceDragManager: ObservableObject {
 
         if foundId != hoveredThinkspaceId {
             hoveredThinkspaceId = foundId
-            hoverProgress = 0
-            springLoadPulse = 0
+            springLoadPulseHost.pulse = 0
             cancelHoverTimer()
 
             if foundId != nil {
@@ -134,18 +142,17 @@ class CrossThinkspaceDragManager: ObservableObject {
                 guard let self = self, let start = self.blinkStartTime else { return }
                 let elapsed = Date().timeIntervalSince(start)
                 let totalDuration = self.hoverDelay + self.blinkDuration
-                self.hoverProgress = CGFloat(min(elapsed / self.hoverDelay, 1.0))
 
                 if elapsed < self.hoverDelay {
-                    self.springLoadPulse = 0
+                    self.springLoadPulseHost.pulse = 0
                 } else {
                     let blinkElapsed = min(elapsed - self.hoverDelay, self.blinkDuration)
                     let blinkPhase = (blinkElapsed / self.blinkDuration) * self.blinkCount
-                    self.springLoadPulse = CGFloat(abs(sin(blinkPhase * .pi)))
+                    self.springLoadPulseHost.pulse = CGFloat(abs(sin(blinkPhase * .pi)))
                 }
 
                 if elapsed >= totalDuration {
-                    self.springLoadPulse = 0
+                    self.springLoadPulseHost.pulse = 0
                     self.performThinkspaceSwitch()
                 }
             }
@@ -156,8 +163,7 @@ class CrossThinkspaceDragManager: ObservableObject {
         hoverTimer?.invalidate()
         hoverTimer = nil
         blinkStartTime = nil
-        hoverProgress = 0
-        springLoadPulse = 0
+        springLoadPulseHost.pulse = 0
     }
 
     // MARK: - Thinkspace Switch
@@ -168,8 +174,7 @@ class CrossThinkspaceDragManager: ObservableObject {
 
         hasThinkspaceSwitched = true
         targetThinkspaceId = targetId
-        hoverProgress = 1.0
-        springLoadPulse = 0
+        springLoadPulseHost.pulse = 0
 
         // Notify MainView to switch destination
         onThinkspaceSwitch?(targetId)
@@ -214,8 +219,7 @@ class CrossThinkspaceDragManager: ObservableObject {
         draggedBlock = nil
         sourceThinkspaceId = nil
         hoveredThinkspaceId = nil
-        hoverProgress = 0
-        springLoadPulse = 0
+        springLoadPulseHost.pulse = 0
         hasThinkspaceSwitched = false
         targetThinkspaceId = nil
         floatingPosition = .zero
@@ -223,16 +227,13 @@ class CrossThinkspaceDragManager: ObservableObject {
         stopEventMonitors()
     }
 
-    func isSpringLoading(_ thinkspaceId: String) -> Bool {
+    /// The row that would spring-load if the hover dwell completes. Discrete —
+    /// it flips only when the hovered row changes, so section bodies can read
+    /// it without subscribing to the 60Hz pulse (that lives on the host).
+    func isSpringLoadCandidate(_ thinkspaceId: String) -> Bool {
         isOverSidebar &&
         !hasThinkspaceSwitched &&
-        hoveredThinkspaceId == thinkspaceId &&
-        springLoadPulse > 0
-    }
-
-    func pulseForThinkspace(_ thinkspaceId: String) -> CGFloat {
-        guard isSpringLoading(thinkspaceId) else { return 0 }
-        return springLoadPulse
+        hoveredThinkspaceId == thinkspaceId
     }
 
     // MARK: - NSEvent Monitors

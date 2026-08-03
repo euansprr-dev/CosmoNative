@@ -53,6 +53,12 @@ final class SwipeStudyModel {
 
     // Instagram native player
     var igPlayer: AVPlayer?
+    /// Periodic time observer + failure observer registered in
+    /// `setupIGPlayer` — held so `teardownIGPlayer()` can remove them.
+    /// Un-removed, the periodic observer kept the AVPlayer (and its retained
+    /// media pipeline) alive for the life of the app.
+    @ObservationIgnored private var igTimeObserver: Any?
+    @ObservationIgnored private var igFailObserver: NSObjectProtocol?
     var igIsExtractingVideo = false
     var igVideoFailed = false
     var igMediaData: InstagramMediaData?
@@ -157,7 +163,7 @@ final class SwipeStudyModel {
     func stop() {
         flushPendingDebouncedSavesSync()
         releaseLock()
-        igPlayer?.pause()
+        teardownIGPlayer()
         // Window context follows presence: leaving the study releases it.
         if let published = publishedContextProvider {
             CosmoWindowViewModel.shared.releaseContext(provider: published)
@@ -494,8 +500,7 @@ final class SwipeStudyModel {
         reclassifySuggestion = nil
         isReclassifying = false
 
-        igPlayer?.pause()
-        igPlayer = nil
+        teardownIGPlayer()
         igIsExtractingVideo = false
         igVideoFailed = false
         igMediaData = nil
@@ -2161,10 +2166,13 @@ final class SwipeStudyModel {
     // MARK: - IG player plumbing
 
     func setupIGPlayer(videoURL: URL) {
+        // Re-setup (local-cache upgrade, refresh) must release the previous
+        // player's observers before replacing it.
+        teardownIGPlayer()
         let item = AVPlayerItem(url: videoURL)
         let player = AVPlayer(playerItem: item)
 
-        player.addPeriodicTimeObserver(
+        igTimeObserver = player.addPeriodicTimeObserver(
             forInterval: CMTime(seconds: 0.1, preferredTimescale: 600),
             queue: .main
         ) { [weak self] time in
@@ -2173,7 +2181,7 @@ final class SwipeStudyModel {
             }
         }
 
-        NotificationCenter.default.addObserver(
+        igFailObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemFailedToPlayToEndTime,
             object: item,
             queue: .main
@@ -2191,6 +2199,22 @@ final class SwipeStudyModel {
                 self?.videoDuration = dur.seconds
             }
         }
+    }
+
+    /// Removes both observers, pauses, and releases the player — the ONLY
+    /// way `igPlayer` goes to nil (a raw `igPlayer = nil` leaks the periodic
+    /// observer and with it the whole AVPlayer).
+    func teardownIGPlayer() {
+        if let igTimeObserver {
+            igPlayer?.removeTimeObserver(igTimeObserver)
+        }
+        igTimeObserver = nil
+        if let igFailObserver {
+            NotificationCenter.default.removeObserver(igFailObserver)
+        }
+        igFailObserver = nil
+        igPlayer?.pause()
+        igPlayer = nil
     }
 
     func refreshIGVideo() {

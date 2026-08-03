@@ -12,6 +12,41 @@ enum ImageStore {
         return appSupport.appendingPathComponent("Cosmo/images", isDirectory: true)
     }
 
+    // MARK: - Decoded-image cache
+
+    /// Decoded images keyed by `path|mtime` so an edited file on disk
+    /// invalidates naturally. Serves `load(path:)` and `resolve(_:)` — the
+    /// editor serializer and presentation resyncs re-request the same paths
+    /// constantly, and each miss was a full disk decode on the main thread.
+    /// `nonisolated(unsafe)` is honest, not a shortcut: NSCache is
+    /// thread-safe and NSImage is Sendable.
+    nonisolated(unsafe) private static let decodedImageCache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 128
+        return cache
+    }()
+
+    /// `path|mtime` identity for a file on disk; falls back to the bare path
+    /// when attributes can't be read (missing file → natural cache miss).
+    private static func cacheKey(forPath path: String) -> NSString {
+        if let attributes = try? FileManager.default.attributesOfItem(atPath: path),
+           let mtime = attributes[.modificationDate] as? Date {
+            return "\(path)|\(mtime.timeIntervalSinceReferenceDate)" as NSString
+        }
+        return path as NSString
+    }
+
+    /// Derived-image lookup (e.g. the serializer's scaled attachment
+    /// bitmaps) under the same `path|mtime` identity plus a discriminator,
+    /// so presentation resyncs don't re-rasterize every image.
+    static func cachedDerivedImage(path: String, discriminator: String) -> NSImage? {
+        decodedImageCache.object(forKey: "\(cacheKey(forPath: path))|\(discriminator)" as NSString)
+    }
+
+    static func storeDerivedImage(_ image: NSImage, path: String, discriminator: String) {
+        decodedImageCache.setObject(image, forKey: "\(cacheKey(forPath: path))|\(discriminator)" as NSString)
+    }
+
     /// Save image data to disk and return the path + dimensions
     static func save(_ imageData: Data, originalFilename: String?) throws -> (path: String, width: CGFloat, height: CGFloat) {
         // Ensure directory exists
@@ -39,9 +74,13 @@ enum ImageStore {
         return (path: fileURL.path, width: width, height: height)
     }
 
-    /// Load an NSImage from a file path
+    /// Load an NSImage from a file path (served through the decoded cache)
     static func load(path: String) -> NSImage? {
-        NSImage(contentsOfFile: path)
+        let key = cacheKey(forPath: path)
+        if let cached = decodedImageCache.object(forKey: key) { return cached }
+        guard let image = NSImage(contentsOfFile: path) else { return nil }
+        decodedImageCache.setObject(image, forKey: key)
+        return image
     }
 
     /// Delete an image file from disk
@@ -67,19 +106,34 @@ enum ImageStore {
     /// `remoteURL` — this is how they render here.
     @MainActor
     static func resolve(_ ref: RichImageReference) async -> NSImage? {
-        if !ref.path.isEmpty, let local = NSImage(contentsOfFile: ref.path) {
-            return local
+        if !ref.path.isEmpty {
+            // Cache check stays synchronous — the warm path returns on the
+            // current tick. Only the disk decode hops off the main actor.
+            let key = cacheKey(forPath: ref.path)
+            if let warm = decodedImageCache.object(forKey: key) { return warm }
+            let path = ref.path
+            if let local = await Task.detached(priority: .userInitiated, operation: { NSImage(contentsOfFile: path) }).value {
+                decodedImageCache.setObject(local, forKey: key)
+                return local
+            }
         }
         guard let remoteURL = ref.remoteURL, let url = URL(string: remoteURL) else { return nil }
         let cached = remoteCacheDirectory.appendingPathComponent(url.lastPathComponent)
-        if let hit = NSImage(contentsOf: cached) { return hit }
+        let cachedKey = cacheKey(forPath: cached.path)
+        if let warm = decodedImageCache.object(forKey: cachedKey) { return warm }
+        if let hit = NSImage(contentsOf: cached) {
+            decodedImageCache.setObject(hit, forKey: cachedKey)
+            return hit
+        }
         guard let client = SupabaseClient.shared else { return nil }
         let request = client.authorizedRequest(for: url)
         guard let (data, response) = try? await URLSession.shared.data(for: request),
               (response as? HTTPURLResponse).map({ (200...299).contains($0.statusCode) }) ?? false,
               !data.isEmpty else { return nil }
         try? data.write(to: cached, options: [.atomic])
-        return NSImage(data: data)
+        guard let downloaded = NSImage(data: data) else { return nil }
+        decodedImageCache.setObject(downloaded, forKey: cacheKey(forPath: cached.path))
+        return downloaded
     }
 
     /// Upload a local note image to the shared bucket and return its URL, so

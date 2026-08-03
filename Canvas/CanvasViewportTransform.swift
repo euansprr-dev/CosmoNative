@@ -676,11 +676,39 @@ enum CanvasViewportSnapshotPolicy {
     /// every remount.
     static let retainInsetMultiplier: CGFloat = 1.75
 
+    /// Pane width streams (divider drag / window live resize) change the
+    /// VIEWPORT SIZE once per pointer frame — a dimension the canvas-gesture
+    /// buckets never touch, so every frame missed the snapshot memo and re-ran
+    /// the full cull + mount diff. Bucketing the size UP to 64pt steps keeps
+    /// the culling rect covering at least the real viewport (never a missing
+    /// block) while the snapshot rebuilds once per step; the retain hysteresis
+    /// absorbs the frontier. The stream's end delivers the exact final size.
+    private static let liveViewportSizeBucket: CGFloat = 64
+
     static func snapshotTransform(
         for transform: CanvasViewportTransform,
-        isLiveGesture: Bool
+        isLiveGesture: Bool,
+        isViewportSizeStreaming: Bool = false
     ) -> CanvasViewportTransform {
-        guard isLiveGesture else { return transform }
+        let snapshotSize: CGSize = isViewportSizeStreaming
+            ? CGSize(
+                width: (transform.viewportSize.width / liveViewportSizeBucket).rounded(.up) * liveViewportSizeBucket,
+                height: (transform.viewportSize.height / liveViewportSizeBucket).rounded(.up) * liveViewportSizeBucket
+            )
+            : transform.viewportSize
+
+        guard isLiveGesture else {
+            guard isViewportSizeStreaming else { return transform }
+            return CanvasViewportTransform(
+                viewportSize: snapshotSize,
+                committedOffset: transform.committedOffset,
+                gesturePanOffset: transform.gesturePanOffset,
+                committedScale: transform.committedScale,
+                gestureMagnification: transform.gestureMagnification,
+                minScale: transform.minScale,
+                maxScale: transform.maxScale
+            )
+        }
 
         // Scale buckets exist to rate-limit invalidation while the scale is
         // actually MOVING (pinch / wheel streak). A pan-only gesture has a
@@ -698,7 +726,7 @@ enum CanvasViewportSnapshotPolicy {
             : transform.effectiveScale
 
         return CanvasViewportTransform(
-            viewportSize: transform.viewportSize,
+            viewportSize: snapshotSize,
             committedOffset: quantizedOffset(transform.contentOffset, bucketSize: livePanBucketSize),
             gesturePanOffset: .zero,
             committedScale: snapshotScale,

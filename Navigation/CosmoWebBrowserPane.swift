@@ -17,6 +17,7 @@ struct CosmoWebBrowserPane: View {
     @State private var renamingPin: CosmoBrowserPinnedSite?
     @State private var dispatchedCaptureKind: CosmoBrowserResearchCaptureKind?
     @Environment(\.isPaneActive) private var isPaneActive
+    @Environment(\.isPaneExpanded) private var isPaneExpanded
 
     init(paneId: String, url: URL, title: String?, onClose: @escaping () -> Void) {
         self.paneId = paneId
@@ -46,6 +47,14 @@ struct CosmoWebBrowserPane: View {
             // (rather than reaching into pane internals from the router) keeps
             // that one seam explicit.
             if active { registerSwipeContext() }
+        }
+        .onChange(of: isPaneExpanded) { _, expanded in
+            // A collapsed browser pane stays mounted (state survives the tab
+            // switch) but its WebContent process kept compositing, running JS,
+            // and PLAYING AUDIO at full rate off-slot. Gate on EXPANDED, never
+            // active — a pinned pane playing a video beside the focused one
+            // must keep playing.
+            browserState.liveWebView?.setAllMediaPlaybackSuspended(!expanded)
         }
         .onDisappear {
             BrowserPaneRegistry.shared.unregister(paneId: paneId)

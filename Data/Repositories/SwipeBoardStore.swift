@@ -196,13 +196,17 @@ final class SwipeBoardStore {
     /// Tally membership straight from the database (sidebar without an open library).
     func refreshCountsFromDatabase() async {
         do {
-            let atoms = try await AtomRepository.shared.search(query: "", types: [.research])
-            var tally: [String: Int] = [:]
-            for atom in atoms where atom.isSwipeFileAtom {
-                for boardID in atom.swipeBoardIDs ?? [] {
-                    tally[boardID, default: 0] += 1
+            let atoms = try await AtomRepository.shared.fetchSwipeFileAtoms()
+            // Membership lives in metadata — the decode loop runs off-main.
+            let tally = await Task.detached(priority: .userInitiated) {
+                var tally: [String: Int] = [:]
+                for atom in atoms where atom.isSwipeFileAtom {
+                    for boardID in atom.swipeBoardIDs ?? [] {
+                        tally[boardID, default: 0] += 1
+                    }
                 }
-            }
+                return tally
+            }.value
             if counts != tally {
                 counts = tally
             }

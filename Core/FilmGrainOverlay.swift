@@ -5,36 +5,29 @@
 
 import SwiftUI
 
-/// A tiled noise texture overlay that adds subtle film grain to surfaces.
-/// Used on the canvas and sanctuary hero to create organic warmth.
-/// Performance: generates the noise bitmap ONCE in onAppear, not every frame.
-struct FilmGrainOverlay: View {
-    var opacity: Double = 0.025
+/// Process-wide cache for the grain tile. The LCG seed is fixed, so the bitmap
+/// is bit-identical for every instance — one CGImage per palette mode replaces
+/// re-running 65k CG fills on each mount (canvas culling remounts sticky notes
+/// constantly). Mirrors CanvasGridPatternCache.
+@MainActor
+final class FilmGrainTextureCache {
+    static let shared = FilmGrainTextureCache()
 
-    /// Pre-rendered grain texture (generated once)
-    @State private var grainImage: CGImage?
+    private var images: [Bool: CGImage] = [:]
 
-    var body: some View {
-        GeometryReader { geo in
-            if let cgImage = grainImage {
-                Image(decorative: cgImage, scale: 1)
-                    .resizable()
-                    .opacity(opacity)
-                    .allowsHitTesting(false)
-            }
+    func image(isDark: Bool) -> CGImage? {
+        if let existing = images[isDark] {
+            return existing
         }
-        .allowsHitTesting(false)
-        .onAppear {
-            generateGrainTexture()
-        }
+        guard let built = Self.buildImage(isDark: isDark) else { return nil }
+        images[isDark] = built
+        return built
     }
 
-    /// Generate the grain noise bitmap once using CGContext.
+    /// Generate the grain noise bitmap using CGContext.
     /// Same algorithm as the old per-frame Canvas: deterministic LCG hash,
     /// 2x2 dots. Light theme: white base + dark dots. Dark theme: dark base + light dots.
-    private func generateGrainTexture() {
-        let isDark = DS.palette.isDark
-
+    private static func buildImage(isDark: Bool) -> CGImage? {
         // Use a fixed tile size — will be stretched by .resizable()
         let tileWidth = 512
         let tileHeight = 512
@@ -51,7 +44,7 @@ struct FilmGrainOverlay: View {
             bytesPerRow: tileWidth,
             space: colorSpace,
             bitmapInfo: CGImageAlphaInfo.none.rawValue
-        ) else { return }
+        ) else { return nil }
 
         // Base fill: white for light themes, dark for dark themes
         let baseFill: CGFloat = isDark ? 0.0 : 1.0
@@ -82,7 +75,37 @@ struct FilmGrainOverlay: View {
             }
         }
 
-        grainImage = ctx.makeImage()
+        return ctx.makeImage()
+    }
+}
+
+/// A tiled noise texture overlay that adds subtle film grain to surfaces.
+/// Used on the canvas and sanctuary hero to create organic warmth.
+/// Performance: generates the noise bitmap ONCE in onAppear, not every frame.
+struct FilmGrainOverlay: View {
+    var opacity: Double = 0.025
+
+    /// Pre-rendered grain texture (generated once)
+    @State private var grainImage: CGImage?
+
+    var body: some View {
+        GeometryReader { geo in
+            if let cgImage = grainImage {
+                Image(decorative: cgImage, scale: 1)
+                    .resizable()
+                    .opacity(opacity)
+                    .allowsHitTesting(false)
+            }
+        }
+        .allowsHitTesting(false)
+        .onAppear {
+            generateGrainTexture()
+        }
+    }
+
+    /// Fetch the shared grain tile (built once per palette mode, then cached).
+    private func generateGrainTexture() {
+        grainImage = FilmGrainTextureCache.shared.image(isDark: DS.palette.isDark)
     }
 }
 

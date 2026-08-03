@@ -182,7 +182,7 @@ extension SwipeCardModel {
             scoreLabel: item.hookScore.map { String(format: "%.1f", $0) },
             scoreTint: nil,
             metricsLine: nil,
-            ageLabel: ISO8601.date(from: item.createdAt).map { SwipeFormatting.compactAge(from: $0) },
+            ageLabel: item.createdAtDate.map { SwipeFormatting.compactAge(from: $0) },
             isUnstudied: !item.isStudied,
             processing: processing,
             kind: item.kind,

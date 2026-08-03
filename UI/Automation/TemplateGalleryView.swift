@@ -12,7 +12,7 @@ struct TemplateGalleryView: View {
     @State private var isLoading = true
     @State private var selectedIndex = 0
     @State private var hoveredIndex: Int?
-    @State private var appearedRows: Set<String> = []
+    @State private var rowsAppeared = false
     @FocusState private var isFocused: Bool
 
     private let menuWidth: CGFloat = 300
@@ -123,24 +123,17 @@ struct TemplateGalleryView: View {
         Button {
             instantiate(template)
         } label: {
-            rowContent(template, meta: meta, highlighted: isSelected || isHovered)
+            rowContent(template, meta: meta, highlighted: isSelected || isHovered, index: index)
         }
         .buttonStyle(.plain)
         .onHover { hovering in
             if hovering { hoveredIndex = index }
             else if hoveredIndex == index { hoveredIndex = nil }
         }
-        .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + Double(index) * 0.03) {
-                withAnimation(ProMotionSprings.cardEntrance) {
-                    _ = appearedRows.insert(template.uuid)
-                }
-            }
-        }
     }
 
     @ViewBuilder
-    private func rowContent(_ template: Atom, meta: BlockTemplateMetadata?, highlighted: Bool) -> some View {
+    private func rowContent(_ template: Atom, meta: BlockTemplateMetadata?, highlighted: Bool, index: Int) -> some View {
         HStack(spacing: 10) {
             Image(systemName: meta?.icon ?? "rectangle.3.group.fill")
                 .font(.system(size: 14))
@@ -177,10 +170,10 @@ struct TemplateGalleryView: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(highlighted ? DS.accent.opacity(0.08) : Color.clear)
         )
-        .opacity(appearedRows.contains(template.uuid) ? 1 : 0)
-        .offset(x: appearedRows.contains(template.uuid) ? 0 : -12)
-        .blur(radius: appearedRows.contains(template.uuid) ? 0 : 2)
-        .scaleEffect(x: appearedRows.contains(template.uuid) ? 1 : 0.98, y: 1, anchor: .leading)
+        .opacity(rowsAppeared ? 1 : 0)
+        .offset(x: rowsAppeared ? 0 : -12)
+        .scaleEffect(x: rowsAppeared ? 1 : 0.98, y: 1, anchor: .leading)
+        .animation(ProMotionSprings.staggered(index: index), value: rowsAppeared)
         .contentShape(Rectangle())
     }
 
@@ -222,8 +215,12 @@ struct TemplateGalleryView: View {
 
     private func loadTemplates() {
         Task {
-            defer { isLoading = false }
             templates = (try? await TemplateEngine.shared.allTemplates()) ?? []
+            isLoading = false
+            // One settled frame so rows mount hidden, then a single flip
+            // animates every row through its per-index staggered delay.
+            try? await Task.sleep(for: .milliseconds(16))
+            rowsAppeared = true
         }
     }
 

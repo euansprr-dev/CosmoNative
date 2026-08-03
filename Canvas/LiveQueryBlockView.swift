@@ -4,6 +4,7 @@
 
 import SwiftUI
 import GRDB
+import Combine
 
 struct LiveQueryBlockView: View {
 
@@ -12,12 +13,21 @@ struct LiveQueryBlockView: View {
     @State private var results: [LiveQueryResult] = []
     @State private var isLoading = true
     @State private var queryDescription = ""
-    @State private var observation: AnyDatabaseCancellable?
+    @State private var observation: AnyCancellable?
+    @State private var queryConfig: LiveQueryConfig?
+    @State private var decodedQuerySource: String?
 
-    private var queryConfig: LiveQueryConfig? {
-        guard let json = block.metadata["liveQuery"],
-              let data = json.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(LiveQueryConfig.self, from: data)
+    /// Decode block.metadata["liveQuery"] only when the JSON string actually
+    /// changes — the computed-property version ran JSONDecoder on every read.
+    private func refreshQueryConfigIfNeeded() {
+        let source = block.metadata["liveQuery"]
+        guard source != decodedQuerySource else { return }
+        decodedQuerySource = source
+        guard let source, let data = source.data(using: .utf8) else {
+            queryConfig = nil
+            return
+        }
+        queryConfig = try? JSONDecoder().decode(LiveQueryConfig.self, from: data)
     }
 
     var body: some View {
@@ -200,6 +210,7 @@ struct LiveQueryBlockView: View {
     // MARK: - Query Execution
 
     private func executeQuery() async {
+        refreshQueryConfigIfNeeded()
         guard let config = queryConfig else {
             queryDescription = "No query configured"
             isLoading = false
@@ -259,16 +270,24 @@ struct LiveQueryBlockView: View {
     private func startObservation() {
         guard let db = CosmoDatabase.shared.dbPool else { return }
 
-        // Re-run query when atoms table changes (debounced by GRDB)
+        // Re-run query when the atoms count changes — removeDuplicates drops
+        // the bookkeeping writes that leave the count unchanged, debounce
+        // coalesces bursts.
         let obs = ValueObservation.tracking { db in
             try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM atoms WHERE is_deleted = 0") ?? 0
         }
 
-        observation = obs.start(in: db, onError: { _ in }) { [self] _ in
-            Task { @MainActor in
-                await executeQuery()
-            }
-        }
+        observation = obs.publisher(in: db)
+            .removeDuplicates()
+            .debounce(for: .milliseconds(400), scheduler: DispatchQueue.main)
+            .sink(
+                receiveCompletion: { _ in },
+                receiveValue: { [self] _ in
+                    Task { @MainActor in
+                        await executeQuery()
+                    }
+                }
+            )
     }
 
     // MARK: - Helpers

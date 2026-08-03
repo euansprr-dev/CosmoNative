@@ -11,6 +11,7 @@ struct DashboardTimeTracker: View {
     var viewModel: CommandCenterDashboardViewModel
     @ObservedObject private var sessionEngine = DeepWorkSessionEngine.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.isPaneExpanded) private var isPaneExpanded
 
     @State private var goalMinutes = FocusStreakEngine.defaultGoalMinutes
     @State private var week: [FocusDay] = []
@@ -80,7 +81,10 @@ struct DashboardTimeTracker: View {
     /// a rectangular frame silently shrinks the arc. The empty open-bottom
     /// quarter is then cropped off, giving the cluster an honest height.
     private var gauge: some View {
-        TimelineView(.periodic(from: .now, by: sessionEngine.isTimerRunning ? 1 : 60)) { _ in
+        // Collapsed Command Center panes stay mounted — a running session
+        // must not tick an off-screen gauge at 1Hz. Re-expanding re-evaluates
+        // with live values immediately.
+        TimelineView(.periodic(from: .now, by: sessionEngine.isTimerRunning && isPaneExpanded ? 1 : 60)) { _ in
             ZStack {
                 // DS.border, not borderSubtle: this gauge sits directly on the
                 // page (the iPhone's sits in a white container) — the subtle

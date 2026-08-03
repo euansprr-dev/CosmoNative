@@ -140,9 +140,12 @@ final class IdeasPageModel {
         }
         let items = live.compactMap(item)
         let archivedItems = archived.compactMap(item)
-        let thumbs = await Self.resolveInspiration(for: live + archived)
-        let scheduled = await Self.resolveScheduledDays()
-        let shipped = await Self.resolveShippedRecency()
+        // Three independent table walks — run them concurrently (pool
+        // readers, no writer contention). They were serialized awaits.
+        async let thumbsResolve = Self.resolveInspiration(for: live + archived)
+        async let scheduledResolve = Self.resolveScheduledDays()
+        async let shippedResolve = Self.resolveShippedRecency()
+        let (thumbs, scheduled, shipped) = await (thumbsResolve, scheduledResolve, shippedResolve)
         let dealt = IdeasDeskEngine.makeDesk(
             ideas: items,
             scheduledDays: scheduled,
@@ -216,15 +219,17 @@ final class IdeasPageModel {
             swipeByIdea[atom.uuid] = swipeUUID
         }
 
+        // One batched IN query — this was one serial DB round-trip per
+        // distinct linked swipe, every load.
+        let swipes = (try? await AtomRepository.shared.fetch(uuids: Array(Set(swipeByIdea.values)))) ?? []
         var thumbsBySwipe: [String: [String]] = [:]
-        for swipeUUID in Set(swipeByIdea.values) {
-            guard let swipe = try? await AtomRepository.shared.fetch(uuid: swipeUUID) else { continue }
+        for swipe in swipes {
             // Preferred (the Supabase mirror when present) first, the origin
             // CDN url second — mirrors are durable but occasionally missing.
             var candidates: [String] = []
             if let preferred = swipe.toSwipeGalleryItem()?.thumbnailUrl { candidates.append(preferred) }
             if let cdn = swipe.researchMetadata?.thumbnailUrl, !candidates.contains(cdn) { candidates.append(cdn) }
-            if !candidates.isEmpty { thumbsBySwipe[swipeUUID] = candidates }
+            if !candidates.isEmpty { thumbsBySwipe[swipe.uuid] = candidates }
         }
 
         return swipeByIdea.compactMapValues { thumbsBySwipe[$0] }

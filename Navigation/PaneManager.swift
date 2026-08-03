@@ -129,34 +129,41 @@ enum PaneContent: Identifiable, Equatable {
 
 // MARK: - Pane Manager
 
+/// @Observable (not ObservableObject): MainView holds this manager and reads
+/// only `panes`-derived state, while `mainSplitRatio` is written once per
+/// divider-drag FRAME and focus switches write two-three properties per tab
+/// click. Under objectWillChange every one of those re-evaluated the entire
+/// app shell; property-level tracking scopes each write to the views that
+/// actually read the property (SplitPaneContainer, PaneDeckView).
 @MainActor
-class PaneManager: ObservableObject {
+@Observable
+final class PaneManager {
 
-    // MARK: - Published State
+    // MARK: - Observable State
 
     /// Ordered list of open panes (right column deck, in opening order)
-    @Published var panes: [PaneContent] = []
+    var panes: [PaneContent] = []
 
     /// The pane expanded to full reading width. Every other pane collapses
     /// into the tab rail.
-    @Published var focusedPaneId: String? = nil
+    var focusedPaneId: String? = nil
 
     /// Optional second pane kept expanded beside the focused one (60/40 split).
     /// Pinning the focused pane keeps it visible while focus moves elsewhere.
-    @Published var pinnedPaneId: String? = nil
+    var pinnedPaneId: String? = nil
 
     /// Horizontal split ratio between left (main content) and right (pane column).
     /// 1.0 = full width (no panes visible). Animates to 0.5 when first pane opens.
-    @Published var mainSplitRatio: CGFloat = 1.0
+    var mainSplitRatio: CGFloat = 1.0
 
     /// True while the user is dragging the main split divider — one of the two
     /// continuous width streams.
-    @Published private(set) var isDraggingMainSplit = false
+    private(set) var isDraggingMainSplit = false
 
     /// True while the hosting window is in a live resize. Window resize is
     /// the same continuous width stream as a divider drag, just delivered by
     /// AppKit instead of a gesture, so it feeds the same flag.
-    @Published private(set) var isWidthStreamWindowResize = false
+    private(set) var isWidthStreamWindowResize = false
 
     /// The one flag the deck consults. It does NOT freeze layout: every pane
     /// whose `widthStreamBehavior` is `.tracksLive` reflows under the cursor
@@ -168,11 +175,11 @@ class PaneManager: ObservableObject {
 
     /// ID of the pane the user last interacted with (tap/focus).
     /// Used to determine which pane's context the CosmoWindow and voice system see.
-    @Published var activePaneId: String? = nil
+    var activePaneId: String? = nil
 
     /// ID of the pane whose entity currently owns global context while another pane
     /// (such as the collaborator) may be focused.
-    @Published var contextOwnerPaneId: String? = nil
+    var contextOwnerPaneId: String? = nil
 
     // MARK: - Constants
 

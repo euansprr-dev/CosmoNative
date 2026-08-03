@@ -8,6 +8,8 @@ import AppKit
 struct PaneCanvasView: View {
     let thinkspaceId: String
 
+    @Environment(\.isPaneWidthStreaming) private var isPaneWidthStreaming
+
     @State private var spatialEngine = SpatialEngine()
     @State private var clusterEngine = CanvasClusterEngine()
     @StateObject private var frameTracker = CanvasBlockFrameTracker()
@@ -86,7 +88,12 @@ struct PaneCanvasView: View {
     ) -> CanvasRenderSnapshot {
         let snapshotTransform = CanvasViewportSnapshotPolicy.snapshotTransform(
             for: transform,
-            isLiveGesture: hasLiveViewportGesture
+            isLiveGesture: hasLiveViewportGesture,
+            // Divider drags / window live-resize feed this pane a new width
+            // per pointer frame — bucket the snapshot's size so the cull +
+            // mount diff doesn't re-run per frame (scale stays exact; the
+            // stream's end lands the exact final size).
+            isViewportSizeStreaming: isPaneWidthStreaming
         )
         let preloadInset = CanvasViewportSnapshotPolicy.preloadInset(
             viewportSize: transform.viewportSize,

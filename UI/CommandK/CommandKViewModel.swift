@@ -455,7 +455,12 @@ enum CommandKSearchMatcher {
     }
 
     static func matches(_ query: String, inAny values: [String?]) -> Bool {
-        let normalizedQuery = normalizeQuery(query)
+        matches(normalizedQuery: normalizeQuery(query), inAny: values)
+    }
+
+    /// Pre-normalized overload — filter loops normalize the query ONCE, not
+    /// once per candidate.
+    static func matches(normalizedQuery: String, inAny values: [String?]) -> Bool {
         guard !normalizedQuery.isEmpty else { return false }
         if values.contains(where: { matches(normalizedQuery: normalizedQuery, in: $0) }) {
             return true
@@ -2024,6 +2029,9 @@ public final class CommandKViewModel {
     private let searchPipeline = CommandKSearchPipeline()
     private var searchIndex = CommandKSearchIndex()
     private var searchIndexLoaded = false
+    /// Newest `updatedAt` the index has seen — force refreshes fetch only rows
+    /// at/after this stamp and merge, instead of re-reading 10k full atoms.
+    private var searchIndexLastIndexedAt: String?
     private var instantIndexSearchTask: Task<[RankedResult], Never>?
     private var instantIndexSearchGeneration = 0
     private var searchIndexTask: Task<Void, Never>?
@@ -2226,6 +2234,39 @@ public final class CommandKViewModel {
                 CommandKPerformanceInstrumentation.signposter.endInterval("prewarm-search-index", signpost)
             }
             do {
+                // Refresh path: fetch only rows at/after the stamp and merge
+                // by uuid — a force refresh used to re-read 10k full atoms.
+                if force, self.searchIndexLoaded, let stamp = self.searchIndexLastIndexedAt {
+                    let changed = try await AtomRepository.shared.fetchUserSearchableUpdatedSince(stamp)
+                    guard !Task.isCancelled, self.isSurfaceActive || ignoringSurface else { return }
+                    guard !changed.isEmpty else { return }
+                    let existing = self.searchIndex.entries
+                    let merged = await Task.detached(priority: .userInitiated) {
+                        () -> (entries: [CommandKSearchIndex.Entry], newestStamp: String?) in
+                        let deleted = Set(changed.filter(\.isDeleted).map(\.uuid))
+                        let live = changed.filter { !$0.isDeleted }
+                        let fresh = CommandKSearchIndex.entries(for: live)
+                        let freshByUUID = Set(fresh.map(\.atomUUID))
+                        var entries = existing.filter {
+                            !deleted.contains($0.atomUUID) && !freshByUUID.contains($0.atomUUID)
+                        }
+                        entries.append(contentsOf: fresh)
+                        // Same shape the full path produces: newest-first,
+                        // capped at the full fetch's 10k.
+                        entries.sort { $0.updatedAt > $1.updatedAt }
+                        if entries.count > 10_000 {
+                            entries.removeLast(entries.count - 10_000)
+                        }
+                        return (entries, changed.map(\.updatedAt).max())
+                    }.value
+                    guard !Task.isCancelled, self.isSurfaceActive || ignoringSurface else { return }
+                    self.searchIndex.replace(merged.entries)
+                    if let newestStamp = merged.newestStamp {
+                        self.searchIndexLastIndexedAt = newestStamp
+                    }
+                    return
+                }
+
                 let atoms = try await AtomRepository.shared.fetchRecent(limit: 10_000)
                 guard !Task.isCancelled, self.isSurfaceActive || ignoringSurface else { return }
                 // Normalizing 10k full-text bodies is too heavy for the main
@@ -2236,6 +2277,8 @@ public final class CommandKViewModel {
                 guard !Task.isCancelled, self.isSurfaceActive || ignoringSurface else { return }
                 self.searchIndex.replace(entries)
                 self.searchIndexLoaded = true
+                // fetchRecent is updatedAt-desc — the first row is the stamp.
+                self.searchIndexLastIndexedAt = atoms.first?.updatedAt
             } catch {
                 CommandKPerformanceInstrumentation.logger.error("Command-K search index prewarm failed: \(error.localizedDescription, privacy: .public)")
             }
@@ -4372,8 +4415,8 @@ public final class CommandKViewModel {
         guard !swipeGalleryLoaded else { return }
 
         do {
-            // Fetch all research atoms
-            let researchAtoms = try await AtomRepository.shared.search(query: "", types: [.research])
+            // Narrow SQL pre-filter; `isSwipeFileAtom` below stays the authority.
+            let researchAtoms = try await AtomRepository.shared.fetchSwipeFileAtoms()
 
             // Filter to swipe files and convert — several JSON decodes per
             // atom, so the map runs off the main actor (Atom is Sendable).
@@ -4541,8 +4584,8 @@ public final class CommandKViewModel {
     }
 
     private nonisolated static func isNewerSwipe(_ lhs: SwipeGalleryItem, than rhs: SwipeGalleryItem) -> Bool {
-        if let leftDate = ISO8601.date(from: lhs.createdAt),
-           let rightDate = ISO8601.date(from: rhs.createdAt),
+        if let leftDate = lhs.createdAtDate,
+           let rightDate = rhs.createdAtDate,
            leftDate != rightDate {
             return leftDate > rightDate
         }

@@ -24,10 +24,11 @@ enum RichDocumentPersistence {
         field: RichDocumentField,
         metadata: String?,
         fallbackPlainText: String?,
-        preferFallbackPlainTextWhenRicher: Bool = false
+        preferFallbackPlainTextWhenRicher: Bool = false,
+        atomUUID: String? = nil
     ) -> RichDocument {
         let fallbackDocument = RichDocument.migrateLegacy(fallbackPlainText ?? "")
-        let metadataDocument = RichDocumentMetadataStorage.readDocument(from: metadata, key: field.metadataKey)
+        let metadataDocument = RichDocumentMetadataStorage.readDocument(from: metadata, key: field.metadataKey, atomUUID: atomUUID)
         let document = preferredDocument(
             field: field,
             metadataDocument: metadataDocument,
@@ -42,13 +43,14 @@ enum RichDocumentPersistence {
         key: String,
         metadata: [String: String],
         fallbackPlainText: String?,
-        preferFallbackPlainTextWhenRicher: Bool = false
+        preferFallbackPlainTextWhenRicher: Bool = false,
+        atomUUID: String? = nil
     ) -> RichDocument {
         let metadataDocument: RichDocument?
         if let encoded = metadata[key] {
             // Memoized: block documents re-decode at every mount otherwise
             // (a thinkspace switch mounts every visible note in one frame).
-            metadataDocument = RichDocumentDecodeCache.shared.document(source: encoded, metadataKey: key) {
+            metadataDocument = RichDocumentDecodeCache.shared.document(source: encoded, metadataKey: key, atomUUID: atomUUID) {
                 guard let data = encoded.data(using: .utf8) else { return nil }
                 return try? JSONDecoder().decode(RichDocument.self, from: data)
             }

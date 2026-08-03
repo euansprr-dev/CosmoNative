@@ -124,19 +124,6 @@ enum SwipeLibraryFiltering {
         return candidates.filter { !$0.items.isEmpty }
     }
 
-    static func facetSummary(allItems: [SwipeGalleryItem], filteredItems: [SwipeGalleryItem]) -> SwipeLibraryFacetSummary {
-        let scores = filteredItems.compactMap(\.hookScore)
-        let average = scores.isEmpty ? nil : scores.reduce(0, +) / Double(scores.count)
-
-        return SwipeLibraryFacetSummary(
-            totalCount: allItems.count,
-            filteredCount: filteredItems.count,
-            highScoreCount: allItems.filter { ($0.hookScore ?? 0) >= 7.5 }.count,
-            unstudiedCount: allItems.filter { !$0.isStudied }.count,
-            averageHookScore: average
-        )
-    }
-
     static func availableCreators(from items: [SwipeGalleryItem]) -> [String] {
         Array(Set(items.compactMap(\.creatorName).filter { !$0.isEmpty })).sorted()
     }
@@ -250,7 +237,7 @@ enum SwipeLibraryFiltering {
 
     static func sortItems(_ items: inout [SwipeGalleryItem], by sortMode: SwipeSortMode) {
         let indexed = items.enumerated().map {
-            SwipeSortRecord(index: $0.offset, item: $0.element, createdAt: date(from: $0.element.createdAt))
+            SwipeSortRecord(index: $0.offset, item: $0.element, createdAt: $0.element.createdAtDate ?? .distantPast)
         }
         let sorted: [SwipeSortRecord]
         switch sortMode {
@@ -307,13 +294,9 @@ enum SwipeLibraryFiltering {
         var lookup: [String: Date] = [:]
         lookup.reserveCapacity(items.count)
         for item in items where lookup[item.id] == nil {
-            lookup[item.id] = date(from: item.createdAt)
+            lookup[item.id] = item.createdAtDate ?? .distantPast
         }
         return lookup
-    }
-
-    private static func date(from string: String) -> Date {
-        ISO8601.date(from: string) ?? .distantPast
     }
 }
 

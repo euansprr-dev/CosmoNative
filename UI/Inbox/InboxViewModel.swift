@@ -193,7 +193,18 @@ final class InboxViewModel {
     /// and the answer changes only when the library does.
     private(set) var hasFlows = false
 
-    init() {
+    /// Pure allocation. `@State`'s initial-value expression is EAGER — this
+    /// model is constructed (and discarded) on every InboxView struct
+    /// construction, i.e. every MainView body pass while Inbox is the
+    /// destination. The observation + first loads run once from the mounted
+    /// instance via `startIfNeeded()`.
+    init() {}
+
+    private var hasStarted = false
+
+    func startIfNeeded() {
+        guard !hasStarted else { return }
+        hasStarted = true
         startObserving()
         loadEmptyStateData()
         refreshFlowAvailability()

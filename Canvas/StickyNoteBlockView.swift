@@ -337,7 +337,8 @@ struct StickyNoteBlockView: View {
         noteBodyDocument = RichDocumentPersistence.loadBlockDocument(
             key: RichDocumentMetadataKeys.bodyDocument,
             metadata: block.metadata,
-            fallbackPlainText: block.metadata["content"]
+            fallbackPlainText: block.metadata["content"],
+            atomUUID: block.id
         )
         noteText = noteBodyDocument.plainText
 
@@ -402,7 +403,8 @@ struct StickyNoteBlockView: View {
         noteBodyDocument = RichDocumentPersistence.loadAtomDocument(
             field: .body,
             metadata: atom.metadata,
-            fallbackPlainText: atom.body
+            fallbackPlainText: atom.body,
+            atomUUID: atom.uuid
         )
         noteText = noteBodyDocument.plainText
         DispatchQueue.main.async {
@@ -425,7 +427,8 @@ struct StickyNoteBlockView: View {
             let newBodyDocument = RichDocumentPersistence.loadAtomDocument(
                 field: .body,
                 metadata: atom.metadata,
-                fallbackPlainText: atom.body
+                fallbackPlainText: atom.body,
+                atomUUID: atom.uuid
             )
             let newBody = newBodyDocument.plainText
             let bodyChanged = newBody != noteText || newBodyDocument != noteBodyDocument

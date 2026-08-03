@@ -721,9 +721,7 @@ struct ResearchBlockView: View {
 
     private func formatTimestamp(_ timestamp: String) -> String {
         if let date = ISO8601.date(from: timestamp) {
-            let formatter = RelativeDateTimeFormatter()
-            formatter.unitsStyle = .abbreviated
-            return formatter.localizedString(for: date, relativeTo: Date())
+            return CosmoDateFormatters.relative.localizedString(for: date, relativeTo: Date())
         }
         return timestamp
     }

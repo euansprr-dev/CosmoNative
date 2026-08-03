@@ -68,38 +68,43 @@ struct WebSourceView: NSViewRepresentable {
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
-        // If the URL changed, navigate
+        context.coordinator.parent = self
+        // If the URL changed, navigate. The new page starts without the reader
+        // style, so the applied marker resets and didFinish re-applies it.
         if webView.url != url {
+            context.coordinator.appliedReaderMode = nil
             webView.load(URLRequest(url: url))
         }
-        if readerMode {
-            // Apply a simple reader-mode CSS overlay
-            let css = """
-            (function() {
-                if (document.getElementById('cosmo-reader-style')) return;
-                const style = document.createElement('style');
-                style.id = 'cosmo-reader-style';
-                style.textContent = `
-                  body { max-width: 720px !important; margin: 32px auto !important; line-height: 1.6 !important; font-family: 'New York', Georgia, serif !important; font-size: 17px !important; color: #1A1814 !important; background: #F8F7F4 !important; padding: 0 24px !important; }
-                  nav, header, footer, aside, .ad, .advertisement, .sidebar, [class*='banner'], [class*='popup'] { display: none !important; }
-                  img { max-width: 100% !important; height: auto !important; }
-                  pre, code { background: #F0EFEC !important; padding: 8px 12px !important; border-radius: 6px !important; font-size: 14px !important; }
-                  a { color: #2D6A4F !important; text-decoration: underline !important; }
-                `;
-                document.head.appendChild(style);
-            })();
-            """
-            webView.evaluateJavaScript(css)
-        } else {
-            let removeCSS = """
-            (function() {
-                const s = document.getElementById('cosmo-reader-style');
-                if (s) s.remove();
-            })();
-            """
-            webView.evaluateJavaScript(removeCSS)
-        }
+        // Reader mode is applied exactly once per state change — every other
+        // SwiftUI render pass of the host must not cost a WebContent IPC.
+        guard context.coordinator.appliedReaderMode != readerMode else { return }
+        context.coordinator.appliedReaderMode = readerMode
+        webView.evaluateJavaScript(readerMode ? Self.applyReaderCSS : Self.removeReaderCSS)
     }
+
+    // Apply a simple reader-mode CSS overlay
+    static let applyReaderCSS = """
+    (function() {
+        if (document.getElementById('cosmo-reader-style')) return;
+        const style = document.createElement('style');
+        style.id = 'cosmo-reader-style';
+        style.textContent = `
+          body { max-width: 720px !important; margin: 32px auto !important; line-height: 1.6 !important; font-family: 'New York', Georgia, serif !important; font-size: 17px !important; color: #1A1814 !important; background: #F8F7F4 !important; padding: 0 24px !important; }
+          nav, header, footer, aside, .ad, .advertisement, .sidebar, [class*='banner'], [class*='popup'] { display: none !important; }
+          img { max-width: 100% !important; height: auto !important; }
+          pre, code { background: #F0EFEC !important; padding: 8px 12px !important; border-radius: 6px !important; font-size: 14px !important; }
+          a { color: #2D6A4F !important; text-decoration: underline !important; }
+        `;
+        document.head.appendChild(style);
+    })();
+    """
+
+    static let removeReaderCSS = """
+    (function() {
+        const s = document.getElementById('cosmo-reader-style');
+        if (s) s.remove();
+    })();
+    """
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -107,6 +112,9 @@ struct WebSourceView: NSViewRepresentable {
 
     class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         var parent: WebSourceView
+        /// The reader-mode state last pushed into the page. `nil` after a
+        /// navigation (fresh pages carry no reader style).
+        var appliedReaderMode: Bool?
         init(parent: WebSourceView) { self.parent = parent }
 
         func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -142,7 +150,13 @@ struct WebSourceView: NSViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            // Apply reader mode on first load (re-applied via updateNSView)
+            // A fresh page never carries the reader style — apply the current
+            // state here deterministically instead of waiting for a host
+            // re-render to happen to call updateNSView.
+            appliedReaderMode = parent.readerMode
+            if parent.readerMode {
+                webView.evaluateJavaScript(WebSourceView.applyReaderCSS)
+            }
             setLoadState(.loaded)
         }
 

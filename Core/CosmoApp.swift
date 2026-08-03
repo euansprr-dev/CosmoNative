@@ -7,15 +7,23 @@ import GRDB
 
 @main
 struct CosmoApp: App {
-    @StateObject private var appState = AppState()
-    @StateObject private var database = CosmoDatabase.shared
-    @StateObject private var notifications = ProactiveNotificationService.shared
-    @StateObject private var syncEngine = SyncEngine.shared
-    @StateObject private var statePersistence = StatePersistence.shared
-    @StateObject private var networkMonitor = NetworkMonitor.shared
-    @StateObject private var glassCenter = CosmoGlassCenter.shared
-    @StateObject private var swipeFileEngine = SwipeFileEngine.shared
-    @StateObject private var cosmoAgent = CosmoAgentService.shared
+    // These are forwarded into the environment but deliberately NOT observed
+    // by the App scene: @StateObject subscribed the Scene body to every
+    // publish (SyncEngine.pendingChanges fires per pushed row during a sync
+    // burst, StatePersistence.state per sidebar-resize frame), and each
+    // Scene invalidation reconstructs the MainView struct — running every
+    // @State default expression in it just to throw the results away.
+    // .environmentObject only needs the instance; downstream views that
+    // observe them subscribe individually.
+    @State private var appState = AppState()
+    private let database = CosmoDatabase.shared
+    private let notifications = ProactiveNotificationService.shared
+    private let syncEngine = SyncEngine.shared
+    private let statePersistence = StatePersistence.shared
+    private let networkMonitor = NetworkMonitor.shared
+    private let glassCenter = CosmoGlassCenter.shared
+    private let swipeFileEngine = SwipeFileEngine.shared
+    private let cosmoAgent = CosmoAgentService.shared
 
     @State private var voicePillHideWorkItem: DispatchWorkItem?
     // NOTE: Global floating dock removed - using in-app dock + spacebar voice overlay instead
@@ -78,8 +86,7 @@ struct CosmoApp: App {
             // Adopt an existing pre-auth workspace: a Mac with real local data
             // must never see the Welcome wall — the gate is for empty Macs.
             if SupabaseAuthService.shared.workspaceMode == nil,
-               let counts = try? await AtomRepository.shared.countsByType(),
-               counts.values.reduce(0, +) > 0 {
+               (try? await AtomRepository.shared.hasAnyAtoms()) == true {
                 SupabaseAuthService.shared.establishLocalWorkspace()
             }
 

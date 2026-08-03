@@ -98,6 +98,9 @@ class CosmoDatabase: ObservableObject {
             // recoverable. On every other launch, defer the copy off the
             // launch path — the file is 250MB+ and the synchronous copy was
             // costing 1–2s of cold open once per day.
+            // (`migrator` is computed — registers every migration closure on
+            // each access — so bind it once for the check + the run.)
+            let migrator = self.migrator
             let hasPendingMigrations = !((try? dbPool.read { try migrator.hasCompletedMigrations($0) }) ?? false)
             if hasPendingMigrations {
                 Self.performDailyBackupIfNeeded(dbPath: dbPath)
@@ -2593,6 +2596,18 @@ class CosmoDatabase: ObservableObject {
             print("✅ recall_vectors.role added")
         }
 
+        migrator.registerMigration("canvas_blocks_entity_uuid_index") { db in
+            // ~40 hot sites filter canvas_blocks by entity_uuid (atom delete
+            // cascade, block create/move dedupe, remote tombstone application,
+            // swipe delete) — each was a full table scan; tombstone bursts
+            // paid one scan per synced row.
+            try db.execute(sql: """
+                CREATE INDEX IF NOT EXISTS idx_canvas_blocks_entity_uuid
+                    ON canvas_blocks(entity_uuid, is_deleted);
+            """)
+            print("✅ canvas_blocks entity_uuid index created")
+        }
+
         return migrator
     }
 
@@ -2970,6 +2985,7 @@ class CosmoDatabase: ObservableObject {
             CREATE INDEX IF NOT EXISTS idx_connections_uuid ON connections(uuid);
             CREATE INDEX IF NOT EXISTS idx_canvas_blocks_document ON canvas_blocks(document_type, document_id, is_deleted);
             CREATE INDEX IF NOT EXISTS idx_canvas_blocks_thinkspace_lookup ON canvas_blocks(thinkspace_id, is_deleted, z_index);
+            CREATE INDEX IF NOT EXISTS idx_canvas_blocks_entity_uuid ON canvas_blocks(entity_uuid, is_deleted);
             CREATE INDEX IF NOT EXISTS idx_sync_queue_status ON sync_queue(status, created_at);
         """)
     }

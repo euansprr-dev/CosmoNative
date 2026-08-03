@@ -65,6 +65,7 @@ struct ThinkspaceSidebar: View {
     // Loading
     @State private var isLoading: Bool = false
     @State private var loadError: String?
+    @State private var atomsChangeReloadTask: Task<Void, Never>?
 
     private let repository = AtomRepository.shared
 
@@ -176,7 +177,12 @@ struct ThinkspaceSidebar: View {
         .animation(ProMotionSprings.snappy, value: shouldShowSidebar)
         .task { await loadProjects() }
         .onReceive(NotificationCenter.default.publisher(for: .atomsDidChange)) { _ in
-            Task {
+            // Coalesce bursts: every atom write posts this notification, and
+            // the two reloads are full-table sweeps.
+            atomsChangeReloadTask?.cancel()
+            atomsChangeReloadTask = Task {
+                try? await Task.sleep(for: .milliseconds(400))
+                guard !Task.isCancelled else { return }
                 await loadProjects()
                 await manager.refreshChildDocs(for: expandedThinkspaces)
             }

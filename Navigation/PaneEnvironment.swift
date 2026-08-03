@@ -27,6 +27,27 @@ private struct IsPaneContextOwnerKey: EnvironmentKey {
     static let defaultValue: Bool = false
 }
 
+// MARK: - Is Pane Expanded
+
+/// Whether this pane is currently EXPANDED (focused or pinned) rather than
+/// collapsed into the tab rail. Collapsed panes stay mounted by design (state
+/// survives the switch), but continuous work — media playback, per-token
+/// transcript scrolls, 1Hz timelines — must quiet down while off-slot.
+/// Defaults TRUE: outside the deck (main destinations, peek, atom windows)
+/// a surface is always "expanded".
+private struct IsPaneExpandedKey: EnvironmentKey {
+    static let defaultValue: Bool = true
+}
+
+// MARK: - Is Pane Width Streaming
+
+/// True while a continuous width stream (main-split divider drag or window
+/// live resize) is feeding the deck. Canvas panes consult it to bucket their
+/// viewport-size snapshot instead of re-culling once per pointer frame.
+private struct IsPaneWidthStreamingKey: EnvironmentKey {
+    static let defaultValue: Bool = false
+}
+
 // MARK: - Is Peek Context
 
 /// Whether the view is rendered inside the Peek overlay. The peek header owns
@@ -85,6 +106,19 @@ extension EnvironmentValues {
     var isPaneContextOwner: Bool {
         get { self[IsPaneContextOwnerKey.self] }
         set { self[IsPaneContextOwnerKey.self] = newValue }
+    }
+
+    /// True when this pane is expanded (focused or pinned) — false while
+    /// collapsed into the tab rail. Defaults true outside the deck.
+    var isPaneExpanded: Bool {
+        get { self[IsPaneExpandedKey.self] }
+        set { self[IsPaneExpandedKey.self] = newValue }
+    }
+
+    /// True while the deck is inside a continuous width stream.
+    var isPaneWidthStreaming: Bool {
+        get { self[IsPaneWidthStreamingKey.self] }
+        set { self[IsPaneWidthStreamingKey.self] = newValue }
     }
 
     /// True when the view is rendered inside the Peek overlay.

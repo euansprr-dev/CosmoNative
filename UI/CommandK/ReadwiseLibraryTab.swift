@@ -472,7 +472,11 @@ struct ReadwiseLibraryTab: View {
     }
 
     nonisolated static func matchesSearch(_ highlight: ReadwiseLibraryHighlight, query: String) -> Bool {
-        CommandKSearchMatcher.matches(query, inAny: [highlight.text, highlight.note] + highlight.tags.map(Optional.some))
+        matchesSearch(highlight, normalizedQuery: CommandKSearchMatcher.normalizeQuery(query))
+    }
+
+    nonisolated static func matchesSearch(_ highlight: ReadwiseLibraryHighlight, normalizedQuery: String) -> Bool {
+        CommandKSearchMatcher.matches(normalizedQuery: normalizedQuery, inAny: [highlight.text, highlight.note] + highlight.tags.map(Optional.some))
     }
 
     @ViewBuilder

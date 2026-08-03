@@ -299,12 +299,15 @@ class ConflictResolver {
 
             try await database.asyncWrite { db in
                 // Don't pile up identical snapshots for the same remote payload.
-                let existing = try Row.fetchOne(
+                // Fetch candidate blobs by the indexed (uuid, status) probe and
+                // compare in Swift — a `data = ?` clause made SQLite compare the
+                // full payload blob against every candidate row inside the scan.
+                let existingBlobs = try String.fetchAll(
                     db,
-                    sql: "SELECT 1 FROM sync_queue WHERE uuid = ? AND status = 'conflict' AND data = ?",
-                    arguments: [uuid, payloadString]
+                    sql: "SELECT data FROM sync_queue WHERE uuid = ? AND status = 'conflict'",
+                    arguments: [uuid]
                 )
-                guard existing == nil else { return }
+                guard !existingBlobs.contains(payloadString) else { return }
                 try db.execute(
                     sql: """
                     INSERT INTO sync_queue (uuid, table_name, operation, data, local_version, status)

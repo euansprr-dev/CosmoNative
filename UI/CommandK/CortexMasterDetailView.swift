@@ -14,6 +14,10 @@ struct CortexMasterDetailView: View {
     @State private var actionSearchQuery = ""
     @State private var actionErrorMessage: String?
     @State private var cachedDetailSubject: CortexDetailSubject = .empty
+    /// Domain rail rows, cached — the filter used to re-run for EVERY body
+    /// evaluation (selection moves included); now it recomputes only when
+    /// `domainItemsKey` changes.
+    @State private var cachedDomainItems: [CommandKDomainRailItem] = []
 
     var body: some View {
         let subject = visibleDetailSubject
@@ -71,6 +75,7 @@ struct CortexMasterDetailView: View {
         .onChange(of: detailSubject.renderSignature) { _, _ in syncCachedDetailSubject() }
         .onChange(of: viewModel.selectedNodeId) { _, _ in syncCachedDetailSubject() }
         .task(id: domainLoadKey) { await loadDomainDataIfNeeded() }
+        .onChange(of: domainItemsKey) { _, _ in refreshDomainItems() }
         .onChange(of: domainSelectionIDs) { _, _ in syncDomainNavigation() }
         .onChange(of: viewModel.cortexMode) { _, _ in syncDomainNavigation() }
         .onReceive(NotificationCenter.default.publisher(for: .showCommandPalette)) { _ in
@@ -169,7 +174,13 @@ struct CortexMasterDetailView: View {
         return false
     }
 
-    private var domainItems: [CommandKDomainRailItem] {
+    private var domainItems: [CommandKDomainRailItem] { cachedDomainItems }
+
+    private func refreshDomainItems() {
+        cachedDomainItems = computeDomainItems()
+    }
+
+    private func computeDomainItems() -> [CommandKDomainRailItem] {
         guard case .expandedDomain(let tab) = viewModel.cortexMode, isDomainHydrated else { return [] }
         return CommandKDomainRailDataSource.items(
             for: tab,
@@ -200,6 +211,24 @@ struct CortexMasterDetailView: View {
         return "\(tab.rawValue)-\(isDomainHydrated)"
     }
 
+    /// Everything `computeDomainItems` reads, folded into one change key:
+    /// tab + hydration (domainLoadKey), the query, and the source-array
+    /// counts (loads/refreshes only ever swap whole arrays). Raw library
+    /// counts + flags stand in for `visibleDatabaseItems` — evaluating the
+    /// key must stay cheaper than the compute it gates.
+    private var domainItemsKey: String {
+        guard case .expandedDomain = viewModel.cortexMode else { return "none" }
+        return [
+            domainLoadKey,
+            viewModel.query,
+            "\(libraryVM.allItems.count)-\(libraryVM.displayItems.count)-\(libraryVM.recentlyDeletedItems.count)",
+            "\(libraryVM.isAtHome)-\(libraryVM.showingRecentlyDeleted)",
+            "\(viewModel.swipeGalleryItems.count)",
+            "\(viewModel.ideaGalleryItems.count)",
+            "\(bookStore.books.count)"
+        ].joined(separator: "|")
+    }
+
     private func selectedDomainItem(for id: String) -> CommandKDomainRailItem? {
         guard isExpandedDomain else { return nil }
         return domainItems.first { $0.selectionID == id }
@@ -220,6 +249,7 @@ struct CortexMasterDetailView: View {
     @MainActor
     private func loadDomainDataIfNeeded() async {
         guard case .expandedDomain(let tab) = viewModel.cortexMode, isDomainHydrated else {
+            refreshDomainItems()
             syncDomainNavigation()
             return
         }
@@ -238,6 +268,9 @@ struct CortexMasterDetailView: View {
             break
         }
         isLoadingDomain = false
+        // The loads above may not change any count (already-loaded arrays), so
+        // the key-driven onChange can't be relied on here — refresh directly.
+        refreshDomainItems()
         syncDomainNavigation()
     }
 

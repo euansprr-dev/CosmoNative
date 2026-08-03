@@ -280,23 +280,18 @@ final class IdeaFocusModeViewModel {
         self.selectedArcType = meta?.arcType
         self.editableCreativeDirection = meta?.creativeDirection ?? ""
 
-        // Decode JSON-backed fields
+        // Decode JSON-backed fields.
+        // codexOutline decodes HERE: the bench body renders the outline
+        // section on its first pass, before onAppear runs `start()`.
         if let outlineJSON = meta?.codexOutline,
            let data = outlineJSON.data(using: .utf8) {
             self.codexOutline = try? JSONDecoder().decode(CodexOutlineModel.self, from: data)
         }
-        if let researchJSON = meta?.researchResults,
-           let data = researchJSON.data(using: .utf8) {
-            self.researchResults = (try? JSONDecoder().decode([IdeaResearchResult].self, from: data)) ?? []
-        }
-        if let chatJSON = meta?.chatHistory,
-           let data = chatJSON.data(using: .utf8) {
-            self.chatHistory = (try? JSONDecoder().decode([IdeaChatMessage].self, from: data)) ?? []
-        }
-        if let arcJSON = meta?.arcRecommendations,
-           let data = arcJSON.data(using: .utf8) {
-            self.arcRecommendations = (try? JSONDecoder().decode([ArcRecommendation].self, from: data)) ?? []
-        }
+        // researchResults / chatHistory / arcRecommendations decode in
+        // `start()`: no view body reads them before appear (verified — the
+        // only readers are save snapshots and Begin Writing, both gated
+        // behind user action), so only the mounted model pays the parse —
+        // this init runs on every host re-render.
     }
 
     /// Begin loading everything this idea hangs off the network and the DB.
@@ -313,6 +308,23 @@ final class IdeaFocusModeViewModel {
         hasStarted = true
 
         let meta = idea.ideaMetadata
+
+        // JSON-backed fields whose decode moved out of init (init runs per
+        // host re-render; only the mounted model should pay the parse).
+        // Synchronous and ahead of the loader ladder so every downstream
+        // reader (save snapshots, Begin Writing) sees them seeded.
+        if let researchJSON = meta?.researchResults,
+           let data = researchJSON.data(using: .utf8) {
+            self.researchResults = (try? JSONDecoder().decode([IdeaResearchResult].self, from: data)) ?? []
+        }
+        if let chatJSON = meta?.chatHistory,
+           let data = chatJSON.data(using: .utf8) {
+            self.chatHistory = (try? JSONDecoder().decode([IdeaChatMessage].self, from: data)) ?? []
+        }
+        if let arcJSON = meta?.arcRecommendations,
+           let data = arcJSON.data(using: .utf8) {
+            self.arcRecommendations = (try? JSONDecoder().decode([ArcRecommendation].self, from: data)) ?? []
+        }
 
         Task { await loadClientProfiles() }
         if let clientUUID = meta?.clientUUID {

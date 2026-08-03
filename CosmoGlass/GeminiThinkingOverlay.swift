@@ -47,27 +47,25 @@ struct GeminiThinkingOverlay: View {
 
 struct EdgeGlow: View {
     let edge: Edge
-    @State private var phase: CGFloat = 0
+    @State private var pulsing = false
 
     var body: some View {
         GeometryReader { geometry in
-            let _ = edge == .leading || edge == .trailing  // Used for layout calculation
-
+            // Static content under the blur — it rasterizes once; the breathing
+            // pulse lives on the layer's compositor-only opacity below. Drawing
+            // the animated phase inside the Canvas re-blurred every frame.
             Canvas { context, size in
-                // Animated gradient that pulses
-                let gradient: Gradient
                 let startPoint: CGPoint
                 let endPoint: CGPoint
 
-                // Purple/lavender gradient (Cosmo's AI color)
-                let colors: [Color] = [
+                // Purple/lavender gradient (Cosmo's AI color) at peak glow
+                let gradient = Gradient(colors: [
                     .clear,
-                    CosmoColors.lavender.opacity(0.15 + 0.1 * Darwin.sin(phase)),
-                    CosmoColors.cosmoAI.opacity(0.25 + 0.15 * Darwin.sin(phase + 0.5)),
-                    CosmoColors.lavender.opacity(0.15 + 0.1 * Darwin.sin(phase + 1.0)),
+                    CosmoColors.lavender.opacity(0.25),
+                    CosmoColors.cosmoAI.opacity(0.40),
+                    CosmoColors.lavender.opacity(0.25),
                     .clear
-                ]
-                gradient = Gradient(colors: colors)
+                ])
 
                 switch edge {
                 case .leading:
@@ -95,10 +93,11 @@ struct EdgeGlow: View {
                 )
             }
             .blur(radius: 20)
+            .opacity(pulsing ? 1.0 : 0.25)
         }
         .onAppear {
             withAnimation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true)) {
-                phase = .pi * 2
+                pulsing = true
             }
         }
     }

@@ -15,12 +15,46 @@ import Foundation
 @MainActor
 enum SwipeFlowStore {
 
+    /// Memoized `flows()` result; invalidated whenever the library changes
+    /// (creation, membership edits, sync pulls all post `libraryDidChange`).
+    private static var cachedFlows: [Atom]?
+    private static var cacheInvalidationObserver: NSObjectProtocol?
+
+    private static func subscribeToInvalidationIfNeeded() {
+        guard cacheInvalidationObserver == nil else { return }
+        cacheInvalidationObserver = NotificationCenter.default.addObserver(
+            forName: CosmoNotification.SwipeFile.libraryDidChange,
+            object: nil,
+            queue: .main
+        ) { _ in
+            Task { @MainActor in cachedFlows = nil }
+        }
+    }
+
     /// Live flow swipes, newest first — what the "Add to flow" pickers show.
+    /// Narrow SQL pre-filter (both keys `createFlow` denormalises into
+    /// metadata) instead of decoding every research atom; the Swift-side
+    /// `swipeKind == .flow` check stays the authority.
     static func flows() async -> [Atom] {
-        let atoms = (try? await AtomRepository.shared.fetchAll(type: .research)) ?? []
-        return atoms
-            .filter { !$0.isDeleted && $0.isSwipeFileAtom && $0.swipeKind == .flow }
-            .sorted { $0.updatedAt > $1.updatedAt }
+        subscribeToInvalidationIfNeeded()
+        if let cachedFlows { return cachedFlows }
+
+        let kindHits = (try? await AtomRepository.shared
+            .fetchByMetadataSubstring("\"swipeKind\":\"flow\"", type: .research)) ?? []
+        let sourceHits = (try? await AtomRepository.shared
+            .fetchByMetadataSubstring("\"contentSource\":\"flow\"", type: .research)) ?? []
+        let flows = await Task.detached(priority: .userInitiated) { () -> [Atom] in
+            var seen = Set<String>()
+            var candidates: [Atom] = []
+            for atom in kindHits + sourceHits where seen.insert(atom.uuid).inserted {
+                candidates.append(atom)
+            }
+            return candidates
+                .filter { !$0.isDeleted && $0.isSwipeFileAtom && $0.swipeKind == .flow }
+                .sorted { $0.updatedAt > $1.updatedAt }
+        }.value
+        cachedFlows = flows
+        return flows
     }
 
     static func hasAnyFlow() async -> Bool {

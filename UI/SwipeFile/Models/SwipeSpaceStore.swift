@@ -50,11 +50,15 @@ final class SwipeSpaceStore {
     /// over legacy rows, and the ~hundreds of swipe atoms make this cheap.
     func refreshCountsFromDatabase() async {
         do {
-            let atoms = try await AtomRepository.shared.search(query: "", types: [.research])
-            var tally: [SwipeGenre: Int] = [:]
-            for atom in atoms where atom.isSwipeFileAtom {
-                tally[atom.swipeGenre, default: 0] += 1
-            }
+            let atoms = try await AtomRepository.shared.fetchSwipeFileAtoms()
+            // The genre ladder decodes metadata per atom — off the main actor.
+            let tally = await Task.detached(priority: .userInitiated) {
+                var tally: [SwipeGenre: Int] = [:]
+                for atom in atoms where atom.isSwipeFileAtom {
+                    tally[atom.swipeGenre, default: 0] += 1
+                }
+                return tally
+            }.value
             isLoaded = true
             if counts != tally {
                 counts = tally

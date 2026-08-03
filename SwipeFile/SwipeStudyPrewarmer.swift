@@ -18,44 +18,90 @@ import Foundation
 final class SwipeStudyPrewarmer {
     static let shared = SwipeStudyPrewarmer()
 
-    /// Parallel prewarms — small so scrolling stays smooth and Instagram's
-    /// CDN never sees a burst.
-    private let semaphore = AsyncSemaphore(value: 3)
-    /// Reels are ~9 MB. They get their OWN slot, held outside the image
-    /// semaphore: three concurrent video downloads used to occupy every prewarm
+    /// Reels are ~9 MB. They get their OWN slot, held outside the drainer
+    /// lanes: three concurrent video downloads used to occupy every prewarm
     /// slot and starve the thumbnails the user is actually looking at.
     private let videoSemaphore = AsyncSemaphore(value: 1)
-    /// UUIDs already warmed (or in flight) this launch. Bounded — a very long
-    /// browsing session resets rather than growing forever.
+    /// LIFO stack of requests waiting for a drainer — the BACK is the newest
+    /// request, which is what the user is looking at right now. A fast scroll
+    /// used to spawn one Task per card and warm them in arrival order, so the
+    /// cards on screen waited behind hundreds already scrolled past.
+    private var pendingUUIDs: [String] = []
+    private var pendingSet: Set<String> = []
+    /// UUIDs whose queued request wants the heavy lane too (see `prewarm`).
+    private var pendingHeavy: Set<String> = []
+    /// Long-lived drainers currently running (max 3 — the old semaphore width).
+    private var drainerCount = 0
+    /// Trim floor: requests beyond this many pending are the ones scrolled
+    /// furthest away — dropped oldest-first, and NOT marked warmed, so they
+    /// retry the next time they become visible.
+    private let pendingLimit = 120
+    /// UUIDs whose fast lane completed (marked at DRAIN time, never enqueue
+    /// time). Bounded — a very long browsing session resets rather than
+    /// growing forever.
     private var warmed: Set<String> = []
+    /// UUIDs whose heavy lane (carousel slides + reel MP4) completed.
+    private var heavyWarmed: Set<String> = []
     /// Video downloads are ~9 MB each — cap them per launch so scrolling the
     /// whole library doesn't quietly pull gigabytes.
     private var videoDownloadsRemaining = 60
 
     private init() {}
 
-    /// Called when a swipe card lands on screen. Fire-and-forget.
-    func prewarm(uuid: String) {
-        guard !warmed.contains(uuid) else { return }
-        if warmed.count > 1500 { warmed.removeAll() }
-        warmed.insert(uuid)
+    /// Fire-and-forget. Visibility-driven callers (card/row onAppear) use the
+    /// default: fast lane only (atom row + grid thumbnail). Selection, preview
+    /// and study call sites pass `includeHeavyMedia: true` to also warm the
+    /// Study-only media — carousel slides 1..N and the reel MP4 — which mere
+    /// scrolling must never download.
+    func prewarm(uuid: String, includeHeavyMedia: Bool = false) {
+        if includeHeavyMedia, !heavyWarmed.contains(uuid) {
+            pendingHeavy.insert(uuid)
+        }
+        let heavyOutstanding = pendingHeavy.contains(uuid)
+        if warmed.contains(uuid), !heavyOutstanding { return }
 
-        Task(priority: .utility) { [weak self] in
-            guard let self else { return }
+        if !pendingSet.contains(uuid) {
+            pendingUUIDs.append(uuid)
+            pendingSet.insert(uuid)
+            if pendingUUIDs.count > pendingLimit {
+                let dropped = pendingUUIDs.removeFirst()
+                pendingSet.remove(dropped)
+                pendingHeavy.remove(dropped)
+            }
+        }
+        startDrainersIfNeeded()
+    }
 
-            await self.semaphore.wait()
-            let deferred = await self.warm(uuid: uuid)
-            await self.semaphore.signal()
+    private func startDrainersIfNeeded() {
+        while drainerCount < 3, drainerCount < pendingUUIDs.count {
+            drainerCount += 1
+            Task(priority: .utility) { [weak self] in
+                await self?.drain()
+            }
+        }
+    }
 
-            // Everything only Swipe Study needs — carousel slides 1..N and the
-            // reel MP4 — runs AFTER the image slot is released, on its own
-            // one-at-a-time lane. Scrolling past a 10-slide carousel used to
-            // enqueue ten full-size downloads in a slot the visible grid's
-            // thumbnails were waiting for.
-            guard let deferred else { return }
-            await self.videoSemaphore.wait()
-            await self.warmStudyOnlyMedia(deferred)
-            await self.videoSemaphore.signal()
+    /// Pops from the BACK — newest request first — until the stack empties.
+    private func drain() async {
+        defer { drainerCount -= 1 }
+        while let uuid = pendingUUIDs.popLast() {
+            pendingSet.remove(uuid)
+            let wantsHeavy = pendingHeavy.remove(uuid) != nil
+            if warmed.contains(uuid), !wantsHeavy { continue }
+            if warmed.count > 1500 {
+                warmed.removeAll()
+                heavyWarmed.removeAll()
+            }
+            warmed.insert(uuid)
+            let deferred = await warm(uuid: uuid)
+
+            // The heavy lane runs AFTER the fast lane, on its own
+            // one-at-a-time slot, and ONLY for explicit requests.
+            guard wantsHeavy, !heavyWarmed.contains(uuid), let deferred else { continue }
+            heavyWarmed.insert(uuid)
+            await videoSemaphore.wait()
+            await warmStudyOnlyMedia(deferred)
+            await videoSemaphore.signal()
         }
     }
 
@@ -142,7 +188,7 @@ final class SwipeStudyPrewarmer {
 
         // Durable Supabase mirror first; the stored CDN URL (expires in days)
         // as the fallback for freshly captured swipes.
-        let source = Self.videoStorageURL(from: atom.metadata)
+        let source = Self.videoStorageURL(of: atom)
             ?? richContentVideoURL(atom)
         guard let source else { return }
 
@@ -152,10 +198,9 @@ final class SwipeStudyPrewarmer {
 
     /// The worker's durable Supabase copy of a reel. Static so playback
     /// surfaces (the preview rail's stage) share the exact source order.
-    static func videoStorageURL(from metadata: String?) -> URL? {
-        guard let metadata, let data = metadata.data(using: .utf8),
-              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let stored = dict["videoStorageURL"] as? String else { return nil }
+    /// Reads the memoized `researchMetadata` decode — never a raw re-parse.
+    static func videoStorageURL(of atom: Atom) -> URL? {
+        guard let stored = atom.researchMetadata?.videoStorageURL else { return nil }
         return URL(string: stored)
     }
 

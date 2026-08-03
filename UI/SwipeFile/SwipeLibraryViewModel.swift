@@ -34,6 +34,14 @@ final class SwipeLibraryViewModel {
             .sink { [weak self] _ in
                 Task { @MainActor [weak self] in
                     guard let self, self.hasLoaded else { return }
+                    // Off-surface changes defer to a dirty bit — the next
+                    // appearance replays them. A capture made WHILE the
+                    // surface is open still reloads immediately (freshness
+                    // contract).
+                    guard self.isSurfaceActive else {
+                        self.missedReloadWhileInactive = true
+                        return
+                    }
                     await self.reload()
                 }
             }
@@ -58,6 +66,10 @@ final class SwipeLibraryViewModel {
     /// Card display models aligned 1:1 with `visibleItems` — adapters (date parsing,
     /// URL building) run once per recompute, never on the render path.
     private(set) var visibleCardModels: [SwipeCardModel] = []
+    /// The `.poster()` map of `visibleCardModels`, same alignment — the catalog
+    /// grid renders posters, and mapping per body re-laid the masonry on every
+    /// selection change.
+    private(set) var visiblePosterModels: [SwipeCardModel] = []
     private(set) var cardModelsByID: [String: SwipeCardModel] = [:]
     private(set) var visibleItemsIdentity = SwipeLibraryVisibleItemsIdentity(items: [])
     /// Month-rhythm sections for the catalog — populated only when browsing the
@@ -86,8 +98,31 @@ final class SwipeLibraryViewModel {
     /// Independent of `filterState` — switching scope never touches user filters.
     private(set) var scope: SwipeLibrarySectionSelection = .all
 
+    /// allItems-derived caches rebuilt in `reload()` — recompute() must never
+    /// rescan the full library for values that only change when it reloads.
+    @ObservationIgnored private var thumbnailByID: [String: String] = [:]
+    @ObservationIgnored private var allItemsHighScoreCount = 0
+    @ObservationIgnored private var allItemsUnstudiedCount = 0
+    /// Facet-row counts, one dictionary pass per reload instead of one
+    /// full-library scan per row per render.
+    private(set) var kindCounts: [SwipeKind: Int] = [:]
+    private(set) var genreCounts: [SwipeGenre: Int] = [:]
+
+    @ObservationIgnored private var queryRecomputeTask: Task<Void, Never>?
+    @ObservationIgnored private var isBatchingFilterChanges = false
+    /// Reference-counted, not a flag: Home/Library/Boards share this VM and
+    /// SwiftUI overlaps the outgoing page's onDisappear with the incoming
+    /// page's onAppear during a switch.
+    @ObservationIgnored private var activeSurfaceCount = 0
+    @ObservationIgnored private var missedReloadWhileInactive = false
+
+    var isSurfaceActive: Bool { activeSurfaceCount > 0 }
+
     var query = "" {
-        didSet { recomputeIfNeeded(oldValue != query) }
+        didSet {
+            guard oldValue != query else { return }
+            scheduleQueryRecompute()
+        }
     }
 
     var filterState = SwipeLibraryFilterState() {
@@ -122,6 +157,21 @@ final class SwipeLibraryViewModel {
         setScope(section)
     }
 
+    /// Wired from the swipe pages' onAppear/onDisappear. Only the
+    /// libraryDidChange NOTIFICATION path gates on visibility — explicit
+    /// reload/prewarm calls (launch prewarm included) work while inactive.
+    func surfaceDidAppear() {
+        activeSurfaceCount += 1
+        guard missedReloadWhileInactive else { return }
+        missedReloadWhileInactive = false
+        guard hasLoaded else { return }
+        Task { await reload() }
+    }
+
+    func surfaceDidDisappear() {
+        activeSurfaceCount = max(0, activeSurfaceCount - 1)
+    }
+
     func setScope(_ newScope: SwipeLibrarySectionSelection) {
         guard scope != newScope else { return }
         scope = newScope
@@ -133,7 +183,7 @@ final class SwipeLibraryViewModel {
         errorMessage = nil
 
         do {
-            let atoms = try await AtomRepository.shared.search(query: "", types: [.research])
+            let atoms = try await AtomRepository.shared.fetchSwipeFileAtoms()
             // Atom→item mapping decodes several JSON columns per swipe — far
             // too heavy for the main actor at library size. Atom and
             // SwipeGalleryItem are Sendable; the map runs detached and only
@@ -151,9 +201,19 @@ final class SwipeLibraryViewModel {
 
             allItems = items
             hasLoaded = true
-            // Sidebar space rows ride every library refresh for free — a
-            // capture or a sync pull updates their counts in the same beat.
+            // Flow mosaics look up member thumbnails among SIBLING rows — a
+            // flow's steps are themselves library swipes, so no fetch is ever
+            // needed. Depends only on allItems, so it rebuilds here, not per
+            // recompute.
+            thumbnailByID = items.reduce(into: [:]) { acc, item in
+                if let thumb = item.thumbnailUrl, !thumb.isEmpty { acc[item.id] = thumb }
+            }
+            allItemsHighScoreCount = items.filter { ($0.hookScore ?? 0) >= 7.5 }.count
+            allItemsUnstudiedCount = items.filter { !$0.isStudied }.count
+            // Sidebar space + board rows ride every library refresh for free —
+            // a capture or a sync pull updates their counts in the same beat.
             SwipeSpaceStore.shared.refreshCounts(from: items)
+            SwipeBoardStore.shared.refreshCounts(from: items)
             await refreshAvailableFacets()
             recompute()
         } catch {
@@ -164,9 +224,36 @@ final class SwipeLibraryViewModel {
     }
 
     func resetFilters() {
-        filterState.reset()
-        query = ""
-        sortMode = .recent
+        withFilterBatch {
+            filterState.reset()
+            query = ""
+            sortMode = .recent
+        }
+    }
+
+    /// The Studied radio rows set two flags — batched so one recompute lands.
+    func setStudiedFilter(onlyStudied: Bool, onlyUnstudied: Bool) {
+        withFilterBatch {
+            filterState.onlyStudied = onlyStudied
+            filterState.onlyUnstudied = onlyUnstudied
+        }
+    }
+
+    /// Suppresses per-didSet recomputes for the duration of `changes` and runs
+    /// exactly ONE recompute at the end — multi-assignment setters (reset,
+    /// triage chips, radio rows) used to recompute once per assignment.
+    func withFilterBatch(_ changes: () -> Void) {
+        guard !isBatchingFilterChanges else {
+            changes()
+            return
+        }
+        isBatchingFilterChanges = true
+        defer {
+            isBatchingFilterChanges = false
+            queryRecomputeTask?.cancel()
+            recompute()
+        }
+        changes()
     }
 
     func applySmartPreset(_ preset: SwipeLibrarySmartPreset) {
@@ -272,7 +359,9 @@ final class SwipeLibraryViewModel {
                 atom.swipeBoardIDs = Array(ids).sorted()
                 _ = try await AtomRepository.shared.update(atom)
                 boardMessage = adding ? "Saved to \(board.name)" : "Removed from \(board.name)"
-                await reload()
+                // No local reload: the notification below finds this surface
+                // active and reloads ONCE — the old inline reload made every
+                // toggle pay the full pipeline twice.
                 SwipeBoardStore.shared.refreshCounts(from: allItems)
                 NotificationCenter.default.post(name: CosmoNotification.SwipeFile.libraryDidChange, object: nil)
             } catch {
@@ -296,8 +385,21 @@ final class SwipeLibraryViewModel {
     }
 
     private func recomputeIfNeeded(_ shouldRecompute: Bool) {
-        guard shouldRecompute else { return }
+        guard shouldRecompute, !isBatchingFilterChanges else { return }
         recompute()
+    }
+
+    /// Search keystrokes coalesce (150ms cancel-and-restart, mirroring
+    /// CommandKViewModel.scheduleSwipeFilterRecompute). Filter, sort, and
+    /// scope changes stay immediate — only QUERY debounces.
+    private func scheduleQueryRecompute() {
+        queryRecomputeTask?.cancel()
+        guard !isBatchingFilterChanges else { return }
+        queryRecomputeTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(150))
+            guard let self, !Task.isCancelled else { return }
+            self.recompute()
+        }
     }
 
     private func recompute() {
@@ -321,11 +423,6 @@ final class SwipeLibraryViewModel {
             if case .genre = effective { return true }
             return effective == .home
         }()
-        // Flow mosaics look up member thumbnails among SIBLING rows — a flow's
-        // steps are themselves library swipes, so no fetch is ever needed.
-        let thumbnailByID: [String: String] = allItems.reduce(into: [:]) { acc, item in
-            if let thumb = item.thumbnailUrl, !thumb.isEmpty { acc[item.id] = thumb }
-        }
         visibleCardModels = items.map { item in
             var model = SwipeCardModel(item: item)
             if !isSingleGenreRoom, item.genre != .post {
@@ -338,6 +435,7 @@ final class SwipeLibraryViewModel {
             }
             return model
         }
+        visiblePosterModels = visibleCardModels.map { $0.poster() }
         cardModelsByID = Dictionary(zip(items.map(\.id), visibleCardModels), uniquingKeysWith: { first, _ in first })
         let wantsDateSections = scope == .all
             && sortMode == .recent
@@ -347,7 +445,16 @@ final class SwipeLibraryViewModel {
             ? SwipeLibraryDateBucket.monthBuckets(items: items, models: visibleCardModels)
             : []
         shelves = SwipeLibraryFiltering.shelves(from: items)
-        summary = SwipeLibraryFiltering.facetSummary(allItems: allItems, filteredItems: items)
+        // Same values the old full facet scan produced — the allItems halves
+        // are cached at reload time, only the filtered halves compute here.
+        let scores = items.compactMap(\.hookScore)
+        summary = SwipeLibraryFacetSummary(
+            totalCount: allItems.count,
+            filteredCount: items.count,
+            highScoreCount: allItemsHighScoreCount,
+            unstudiedCount: allItemsUnstudiedCount,
+            averageHookScore: scores.isEmpty ? nil : scores.reduce(0, +) / Double(scores.count)
+        )
         // Warm the head of whatever the user is about to be looking at — a
         // launch prewarm, a scope switch, a filter, a search keystroke. Already
         // resident keys never reach the queue, so this is nearly free. Only an
@@ -370,20 +477,20 @@ final class SwipeLibraryViewModel {
         availablePlatforms = Array(Set(allItems.compactMap(\.platform))).sorted { lhs, rhs in
             platformName(lhs) < platformName(rhs)
         }
-        let present = Set(allItems.map(\.kind))
-        availableKinds = SwipeKind.allCases.filter(present.contains)
-        let presentGenres = Set(allItems.map(\.genre))
-        availableGenres = SwipeGenre.allCases.filter(presentGenres.contains)
+        kindCounts = allItems.reduce(into: [:]) { $0[$1.kind, default: 0] += 1 }
+        genreCounts = allItems.reduce(into: [:]) { $0[$1.genre, default: 0] += 1 }
+        availableKinds = SwipeKind.allCases.filter { (kindCounts[$0] ?? 0) > 0 }
+        availableGenres = SwipeGenre.allCases.filter { (genreCounts[$0] ?? 0) > 0 }
     }
 
     /// How many swipes of a kind the library holds — the facet row's live count.
     func kindCount(_ kind: SwipeKind) -> Int {
-        allItems.reduce(into: 0) { $0 += ($1.kind == kind ? 1 : 0) }
+        kindCounts[kind] ?? 0
     }
 
     /// How many swipes of a genre the library holds — the facet row's live count.
     func genreCount(_ genre: SwipeGenre) -> Int {
-        allItems.reduce(into: 0) { $0 += ($1.genre == genre ? 1 : 0) }
+        genreCounts[genre] ?? 0
     }
 
     /// Niche facet options: the exact strings present in the library (the

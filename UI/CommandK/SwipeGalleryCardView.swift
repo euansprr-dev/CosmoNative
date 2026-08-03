@@ -410,12 +410,6 @@ struct SwipeGalleryCardView: View {
 
     // MARK: - Helpers
 
-    private static let isoFormatter: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return f
-    }()
-    private static let isoFormatterBasic = ISO8601DateFormatter()
     private static let relativeFormatter: RelativeDateTimeFormatter = {
         let f = RelativeDateTimeFormatter()
         f.unitsStyle = .abbreviated
@@ -423,10 +417,7 @@ struct SwipeGalleryCardView: View {
     }()
 
     private var relativeDate: String {
-        guard let date = Self.isoFormatter.date(from: item.createdAt)
-                ?? Self.isoFormatterBasic.date(from: item.createdAt) else {
-            return item.createdAt
-        }
+        guard let date = item.createdAtDate else { return item.createdAt }
         return Self.relativeFormatter.localizedString(for: date, relativeTo: Date())
     }
 

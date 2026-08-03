@@ -284,8 +284,10 @@ struct SidebarThinkspaceSection: View {
         // A sibling Thinkspace is being dragged onto this row to nest it.
         let isReparentTarget = reparentDropTargetId == thinkspace.id
         let isDropTarget = isBlockDropTarget || isReparentTarget
-        let springLoadPulse = crossDragManager.pulseForThinkspace(thinkspace.id)
-        let isSpringLoading = springLoadPulse > 0
+        // Discrete flag only — the 60Hz pulse value is read inside the row
+        // chrome (via the pulse host), never here, so ticks don't re-evaluate
+        // the whole section body.
+        let isSpringLoadCandidate = crossDragManager.isSpringLoadCandidate(thinkspace.id)
 
         return VStack(alignment: .leading, spacing: 0) {
             if isRenaming && !isCollapsed {
@@ -309,8 +311,8 @@ struct SidebarThinkspaceSection: View {
             isActive: isActive,
             isHovered: isHovered,
             isDropTarget: isDropTarget,
-            isSpringLoading: isSpringLoading,
-            springLoadPulse: springLoadPulse,
+            isSpringLoadCandidate: isSpringLoadCandidate,
+            pulseHost: crossDragManager.springLoadPulseHost,
             accentColor: rowColor,
             fillColor: thinkspaceRowFill(color: rowColor, isActive: isActive, isHovered: isHovered, isDropTarget: isDropTarget)
         ))
@@ -323,7 +325,6 @@ struct SidebarThinkspaceSection: View {
         }
         .animation(hoverAnimation, value: isHovered)
         .animation(hoverAnimation, value: isDropTarget)
-        .animation(.linear(duration: 0.08), value: springLoadPulse)
         // Nest-by-drag: a plain SwiftUI DragGesture rather than AppKit
         // drag-and-drop. `.onDrop`/`.dropDestination` never received these
         // sidebar rows (the row chrome/controls swallow the drop), so we
@@ -1282,10 +1283,20 @@ private struct ThinkspaceRowChrome: ViewModifier {
     let isActive: Bool
     let isHovered: Bool
     let isDropTarget: Bool
-    let isSpringLoading: Bool
-    let springLoadPulse: Double
+    let isSpringLoadCandidate: Bool
+    /// Read here — and only here — so the 60Hz pulse invalidates just this
+    /// chrome, never the owning section body (CortexScrollMetricsStore pattern).
+    let pulseHost: SpringLoadPulseHost
     let accentColor: Color
     let fillColor: Color
+
+    private var springLoadPulse: CGFloat {
+        isSpringLoadCandidate ? pulseHost.pulse : 0
+    }
+
+    private var isSpringLoading: Bool {
+        springLoadPulse > 0
+    }
 
     func body(content: Content) -> some View {
         content

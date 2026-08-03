@@ -251,9 +251,45 @@ struct NoteDocumentStyle: Codable, Equatable {
 
     static let metadataKey = "note_document_style"
 
+    /// Last-decode memo for `load(fromMetadata:)`. NoteFocusModeView.init
+    /// re-runs the load on every SwiftUI re-init, re-parsing the whole
+    /// metadata JSON (often hundreds of KB) each time — and the hot case is
+    /// the SAME atom string decoded back-to-back, so one entry suffices.
+    /// Exact-equality semantics: `==` short-circuits on the count check
+    /// before comparing bytes. Lock-guarded to mirror
+    /// Atom.DecodedColumnCache's shape (call sites include nonisolated
+    /// test contexts, so no actor annotation).
+    private final class StyleDecodeMemo: @unchecked Sendable {
+        static let shared = StyleDecodeMemo()
+        private let lock = NSLock()
+        private var lastDecode: (source: String, style: NoteDocumentStyle)?
+
+        func style(for source: String, decode: () -> NoteDocumentStyle) -> NoteDocumentStyle {
+            lock.lock()
+            if let cached = lastDecode, cached.source.count == source.count, cached.source == source {
+                let hit = cached.style
+                lock.unlock()
+                return hit
+            }
+            lock.unlock()
+
+            let decoded = decode()
+            lock.lock()
+            lastDecode = (source, decoded)
+            lock.unlock()
+            return decoded
+        }
+    }
+
     static func load(fromMetadata metadata: String?) -> NoteDocumentStyle {
-        guard let metadata,
-              let data = metadata.data(using: .utf8),
+        guard let metadata else { return .default }
+        return StyleDecodeMemo.shared.style(for: metadata) {
+            decodeStyle(fromMetadata: metadata)
+        }
+    }
+
+    private static func decodeStyle(fromMetadata metadata: String) -> NoteDocumentStyle {
+        guard let data = metadata.data(using: .utf8),
               let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let value = dict[Self.metadataKey],
               JSONSerialization.isValidJSONObject(value),

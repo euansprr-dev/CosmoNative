@@ -23,6 +23,11 @@ struct InstagramReelLayout: View {
     @State private var isPlaying = false
     @State private var player: AVPlayer?
     @State private var isRefreshing = false
+    // Playback ticks land on the clock, not the currentTimestamp binding — a
+    // 10Hz write into the view model re-rendered the whole focus mode per tick.
+    @State private var clock = ReelPlaybackClock()
+    @State private var timeObserverToken: Any?
+    @State private var playbackFailureObserver: NSObjectProtocol?
 
     var body: some View {
         HStack(alignment: .top, spacing: 24) {
@@ -35,11 +40,23 @@ struct InstagramReelLayout: View {
                 .frame(maxWidth: .infinity)
         }
         .onAppear {
+            clock.tick(currentTimestamp)
+            clock.updateSections(sectionWindows, fallbackDuration: duration)
             setupPlayer()
         }
+        .onChange(of: sectionWindows) { _, windows in
+            clock.updateSections(windows, fallbackDuration: duration)
+        }
         .onDisappear {
-            player?.pause()
-            player = nil
+            // The view model's copy feeds saveState — sync it once on exit.
+            currentTimestamp = clock.currentTimestamp
+            teardownPlayer()
+        }
+    }
+
+    private var sectionWindows: [ReelPlaybackClock.SectionWindow] {
+        (instagramData.manualTranscript?.sections ?? []).map {
+            ReelPlaybackClock.SectionWindow(id: $0.id, start: $0.startTime, end: $0.endTime)
         }
     }
 
@@ -269,9 +286,12 @@ struct InstagramReelLayout: View {
                         ForEach(transcript.sections) { section in
                             ManualTranscriptSectionView(
                                 section: section,
-                                isActive: isSectionActive(section),
+                                isActive: clock.activeSectionIDs.contains(section.id),
                                 onTap: { onSectionTap(section) },
                                 onAddAnnotation: { type in
+                                    // The view model stamps annotations from its
+                                    // own copy — sync it at action time.
+                                    currentTimestamp = clock.currentTimestamp
                                     onAnnotationAdd(section.id, type)
                                 },
                                 onAnnotationEdit: onAnnotationEdit,
@@ -309,7 +329,7 @@ struct InstagramReelLayout: View {
 
             // Add section at current time
             Button {
-                onAddSection(currentTimestamp)
+                onAddSection(clock.currentTimestamp)
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "plus")
@@ -346,21 +366,7 @@ struct InstagramReelLayout: View {
     }
 
     private var addSectionButton: some View {
-        Button {
-            onAddSection(currentTimestamp)
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "plus.circle.fill")
-                    .font(.system(size: 14))
-                Text("Add Section at \(formatTime(currentTimestamp))")
-                    .font(.system(size: 13, weight: .medium))
-            }
-            .foregroundColor(CosmoColors.emerald)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
-            .background(CosmoColors.emerald.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
-        }
-        .buttonStyle(.plain)
+        ReelAddSectionButton(clock: clock, onAddSection: onAddSection)
     }
 
     // MARK: - Helpers
@@ -373,15 +379,8 @@ struct InstagramReelLayout: View {
         instagramData.manualTranscript?.sections.reduce(0) { $0 + $1.annotations.count } ?? 0
     }
 
-    private func isSectionActive(_ section: ManualTranscriptSection) -> Bool {
-        let endTime = section.endTime ?? (duration ?? .infinity)
-        return currentTimestamp >= section.startTime && currentTimestamp < endTime
-    }
-
     private func formatTime(_ time: TimeInterval) -> String {
-        let minutes = Int(time) / 60
-        let seconds = Int(time) % 60
-        return "\(minutes):\(String(format: "%02d", seconds))"
+        formatReelTime(time)
     }
 
     private func setupPlayer() {
@@ -396,19 +395,35 @@ struct InstagramReelLayout: View {
         let item = AVPlayerItem(url: videoURL)
         player = AVPlayer(playerItem: item)
 
-        // Observe playback time
-        player?.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.1, preferredTimescale: 600), queue: .main) { [self] time in
-            self.currentTimestamp = time.seconds
+        // Observe playback time — token stashed so teardown can remove it
+        // (AVFoundation requires removeTimeObserver before player release).
+        timeObserverToken = player?.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.1, preferredTimescale: 600), queue: .main) { [clock] time in
+            MainActor.assumeIsolated {
+                clock.tick(time.seconds)
+            }
         }
 
         // Handle playback errors (expired URL)
-        NotificationCenter.default.addObserver(
+        playbackFailureObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemFailedToPlayToEndTime,
             object: item,
             queue: .main
         ) { [self] _ in
             self.refreshVideo()
         }
+    }
+
+    private func teardownPlayer() {
+        if let timeObserverToken {
+            player?.removeTimeObserver(timeObserverToken)
+        }
+        timeObserverToken = nil
+        if let playbackFailureObserver {
+            NotificationCenter.default.removeObserver(playbackFailureObserver)
+        }
+        playbackFailureObserver = nil
+        player?.pause()
+        player = nil
     }
 
     private func togglePlayback() {
@@ -431,8 +446,9 @@ struct InstagramReelLayout: View {
                     let item = AVPlayerItem(url: videoURL)
                     player?.replaceCurrentItem(with: item)
                     // Resume playback from same position
-                    if currentTimestamp > 0 {
-                        await player?.seek(to: CMTime(seconds: currentTimestamp, preferredTimescale: 600))
+                    let resumeAt = clock.currentTimestamp
+                    if resumeAt > 0 {
+                        await player?.seek(to: CMTime(seconds: resumeAt, preferredTimescale: 600))
                     }
                 }
             } catch {
@@ -441,6 +457,82 @@ struct InstagramReelLayout: View {
             isRefreshing = false
         }
     }
+}
+
+// MARK: - Playback Clock
+
+/// 10Hz playback ticks land here instead of view state: only the leaf that
+/// reads `currentTimestamp` re-renders per tick, and the transcript reads the
+/// segment-granularity `activeSectionIDs` bucket, which changes only at
+/// section boundaries.
+@Observable @MainActor
+final class ReelPlaybackClock {
+    struct SectionWindow: Equatable {
+        let id: UUID
+        let start: TimeInterval
+        let end: TimeInterval?
+    }
+
+    var currentTimestamp: TimeInterval = 0
+    var activeSectionIDs: Set<UUID> = []
+
+    private var windows: [SectionWindow] = []
+    private var fallbackDuration: TimeInterval?
+
+    func updateSections(_ windows: [SectionWindow], fallbackDuration: TimeInterval?) {
+        self.windows = windows
+        self.fallbackDuration = fallbackDuration
+        refreshActiveSections()
+    }
+
+    func tick(_ seconds: TimeInterval) {
+        currentTimestamp = seconds
+        refreshActiveSections()
+    }
+
+    private func refreshActiveSections() {
+        let active = Set(
+            windows
+                .filter {
+                    currentTimestamp >= $0.start
+                        && currentTimestamp < ($0.end ?? fallbackDuration ?? .infinity)
+                }
+                .map(\.id)
+        )
+        if active != activeSectionIDs {
+            activeSectionIDs = active
+        }
+    }
+}
+
+/// Leaf reader of the clock — only this label pays the per-tick re-render.
+private struct ReelAddSectionButton: View {
+    let clock: ReelPlaybackClock
+    let onAddSection: (TimeInterval) -> Void
+
+    var body: some View {
+        Button {
+            onAddSection(clock.currentTimestamp)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "plus.circle.fill")
+                    .font(.system(size: 14))
+                Text("Add Section at \(formatReelTime(clock.currentTimestamp))")
+                    .font(.system(size: 13, weight: .medium))
+            }
+            .foregroundColor(CosmoColors.emerald)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .background(CosmoColors.emerald.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private func formatReelTime(_ time: TimeInterval) -> String {
+    let minutes = Int(time) / 60
+    let seconds = Int(time) % 60
+    return "\(minutes):\(String(format: "%02d", seconds))"
 }
 
 // MARK: - Manual Transcript Section View

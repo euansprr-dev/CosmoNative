@@ -12,10 +12,14 @@ struct SwipeDiscoverPostGrid: View {
     @State private var quickLookExpanded = false
     @State private var quickLookSource: CGRect?
     @State private var revealDate = Date()
+    /// Adapter memo — plain reference so body can fill it without invalidating.
+    @State private var cardModelMemo = CardModelMemo()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        let cardModels = posts.map(SwipeCardModel.init(post:))
+        // Memoized on the posts array — quick-look/hover state changes re-run
+        // body without re-running the whole adapter map.
+        let cardModels = cachedCardModels(for: posts)
 
         ZStack(alignment: .topLeading) {
             SwipeWaterfallGrid(
@@ -47,6 +51,20 @@ struct SwipeDiscoverPostGrid: View {
                 quickLook(post)
             }
         }
+    }
+
+    private func cachedCardModels(for posts: [SocialPostSnapshot]) -> [SwipeCardModel] {
+        let memo = cardModelMemo
+        if memo.posts != posts {
+            memo.posts = posts
+            memo.models = posts.map(SwipeCardModel.init(post:))
+        }
+        return memo.models
+    }
+
+    private final class CardModelMemo {
+        var posts: [SocialPostSnapshot] = []
+        var models: [SwipeCardModel] = []
     }
 
     private var quickLookPost: SocialPostSnapshot? {

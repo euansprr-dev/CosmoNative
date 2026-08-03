@@ -76,6 +76,17 @@ struct ConnectionFocusModeView: View {
             .focusImmersiveEntryTransition()
             .onAppear(perform: handleAppear)
             .onDisappear(perform: handleDisappear)
+            // The termination flush belongs to the MOUNTED view, never to the
+            // model (the Idea/Content/Notes idiom). `State(initialValue:)` is
+            // not lazy, so this view's initializer builds a model on every
+            // re-render and SwiftUI discards all but the first; when the model
+            // subscribed in its own init, quitting made every discarded copy
+            // flush its stale open-time state over the live one. Only one view
+            // is mounted, so only one flush can fire. Stays synchronous — the
+            // process is about to exit.
+            .onReceive(NotificationCenter.default.publisher(for: .cosmoAppWillTerminate)) { _ in
+                viewModel.saveToAtom()
+            }
             .onChange(of: isPaneContextOwner) { _, isOwner in
                 if isOwner { registerContextProvider() }
             }
@@ -597,7 +608,9 @@ struct ConnectionFocusModeView: View {
         AtomRepository.shared.releaseEditingLock(uuid: atom.uuid)
         viewModel.state.viewMode = workspace.viewMode
         viewModel.flushTitleSave()
-        viewModel.saveToAtom()
+        // ONE atom persist: saveState() routes it through the escorted async
+        // close save (the old explicit saveToAtom() here ran the same
+        // synchronous write TWICE inside the exit animation).
         viewModel.saveState()
         // Assistant scope and window context follow presence: leaving the
         // concept releases both.
@@ -1054,12 +1067,14 @@ final class ConnectionFocusModeViewModel {
     // MARK: - Properties
 
     @ObservationIgnored private let atom: Atom
-    @ObservationIgnored private var terminationCancellable: AnyCancellable?
     @ObservationIgnored private var titleSaveTask: Task<Void, Never>?
     /// Tracks whether sections were actually modified in this focus mode session.
     /// Prevents saveToAtom() from overwriting DB sections with stale state
     /// when the user only viewed but didn't edit in focus mode.
     @ObservationIgnored private(set) var sectionsModifiedInFocusMode = false
+    /// Monotonic ticket for escorted saves — stale in-flight snapshots skip
+    /// their write (mirrors IdeaFocusModeViewModel.saveSequence).
+    @ObservationIgnored private var saveSequence: UInt64 = 0
 
     // MARK: - Initialization
 
@@ -1069,24 +1084,18 @@ final class ConnectionFocusModeViewModel {
         let initialTitleDocument = RichDocumentPersistence.loadAtomDocument(
             field: .title,
             metadata: atom.metadata,
-            fallbackPlainText: atom.title ?? "New Concept"
+            fallbackPlainText: atom.title ?? "New Concept",
+            atomUUID: atom.uuid
         )
         self.titleDocument = initialTitleDocument
         self.editableTitle = RichDocumentPersistence.titlePlainText(from: initialTitleDocument)
         parseAtomStructuredData()
 
-        // Flush pending saves synchronously when the app is about to terminate
-        terminationCancellable = NotificationCenter.default
-            .publisher(for: .cosmoAppWillTerminate)
-            .sink { [weak self] _ in
-                self?.saveToAtom()
-            }
-    }
-
-    deinit {
-        MainActor.assumeIsolated {
-            terminationCancellable?.cancel()
-        }
+        // The `.cosmoAppWillTerminate` flush lives in the VIEW (.onReceive),
+        // never here: `State(initialValue:)` builds a model per re-render and
+        // SwiftUI discards all but the first — an init-owned sink made every
+        // discarded copy flush its stale open-time state at quit (the
+        // idea_stale_model_clobber shape).
     }
 
     // MARK: - State Management
@@ -1113,12 +1122,16 @@ final class ConnectionFocusModeViewModel {
         applySections(fromStructured: fresh.structured)
     }
 
-    func saveState() {
+    func saveState(persistToAtom: Bool = true) {
         state.lastModified = Date()
         state.save()
 
-        // Also save to atom.structured
-        saveToAtom()
+        // Also save to atom.structured — escorted async, so the focus-exit
+        // animation never blocks on the DB write lock. The app-termination
+        // sink calls the synchronous saveToAtom() directly.
+        if persistToAtom {
+            saveToAtomEscorted()
+        }
     }
 
     // MARK: - Title
@@ -1248,7 +1261,12 @@ final class ConnectionFocusModeViewModel {
     // MARK: - Atom persistence
 
     private func parseAtomStructuredData() {
-        applySections(fromStructured: atom.structured)
+        // Memoized decode (Atom.DecodedColumnCache): this init re-runs on
+        // every SwiftUI re-init of the focus view, and the raw whole-column
+        // parse was per-init main-thread cost. Same nil-on-absent/corrupt
+        // semantics as the old ConnectionStructuredData.fromJSON guard.
+        guard let data = atom.structuredData(as: ConnectionStructuredData.self) else { return }
+        applyParsedSections(data)
     }
 
     private func applySections(fromStructured structured: String?) {
@@ -1256,7 +1274,10 @@ final class ConnectionFocusModeViewModel {
               let data = ConnectionStructuredData.fromJSON(structured) else {
             return
         }
+        applyParsedSections(data)
+    }
 
+    private func applyParsedSections(_ data: ConnectionStructuredData) {
         // Merge saved sections with default sections
         for savedSection in data.sections {
             if let index = state.sections.firstIndex(where: { $0.type == savedSection.type }) {
@@ -1293,6 +1314,84 @@ final class ConnectionFocusModeViewModel {
             PersistenceHealth.note(
                 .writeFailure,
                 context: "ConnectionFocusMode.saveToAtom(\(atomUUID.prefix(8)))",
+                detail: error.localizedDescription
+            )
+        }
+    }
+
+    /// Escorted async atom persist — mirrors IdeaFocusModeViewModel.saveOnClose:
+    /// the focus-exit animation must never block on the DB write lock
+    /// (cross-process busy timeout is 5s). The registry escort preserves the
+    /// quit guarantee — terminating mid-write flushes the captured snapshot
+    /// synchronously; the commit unregisters it. The `.cosmoAppWillTerminate`
+    /// sink keeps calling the synchronous `saveToAtom()` directly.
+    private func saveToAtomEscorted() {
+        // GUARD-TWIN of the gate in `saveToAtom()` (change together): a
+        // session that never edited sections must not overwrite sections
+        // edited in the canvas block view.
+        guard sectionsModifiedInFocusMode else { return }
+
+        // Snapshot on main — the write body must never read live state later.
+        let structuredData = ConnectionStructuredData(sections: state.sections, media: state.media)
+        let bodyText = state.flattenedBodyText
+        let sequence = nextSaveSequence()
+
+        let escortID = "connection-close-\(atom.uuid)-\(UUID().uuidString.prefix(8))"
+        DirtyEditorRegistry.shared.register(id: escortID) { [weak self] in
+            self?.writeStructuredSnapshotSync(structuredData, bodyText: bodyText, sequence: sequence)
+        }
+        Task { @MainActor in
+            defer { DirtyEditorRegistry.shared.unregister(id: escortID) }
+            await self.writeStructuredSnapshot(structuredData, bodyText: bodyText, sequence: sequence)
+        }
+    }
+
+    private func nextSaveSequence() -> UInt64 {
+        saveSequence += 1
+        return saveSequence
+    }
+
+    private func writeStructuredSnapshot(_ structuredData: ConnectionStructuredData, bodyText: String, sequence: UInt64) async {
+        guard sequence == saveSequence else { return }
+        let atomUUID = atom.uuid
+        do {
+            // Fetch-fresh-row anti-clobber stays INSIDE the escorted body:
+            // saving from the immutable open-time `atom` snapshot reverted
+            // title/metadata/links to open-time values.
+            let fresh = try await CosmoDatabase.shared.asyncRead { db in
+                try Atom.filter(Column("uuid") == atomUUID).fetchOne(db)
+            } ?? atom
+            // Merge the sections key over existing structured so legacy
+            // mental-model keys survive the round-trip.
+            var updatedAtom = fresh.mergingStructuredKeys(structuredData)
+            updatedAtom.body = bodyText
+            // update() is the async twin of updateSync: versioned,
+            // merge-on-conflict, and queues the sync row.
+            _ = try await AtomRepository.shared.update(updatedAtom)
+        } catch {
+            PersistenceHealth.note(
+                .writeFailure,
+                context: "ConnectionFocusMode.saveToAtomEscorted(\(atomUUID.prefix(8)))",
+                detail: error.localizedDescription
+            )
+        }
+    }
+
+    /// Synchronous escort fallback — termination path only.
+    private func writeStructuredSnapshotSync(_ structuredData: ConnectionStructuredData, bodyText: String, sequence: UInt64) {
+        guard sequence == saveSequence else { return }
+        let atomUUID = atom.uuid
+        do {
+            let fresh = try CosmoDatabase.shared.read { db in
+                try Atom.filter(Column("uuid") == atomUUID).fetchOne(db)
+            } ?? atom
+            var updatedAtom = fresh.mergingStructuredKeys(structuredData)
+            updatedAtom.body = bodyText
+            _ = try AtomRepository.shared.updateSync(updatedAtom)
+        } catch {
+            PersistenceHealth.note(
+                .writeFailure,
+                context: "ConnectionFocusMode.saveToAtomEscorted.sync(\(atomUUID.prefix(8)))",
                 detail: error.localizedDescription
             )
         }

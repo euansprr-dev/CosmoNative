@@ -727,6 +727,7 @@ final class CosmoInlineSkillResolver {
 struct CosmoInlineAssistantPaneMessages: View {
     @ObservedObject var store: CosmoInlineAssistantStore
     @State private var skillResolver = CosmoInlineSkillResolver()
+    @Environment(\.isPaneExpanded) private var isPaneExpanded
 
     private static let bottomAnchorID = "pane-bottom-anchor"
 
@@ -744,18 +745,29 @@ struct CosmoInlineAssistantPaneMessages: View {
             // a top-anchored scroll + manual scroll-to-bottom would.
             .defaultScrollAnchor(.bottom)
             .onChange(of: store.paneMessages.count) {
+                guard isPaneExpanded else { return }
                 withAnimation(ProMotionSprings.gentle) {
                     proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
                 }
             }
             .onChange(of: store.paneMessages.last?.content) {
-                // Streaming growth: follow without animating every token.
+                // Streaming growth: follow without animating every token —
+                // and never for a COLLAPSED pane (a Cosmo run streaming while
+                // the user reads another tab was scrolling an invisible
+                // transcript per token).
+                guard isPaneExpanded else { return }
                 proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
             }
             .onChange(of: store.isProcessing) {
+                guard isPaneExpanded else { return }
                 withAnimation(ProMotionSprings.gentle) {
                     proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
                 }
+            }
+            .onChange(of: isPaneExpanded) { _, expanded in
+                // Re-expanding catches up on whatever streamed while collapsed.
+                guard expanded else { return }
+                proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
             }
         }
         // Select→mint: highlighting a concept-shaped phrase in the transcript

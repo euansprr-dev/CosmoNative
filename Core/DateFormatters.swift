@@ -153,6 +153,46 @@ enum CosmoDateFormatters {
         formatter.dateFormat = "MMM d, yyyy"
         return formatter
     }()
+
+    /// Full weekday + compact month/day for logbook day headers
+    /// Format: "Monday, Jan 15"
+    static let fullWeekdayAbbrevMonthDay: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EEEE, MMM d"
+        return formatter
+    }()
+
+    /// Full weekday + compact month/day/year for logbook day headers outside the current year
+    /// Format: "Monday, Jan 15, 2024"
+    static let fullWeekdayAbbrevMonthDayYear: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EEEE, MMM d, yyyy"
+        return formatter
+    }()
+
+    /// 24-hour clock time for calendar chips and editors
+    /// Format: "14:30"
+    static let twentyFourHourTime: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter
+    }()
+
+    /// Day + abbreviated month + year for calendar editor ranges
+    /// Format: "15 Jan 2024"
+    static let dayAbbrevMonthYear: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "d MMM yyyy"
+        return formatter
+    }()
+
+    /// Bare hour:minute for schedule strip time ranges
+    /// Format: "2:30"
+    static let hourMinute: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "h:mm"
+        return formatter
+    }()
 }
 
 // MARK: - Convenience Extensions

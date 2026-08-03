@@ -12,7 +12,6 @@ struct PaneContentView: View {
     @Environment(\.paneDeckChrome) private var paneDeckChrome
 
     @State private var loadedAtom: Atom?
-    @State private var swipeLibraryViewModel = SwipeLibraryViewModel()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -81,7 +80,7 @@ struct PaneContentView: View {
                 .environment(\.isPaneContextOwner, isContextOwner)
 
         case .swipeGallery:
-            SwipeLibraryPage(viewModel: swipeLibraryViewModel, section: .all)
+            PaneSwipeGalleryContent()
                 .environment(\.isPaneContext, true)
                 .environment(\.isPaneActive, isActive)
                 .environment(\.isPaneContextOwner, isContextOwner)
@@ -172,6 +171,19 @@ struct PaneContentView: View {
 
     private var backgroundFill: some View {
         DS.bg
+    }
+
+    /// Owns the gallery pane's library view model. `@State`'s default
+    /// expression is EAGER, so declaring the model on PaneContentView built a
+    /// full SwipeLibraryViewModel (two Combine subscriptions, immediately
+    /// cancelled) on every construction of EVERY pane kind. Scoped here, only
+    /// swipe-gallery panes ever pay it.
+    private struct PaneSwipeGalleryContent: View {
+        @State private var viewModel = SwipeLibraryViewModel()
+
+        var body: some View {
+            SwipeLibraryPage(viewModel: viewModel, section: .all)
+        }
     }
 
     /// Pane kind decides border WEIGHT (an inactive minimal pane recedes),

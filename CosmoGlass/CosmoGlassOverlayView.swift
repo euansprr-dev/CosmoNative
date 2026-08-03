@@ -721,25 +721,20 @@ enum ResponseSegment: Equatable {
 // MARK: - Streaming Dots Animation
 
 struct StreamingDotsView: View {
-    @State private var animatingDots = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        HStack(spacing: 3) {
-            ForEach(0..<3) { index in
-                Circle()
-                    .fill(CosmoColors.lavender)
-                    .frame(width: 4, height: 4)
-                    .opacity(animatingDots == index ? 1.0 : 0.3)
-            }
-        }
-        .onAppear {
-            withAnimation(.easeInOut(duration: 0.4).repeatForever(autoreverses: false)) {
-                animatingDots = (animatingDots + 1) % 3
-            }
-
-            // Cycle through dots
-            Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { _ in
-                animatingDots = (animatingDots + 1) % 3
+        // Zero-state cadence: phase derives from the clock, so there is no
+        // timer to leak when the streaming bubble goes away.
+        TimelineView(.animation(minimumInterval: 0.4, paused: reduceMotion)) { context in
+            let phase = Int(context.date.timeIntervalSinceReferenceDate / 0.4) % 3
+            HStack(spacing: 3) {
+                ForEach(0..<3, id: \.self) { index in
+                    Circle()
+                        .fill(CosmoColors.lavender)
+                        .frame(width: 4, height: 4)
+                        .opacity(reduceMotion ? 0.65 : (phase == index ? 1.0 : 0.3))
+                }
             }
         }
     }

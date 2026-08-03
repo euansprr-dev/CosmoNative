@@ -324,7 +324,10 @@ enum CommandKDomainRailDataSource {
         )
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return allItems }
-        return allItems.filter { matches($0, query: trimmed) }
+        // Normalize ONCE — the per-item matchers used to re-normalize the
+        // query for every candidate row.
+        let normalizedQuery = CommandKSearchMatcher.normalizeQuery(trimmed)
+        return allItems.filter { matches($0, normalizedQuery: normalizedQuery) }
     }
 
     /// Empty query → the jump row leads, so ⏎ goes straight to the board.
@@ -337,7 +340,8 @@ enum CommandKDomainRailDataSource {
             return [.ideasBoardJump(clientUUID: nil, clientName: nil, isSearch: false)] + rows
         }
 
-        let hits = ideaItems.filter { IdeasTab.matchesSearch($0, query: trimmed) }
+        let normalizedQuery = CommandKSearchMatcher.normalizeQuery(trimmed)
+        let hits = ideaItems.filter { IdeasTab.matchesSearch($0, normalizedQuery: normalizedQuery) }
         let rows = CommandKIdeaRailGrouping.orderedItems(from: hits).map(CommandKDomainRailItem.idea)
         let sections = CommandKIdeaRailGrouping.sections(from: hits)
         let inferred = sections.count == 1 && sections[0].title != "Unassigned" ? sections[0] : nil
@@ -370,16 +374,16 @@ enum CommandKDomainRailDataSource {
         }
     }
 
-    private static func matches(_ item: CommandKDomainRailItem, query: String) -> Bool {
+    private static func matches(_ item: CommandKDomainRailItem, normalizedQuery: String) -> Bool {
         switch item {
         case .library(let libraryItem):
-            return LibraryTab.matchesSearch(libraryItem, query: query)
+            return LibraryTab.matchesSearch(libraryItem, normalizedQuery: normalizedQuery)
         case .swipe(let swipeItem):
-            return CommandKViewModel.matchesSwipeGallerySearch(swipeItem, query: query)
+            return CommandKViewModel.matchesSwipeGallerySearch(swipeItem, normalizedQuery: normalizedQuery)
         case .idea(let ideaItem):
-            return IdeasTab.matchesSearch(ideaItem, query: query)
+            return IdeasTab.matchesSearch(ideaItem, normalizedQuery: normalizedQuery)
         case .readwise(let book):
-            return ReadwiseBookStore.matchesSearch(book, query: query)
+            return ReadwiseBookStore.matchesSearch(book, normalizedQuery: normalizedQuery)
         case .ideasBoardJump:
             return true
         }

@@ -132,7 +132,14 @@ struct SwipeWaterfallGrid<Item: Identifiable & Equatable, Cell: View>: View {
     @ViewBuilder let cell: (Item, CGFloat, Int) -> Cell
 
     @State private var availableWidth: CGFloat = 0
-    @State private var bands = SwipeMasonryScrollBands.everything
+    // PRECONDITION: every SwipeWaterfallGrid lives inside a vertical
+    // ScrollView, so the first real band arrives from onGeometryChange on the
+    // first laid-out frame. Seeding a finite band (instead of `.everything`)
+    // keeps the initial mount to ~one viewport of cells rather than the whole
+    // dataset for one frame.
+    @State private var bands = SwipeMasonryScrollBands.quantized(offsetInGrid: 0, viewportHeight: 900)
+    /// Layout memo — plain reference so body can fill it without invalidating.
+    @State private var layoutMemo = LayoutMemo()
 
     var body: some View {
         let metrics = SwipeWaterfallLayout.columnMetrics(
@@ -142,11 +149,10 @@ struct SwipeWaterfallGrid<Item: Identifiable & Equatable, Cell: View>: View {
             minColumns: minColumns,
             maxColumns: maxColumns
         )
-        let layout = SwipeWaterfallLayout.compute(
+        let layout = cachedLayout(
             heights: items.map { itemHeight($0, metrics.width) },
             columnCount: metrics.count,
-            columnWidth: metrics.width,
-            spacing: spacing
+            columnWidth: metrics.width
         )
 
         ZStack(alignment: .topLeading) {
@@ -170,6 +176,41 @@ struct SwipeWaterfallGrid<Item: Identifiable & Equatable, Cell: View>: View {
             emitPrefetch(layout, band: next.prefetch)
         }
         .onChange(of: items.count) { emitPrefetch(layout, band: bands.prefetch) }
+    }
+
+    /// Memoized `SwipeWaterfallLayout.compute` — the exact same call with the
+    /// exact same inputs, skipped when nothing changed. A selection or hover
+    /// re-runs body without re-running the O(n·columns) waterfall.
+    private func cachedLayout(
+        heights: [CGFloat],
+        columnCount: Int,
+        columnWidth: CGFloat
+    ) -> SwipeWaterfallLayout {
+        let memo = layoutMemo
+        if memo.heights == heights, memo.columnCount == columnCount,
+           memo.columnWidth == columnWidth, memo.spacing == spacing {
+            return memo.layout
+        }
+        let layout = SwipeWaterfallLayout.compute(
+            heights: heights,
+            columnCount: columnCount,
+            columnWidth: columnWidth,
+            spacing: spacing
+        )
+        memo.heights = heights
+        memo.columnCount = columnCount
+        memo.columnWidth = columnWidth
+        memo.spacing = spacing
+        memo.layout = layout
+        return layout
+    }
+
+    private final class LayoutMemo {
+        var heights: [CGFloat] = []
+        var columnCount = -1
+        var columnWidth: CGFloat = -1
+        var spacing: CGFloat = -1
+        var layout = SwipeWaterfallLayout.empty
     }
 
     private func visibleEntries(_ layout: SwipeWaterfallLayout) -> [Entry] {

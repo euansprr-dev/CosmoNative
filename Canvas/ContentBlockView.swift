@@ -232,6 +232,13 @@ struct ContentBlockView: View {
         }
         observationCancellable = observation.publisher(in: CosmoDatabase.shared.dbPool)
             .receive(on: DispatchQueue.main)
+            .removeDuplicates(by: { prev, next in
+                guard let prev, let next else { return prev == nil && next == nil }
+                return prev.title == next.title
+                    && prev.body == next.body
+                    && prev.structured == next.structured
+                    && prev.metadata == next.metadata
+            })
             .sink(
                 receiveCompletion: { _ in },
                 receiveValue: { [self] atom in
@@ -372,17 +379,13 @@ struct ContentBlockView: View {
 
     private func formatTimestamp(_ timestamp: String) -> String {
         if let date = ISO8601.date(from: timestamp) {
-            let formatter = RelativeDateTimeFormatter()
-            formatter.unitsStyle = .abbreviated
-            return formatter.localizedString(for: date, relativeTo: Date())
+            return CosmoDateFormatters.relative.localizedString(for: date, relativeTo: Date())
         }
         return timestamp
     }
 
     private func formatRelativeDate(_ date: Date) -> String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date, relativeTo: Date())
+        CosmoDateFormatters.relative.localizedString(for: date, relativeTo: Date())
     }
 }
 
@@ -656,14 +659,11 @@ struct ContentFooter: View {
     }
 
     private func timeAgo(from dateString: String) -> String {
-        let formatter = ISO8601DateFormatter()
-        guard let date = formatter.date(from: dateString) else {
+        guard let date = CosmoDateFormatters.iso8601.date(from: dateString) else {
             return ""
         }
 
-        let relativeFormatter = RelativeDateTimeFormatter()
-        relativeFormatter.unitsStyle = .abbreviated
-        return relativeFormatter.localizedString(for: date, relativeTo: Date())
+        return CosmoDateFormatters.relative.localizedString(for: date, relativeTo: Date())
     }
 
     private func copyContent() {

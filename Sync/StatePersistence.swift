@@ -63,20 +63,47 @@ class StatePersistence: ObservableObject {
 
     @Published var state: AppUIState {
         didSet {
-            saveState()
+            scheduleSave()
         }
     }
 
+    private var pendingSave: DispatchWorkItem?
+
     private init() {
         state = Self.loadState()
+        // The coalesced write must never be lost at quit.
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            // Delivered on .main — safe to assume the actor.
+            MainActor.assumeIsolated {
+                self?.pendingSave?.cancel()
+                self?.saveState()
+            }
+        }
     }
 
     // MARK: - Save State
+
+    /// Coalesce bursts — `state` is written from UI interactions that can
+    /// arrive many times per second, and each save is a full JSONEncoder pass
+    /// plus a UserDefaults write. 300ms of quiet is plenty for a UI-state
+    /// preference; the terminate observer flushes the tail.
+    private func scheduleSave() {
+        pendingSave?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.saveState()
+        }
+        pendingSave = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+    }
+
     private func saveState() {
         do {
             let data = try JSONEncoder().encode(state)
             userDefaults.set(data, forKey: stateKey)
-            print("💾 UI state saved")
         } catch {
             print("❌ Failed to save UI state: \(error)")
         }

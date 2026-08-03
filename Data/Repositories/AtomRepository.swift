@@ -281,6 +281,22 @@ class AtomRepository: ObservableObject {
         }
     }
 
+    /// User-searchable atoms whose `updated_at` is at or after the stamp —
+    /// INCLUDING tombstoned rows, so an incremental index refresh can drop
+    /// deletions instead of serving ghosts. `>=` on purpose: same-second
+    /// writes re-fetch a handful of rows rather than ever missing one.
+    func fetchUserSearchableUpdatedSince(_ iso8601Stamp: String, limit: Int = 10_000) async throws -> [Atom] {
+        let typeStrings = AtomType.userSearchableTypes.map { $0.rawValue }
+        return try await database.asyncRead { db in
+            try Atom
+                .filter(typeStrings.contains(Column("type")))
+                .filter(Atom.CodingKeys.updatedAt >= iso8601Stamp)
+                .order(Atom.CodingKeys.updatedAt.desc)
+                .limit(limit)
+                .fetchAll(db)
+        }
+    }
+
     /// Fetch atoms the user has actually opened, ordered by graph access time.
     func fetchRecentlyOpened(limit: Int = 25) async throws -> [RecentlyOpenedAtom] {
         let userTypes = AtomType.userSearchableTypes
@@ -1194,6 +1210,43 @@ class AtomRepository: ObservableObject {
         }
     }
 
+    /// Batch-fetch by uuid — one IN query per 900 uuids (SQLite's variable
+    /// cap is 999) instead of one round-trip per uuid. Result order is
+    /// unspecified; callers key by uuid.
+    func fetch(uuids: [String]) async throws -> [Atom] {
+        guard !uuids.isEmpty else { return [] }
+        return try await database.asyncRead { db in
+            var result: [Atom] = []
+            result.reserveCapacity(uuids.count)
+            for chunkStart in stride(from: 0, to: uuids.count, by: 900) {
+                let chunk = Array(uuids[chunkStart..<min(chunkStart + 900, uuids.count)])
+                result.append(contentsOf: try Atom
+                    .filter(chunk.contains(Column("uuid")))
+                    .filter(Atom.CodingKeys.isDeleted == false)
+                    .fetchAll(db))
+            }
+            return result
+        }
+    }
+
+    /// Fetch swipe-file candidate atoms without the `LIKE '%%'` full scan.
+    /// `search(query: "", types: [.research])` evaluated `title LIKE '%%' OR
+    /// body LIKE '%%'` against every research row — reading whole transcript
+    /// blobs to prove they match everything, and silently dropping rows whose
+    /// title AND body are both NULL. The metadata predicate here is a cheap
+    /// SQL pre-filter only (same shape SwipeProcessingService trusts);
+    /// callers keep `atom.isSwipeFileAtom` as the authority downstream.
+    func fetchSwipeFileAtoms() async throws -> [Atom] {
+        try await database.asyncRead { db in
+            try Atom
+                .filter(Atom.CodingKeys.isDeleted == false)
+                .filter(Atom.CodingKeys.type == AtomType.research.rawValue)
+                .filter(sql: "metadata LIKE '%\"isSwipeFile\":true%'")
+                .order(Atom.CodingKeys.updatedAt.desc)
+                .fetchAll(db)
+        }
+    }
+
     /// Search atoms by metadata field value
     func search(metadataKey: String, value: String, type: AtomType? = nil) async throws -> [Atom] {
         // Use JSON path search
@@ -1667,20 +1720,39 @@ extension AtomRepository {
 
 extension AtomRepository {
 
-    /// Get counts by type
+    /// Get counts by type — one GROUP BY, not one COUNT query per AtomType
+    /// case (81 cases = 81 index scans on the launch path). Absent types
+    /// still report 0.
     func countsByType() async throws -> [AtomType: Int] {
         try await database.asyncRead { db in
             var counts: [AtomType: Int] = [:]
-
             for type in AtomType.allCases {
-                let count = try Atom
-                    .filter(Atom.CodingKeys.type == type.rawValue)
-                    .filter(Atom.CodingKeys.isDeleted == false)
-                    .fetchCount(db)
-                counts[type] = count
+                counts[type] = 0
+            }
+
+            let rows = try Row.fetchAll(
+                db,
+                sql: "SELECT type, COUNT(*) AS n FROM atoms WHERE is_deleted = 0 GROUP BY type"
+            )
+            for row in rows {
+                if let raw = row["type"] as String?,
+                   let type = AtomType(rawValue: raw) {
+                    counts[type] = (row["n"] as Int?) ?? 0
+                }
             }
 
             return counts
+        }
+    }
+
+    /// One bit: does this Mac hold any live atoms at all? Cheaper than any
+    /// counting path — EXISTS short-circuits on the first row.
+    func hasAnyAtoms() async throws -> Bool {
+        try await database.asyncRead { db in
+            try Bool.fetchOne(
+                db,
+                sql: "SELECT EXISTS(SELECT 1 FROM atoms WHERE is_deleted = 0)"
+            ) ?? false
         }
     }
 

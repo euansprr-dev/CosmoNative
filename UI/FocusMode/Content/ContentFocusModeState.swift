@@ -664,7 +664,8 @@ extension ContentFocusModeState {
         state.contentDescription = canonicalIdea
         let richDraftDocument = RichDocumentMetadataStorage.readDocument(
             from: atom.metadata,
-            key: RichDocumentMetadataKeys.contentDraftDocument
+            key: RichDocumentMetadataKeys.contentDraftDocument,
+            atomUUID: atom.uuid
         )
         let body = atom.body ?? ""
         if let doc = richDraftDocument, doc.plainText != body, !body.isEmpty,

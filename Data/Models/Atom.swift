@@ -1554,7 +1554,14 @@ extension Atom {
         private let lock = NSLock()
         /// Hard cap; on overflow the cache resets wholesale (cheaper than LRU
         /// bookkeeping on every hit, and a rare full re-decode is harmless).
-        private let limit = 2048
+        /// Sized to hold a full swipe-library map: toSwipeGalleryItem touches
+        /// FOUR decodes per swipe (researchMetadata, swipeAnalysis,
+        /// richContent, swipeArtifact), so 2048 overflowed — and wholesale
+        /// reset — several times inside ONE library reload above ~500 swipes,
+        /// silently voiding the Study prewarm's decoded-columns contract.
+        /// Entries hold decoded structs (not JSON strings); memory is bounded
+        /// by what the library already keeps live.
+        private let limit = 16_384
 
         private init() {}
 
@@ -3139,6 +3146,12 @@ struct ResearchMetadata: Codable, Sendable {
     /// Absent on a non-swipe research atom means "research lens" by derivation
     /// (see `Atom.hasResearchLens`), so pre-lens rows need no migration.
     var researchLens: Bool?
+    /// The Railway worker's durable Supabase mirrors — READ-ONLY on the Mac.
+    /// Writers stay on the raw-dict merge (`mergeRawMetadata`); these fields
+    /// exist so readers ride the memoized `researchMetadata` decode instead of
+    /// re-running JSONSerialization per card. Keys match the worker exactly.
+    var thumbnailStorageURL: String?
+    var videoStorageURL: String?
 }
 
 // MARK: - Knowledge Crystallization

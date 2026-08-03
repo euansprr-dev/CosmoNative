@@ -25,7 +25,10 @@ struct InboxView: View {
         .background(DS.bg)
         .sheet(isPresented: $viewModel.showOverrideSheet) { overrideSheet }
         .modifier(InboxKeyboardModel(viewModel: viewModel))
-        .onAppear { viewModel.isInboxVisible = true }
+        .onAppear {
+            viewModel.startIfNeeded()
+            viewModel.isInboxVisible = true
+        }
         .onDisappear { viewModel.isInboxVisible = false }
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Inbox.focusCaptureField)) { _ in
             route = .global

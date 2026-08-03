@@ -61,10 +61,10 @@ public struct ConsoleLog {
 
     /// Verbose-level logging - for very detailed trace information
     /// Only shown when isVerboseEnabled is true
-    public static func verbose(_ message: String, subsystem: LogSubsystem) {
+    public static func verbose(_ message: @autoclosure () -> String, subsystem: LogSubsystem) {
         guard isVerboseEnabled else { return }
 
-        let formatted = "[\(subsystem.rawValue)] \(message)"
+        let formatted = "[\(subsystem.rawValue)] \(message())"
         os_log(.debug, log: osLog, "%{public}@", formatted)
         #if DEBUG
         print("🔬 \(formatted)")

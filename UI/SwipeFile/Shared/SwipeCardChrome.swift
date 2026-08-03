@@ -105,7 +105,6 @@ struct SwipeContextPill: View {
         .buttonStyle(.plain)
         .glassEffect(.regular, in: .capsule)
         .opacity(visible ? 1 : 0)
-        .blur(radius: visible || reduceMotion ? 0 : 8)
         .offset(y: visible ? 0 : -6)
         .animation(ProMotionSprings.gentle, value: visible)
         .allowsHitTesting(visible)

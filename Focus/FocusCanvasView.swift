@@ -6,6 +6,20 @@ import SwiftUI
 import AppKit
 import GRDB
 
+/// Tokens for the block-based NotificationCenter observers. The old
+/// struct-`self` removeObserver form removed NOTHING (block observers are
+/// only removable by token) — observers accumulated per focus open and stale
+/// handlers kept inserting DB rows. Reference-typed so every copy of the
+/// view value shares one bag.
+@MainActor
+final class FocusCanvasObserverBag {
+    var tokens: [NSObjectProtocol] = []
+    func drop() {
+        tokens.forEach(NotificationCenter.default.removeObserver)
+        tokens.removeAll()
+    }
+}
+
 /// Full-screen focus mode editor with optional floating blocks
 /// Right-click anywhere to add floating notes, ideas, or tasks
 /// Uses unified canvas block system (DocumentBlocksLayer) for consistency with home canvas
@@ -29,6 +43,12 @@ struct FocusCanvasView: View {
 
     // Atom for new Focus Mode views (Research/Connection)
     @State private var loadedAtom: Atom?
+    /// Cold-path fetch guard — the loading fallback's onAppear and
+    /// setupFocusMode can both request the same atom in one open.
+    @State private var atomLoadInFlight = false
+
+    /// Holds the block-observer tokens for this open; dropped on disappear.
+    @State private var observerBag = FocusCanvasObserverBag()
 
     // MARK: - Infinite Canvas State
     /// Horizontal offset for infinite panning (like home canvas)
@@ -278,24 +298,36 @@ struct FocusCanvasView: View {
 
     // MARK: - Atom Loading
     private func loadAtomForFocusMode() {
+        guard !atomLoadInFlight else { return }
+        atomLoadInFlight = true
         Task {
             do {
                 guard entity.id > 0 else {
                     print("❌ loadAtomForFocusMode: invalid entity id \(entity.id), closing focus mode")
-                    await MainActor.run { closeFocusMode() }
+                    await MainActor.run {
+                        atomLoadInFlight = false
+                        closeFocusMode()
+                    }
                     return
                 }
                 if let atom = try await AtomRepository.shared.fetch(id: entity.id) {
                     await MainActor.run {
+                        atomLoadInFlight = false
                         loadedAtom = atom
                     }
                 } else {
                     print("❌ loadAtomForFocusMode: atom not found for id \(entity.id), closing focus mode")
-                    await MainActor.run { closeFocusMode() }
+                    await MainActor.run {
+                        atomLoadInFlight = false
+                        closeFocusMode()
+                    }
                 }
             } catch {
                 print("❌ loadAtomForFocusMode failed: \(error)")
-                await MainActor.run { closeFocusMode() }
+                await MainActor.run {
+                    atomLoadInFlight = false
+                    closeFocusMode()
+                }
             }
         }
     }
@@ -527,7 +559,7 @@ struct FocusCanvasView: View {
         // Remove any existing observers first to prevent duplicates
         cleanupVoiceListeners()
 
-        NotificationCenter.default.addObserver(
+        observerBag.tokens.append(NotificationCenter.default.addObserver(
             forName: .voiceRecordingStateChanged,
             object: nil,
             queue: .main
@@ -539,9 +571,9 @@ struct FocusCanvasView: View {
                 if !isRecording { voiceStatus = "" }
                 }
             }
-        }
+        })
 
-        NotificationCenter.default.addObserver(
+        observerBag.tokens.append(NotificationCenter.default.addObserver(
             forName: .voiceTranscription,
             object: nil,
             queue: .main
@@ -552,10 +584,10 @@ struct FocusCanvasView: View {
                 voiceStatus = text
                 }
             }
-        }
+        })
 
         // Listen for "bring related blocks" voice command
-        NotificationCenter.default.addObserver(
+        observerBag.tokens.append(NotificationCenter.default.addObserver(
             forName: .bringRelatedBlocks,
             object: nil,
             queue: .main
@@ -566,7 +598,7 @@ struct FocusCanvasView: View {
             Task { @MainActor in
                 handleBringRelatedBlocks(quantity: quantity, entityType: entityType, query: query)
             }
-        }
+        })
 
         // Note: `.exitFocusMode` is deliberately NOT observed here. That
         // notification means "hard-exit to the underlying destination" and is
@@ -577,7 +609,7 @@ struct FocusCanvasView: View {
         // to the explicit onClose / ESC chrome path only.
 
         // Listen for @mention clicks to open as floating blocks
-        NotificationCenter.default.addObserver(
+        observerBag.tokens.append(NotificationCenter.default.addObserver(
             forName: .openMentionAsFloatingBlock,
             object: nil,
             queue: .main
@@ -589,10 +621,10 @@ struct FocusCanvasView: View {
                     await createFloatingBlockFromEntity(type: entityType, id: entityId)
                 }
             }
-        }
+        })
 
         // Listen for createEntityInFocusMode from Command Hub single-click or forwarded from CanvasView
-        NotificationCenter.default.addObserver(
+        observerBag.tokens.append(NotificationCenter.default.addObserver(
             forName: .createEntityInFocusMode,
             object: nil,
             queue: .main
@@ -619,10 +651,10 @@ struct FocusCanvasView: View {
                     }
                 }
             }
-        }
+        })
 
         // Listen for Cosmo AI block creation (redirected from main canvas when in focus mode)
-        NotificationCenter.default.addObserver(
+        observerBag.tokens.append(NotificationCenter.default.addObserver(
             forName: CosmoNotification.Canvas.createCosmoAIBlock,
             object: nil,
             queue: .main
@@ -638,16 +670,14 @@ struct FocusCanvasView: View {
                 )
                 addCosmoAIBlock(at: blockPosition, query: query, mode: mode)
             }
-        }
+        })
     }
 
     private func cleanupVoiceListeners() {
-        NotificationCenter.default.removeObserver(self, name: .voiceRecordingStateChanged, object: nil)
-        NotificationCenter.default.removeObserver(self, name: .voiceTranscription, object: nil)
-        NotificationCenter.default.removeObserver(self, name: .bringRelatedBlocks, object: nil)
-        NotificationCenter.default.removeObserver(self, name: .openMentionAsFloatingBlock, object: nil)
-        NotificationCenter.default.removeObserver(self, name: .createEntityInFocusMode, object: nil)
-        NotificationCenter.default.removeObserver(self, name: CosmoNotification.Canvas.createCosmoAIBlock, object: nil)
+        // Block-based observers are only removable by token — dropping the
+        // bag is the ONLY effective removal (the old struct-`self` form was
+        // a no-op).
+        observerBag.drop()
     }
 
     // MARK: - Bring Related Blocks Handler

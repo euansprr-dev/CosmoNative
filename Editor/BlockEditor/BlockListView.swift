@@ -126,6 +126,9 @@ struct BlockListView: View {
     /// hydration pump raises it (progressiveHydration only). `.max` = fully
     /// hydrated; the non-progressive path never consults it.
     @State private var hydratedRowLimit = BlockHydrationPolicy.initialChunk
+    /// Set on disappear so the hydration pump's runloop recursion stops
+    /// re-scheduling against a closed document; re-armed on appear.
+    @State private var hydrationCancelled = false
     @FocusState private var selectionKeyboardFocused: Bool
 
     var body: some View {
@@ -210,6 +213,16 @@ struct BlockListView: View {
         }
         .onDisappear {
             selectionKeyMonitor.remove()
+            hydrationCancelled = true
+            // Drop the closed document's undo entries from the window
+            // UndoManager: cross-document ⌘Z was already broken (the
+            // registrar applies into a dead view's @State), so retaining the
+            // stack only pinned every superseded document copy in memory.
+            // Only the OWNING list clears — nested element lists share the
+            // window stack but not ownership.
+            if providesNavigationOrder {
+                undoManager?.removeAllActions(withTarget: undoRegistrar)
+            }
         }
     }
 
@@ -1139,21 +1152,24 @@ struct BlockListView: View {
 
     private func startHydrationPumpIfNeeded() {
         guard progressiveHydration else { return }
+        hydrationCancelled = false
         pumpHydration()
     }
 
     /// Raises the hydrated-row limit one chunk per runloop turn until every
     /// row is live, then parks it at .max so blocks appended later always
-    /// mount live. Chunked so the main thread stays responsive between
-    /// chunks — the whole document hydrates within roughly a second.
-    private func pumpHydration() {
+    /// mount live. Chunks grow geometrically: the first ticks stay small so
+    /// the main thread breathes right after first paint, then the pump
+    /// accelerates so long documents don't pay hundreds of list-body passes.
+    private func pumpHydration(chunk: Int = BlockHydrationPolicy.chunk) {
+        guard !hydrationCancelled else { return }
         guard hydratedRowLimit < document.blocks.count else {
             hydratedRowLimit = .max
             return
         }
         DispatchQueue.main.async {
-            hydratedRowLimit += BlockHydrationPolicy.chunk
-            pumpHydration()
+            hydratedRowLimit += chunk
+            pumpHydration(chunk: BlockHydrationPolicy.nextChunk(after: chunk))
         }
     }
 
@@ -1176,6 +1192,15 @@ struct BlockListView: View {
 enum BlockHydrationPolicy {
     static let initialChunk = 28
     static let chunk = 24
+    /// Geometric growth per pump tick, capped: 24 → 38 → 60 → 96 → 96 …
+    /// The cap keeps a single tick's row mounts under a frame's worth of
+    /// blocking work; the growth keeps 500-block documents from paying a
+    /// full list-body pass every 24 rows.
+    static let growth = 1.6
+    static let maxChunk = 96
+    static func nextChunk(after current: Int) -> Int {
+        min(maxChunk, max(chunk, Int(Double(current) * growth)))
+    }
 }
 
 /// Off-render-path frame storage: the block list's frame in the hosting

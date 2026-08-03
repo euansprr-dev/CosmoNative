@@ -5,6 +5,7 @@
 
 import SwiftUI
 import GRDB
+import Combine
 
 struct IdeaBoardBlockView: View {
 
@@ -12,7 +13,7 @@ struct IdeaBoardBlockView: View {
 
     @State private var section: IdeaClientSection?
     @State private var isLoading = true
-    @State private var observation: AnyDatabaseCancellable?
+    @State private var observation: AnyCancellable?
     @State private var hasAppeared = false
 
     private var clientUUID: String? {
@@ -189,14 +190,23 @@ struct IdeaBoardBlockView: View {
     private func startObservation() {
         guard let db = CosmoDatabase.shared.dbPool else { return }
 
+        // Reload when the idea count changes — removeDuplicates drops the
+        // bookkeeping writes that leave the count unchanged, debounce
+        // coalesces bursts.
         let obs = ValueObservation.tracking { db in
             try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM atoms WHERE type = 'idea' AND is_deleted = 0") ?? 0
         }
 
-        observation = obs.start(in: db, onError: { _ in }) { [self] _ in
-            Task { @MainActor in
-                await loadIdeas()
-            }
-        }
+        observation = obs.publisher(in: db)
+            .removeDuplicates()
+            .debounce(for: .milliseconds(400), scheduler: DispatchQueue.main)
+            .sink(
+                receiveCompletion: { _ in },
+                receiveValue: { [self] _ in
+                    Task { @MainActor in
+                        await loadIdeas()
+                    }
+                }
+            )
     }
 }

@@ -1151,8 +1151,6 @@ extension CosmoNotification.Canvas {
 extension Thinkspace {
     /// Human-readable time since last opened
     var lastOpenedFormatted: String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: lastOpened, relativeTo: Date())
+        CosmoDateFormatters.relative.localizedString(for: lastOpened, relativeTo: Date())
     }
 }

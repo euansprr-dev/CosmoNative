@@ -825,6 +825,14 @@ final class CommandCenterDashboardViewModel {
         await loadSomedayTasks()
     }
 
+    private var hasLoadedHabits = false
+
+    func loadHabitsIfNeeded() async {
+        guard !hasLoadedHabits else { return }
+        hasLoadedHabits = true
+        await loadHabits()
+    }
+
     // MARK: - Property-change handlers (were Combine $-sinks pre-@Observable)
 
     private func handleSelectedDateChange() {

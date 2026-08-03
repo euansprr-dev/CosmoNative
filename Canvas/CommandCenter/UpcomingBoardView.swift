@@ -568,8 +568,7 @@ struct UpcomingBoardView: View {
     }
 
     private func timeRangeText(_ start: Date, _ end: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
+        let formatter = CosmoDateFormatters.twentyFourHourTime
         return "\(formatter.string(from: start))-\(formatter.string(from: end))"
     }
 }
@@ -888,9 +887,7 @@ private struct UpcomingTimelineCalendarView: View {
     }
 
     private func nowLabel(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
-        return formatter.string(from: date)
+        CosmoDateFormatters.twentyFourHourTime.string(from: date)
     }
 }
 
@@ -952,9 +949,7 @@ private struct CalendarDayHeaderCell: View {
     }
 
     private var weekdayText: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "EEE"
-        return formatter.string(from: date)
+        CosmoDateFormatters.shortDayOfWeek.string(from: date)
     }
 
     private var dayText: String {
@@ -1623,15 +1618,13 @@ private struct CalendarEditorPopover: View {
     }
 
     private var dateRangeText: String {
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "d MMM yyyy"
+        let dateFormatter = CosmoDateFormatters.dayAbbrevMonthYear
 
         if draft.isAllDay {
             return "\(dateFormatter.string(from: start)) · all day"
         }
 
-        let timeFormatter = DateFormatter()
-        timeFormatter.dateFormat = "HH:mm"
+        let timeFormatter = CosmoDateFormatters.twentyFourHourTime
         return "\(dateFormatter.string(from: start))  \(timeFormatter.string(from: start)) – \(timeFormatter.string(from: end))"
     }
 }

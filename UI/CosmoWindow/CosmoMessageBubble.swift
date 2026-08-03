@@ -939,7 +939,7 @@ struct StreamingIndicator: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 0.35)) { context in
+        TimelineView(.animation(minimumInterval: 0.35, paused: reduceMotion)) { context in
             let phase = Int(context.date.timeIntervalSinceReferenceDate / 0.35) % 3
             HStack(spacing: 4) {
                 ForEach(0..<3, id: \.self) { index in

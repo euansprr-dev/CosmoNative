@@ -1220,6 +1220,14 @@ struct CommandKSearchIndex: Sendable {
         let normalizedTitle: String
         let recencyWeight: Double
 
+        /// Bounded retention: the index held every atom's FULL body twice
+        /// (snippet + normalized searchableText) — tens of MB at 10k atoms.
+        /// Instant-tier matching covers the first 2000 chars of body + 512 of
+        /// metadata; the snippet keeps the SAME 2000-char window because
+        /// matched excerpts derive from it — anything the instant tier can
+        /// match must be excerptable (display takes its own 160-char head).
+        /// Deeper-body-only matches legitimately fall to the FTS tier.
+        /// Title and type stay whole.
         init(
             id: String,
             atomUUID: String,
@@ -1233,12 +1241,12 @@ struct CommandKSearchIndex: Sendable {
             self.atomUUID = atomUUID
             self.atomType = atomType
             self.title = title
-            self.snippet = snippet
+            self.snippet = snippet.map { String($0.prefix(2000)) }
             self.updatedAt = updatedAt
             self.searchableText = CommandKSearchMatcher.searchableText(from: [
                 title,
-                snippet,
-                metadata,
+                self.snippet,
+                metadata.map { String($0.prefix(512)) },
                 atomType.rawValue
             ])
             self.normalizedTitle = CommandKSearchMatcher.normalize(title)

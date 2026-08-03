@@ -113,8 +113,12 @@ private extension NSView {
 struct MainView: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var database: CosmoDatabase
-    @EnvironmentObject var glassCenter: CosmoGlassCenter
-    @EnvironmentObject var swipeFileEngine: SwipeFileEngine
+    // CosmoGlassCenter and SwipeFileEngine are deliberately NOT observed here:
+    // glassCenter's streamingContent publishes per AI stream chunk and the
+    // swipe engine publishes per capture step — each publish re-ran this whole
+    // body. Their overlay branches live in MainGlassOverlayHost /
+    // MainInstagramModalHost below (leaf views that observe the singletons
+    // themselves); event handlers reference the singletons directly.
 
     // Observe ThinkspaceManager for sidebar visibility changes
     // @Observable — a plain reference; SwiftUI tracks only the properties
@@ -134,8 +138,13 @@ struct MainView: View {
     @State private var commandKSearchFocusRequest = 0
     @State private var commandKViewModel = CommandKViewModel()
 
-    // Block context menu (right-click on block)
-    @StateObject private var blockFrameTracker = CanvasBlockFrameTracker()
+    // Block context menu (right-click on block).
+    // Plain @State reference, NOT @StateObject: MainView reads only the
+    // non-published trackedBlocks inside handlers/menu branches, while the
+    // tracker's blockFrames publish every 100ms during canvas pan/zoom —
+    // observing it re-ran this whole body on each publish. Consumers that
+    // need updates still observe it via .environmentObject.
+    @State private var blockFrameTracker = CanvasBlockFrameTracker()
     @State private var rightClickedBlockId: String?
     @State private var showBlockContextMenu = false
     @State private var blockContextMenuPosition: CGPoint = .zero
@@ -176,7 +185,9 @@ struct MainView: View {
     @State private var sidebarHoverCloseTask: Task<Void, Never>?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     // Split-pane system
-    @StateObject private var paneManager = PaneManager()
+    // @Observable — plain @State reference; MainView invalidates only on the
+    // properties it reads (panes), never on divider-drag ratio writes.
+    @State private var paneManager = PaneManager()
 
     // Deep work session engine: referenced in event handlers only — MainView
     // must NOT observe it (its elapsedSeconds publishes every second during a
@@ -217,18 +228,8 @@ struct MainView: View {
 
 
             // Glass overlay for search results, clarifications, proactive suggestions
-            if glassCenter.isVisible {
-                VStack {
-                    HStack {
-                        Spacer()
-                        CosmoGlassOverlayView()
-                            .environmentObject(glassCenter)
-                    }
-                    Spacer()
-                }
+            MainGlassOverlayHost()
                 .zIndex(60)
-                .transition(.opacity)
-            }
 
             // Global status indicator (bottom-right)
             VStack {
@@ -322,30 +323,8 @@ struct MainView: View {
             .zIndex(200)
 
             // Instagram Swipe File Modal (manual entry for Instagram content)
-            if swipeFileEngine.showInstagramModal {
-                // Backdrop
-                Color.black.opacity(0.35)
-                    .ignoresSafeArea()
-                    .onTapGesture {
-                        withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
-                            swipeFileEngine.cancelInstagramSave()
-                        }
-                    }
-                    .transition(.opacity)
-
-                InstagramSwipeModal(
-                    isPresented: $swipeFileEngine.showInstagramModal,
-                    pendingItem: swipeFileEngine.pendingInstagramItem,
-                    onSave: { hook, transcript in
-                        await swipeFileEngine.completeInstagramSave(hook: hook, transcript: transcript)
-                    },
-                    onCancel: {
-                        swipeFileEngine.cancelInstagramSave()
-                    }
-                )
-                .transition(.opacity.combined(with: .scale(scale: 0.95)))
+            MainInstagramModalHost()
                 .zIndex(275)
-            }
 
 
             // Radial Menu (right-click creation) - no overlay, just the menu
@@ -528,8 +507,9 @@ struct MainView: View {
         // and strand the palette's invisible click-catching snapshot.
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: showRadialMenu)
         .animation(.spring(response: 0.2, dampingFraction: 0.75), value: showBlockContextMenu)
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: glassCenter.isVisible)
-        .animation(.spring(response: 0.25, dampingFraction: 0.85), value: swipeFileEngine.showInstagramModal)
+        // The glass-overlay and Instagram-modal springs moved INTO their leaf
+        // hosts (MainGlassOverlayHost / MainInstagramModalHost) with identical
+        // curves — driving them here required observing the publishers.
         .animation(.spring(response: 0.25, dampingFraction: 0.85), value: showSettings)
         // onReceive, not onChange: MainView deliberately does NOT observe the
         // assistant store (its composerText publishes per keystroke and its
@@ -1188,7 +1168,14 @@ struct MainView: View {
                 guard database.isReady else { return }
                 await commandKViewModel.prewarmForAppLaunch()
                 await prewarmCanvasForAppLaunch()
-                await prewarmStudioAndIdeasForAppLaunch()
+                // Studio/Ideas and the neighbour-thinkspace warm run
+                // CONCURRENTLY — appended serially, Studio/Ideas inherited
+                // every sleep in the canvas tail and warmed at t≈4–7s, late
+                // enough for a fast first click to hit the cold path anyway.
+                // Both are pool reads; no writer contention.
+                async let studioWarm: Void = prewarmStudioAndIdeasForAppLaunch()
+                async let neighbourWarm: Void = prewarmNeighbourThinkspacesForAppLaunch()
+                _ = await (studioWarm, neighbourWarm)
             }
             .onDisappear {
                 cancelSidebarHoverClose()
@@ -1383,12 +1370,17 @@ struct MainView: View {
                 ?? candidates.first?.id else { return }
 
         canvasThinkspaceId = targetId
+    }
 
-        // Once the hidden mount has loaded its own space, warm the snapshot
-        // cache for the next most-recent spaces so their first open is
-        // instant too (CanvasView's prewarm guard never clobbers real visits).
+    /// Once the hidden mount has loaded its own space, warm the snapshot
+    /// cache for the next most-recent spaces so their first open is instant
+    /// too (CanvasView's prewarm guard never clobbers real visits). Split
+    /// from prewarmCanvasForAppLaunch so its settle sleep doesn't serialize
+    /// the Studio/Ideas warm behind it.
+    private func prewarmNeighbourThinkspacesForAppLaunch() async {
+        guard let targetId = canvasThinkspaceId else { return }
         try? await Task.sleep(for: .milliseconds(1500))
-        for thinkspace in candidates.prefix(3) where thinkspace.id != targetId {
+        for thinkspace in thinkspaceManager.sidebarThinkspaces.prefix(3) where thinkspace.id != targetId {
             NotificationCenter.default.post(
                 name: CosmoNotification.Canvas.prewarmThinkspace,
                 object: nil,
@@ -1408,6 +1400,12 @@ struct MainView: View {
         await swipeLibraryViewModel.prewarmIfNeeded()
         await swipeDiscoverModel.loadIfNeeded()
         await ideasPageModel.prewarmIfNeeded()
+        // Restored UI state can land the launch on a non-home destination,
+        // leaving Today cold until first visit — warm it here (guarded; a
+        // real visit racing this is a no-op).
+        if currentDestination != .commandCenter {
+            await commandCenterViewModel.startInitialLoadIfNeeded()
+        }
     }
 
     private func switchToThinkspaceForDestination(id: String) {
@@ -1549,16 +1547,21 @@ struct MainView: View {
     }
 
     private func syncSidebarContext(with destination: SidebarDestination) {
+        let next: SidebarContext
         switch destination {
         case .commandCenter:
-            activeSidebarContext = .commandCenter
+            next = .commandCenter
         case .inbox:
-            activeSidebarContext = .inbox
+            next = .inbox
         case .thinkspace:
-            activeSidebarContext = .thinkspaces
+            next = .thinkspaces
         case .discover, .swipeFile, .ideas:
-            activeSidebarContext = .swipeFile
+            next = .swipeFile
         }
+        // @AppStorage — every assignment is a UserDefaults write on the
+        // switch path; Studio↔Ideas↔Discover all map to the same context.
+        guard activeSidebarContext != next else { return }
+        activeSidebarContext = next
     }
 
     @ViewBuilder
@@ -2249,9 +2252,9 @@ struct MainView: View {
                 }
 
                 // 1. Instagram modal
-                if swipeFileEngine.showInstagramModal {
+                if SwipeFileEngine.shared.showInstagramModal {
                     withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
-                        swipeFileEngine.cancelInstagramSave()
+                        SwipeFileEngine.shared.cancelInstagramSave()
                     }
                     return nil
                 }
@@ -2331,8 +2334,8 @@ struct MainView: View {
                 }
 
                 // 10. Dismiss glass cards
-                if glassCenter.isVisible {
-                    glassCenter.clearAll()
+                if CosmoGlassCenter.shared.isVisible {
+                    CosmoGlassCenter.shared.clearAll()
                     return nil
                 }
 
@@ -3205,5 +3208,70 @@ private struct CrossThinkspaceDragPreviewHost: View {
                 .transition(.scale(scale: 0.8).combined(with: .opacity))
                 .allowsHitTesting(false)
         }
+    }
+}
+
+// MARK: - Glass Overlay Host
+
+/// The one view that observes CosmoGlassCenter. Its `streamingContent`
+/// publishes on every AI stream chunk — isolating the observation here keeps
+/// those publishes from re-evaluating MainView's whole body. The spring is
+/// the same curve MainView used to carry on `glassCenter.isVisible`.
+private struct MainGlassOverlayHost: View {
+    @ObservedObject private var glassCenter = CosmoGlassCenter.shared
+
+    var body: some View {
+        ZStack {
+            if glassCenter.isVisible {
+                VStack {
+                    HStack {
+                        Spacer()
+                        CosmoGlassOverlayView()
+                            .environmentObject(glassCenter)
+                    }
+                    Spacer()
+                }
+                .transition(.opacity)
+            }
+        }
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: glassCenter.isVisible)
+    }
+}
+
+// MARK: - Instagram Modal Host
+
+/// The one view that observes SwipeFileEngine (its processing state publishes
+/// per capture step). Same isolation pattern as MainGlassOverlayHost; the
+/// spring is the curve MainView used to carry on `showInstagramModal`.
+private struct MainInstagramModalHost: View {
+    @ObservedObject private var swipeFileEngine = SwipeFileEngine.shared
+
+    var body: some View {
+        ZStack {
+            if swipeFileEngine.showInstagramModal {
+                // Backdrop
+                Color.black.opacity(0.35)
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
+                            swipeFileEngine.cancelInstagramSave()
+                        }
+                    }
+                    .transition(.opacity)
+
+                InstagramSwipeModal(
+                    isPresented: $swipeFileEngine.showInstagramModal,
+                    pendingItem: swipeFileEngine.pendingInstagramItem,
+                    onSave: { hook, transcript in
+                        await swipeFileEngine.completeInstagramSave(hook: hook, transcript: transcript)
+                    },
+                    onCancel: {
+                        swipeFileEngine.cancelInstagramSave()
+                    }
+                )
+                .transition(.opacity.combined(with: .scale(scale: 0.95)))
+            }
+        }
+        .animation(.spring(response: 0.25, dampingFraction: 0.85), value: swipeFileEngine.showInstagramModal)
     }
 }

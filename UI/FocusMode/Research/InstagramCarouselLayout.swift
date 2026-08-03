@@ -305,6 +305,10 @@ struct CarouselSlideView: View {
                 }
             }
         }
+        .onDisappear {
+            player?.pause()
+            player = nil
+        }
     }
 
     private func setupVideoPlayer() {

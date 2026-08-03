@@ -463,10 +463,13 @@ struct SwipeStudyCarouselPager: View {
 
     @ViewBuilder
     private func carouselItemView(item: CarouselItem, shortcode: String?) -> some View {
-        let displayURL = InstagramCarouselImageCache.displayURL(for: item, shortcode: shortcode)
+        // Source URL + stable key, no `displayURL` — that helper stats the
+        // disk cache synchronously IN BODY. CachedAsyncImage probes the same
+        // file (same key, same directory) on its detached path.
+        let sourceURL = InstagramCarouselImageCache.imageSourceURL(for: item)
         let cacheKey = InstagramCarouselImageCache.stableKey(for: item, shortcode: shortcode)
 
-        CachedAsyncImage(url: displayURL, stableKey: cacheKey) { phase in
+        CachedAsyncImage(url: sourceURL, stableKey: cacheKey) { phase in
             switch phase {
             case .success(let image):
                 image

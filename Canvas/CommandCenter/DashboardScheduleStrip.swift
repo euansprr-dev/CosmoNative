@@ -421,8 +421,7 @@ struct DashboardScheduleStrip: View {
     }
 
     private func timeRange(_ start: Date, _ end: Date) -> String {
-        let fmt = DateFormatter()
-        fmt.dateFormat = "h:mm"
+        let fmt = CosmoDateFormatters.hourMinute
         return "\(fmt.string(from: start))-\(fmt.string(from: end))"
     }
 

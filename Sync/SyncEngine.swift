@@ -102,9 +102,15 @@ class SyncEngine: ObservableObject {
             }
         }
 
-        // Initial sync after a short delay
+        // Initial sync deliberately AFTER the launch prewarm ladder settles.
+        // At t=2s the ⌘K prewarm, the canvas hidden mount, and the automation
+        // startup all wake on the same fuse — a full sync pass (fence cleanup,
+        // backfills, orphan heal, push, pull) landing in that window contends
+        // for the pool writer and the main actor exactly when the first
+        // interactions happen. Realtime covers the live path; the first batch
+        // pass can wait for the app to go quiet.
         Task {
-            try? await Task.sleep(for: .seconds(2))
+            try? await Task.sleep(for: .seconds(8))
             await performBackgroundSync()
         }
     }
@@ -368,91 +374,120 @@ class SyncEngine: ObservableObject {
         // they must never silently orphan local edits.
         await requeueStaleFailedPushes()
 
-        let pendingItems = try? await database.asyncRead { db in
-            try SyncQueueItem
-                .filter(Column("status") == "pending")
-                .order(Column("created_at").asc)
-                .limit(500)
-                .fetchAll(db)
-        }
+        // One cheap COUNT for the status badge instead of hydrating the whole
+        // backlog up front. The pass then pages 50 rows at a time — a 500-row
+        // offline backlog used to hydrate 500 fat payload strings in one go.
+        let totalPending = (try? await database.asyncRead { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM sync_queue WHERE status = 'pending'") ?? 0
+        }) ?? 0
 
-        guard let items = pendingItems, !items.isEmpty else {
+        guard totalPending > 0 else {
             pendingChanges = 0
             return
         }
 
-        pendingChanges = items.count
-        print("📤 Syncing \(items.count) pending changes...")
+        pendingChanges = totalPending
+        print("📤 Syncing \(totalPending) pending changes...")
 
-        for item in items {
-            do {
-                try await pushChange(item)
+        // Transient failures keep status = 'pending' (retry next PASS, not next
+        // page) — exclude already-attempted rows so each item gets exactly one
+        // attempt per pass, same as the old single-fetch semantics.
+        let pageSize = 50
+        let passBudget = 500
+        var attemptedIds: Set<Int64> = []
+        var interrupted = false
 
-                // Scope to the pushed local_version (mirrors ChangeTracker.immediatePush):
-                // queueChange bumps the same row in place when an edit lands mid-flight,
-                // so an unscoped update would claim the newer edit was synced.
-                do {
-                    try await database.asyncWrite { db in
-                        try db.execute(
-                            sql: "UPDATE sync_queue SET status = 'synced', synced_at = ? WHERE id = ? AND local_version <= ?",
-                            arguments: [ISO8601.string(from: Date()), item.id, item.localVersion]
-                        )
-                        // A successful push carries the row's full current content,
-                        // superseding any older dead-lettered payload for it.
-                        try SyncQueueReconciler.clearSupersededDeadLetters(
-                            db, uuid: item.uuid, table: item.tableName, upToVersion: item.localVersion
-                        )
-                    }
-                } catch {
-                    PersistenceHealth.note(.syncFailure, context: "SyncEngine.syncPendingChanges(\(item.uuid.prefix(8)))", detail: "post-push queue bookkeeping failed: \(error)")
+        while attemptedIds.count < passBudget && !interrupted {
+            let excluded = attemptedIds
+            let pendingItems = try? await database.asyncRead { db in
+                var request = SyncQueueItem
+                    .filter(Column("status") == "pending")
+                if !excluded.isEmpty {
+                    request = request.filter(!excluded.contains(Column("id")))
                 }
+                return try request
+                    .order(Column("created_at").asc)
+                    .limit(pageSize)
+                    .fetchAll(db)
+            }
+            guard let items = pendingItems, !items.isEmpty else { break }
 
-                pendingChanges = max(0, pendingChanges - 1)
-
-            } catch {
-                let resolution = SyncFailurePolicy.resolve(
-                    currentRetryCount: item.retryCount,
-                    maxRetries: self.maxRetries,
-                    error: error
-                )
-
+            for item in items {
+                if let rowId = item.id { attemptedIds.insert(rowId) }
                 do {
-                    try await database.asyncWrite { db in
-                        try db.execute(
-                            sql: "UPDATE sync_queue SET status = ?, retry_count = ?, error_message = ? WHERE id = ?",
-                            arguments: [resolution.status, resolution.retryCount, error.localizedDescription, item.id]
-                        )
+                    try await pushChange(item)
 
-                        // Stamp the failure time so requeueStaleFailedPushes can
-                        // re-queue this row after a cool-down.
-                        if resolution.status == "failed" {
+                    // Scope to the pushed local_version (mirrors ChangeTracker.immediatePush):
+                    // queueChange bumps the same row in place when an edit lands mid-flight,
+                    // so an unscoped update would claim the newer edit was synced.
+                    do {
+                        try await database.asyncWrite { db in
                             try db.execute(
-                                sql: "UPDATE sync_queue SET created_at = ? WHERE id = ?",
-                                arguments: [Int64(Date().timeIntervalSince1970 * 1000), item.id]
+                                sql: "UPDATE sync_queue SET status = 'synced', synced_at = ? WHERE id = ? AND local_version <= ?",
+                                arguments: [ISO8601.string(from: Date()), item.id, item.localVersion]
+                            )
+                            // A successful push carries the row's full current content,
+                            // superseding any older dead-lettered payload for it.
+                            try SyncQueueReconciler.clearSupersededDeadLetters(
+                                db, uuid: item.uuid, table: item.tableName, upToVersion: item.localVersion
                             )
                         }
-
-                        // NOTE: _local_pending is deliberately NOT cleared on permanent
-                        // failure. The shield must stay up — clearing it let every future
-                        // remote change route into handleConflict and silently discard
-                        // the unpushed local edit (audit RC7). The row is re-queued for
-                        // slow-cadence retry by requeueStaleFailedPushes() instead; only
-                        // after failedPushAbandonAfter does dead-lettering lower the
-                        // shield (with the payload preserved) so inbound sync resumes.
+                    } catch {
+                        PersistenceHealth.note(.syncFailure, context: "SyncEngine.syncPendingChanges(\(item.uuid.prefix(8)))", detail: "post-push queue bookkeeping failed: \(error)")
                     }
+
                 } catch {
-                    PersistenceHealth.note(.writeFailure, context: "SyncEngine.syncPendingChanges(\(item.uuid.prefix(8)))", detail: "failed to record push failure: \(error)")
-                }
+                    let resolution = SyncFailurePolicy.resolve(
+                        currentRetryCount: item.retryCount,
+                        maxRetries: self.maxRetries,
+                        error: error
+                    )
 
-                if resolution.status == "failed" {
-                    PersistenceHealth.note(.syncFailure, context: "SyncEngine.pushChange(\(item.uuid.prefix(8)))", detail: "push failed after \(resolution.retryCount) attempts (retries every \(Int(failedPushRequeueDelay / 60)) min for \(Int(failedPushAbandonAfter / 86_400)) days, then dead-letters): \(error.localizedDescription)")
-                }
+                    do {
+                        try await database.asyncWrite { db in
+                            try db.execute(
+                                sql: "UPDATE sync_queue SET status = ?, retry_count = ?, error_message = ? WHERE id = ?",
+                                arguments: [resolution.status, resolution.retryCount, error.localizedDescription, item.id]
+                            )
 
-                if resolution.shouldPauseFurtherAttempts {
-                    print("⏸️ Supabase sync writes paused — preserving pending local changes and pausing this sync pass")
-                    break
+                            // Stamp the failure time so requeueStaleFailedPushes can
+                            // re-queue this row after a cool-down.
+                            if resolution.status == "failed" {
+                                try db.execute(
+                                    sql: "UPDATE sync_queue SET created_at = ? WHERE id = ?",
+                                    arguments: [Int64(Date().timeIntervalSince1970 * 1000), item.id]
+                                )
+                            }
+
+                            // NOTE: _local_pending is deliberately NOT cleared on permanent
+                            // failure. The shield must stay up — clearing it let every future
+                            // remote change route into handleConflict and silently discard
+                            // the unpushed local edit (audit RC7). The row is re-queued for
+                            // slow-cadence retry by requeueStaleFailedPushes() instead; only
+                            // after failedPushAbandonAfter does dead-lettering lower the
+                            // shield (with the payload preserved) so inbound sync resumes.
+                        }
+                    } catch {
+                        PersistenceHealth.note(.writeFailure, context: "SyncEngine.syncPendingChanges(\(item.uuid.prefix(8)))", detail: "failed to record push failure: \(error)")
+                    }
+
+                    if resolution.status == "failed" {
+                        PersistenceHealth.note(.syncFailure, context: "SyncEngine.pushChange(\(item.uuid.prefix(8)))", detail: "push failed after \(resolution.retryCount) attempts (retries every \(Int(failedPushRequeueDelay / 60)) min for \(Int(failedPushAbandonAfter / 86_400)) days, then dead-letters): \(error.localizedDescription)")
+                    }
+
+                    if resolution.shouldPauseFurtherAttempts {
+                        print("⏸️ Supabase sync writes paused — preserving pending local changes and pausing this sync pass")
+                        interrupted = true
+                        break
+                    }
                 }
             }
+
+            // Publish once per page, not once per item — pendingChanges is
+            // observed app-wide and used to publish per pushed row.
+            pendingChanges = max(0, totalPending - attemptedIds.count)
+
+            if items.count < pageSize { break }
         }
 
         // Clean up old synced items
@@ -570,64 +605,26 @@ class SyncEngine: ObservableObject {
         // Set sync fence to prevent remote from overwriting
         try await setSyncFence(uuid: item.uuid)
 
-        // Parse the data payload. DELETE rows are queued with no payload
-        // (soft delete by uuid) — requiring one made every batch-retried
-        // delete throw invalidPayload, so offline deletes never propagated.
-        var payload: [String: Any] = [:]
-        var serverVersion = 0
-        if item.operation != "DELETE" {
-            guard let data = item.data,
-                  let jsonData = data.data(using: .utf8),
-                  let parsed = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
-                throw SyncError.invalidPayload
-            }
-            payload = parsed
-            serverVersion = payload["_server_version"] as? Int ?? 0
-
-            // Remove local-only fields + GRDB autoincrement id (conflicts with Postgres serial)
-            payload.removeValue(forKey: "id")
-            payload.removeValue(forKey: "_local_version")
-            payload.removeValue(forKey: "_server_version")
-            payload.removeValue(forKey: "_sync_version")
-            payload.removeValue(forKey: "_local_pending")
-
-            // Add user_id for RLS compliance
-            if let userId = client.currentUserId {
-                payload["user_id"] = userId
-            }
-
-            // Add source tracking
-            payload["_source"] = "mac"
-
-            // For the unified atoms table, convert TEXT JSON fields to parsed objects
-            // so Postgres can store them as JSONB
-            if item.tableName == "atoms" {
-                payload = convertJSONFieldsForPostgres(payload)
-            }
-        }
-
-        let writeDisposition: SyncWriteDisposition
-        if item.tableName == "atoms" {
-            writeDisposition = SyncWriteDisposition.resolve(
-                requestedOperation: item.operation,
-                serverVersion: serverVersion
-            )
-        } else if item.operation == "INSERT" {
-            writeDisposition = .upsert
-        } else {
-            writeDisposition = .update
-        }
+        // Payload preparation (multi-hundred-KB JSON parse + JSONB conversion)
+        // runs off the main actor — draining a 500-row backlog used to land
+        // one main-thread parse per item in a tight loop.
+        let prep = try await Self.preparePushPayload(
+            operation: item.operation,
+            tableName: item.tableName,
+            data: item.data,
+            userId: client.currentUserId
+        )
 
         switch item.operation {
         case "DELETE":
             try await client.softDelete(table: item.tableName, uuid: item.uuid)
 
         case "INSERT", "UPDATE":
-            switch writeDisposition {
+            switch prep.writeDisposition {
             case .upsert:
-                try await client.upsert(table: item.tableName, data: payload, onConflict: "uuid")
+                try await client.upsert(table: item.tableName, data: prep.payload, onConflict: "uuid")
             case .update:
-                try await client.update(table: item.tableName, uuid: item.uuid, data: payload)
+                try await client.update(table: item.tableName, uuid: item.uuid, data: prep.payload)
             }
 
         default:
@@ -660,8 +657,74 @@ class SyncEngine: ObservableObject {
         }
     }
 
+    /// Prepared push payload — carried across the off-main prep boundary.
+    /// `@unchecked Sendable`: the dictionary is built and then only read.
+    private struct PushPayloadPrep: @unchecked Sendable {
+        let payload: [String: Any]
+        let writeDisposition: SyncWriteDisposition
+    }
+
+    /// Parse + strip + JSONB-convert a queue row's payload. `nonisolated
+    /// async` so it runs on the global executor, never the main actor.
+    private nonisolated static func preparePushPayload(
+        operation: String,
+        tableName: String,
+        data: String?,
+        userId: String?
+    ) async throws -> PushPayloadPrep {
+        // Parse the data payload. DELETE rows are queued with no payload
+        // (soft delete by uuid) — requiring one made every batch-retried
+        // delete throw invalidPayload, so offline deletes never propagated.
+        var payload: [String: Any] = [:]
+        var serverVersion = 0
+        if operation != "DELETE" {
+            guard let data,
+                  let jsonData = data.data(using: .utf8),
+                  let parsed = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
+                throw SyncError.invalidPayload
+            }
+            payload = parsed
+            serverVersion = payload["_server_version"] as? Int ?? 0
+
+            // Remove local-only fields + GRDB autoincrement id (conflicts with Postgres serial)
+            payload.removeValue(forKey: "id")
+            payload.removeValue(forKey: "_local_version")
+            payload.removeValue(forKey: "_server_version")
+            payload.removeValue(forKey: "_sync_version")
+            payload.removeValue(forKey: "_local_pending")
+
+            // Add user_id for RLS compliance
+            if let userId {
+                payload["user_id"] = userId
+            }
+
+            // Add source tracking
+            payload["_source"] = "mac"
+
+            // For the unified atoms table, convert TEXT JSON fields to parsed objects
+            // so Postgres can store them as JSONB
+            if tableName == "atoms" {
+                payload = convertJSONFieldsForPostgres(payload)
+            }
+        }
+
+        let writeDisposition: SyncWriteDisposition
+        if tableName == "atoms" {
+            writeDisposition = SyncWriteDisposition.resolve(
+                requestedOperation: operation,
+                serverVersion: serverVersion
+            )
+        } else if operation == "INSERT" {
+            writeDisposition = .upsert
+        } else {
+            writeDisposition = .update
+        }
+
+        return PushPayloadPrep(payload: payload, writeDisposition: writeDisposition)
+    }
+
     /// Convert TEXT JSON fields to parsed objects for JSONB storage in Postgres
-    private func convertJSONFieldsForPostgres(_ payload: [String: Any]) -> [String: Any] {
+    private nonisolated static func convertJSONFieldsForPostgres(_ payload: [String: Any]) -> [String: Any] {
         var converted = payload
         for key in ["structured", "metadata", "links"] {
             if let jsonString = converted[key] as? String,
@@ -1366,7 +1429,7 @@ final class AtomSyncObserver: TransactionObserver, @unchecked Sendable {
         guard !pendingRowIDs.isEmpty else { return }
         let rowIDs = pendingRowIDs
         pendingRowIDs.removeAll()
-        Task { @MainActor in
+        Task {
             await Self.enqueueForSync(rowIDs: rowIDs)
         }
     }
@@ -1380,11 +1443,26 @@ final class AtomSyncObserver: TransactionObserver, @unchecked Sendable {
     /// (0 = never pushed → upsert), so new atoms are covered too. The
     /// fire-and-forget immediatePush or the periodic SyncEngine pass flushes
     /// the queue.
-    @MainActor
+    ///
+    /// Reads + JSON serialization run on a POOL READER; only the queue
+    /// upserts take the writer. Serializing fat metadata columns while
+    /// holding the pool's one writer stalled every interactive write behind
+    /// each sync burst. A row edited between the read and the write simply
+    /// gets re-enqueued with fresher JSON by that edit's own commit — the
+    /// queue upsert is idempotent per (uuid, table, pending).
     private static func enqueueForSync(rowIDs: Set<Int64>) async {
+        struct PreparedQueueRow: Sendable {
+            let uuid: String
+            let rowId: Int64?
+            let json: String
+            let localVersion: Int
+        }
+
         let ids = Array(rowIDs)
         do {
-            try await CosmoDatabase.shared.asyncWrite { db in
+            let prepared: [PreparedQueueRow] = try await CosmoDatabase.shared.asyncRead { db in
+                var result: [PreparedQueueRow] = []
+                result.reserveCapacity(ids.count)
                 for chunkStart in stride(from: 0, to: ids.count, by: 100) {
                     let chunk = Array(ids[chunkStart..<min(chunkStart + 100, ids.count)])
                     let marks = chunk.map { _ in "?" }.joined(separator: ",")
@@ -1396,27 +1474,39 @@ final class AtomSyncObserver: TransactionObserver, @unchecked Sendable {
                     for row in rows {
                         guard let uuid = row["uuid"] as String?, !uuid.isEmpty,
                               let json = SyncQueueReconciler.atomPayloadJSON(row) else { continue }
-                        let localVersion = row["_local_version"] as Int? ?? 1
+                        result.append(PreparedQueueRow(
+                            uuid: uuid,
+                            rowId: row["id"] as Int64?,
+                            json: json,
+                            localVersion: row["_local_version"] as Int? ?? 1
+                        ))
+                    }
+                }
+                return result
+            }
 
-                        let existing = try Row.fetchOne(
-                            db,
-                            sql: "SELECT id FROM sync_queue WHERE uuid = ? AND table_name = 'atoms' AND status = 'pending'",
-                            arguments: [uuid]
+            guard !prepared.isEmpty else { return }
+
+            try await CosmoDatabase.shared.asyncWrite { db in
+                for item in prepared {
+                    let existing = try Row.fetchOne(
+                        db,
+                        sql: "SELECT id FROM sync_queue WHERE uuid = ? AND table_name = 'atoms' AND status = 'pending'",
+                        arguments: [item.uuid]
+                    )
+                    if let existingId = existing?["id"] as Int64? {
+                        try db.execute(
+                            sql: "UPDATE sync_queue SET operation = 'UPDATE', data = ?, local_version = ?, created_at = ? WHERE id = ?",
+                            arguments: [item.json, item.localVersion, Int64(Date().timeIntervalSince1970 * 1000), existingId]
                         )
-                        if let existingId = existing?["id"] as Int64? {
-                            try db.execute(
-                                sql: "UPDATE sync_queue SET operation = 'UPDATE', data = ?, local_version = ?, created_at = ? WHERE id = ?",
-                                arguments: [json, localVersion, Int64(Date().timeIntervalSince1970 * 1000), existingId]
-                            )
-                        } else {
-                            try db.execute(
-                                sql: """
-                                INSERT INTO sync_queue (uuid, table_name, row_id, operation, data, local_version, status)
-                                VALUES (?, 'atoms', ?, 'UPDATE', ?, ?, 'pending')
-                                """,
-                                arguments: [uuid, row["id"] as Int64?, json, localVersion]
-                            )
-                        }
+                    } else {
+                        try db.execute(
+                            sql: """
+                            INSERT INTO sync_queue (uuid, table_name, row_id, operation, data, local_version, status)
+                            VALUES (?, 'atoms', ?, 'UPDATE', ?, ?, 'pending')
+                            """,
+                            arguments: [item.uuid, item.rowId, item.json, item.localVersion]
+                        )
                     }
                 }
             }

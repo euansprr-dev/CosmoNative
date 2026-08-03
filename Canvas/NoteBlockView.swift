@@ -430,12 +430,14 @@ struct NoteBlockView: View {
         noteTitleDocument = RichDocumentPersistence.loadBlockDocument(
             key: RichDocumentMetadataKeys.titleDocument,
             metadata: block.metadata,
-            fallbackPlainText: block.metadata["title"]
+            fallbackPlainText: block.metadata["title"],
+            atomUUID: block.id
         )
         noteBodyDocument = RichDocumentPersistence.loadBlockDocument(
             key: RichDocumentMetadataKeys.bodyDocument,
             metadata: block.metadata,
-            fallbackPlainText: block.metadata["content"]
+            fallbackPlainText: block.metadata["content"],
+            atomUUID: block.id
         )
         noteTitleText = RichDocumentPersistence.titlePlainText(from: noteTitleDocument)
         noteText = noteBodyDocument.plainText
@@ -518,12 +520,14 @@ struct NoteBlockView: View {
         noteTitleDocument = RichDocumentPersistence.loadAtomDocument(
             field: .title,
             metadata: atom.metadata,
-            fallbackPlainText: atom.title
+            fallbackPlainText: atom.title,
+            atomUUID: atom.uuid
         )
         noteBodyDocument = RichDocumentPersistence.loadAtomDocument(
             field: .body,
             metadata: atom.metadata,
-            fallbackPlainText: atom.body
+            fallbackPlainText: atom.body,
+            atomUUID: atom.uuid
         )
         noteTitleText = RichDocumentPersistence.titlePlainText(from: noteTitleDocument)
         noteText = noteBodyDocument.plainText
@@ -560,12 +564,14 @@ struct NoteBlockView: View {
         let newTitleDocument = RichDocumentPersistence.loadAtomDocument(
             field: .title,
             metadata: atom.metadata,
-            fallbackPlainText: atom.title
+            fallbackPlainText: atom.title,
+            atomUUID: atom.uuid
         )
         let newBodyDocument = RichDocumentPersistence.loadAtomDocument(
             field: .body,
             metadata: atom.metadata,
-            fallbackPlainText: atom.body
+            fallbackPlainText: atom.body,
+            atomUUID: atom.uuid
         )
         let newTitle = RichDocumentPersistence.titlePlainText(from: newTitleDocument)
         let newBody = newBodyDocument.plainText
@@ -1162,9 +1168,7 @@ struct NoteBlockView: View {
 
     private func formatTimestamp(_ timestamp: String) -> String {
         if let date = ISO8601.date(from: timestamp) {
-            let formatter = RelativeDateTimeFormatter()
-            formatter.unitsStyle = .abbreviated
-            return formatter.localizedString(for: date, relativeTo: Date())
+            return CosmoDateFormatters.relative.localizedString(for: date, relativeTo: Date())
         }
         return timestamp
     }

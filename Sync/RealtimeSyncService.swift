@@ -352,23 +352,22 @@ final class RealtimeSyncService {
             let data = convertRecord(insert.record)
             guard let uuid = data["uuid"] as? String, !uuid.isEmpty else { return }
             let source = data["_source"] as? String ?? "unknown"
-            print("[REALTIME] INSERT received — uuid=\(uuid) source=\(source)")
-            guard isFromCloud(data) else { print("[REALTIME] INSERT SKIPPED — source=mac (own echo) uuid=\(uuid)"); return }
-            guard !isLocallyPending(uuid: uuid) else { print("[REALTIME] INSERT SKIPPED — localPending uuid=\(uuid)"); return }
+            ConsoleLog.verbose("[REALTIME] INSERT received — uuid=\(uuid) source=\(source)", subsystem: .sync)
+            guard isFromCloud(data) else { ConsoleLog.verbose("[REALTIME] INSERT SKIPPED — source=mac (own echo) uuid=\(uuid)", subsystem: .sync); return }
+            guard !isLocallyPending(uuid: uuid) else { ConsoleLog.verbose("[REALTIME] INSERT SKIPPED — localPending uuid=\(uuid)", subsystem: .sync); return }
             // FIX 3 [P0]: Match batch pull safety — check sync fence + editing lock
-            guard !hasSyncFence(uuid: uuid) else { print("[REALTIME] INSERT SKIPPED — syncFence active uuid=\(uuid)"); return }
+            guard !hasSyncFence(uuid: uuid) else { ConsoleLog.verbose("[REALTIME] INSERT SKIPPED — syncFence active uuid=\(uuid)", subsystem: .sync); return }
             guard !AtomRepository.shared.isBeingEdited(uuid) else {
                 // Queue for reconciliation after the lock is released — the
                 // change must not be lost to the next local autosave.
                 pendingLockedUUIDs.insert(uuid)
-                print("[REALTIME] INSERT SKIPPED — editingLock active uuid=\(uuid) (queued for reconcile)")
+                ConsoleLog.verbose("[REALTIME] INSERT SKIPPED — editingLock active uuid=\(uuid) (queued for reconcile)", subsystem: .sync)
                 return
             }
             let localData = convertJSONFieldsFromPostgres(data)
-            print("[REALTIME] INSERT APPLYING — uuid=\(uuid) source=\(source)")
             await conflictResolver.applyRemoteChange(table: "atoms", uuid: uuid, data: localData)
             lastEventTime = Date()
-            print("[REALTIME] INSERT APPLIED — uuid=\(uuid)")
+            ConsoleLog.verbose("[REALTIME] INSERT APPLIED — uuid=\(uuid)", subsystem: .sync)
             // Notify automation dispatcher for catch-up evaluation
             await MainActor.run {
                 NotificationCenter.default.post(
@@ -388,23 +387,23 @@ final class RealtimeSyncService {
             let data = convertRecord(update.record)
             guard let uuid = data["uuid"] as? String, !uuid.isEmpty else { return }
             let source = data["_source"] as? String ?? "unknown"
-            print("[REALTIME] UPDATE received — uuid=\(uuid) source=\(source)")
-            guard isFromCloud(data) else { print("[REALTIME] UPDATE SKIPPED — source=mac (own echo) uuid=\(uuid)"); return }
-            guard !isLocallyPending(uuid: uuid) else { print("[REALTIME] UPDATE SKIPPED — localPending uuid=\(uuid)"); return }
+            ConsoleLog.verbose("[REALTIME] UPDATE received — uuid=\(uuid) source=\(source)", subsystem: .sync)
+            guard isFromCloud(data) else { ConsoleLog.verbose("[REALTIME] UPDATE SKIPPED — source=mac (own echo) uuid=\(uuid)", subsystem: .sync); return }
+            guard !isLocallyPending(uuid: uuid) else { ConsoleLog.verbose("[REALTIME] UPDATE SKIPPED — localPending uuid=\(uuid)", subsystem: .sync); return }
             // FIX 3 [P0]: Match batch pull safety — check sync fence + editing lock
-            guard !hasSyncFence(uuid: uuid) else { print("[REALTIME] UPDATE SKIPPED — syncFence active uuid=\(uuid)"); return }
+            guard !hasSyncFence(uuid: uuid) else { ConsoleLog.verbose("[REALTIME] UPDATE SKIPPED — syncFence active uuid=\(uuid)", subsystem: .sync); return }
             guard !AtomRepository.shared.isBeingEdited(uuid) else {
                 // Queue for reconciliation after the lock is released — the
                 // change must not be lost to the next local autosave.
                 pendingLockedUUIDs.insert(uuid)
-                print("[REALTIME] UPDATE SKIPPED — editingLock active uuid=\(uuid) (queued for reconcile)")
+                ConsoleLog.verbose("[REALTIME] UPDATE SKIPPED — editingLock active uuid=\(uuid) (queued for reconcile)", subsystem: .sync)
                 return
             }
             let localData = convertJSONFieldsFromPostgres(data)
-            print("[REALTIME] UPDATE APPLYING — uuid=\(uuid) source=\(source) bodyPreview=\"\((data["body"] as? String)?.prefix(80) ?? "nil")\"")
+            ConsoleLog.verbose("[REALTIME] UPDATE APPLYING — uuid=\(uuid) source=\(source) bodyPreview=\"\((data["body"] as? String)?.prefix(80) ?? "nil")\"", subsystem: .sync)
             await conflictResolver.applyRemoteChange(table: "atoms", uuid: uuid, data: localData)
             lastEventTime = Date()
-            print("[REALTIME] UPDATE APPLIED — uuid=\(uuid)")
+            ConsoleLog.verbose("[REALTIME] UPDATE APPLIED — uuid=\(uuid)", subsystem: .sync)
             // Notify automation dispatcher for catch-up evaluation
             await MainActor.run {
                 NotificationCenter.default.post(

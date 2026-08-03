@@ -383,7 +383,8 @@ final class CosmoAtomBackedEditableSurface: CosmoEditableSurfaceProvider {
         self.loadedText = RichDocumentPersistence.loadAtomDocument(
             field: .body,
             metadata: atom.metadata,
-            fallbackPlainText: atom.body
+            fallbackPlainText: atom.body,
+            atomUUID: atom.uuid
         ).plainText
     }
 
@@ -416,7 +417,8 @@ final class CosmoAtomBackedEditableSurface: CosmoEditableSurfaceProvider {
         let document = RichDocumentPersistence.loadAtomDocument(
             field: .body,
             metadata: atom.metadata,
-            fallbackPlainText: atom.body
+            fallbackPlainText: atom.body,
+            atomUUID: atom.uuid
         )
 
         let nextDocument: RichDocument

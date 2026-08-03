@@ -216,7 +216,11 @@ struct LibraryTab: View {
     }
 
     nonisolated static func matchesSearch(_ item: LibraryItem, query: String) -> Bool {
-        CommandKSearchMatcher.matches(query, inAny: [item.title, item.preview, item.typeName, item.provenanceSummary])
+        matchesSearch(item, normalizedQuery: CommandKSearchMatcher.normalizeQuery(query))
+    }
+
+    nonisolated static func matchesSearch(_ item: LibraryItem, normalizedQuery: String) -> Bool {
+        CommandKSearchMatcher.matches(normalizedQuery: normalizedQuery, inAny: [item.title, item.preview, item.typeName, item.provenanceSummary])
     }
 
     @ViewBuilder

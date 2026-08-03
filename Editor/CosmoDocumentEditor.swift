@@ -239,6 +239,12 @@ final class DocumentEditorSyncBox {
     var isSyncingFromEditor = false
     var documentSyncWorkItem: DispatchWorkItem?
     var lastEmittedPlainText = ""
+    /// One-shot handoff of the mount-time serialization: `initialContent`
+    /// builds the seed for makeNSView; `.onAppear`'s syncEditorFromDocument
+    /// used to build the SAME bytes a second time and then deep-compare the
+    /// two. Sharing the instance makes mount cost one serialization and the
+    /// reconcile a pointer check.
+    var mountSerialization: NSAttributedString?
     /// The last document value THIS editor wrote to the binding. Guards
     /// `.onChange(of: document)` against echoes of our own writes — the
     /// async-reset `isSyncingFromEditor` flag alone has a one-tick dead
@@ -412,11 +418,15 @@ struct CosmoDocumentEditor: View {
                 syncDocumentFromEditor()
             },
             autoFocus: autoFocus,
-            initialContent: { serializedEditorContent() },
+            initialContent: {
+                let seed = serializedEditorContent()
+                syncBox.mountSerialization = seed
+                return seed
+            },
             onSave: { _ in syncDocumentFromEditor() }
         )
         .onAppear {
-            syncEditorFromDocument()
+            syncEditorFromDocument(allowMountSeed: true)
         }
         .onChange(of: document) { _, newValue in
             // Echo guard by VALUE: the async-reset flags below have a
@@ -473,13 +483,22 @@ struct CosmoDocumentEditor: View {
         )
     }
 
-    private func syncEditorFromDocument(preferLivePlainText: Bool = false) {
+    private func syncEditorFromDocument(preferLivePlainText: Bool = false, allowMountSeed: Bool = false) {
         syncBox.isApplyingExternalUpdate = true
         // External content now owns the view — a later external revert to a
         // previously self-written value must not be mistaken for an echo.
         syncBox.lastSelfWrittenDocument = nil
         let resolved = resolvedDocumentForEditor(preferLivePlainText: preferLivePlainText)
-        syncBox.attributedText = serializedEditorContent(preferLivePlainText: preferLivePlainText)
+        // Mount seed reuse is opt-in (the .onAppear immediately after
+        // makeNSView) — any other caller may run against a document that
+        // changed since the seed was built and must re-serialize.
+        if allowMountSeed, let mountSeed = syncBox.mountSerialization {
+            syncBox.mountSerialization = nil
+            syncBox.attributedText = mountSeed
+        } else {
+            syncBox.mountSerialization = nil
+            syncBox.attributedText = serializedEditorContent(preferLivePlainText: preferLivePlainText)
+        }
         let resolvedPlainText = resolvedPlainTextForCallbacks(from: resolved)
         setMirror(resolvedPlainText)
         syncBox.lastEmittedPlainText = resolvedPlainText

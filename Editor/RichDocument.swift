@@ -690,39 +690,75 @@ enum RichDocumentMetadataKeys {
 final class RichDocumentDecodeCache: @unchecked Sendable {
     static let shared = RichDocumentDecodeCache()
 
-    private struct Key: Hashable {
+    /// Preferred identity (mirrors Atom.DecodedColumnCache): a cheap
+    /// (uuid, metadataKey) probe with the source string stored IN the entry
+    /// and validated on every hit — hashing the whole multi-hundred-KB
+    /// metadata string per probe was itself a per-mount tax. Any source
+    /// mismatch re-decodes and replaces.
+    private struct UUIDKey: Hashable {
+        let uuid: String
+        let metadataKey: String
+    }
+
+    private struct Entry {
+        let source: String
+        /// nil documents are cached too — "this metadata has no document
+        /// under this key" is a stable fact of the source string.
+        let document: RichDocument?
+    }
+
+    /// Fallback identity for call sites with no uuid: the exact source
+    /// string, as before.
+    private struct SourceKey: Hashable {
         let source: String
         let metadataKey: String
     }
 
-    /// nil documents are cached too — "this metadata has no document under
-    /// this key" is a stable fact of the source string.
-    private var entries: [Key: RichDocument?] = [:]
+    private var entriesByUUID: [UUIDKey: Entry] = [:]
+    private var entriesBySource: [SourceKey: RichDocument?] = [:]
     private let lock = NSLock()
     private let limit = 512
 
     private init() {}
 
-    func document(source: String, metadataKey: String, decode: () -> RichDocument?) -> RichDocument? {
-        let key = Key(source: source, metadataKey: metadataKey)
+    func document(source: String, metadataKey: String, atomUUID: String? = nil, decode: () -> RichDocument?) -> RichDocument? {
+        if let atomUUID, !atomUUID.isEmpty {
+            let key = UUIDKey(uuid: atomUUID, metadataKey: metadataKey)
+            lock.lock()
+            let cached = entriesByUUID[key]
+            lock.unlock()
+            if let cached, cached.source == source { return cached.document }
+
+            let decoded = decode()
+            lock.lock()
+            if entriesByUUID.count >= limit { entriesByUUID.removeAll(keepingCapacity: true) }
+            entriesByUUID[key] = Entry(source: source, document: decoded)
+            lock.unlock()
+            return decoded
+        }
+
+        let key = SourceKey(source: source, metadataKey: metadataKey)
         lock.lock()
-        let cached = entries[key]
+        let cached = entriesBySource[key]
         lock.unlock()
         if let cached { return cached }
 
         let decoded = decode()
         lock.lock()
-        if entries.count >= limit { entries.removeAll(keepingCapacity: true) }
-        entries[key] = decoded
+        if entriesBySource.count >= limit { entriesBySource.removeAll(keepingCapacity: true) }
+        entriesBySource[key] = decoded
         lock.unlock()
         return decoded
     }
 }
 
 enum RichDocumentMetadataStorage {
-    static func readDocument(from metadata: String?, key: String) -> RichDocument? {
+    /// `atomUUID`, when known, gives the decode cache a cheap stable identity
+    /// (probe by uuid, validate by stored source) instead of hashing the
+    /// whole metadata string per read.
+    static func readDocument(from metadata: String?, key: String, atomUUID: String? = nil) -> RichDocument? {
         guard let metadata else { return nil }
-        return RichDocumentDecodeCache.shared.document(source: metadata, metadataKey: key) {
+        return RichDocumentDecodeCache.shared.document(source: metadata, metadataKey: key, atomUUID: atomUUID) {
             guard let data = metadata.data(using: .utf8),
                   let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let value = dict[key],
@@ -1348,17 +1384,31 @@ enum RichDocumentSerializer {
     }
 
     private static func imageAttachment(for image: RichImageReference) -> NSTextAttachment? {
-        guard let nsImage = ImageStore.load(path: image.path) else {
-            return nil
-        }
-
+        // Display math reads the STORED reference dims (never decoded pixels)
+        // so cached and freshly-decoded paths lay out identically.
         let intrinsic = CGSize(width: image.width, height: image.height)
         let display = ImageResizeMath.resolvedSize(displayWidth: image.displayWidth, intrinsic: intrinsic, maxWidth: 680)
 
+        // The scaled bitmap is cached per path+mtime+targetWidth so
+        // syncEditorForPresentationChange doesn't re-rasterize every image
+        // on each rebuild.
+        let targetWidth = min(680, image.width)
+        let scaledDiscriminator = "scaled|\(targetWidth)"
+        let scaled: NSImage
+        if let cachedScaled = ImageStore.cachedDerivedImage(path: image.path, discriminator: scaledDiscriminator) {
+            scaled = cachedScaled
+        } else {
+            guard let nsImage = ImageStore.load(path: image.path) else {
+                return nil
+            }
+            // Keep a crisp bitmap (scaled to the historical cap), but let `bounds` drive the
+            // on-screen size so resizing is a pure layout change — no image re-decode.
+            scaled = nsImage.scaled(toFit: CGSize(width: targetWidth, height: 10_000))
+            ImageStore.storeDerivedImage(scaled, path: image.path, discriminator: scaledDiscriminator)
+        }
+
         let attachment = NSTextAttachment()
-        // Keep a crisp bitmap (scaled to the historical cap), but let `bounds` drive the
-        // on-screen size so resizing is a pure layout change — no image re-decode.
-        attachment.image = nsImage.scaled(toFit: CGSize(width: min(680, image.width), height: 10_000))
+        attachment.image = scaled
         attachment.bounds = CGRect(origin: .zero, size: display)
         return attachment
     }

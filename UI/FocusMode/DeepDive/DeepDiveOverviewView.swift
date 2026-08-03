@@ -12,6 +12,10 @@ struct DeepDiveOverviewView: View {
 
     @State private var viewModel: DeepDiveOverviewViewModel
     @State private var selectedTab: DeepDiveOverviewTab = .overview
+    /// Tabs mount on first visit and then stay alive (opacity-swapped), so a
+    /// tab switch never rebuilds the outgoing surface mid-spring and scroll
+    /// positions survive. Bounded by what the user actually opened.
+    @State private var visitedTabs: Set<DeepDiveOverviewTab> = [.overview]
     @State private var showingRootQuestionComposer = false
     @State private var rootQuestionDraft = ""
     @State private var showArchivedSessions = false
@@ -150,12 +154,34 @@ struct DeepDiveOverviewView: View {
 
     // MARK: - Tab Content
 
+    /// Keep-alive deck (the pane-slot grammar): visited tabs stay mounted and
+    /// opacity-swap, so switching doesn't pay the outgoing tab's teardown +
+    /// the incoming tab's FULL first layout inside frame 1 of the switch
+    /// spring — and the dossier's scroll offset survives a round trip.
     @ViewBuilder
     private var tabContent: some View {
-        switch selectedTab {
-        case .overview: overviewTab
-        case .sessions: sessionsTab
-        case .map: mapTab
+        ZStack {
+            if visitedTabs.contains(.overview) {
+                overviewTab
+                    .opacity(selectedTab == .overview ? 1 : 0)
+                    .allowsHitTesting(selectedTab == .overview)
+                    .accessibilityHidden(selectedTab != .overview)
+            }
+            if visitedTabs.contains(.sessions) {
+                sessionsTab
+                    .opacity(selectedTab == .sessions ? 1 : 0)
+                    .allowsHitTesting(selectedTab == .sessions)
+                    .accessibilityHidden(selectedTab != .sessions)
+            }
+            if visitedTabs.contains(.map) {
+                mapTab
+                    .opacity(selectedTab == .map ? 1 : 0)
+                    .allowsHitTesting(selectedTab == .map)
+                    .accessibilityHidden(selectedTab != .map)
+            }
+        }
+        .onChange(of: selectedTab) { _, tab in
+            visitedTabs.insert(tab)
         }
     }
 
@@ -178,6 +204,9 @@ struct DeepDiveOverviewView: View {
                 .onScrollGeometryChange(for: Bool.self) { geometry in
                     geometry.contentOffset.y < 96
                 } action: { _, isAtTop in
+                    // Kept-alive but hidden dossier must not drive the
+                    // masthead while another tab is frontmost.
+                    guard selectedTab == .overview, mastheadVisible != isAtTop else { return }
                     mastheadVisible = isAtTop
                 }
                 .onChange(of: scrollHomeTick) {

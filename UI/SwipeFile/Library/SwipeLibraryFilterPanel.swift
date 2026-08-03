@@ -172,8 +172,7 @@ struct SwipeLibraryFilterPanel: View {
 
     private func setStudied(studied: Bool, unstudied: Bool) {
         withAnimation(ProMotionSprings.snappy) {
-            viewModel.filterState.onlyStudied = studied
-            viewModel.filterState.onlyUnstudied = unstudied
+            viewModel.setStudiedFilter(onlyStudied: studied, onlyUnstudied: unstudied)
         }
     }
 

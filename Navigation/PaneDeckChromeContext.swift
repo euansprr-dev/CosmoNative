@@ -12,7 +12,7 @@ import SwiftUI
 /// One deck tab, described by the pane it names. The strip resolves glyph,
 /// tint, and title through `PaneInfo` (+ `BrowserPaneRegistry` for live
 /// browser titles), so the payload stays a thin description.
-struct PaneDeckTab: Identifiable {
+struct PaneDeckTab: Identifiable, Equatable {
     let content: PaneContent
     let isFocused: Bool
     let isPinned: Bool
@@ -45,6 +45,20 @@ struct PaneDeckChromePayload {
 
     static func quantizedWidth(_ width: CGFloat) -> CGFloat {
         (width / 24).rounded() * 24
+    }
+}
+
+extension PaneDeckChromePayload: Equatable {
+    /// Equality is the payload's DESCRIPTION — tabs and width. `actions` is
+    /// deliberately excluded: the shell rebuilds those closures on every
+    /// evaluation, but they only ever capture the stable PaneManager and the
+    /// deck spring, so two payloads describing the same deck are the same
+    /// payload. Without this, the environment injection defeated the width
+    /// quantizer and re-invalidated the focused pane's chrome every divider
+    /// -drag frame. If an action closure ever captures per-frame state, it
+    /// must graduate into a compared stored property instead.
+    static func == (lhs: PaneDeckChromePayload, rhs: PaneDeckChromePayload) -> Bool {
+        lhs.tabs == rhs.tabs && lhs.paneWidth == rhs.paneWidth
     }
 }
 

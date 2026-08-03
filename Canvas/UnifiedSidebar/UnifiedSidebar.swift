@@ -339,8 +339,13 @@ struct UnifiedSidebar: View {
         reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.2, dampingFraction: 0.92)
     }
 
-    private var userFirstName: String {
+    // NSFullUserName() is a directory-services call — resolve once, not per
+    // footer body pass.
+    private static let cachedUserFirstName =
         NSFullUserName().components(separatedBy: " ").first ?? "User"
+
+    private var userFirstName: String {
+        Self.cachedUserFirstName
     }
 
     var body: some View {
@@ -391,6 +396,10 @@ struct UnifiedSidebar: View {
                 panelWidth = clamped
                 return
             }
+            // Mid-drag frames don't persist — saveSidebarWidth re-encodes the
+            // whole UI-state blob, and the drag writes once per pointer frame.
+            // The resize handle's .onEnded records the final width.
+            guard resizeStartWidth == nil else { return }
             StatePersistence.shared.saveSidebarWidth(clamped)
         }
     }
@@ -704,12 +713,22 @@ struct UnifiedSidebar: View {
                         }
 
                         guard let startWidth = resizeStartWidth else { return }
-                        panelWidth = UnifiedSidebarMetrics.clampedExpandedWidth(
-                            startWidth + value.translation.width
-                        )
+                        // Seat idiom (SplitPaneContainer): a spring re-targeted
+                        // every pointer frame never settles — the width must
+                        // track the cursor exactly, so the per-frame write is
+                        // explicitly un-animated. Open/close keep their springs
+                        // (they animate isSidebarHidden, a different value).
+                        withTransaction(\.disablesAnimations, true) {
+                            panelWidth = UnifiedSidebarMetrics.clampedExpandedWidth(
+                                startWidth + value.translation.width
+                            )
+                        }
                     }
                     .onEnded { _ in
                         resizeStartWidth = nil
+                        StatePersistence.shared.saveSidebarWidth(
+                            UnifiedSidebarMetrics.clampedExpandedWidth(panelWidth)
+                        )
                     }
             )
     }
@@ -826,10 +845,16 @@ private struct SidebarCommandCenterContext: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .task {
-            await viewModel.loadAreas()
-            await viewModel.loadAnytimeTasks()
-            await viewModel.loadSomedayTasks()
-            await viewModel.loadHabits()
+            // IfNeeded variants: this context REMOUNTS on every switch to the
+            // Command Center sidebar (the section is keyed on activeContext) —
+            // the unguarded loads paid two full task-table scans + a per-row
+            // decode pass per switch. Freshness after the first load is owned
+            // by the DashboardAtomRefreshSignature observation and the habit
+            // engine's definitions publisher.
+            await viewModel.loadAreasIfNeeded()
+            await viewModel.loadAnytimeTasksIfNeeded()
+            await viewModel.loadSomedayTasksIfNeeded()
+            await viewModel.loadHabitsIfNeeded()
         }
     }
 
@@ -1211,6 +1236,7 @@ private struct SidebarSwipeFileContext: View {
 
     @State private var isCreatingBoard = false
     @State private var draftBoardName = ""
+    @State private var countsRefreshTask: Task<Void, Never>?
     @FocusState private var isBoardNameFocused: Bool
 
     var body: some View {
@@ -1269,7 +1295,12 @@ private struct SidebarSwipeFileContext: View {
             await SwipeSpaceStore.shared.loadIfNeeded()
         }
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.SwipeFile.libraryDidChange)) { _ in
-            Task {
+            // Coalesce bursts: heal sweeps / classifiers post this once per
+            // touched swipe, and each refresh is a full swipe-table read.
+            countsRefreshTask?.cancel()
+            countsRefreshTask = Task {
+                try? await Task.sleep(for: .milliseconds(500))
+                guard !Task.isCancelled else { return }
                 await SwipeBoardStore.shared.refreshCountsFromDatabase()
                 await SwipeSpaceStore.shared.refreshCountsFromDatabase()
             }

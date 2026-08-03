@@ -23,7 +23,11 @@ struct IdeaClientSection: Identifiable {
 
 enum IdeasTab {
     nonisolated static func matchesSearch(_ item: IdeaGalleryItem, query: String) -> Bool {
-        CommandKSearchMatcher.matches(query, inAny: [item.title, item.body, item.clientName] + item.tags.map(Optional.some))
+        matchesSearch(item, normalizedQuery: CommandKSearchMatcher.normalizeQuery(query))
+    }
+
+    nonisolated static func matchesSearch(_ item: IdeaGalleryItem, normalizedQuery: String) -> Bool {
+        CommandKSearchMatcher.matches(normalizedQuery: normalizedQuery, inAny: [item.title, item.body, item.clientName] + item.tags.map(Optional.some))
     }
 }
 

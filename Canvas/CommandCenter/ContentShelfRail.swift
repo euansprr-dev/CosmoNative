@@ -267,18 +267,19 @@ struct ContentShelfRail: View {
         // The symmetric gesture: drag a calendar chip back onto the shelf
         // to unschedule it — it returns to DRAFTS.
         .dropDestination(for: String.self) { payloads, _ in
-            var handled = false
-            for raw in payloads {
-                if case .content(let uuid) = ContentShelfPayload(string: raw) {
-                    handled = true
-                    Task {
-                        await ContentQueueLoader.setSchedule(nil, status: nil, for: uuid)
-                        await reload()
-                        NotificationCenter.default.post(name: .contentCalendarNeedsReload, object: nil)
-                    }
-                }
+            let uuids = payloads.compactMap { raw -> String? in
+                guard case .content(let uuid) = ContentShelfPayload(string: raw) else { return nil }
+                return uuid
             }
-            return handled
+            guard !uuids.isEmpty else { return false }
+            Task {
+                for uuid in uuids {
+                    await ContentQueueLoader.setSchedule(nil, status: nil, for: uuid)
+                }
+                await reload()
+                NotificationCenter.default.post(name: .contentCalendarNeedsReload, object: nil)
+            }
+            return true
         }
     }
 

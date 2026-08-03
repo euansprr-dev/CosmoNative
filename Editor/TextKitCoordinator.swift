@@ -2044,7 +2044,10 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             // equal to the serialized binding).
             let mountSeed = context.coordinator.mountSeedContent
             context.coordinator.mountSeedContent = nil
-            if let mountSeed, mountSeed.isEqual(to: attributedText) {
+            // Pointer check first: the sync box now hands .onAppear the SAME
+            // instance initialContent built, so the mount reconcile is free —
+            // the deep compare only runs for a seed rebuilt in between.
+            if let mountSeed, mountSeed === attributedText || mountSeed.isEqual(to: attributedText) {
                 // Already applied at mount — heights and layout are current.
             } else if !textView.attributedString().isEqual(to: attributedText) {
                 let selectedRange = textView.selectedRange()

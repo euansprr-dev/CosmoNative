@@ -293,8 +293,19 @@ struct CortexDetailPane: View {
     }
 
     private func loadAtom() async {
-        atom = nil
-        guard let id = subject.atomUUID else { return }
+        guard let id = subject.atomUUID else {
+            atom = nil
+            return
+        }
+        // Warm-store hit paints the pane on the current frame; blanking is
+        // reserved for a genuinely different atom — clearing unconditionally
+        // tore the whole pane to empty on every selection move.
+        if let warm = CanvasAtomWarmStore.shared.atom(uuid: id) {
+            atom = warm
+        } else if atom?.uuid != id {
+            atom = nil
+        }
+        // Always fetch fresh — a stale warm copy self-corrects here.
         atom = try? await AtomRepository.shared.fetch(uuid: id)
     }
 
@@ -400,7 +411,39 @@ private struct CortexPreviewBlock: View {
     /// matched passage instead of showing the document head.
     var matchQuery: String? = nil
 
+    /// Transcript decode hoisted off the render path (mirrors
+    /// CortexConnectionManuscriptPreview): `readableBody` used to run the
+    /// up-to-2MB [TranscriptSegment] JSON decode on EVERY body pass. `plain`
+    /// nil = the body is not transcript JSON and renders as written.
+    private struct HoistedTranscript: Equatable {
+        let key: String
+        let plain: String?
+    }
+    @State private var hoistedTranscript: HoistedTranscript?
+
     var body: some View {
+        preview
+            .task(id: transcriptDecodeKey) { decodeTranscriptBody() }
+    }
+
+    private var transcriptDecodeKey: String {
+        "\(atom?.uuid ?? "")#\(atom?.updatedAt ?? "")"
+    }
+
+    private func decodeTranscriptBody() {
+        let key = transcriptDecodeKey
+        guard let atom, atom.type == .research, let body = atom.body else {
+            hoistedTranscript = HoistedTranscript(key: key, plain: nil)
+            return
+        }
+        hoistedTranscript = HoistedTranscript(
+            key: key,
+            plain: CortexResearchLinkModel.transcriptPlainText(fromBody: body, atom: atom)
+        )
+    }
+
+    @ViewBuilder
+    private var preview: some View {
         if let item = atom?.toSwipeGalleryItem() {
             CortexSwipeDomainPreview(item: item, atom: atom)
         } else if let atom, atom.type == .task {
@@ -497,14 +540,19 @@ private struct CortexPreviewBlock: View {
 
     /// A research atom's body may be raw `[TranscriptSegment]` JSON (the
     /// capture pipeline stores the segment array verbatim). Reading surfaces
-    /// show the spoken words, never the JSON.
+    /// show the spoken words, never the JSON. The decode itself lives in
+    /// `decodeTranscriptBody()` (task-keyed per atom version) — this only
+    /// reads the hoisted result.
     private var readableBody: String? {
         guard let body = atom?.body else { return nil }
         guard atom?.type == .research else { return body }
-        if let plain = CortexResearchLinkModel.transcriptPlainText(fromBody: body, atom: atom) {
-            return plain
+        guard let hoisted = hoistedTranscript, hoisted.key == transcriptDecodeKey else {
+            // Decode not landed yet: prose renders as written immediately;
+            // a candidate transcript-JSON wall is never typeset raw.
+            let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.hasPrefix("[{") ? nil : body
         }
-        return body
+        return hoisted.plain ?? body
     }
 
     /// Reading excerpt typeset directly on the body surface — no inner white

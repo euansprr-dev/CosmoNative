@@ -20,14 +20,19 @@ struct CosmoApp: App {
     @State private var voicePillHideWorkItem: DispatchWorkItem?
     // NOTE: Global floating dock removed - using in-app dock + spacebar voice overlay instead
 
-    @State private var themeRefreshID = UUID()
+    // Theme swaps re-render in place: DS tokens read through the @Observable
+    // ThemePaletteStore, so every body wearing a token invalidates on its own.
+    // The old UUID-based `.id()` nuke here destroyed every @State in the
+    // tree (canvas unmounted, ⌘K index rebuilt, panes closed) per switch.
+    // Only the color scheme still needs an explicit nudge — appearance drives
+    // AppKit vibrancy/materials and must flip with the palette.
+    @State private var prefersDarkScheme = ThemeManager.shared.isDark
     @State private var interactiveStartupTask: Task<Void, Never>?
 
     var body: some Scene {
         WindowGroup {
             MainView()
-                .id(themeRefreshID)
-                .preferredColorScheme(ThemeManager.shared.isDark ? .dark : .light)
+                .preferredColorScheme(prefersDarkScheme ? .dark : .light)
                 .environmentObject(appState)
                 .environmentObject(database)
                 .environmentObject(syncEngine)
@@ -37,7 +42,7 @@ struct CosmoApp: App {
                 .environmentObject(swipeFileEngine)
                 .environmentObject(cosmoAgent)
                 .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Theme.changed)) { _ in
-                    themeRefreshID = UUID()
+                    prefersDarkScheme = ThemeManager.shared.isDark
                 }
                 .onAppear {
                     initializeApp()

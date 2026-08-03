@@ -329,6 +329,9 @@ struct ContentDraftView: View {
                                 triggerAutoSave()
                             }
                         )
+                        // Bakes textColor/insertionPointColor at makeNSView —
+                        // remake on theme swap so the ink follows the palette.
+                        .recreateOnThemeChange()
                         .frame(height: max(400, textContentHeight))
                         .background(
                             GeometryReader { proxy in

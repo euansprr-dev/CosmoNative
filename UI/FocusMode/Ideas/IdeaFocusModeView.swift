@@ -1218,6 +1218,9 @@ extension IdeaFocusModeView {
                     onDeleteEmpty: { handleDeleteOnSlide(slide.id) == .handled },
                     onMoveLine: { direction in moveSlide(slide.id, direction) }
                 )
+                // Focus-paired ink is baked at makeNSView only — remake on
+                // theme swap so outline notes don't keep the old palette.
+                .recreateOnThemeChange()
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
             }

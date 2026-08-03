@@ -27,6 +27,12 @@ struct FilmGrainOverlay: View {
         .onAppear {
             generateGrainTexture()
         }
+        // The grain's base/dot polarity is keyed on the palette's isDark.
+        // This used to refresh via the app-root theme nuke re-running
+        // onAppear; with in-place theme re-rendering it must listen itself.
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Theme.changed)) { _ in
+            generateGrainTexture()
+        }
     }
 
     /// Generate the grain noise bitmap once using CGContext.

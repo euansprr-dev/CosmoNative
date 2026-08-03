@@ -260,6 +260,10 @@ struct ConnectionItemEditRow: View {
                     originSection: sectionType,
                     mentions: item.explicitMentions
                 )
+                // Stamps DS ink into its attributed string behind a
+                // text/targets/mentions diff guard — a theme swap alone never
+                // restamps, so remake the view when the palette changes.
+                .recreateOnThemeChange()
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             if let sourceUUID = item.sourceAtomUUID, !item.isConnectionLink {

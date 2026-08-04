@@ -245,6 +245,13 @@ final class DocumentEditorSyncBox {
     /// two. Sharing the instance makes mount cost one serialization and the
     /// reconcile a pointer check.
     var mountSerialization: NSAttributedString?
+    /// The document value `mountSerialization` was built from. The seed is
+    /// reusable ONLY while the binding still holds this value — a parent that
+    /// seeds its document @State lazily (content focus hydrates in an
+    /// ancestor's .onAppear, after makeNSView) changes the binding between
+    /// seed build and .onAppear, and reusing the stale seed leaves the editor
+    /// blank while the first keystroke persists that blank over the draft.
+    var mountSerializationDocument: RichDocument?
     /// The last document value THIS editor wrote to the binding. Guards
     /// `.onChange(of: document)` against echoes of our own writes — the
     /// async-reset `isSyncingFromEditor` flag alone has a one-tick dead
@@ -421,6 +428,7 @@ struct CosmoDocumentEditor: View {
             initialContent: {
                 let seed = serializedEditorContent()
                 syncBox.mountSerialization = seed
+                syncBox.mountSerializationDocument = document
                 return seed
             },
             onSave: { _ in syncDocumentFromEditor() }
@@ -496,13 +504,19 @@ struct CosmoDocumentEditor: View {
         syncBox.lastSelfWrittenDocument = nil
         let resolved = resolvedDocumentForEditor(preferLivePlainText: preferLivePlainText)
         // Mount seed reuse is opt-in (the .onAppear immediately after
-        // makeNSView) — any other caller may run against a document that
-        // changed since the seed was built and must re-serialize.
-        if allowMountSeed, let mountSeed = syncBox.mountSerialization {
+        // makeNSView) AND identity-checked: the parent may hydrate the bound
+        // document between makeNSView and .onAppear (content focus seeds its
+        // @State lazily in an ancestor's .onAppear, and the .onChange for
+        // that write is swallowed by isApplyingExternalUpdate's async reset),
+        // so a seed built from a different document value must re-serialize.
+        if allowMountSeed, let mountSeed = syncBox.mountSerialization,
+           syncBox.mountSerializationDocument == document {
             syncBox.mountSerialization = nil
+            syncBox.mountSerializationDocument = nil
             syncBox.attributedText = mountSeed
         } else {
             syncBox.mountSerialization = nil
+            syncBox.mountSerializationDocument = nil
             syncBox.attributedText = serializedEditorContent(preferLivePlainText: preferLivePlainText)
         }
         let resolvedPlainText = resolvedPlainTextForCallbacks(from: resolved)

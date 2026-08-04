@@ -32,20 +32,36 @@ struct CommandCenterDashboard: View {
     }
 
     var body: some View {
+        GeometryReader { geometry in
+            // Resolved in-pass, the Idea-bench law: routing width through
+            // `.onChange` -> state seats columns against the width from
+            // BEFORE a resize and clips for a pass. Below its full measure
+            // (~1111pt) this page used to keep every column mounted and
+            // simply clip at the trailing edge whenever a pane deck or a
+            // narrow window squeezed the slot.
+            let seats = DashboardLayoutMetrics.seats(
+                width: geometry.size.width,
+                wantsInternalSidebar: showsInternalSidebar
+            )
+            dashboardBody(seats: seats)
+        }
+    }
+
+    private func dashboardBody(seats: DashboardColumnSeats) -> some View {
         ZStack(alignment: .topLeading) {
             // The rail runs full-bleed to the pane's top/bottom/trailing
             // edges (an integrated sidebar meets its window, never floats
             // inset); only the working region keeps the page margin.
             HStack(alignment: .top, spacing: 0) {
                 HStack(alignment: .top, spacing: 0) {
-                    if showsInternalSidebar {
+                    if seats.internalSidebar {
                         leftColumn
                     }
-                    centerColumn
+                    centerColumn(seats: seats)
                 }
                 .padding(DS.space24)
 
-                if !viewModel.viewMode.isFullPlanningPage {
+                if !viewModel.viewMode.isFullPlanningPage, seats.rail {
                     rightColumn
                 }
             }
@@ -98,6 +114,12 @@ struct CommandCenterDashboard: View {
                 selectedTaskForDetail = nil
                 composer.dismiss()
             }
+            // Lives on the root, not the rail: the rail sheds below its
+            // seat width and a shed rail must not stop the deleted-task
+            // detail/composer cleanup from firing.
+            .onChange(of: visibleTaskUUIDs) { _, taskUUIDs in
+                clearDeletedTaskState(visibleTaskUUIDs: taskUUIDs)
+            }
 
             CommandCenterComposerHost(viewModel: viewModel, composer: composer)
         }
@@ -122,10 +144,10 @@ struct CommandCenterDashboard: View {
 
     // MARK: - Center Column — Timer + Content (Smart List or Project)
 
-    private var centerColumn: some View {
+    private func centerColumn(seats: DashboardColumnSeats) -> some View {
         VStack(alignment: .leading, spacing: DS.space16) {
             Group {
-                centerContent
+                centerContent(seats: seats)
             }
             .id(centerContentTransitionID)
             .transition(.opacity)
@@ -142,7 +164,7 @@ struct CommandCenterDashboard: View {
     }
 
     @ViewBuilder
-    private var centerContent: some View {
+    private func centerContent(seats: DashboardColumnSeats) -> some View {
         switch viewModel.viewMode {
         case .habits:
             HabitsSectionView(viewModel: viewModel, composer: composer)
@@ -153,12 +175,12 @@ struct CommandCenterDashboard: View {
             // next tick; render nothing for the transient frame.
             Color.clear
         case .today, .upcoming, .anytime, .someday, .logbook, .project, .area:
-            existingTaskOrProjectContent
+            existingTaskOrProjectContent(seats: seats)
         }
     }
 
     @ViewBuilder
-    private var existingTaskOrProjectContent: some View {
+    private func existingTaskOrProjectContent(seats: DashboardColumnSeats) -> some View {
         if viewModel.viewMode == .project, let projectUUID = viewModel.selectedProjectUUID,
            let project = viewModel.projects.first(where: { $0.uuid == projectUUID }) {
             ProjectDetailView(project: project, viewModel: viewModel)
@@ -201,11 +223,17 @@ struct CommandCenterDashboard: View {
                         selectingTaskList
                             .cascadeIn(hasAppeared, index: 2)
 
-                        DashboardDayTimeline(viewModel: viewModel) { task in
-                            selectTaskForDetail(task)
+                        // The day timeline is the first column to shed:
+                        // below its seat width Today collapses to the ONE
+                        // ledger column (the LAW: collapse, never shrink
+                        // the two columns into each other).
+                        if seats.timeline {
+                            DashboardDayTimeline(viewModel: viewModel) { task in
+                                selectTaskForDetail(task)
+                            }
+                            .frame(width: DashboardLayoutMetrics.timelineWidth)
+                            .cascadeIn(hasAppeared, index: 3)
                         }
-                        .frame(width: 302)
-                        .cascadeIn(hasAppeared, index: 3)
                     }
                     // The page's ONE trailing rail (x = W−12): the schedule
                     // rule now terminates on the same line as the masthead
@@ -436,12 +464,9 @@ struct CommandCenterDashboard: View {
                 Spacer(minLength: 0)
             }
         }
-        .frame(width: 280)
+        .frame(width: DashboardLayoutMetrics.railWidth)
         .animation(ProMotionSprings.gentle, value: showsContentShelf)
         .animation(ProMotionSprings.gentle, value: showsWorkShelf)
-        .onChange(of: visibleTaskUUIDs) { _, taskUUIDs in
-            clearDeletedTaskState(visibleTaskUUIDs: taskUUIDs)
-        }
     }
 
     private var rightColumnTabs: some View {
@@ -679,4 +704,62 @@ final class CommandCenterContextProvider: CosmoContextProvider {
             .joined(separator: ", ")
     }
 
+}
+
+// MARK: - Width classes (derive-never-type)
+
+/// Which optional columns the dashboard can seat at a given width. Resolved
+/// in-pass from the root GeometryReader — routing width through `.onChange`
+/// -> state seats columns one pass late and clips during resizes (the
+/// Idea-bench law).
+struct DashboardColumnSeats: Equatable {
+    var internalSidebar: Bool
+    var rail: Bool
+    var timeline: Bool
+}
+
+/// The dashboard's column arithmetic, derived from the columns the layout
+/// actually mounts — never a typed magic threshold. Shedding order as width
+/// shrinks: the day timeline first (Today collapses to the one ledger
+/// column, the mac-Today LAW — collapse, never shrink), then the
+/// habits/reports rail, then the internal navigation sidebar (navigation
+/// outlives the inspector — the Things grammar). The flexible ledger never
+/// drops below `minimumLedgerMeasure`. Before this, the page's full measure
+/// was ~1111pt and every narrower slot (open pane deck, narrow window)
+/// clipped at the trailing edge (Aug 2026 audit).
+enum DashboardLayoutMetrics {
+    /// The working region's page padding (`.padding(DS.space24)`, horizontal share).
+    static let pagePadding: CGFloat = DS.space24 * 2
+    /// The center column's own horizontal padding.
+    static let centerPadding: CGFloat = DS.space16 * 2
+    /// Navigation sidebar column plus its trailing gap.
+    static let internalSidebarSpan: CGFloat = 240 + DS.space24
+    static let railWidth: CGFloat = 280
+    static let timelineWidth: CGFloat = 302
+    /// Timeline column plus its leading gap and the page's trailing rail inset.
+    static var timelineSpan: CGFloat { timelineWidth + DS.space24 + DS.space12 }
+    /// The flexible ledger's floor beside seated columns.
+    static let minimumLedgerMeasure: CGFloat = 460
+
+    /// Seating priority when width is scarce: internal sidebar, then rail,
+    /// then timeline — the inverse of the shedding order above. The order is
+    /// what keeps seating MONOTONIC in width: a lower-priority column only
+    /// spends budget the higher ones left behind, so growing the window can
+    /// never swap one seated column for another.
+    static func seats(width: CGFloat, wantsInternalSidebar: Bool) -> DashboardColumnSeats {
+        var budget = width - pagePadding - centerPadding
+        var seats = DashboardColumnSeats(internalSidebar: false, rail: false, timeline: false)
+        if wantsInternalSidebar, budget - internalSidebarSpan >= minimumLedgerMeasure {
+            seats.internalSidebar = true
+            budget -= internalSidebarSpan
+        }
+        if budget - railWidth >= minimumLedgerMeasure {
+            seats.rail = true
+            budget -= railWidth
+        }
+        if budget - timelineSpan >= minimumLedgerMeasure {
+            seats.timeline = true
+        }
+        return seats
+    }
 }

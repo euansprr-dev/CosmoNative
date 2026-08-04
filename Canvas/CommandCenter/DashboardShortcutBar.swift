@@ -20,7 +20,10 @@ struct DashboardShortcutBar: View {
     // they stay visible. Only "S" (start a session) is genuinely dead while
     // one runs, and Space relabels in place.
     var body: some View {
-        HStack(spacing: DS.space16) {
+        // A flow, not an HStack: seven hints sum to ~550pt, which must never
+        // become the ledger's minimum width — at narrow slots (single-column
+        // Today, command-center panes) the tail hints wrap to a second line.
+        CosmoFlowLayout(spacing: DS.space16) {
             hint("N", "Add task")
             if !focus.isTimerRunning {
                 hint("S", "Session")

@@ -34,12 +34,15 @@ struct DashboardTimeTracker: View {
     // turns the hero row's dead right half into structure — an interval
     // between two anchors, not a leak.
     var body: some View {
-        HStack(alignment: .center, spacing: DS.space24) {
-            gauge
-            rightColumn
-                .fixedSize(horizontal: true, vertical: false)
-            Spacer(minLength: DS.space24)
-            actionRow
+        // The hero degrades by STRUCTURE, never by clipping — the full row
+        // needs ~800pt (arc 208 + the fixed-size week/streak cluster + the
+        // action), which used to set the whole Today page's minimum width.
+        // The quiet middle sheds first; at pane-slot widths the row stacks
+        // (arc above, action beneath) so the arc keeps its hero scale.
+        ViewThatFits(in: .horizontal) {
+            heroRow(showsWeekCluster: true)
+            heroRow(showsWeekCluster: false)
+            heroColumn
         }
         .padding(.horizontal, DS.space12)
         .padding(.vertical, DS.space12)
@@ -49,6 +52,27 @@ struct DashboardTimeTracker: View {
         .onChange(of: viewModel.todayTrackedMinutes) { _, _ in
             Task { await loadStreaks() }
         }
+    }
+
+    private func heroRow(showsWeekCluster: Bool) -> some View {
+        HStack(alignment: .center, spacing: DS.space24) {
+            gauge
+            if showsWeekCluster {
+                rightColumn
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            Spacer(minLength: DS.space24)
+            actionRow
+        }
+    }
+
+    /// The narrowest tier: arc above, action beneath, both leading-aligned.
+    private var heroColumn: some View {
+        VStack(alignment: .leading, spacing: DS.space12) {
+            gauge
+            actionRow
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Live math

@@ -1,6 +1,6 @@
 // CosmoOS/UI/AtomWindow/AtomWindowPanelController.swift
 // System-wide floating NSPanel for the universal atom viewer
-// Accessible from any app via Option+W hotkey
+// Accessible from any app via Control+Option+E (and Option+E)
 // April 2026
 
 import SwiftUI
@@ -120,8 +120,7 @@ final class AtomWindowPanelController: NSWindowController {
             if event.keyCode == 14,
                event.modifierFlags.contains(.option),
                !event.modifierFlags.contains(.command),
-               !event.modifierFlags.contains(.shift),
-               !event.modifierFlags.contains(.control) {
+               !event.modifierFlags.contains(.shift) {
                 Task { @MainActor in
                     self?.toggle()
                 }
@@ -129,11 +128,16 @@ final class AtomWindowPanelController: NSWindowController {
         }
 
         localHotkeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if let self, event.window === self.panel,
+               event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command,
+               event.charactersIgnoringModifiers?.lowercased() == "k" {
+                self.viewModel.isSearchVisible.toggle()
+                return nil
+            }
             if event.keyCode == 14,
                event.modifierFlags.contains(.option),
                !event.modifierFlags.contains(.command),
-               !event.modifierFlags.contains(.shift),
-               !event.modifierFlags.contains(.control) {
+               !event.modifierFlags.contains(.shift) {
                 Task { @MainActor in
                     self?.toggle()
                 }
@@ -168,6 +172,8 @@ final class AtomWindowPanelController: NSWindowController {
     // MARK: - Hosting View
 
     private func buildHostingView() {
+        panel.makeFirstResponder(nil)
+        DirtyEditorRegistry.shared.flushAll()
         let isDark = ThemeManager.shared.isDark
         let contentView = NSHostingView(
             rootView: AtomWindowRootView(viewModel: viewModel)
@@ -194,6 +200,7 @@ final class AtomWindowPanelController: NSWindowController {
 
     func show() {
         isShown = true
+        viewModel.isPresented = true
         panel.alphaValue = 1 // a hide() mid-teardown may have dropped it
         panel.orderFrontRegardless()
         panel.makeKey()
@@ -210,6 +217,9 @@ final class AtomWindowPanelController: NSWindowController {
 
         // Commit every surface holding unsaved edits, synchronously, BEFORE the
         // session is torn down and the editing lock released.
+        // Resigning flushes TextKit's pending buffer into the document before
+        // the persistence registry takes its snapshot.
+        panel.makeFirstResponder(nil)
         DirtyEditorRegistry.shared.flushAll()
 
         // Then let SwiftUI actually process the teardown. The hosted focus
@@ -221,7 +231,13 @@ final class AtomWindowPanelController: NSWindowController {
         // run. Drop alpha for an instant visual close, order out once the
         // teardown has been processed.
         panel.alphaValue = 0
-        viewModel.unloadCurrentSession()
+        viewModel.isPresented = false
+        // Keep the one open note mounted: reopening preserves its scroll,
+        // undo history, and hydrated editors. Other focus modes still use
+        // their existing teardown lifecycle.
+        if viewModel.currentAtom?.type != .note {
+            viewModel.unloadCurrentSession()
+        }
         DispatchQueue.main.async { [weak self] in
             // A show() may have raced in behind us — never yank it back out.
             guard let self, !self.isShown else { return }
@@ -233,12 +249,17 @@ final class AtomWindowPanelController: NSWindowController {
     /// Open the panel and navigate to a specific atom
     func show(atomUUID: String) {
         isShown = true
+        viewModel.isPresented = true
         contentLoadTask?.cancel()
         panel.alphaValue = 1 // a hide() mid-teardown may have dropped it
         panel.orderFrontRegardless()
         panel.makeKey()
         contentLoadTask = Task { @MainActor in
-            await viewModel.navigate(to: atomUUID)
+            if viewModel.currentAtom?.uuid == atomUUID {
+                await viewModel.restoreLastSession()
+            } else {
+                await viewModel.navigate(to: atomUUID)
+            }
         }
     }
 

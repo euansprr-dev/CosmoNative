@@ -6,11 +6,13 @@ enum ContentWorkspaceTab: String, CaseIterable, Identifiable {
     case ideas, pipeline, calendar
     var id: String { rawValue }
     var title: String { rawValue.capitalized }
-    var icon: String {
+    var icon: String { cosmoIcon.systemName }
+
+    var cosmoIcon: CosmoIcon {
         switch self {
-        case .ideas: return "lightbulb"
-        case .pipeline: return "rectangle.split.3x1"
-        case .calendar: return "calendar"
+        case .ideas: return .idea
+        case .pipeline: return .pipeline
+        case .calendar: return .calendar
         }
     }
 }
@@ -51,7 +53,11 @@ struct ContentWorkspacePage: View {
         .onChange(of: destination) { _, _ in route() }
         .onChange(of: boardRequest) { _, _ in consumeBoardRequest() }
         .onChange(of: pipelineModel.scope) { _, scope in ideasModel.scope = scope }
-        .onChange(of: tab) { _, value in visitedTabs.insert(value); updateLayout() }
+        .onChange(of: tab) { _, value in
+            visitedTabs.insert(value)
+            updateLayout()
+            syncDestination(to: value)
+        }
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.openPipeline)) { notification in
             if notification.userInfo?["tab"] as? String == "ideas" { tab = .ideas }
             else { tab = notification.userInfo?["view"] as? String == "calendar" ? .calendar : .pipeline }
@@ -111,7 +117,7 @@ struct ContentWorkspacePage: View {
             HStack(spacing: DS.space16) {
                 CosmoSegmentedSwitcher(
                     options: ContentWorkspaceTab.allCases,
-                    label: { $0.title }, icon: { $0.icon },
+                    label: { $0.title }, icon: { $0.cosmoIcon },
                     help: { "\($0.title) (⌘\((ContentWorkspaceTab.allCases.firstIndex(of: $0) ?? 0) + 1))" },
                     selection: $tab
                 )
@@ -238,6 +244,20 @@ struct ContentWorkspacePage: View {
     }
     private func updateLayout() {
         if tab != .ideas { pipelineModel.view = tab == .calendar ? .calendar : (listLayout ? .list : .board) }
+    }
+    /// The in-page switcher writes the destination back, so the sidebar and
+    /// the trail always name the lens on screen. A client hub stays a client
+    /// hub — both pipeline lenses are honest under `.client`.
+    private func syncDestination(to tab: ContentWorkspaceTab) {
+        switch tab {
+        case .ideas:
+            if destination != .ideas { destination = .ideas }
+        case .pipeline, .calendar:
+            switch destination {
+            case .pipeline, .client: break
+            default: destination = .pipeline
+            }
+        }
     }
 }
 

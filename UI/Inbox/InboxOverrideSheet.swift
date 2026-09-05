@@ -144,7 +144,7 @@ struct InboxOverrideSheet: View {
             Task { await viewModel.overrideMerge(item: item, targetUuid: uuid) }
         } label: {
             HStack(spacing: 10) {
-                Image(systemName: result.entityType.icon)
+                Image(cosmo: result.entityType.cosmoIcon)
                     .font(.system(size: 12))
                     .foregroundStyle(DS.accent)
                     .frame(width: 24, height: 24)

@@ -56,12 +56,19 @@ final class CanvasAtomWarmStore {
         return entriesByUUID[uuid]?.atom
     }
 
-    fileprivate func store(_ atom: Atom) {
+    @discardableResult
+    fileprivate func store(_ atom: Atom) -> Bool {
+        if let current = entriesByUUID[atom.uuid]?.atom,
+           atom.updatedAt < current.updatedAt
+            || (atom.updatedAt == current.updatedAt && atom.localVersion < current.localVersion) {
+            return false
+        }
         entriesByUUID[atom.uuid] = Entry(atom: atom, stampedAt: Date())
         if let id = atom.id {
             uuidByID[id] = atom.uuid
         }
         trimIfNeeded()
+        return true
     }
 
     private func trimIfNeeded() {
@@ -158,8 +165,9 @@ final class CanvasAtomObservationHub {
     /// Initial-value delivery: newer-than-baseline data fans out to every
     /// subscriber of the uuid; an unchanged baseline still hands the
     /// requesting subscriber its current value (that's the point of asking).
-    private func deliverInitialValue(_ atom: Atom, to token: UUID, uuid: String) {
-        CanvasAtomWarmStore.shared.store(atom)
+    private func deliverInitialValue(_ fetchedAtom: Atom, to token: UUID, uuid: String) {
+        CanvasAtomWarmStore.shared.store(fetchedAtom)
+        let atom = CanvasAtomWarmStore.shared.atom(uuid: uuid) ?? fetchedAtom
         let incoming = KnownVersion(localVersion: atom.localVersion, updatedAt: atom.updatedAt)
         let known = knownVersions[uuid]
         knownVersions[uuid] = incoming
@@ -189,7 +197,7 @@ final class CanvasAtomObservationHub {
     /// as targeted data updates) and by the hub's own observation wakes.
     func absorb(_ atoms: [Atom]) {
         for atom in atoms {
-            CanvasAtomWarmStore.shared.store(atom)
+            guard CanvasAtomWarmStore.shared.store(atom) else { continue }
             deliverIfNewer(atom)
         }
     }
@@ -202,7 +210,8 @@ final class CanvasAtomObservationHub {
             // Never regress: a slow batch fetch racing a newer wake must not
             // overwrite fresher content with an older row. ISO8601 strings
             // compare chronologically; equal stamps defer to version drift.
-            if incoming.updatedAt < known.updatedAt { return }
+            if incoming.updatedAt < known.updatedAt
+                || (incoming.updatedAt == known.updatedAt && incoming.localVersion < known.localVersion) { return }
         }
         knownVersions[atom.uuid] = incoming
         for callback in callbacks.values {

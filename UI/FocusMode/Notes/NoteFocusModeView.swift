@@ -400,6 +400,10 @@ struct NoteFocusModeView: View {
     @Environment(\.isPeekContext) private var isPeekContext
     @Environment(\.isPaneContextOwner) private var isPaneContextOwner
     @Environment(\.atomWindowChromeContext) private var atomChrome
+    @Environment(\.cosmoFloatingPanelIsVisible) private var floatingPanelIsVisible
+    @State private var panelSessionIsVisible = true
+    @State private var pendingObservedStyle: NoteDocumentStyle?
+    @State private var shareDraft: String?
     @Environment(\.paneDeckChrome) private var paneDeckChrome
 
     enum SaveState: Equatable {
@@ -500,8 +504,11 @@ struct NoteFocusModeView: View {
         .cosmoSurfaceKeyWindowActivation(surfaceID: "note:\(atom.uuid)")
         .focusImmersiveEntryTransition()
         .onAppear {
-            AtomRepository.shared.acquireEditingLock(uuid: atom.uuid)
-            startEditingLockRefresh()
+            panelSessionIsVisible = floatingPanelIsVisible
+            if floatingPanelIsVisible {
+                AtomRepository.shared.acquireEditingLock(uuid: atom.uuid)
+                startEditingLockRefresh()
+            }
             // Session-long synchronous escort. `onDisappear` owns the normal
             // close-save, but it is not guaranteed to run when the host tears
             // the view down out-of-band (the atom panel ordering out, the
@@ -553,8 +560,10 @@ struct NoteFocusModeView: View {
             // gating registration on it hid every other open document from the
             // assistant's scope switcher.
             ownedContextProvider = provider
-            CosmoEditableSurfaceRegistry.shared.registerPresence(provider)
-            if !isPaneContext || isPaneContextOwner {
+            if floatingPanelIsVisible {
+                CosmoEditableSurfaceRegistry.shared.registerPresence(provider)
+            }
+            if floatingPanelIsVisible, !isPaneContext || isPaneContextOwner {
                 CosmoWindowViewModel.shared.updateContext(provider: provider)
             }
             // Safety fallback: ensure isInitialLoad clears even if GRDB observation
@@ -569,8 +578,32 @@ struct NoteFocusModeView: View {
             // Promote the provider this view already owns — a second instance
             // would orphan the registry's weak entry for an instant and drop the
             // note out of the switcher.
-            guard isOwner, let provider = ownedContextProvider else { return }
+            guard floatingPanelIsVisible, isOwner, let provider = ownedContextProvider else { return }
             CosmoWindowViewModel.shared.updateContext(provider: provider)
+        }
+        .onChange(of: floatingPanelIsVisible) { _, visible in
+            panelSessionIsVisible = visible
+            if visible {
+                AtomRepository.shared.acquireEditingLock(uuid: atom.uuid)
+                startEditingLockRefresh()
+                if let provider = ownedContextProvider {
+                    CosmoEditableSurfaceRegistry.shared.registerPresence(provider)
+                    if !isPaneContext || isPaneContextOwner {
+                        CosmoWindowViewModel.shared.updateContext(provider: provider)
+                    }
+                }
+            } else {
+                isEditingTitle = false
+                autoSaveTask?.cancel()
+                saveAtomImmediately()
+                floatingBlocksManager.saveImmediately()
+                stopEditingLockRefresh()
+                AtomRepository.shared.releaseEditingLock(uuid: atom.uuid)
+                if let provider = ownedContextProvider {
+                    CosmoEditableSurfaceRegistry.shared.unregister(provider)
+                    CosmoWindowViewModel.shared.releaseContext(provider: provider)
+                }
+            }
         }
         .onReceive(CosmoInlineAssistantStore.shared.$proposals) { proposals in
             let surfaceID = "note:\(atom.uuid)"
@@ -632,7 +665,10 @@ struct NoteFocusModeView: View {
         .sheet(isPresented: $historySheetPresented) {
             AtomHistorySheet(atom: atom) { historySheetPresented = false }
         }
-        .onChange(of: noteStyle) { _, _ in
+        .onChange(of: noteStyle) { _, newStyle in
+            let observedStyle = pendingObservedStyle
+            pendingObservedStyle = nil
+            guard newStyle != observedStyle else { return }
             guard !isInitialLoad else { return }
             hasLocalMetaEdits = true
             triggerAutoSave()
@@ -783,6 +819,7 @@ struct NoteFocusModeView: View {
         } trailing: {
             CosmoChromeIsland {
                 styleMenuButton
+                shareMenuButton
                 AtomWindowChromeDivider()
                 AtomWindowChromeTrailingControls(context: atomChrome)
             }
@@ -868,6 +905,37 @@ struct NoteFocusModeView: View {
         HStack(spacing: DS.space8) {
             historyButton
             styleMenuButton
+            shareMenuButton
+        }
+    }
+
+    private var shareMenuButton: some View {
+        chromeIconButton(
+            systemName: "square.and.arrow.up", isActive: shareDraft != nil,
+            tint: DS.accent, help: "Share note", accessibilityLabel: "Share note"
+        ) {
+            // Blur commits the active row before taking a portable snapshot.
+            NSApp.keyWindow?.makeFirstResponder(nil)
+            shareDraft = ([titlePlainText] + BlockOperations.markdownLines(for: bodyDocument.blocks))
+                .joined(separator: "\n\n")
+        }
+        .popover(isPresented: Binding(get: { shareDraft != nil }, set: { if !$0 { shareDraft = nil } })) {
+            if let shareDraft {
+                VStack(alignment: .leading, spacing: DS.space12) {
+                    Text("Share note").font(DS.headline)
+                    Text("A copy of the full note. Edits stay in Cosmo.")
+                        .font(DS.caption).foregroundStyle(DS.textSecondary)
+                    ShareLink(item: shareDraft) {
+                        Label("Share a copy…", systemImage: "square.and.arrow.up")
+                    }
+                    Button("Copy Markdown") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(shareDraft, forType: .string)
+                        self.shareDraft = nil
+                    }
+                }
+                .padding(DS.space16)
+            }
         }
     }
 
@@ -1437,7 +1505,7 @@ struct NoteFocusModeView: View {
                     ForEach(Array(mentionedInCounts.keys.sorted(by: { $0.rawValue < $1.rawValue })), id: \.self) { type in
                         if let count = mentionedInCounts[type], count > 0 {
                             HStack(spacing: DS.space6) {
-                                Image(systemName: type.iconName)
+                                Image(cosmo: type.cosmoIcon)
                                     .font(DS.caption2)
                                     .foregroundStyle(focusTextSecondary)
                                     .accessibilityLabel(type.displayName)
@@ -1970,7 +2038,7 @@ struct NoteFocusModeView: View {
 
                 ForEach(linkedAtoms, id: \.uuid) { linked in
                     HStack(spacing: DS.space8) {
-                        Image(systemName: linked.type.iconName)
+                        Image(cosmo: linked.type.cosmoIcon)
                             .font(DS.footnote)
                             .foregroundStyle(focusTextSecondary)
 
@@ -2089,6 +2157,13 @@ struct NoteFocusModeView: View {
             uuid: uuid,
             deliverCurrentValue: true
         ) { fetchedAtom in
+                    if !panelSessionIsVisible, !hasLocalMetaEdits {
+                        let observedStyle = NoteDocumentStyle.load(fromMetadata: fetchedAtom.metadata)
+                        if observedStyle != noteStyle {
+                            pendingObservedStyle = observedStyle
+                            noteStyle = observedStyle
+                        }
+                    }
                     let nextTitleDocument = RichDocumentPersistence.loadAtomDocument(
                         field: .title,
                         metadata: fetchedAtom.metadata,
@@ -2118,7 +2193,7 @@ struct NoteFocusModeView: View {
                     // Only overwrite body from DB during initial load —
                     // after that, the user is always editing and observation echoes
                     // from auto-save would overwrite text typed since save started.
-                    if isInitialLoad,
+                    if isInitialLoad || (!panelSessionIsVisible && !hasLocalBodyEdits),
                        nextBodyPlainText != plainContent || nextBodyDocument != bodyDocument {
                         NoteFocusLog.debug("[FOCUS-NOTE] 🔔 observation APPLYING body (initialLoad) — uuid=\(atom.uuid) dbLen=\(nextBodyPlainText.count)")
                         bodyDocument = nextBodyDocument
@@ -2300,6 +2375,7 @@ struct NoteFocusModeView: View {
             let snapshot = try database.write { db in
                 try Self.persistCloseSnapshot(closeSnapshot, in: db)
             }
+            UserDefaults.standard.removeObject(forKey: Self.deadLetterKey(forAtomUUID: uuid))
             if plainContent == plainContentCopy {
                 hasLocalBodyEdits = false
             }
@@ -2548,7 +2624,6 @@ struct NoteFocusModeView: View {
     private func restoreDeadLetterIfNeeded() {
         let key = Self.deadLetterKey(forAtomUUID: atom.uuid)
         guard let data = UserDefaults.standard.data(forKey: key) else { return }
-        defer { UserDefaults.standard.removeObject(forKey: key) }
         guard let letter = try? JSONDecoder().decode(NoteSaveDeadLetter.self, from: data) else { return }
 
         let restoredBody = letter.body
@@ -2586,6 +2661,11 @@ struct NoteFocusModeView: View {
         hasLocalMetaEdits = true
         isInitialLoad = false
         saveAtomImmediately()
+        // Remove the recovery copy only after the synchronous commit cleared
+        // both dirty flags. A second failure must leave it recoverable.
+        if !hasLocalBodyEdits && !hasLocalMetaEdits {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
         PersistenceHealth.note(.conflict, context: "noteFocus.deadLetter", detail: "restored unsaved close snapshot for \(atom.uuid) (\(restoredBody.count) chars)")
         print("📨 Restored dead-lettered note snapshot for \(atom.uuid)")
     }
@@ -2770,6 +2850,7 @@ struct NoteFocusModeView: View {
                     }
                 }
 
+                UserDefaults.standard.removeObject(forKey: Self.deadLetterKey(forAtomUUID: uuid))
                 // Sync: queue for Supabase push so notes sync to cloud
                 if let updatedAtom = try? await database.asyncRead({ db in
                     try Atom.filter(Column("uuid") == uuid).fetchOne(db)
@@ -2926,7 +3007,7 @@ fileprivate struct BacklinkCardView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space6) {
             HStack(alignment: .top, spacing: DS.space6) {
-                Image(systemName: preview.type.iconName)
+                Image(cosmo: preview.type.cosmoIcon)
                     .font(DS.caption2)
                     .foregroundStyle(entityTint)
                     .frame(width: 14, alignment: .leading)

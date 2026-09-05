@@ -385,6 +385,7 @@ struct CanvasView: View {
     @State private var deepDiveChrome = DeepDiveStudyChromeModel()
     @State private var materialsStore = SpaceMaterialsStore()
     @State private var showingMaterialPicker = false
+    @State private var creatingSpaceItem: SpaceCompositionKind?
     @State private var libraryInventory: [ChildDoc] = []
     @State private var libraryLoadTask: Task<Void, Never>?
     /// Library folder currently open — hoisted here so the navigation trail
@@ -399,7 +400,9 @@ struct CanvasView: View {
 
     /// The canvas world takes gestures, drops and right-clicks only while it
     /// is the active view — every other view is a surface laid over it.
-    private var isCanvasViewActive: Bool { activeSpaceView == .canvas }
+    private var isCanvasViewActive: Bool {
+        activeSpaceView == .canvas && !(thinkspaceId.map { SpaceWorkspaceStore.shared.isPresenting(in: $0) } ?? false)
+    }
 
     // Notification observer management - prevent duplicate registrations
     @State private var observersRegistered = false
@@ -477,6 +480,7 @@ struct CanvasView: View {
                 // browser overlay — kill hit-testing so covered blocks can't
                 // capture right-clicks and show another document's menu.
                 .allowsHitTesting(isCanvasViewActive)
+                .accessibilityElement(children: .contain)
                 .accessibilityHidden(!isCanvasViewActive)
 
                 // Screen-space layers (outside the scaled container to
@@ -521,6 +525,14 @@ struct CanvasView: View {
                 }
                 .allowsHitTesting(!isCanvasViewActive)
                 .zIndex(2000)
+
+                if isCanvasViewActive, !spatialEngine.isLoading, spatialEngine.blocks.isEmpty,
+                   clusterEngine.clusters.isEmpty, drawingState.drawings.isEmpty {
+                    SpaceCanvasWelcome(purpose: currentSpace?.purpose,
+                        createNote: { addFromChromeRow(.note) }, addMaterials: { addFromChromeRow(.existing) })
+                        .padding(.leading, crossDragManager.sidebarTotalWidth)
+                        .zIndex(1999)
+                }
 
                 // Space+drag pan overlay — sits above everything so dragging
                 // works even over blocks and clusters (like Figma hand tool)
@@ -643,12 +655,14 @@ struct CanvasView: View {
             // Any non-canvas view covers the canvas with its own surface —
             // the right-click monitor must stand down (mirrors the world
             // layer's allowsHitTesting gate).
-            .onChange(of: activeSpaceView, initial: true) { _, view in
-                blockFrameTracker.isCanvasSurfaceActive = (view == .canvas)
+            .onChange(of: activeSpaceView) { _, view in
                 if view == .library {
                     refreshLibraryInventory()
                     libraryChrome.refocusBrowser()
                 }
+            }
+            .onChange(of: isCanvasViewActive, initial: true) { _, active in
+                blockFrameTracker.isCanvasSurfaceActive = active
             }
         }
         // NOTE: Removed .drawingGroup() from here - it was breaking async image loading
@@ -694,12 +708,20 @@ struct CanvasView: View {
             actions: spaceChromeActions,
             onSelectView: { view in
                 guard let thinkspaceId else { return }
-                SpaceViewStore.shared.select(view, for: thinkspaceId)
+                SpaceWorkspaceStore.shared.showRoot(view, in: thinkspaceId)
             },
             availableWidth: canvasSize.width
         )
         .sheet(isPresented: $showingMaterialPicker) {
-            if let thinkspaceId { SpaceMaterialPicker(spaceID: thinkspaceId) }
+            if let thinkspaceId {
+                if let target = SpaceWorkspaceStore.shared.selectedItem(in: thinkspaceId) {
+                    SpaceWorkspaceItemPicker(spaceID: thinkspaceId, target: target,
+                        purpose: target.spaceCompositionKind == .group ? .members : .references)
+                } else { SpaceMaterialPicker(spaceID: thinkspaceId) }
+            }
+        }
+        .sheet(item: $creatingSpaceItem) { kind in
+            if let thinkspaceId { SpaceWorkspaceCreateSheet(spaceID: thinkspaceId, kind: kind) }
         }
 
     }
@@ -745,6 +767,12 @@ struct CanvasView: View {
                 guard let folderID = librarySelectedFolderID else { return false }
                 removeLibraryItemFromFolder(itemUUID: uuid, clusterID: folderID)
                 return true
+            },
+            selectedSourceIDs: {
+                if let thinkspaceId, SpaceWorkspaceStore.shared.isPresenting(in: thinkspaceId) {
+                    return SpaceWorkspaceStore.shared.inquirySources(in: thinkspaceId)
+                }
+                return activeSpaceView == .library ? libraryChrome.inquirySourceIDs : activeSpaceView == .canvas ? spatialEngine.blocks.filter { $0.isSelected }.map(\.entityUuid) : []
             }
         )
     }
@@ -776,20 +804,11 @@ struct CanvasView: View {
         case .existing:
             showingMaterialPicker = true
         case .group:
-            materialsStore.create()
+            creatingSpaceItem = .group
         case .file:
             presentFilePortalOpenPanel(at: viewportCenterCanvasPoint())
         case .question:
-            Task { @MainActor in
-                guard let thinkspaceId else { return }
-                if let uuid = await thinkspaceManager.ensureDeepDiveProfileUUID(for: thinkspaceId) {
-                    NotificationCenter.default.post(
-                        name: CosmoNotification.Inquiry.openDeepDive,
-                        object: nil,
-                        userInfo: ["uuid": uuid, "composeQuestion": true]
-                    )
-                }
-            }
+            if let thinkspaceId { SpaceInquiryRequest.start(spaceID: thinkspaceId, sources: spaceChromeActions.selectedSourceIDs()) }
         default:
             let entityType: EntityType
             switch kind {
@@ -1182,6 +1201,7 @@ struct CanvasView: View {
             // Skip the whole cluster subtree unless its render inputs changed
             // (the action closures above are excluded from equality).
             .equatable()
+            .accessibilityHidden(!isCanvasViewActive)
 
             // Knowledge connection lines — above zone fills, under every
             // card. Blocks consumed by list/board/grid clusters render inside
@@ -1226,6 +1246,7 @@ struct CanvasView: View {
             blocksLayer(snapshot: snapshot)
             conceptMergeHoverPreviewLayer
             inboxBlocksLayer
+                .accessibilityHidden(!isCanvasViewActive)
 
             // Drag-to-connect overlay shares the same raw canvas coordinates as blocks.
             DragToConnectOverlay(
@@ -1236,11 +1257,14 @@ struct CanvasView: View {
     }
 
     private var thinkspaceLibrarySnapshot: ThinkspaceLibrarySnapshot {
-        ThinkspaceLibrarySnapshot.make(
-            blocks: spatialEngine.blocks,
+        let composition = thinkspaceId.flatMap { SpaceWorkspaceStore.shared.snapshots[$0] }
+        let groupIDs = Set(composition?.metadataByUUID.filter { $0.value.kind == .group }.map(\.key) ?? [])
+        let migrated = composition?.legacyGroupMapping ?? [:]
+        return ThinkspaceLibrarySnapshot.make(
+            blocks: spatialEngine.blocks.filter { !groupIDs.contains($0.entityUuid) },
             clusters: clusterEngine.userClusters,
-            inventory: libraryInventory,
-            materialGroups: materialsStore.groups
+            inventory: libraryInventory.filter { !groupIDs.contains($0.entityUuid) },
+            materialGroups: materialsStore.groups.filter { migrated[$0.id.uuidString] == nil }
         )
     }
 
@@ -1261,7 +1285,8 @@ struct CanvasView: View {
                 renameItem: { item, newName in renameLibraryItem(item, to: newName) },
                 deleteItem: { item in deleteLibraryItem(item) },
                 placeOnCanvas: { placeLibraryItemOnCanvas($0) },
-                removeFromSpace: { removeLibraryMember($0) }
+                removeFromSpace: { removeLibraryMember($0) },
+                startInquiry: { ids in if let thinkspaceId { SpaceInquiryRequest.start(spaceID: thinkspaceId, sources: ids) } }
             ),
             chrome: libraryChrome
         )
@@ -1276,6 +1301,18 @@ struct CanvasView: View {
         .onAppear {
             refreshLibraryInventory()
         }
+        .onChange(of: migratedLibraryFolder, initial: true) { _, atom in
+            guard let atom, let thinkspaceId else { return }
+            librarySelectedFolderID = nil
+            SpaceWorkspaceStore.shared.open(atom, in: thinkspaceId)
+        }
+    }
+
+    private var migratedLibraryFolder: Atom? {
+        guard let thinkspaceId, let folderID = librarySelectedFolderID,
+              let snapshot = SpaceWorkspaceStore.shared.snapshots[thinkspaceId],
+              let uuid = snapshot.legacyGroupMapping[folderID.uuidString] else { return nil }
+        return snapshot.atomsByUUID[uuid]
     }
 
     /// File an on-canvas library item into a cluster ("folder") via drag-and-drop.
@@ -1293,7 +1330,7 @@ struct CanvasView: View {
     /// then the canvas view opens on it.
     private func placeLibraryItemOnCanvas(_ item: ThinkspaceLibraryItem) {
         guard !item.isOnCanvas, let thinkspaceId else { return }
-        SpaceViewStore.shared.select(.canvas, for: thinkspaceId)
+        SpaceWorkspaceStore.shared.showRoot(.canvas, in: thinkspaceId)
         let position = viewportCenterCanvasPoint()
         Task { @MainActor in
             guard let block = await spatialEngine.placeMember(entityUuid: item.entityUuid, at: position) else { return }
@@ -1308,7 +1345,7 @@ struct CanvasView: View {
     /// "Reveal on Canvas" — flip back to the canvas view, then glide the camera to the block.
     private func revealLibraryItemOnCanvas(_ item: ThinkspaceLibraryItem) {
         guard item.isOnCanvas, let thinkspaceId else { return }
-        SpaceViewStore.shared.select(.canvas, for: thinkspaceId)
+        SpaceWorkspaceStore.shared.showRoot(.canvas, in: thinkspaceId)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
             flyCameraToBlock(atomUUID: item.entityUuid)
         }
@@ -1331,6 +1368,20 @@ struct CanvasView: View {
 
     private func openLibraryItem(_ item: ThinkspaceLibraryItem) {
         guard item.entityId > 0 else { return }
+        if let thinkspaceId, let atom = SpaceWorkspaceStore.shared.snapshots[thinkspaceId]?.atomsByUUID[item.entityUuid],
+           atom.spaceCompositionKind != nil {
+            SpaceWorkspaceStore.shared.open(atom, in: thinkspaceId)
+            return
+        }
+        if item.entityType == .note, let thinkspaceId {
+            Task { @MainActor in
+                do {
+                    guard let atom = try await AtomRepository.shared.fetch(uuid: item.entityUuid) else { return }
+                    SpaceWorkspaceStore.shared.open(atom, in: thinkspaceId)
+                } catch { SpaceWorkspaceStore.shared.report(error, in: thinkspaceId) }
+            }
+            return
+        }
         NotificationCenter.default.post(
             name: .enterFocusMode,
             object: nil,
@@ -1379,9 +1430,13 @@ struct CanvasView: View {
     /// the two views never disagree.
     private func renameLibraryItem(_ item: ThinkspaceLibraryItem, to newName: String) {
         if let blockIndex = spatialEngine.blocks.firstIndex(where: { $0.entityUuid == item.entityUuid }) {
-            spatialEngine.blocks[blockIndex].title = newName
-            let block = spatialEngine.blocks[blockIndex]
-            Task { await spatialEngine.saveBlock(block) }
+            do {
+                try spatialEngine.updateBlockMetadata(
+                    blockID: spatialEngine.blocks[blockIndex].id, patch: ["title": newName]
+                )
+            } catch {
+                PersistenceHealth.note(.writeFailure, context: "canvas.rename", detail: "\(error)")
+            }
         }
         Task { @MainActor in
             guard var atom = try? await AtomRepository.shared.fetch(uuid: item.entityUuid) else { return }
@@ -1474,7 +1529,8 @@ struct CanvasView: View {
                 staticContent: CanvasBlockStaticView(
                     block: block,
                     isMediaContent: snapshot.mediaContentBlockIds.contains(block.id),
-                    isViewportActive: snapshot.visibleBlockIds.contains(block.id)
+                    isViewportActive: snapshot.visibleBlockIds.contains(block.id),
+                    spaceID: thinkspaceId
                 ),
                 onDragChanged: { translation in
                     if NSEvent.modifierFlags.contains(.option) {
@@ -1509,6 +1565,10 @@ struct CanvasView: View {
                 onDoubleTap: { openBlockInFocusMode(block) }
             )
             .equatable()
+            // Accessibility visibility lives outside the cached card subtree.
+            // Explicit thought-card elements must leave the tree while a
+            // workspace covers them, without tearing down their editor state.
+            .accessibilityHidden(!isCanvasViewActive)
         }
     }
 
@@ -2355,6 +2415,33 @@ struct CanvasView: View {
                     handlePlaceEntityOnCanvas(notification: notification)
                 }
 
+                addCanvasObserver(
+                    forName: Notification.Name("com.cosmo.space.placeCreatedItem"),
+                    object: nil, queue: .main, activeOnly: true
+                ) { [self] notification in
+                    guard let uuid = notification.userInfo?["atomUUID"] as? String,
+                          let destination = notification.userInfo?["spaceID"] as? String,
+                          destination == thinkspaceId,
+                          destination == spatialEngine.currentThinkspaceId else { return }
+                    let position = PositionResolver.shared.findNonOverlappingPosition(
+                        near: viewportCenterCanvasPoint(), existingBlocks: spatialEngine.blocks, canvasSize: canvasSize)
+                    Task { @MainActor in
+                        guard await spatialEngine.placeMember(entityUuid: uuid, at: position) != nil else {
+                            SpaceWorkspaceStore.shared.report(SpaceCompositionError.invalidPlacement, in: destination)
+                            return
+                        }
+                        refreshLibraryInventory()
+                    }
+                }
+
+                addCanvasObserver(
+                    forName: Notification.Name("com.cosmo.space.importFiles"),
+                    object: nil, queue: .main, activeOnly: true
+                ) { [self] notification in
+                    guard notification.userInfo?["spaceID"] as? String == thinkspaceId else { return }
+                    presentFilePortalOpenPanel(at: viewportCenterCanvasPoint())
+                }
+
                 // Listen for block resize commands
                 addCanvasObserver(
                     forName: .resizeSelectedBlock,
@@ -2596,6 +2683,7 @@ struct CanvasView: View {
                 // Track space bar press to enable drag-to-pan over any element
                 keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { [self] event in
                     guard canvasIsActive else { return event }
+                    guard !MainKeyboardShortcutPolicy.reservesDocumentKeyboard(in: event.window) else { return event }
                     if CanvasKeyboardShortcutPolicy.shouldToggleMinimap(
                         keyCode: event.keyCode,
                         eventType: event.type,
@@ -2697,6 +2785,7 @@ struct CanvasView: View {
             .onChange(of: isActive) { _, newValue in
                 canvasIsActive = newValue
                 if !newValue {
+                    DirtyEditorRegistry.shared.flushAll()
                     // Gestures can't finish once the canvas is hidden —
                     // replaces @GestureState auto-reset for interrupted pans.
                     viewportState.resetLiveGesture()
@@ -2720,6 +2809,9 @@ struct CanvasView: View {
             }
             .onChange(of: thinkspaceId) { _, newId in
                 thinkspaceSwitchTask?.cancel()
+                // Commit visible drafts before starting a read for another
+                // space; a rapid return must not fetch before its close save.
+                DirtyEditorRegistry.shared.flushAll()
                 // A switch mid-gesture must not carry the live pan into the
                 // next space (replaces @GestureState auto-reset).
                 viewportState.resetLiveGesture()
@@ -2864,8 +2956,16 @@ struct CanvasView: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.showLibraryFolder)) { notification in
                 if let folderID = notification.userInfo?["folderID"] as? UUID {
+                    if let thinkspaceId,
+                       let snapshot = SpaceWorkspaceStore.shared.snapshots[thinkspaceId],
+                       let uuid = snapshot.legacyGroupMapping[folderID.uuidString],
+                       let atom = snapshot.atomsByUUID[uuid] {
+                        librarySelectedFolderID = nil
+                        SpaceWorkspaceStore.shared.open(atom, in: thinkspaceId)
+                        return
+                    }
                     if let thinkspaceId {
-                        SpaceViewStore.shared.select(.library, for: thinkspaceId, source: .trail)
+                        SpaceWorkspaceStore.shared.showRoot(.library, in: thinkspaceId)
                     }
                     withAnimation(ProMotionSprings.focusTransition) {
                         librarySelectedFolderID = folderID
@@ -3646,166 +3746,57 @@ struct CanvasView: View {
 
     // MARK: - Block Content Update Handler
     private func handleUpdateBlockContent(notification: Notification) {
-        guard let userInfo = notification.userInfo,
-              let blockId = userInfo["blockId"] as? String else {
-            return
-        }
-
-        let content = userInfo["content"] as? String ?? ""
-        let title = userInfo["title"] as? String
-
-        // Defer state mutation to next run loop to avoid "Modifying state during view update"
+        guard let blockId = notification.userInfo?["blockId"] as? String,
+              let content = notification.userInfo?["content"] as? String else { return }
+        let title = notification.userInfo?["title"] as? String
         Task { @MainActor in
-            guard let blockIndex = spatialEngine.blocks.firstIndex(where: { $0.id == blockId }) else {
-                // The block isn't in the current in-memory array (canvas switched or
-                // unmounted mid-save) — never drop the user's text silently. Write
-                // straight to canvas_blocks by block id instead.
-                await writeBlockContentDirectly(blockId: blockId, content: content, title: title)
-                return
-            }
-
-            let block = spatialEngine.blocks[blockIndex]
-
-            if block.entityType == .note || block.entityType == .stickyNote || block.entityType == .content {
-                spatialEngine.blocks[blockIndex].metadata["content"] = content
-                if let title = title {
-                    spatialEngine.blocks[blockIndex].metadata["title"] = title
-                    let defaultTitle = block.entityType == .note ? "Note" : "Content"
-                    spatialEngine.blocks[blockIndex].title = title.isEmpty ? defaultTitle : title
+            if let block = spatialEngine.blocks.first(where: { $0.id == blockId }),
+               ![EntityType.note, .stickyNote, .content].contains(block.entityType) {
+                if block.entityId == -1 && !content.isEmpty {
+                    await createDatabaseEntryForBlock(block: block, content: content)
+                } else if block.entityId != -1 {
+                    await updateDatabaseEntry(block: block, content: content)
                 }
-                await spatialEngine.saveBlock(spatialEngine.blocks[blockIndex])
-                storeThinkspaceSnapshotCache()
-                let blockTypeName = block.entityType == .note ? "note" : "content"
-                print("📝 Saved \(blockTypeName) to ThinkSpace")
                 return
             }
-
-            // For other entity types, create or update database entry
-            if block.entityId == -1 && !content.isEmpty {
-                await createDatabaseEntryForBlock(block: block, content: content)
-            } else if block.entityId != -1 {
-                await updateDatabaseEntry(block: block, content: content)
+            var patch = ["content": content]
+            if let title { patch["title"] = title }
+            do {
+                try spatialEngine.updateBlockMetadata(blockID: blockId, patch: patch)
+            } catch {
+                PersistenceHealth.note(.writeFailure, context: "canvas.updateBlockContent", detail: "\(blockId): \(error)")
             }
         }
     }
 
-    /// Refresh the warm thinkspace snapshot cache after a content/metadata save so
-    /// returning to this thinkspace can never resurrect pre-edit text.
     private func storeThinkspaceSnapshotCache() {
         ThinkspaceCanvasSnapshotCache.shared.store(
-            blocks: spatialEngine.blocks,
-            zoomLevel: canvasScale,
-            panOffset: canvasOffset,
-            thinkspaceId: spatialEngine.currentThinkspaceId,
-            userClusters: clusterEngine.userClusters
+            blocks: spatialEngine.blocks, zoomLevel: canvasScale, panOffset: canvasOffset,
+            thinkspaceId: spatialEngine.currentThinkspaceId, userClusters: clusterEngine.userClusters
         )
     }
 
-    /// Fallback for `.updateBlockContent` when the in-memory lookup fails:
-    /// persist note_content (and a flattened body document) directly by block id.
-    private func writeBlockContentDirectly(blockId: String, content: String, title: String?) async {
-        do {
-            try await CosmoDatabase.shared.asyncWrite { db in
-                let existingJSON = try String.fetchOne(
-                    db,
-                    sql: "SELECT metadata FROM canvas_blocks WHERE id = ? AND is_deleted = 0",
-                    arguments: [blockId]
-                )
-                // Keep the metadata column coherent with note_content — a stale
-                // rich body document must not shadow the newer plain text on load.
-                var metadata = SpatialEngine.decodeBlockMetadataJSON(existingJSON) ?? [:]
-                metadata = RichDocumentPersistence.writeBlockDocument(
-                    RichDocument.migrateLegacy(content),
-                    key: RichDocumentMetadataKeys.bodyDocument,
-                    metadata: metadata
-                )
-                metadata["content"] = content
-                if let title { metadata["title"] = title }
-
-                try db.execute(
-                    sql: """
-                    UPDATE canvas_blocks
-                    SET note_content = ?, metadata = ?, entity_title = COALESCE(?, entity_title), updated_at = CURRENT_TIMESTAMP
-                    WHERE id = ? AND is_deleted = 0
-                    """,
-                    arguments: [content, SpatialEngine.encodeBlockMetadataJSON(metadata), title, blockId]
-                )
-            }
-            PersistenceHealth.note(.conflict, context: "canvas.updateBlockContent", detail: "block \(blockId) not in memory — wrote canvas_blocks directly")
-        } catch {
-            PersistenceHealth.note(.writeFailure, context: "canvas.updateBlockContent", detail: "fallback write failed for block \(blockId): \(error)")
-            print("❌ updateBlockContent fallback write failed: \(error)")
-        }
-    }
-
-    // MARK: - Block Metadata Update Handler
     private func handleUpdateBlockMetadata(notification: Notification) {
-        guard let userInfo = notification.userInfo,
-              let metadata = userInfo["metadata"] as? [String: String] else {
-            return
-        }
-
-        // Match by blockId or entityUuid (entityUuid used by SwipeProcessingService after analysis)
-        let blockId = userInfo["blockId"] as? String
-        let entityUuid = userInfo["entityUuid"] as? String
-        guard blockId != nil || entityUuid != nil else { return }
-
+        guard let metadata = notification.userInfo?["metadata"] as? [String: String] else { return }
+        let blockId = notification.userInfo?["blockId"] as? String
+        let entityUuid = notification.userInfo?["entityUuid"] as? String
+        let alreadyPersisted = notification.userInfo?["alreadyPersisted"] as? Bool ?? false
         Task { @MainActor in
-            let blockIndex: Int?
-            if let blockId {
-                blockIndex = spatialEngine.blocks.firstIndex(where: { $0.id == blockId })
-            } else if let entityUuid {
-                blockIndex = spatialEngine.blocks.firstIndex(where: { $0.entityUuid == entityUuid })
-            } else {
-                blockIndex = nil
-            }
-
-            guard let blockIndex else {
-                // Block not in memory — merge the keys straight into the
-                // canvas_blocks metadata column instead of dropping the update.
-                await writeBlockMetadataDirectly(blockId: blockId, entityUuid: entityUuid, metadata: metadata)
-                return
-            }
-
-            for (key, value) in metadata {
-                spatialEngine.blocks[blockIndex].metadata[key] = value
-            }
-
-            await spatialEngine.saveBlock(spatialEngine.blocks[blockIndex])
-            storeThinkspaceSnapshotCache()
-        }
-    }
-
-    /// Fallback for `.updateBlockMetadata` when the in-memory lookup fails:
-    /// merge the provided keys into the persisted metadata column directly.
-    private func writeBlockMetadataDirectly(blockId: String?, entityUuid: String?, metadata: [String: String]) async {
-        let whereClause = blockId != nil ? "id = ?" : "entity_uuid = ?"
-        guard let identifier = blockId ?? entityUuid else { return }
-        do {
-            try await CosmoDatabase.shared.asyncWrite { db in
-                let existingJSON = try String.fetchOne(
-                    db,
-                    sql: "SELECT metadata FROM canvas_blocks WHERE \(whereClause) AND is_deleted = 0",
-                    arguments: [identifier]
-                )
-                var merged = SpatialEngine.decodeBlockMetadataJSON(existingJSON) ?? [:]
-                for (key, value) in metadata {
-                    merged[key] = value
+            do {
+                let ids: [String]
+                if let blockId {
+                    ids = [blockId]
+                } else if let entityUuid {
+                    ids = try CosmoDatabase.shared.read { db in
+                        try String.fetchAll(db, sql: "SELECT id FROM canvas_blocks WHERE entity_uuid = ? AND is_deleted = 0", arguments: [entityUuid])
+                    }
+                } else { return }
+                for id in ids {
+                    try spatialEngine.updateBlockMetadata(blockID: id, patch: metadata, alreadyPersisted: alreadyPersisted)
                 }
-                var sql = "UPDATE canvas_blocks SET metadata = ?, updated_at = CURRENT_TIMESTAMP"
-                var arguments: [DatabaseValueConvertible?] = [SpatialEngine.encodeBlockMetadataJSON(merged)]
-                if let content = metadata["content"] {
-                    sql += ", note_content = ?"
-                    arguments.append(content)
-                }
-                sql += " WHERE \(whereClause) AND is_deleted = 0"
-                arguments.append(identifier)
-                try db.execute(sql: sql, arguments: StatementArguments(arguments))
+            } catch {
+                PersistenceHealth.note(.writeFailure, context: "canvas.updateBlockMetadata", detail: "\(error)")
             }
-            PersistenceHealth.note(.conflict, context: "canvas.updateBlockMetadata", detail: "block \(identifier) not in memory — wrote canvas_blocks directly")
-        } catch {
-            PersistenceHealth.note(.writeFailure, context: "canvas.updateBlockMetadata", detail: "fallback write failed for \(identifier): \(error)")
-            print("❌ updateBlockMetadata fallback write failed: \(error)")
         }
     }
 
@@ -3825,7 +3816,9 @@ struct CanvasView: View {
 
             spatialEngine.blocks[blockIndex].entityId = entityId
             spatialEngine.blocks[blockIndex].entityUuid = entityUuid
-            await spatialEngine.saveBlock(spatialEngine.blocks[blockIndex])
+            if userInfo["alreadyPersisted"] as? Bool != true {
+                await spatialEngine.saveBlock(spatialEngine.blocks[blockIndex])
+            }
         }
     }
 
@@ -3925,8 +3918,9 @@ struct CanvasView: View {
         clusterEngine.updateUserClusterBounds(blocks: spatialEngine.blocks)
         clusterEngine.persistAfterMove()
 
+        let block = spatialEngine.blocks[blockIndex]
         Task {
-            await spatialEngine.saveBlock(spatialEngine.blocks[blockIndex])
+            await spatialEngine.saveBlock(block)
         }
     }
 
@@ -3944,8 +3938,9 @@ struct CanvasView: View {
             spatialEngine.blocks[blockIndex].position = canvasPosition
             spatialEngine.blocks[blockIndex].size = spatialEngine.blocks[blockIndex].defaultSize
 
+            let block = spatialEngine.blocks[blockIndex]
             Task {
-                await spatialEngine.saveBlock(spatialEngine.blocks[blockIndex])
+                await spatialEngine.saveBlock(block)
             }
         }
 
@@ -3979,8 +3974,7 @@ struct CanvasView: View {
             case .note:
                 // Notes now have backing atoms — update both block metadata and atom
                 if let index = spatialEngine.blocks.firstIndex(where: { $0.id == block.id }) {
-                    spatialEngine.blocks[index].metadata["content"] = content
-                    await spatialEngine.saveBlock(spatialEngine.blocks[index])
+                    try spatialEngine.updateBlockMetadata(blockID: spatialEngine.blocks[index].id, patch: ["content": content])
                 }
                 // Also update the backing atom if it exists
                 if block.entityId > 0 {
@@ -4018,8 +4012,7 @@ struct CanvasView: View {
 
             case .note:
                 if let index = spatialEngine.blocks.firstIndex(where: { $0.id == block.id }) {
-                    spatialEngine.blocks[index].metadata["content"] = content
-                    await spatialEngine.saveBlock(spatialEngine.blocks[index])
+                    try spatialEngine.updateBlockMetadata(blockID: spatialEngine.blocks[index].id, patch: ["content": content])
                 }
 
             default:
@@ -4815,6 +4808,11 @@ struct CanvasView: View {
 
     private func openBlockInFocusMode(_ block: CanvasBlock) {
         AppPerformanceInstrumentation.trace("CANVAS openBlockInFocusMode \(block.entityType.rawValue)#\(block.entityId)")
+        if block.entityType == .note, let thinkspaceId,
+           let atom = SpaceWorkspaceStore.shared.snapshots[thinkspaceId]?.atomsByUUID[block.entityUuid] {
+            SpaceWorkspaceStore.shared.open(atom, in: thinkspaceId)
+            return
+        }
         guard [.idea, .content, .research, .connection, .cosmoAI].contains(block.entityType) else {
             return
         }
@@ -6095,21 +6093,23 @@ struct CanvasView: View {
         print("🔗 Dropped link → swipe canvas block (uuid: \(atom.uuid))")
     }
 
-    /// Imports files through the portal choke point and lays their blocks at
-    /// the drop point — multi-file drops fan out in a slight cascade so
-    /// nothing lands perfectly stacked.
+    /// Batch imports retain every successful item and place them without
+    /// overlapping existing work. Switching Spaces cannot redirect the import.
     private func createFilePortalBlocks(fileURLs: [URL], position: CGPoint) async {
-        for (index, fileURL) in fileURLs.prefix(10).enumerated() {
+        guard let destination = spatialEngine.currentThinkspaceId else { return }
+        let columns = max(1, min(4, Int(ceil(sqrt(Double(fileURLs.count))))))
+        for (index, fileURL) in fileURLs.enumerated() {
             do {
                 let imported = try await FilePortalImportService.shared.importFile(at: fileURL)
-                let offset = CGFloat(index) * 36
-                let block = CanvasBlock.fromAtom(
-                    imported.atom,
-                    position: CGPoint(x: position.x + offset, y: position.y + offset)
-                )
-                await spatialEngine.addBlock(block, persist: true)
-                selectedBlockId = block.id
-                print("📄 Added file portal → canvas block (uuid: \(imported.atom.uuid))")
+                try await SpaceMembershipService.add(imported.atom, to: destination)
+                guard destination == spatialEngine.currentThinkspaceId else { continue }
+                let anchor = CGPoint(x: position.x + CGFloat(index % columns) * 360,
+                                     y: position.y + CGFloat(index / columns) * 380)
+                let target = PositionResolver.shared.findNonOverlappingPosition(
+                    near: anchor, existingBlocks: spatialEngine.blocks, canvasSize: canvasSize)
+                if let block = await spatialEngine.placeMember(entityUuid: imported.atom.uuid, at: target) {
+                    selectedBlockId = block.id
+                }
             } catch {
                 print("⚠️ [CanvasView] File portal import failed for \(fileURL.lastPathComponent): \(error.localizedDescription)")
                 presentFilePortalImportError(error)
@@ -6129,13 +6129,22 @@ struct CanvasView: View {
         guard !urls.isEmpty else { return }
         let place = isCanvasViewActive
         let destination = thinkspaceId
+        let target = destination.flatMap { SpaceWorkspaceStore.shared.selectedItem(in: $0) }
         Task {
             if place { await createFilePortalBlocks(fileURLs: urls, position: position) }
             else if let destination {
                 for url in urls {
                     do {
                         let imported = try await FilePortalImportService.shared.importFile(at: url)
-                        try await SpaceMembershipService.add(imported.atom, to: destination)
+                        if let target, target.spaceCompositionKind == .group {
+                            try await SpaceCompositionService.addMembers([imported.atom.uuid], to: target.uuid, in: destination)
+                        } else {
+                            try await SpaceMembershipService.add(imported.atom, to: destination)
+                            if let target {
+                                try await SpaceCompositionService.attachReference(.init(sourceUUID: imported.atom.uuid,
+                                    sourceTitle: imported.atom.title), to: target.uuid)
+                            }
+                        }
                     } catch { presentFilePortalImportError(error) }
                 }
                 refreshLibraryInventory()
@@ -6146,7 +6155,7 @@ struct CanvasView: View {
     /// User-initiated imports fail loudly (Finder-style alert), never silently.
     private func presentFilePortalImportError(_ error: Error) {
         let alert = NSAlert()
-        alert.messageText = "Couldn't add file to canvas"
+        alert.messageText = "Couldn't import file"
         alert.informativeText = error.localizedDescription
         alert.alertStyle = .warning
         alert.runModal()
@@ -6606,13 +6615,16 @@ struct CanvasBlockStaticView: View, Equatable {
     let block: CanvasBlock
     let isMediaContent: Bool
     let isViewportActive: Bool
+    var spaceID: String? = nil
 
     var body: some View {
         switch block.entityType {
         case .cosmoAI:
             CosmoAIBlockView(block: block)
         case .note:
-            NoteBlockView(block: block)
+            if let spaceID, let atom = compositionPortal {
+                SpaceCompositionCanvasPortal(block: block, atom: atom, spaceID: spaceID)
+            } else { NoteBlockView(block: block) }
         case .calendar:
             Text("Calendar")
                 .font(DS.body)
@@ -6648,6 +6660,64 @@ struct CanvasBlockStaticView: View, Equatable {
             FilePortalBlockView(block: block, isViewportActive: isViewportActive)
         default:
             FloatingBlockView(block: block)
+        }
+    }
+
+    private var compositionPortal: Atom? {
+        guard let spaceID, let snapshot = SpaceWorkspaceStore.shared.snapshots[spaceID],
+              let atom = snapshot.atomsByUUID[block.entityUuid], let kind = atom.spaceCompositionKind,
+              kind != .page || !snapshot.children(of: atom.uuid).isEmpty else { return nil }
+        return atom
+    }
+}
+
+/// The canvas card opens the actual collection or composed work. Its small
+/// contents preview never creates a second draft or an empty note wrapper.
+private struct SpaceCompositionCanvasPortal: View {
+    let block: CanvasBlock
+    let atom: Atom
+    let spaceID: String
+    private var store: SpaceWorkspaceStore { .shared }
+    private var items: [Atom] { store.items(in: atom, spaceID: spaceID) }
+    private var kind: SpaceCompositionKind { atom.spaceCompositionKind ?? .page }
+    private var images: [Atom] { Array(items.filter { $0.type == .image }.prefix(4)) }
+    var body: some View {
+        CosmoBlockWrapper(block: block, accentColor: DS.accent, icon: kind.symbol,
+            title: atom.title ?? "Untitled", suppressGiltCorner: true, suppressAccentChip: true,
+            onFocusMode: { store.open(atom, in: spaceID) }) {
+            VStack(alignment: .leading, spacing: DS.space16) {
+                HStack {
+                    Text(kind.title.uppercased()).font(DS.caption2.weight(.medium)).tracking(1.2)
+                    Spacer()
+                    Text("\(items.count) \(kind == .group ? "items" : "sections")").font(DS.caption).monospacedDigit()
+                }.foregroundStyle(DS.textMuted)
+                if kind == .group, !images.isEmpty {
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: DS.space4) {
+                        ForEach(images, id: \.uuid) { image in
+                            SpaceCollectionPreview(atom: image, compact: true)
+                                .frame(height: 76).clipShape(.rect(cornerRadius: 6))
+                        }
+                    }
+                } else {
+                VStack(alignment: .leading, spacing: DS.space12) {
+                    ForEach(Array(items.prefix(3)), id: \.uuid) { child in
+                        HStack(alignment: .top, spacing: DS.space8) {
+                            Image(systemName: child.spaceCompositionKind?.symbol ?? (child.type == .image ? "photo" : "doc"))
+                                .foregroundStyle(DS.textMuted).frame(width: 18)
+                            Text(child.title ?? "Untitled").foregroundStyle(DS.textSecondary).lineLimit(2)
+                        }.font(DS.callout)
+                    }
+                    if items.isEmpty {
+                        Text(kind == .group ? "Bring images, notes and references together." : "Add pages and shape the work as it grows.")
+                            .font(DS.callout).foregroundStyle(DS.textSecondary).lineLimit(3)
+                    }
+                }
+                }
+                Spacer(minLength: 0)
+                Button("Open \(kind.title.lowercased())", systemImage: "arrow.up.right") { store.open(atom, in: spaceID) }
+                    .buttonStyle(.plain).font(DS.callout.weight(.medium)).foregroundStyle(DS.accent)
+                    .frame(minHeight: 44).help("Open \(atom.title ?? kind.title)")
+            }.padding(DS.space20)
         }
     }
 }

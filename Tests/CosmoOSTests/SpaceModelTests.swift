@@ -33,9 +33,9 @@ final class SpaceModelTests: XCTestCase {
 
     func testRenderableViewsNeverEmpty() {
         // Calendar and Tasks views are deferred (no surface yet); Board has one since phase 3.
-        XCTAssertEqual(SpaceViewResolver.renderableViews([.calendar, .tasks]), [.home, .library, .canvas, .deepDive])
-        XCTAssertEqual(SpaceViewResolver.renderableViews([.library, .tasks, .canvas]), [.home, .library, .canvas, .deepDive])
-        XCTAssertEqual(SpaceViewResolver.renderableViews([.board, .calendar]), [.home, .library, .canvas, .deepDive])
+        XCTAssertEqual(SpaceViewResolver.renderableViews([.calendar, .tasks]), [.canvas, .library, .deepDive])
+        XCTAssertEqual(SpaceViewResolver.renderableViews([.library, .tasks, .canvas]), [.canvas, .library, .deepDive])
+        XCTAssertEqual(SpaceViewResolver.renderableViews([.board, .calendar]), [.canvas, .library, .deepDive])
     }
 
     func testOpeningLadderLastThenDefaultThenKindThenFirst() {
@@ -46,11 +46,11 @@ final class SpaceModelTests: XCTestCase {
         )
         XCTAssertEqual(
             SpaceViewResolver.openingView(renderable: renderable, lastRaw: "deepDive", defaultRaw: "library", kind: .collection),
-            .library, "a disabled last view yields to the preferred one"
+            .canvas, "without a valid local choice the canvas opens"
         )
         XCTAssertEqual(
             SpaceViewResolver.openingView(renderable: renderable, lastRaw: nil, defaultRaw: "deepDive", kind: .collection),
-            .library, "a disabled preferred view yields to the kind"
+            .canvas, "legacy kinds do not change the starting view"
         )
         XCTAssertEqual(
             SpaceViewResolver.openingView(renderable: [.canvas], lastRaw: nil, defaultRaw: nil, kind: .research),
@@ -105,7 +105,7 @@ final class SpaceModelTests: XCTestCase {
         let atom = Atom.new(type: .thinkspace, title: "Goals", metadata: String(data: data, encoding: .utf8))
         let space = Thinkspace(from: atom)
         XCTAssertEqual(space.kind, .whiteboard)
-        XCTAssertEqual(space.renderableViews, [.home, .library, .canvas, .deepDive])
+        XCTAssertEqual(space.renderableViews, [.canvas, .library, .deepDive])
         XCTAssertEqual(space.openingView, .canvas)
         XCTAssertEqual(space.identityEmoji, "🗺️")
     }
@@ -155,8 +155,8 @@ final class SpaceModelTests: XCTestCase {
     func testProgrammaticDefaultKeepsTodaysShape() {
         let draft = SpaceDraft.programmaticDefault(name: "Inbox space", accentHex: "#2D6A4F")
         XCTAssertEqual(draft.kind, .custom)
-        XCTAssertEqual(draft.enabledViews, [.home, .library, .canvas, .deepDive])
-        XCTAssertEqual(draft.defaultView, .home)
+        XCTAssertEqual(draft.enabledViews, [.canvas, .library, .deepDive])
+        XCTAssertEqual(draft.defaultView, .canvas)
     }
 
     // MARK: - Keyboard policy
@@ -228,5 +228,32 @@ final class SpaceModelTests: XCTestCase {
             .init(thinkspaceId: "home")
         )
         XCTAssertNil(SpaceDeepDiveRoutingPolicy.spaceRedirect(deepDiveUUID: "dive-9", primaryThinkspaceUUID: "elsewhere", thinkspaces: [home]))
+    }
+}
+
+@MainActor
+final class SpaceResearchWireTests: XCTestCase {
+    func testPhoneResearchTreeAndSourceTabDecodeInMacWorkspace() throws {
+        var structured = SpaceResearchSchema.bootstrap(questionID: "question-1", title: "What works?", now: "2026-09-05T00:00:00Z")
+        structured["futureResearch"] = ["keep": true]
+        try SpaceResearchSchema.attachSource(id: "source-1", title: "Paper", url: "https://example.com/paper", to: &structured, now: "2026-09-05T00:00:00Z")
+        try SpaceResearchSchema.append("note-1", kind: "note", title: "Observation", to: &structured, now: "2026-09-05T00:00:00Z")
+        let json = try SpaceResearchSchema.json(structured)
+        let decoded = try JSONDecoder().decode(InquirySessionStructured.self, from: Data(json.utf8))
+        XCTAssertEqual(decoded.sourceTabs.first?.sourceUUID, "source-1")
+        XCTAssertEqual(decoded.researchTree.nodes.count, 3)
+        XCTAssertEqual((structured["futureResearch"] as? [String: Bool])?["keep"], true)
+    }
+
+    func testPhoneSpaceMetadataRetainsPurposeAndParent() throws {
+        let json = #"{"name":"Breathing","parentThinkspaceId":"parent","purpose":"Understand the evidence","defaultView":"canvas","enabledViews":["canvas","library","deepDive"]}"#
+        let space = Thinkspace(from: Atom.new(type: .thinkspace, title: "Breathing", metadata: json))
+        XCTAssertEqual(space.purpose, "Understand the evidence")
+        XCTAssertEqual(space.parentThinkspaceId, "parent")
+        XCTAssertEqual(space.renderableViews, [.canvas, .library, .deepDive])
+    }
+
+    func testOldOverviewNeverWinsOverCanvas() {
+        XCTAssertEqual(SpaceViewResolver.openingView(renderable: [.canvas, .library, .deepDive], lastRaw: "home", defaultRaw: "home", kind: .research), .canvas)
     }
 }

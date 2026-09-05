@@ -262,6 +262,11 @@ final class PaneManager {
 
     /// Open a new pane. Silently ignores if content is already open or max reached.
     func openPane(_ content: PaneContent) {
+        if content.id == PaneContent.inlineAssistant.id || content.id == PaneContent.cosmoWindow.id,
+           let existing = panes.first(where: { $0.id == PaneContent.inlineAssistant.id || $0.id == PaneContent.cosmoWindow.id }) {
+            activatePane(existing.id)
+            return
+        }
         // Check duplicates
         guard !panes.contains(where: { $0.id == content.id }) else { return }
         guard panes.count < maxPanes else { return }
@@ -491,6 +496,10 @@ final class PaneManager {
     }
 
     func openOrActivateCosmoWindow() {
+        if panes.contains(where: { $0.id == PaneContent.inlineAssistant.id }) {
+            openOrActivateInlineAssistant()
+            return
+        }
         let cosmoWindow = PaneContent.cosmoWindow
 
         if panes.contains(where: { $0.id == cosmoWindow.id }) {
@@ -512,16 +521,17 @@ final class PaneManager {
         }
     }
 
-    func openOrActivateInlineAssistant() {
+    @discardableResult
+    func openOrActivateInlineAssistant() -> Bool {
         let assistant = PaneContent.inlineAssistant
 
-        if panes.contains(where: { $0.id == assistant.id }) {
-            activePaneId = assistant.id
-            focusedPaneId = assistant.id
-            return
+        if let existing = panes.first(where: { $0.id == assistant.id || $0.id == PaneContent.cosmoWindow.id }) {
+            activePaneId = existing.id
+            focusedPaneId = existing.id
+            return true
         }
 
-        guard panes.count < maxPanes else { return }
+        guard panes.count < maxPanes else { return false }
         let isFirst = panes.isEmpty
         panes.append(assistant)
         activePaneId = assistant.id
@@ -532,6 +542,7 @@ final class PaneManager {
                 mainSplitRatio = 0.5
             }
         }
+        return true
     }
 
     func closeCollaborator() {

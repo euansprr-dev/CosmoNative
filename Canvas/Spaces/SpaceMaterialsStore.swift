@@ -43,6 +43,23 @@ final class SpaceMaterialsStore {
         }
         do {
             guard let atom = try await AtomRepository.shared.fetch(uuid: spaceID) else { return }
+            // The composition navigator owns migrated groups. Keep their original
+            // cross-platform metadata intact; the retired UUID-only reader must
+            // neither rewrite it nor report an error for valid older iOS IDs.
+            if let raw = atom.metadataDict?[SpaceCompositionLegacyMigration.metadataKey] {
+                let marker = try JSONDecoder().decode(SpaceCompositionLegacyMigration.self,
+                    from: JSONSerialization.data(withJSONObject: raw))
+                guard marker.schemaVersion == 1 else { throw SpaceCompositionError.unsupportedVersion(marker.schemaVersion) }
+                let original = atom.metadataDict?["materialGroups"] ?? atom.metadataDict?["clusters"]
+                if let legacy = original as? [[String: Any]], legacy.allSatisfy({ group in
+                    guard let id = group["id"] as? String else { return false }
+                    return marker.groups[UUID(uuidString: id)?.uuidString ?? id] != nil
+                }) {
+                    guard self.spaceID == spaceID else { return }
+                    groups = []; errorMessage = nil
+                    return
+                }
+            }
             if let stored = try Self.decodeGroups(atom) {
                 guard self.spaceID == spaceID else { return }
                 groups = stored

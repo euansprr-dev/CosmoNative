@@ -155,7 +155,7 @@ private struct PeekPanelContent: View {
     private var header: some View {
         HStack(spacing: 10) {
             if let entity = target.entitySelection {
-                Image(systemName: entity.type.icon)
+                Image(cosmo: entity.type.cosmoIcon)
                     .font(DS.subheadline)
                     .foregroundStyle(entity.type.color)
             }

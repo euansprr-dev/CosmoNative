@@ -33,6 +33,7 @@ final class ResizeBlockAction: UndoableAction {
         guard let engine = spatialEngine,
               let index = engine.blocks.firstIndex(where: { $0.id == blockId }) else { return }
         engine.blocks[index].size = size
-        Task { await engine.saveBlock(engine.blocks[index]) }
+        let block = engine.blocks[index]
+        Task { await engine.saveBlock(block) }
     }
 }

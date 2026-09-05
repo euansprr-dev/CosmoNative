@@ -587,6 +587,7 @@ struct LibraryItemMenuItems: View {
 
     var body: some View {
         openItems
+        Button("Explore a question", systemImage: "questionmark.bubble") { context.actions.startInquiry(batch.map(\.entityUuid)) }
         moveItems
         renameItem
         copyLinkItem

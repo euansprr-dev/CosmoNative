@@ -3505,46 +3505,27 @@ class ContentFocusModeViewModel: ObservableObject {
         messages: [WritingMessage],
         summary: String
     ) async {
-        let recentMessages = Array(messages.suffix(30))
-
+        guard !messages.isEmpty else { return }
+        let recentMessages = messages
         do {
+            let messagesData = try JSONEncoder().encode(messages)
+            let messagesArray = try JSONSerialization.jsonObject(with: messagesData)
             try await CosmoDatabase.shared.asyncWrite { db in
-                guard let row = try Row.fetchOne(db, sql: "SELECT metadata FROM atoms WHERE uuid = ?", arguments: [atomUUID]),
-                      let existingStr: String = row["metadata"],
-                      let existingData = existingStr.data(using: .utf8),
-                      var dict = try? JSONSerialization.jsonObject(with: existingData) as? [String: Any] else {
-                    return
+                guard let row = try Row.fetchOne(db, sql: "SELECT metadata FROM atoms WHERE uuid = ? AND is_deleted = 0", arguments: [atomUUID]) else {
+                    throw AtomRepositoryError.notFound(atomUUID)
                 }
-
-                // Encode conversation history
-                if !recentMessages.isEmpty,
-                   let messagesData = try? JSONEncoder().encode(recentMessages),
-                   let messagesArray = try? JSONSerialization.jsonObject(with: messagesData) {
-                    dict["conversationHistory"] = messagesArray
-                } else {
-                    dict["conversationHistory"] = nil
+                var dict: [String: Any] = [:]
+                if let json: String = row["metadata"], !json.isEmpty {
+                    dict = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] ?? [:]
                 }
-
+                dict["conversationHistory"] = messagesArray
                 dict["conversationSummary"] = summary.isEmpty ? nil : summary
-
-                // Write merged metadata back
-                if let metadataData = try? JSONSerialization.data(withJSONObject: dict),
-                   let metadataStr = String(data: metadataData, encoding: .utf8) {
-                    try db.execute(
-                        sql: """
-                        UPDATE atoms
-                        SET metadata = ?,
-                            updated_at = ?,
-                            _local_version = _local_version + 1
-                        WHERE uuid = ?
-                        """,
-                        arguments: [
-                            metadataStr,
-                            ISO8601.string(from: Date()),
-                            atomUUID
-                        ]
-                    )
-                }
+                let metadataData = try JSONSerialization.data(withJSONObject: dict)
+                try db.execute(sql: """
+                    UPDATE atoms SET metadata = ?, updated_at = ?,
+                        _local_version = _local_version + 1, _local_pending = 1
+                    WHERE uuid = ? AND is_deleted = 0
+                    """, arguments: [String(decoding: metadataData, as: UTF8.self), ISO8601.string(from: Date()), atomUUID])
             }
             print("💾 Content focus: persisted conversation (\(recentMessages.count) msgs) for \(atomUUID)")
             // Sync: queue conversation history for Supabase push
@@ -3554,6 +3535,7 @@ class ContentFocusModeViewModel: ObservableObject {
                 await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom)
             }
         } catch {
+            PersistenceHealth.note(.writeFailure, context: "contentChat.save", detail: "\(error)")
             print("❌ Content focus: persistConversationDirect failed: \(error)")
         }
     }

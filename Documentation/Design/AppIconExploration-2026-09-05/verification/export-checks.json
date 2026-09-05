@@ -1,0 +1,15 @@
+{
+  "svg_count": 15,
+  "png_count": 15,
+  "dimensions": [
+    1024,
+    1024
+  ],
+  "png_mode": "RGB",
+  "embedded_raster_images": false,
+  "fonts": false,
+  "filters": false,
+  "gradients": false,
+  "reference_count": 33,
+  "original_asset_hashes_unchanged": true
+}

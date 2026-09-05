@@ -108,11 +108,10 @@ struct CommandKIconVisualTile: View {
     var scale: CommandKIconVisualScale = .rail
 
     var body: some View {
-        // One register for every identity — the compact chip (Raycast's
-        // grammar). The hand-drawn swipe miniatures were retired July 2026:
-        // swipe surfaces wear standard SF glyphs like everything else.
+        // One compact mark per identity, shared with the sidebar and library.
+        // Original symbol artwork inherits the same font metrics as SF Symbols.
         CosmoIdentityChip(
-            systemName: identity.symbolName,
+            icon: identity.icon,
             tint: accent,
             size: scale == .rail ? 26 : 44
         )

@@ -58,6 +58,7 @@ final class CosmoAIFocusModeViewModel: ObservableObject {
 
         let userMsg = CosmoWindowMessage.user(query, mentionedAtoms: mentionInfo)
         messages.append(userMsg)
+        saveConversationHistory()
 
         isProcessing = true
         liveToolActivity = []
@@ -308,55 +309,13 @@ final class CosmoAIFocusModeViewModel: ObservableObject {
 
     // MARK: - Persistence
     private func loadConversationHistory() {
-        guard let structured = atom.structured,
-              let data = structured.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let messagesArray = json["messages"] as? [[String: Any]] else { return }
-
-        messages = messagesArray.compactMap { dict in
-            guard let typeStr = dict["type"] as? String,
-                  let content = dict["content"] as? String else { return nil }
-            let timestamp = (dict["timestamp"] as? Double).map { Date(timeIntervalSince1970: $0) } ?? Date()
-            let isStreaming = false
-
-            switch typeStr {
-            case "user":
-                return CosmoWindowMessage(type: .user, content: content, timestamp: timestamp, isStreaming: isStreaming)
-            case "assistant":
-                return CosmoWindowMessage(type: .assistant, content: content, timestamp: timestamp, isStreaming: isStreaming)
-            case "system":
-                return CosmoWindowMessage(type: .system, content: content, timestamp: timestamp, isStreaming: isStreaming)
-            default:
-                return nil
-            }
-        }
+        do { messages = try CanvasChatArchive.load(entityUUID: atom.uuid) }
+        catch { PersistenceHealth.note(.writeFailure, context: "focusChat.load", detail: "Saved conversation preserved: \(error)") }
     }
 
     private func saveConversationHistory() {
-        let messagesArray: [[String: Any]] = messages.suffix(50).compactMap { msg in
-            let typeStr: String
-            switch msg.type {
-            case .user: typeStr = "user"
-            case .assistant: typeStr = "assistant"
-            case .system: typeStr = "system"
-            default: return nil  // Don't persist trace/change messages
-            }
-            return [
-                "type": typeStr,
-                "content": msg.content,
-                "timestamp": msg.timestamp.timeIntervalSince1970
-            ]
-        }
-
-        let json: [String: Any] = ["messages": messagesArray]
-        if let data = try? JSONSerialization.data(withJSONObject: json),
-           let jsonString = String(data: data, encoding: .utf8) {
-            Task {
-                var updatedAtom = atom
-                updatedAtom.structured = jsonString
-                _ = try? await AtomRepository.shared.update(updatedAtom)
-            }
-        }
+        do { try CanvasChatArchive.save(messages, entityUUID: atom.uuid) }
+        catch { PersistenceHealth.note(.writeFailure, context: "focusChat.save", detail: "\(error)") }
     }
 
     // MARK: - Pin / Unpin Atom

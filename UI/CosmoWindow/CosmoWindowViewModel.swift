@@ -96,6 +96,7 @@ final class CosmoWindowViewModel: ObservableObject {
     private var conversationId: String = UserDefaults.standard.string(forKey: "cosmoWindow.lastConversationId") ?? "cosmo-global-window"
     private var linkedAtomUUIDs: Set<String> = []
     private var pinnedContextSourceIDs: [String] = []
+    private var unreadableArchiveKeys = Set<String>()
     private let messageArchiveKeyPrefix = "cosmoWindow.messageArchive."
 
     // MARK: - Context Tracking
@@ -2263,31 +2264,36 @@ final class CosmoWindowViewModel: ObservableObject {
 
     private func loadStoredMessages(for conversationId: String) -> [CosmoWindowMessage]? {
         let key = messageArchiveKey(for: conversationId)
-        guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-
-        guard let decoded = try? decoder.decode([CosmoWindowMessage].self, from: data) else {
+        do {
+            guard let data = try LocalDocumentArchive.load(key: key) else { return nil }
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            let decoded = try decoder.decode([CosmoWindowMessage].self, from: data)
+            unreadableArchiveKeys.remove(key)
+            return decoded.compactMap { message in
+                if case .contextChange = message.type { return nil }
+                var normalized = message
+                normalized.isStreaming = false
+                normalized.toolActivityGroups = nil
+                return normalized
+            }
+        } catch {
+            unreadableArchiveKeys.insert(key)
+            PersistenceHealth.note(.writeFailure, context: "windowChat.load", detail: "Saved conversation preserved: \(error)")
             return nil
-        }
-
-        return decoded.compactMap { message in
-            // Strip stale context change dividers from persisted history
-            if case .contextChange = message.type { return nil }
-            var normalized = message
-            normalized.isStreaming = false
-            normalized.toolActivityGroups = nil
-            return normalized
         }
     }
 
     private func saveStoredMessages(_ messages: [CosmoWindowMessage], for conversationId: String) {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-
-        guard let data = try? encoder.encode(messages) else { return }
-        UserDefaults.standard.set(data, forKey: messageArchiveKey(for: conversationId))
+        let key = messageArchiveKey(for: conversationId)
+        guard !unreadableArchiveKeys.contains(key) else { return }
+        do {
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            try LocalDocumentArchive.save(key: key, data: encoder.encode(messages))
+        } catch {
+            PersistenceHealth.note(.writeFailure, context: "windowChat.save", detail: "\(error)")
+        }
     }
 
     private func appendContextChangeIfNeeded(from oldType: CosmoContextType, to newType: CosmoContextType) {

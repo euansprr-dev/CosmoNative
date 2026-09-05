@@ -54,7 +54,7 @@ struct SpaceMaterialPicker: View {
             HStack(spacing: DS.space12) {
                 Image(systemName: included || selection.contains(atom.uuid) ? "checkmark.circle.fill" : "circle")
                     .foregroundStyle(included ? DS.textMuted : DS.accent)
-                Image(systemName: atom.type.iconName).foregroundStyle(DS.textMuted).frame(width: 20)
+                Image(cosmo: atom.cosmoIcon).foregroundStyle(DS.textMuted).frame(width: 20)
                 VStack(alignment: .leading, spacing: DS.space4) {
                     Text(atom.title ?? "Untitled").font(DS.callout).foregroundStyle(DS.text).lineLimit(2)
                     Text(included ? "Already in this Space" : atom.type.displayName).font(DS.caption).foregroundStyle(DS.textMuted)

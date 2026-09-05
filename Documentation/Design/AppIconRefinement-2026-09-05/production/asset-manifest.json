@@ -1,0 +1,85 @@
+{
+  "approvedDesign": "05 Evergreen",
+  "assets": [
+    {
+      "platform": "macOS",
+      "filename": "app_icon_1024.png",
+      "size": [
+        1024,
+        1024
+      ],
+      "mode": "RGBA",
+      "sha256": "6d61ca629fb64abc9c4b3a700df80991186c3230d6141ce7b54548033333dfd9"
+    },
+    {
+      "platform": "macOS",
+      "filename": "app_icon_128.png",
+      "size": [
+        128,
+        128
+      ],
+      "mode": "RGBA",
+      "sha256": "2f693d175ce2bef90af7a91270cf8031517de50f651475396b9abc63087da22a"
+    },
+    {
+      "platform": "macOS",
+      "filename": "app_icon_16.png",
+      "size": [
+        16,
+        16
+      ],
+      "mode": "RGBA",
+      "sha256": "525a435df95bf23c79d0850962e4f009b22f6ccde39a82fbbc546aa2b0467a88"
+    },
+    {
+      "platform": "macOS",
+      "filename": "app_icon_256.png",
+      "size": [
+        256,
+        256
+      ],
+      "mode": "RGBA",
+      "sha256": "0a66bd720d9e3d5fe9d8dc5852bdaaf5a08ae76a131d48e6657135862c5ec22f"
+    },
+    {
+      "platform": "macOS",
+      "filename": "app_icon_32.png",
+      "size": [
+        32,
+        32
+      ],
+      "mode": "RGBA",
+      "sha256": "d316a1545f5c33a7f51fec6f48ff5b923573187dc7c6097a26dce3c00cbf488a"
+    },
+    {
+      "platform": "macOS",
+      "filename": "app_icon_512.png",
+      "size": [
+        512,
+        512
+      ],
+      "mode": "RGBA",
+      "sha256": "01c229d11d28ef3e8063daacd65b9b7c34ddf4ea668fad227e5b4a0f5273a850"
+    },
+    {
+      "platform": "macOS",
+      "filename": "app_icon_64.png",
+      "size": [
+        64,
+        64
+      ],
+      "mode": "RGBA",
+      "sha256": "644a05e4751b40f87bb4ce074d589c1531ab9c3b4e093bae4e14ce722df91b90"
+    },
+    {
+      "platform": "iOS",
+      "filename": "app_icon_1024.png",
+      "size": [
+        1024,
+        1024
+      ],
+      "mode": "RGB",
+      "sha256": "1ea04fdafdf4d86ce69bb6d961ccf62be947586bac992b08ec237ed383c4b9b2"
+    }
+  ]
+}

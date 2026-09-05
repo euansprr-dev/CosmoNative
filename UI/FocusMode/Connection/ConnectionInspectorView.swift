@@ -264,7 +264,7 @@ struct ConnectionInspectorSourceDetail: View {
         VStack(alignment: .leading, spacing: DS.space16) {
             if let source {
                 HStack(spacing: DS.space8) {
-                    Image(systemName: source.type.iconName)
+                    Image(cosmo: source.cosmoIcon)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(DS.textSecondary)
                         .accessibilityHidden(true)

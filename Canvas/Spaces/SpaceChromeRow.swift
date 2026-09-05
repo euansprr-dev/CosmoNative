@@ -22,6 +22,7 @@ struct SpaceChromeActions {
     var exitFolder: () -> Void = {}
     var renameFolder: (UUID, String) -> Void = { _, _ in }
     var dropToRoot: (String) -> Bool = { _ in false }
+    var selectedSourceIDs: () -> [String] = { [] }
 }
 
 /// What ＋ can make — the menu adapts to the active view.
@@ -62,7 +63,7 @@ enum SpaceAddKind: String, CaseIterable, Identifiable {
     static func kinds(for view: SpaceView) -> [SpaceAddKind] {
         switch view {
         case .home: return [.note, .existing, .file, .question]
-        case .canvas: return [.note, .idea, .task, .content, .stickyNote, .deepDive, .file]
+        case .canvas: return [.note, .idea, .task, .content, .stickyNote, .existing, .file]
         case .library: return [.existing, .file, .note, .group]
         case .deepDive: return [.question, .note]
         case .board: return [.content, .idea]
@@ -82,17 +83,20 @@ struct SpaceChromeRow: View {
     let actions: SpaceChromeActions
     let onSelectView: (SpaceView) -> Void
     let availableWidth: CGFloat
-    private var compact: Bool { availableWidth - leadingInset < (activeView == .library ? 1400 : 900) }
+    private var compact: Bool { availableWidth - leadingInset < 980 }
+    @State private var creating: SpaceCompositionKind?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        CosmoChromeRow(insetsEnabled: true, centersAbsolutely: false) {
+        CosmoChromeRow(insetsEnabled: true, centersAbsolutely: availableWidth - leadingInset >= 900) {
             NavigationTrailIsland(showsSidebarToggle: leadingInset == 0)
-            if availableWidth - leadingInset >= 600 {
+            if availableWidth - leadingInset >= 900 {
             SpaceIdentityIsland(
                 thinkspace: thinkspace,
                 folder: activeView == .library ? libraryFolder : nil,
                 actions: actions
             )
+            .frame(maxWidth: availableWidth - leadingInset >= 1200 ? 320 : 230)
             }
         } center: {
             centerIslands
@@ -100,87 +104,77 @@ struct SpaceChromeRow: View {
             trailingIslands
         }
         .padding(.leading, leadingInset)
-        .animation(ProMotionSprings.gentle, value: leadingInset)
-        .animation(ProMotionSprings.focusTransition, value: activeView)
+        .animation(reduceMotion ? nil : ProMotionSprings.gentle, value: leadingInset)
+        .animation(reduceMotion ? nil : ProMotionSprings.focusTransition, value: activeView)
+        .sheet(item: $creating) { kind in
+            if let thinkspace {
+                SpaceWorkspaceCreateSheet(spaceID: thinkspace.id, kind: kind,
+                    parent: SpaceWorkspaceStore.shared.selectedItem(in: thinkspace.id))
+            }
+        }
     }
 
     @ViewBuilder
     private var centerIslands: some View {
-        CosmoChromeIsland(recede: recedes) {
-            if compact {
+        // Contents lives in the contextual sidebar. The same destinations stay
+        // one click away when the sidebar is tucked away.
+        if leadingInset == 0 {
+            CosmoChromeIsland {
                 Menu {
-                    ForEach([SpaceView.home, .library, .canvas, .deepDive]) { view in
+                    ForEach([SpaceView.canvas, .library, .deepDive]) { view in
                         Button(view.title, systemImage: view.icon) { onSelectView(view) }
                     }
-                    if activeView == .library {
+                    if let thinkspace, let snapshot = SpaceWorkspaceStore.shared.snapshots[thinkspace.id], !snapshot.roots.isEmpty {
                         Divider()
-                        Picker("Display", selection: Binding(get: { libraryChrome.prefs.viewMode }, set: { libraryChrome.setViewMode($0) })) {
-                            ForEach(ThinkspaceLibraryViewMode.allCases) { Text($0.title).tag($0) }
+                        ForEach(snapshot.roots, id: \.uuid) { atom in
+                            Button(atom.title ?? "Untitled", systemImage: atom.spaceCompositionKind?.symbol ?? "doc.text") {
+                                SpaceWorkspaceStore.shared.open(atom, in: thinkspace.id)
+                            }
                         }
                     }
-                } label: { Label(activeView.title, systemImage: activeView.icon).font(DS.subheadline).padding(.horizontal, DS.space8) }
-                .menuStyle(.borderlessButton).fixedSize().help("Space tools and views")
-            } else {
-            ForEach([SpaceView.home, .library, .canvas]) { view in
-                Button { onSelectView(view) } label: {
-                    Label(view.title, systemImage: view.icon)
-                        .lineLimit(1)
-                        .font(DS.subheadline.weight(activeView == view ? .semibold : .regular))
-                        .foregroundStyle(activeView == view ? DS.accent : DS.textSecondary)
-                        .padding(.horizontal, DS.space10)
-                        .frame(minHeight: 44)
-                        .background(activeView == view ? DS.glassSectionFill : .clear, in: .capsule)
+                } label: {
+                    Label("Contents", systemImage: "sidebar.left")
+                        .font(DS.subheadline.weight(.medium)).foregroundStyle(DS.textSecondary)
+                        .frame(minHeight: 44).padding(.horizontal, DS.space8)
                 }
-                .buttonStyle(.plain)
-                .help("Open \(view.title.lowercased())")
-                .accessibilityAddTraits(activeView == view ? .isSelected : [])
+                .menuStyle(.borderlessButton).menuIndicator(.visible).help("Navigate this Space")
             }
-            Menu {
-                Button("Start or continue inquiry", systemImage: "sparkle.magnifyingglass") { onSelectView(.deepDive) }
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(DS.subheadline)
-                    .frame(width: 36, height: 44)
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .help("Research tools")
-            .accessibilityLabel("Research tools")
-            }
-        }
-        switch activeView {
-        case .library:
-            if !compact { ThinkspaceLibraryLensIsland(chrome: libraryChrome)
-                .transition(.opacity)
-            }
-        case .deepDive:
-            DeepDiveStudyTabsIsland(chrome: deepDiveChrome)
-                .transition(.opacity)
-        default:
-            EmptyView()
         }
     }
 
     @ViewBuilder
     private var trailingIslands: some View {
-        switch activeView {
-        case .library:
-            ThinkspaceLibraryToolsIsland(chrome: libraryChrome, compact: compact)
-                .transition(.opacity)
-        case .deepDive:
-            DeepDiveStudyToolsIsland(chrome: deepDiveChrome)
-                .transition(.opacity)
-        default:
-            EmptyView()
+        CosmoChromeIsland {
+            Button {
+                guard let thinkspace else { return }
+                SpaceInquiryRequest.start(spaceID: thinkspace.id, sources: actions.selectedSourceIDs())
+                onSelectView(.deepDive)
+            } label: {
+                Label("Start inquiry", systemImage: "questionmark.bubble")
+                    .font(DS.subheadline.weight(.medium))
+                    .foregroundStyle(DS.accent)
+                    .frame(minHeight: 44)
+            }
+            .buttonStyle(.plain)
+            .help("Start an inquiry with the selected materials (⌘⌥I)")
+            .keyboardShortcut("i", modifiers: [.command, .option])
+            if !(thinkspace.map { SpaceWorkspaceStore.shared.isPresenting(in: $0.id) } ?? false) {
+            Menu {
+                SpaceCreationMenuItems { creating = $0 }
+                Divider()
+                Button("Add existing material…", systemImage: "plus.rectangle.on.folder") { actions.addAtCamera(.existing) }
+                Button("Import files…", systemImage: "arrow.down.doc") { actions.addAtCamera(.file) }
+                if activeView == .canvas, let thinkspace, !SpaceWorkspaceStore.shared.isPresenting(in: thinkspace.id) {
+                    Button("Sticky note", systemImage: "note.text") { actions.addAtCamera(.stickyNote) }
+                }
+            } label: {
+                Image(systemName: "plus").font(DS.subheadline.weight(.semibold))
+                    .foregroundStyle(DS.textSecondary).frame(width: 44, height: 44).contentShape(.rect)
+            }.menuStyle(.borderlessButton).menuIndicator(.hidden).help("Add to Space").accessibilityLabel("Add to Space")
+            }
+            SpaceMoreMenu(activeView: activeView, actions: actions,
+                showsCanvasActions: !(thinkspace.map { SpaceWorkspaceStore.shared.isPresenting(in: $0.id) } ?? false))
         }
-        CosmoChromeIsland(recede: recedes) {
-            SpaceAddMenu(activeView: activeView, actions: actions)
-            SpaceMoreMenu(activeView: activeView, actions: actions)
-        }
-    }
-
-    private var recedes: Bool {
-        activeView == .deepDive && deepDiveChrome.recede
     }
 }
 
@@ -319,12 +313,13 @@ struct SpaceAddMenu: View {
 struct SpaceMoreMenu: View {
     let activeView: SpaceView
     let actions: SpaceChromeActions
+    var showsCanvasActions = true
 
     @State private var isHovered = false
 
     var body: some View {
         Menu {
-            if activeView == .canvas {
+            if activeView == .canvas && showsCanvasActions {
                 Button { actions.organizeWorkspace() } label: { Label("Organize workspace", systemImage: "wand.and.stars") }
                 Button { actions.savePlace() } label: { Label("Save this view as a Place", systemImage: "mappin.and.ellipse") }
                     .keyboardShortcut("d", modifiers: .command)

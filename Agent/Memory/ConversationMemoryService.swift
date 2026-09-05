@@ -11,7 +11,6 @@ class ConversationMemoryService {
     private let atomRepo = AtomRepository.shared
     private let maxWindowSize = 20
     private let summarizationThreshold = 15
-    private let archiveAgeDays = 30
 
     private init() {}
 
@@ -19,15 +18,7 @@ class ConversationMemoryService {
 
     func saveConversation(_ conversation: AgentConversation) async {
         var conv = conversation
-        guard !conv.messages.isEmpty else {
-            await deleteConversation(id: conv.id)
-            return
-        }
-
-        // Cap stored history: fold the oldest runs into the summary so
-        // long-lived conversations (inline sessions accumulate per surface)
-        // don't grow unboundedly on disk and in load time.
-        conv = Self.foldingOldMessagesIntoSummary(conv)
+        guard !conv.messages.isEmpty else { return }
 
         // Auto-extract topics if not already set
         if conv.topics.isEmpty {
@@ -62,32 +53,39 @@ class ConversationMemoryService {
         structuredDict["topics"] = conv.topics
         let structuredJSON = (try? JSONSerialization.data(withJSONObject: structuredDict)).flatMap { String(data: $0, encoding: .utf8) }
 
-        let existingConv = try? await atomRepo.fetchAgentConversationAtom(conversationId: conv.id)
-
-        if var existing = existingConv {
-            existing.body = messagesJSON
-            existing.metadata = metadataJSON
-            existing.structured = structuredJSON
-            try? await atomRepo.update(existing)
-        } else {
-            let atom = Atom.new(
-                type: .systemEvent,
-                title: "Agent Conversation: \(conv.source.rawValue)",
-                body: messagesJSON,
-                structured: structuredJSON,
-                metadata: metadataJSON
-            )
-            _ = try? await atomRepo.create(atom)
+        do {
+            let existingConv = try await atomRepo.fetchAgentConversationAtom(conversationId: conv.id)
+            if var existing = existingConv {
+                guard decodeConversation(from: existing) != nil else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                existing.body = messagesJSON
+                existing.metadata = metadataJSON
+                existing.structured = structuredJSON
+                try await atomRepo.update(existing)
+            } else {
+                let atom = Atom.new(
+                    type: .systemEvent, title: "Agent Conversation: \(conv.source.rawValue)",
+                    body: messagesJSON, structured: structuredJSON, metadata: metadataJSON
+                )
+                _ = try await atomRepo.create(atom)
+            }
+        } catch {
+            PersistenceHealth.note(.writeFailure, context: "conversation.save", detail: "\(conv.id): \(error)")
         }
     }
 
     // MARK: - Load Conversation
 
     func loadConversation(id: String) async -> AgentConversation? {
-        guard let atom = try? await atomRepo.fetchAgentConversationAtom(conversationId: id) else {
+        do {
+            guard let atom = try await atomRepo.fetchAgentConversationAtom(conversationId: id) else { return nil }
+            guard let conversation = decodeConversation(from: atom) else { throw CocoaError(.coderReadCorrupt) }
+            return conversation
+        } catch {
+            PersistenceHealth.note(.writeFailure, context: "conversation.load", detail: "\(id): \(error)")
             return nil
         }
-        return decodeConversation(from: atom)
     }
 
     // MARK: - Rollback
@@ -103,60 +101,12 @@ class ConversationMemoryService {
         let kept = conversation.messages.filter { $0.timestamp < cutoff }
         guard kept.count != conversation.messages.count else { return }
         conversation.messages = kept
-        await saveConversation(conversation)
+        if kept.isEmpty {
+            await deleteConversation(id: id)
+        } else {
+            await saveConversation(conversation)
+        }
         print("[ConversationMemory] Rolled back \(id) to \(cutoff) — \(kept.count) messages kept")
-    }
-
-    // MARK: - History Folding
-
-    private static let maxStoredMessages = 60
-    private static let retainedRecentMessages = 40
-    private static let maxSummaryCharacters = 4000
-
-    /// Deterministically folds the oldest messages into `summary` when the
-    /// conversation exceeds the storage cap. Assistant receipts already carry
-    /// the substance of each run (staged titles, answer digests), so the fold
-    /// keeps user asks + assistant text and drops tool plumbing — no LLM call
-    /// on the hot save path.
-    static func foldingOldMessagesIntoSummary(_ conversation: AgentConversation) -> AgentConversation {
-        guard conversation.messages.count > maxStoredMessages else { return conversation }
-        var conv = conversation
-
-        // Cut at a run boundary (a user message) so tool_use/tool_result pairs
-        // are never split across the fold.
-        let idealCut = conv.messages.count - retainedRecentMessages
-        guard let cut = conv.messages.indices.first(where: {
-            $0 >= idealCut && conv.messages[$0].role == .user
-        }), cut > 0 else { return conversation }
-
-        var lines: [String] = []
-        for message in conv.messages.prefix(cut) {
-            switch message.role {
-            case .user:
-                lines.append("User: \(String(message.content.prefix(140)))")
-            case .assistant:
-                let text = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !text.isEmpty {
-                    lines.append("Cosmo: \(String(text.prefix(180)))")
-                } else if let calls = message.toolCalls, !calls.isEmpty {
-                    lines.append("Cosmo ran: \(calls.map(\.name).joined(separator: ", "))")
-                }
-            case .tool, .system:
-                break
-            }
-        }
-
-        var summary = [conv.summary, lines.joined(separator: "\n")]
-            .compactMap { $0 }
-            .filter { !$0.isEmpty }
-            .joined(separator: "\n")
-        if summary.count > maxSummaryCharacters {
-            summary = "…" + String(summary.suffix(maxSummaryCharacters))
-        }
-
-        conv.summary = summary.isEmpty ? conv.summary : summary
-        conv.messages = Array(conv.messages.suffix(from: cut))
-        return conv
     }
 
     // MARK: - Get Recent Conversations
@@ -371,45 +321,15 @@ class ConversationMemoryService {
         return result
     }
 
-    // MARK: - Conversation Lifecycle
-
-    /// Archive old conversations (keep summaries, drop message bodies)
-    func archiveOldConversations() async {
-        let cutoffDate = Calendar.current.date(byAdding: .day, value: -archiveAgeDays, to: Date()) ?? Date()
-        let all = await getRecentConversations(limit: 100)
-
-        for conv in all {
-            guard conv.createdAt < cutoffDate else { continue }
-
-            // Generate summary if not already present
-            var archived = conv
-            if archived.summary == nil {
-                archived.summary = await generateSummary(for: archived)
-            }
-
-            // Keep only the summary and topics, trim messages to last 3
-            // Sanitize to avoid orphaned tool_result messages after truncation
-            if archived.messages.count > 3 {
-                let lastMessages = Array(archived.messages.suffix(3))
-                archived.messages = Self.sanitizeToolPairs(lastMessages)
-            }
-
-            await saveConversation(archived)
-        }
-    }
-
     // MARK: - Delete Conversation
 
     func deleteConversation(id: String) async {
-        let atoms = (try? await atomRepo.fetchAll(type: .systemEvent)) ?? []
-        if let atom = atoms.first(where: { atom in
-            guard let meta = atom.metadata,
-                  let dict = try? JSONSerialization.jsonObject(with: Data(meta.utf8)) as? [String: Any],
-                  let subtype = dict["subtype"] as? String,
-                  let convId = dict["conversationId"] as? String else { return false }
-            return subtype == "agent_conversation" && convId == id
-        }) {
-            try? await atomRepo.delete(atom)
+        do {
+            if let atom = try await atomRepo.fetchAgentConversationAtom(conversationId: id) {
+                try await atomRepo.delete(atom)
+            }
+        } catch {
+            PersistenceHealth.note(.writeFailure, context: "conversation.delete", detail: "\(id): \(error)")
         }
     }
 

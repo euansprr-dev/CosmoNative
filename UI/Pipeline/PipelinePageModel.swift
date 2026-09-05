@@ -22,17 +22,17 @@ final class PipelinePageModel {
     var filters = PipelineFilters() {
         didSet { if filters != oldValue { Task { await rebuildSnapshot() } } }
     }
-    var groupByClient = false {
-        didSet { if groupByClient != oldValue { Task { await rebuildSnapshot() } } }
+    /// Collapsed board columns, persisted. The backlog starts collapsed:
+    /// the board reads short, the count stays visible, nothing is lost.
+    var collapsedColumns: Set<PipelineBoardSnapshot.Column> = PipelinePageModel.storedCollapsedColumns() {
+        didSet { Self.storeCollapsedColumns(collapsedColumns) }
     }
 
     private(set) var content: [PipelineContentItem] = []
     private(set) var archived: [PipelineContentItem] = []
     private(set) var clients: [PipelineClient] = []
-    private(set) var ideas: [IdeaGalleryItem] = []
     private(set) var snapshot = PipelineBoardSnapshot.empty
     private(set) var listRows: [PipelineContentItem] = []
-    private(set) var sessionDaysByIdea: [String: Date] = [:]
     private(set) var sessionDaysByContent: [String: Date] = [:]
     private(set) var perfByContent: [String: ContentPerfSnapshot] = [:]
     private(set) var isLoaded = false
@@ -51,7 +51,7 @@ final class PipelinePageModel {
     var quickLookID: String?
 
     /// In-motion count for the sidebar badge and the masthead line.
-    var inMotionCount: Int { content.filter { !$0.isShipped }.count }
+    var inMotionCount: Int { content.filter { !$0.isShipped && $0.productionStage != .notStarted }.count }
     var publishingThisWeekCount: Int {
         let calendar = Calendar.current
         guard let interval = calendar.dateInterval(of: .weekOfYear, for: Date()) else { return 0 }
@@ -171,19 +171,9 @@ final class PipelinePageModel {
         let scope = self.scope
         do {
         async let workspaceLoad = ContentPipelineLoader.loadWorkspace(scope: scope)
-        async let ideaAtomsLoad = ContentIdeaLoader.load(scope: scope)
         async let tasksLoad = Self.loadOpenTasks()
         async let perfLoad = ContentPerfStore.latestByContent()
-        let (workspace, ideaAtoms, tasks, perf) =
-            try await (workspaceLoad, ideaAtomsLoad, tasksLoad, perfLoad)
-        let names = Dictionary(uniqueKeysWithValues: workspace.clients.map { ($0.uuid, $0.name) })
-        let loadedIdeas = await Task.detached(priority: .userInitiated) {
-            ideaAtoms.compactMap { atom in
-                atom.toIdeaGalleryItem(clientName: atom.ideaMetadata?.clientUUID.flatMap { names[$0] })
-            }
-        }.value
-
-        let ideaDays = IdeaTaskLinkService.openSessionDaysByIdea(in: tasks)
+        let (workspace, tasks, perf) = try await (workspaceLoad, tasksLoad, perfLoad)
         let contentDays = IdeaTaskLinkService.openSessionDaysByContent(in: tasks)
 
         guard scope == self.scope, generation == loadGeneration, !Task.isCancelled else { return }
@@ -191,8 +181,6 @@ final class PipelinePageModel {
         content = workspace.content
         archived = workspace.archived
         clients = workspace.clients
-        ideas = loadedIdeas
-        sessionDaysByIdea = ideaDays
         sessionDaysByContent = contentDays
         perfByContent = perf
         await rebuildSnapshot()
@@ -209,21 +197,15 @@ final class PipelinePageModel {
         let generation = snapshotGeneration
         let content = self.content
         let archived = self.archived
-        let ideas = self.ideas
-        let ideaDays = sessionDaysByIdea
         let contentDays = sessionDaysByContent
         let perf = perfByContent
         let filters = self.filters
-        let groupByClient = self.groupByClient
         let built = await Task.detached(priority: .userInitiated) {
             let snapshot = PipelineBoardSnapshot.build(
                 content: content,
-                ideas: ideas,
-                sessionDaysByIdea: ideaDays,
                 sessionDaysByContent: contentDays,
                 perf: perf,
-                filters: filters,
-                groupByClient: groupByClient
+                filters: filters
             )
             return (snapshot, Self.listRows(content: content, archived: archived, filters: filters))
         }.value
@@ -231,15 +213,6 @@ final class PipelinePageModel {
         withAnimation(ProMotionSprings.gentle) {
             snapshot = built.0
             listRows = built.1
-        }
-    }
-
-    static func loadUpNextIdeas(scope: PipelineScope) async -> [IdeaGalleryItem] {
-        let atoms = (try? await ContentIdeaLoader.load(scope: scope)) ?? []
-        let clients = await ContentPipelineLoader.loadClients()
-        let names = Dictionary(uniqueKeysWithValues: clients.map { ($0.uuid, $0.name) })
-        return atoms.compactMap { atom in
-            atom.toIdeaGalleryItem(clientName: atom.ideaMetadata?.clientUUID.flatMap { names[$0] })
         }
     }
 
@@ -260,7 +233,9 @@ final class PipelinePageModel {
         }
     }
 
-    func createDraft() {
+    /// A new piece is a deliberate act, so it carries an explicit stage:
+    /// the column it was born in, or In progress from the page-level verb.
+    func createDraft(stage: ContentProductionStage = .inProgress) {
         guard !creatingDraft else { return }
         creatingDraft = true
         let capturedScope = scope
@@ -268,8 +243,9 @@ final class PipelinePageModel {
             defer { creatingDraft = false }
             do {
                 var prepared = Atom.new(type: .content, title: "Untitled", body: "")
-                prepared.metadata = ContentAtomMetadata(phase: .draft, clientProfileUUID: capturedScope.clientUUID,
+                prepared.metadata = ContentAtomMetadata(phase: stage == .notStarted ? .ideation : .draft, clientProfileUUID: capturedScope.clientUUID,
                     wordCount: 0, createdPhaseAt: Date()).toJSON()
+                prepared = prepared.mergingMetadataKeys(["productionStage": stage.rawValue])
                 if let client = capturedScope.clientUUID {
                     prepared = prepared.addingLink(.contentToClient(client))
                 }
@@ -305,9 +281,26 @@ final class PipelinePageModel {
 
     // MARK: Verbs (each = one state write + one ⌘Z + one reload)
 
-    var visibleColumns: [PipelineBoardSnapshot.Column] {
-        let includesReview = scope.clientUUID != nil || content.contains { $0.clientUUID != nil || $0.productionStage == .review }
-        return PipelineBoardSnapshot.Column.allCases.filter { includesReview || $0 != .review }
+    /// Every stage is a column. Collapse is the user's call, never a heuristic.
+    var visibleColumns: [PipelineBoardSnapshot.Column] { PipelineBoardSnapshot.Column.allCases }
+
+    func isCollapsed(_ column: PipelineBoardSnapshot.Column) -> Bool { collapsedColumns.contains(column) }
+
+    func toggleCollapsed(_ column: PipelineBoardSnapshot.Column) {
+        if collapsedColumns.contains(column) { collapsedColumns.remove(column) } else { collapsedColumns.insert(column) }
+    }
+
+    private static let collapsedColumnsKey = "pipeline.collapsedColumns"
+
+    static func storedCollapsedColumns() -> Set<PipelineBoardSnapshot.Column> {
+        guard let raw = UserDefaults.standard.array(forKey: collapsedColumnsKey) as? [String] else {
+            return PipelineBoardSnapshot.Column.collapsedByDefault
+        }
+        return Set(raw.compactMap(PipelineBoardSnapshot.Column.init(rawValue:)))
+    }
+
+    private static func storeCollapsedColumns(_ columns: Set<PipelineBoardSnapshot.Column>) {
+        UserDefaults.standard.set(columns.map(\.rawValue).sorted(), forKey: collapsedColumnsKey)
     }
 
     func move(_ uuid: String, to stage: ContentProductionStage) {
@@ -449,29 +442,6 @@ final class PipelinePageModel {
 
     /// Drag an idea into a stage column: the full Begin Writing promotion
     /// (hooks, swipes, concepts inherited), landing in that stage.
-    func promote(ideaUUID: String, to column: PipelineBoardSnapshot.Column, on day: Date? = nil) {
-        Task {
-            do {
-                let options = IdeaPromotionService.PromotionOptions(
-                    refreshInsightIfStale: false,
-                    scheduleOn: day,
-                    initialPhase: column.phase ?? .draft,
-                    productionStage: column.stage,
-                    carryAssistantSession: false,
-                    openFocusMode: false
-                )
-                let result = try await IdeaPromotionService.promote(ideaUUID: ideaUUID, options: options)
-
-                let title = result.content.title ?? "the piece"
-                toast("Writing “\(title)” · \(column.title)")
-            } catch {
-                toast("Couldn't begin writing — \(error.localizedDescription)")
-            }
-            NotificationCenter.default.post(name: .contentCalendarNeedsReload, object: nil)
-            await load()
-        }
-    }
-
     /// Book a writing session for a piece — an ordinary task on the Upcoming
     /// board, linked to the content (the idea grammar, content flavour).
     func bookSession(_ uuid: String, on day: Date) {
@@ -501,19 +471,14 @@ final class PipelinePageModel {
     // MARK: Drops
 
     /// A drop on a column is a stage write. Bare uuids are refused (three
-    /// vocabularies share the String channel); only prefixed payloads route.
+    /// vocabularies share the String channel); only content payloads route —
+    /// ideas enter the board through Begin writing, never by drop.
     @discardableResult
     func handleDrop(_ payloads: [String], on column: PipelineBoardSnapshot.Column) -> Bool {
-        guard let payload = PipelineDropPayload.first(in: payloads) else { return false }
-        switch payload {
-        case .content(let uuid):
-            guard let item = item(uuid) else { return false }
-            if column == .shipped { pendingShip = item.atom }
-            else { move(uuid, to: column.stage) }
-        case .idea(let uuid):
-            guard column != .shipped else { return false }
-            promote(ideaUUID: uuid, to: column)
-        }
+        guard let payload = PipelineDropPayload.first(in: payloads), case .content(let uuid) = payload,
+              let item = item(uuid) else { return false }
+        if column == .shipped { pendingShip = item.atom }
+        else { move(uuid, to: column.stage) }
         return true
     }
 

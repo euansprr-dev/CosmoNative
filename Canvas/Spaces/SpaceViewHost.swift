@@ -1,12 +1,11 @@
 // CosmoOS/Canvas/Spaces/SpaceViewHost.swift
 // The non-canvas views of a space, hosted over the keep-alive canvas world.
-// The library mounts per visit (cheap, snapshot-driven); the Deep Dive
-// dossier mounts on first visit and then stays alive, opacity-swapped, so a
-// Canvas ↔ Deep Dive round trip never pays the dossier's full first layout
-// and its scroll position survives. A space switch tears it down.
+// Materials and Inquiries mount on first visit and stay alive so switching
+// preserves scroll position and avoids repeating their initial layout.
+// A space switch tears down their state.
 //
 // Layout-inert law: the host is wrapped in a GeometryReader window and
-// clipped by its mounting site — the dossier's fixed-width columns must
+// clipped by its mounting site — the hosted content must never
 // never propose a size to the canvas ZStack.
 
 import SwiftUI
@@ -18,100 +17,82 @@ struct SpaceViewHost<Library: View>: View {
     var contentLeadingInset: CGFloat = 0
     @ViewBuilder let library: () -> Library
 
-    @State private var hasVisitedDeepDive = false
-    @State private var homeModel: SpaceHomeModel?
+    @State private var hasVisitedInquiries = false
+    @State private var hasVisitedMaterials = false
+    @State private var preservationError: String?
+    private var workspaceIsVisible: Bool {
+        guard let thinkspaceId else { return false }
+        return activeView == .canvas && SpaceWorkspaceStore.shared.isPresenting(in: thinkspaceId)
+    }
 
     var body: some View {
-        ZStack {
-            if activeView == .home, let homeModel, homeModel.spaceID == thinkspaceId {
-                SpaceHomeView(model: homeModel)
-                    .id(homeModel.spaceID)
-                    .padding(.leading, contentLeadingInset)
+        ZStack(alignment: .top) {
+            if hasVisitedMaterials {
+                library().padding(.leading, contentLeadingInset)
+                    .opacity(activeView == .library ? 1 : 0)
+                    .allowsHitTesting(activeView == .library)
+                    .accessibilityHidden(activeView != .library)
             }
-            if activeView == .library {
-                library()
+            if hasVisitedInquiries, let thinkspaceId {
+                SpaceInquiriesView(spaceID: thinkspaceId)
+                    .id(thinkspaceId)
                     .padding(.leading, contentLeadingInset)
-                    .transition(.opacity.combined(with: .scale(scale: 0.99)))
-            }
-            if hasVisitedDeepDive {
-                SpaceDeepDiveHost(thinkspaceId: thinkspaceId, chrome: deepDiveChrome)
                     .opacity(activeView == .deepDive ? 1 : 0)
                     .allowsHitTesting(activeView == .deepDive)
                     .accessibilityHidden(activeView != .deepDive)
             }
-        }
-        .background(activeView == .canvas ? Color.clear : DS.bg)
-        .onChange(of: activeView, initial: true) { _, view in
-            if view == .deepDive { hasVisitedDeepDive = true }
-            deepDiveChrome.isFrontmost = (view == .deepDive)
-        }
-        .onChange(of: thinkspaceId, initial: true) { _, id in
-            hasVisitedDeepDive = (activeView == .deepDive)
-            // Keep the document model across Home/Library/Canvas visits,
-            // without retaining a hidden text editor or its keyboard handlers.
-            homeModel = id.map { SpaceHomeModel(spaceID: $0) }
-        }
-    }
-}
-
-/// Resolves the space's Deep Dive profile (one shared in-flight task per
-/// space, never minting a second profile) and renders the dossier embedded.
-struct SpaceDeepDiveHost: View {
-    let thinkspaceId: String?
-    let chrome: DeepDiveStudyChromeModel
-
-    @State private var profileAtom: Atom?
-    @State private var resolvedFor: String?
-
-    var body: some View {
-        ZStack {
-            DS.bg.ignoresSafeArea()
-            if let profileAtom {
-                DeepDiveOverviewView(
-                    atom: profileAtom,
-                    presentation: .embeddedInSpace,
-                    chrome: chrome,
-                    onClose: {}
-                )
-                .id(profileAtom.uuid)
-                .transition(.opacity)
-            } else {
-                loadingState
+            if workspaceIsVisible, let thinkspaceId {
+                SpaceWorkspaceView(spaceID: thinkspaceId)
+                    .padding(.leading, contentLeadingInset)
+                    .background(DS.bg)
+            }
+            if let preservationError, activeView != .canvas {
+                HStack {
+                    Text(preservationError).font(DS.callout)
+                    Button("Retry") { Task { await preserve() } }
+                }.padding(DS.space16).background(DS.surface, in: .rect(cornerRadius: 12))
+                    .padding(.top, SpaceChromeMetrics.contentTopInset + DS.space8)
             }
         }
-        .task(id: thinkspaceId) { await resolve() }
-        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Canvas.thinkspaceChanged)) { _ in
-            Task { await resolve() }
+        .background(activeView == .canvas && !workspaceIsVisible ? Color.clear : DS.bg)
+        .onChange(of: activeView, initial: true) { _, view in
+            if view == .deepDive { hasVisitedInquiries = true }
+            if view == .library { hasVisitedMaterials = true }
+            deepDiveChrome.isFrontmost = false
+        }
+        .onChange(of: thinkspaceId) { _, _ in hasVisitedInquiries = activeView == .deepDive; hasVisitedMaterials = activeView == .library }
+        .task(id: thinkspaceId) {
+            await preserve()
+            if let thinkspaceId {
+                await SpaceWorkspaceStore.shared.load(thinkspaceId)
+                if !Task.isCancelled, SpaceWorkspaceStore.shared.isPresenting(in: thinkspaceId) {
+                    SpaceViewStore.shared.select(.canvas, for: thinkspaceId)
+                }
+            }
         }
     }
-
-    private var loadingState: some View {
-        VStack(spacing: DS.space8) {
-            Image(systemName: SpaceView.deepDive.icon)
-                .font(DS.title2)
-                .foregroundStyle(DS.textMuted)
-            Text("Opening this space's Deep Dive")
-                .font(DS.subheadline)
-                .foregroundStyle(DS.textSecondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    private func preserve() async {
+        guard let thinkspaceId else { return }
+        do { try await SpaceResearchService.preserveDocuments(in: thinkspaceId); preservationError = nil }
+        catch { preservationError = "Your previous working notes couldn't be added to Materials. " + error.localizedDescription }
     }
-
-    private func resolve() async {
-        guard let thinkspaceId else {
-            profileAtom = nil
-            resolvedFor = nil
-            return
-        }
-        guard resolvedFor != thinkspaceId || profileAtom == nil else { return }
-        guard let uuid = await ThinkspaceManager.shared.ensureDeepDiveProfileUUID(for: thinkspaceId),
-              let atom = try? await AtomRepository.shared.fetch(uuid: uuid) else {
-            return
-        }
-        guard !Task.isCancelled else { return }
-        withAnimation(ProMotionSprings.focusTransition) {
-            profileAtom = atom
-            resolvedFor = thinkspaceId
-        }
+}
+struct SpaceCanvasWelcome: View {
+    var purpose: String?
+    var createNote: () -> Void
+    var addMaterials: () -> Void
+    var body: some View {
+        VStack(spacing: DS.space16) {
+            Image(systemName: "rectangle.3.group").font(DS.pageTitle).foregroundStyle(DS.textMuted)
+            Text("Room to think").font(DS.title2).foregroundStyle(DS.text)
+            Text(purpose.flatMap { $0.isEmpty ? nil : $0 } ?? "Place notes and sources side by side. Arrange them as your thinking takes shape.")
+                .font(DS.body).foregroundStyle(DS.textSecondary).multilineTextAlignment(.center)
+            HStack(spacing: DS.space20) {
+                Button("New note", systemImage: "square.and.pencil", action: createNote)
+                    .buttonStyle(.plain).foregroundStyle(DS.accent).help("Create a note on the canvas").frame(minHeight: 44)
+                Button("Add materials", systemImage: "plus", action: addMaterials)
+                    .buttonStyle(.plain).foregroundStyle(DS.textSecondary).help("Place existing material in this space").frame(minHeight: 44)
+            }.font(DS.callout.weight(.medium))
+        }.frame(maxWidth: 380).padding(DS.space32)
     }
 }

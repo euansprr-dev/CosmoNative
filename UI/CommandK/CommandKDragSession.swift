@@ -28,7 +28,7 @@ final class CommandKDragSession {
         let title: String
         var subtitle: String = ""
         var accent: Color = DS.accent
-        var symbolName: String? = nil
+        var icon: CosmoIcon? = nil
         var thumbnailURL: String? = nil
         var faviconHost: String? = nil
     }
@@ -159,7 +159,7 @@ struct CommandKDragOutModifier: ViewModifier {
     let title: String
     var subtitle: String = ""
     var accent: Color = DS.accent
-    var symbolName: String? = nil
+    var icon: CosmoIcon? = nil
     var thumbnailURL: String? = nil
     var faviconHost: String? = nil
     /// Read at drag start so a selection made after view construction counts.
@@ -170,7 +170,7 @@ struct CommandKDragOutModifier: ViewModifier {
             title: title,
             subtitle: subtitle,
             accent: accent,
-            symbolName: symbolName,
+            icon: icon,
             thumbnailURL: thumbnailURL,
             faviconHost: faviconHost
         )
@@ -256,7 +256,7 @@ struct CommandKDragCardPreview: View {
         } else if let host = card.faviconHost {
             CommandKFavicon(host: host) { identityChip }
                 .frame(width: 30, height: 40)
-        } else if card.symbolName != nil {
+        } else if card.icon != nil {
             identityChip
                 .frame(width: 30, height: 40)
         } else {
@@ -267,7 +267,7 @@ struct CommandKDragCardPreview: View {
     }
 
     private var identityChip: some View {
-        CosmoIdentityChip(systemName: card.symbolName ?? "doc", tint: card.accent, size: 22)
+        CosmoIdentityChip(icon: card.icon ?? .system("doc"), tint: card.accent, size: 22)
     }
 
     private var countBadge: some View {

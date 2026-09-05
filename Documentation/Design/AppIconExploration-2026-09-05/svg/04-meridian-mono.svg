@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024"><title>Cosmo — Meridian</title><desc>Flat vector app icon. Two measured orbits and a small gilt seed. A quieter, more scholarly expression of the same idea.</desc><rect width="1024" height="1024" fill="#F6F2E7"/><g stroke-linecap="round" stroke-linejoin="round">
+      <path d="M675 411 C548 376 365 391 269 449 C170 510 222 577 349 610 C466 641 584 627 655 606" fill="none" stroke="#245B43" stroke-width="29"/>
+      <path d="M696 362 C720 291 703 245 659 245 C573 245 435 365 344 499 C253 633 229 756 286 777 C374 809 629 582 787 419" fill="none" stroke="#245B43" stroke-width="27"/>
+      <path d="M601 590 C611 470 687 389 806 404 C812 515 747 597 644 621 C711 571 756 513 768 440 C692 449 639 504 601 590Z" fill="#245B43"/>
+      <circle cx="494" cy="519" r="47" fill="#245B43"/></g></svg>

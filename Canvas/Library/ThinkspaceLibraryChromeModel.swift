@@ -22,6 +22,7 @@ final class ThinkspaceLibraryChromeModel {
         }
     }
 
+    var inquirySourceIDs: [String] = []
     var searchText = ""
     /// Inside a folder, search can look through just the folder or everything.
     var searchEntireThinkspace = false
@@ -42,6 +43,7 @@ final class ThinkspaceLibraryChromeModel {
         guard thinkspaceId != self.thinkspaceId else { return }
         self.thinkspaceId = thinkspaceId
         prefs = ThinkspaceLibraryPrefs.load(thinkspaceId: thinkspaceId)
+        if prefs.viewMode == .gallery { prefs.viewMode = .icons }
         searchText = ""
         searchEntireThinkspace = false
         kindFilter = nil

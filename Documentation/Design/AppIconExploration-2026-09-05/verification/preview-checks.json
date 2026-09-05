@@ -1,0 +1,42 @@
+[
+  {
+    "width": 736,
+    "scheme": "light",
+    "layout": {
+      "width": 736,
+      "scrollWidth": 736
+    },
+    "errors": [],
+    "selectionChecks": 15
+  },
+  {
+    "width": 736,
+    "scheme": "dark",
+    "layout": {
+      "width": 736,
+      "scrollWidth": 736
+    },
+    "errors": [],
+    "selectionChecks": 15
+  },
+  {
+    "width": 360,
+    "scheme": "light",
+    "layout": {
+      "width": 360,
+      "scrollWidth": 360
+    },
+    "errors": [],
+    "selectionChecks": 15
+  },
+  {
+    "width": 360,
+    "scheme": "dark",
+    "layout": {
+      "width": 360,
+      "scrollWidth": 360
+    },
+    "errors": [],
+    "selectionChecks": 15
+  }
+]

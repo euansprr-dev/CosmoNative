@@ -41,11 +41,13 @@ enum PipelineView: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    var icon: String {
+    var icon: String { cosmoIcon.systemName }
+
+    var cosmoIcon: CosmoIcon {
         switch self {
-        case .board: return "rectangle.split.3x1"
-        case .calendar: return "calendar"
-        case .list: return "list.bullet"
+        case .board: return .pipeline
+        case .calendar: return .calendar
+        case .list: return .system("list.bullet")
         }
     }
 

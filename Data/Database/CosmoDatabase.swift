@@ -87,7 +87,7 @@ class CosmoDatabase: ObservableObject {
             // database-file property — DatabasePool activates it itself.)
             config.prepareDatabase { db in
                 try db.execute(sql: "PRAGMA foreign_keys = ON")
-                try db.execute(sql: "PRAGMA synchronous = NORMAL")
+                try db.execute(sql: "PRAGMA synchronous = FULL")
                 try db.execute(sql: "PRAGMA temp_store = MEMORY")
                 try db.execute(sql: "PRAGMA mmap_size = 30000000000")
             }
@@ -2626,6 +2626,17 @@ class CosmoDatabase: ObservableObject {
         // wait in the canvas tray and show in the space's library/board.
         migrator.registerMigration("add_is_placed_to_canvas_blocks") { db in
             try Self.addIsPlacedColumn(db)
+        }
+
+        migrator.registerMigration("local_document_archives") { db in
+            try db.execute(sql: """
+                CREATE TABLE local_document_archives (
+                    key TEXT PRIMARY KEY NOT NULL,
+                    data BLOB NOT NULL,
+                    previous_data BLOB,
+                    updated_at TEXT NOT NULL
+                );
+                """)
         }
 
         return migrator

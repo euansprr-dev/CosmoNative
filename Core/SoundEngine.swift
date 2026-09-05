@@ -1,301 +1,456 @@
-// Core/SoundEngine.swift
-// The Greenhouse Sound, on the desk: the Mac port of the iOS SoundEngine
-// (CosmoiOS/Design/SoundEngine.swift — keep the two in step). The app sounds
-// like the place it looks like — wood, seeds, paper, felt, water, air — and
-// one strain of tuned warmth reserved for earned moments.
-//
-// Architecture: AVAudioEngine + a pool of player nodes over a bank of
-// preloaded .caf buffers (round-robin variants, jitter baked into the files).
-// macOS differences from the iOS engine: there is no AVAudioSession — the
-// engine listens for AVAudioEngineConfigurationChange (device/route changes)
-// and rebuilds lazily; there is no silent switch, so the Settings profile is
-// the only gate. Call sites speak `Sound.*` semantic verbs, never file names.
-// July 2026
+// Cosmo sound system. Keep this file identical in the macOS and iOS apps.
+// Nine short, mastered gestures; one stable identity on every device.
+// Audio I/O is confined to a serial queue. The main actor only sends intent.
 
 import AVFoundation
-import SwiftUI
+import Observation
+import os
+#if os(iOS)
+import UIKit
+#else
+import AppKit
+#endif
 
-// MARK: - Profiles & tiers (mirrors iOS)
-
-/// How much of the soundscape plays. `minimal` keeps only the signature
-/// moments — completion, the earned once-a-day cues — so the sounds that
-/// remain never wear out.
-enum SoundProfile: String, CaseIterable {
-    case full, minimal, off
+enum SoundProfile: String, CaseIterable, Sendable {
+    // Preserve the existing stored values when upgrading.
+    case minimal, full, off
 
     var label: String {
         switch self {
-        case .full: return "Full"
-        case .minimal: return "Minimal"
+        case .minimal: return "Essentials"
+        case .full: return "All actions"
         case .off: return "Off"
         }
     }
+
+    var detail: String {
+        switch self {
+        case .minimal: return "Completion and milestones."
+        case .full: return "Subtle sounds for everyday actions."
+        case .off: return "Interface sounds are muted."
+        }
+    }
+
+    func allows(_ cue: SoundCue) -> Bool {
+        self == .full || (self == .minimal && cue.isEssential)
+    }
 }
 
-/// floor     — frequent vocabulary sounds; Full only.
-/// standard  — bespoke everyday cues (drags, filing); Full only.
-/// signature — completion and the rare earned moments; plays in Minimal too.
-enum SoundTier { case floor, standard, signature }
+enum SoundCue: String, CaseIterable, Sendable {
+    case complete, milestone, confirm, open, close, place, remove, undo, focus
 
-// MARK: - The engine
+    var isEssential: Bool {
+        switch self {
+        case .complete, .milestone, .focus: return true
+        default: return false
+        }
+    }
 
-@MainActor
-final class SoundEngine {
+    var priority: Int {
+        switch self {
+        case .complete, .milestone, .focus: return 2
+        default: return 1
+        }
+    }
 
-    static let shared = SoundEngine()
+    var cooldown: TimeInterval {
+        switch self {
+        case .milestone: return 1.5
+        case .complete: return 0.24
+        default: return 0.16
+        }
+    }
 
-    static let profileKey = "sound.profile"
+    var resourceName: String { "ui_" + rawValue }
+}
 
-    /// Minimal by default: the signature sounds only; Full is the opt-in.
-    var profile: SoundProfile {
-        get {
-            if let raw = UserDefaults.standard.string(forKey: Self.profileKey),
-               let stored = SoundProfile(rawValue: raw) {
-                return stored
+/// Pure admission policy, also exercised by the standalone sound regression suite.
+struct SoundPlaybackPolicy {
+    private var lastPlayed: [SoundCue: TimeInterval] = [:]
+    private var protectedUntil: TimeInterval = 0
+    private var lastAny: TimeInterval = -.infinity
+
+    func allows(_ cue: SoundCue, at now: TimeInterval) -> Bool {
+        guard now - lastAny >= 0.055 else { return false }
+        if let last = lastPlayed[cue], now - last < cue.cooldown { return false }
+        return cue.priority == 2 || now >= protectedUntil
+    }
+
+    mutating func record(_ cue: SoundCue, at now: TimeInterval, duration: TimeInterval) {
+        lastPlayed[cue] = now
+        lastAny = now
+        if cue.priority == 2 { protectedUntil = now + duration }
+    }
+}
+
+/// Revoking a request is synchronous, even while the audio queue is preparing
+/// a player. Off, background, media, and route changes invalidate queued work.
+final class SoundPlaybackGate: Sendable {
+    struct State: Sendable {
+        var generation: UInt64 = 0
+        var enabled = false
+        var volume: Float = 0.7
+    }
+
+    private let state = OSAllocatedUnfairLock(initialState: State())
+
+    func update(enabled: Bool, volume: Float) {
+        state.withLock {
+            $0.generation &+= 1
+            $0.enabled = enabled
+            $0.volume = volume
+        }
+    }
+
+    func snapshot() -> State { state.withLock { $0 } }
+
+    func accepts(generation: UInt64, requestedAt: TimeInterval, now: TimeInterval) -> Bool {
+        state.withLock { $0.enabled && $0.generation == generation && now - requestedAt < 0.18 }
+    }
+}
+
+/// Queue confinement is the Sendable invariant. Players never cross this queue.
+private final class SoundPlaybackDriver: @unchecked Sendable {
+    private let queue = DispatchQueue(label: "com.cosmo.interface-audio", qos: .userInitiated)
+    private let gate: SoundPlaybackGate
+    private var players: [SoundCue: AVAudioPlayer] = [:]
+    private var policy = SoundPlaybackPolicy()
+    private var preparedSession = false
+    private let logger = Logger(subsystem: "com.cosmo.audio", category: "playback")
+
+    init(gate: SoundPlaybackGate) { self.gate = gate }
+
+    func prewarm() {
+        queue.async { [self] in
+            guard gate.snapshot().enabled else { return }
+            guard prepareSession() else { return }
+            for cue in SoundCue.allCases { _ = player(for: cue) }
+        }
+    }
+
+    func invalidate() {
+        queue.async { [self] in
+            players.values.forEach { $0.stop() }
+            players.removeAll()
+            preparedSession = false
+            policy = SoundPlaybackPolicy()
+        }
+    }
+
+    func updateVolume() {
+        queue.async { [self] in
+            let state = gate.snapshot()
+            for player in players.values {
+                if !state.enabled { player.stop() }
+                player.volume = state.volume
             }
-            return .minimal
-        }
-        set {
-            UserDefaults.standard.set(newValue.rawValue, forKey: Self.profileKey)
         }
     }
 
-    private func allows(_ tier: SoundTier) -> Bool {
-        switch profile {
-        case .full: return true
-        case .minimal: return tier == .signature
-        case .off: return false
+    func play(_ cue: SoundCue) {
+        let request = gate.snapshot()
+        let requestedAt = ProcessInfo.processInfo.systemUptime
+        queue.async { [self] in
+            guard gate.accepts(generation: request.generation, requestedAt: requestedAt,
+                               now: ProcessInfo.processInfo.systemUptime) else { return }
+            guard prepareSession() else { return }
+            guard let player = player(for: cue) else { return }
+            let now = ProcessInfo.processInfo.systemUptime
+            // Revalidate AFTER blocking audio I/O, not only at tap time.
+            guard gate.accepts(generation: request.generation, requestedAt: requestedAt, now: now),
+                  policy.allows(cue, at: now), !player.isPlaying,
+                  players.values.filter(\.isPlaying).count < 3 else { return }
+            #if os(iOS)
+            let session = AVAudioSession.sharedInstance()
+            guard !session.isOtherAudioPlaying, !session.secondaryAudioShouldBeSilencedHint,
+                  session.category == .ambient else { return }
+            #endif
+            player.currentTime = 0
+            player.volume = gate.snapshot().volume
+            if player.play() { policy.record(cue, at: now, duration: player.duration) }
         }
     }
 
-    // MARK: Suppression (unmuted media surfaces)
+    @discardableResult
+    private func prepareSession() -> Bool {
+        #if os(iOS)
+        let session = AVAudioSession.sharedInstance()
+        if preparedSession && session.category == .ambient { return true }
+        do {
+            // Avoid generating a category-change notification on every recovery.
+            if session.category != .ambient || session.mode != .default {
+                try session.setCategory(.ambient, mode: .default)
+            }
+            // An interruption may have no matching ended notification. Let iOS
+            // decide whether a fresh activation is allowed, and handle failure.
+            try session.setActive(true)
+        } catch {
+            preparedSession = false
+            logger.error("Could not activate interface audio: \(error.localizedDescription, privacy: .public)")
+            return false
+        }
+        #endif
+        preparedSession = true
+        return true
+    }
 
+    private func player(for cue: SoundCue) -> AVAudioPlayer? {
+        if let player = players[cue] { return player }
+        guard let url = Bundle.main.url(forResource: cue.resourceName, withExtension: "caf", subdirectory: "Sounds")
+                ?? Bundle.main.url(forResource: cue.resourceName, withExtension: "caf") else {
+            logger.error("Missing interface cue: \(cue.rawValue, privacy: .public)")
+            return nil
+        }
+        do {
+            let player = try AVAudioPlayer(contentsOf: url)
+            player.prepareToPlay()
+            players[cue] = player
+            return player
+        } catch {
+            logger.error("Could not load interface cue: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
+    }
+}
+
+@Observable @MainActor
+final class SoundEngine {
+    static let shared = SoundEngine()
+    static let profileKey = "sound.profile"
+    static let volumeKey = "sound.volume"
+    static let hapticsKey = "haptics.enabled"
+
+    var profile: SoundProfile {
+        didSet {
+            UserDefaults.standard.set(profile.rawValue, forKey: Self.profileKey)
+            refreshGate()
+            if profile == .off { driver.invalidate() } else { prewarm() }
+        }
+    }
+
+    var volume: Double {
+        didSet {
+            let clamped = volume.isFinite ? min(1, max(0, volume)) : 0.7
+            if volume != clamped { volume = clamped }
+            UserDefaults.standard.set(clamped, forKey: Self.volumeKey)
+            refreshGate()
+            driver.updateVolume()
+        }
+    }
+
+    @ObservationIgnored private let gate: SoundPlaybackGate
+    @ObservationIgnored private let driver: SoundPlaybackDriver
+    @ObservationIgnored private var observers: [NSObjectProtocol] = []
     private var suppressionCount = 0
-
-    /// While any unmuted media surface plays, UI sound yields entirely.
-    func beginSuppression() { suppressionCount += 1 }
-    func endSuppression() { suppressionCount = max(0, suppressionCount - 1) }
-
-    /// Bespoke cues muffle the vocabulary floor briefly so a paired generic
-    /// cue never doubles the designed one.
-    private var floorMutedUntil: TimeInterval = 0
-
-    // MARK: Engine state
-
-    private let engine = AVAudioEngine()
-    private var players: [AVAudioPlayerNode] = []
-    private var nextPlayer = 0
-    private var format: AVAudioFormat?
-    private var bank: [String: [AVAudioPCMBuffer]] = [:]
-    private var lastVariant: [String: Int] = [:]
-    private var lastPlayed: [String: TimeInterval] = [:]
-    private var lastActivity: TimeInterval = 0
-    private var running = false
-    private var loaded = false
-    private var idleWatch: Task<Void, Never>?
-
-    private static let poolSize = 10
-    private static let idleStop: TimeInterval = 30
+    private var isActive = true
+    private var interrupted = false
+    private var isRecording = false
 
     private init() {
-        // An output-device change invalidates the graph — tear down and let
-        // the next sound rebuild lazily against the new route.
-        NotificationCenter.default.addObserver(
-            forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
-        ) { _ in Task { @MainActor in SoundEngine.shared.stopEngine() } }
+        let defaults = UserDefaults.standard
+        profile = defaults.string(forKey: Self.profileKey).flatMap(SoundProfile.init(rawValue:))
+            ?? (defaults.object(forKey: "sound.enabled") as? Bool == false ? .off : .minimal)
+        let savedVolume = defaults.object(forKey: Self.volumeKey) as? Double ?? 0.7
+        volume = savedVolume.isFinite ? min(1, max(0, savedVolume)) : 0.7
+        let gate = SoundPlaybackGate()
+        self.gate = gate
+        driver = SoundPlaybackDriver(gate: gate)
+        #if os(iOS)
+        isActive = UIApplication.shared.applicationState == .active
+        #else
+        isActive = NSApp?.isActive ?? false
+        #endif
+        refreshGate()
+        observeLifecycle()
     }
 
-    // MARK: Boot
-
-    /// Load the bank and warm the graph so the first real sound of the
-    /// session is as tight as the tenth.
     func prewarm() {
-        guard profile != .off else { return }
-        loadBankIfNeeded()
-        startIfNeeded()
+        refreshGate()
+        driver.prewarm()
     }
 
-    // MARK: Bank
-
-    private func loadBankIfNeeded() {
-        guard !loaded else { return }
-        loaded = true
-        // Individually-added resources flatten into the bundle root; a folder
-        // reference would keep the Sounds/ subdirectory. Accept either.
-        let subdirectoryURLs = Bundle.main.urls(forResourcesWithExtension: "caf", subdirectory: "Sounds") ?? []
-        let urls = subdirectoryURLs.isEmpty
-            ? (Bundle.main.urls(forResourcesWithExtension: "caf", subdirectory: nil) ?? [])
-            : subdirectoryURLs
-        for url in urls where url.lastPathComponent.hasPrefix("snd_") {
-            guard let file = try? AVAudioFile(forReading: url) else { continue }
-            let fileFormat = file.processingFormat
-            guard let buffer = AVAudioPCMBuffer(
-                pcmFormat: fileFormat, frameCapacity: AVAudioFrameCount(file.length)
-            ), (try? file.read(into: buffer)) != nil else { continue }
-            format = format ?? fileFormat
-            // snd_<key>_<n>.caf → key
-            let stem = url.deletingPathExtension().lastPathComponent.dropFirst(4)
-            guard let underscore = stem.lastIndex(of: "_") else { continue }
-            let key = String(stem[..<underscore])
-            bank[key, default: []].append(buffer)
+    func play(_ cue: SoundCue, preview: Bool = false) {
+        #if os(iOS)
+        // Preview is a new playback request, not an automatic resume. An old
+        // interruption must not permanently disable the user's Play button.
+        if preview && isActive && interrupted {
+            interrupted = false
+            refreshGate()
+            driver.invalidate()
         }
+        #endif
+        guard profile != .off, preview || profile.allows(cue),
+              suppressionCount == 0, isActive, !interrupted, !isRecording, volume > 0 else { return }
+        #if os(iOS)
+        let session = AVAudioSession.sharedInstance()
+        guard !session.isOtherAudioPlaying, !session.secondaryAudioShouldBeSilencedHint else { return }
+        #endif
+        driver.play(cue)
     }
 
-    private func startIfNeeded() {
-        guard !running, let format else { return }
-        if players.isEmpty {
-            for _ in 0..<Self.poolSize {
-                let node = AVAudioPlayerNode()
-                players.append(node)
-                engine.attach(node)
-                engine.connect(node, to: engine.mainMixerNode, format: format)
+    func beginSuppression() {
+        suppressionCount += 1
+        refreshGate()
+        driver.invalidate()
+    }
+
+    func endSuppression() {
+        suppressionCount = max(0, suppressionCount - 1)
+        prewarm()
+    }
+
+    func appDidEnterBackground() {
+        isActive = false
+        refreshGate()
+        driver.invalidate()
+    }
+
+    func appDidBecomeActive() {
+        isActive = true
+        #if os(iOS)
+        // iOS does not guarantee an interruption-ended notification after the
+        // app leaves the foreground. Rebuild the session for future actions.
+        interrupted = false
+        driver.invalidate()
+        #endif
+        prewarm()
+    }
+
+    private func refreshGate() {
+        gate.update(enabled: profile != .off && volume > 0 && suppressionCount == 0 && isActive && !interrupted && !isRecording,
+                    volume: Float(volume))
+    }
+
+    private func observe(_ name: Notification.Name, detailKey: String? = nil, action: @escaping @MainActor @Sendable (UInt?) -> Void) {
+        observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { note in
+            // Only a Sendable scalar crosses isolation; Notification.userInfo
+            // may hold non-Sendable objects owned by the audio framework.
+            #if os(iOS)
+            let interruption = note.userInfo?[detailKey ?? AVAudioSessionInterruptionTypeKey] as? UInt
+            #else
+            let interruption: UInt? = nil
+            #endif
+            MainActor.assumeIsolated { action(interruption) }
+        })
+    }
+
+    private func observeLifecycle() {
+        #if os(iOS)
+        observe(UIApplication.willResignActiveNotification) { [weak self] _ in self?.appDidEnterBackground() }
+        observe(UIApplication.didBecomeActiveNotification) { [weak self] _ in
+            self?.appDidBecomeActive()
+        }
+        observe(AVAudioSession.interruptionNotification) { [weak self] raw in
+            guard let self, let raw,
+                  let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+            self.interrupted = type == .began
+            self.refreshGate()
+            self.driver.invalidate()
+            // End of an interruption permits FUTURE taps; old cues never replay.
+            if !self.interrupted { self.driver.prewarm() }
+        }
+        observe(AVAudioSession.routeChangeNotification, detailKey: AVAudioSessionRouteChangeReasonKey) { [weak self] raw in
+            guard let self else { return }
+            // Reconnecting an output can end a route-disconnection interruption
+            // without an interruption-ended notification.
+            if raw == AVAudioSession.RouteChangeReason.newDeviceAvailable.rawValue {
+                self.interrupted = false
             }
+            self.refreshGate()
+            self.driver.invalidate()
+            self.driver.prewarm()
         }
-        guard (try? engine.start()) != nil else { return }
-        running = true
-        // Swallow the first-play latency spike with one silent buffer.
-        if let silent = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 256) {
-            silent.frameLength = 256
-            players[0].scheduleBuffer(silent)
-            players[0].play()
+        observe(AVAudioSession.mediaServicesWereResetNotification) { [weak self] _ in
+            guard let self else { return }
+            self.interrupted = false
+            self.refreshGate()
+            self.driver.invalidate()
+            self.driver.prewarm()
         }
-        watchIdle()
-    }
-
-    private func watchIdle() {
-        idleWatch?.cancel()
-        lastActivity = Date.timeIntervalSinceReferenceDate
-        idleWatch = Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(10))
-                guard let self else { return }
-                if Date.timeIntervalSinceReferenceDate - self.lastActivity > Self.idleStop {
-                    self.stopEngine()
-                    return
-                }
+        #else
+        observe(NSApplication.didResignActiveNotification) { [weak self] _ in self?.appDidEnterBackground() }
+        observe(NSApplication.didBecomeActiveNotification) { [weak self] _ in
+            self?.appDidBecomeActive()
+        }
+        observers.append(NotificationCenter.default.addObserver(
+            forName: Notification.Name("com.cosmo.voice.recordingStateChanged"), object: nil, queue: .main
+        ) { [weak self] note in
+            let recording = note.userInfo?["isRecording"] as? Bool ?? false
+            MainActor.assumeIsolated {
+                self?.isRecording = recording
+                self?.refreshGate()
+                if recording { self?.driver.invalidate() }
+                else { self?.prewarm() }
             }
+        })
+        #endif
+    }
+
+    #if os(iOS)
+    nonisolated static let notificationSoundName = FocusGoalNotifier.soundName
+
+    nonisolated static func installNotificationSound() {
+        guard let source = Bundle.main.url(forResource: "ui_milestone", withExtension: "caf", subdirectory: "Sounds")
+                ?? Bundle.main.url(forResource: "ui_milestone", withExtension: "caf"),
+              let data = try? Data(contentsOf: source),
+              let library = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first else { return }
+        let directory = library.appendingPathComponent("Sounds", isDirectory: true)
+        let destination = directory.appendingPathComponent(notificationSoundName)
+        // Atomic replacement also upgrades an existing installation's old bell.
+        guard (try? Data(contentsOf: destination)) != data else { return }
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try data.write(to: destination, options: .atomic)
+        } catch {
+            Logger(subsystem: "com.cosmo.audio", category: "notification")
+                .error("Could not install goal sound: \(error.localizedDescription, privacy: .public)")
         }
     }
-
-    private func stopEngine() {
-        idleWatch?.cancel()
-        idleWatch = nil
-        guard running else { return }
-        for node in players { node.stop() }
-        engine.stop()
-        running = false
-    }
-
-    // MARK: Play
-
-    private func canPlay(_ tier: SoundTier) -> Bool {
-        allows(tier) && suppressionCount == 0
-    }
-
-    /// Vocabulary-floor sound. Full profile only.
-    func floor(_ key: String, gain: Float = 1, minInterval: TimeInterval = 0.05) {
-        let now = Date.timeIntervalSinceReferenceDate
-        guard now >= floorMutedUntil else { return }
-        fire(key, tier: .floor, gain: gain, minInterval: minInterval, now: now)
-    }
-
-    /// Bespoke cue — mutes the floor briefly so nothing doubles it.
-    func cue(
-        _ key: String,
-        tier: SoundTier = .standard,
-        gain: Float = 1,
-        muffleFloor: TimeInterval = 0.3
-    ) {
-        let now = Date.timeIntervalSinceReferenceDate
-        floorMutedUntil = max(floorMutedUntil, now + muffleFloor)
-        fire(key, tier: tier, gain: gain, minInterval: 0.08, now: now)
-    }
-
-    private func fire(_ key: String, tier: SoundTier, gain: Float, minInterval: TimeInterval, now: TimeInterval) {
-        guard canPlay(tier) else { return }
-        if let last = lastPlayed[key], now - last < minInterval { return }
-        loadBankIfNeeded()
-        startIfNeeded()
-        guard running, let variantsAvailable = bank[key], !variantsAvailable.isEmpty else { return }
-
-        // Round-robin, never the same variant twice in a row.
-        var index = Int.random(in: 0..<variantsAvailable.count)
-        if variantsAvailable.count > 1, index == lastVariant[key] {
-            index = (index + 1) % variantsAvailable.count
-        }
-        lastVariant[key] = index
-        lastPlayed[key] = now
-        lastActivity = now
-
-        let node = players[nextPlayer]
-        nextPlayer = (nextPlayer + 1) % players.count
-        // Reset the node: scheduleBuffer QUEUES behind a still-ringing tail,
-        // which would delay this sound — a stopped node plays immediately.
-        node.stop()
-        // ±0.8 dB per-play jitter for foley; signatures play IDENTICALLY
-        // every time (the Apple Pay rule — sameness is the identity).
-        let jitter: Float = tier == .signature
-            ? 1
-            : Float(pow(10, Double.random(in: -0.8...0.8) / 20))
-        node.volume = gain * jitter
-        node.scheduleBuffer(variantsAvailable[index])
-        node.play()
-    }
+    #endif
 }
 
-// MARK: - The vocabulary (semantic API — call sites never see file names)
-
-/// Sound cues for the Mac's moments. Every method is safe to call
-/// unconditionally — the engine handles the Settings profile, media
-/// suppression, and rate limits. Only verbs with wired call sites live here;
-/// grow it alongside the iOS vocabulary as surfaces adopt sound.
-@MainActor
-enum Sound {
-
+/// Semantic call sites stay stable while both apps share the same small palette.
+@MainActor enum Sound {
     private static var engine: SoundEngine { .shared }
 
-    // MARK: Completion choreography — layers on the animation keyframes
-
-    /// Swish with the ring, pen stroke with the check, the rising du-DUM with
-    /// the strike — riding the exact completion timings. Signature: this is
-    /// the sound of the app.
-    static func taskCompletion(timings: CommandCenterCompletionTimings) {
-        engine.cue("swish", tier: .signature, muffleFloor: timings.fadeDelay)
-        Task {
-            try? await Task.sleep(for: .seconds(timings.checkDelay))
-            engine.cue("stroke", tier: .signature, muffleFloor: 0.1)
-            try? await Task.sleep(for: .seconds(timings.strikeDelay - timings.checkDelay))
-            engine.cue("landing", tier: .signature, muffleFloor: 0.1)
-        }
+    // The caller fires this ON the checkmark beat. One audio file owns both
+    // transients, so the signature never depends on independently sleeping Tasks.
+    static func taskComplete() { engine.play(.complete) }
+    static func dayClear() {
+        let defaults = UserDefaults.standard
+        let today = Calendar.current.startOfDay(for: Date()).timeIntervalSince1970
+        guard defaults.double(forKey: "sound.lastDayClear") != today else { return }
+        defaults.set(today, forKey: "sound.lastDayClear")
+        engine.play(.milestone)
     }
+    static func habitComplete() { engine.play(.complete) }
+    static func focusStart() { engine.play(.open) }
+    static func focusPause() { engine.play(.close) }
+    static func focusResume() { engine.play(.open) }
+    static func focusEnd() { engine.play(.focus) }
+    static func goalBell() { engine.play(.milestone) }
+    static func dragPickup() { engine.play(.open) }
+    static func dragDrop() { engine.play(.place) }
+    static func deleteTuck() { engine.play(.remove) }
+    static func undo() { engine.play(.undo) }
+    static func companionFlourish(_ companion: Companion) { engine.play(.confirm) }
 
-    // (Un-completing is silent — removing a checkmark is not a moment.)
-
-    // MARK: Earned moments
-
-    /// The last open task of the day falls: once a day, never anywhere else.
-    static func dayClear() { engine.cue("dayclear", tier: .signature, muffleFloor: 0.6) }
-    static func habitComplete() { engine.cue("minibloom", muffleFloor: 0.4) }
-
-    // MARK: Focus arc
-
-    static func focusStart() { engine.cue("focusstart") }
-    static func focusPause() { engine.cue("pause") }
-    static func focusResume() { engine.cue("resume") }
-    /// The exhale + droplet: time banked in the greenhouse.
-    static func focusEnd() { engine.cue("exhale", muffleFloor: 0.5) }
-    /// The felt bell — the daily goal lands mid-session.
-    static func goalBell() { engine.cue("bell", tier: .signature, muffleFloor: 0.6) }
-
-    // MARK: Drag & place
-
-    static func dragPickup() { engine.cue("pickup", muffleFloor: 0.08) }
-    static func dragDrop() { engine.cue("drop", muffleFloor: 0.15) }
-
-    // MARK: Forgiveness
-
-    /// The falling whoosh into the bin (the macOS trash grammar). Signature:
-    /// deleting deserves its sound even in Minimal.
-    static func deleteTuck() { engine.cue("delete", tier: .signature) }
-    static func undo() { engine.cue("undo") }
+    #if os(iOS)
+    enum Entity: String { case task, note, idea, connection, swipe }
+    static func inboxZero() { engine.play(.milestone) }
+    static func giltShimmer() {} // Decorative changes do not need an announcement.
+    static func orbTap() { engine.play(.open) }
+    static func bloomOpen() { engine.play(.open) }
+    static func bloomClose() { engine.play(.close) }
+    static func fanStep(_ rowIndex: Int) {} // Selection haptics carry navigation.
+    static func entityCommit(_ route: CreationRoute) { engine.play(.confirm) }
+    static func captureSaved() { engine.play(.confirm) }
+    static func filing(_ entity: Entity?) { engine.play(.place) }
+    static func connectTie() { engine.play(.confirm) }
+    static func dismissTuck() { engine.play(.close) }
+    static func reschedule() { engine.play(.place) }
+    static func snapTick(degree: Int) {} // No pitched scale while dragging.
+    static func workspaceReady() {} // Loading a page is silent.
+    static func hello() { engine.play(.focus) }
+    #endif
 }

@@ -24,6 +24,8 @@ struct ContentAICollaboratorView: View {
     private let popoverWidth: CGFloat = 380
     private let popoverMaxHeight: CGFloat = 500
 
+    @State private var visibleMessageLimit = 30
+
     var body: some View {
         VStack(spacing: 0) {
             headerBar
@@ -186,10 +188,12 @@ struct ContentAICollaboratorView: View {
                         emptyStateView
                     }
 
-                    // Cap displayed messages to last 30 to bound render cost.
-                    // With 48+ messages, ForEach over all of them causes O(N) diffing
-                    // on every @Published change, leading to 100% CPU.
-                    ForEach(engine.messages.suffix(30)) { message in
+                    if engine.messages.count > visibleMessageLimit {
+                        Button("Show earlier messages") { visibleMessageLimit += 30 }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(DS.accent)
+                    }
+                    ForEach(engine.messages.suffix(visibleMessageLimit)) { message in
                         WritingMessageBubble(message: message)
                             .id(message.id)
                     }

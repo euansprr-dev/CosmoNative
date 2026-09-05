@@ -2557,6 +2557,7 @@ final class CommandCenterDashboardViewModel {
                 trackedMinutes: nil
             )
             await habitEngine.recordTaskCompletion(taskUUID: task.uuid, on: completionDate)
+            await CompanionStore.shared.notice(.taskCompleted, eventID: "\(task.uuid):\(occurrenceDay)")
             await refreshTaskCollectionsAfterMutation()
             await loadHabits()
             return true
@@ -2595,6 +2596,7 @@ final class CommandCenterDashboardViewModel {
 
         // Habit credit only after the completion actually persisted.
         await habitEngine.recordTaskCompletion(taskUUID: uuid, on: completionDate)
+        await CompanionStore.shared.notice(.taskCompleted, eventID: uuid)
         await refreshTaskCollectionsAfterMutation()
         await loadHabits()
         return true

@@ -202,7 +202,7 @@ struct ResearchSidebarView: View {
     @ViewBuilder
     private func relatedItemCardLabel(_ item: RelatedItem) -> some View {
         HStack(spacing: 10) {
-            Image(systemName: iconForType(item.type))
+            Image(cosmo: item.type.cosmoIcon)
                 .font(.system(size: 11))
                 .foregroundColor(colorForType(item.type))
                 .frame(width: 16)
@@ -663,7 +663,7 @@ struct ResearchSidebarView: View {
     @ViewBuilder
     private func linkedItemRowLabel(_ item: Atom) -> some View {
         HStack(spacing: 8) {
-            Image(systemName: iconForType(item.type))
+            Image(cosmo: item.type.cosmoIcon)
                 .font(.system(size: 10))
                 .foregroundColor(colorForType(item.type))
                 .frame(width: 16)
@@ -1010,18 +1010,6 @@ struct ResearchSidebarView: View {
     }
 
     // MARK: - Helpers
-
-    private func iconForType(_ type: AtomType) -> String {
-        switch type {
-        case .connection: return "link.circle.fill"
-        case .research: return "magnifyingglass"
-        case .content: return "doc.text.fill"
-        case .idea: return "lightbulb.fill"
-        case .task: return "checkmark.circle.fill"
-        case .note: return "note.text"
-        default: return "doc.fill"
-        }
-    }
 
     private func colorForType(_ type: AtomType) -> Color {
         switch type {

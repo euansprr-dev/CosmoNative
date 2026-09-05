@@ -196,7 +196,7 @@ struct SmartTaskCaptureRow: View {
 
         var body: some View {
             HStack(spacing: DS.space6) {
-                Image(systemName: result.entityType.icon)
+                Image(cosmo: result.entityType.cosmoIcon)
                     .font(DS.caption2)
                     .foregroundStyle(color)
                     .frame(width: 14)

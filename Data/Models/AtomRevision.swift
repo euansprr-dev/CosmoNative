@@ -146,6 +146,9 @@ enum AtomRevisionPolicy {
             return contentChanged
         case .userEdit:
             guard contentChanged else { return false }
+            // Clearing even a short note must retain the text being removed.
+            // A recent autosave revision may predate all of that text.
+            if previous.body?.isEmpty == false && (incoming.body?.isEmpty ?? true) { return true }
             guard let last = lastRevisionAt else { return true }
             if now.timeIntervalSince(last) >= minUserEditInterval { return true }
             let previousLength = previous.body?.count ?? 0

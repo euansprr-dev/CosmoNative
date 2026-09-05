@@ -1,33 +1,10 @@
 // CosmoOS/Canvas/Library/ThinkspaceLibraryToolbar.swift
-// The library's controls as chrome-row islands. The SPACE chrome row (owned
-// by CanvasView) mounts these beside the space's view switcher, so the
-// library never draws a second row of its own: lenses dead center, sort and
-// search trailing. State lives in ThinkspaceLibraryChromeModel; the search
-// field's focus is mirrored into it so the lens can refocus its browser.
+// Materials display, sorting, and search form one subordinate toolbar.
+// Keeping them inside Materials leaves the space's primary tabs stationary.
+// Search focus is mirrored into the hoisted chrome model for keyboard routing.
 
 import SwiftUI
 import AppKit
-
-// MARK: - Lenses island (center)
-
-struct ThinkspaceLibraryLensIsland: View {
-    let chrome: ThinkspaceLibraryChromeModel
-
-    var body: some View {
-        CosmoChromeIsland {
-            CosmoSegmentedSwitcher(
-                options: ThinkspaceLibraryViewMode.allCases,
-                label: { $0.title },
-                icon: { $0.icon },
-                help: { mode in
-                    "\(mode.title) view (⇧⌘\((ThinkspaceLibraryViewMode.allCases.firstIndex(of: mode) ?? 0) + 1))"
-                },
-                chrome: .bare,
-                selection: Binding(get: { chrome.prefs.viewMode }, set: { chrome.setViewMode($0) })
-            )
-        }
-    }
-}
 
 // MARK: - Sort + search island (trailing)
 
@@ -40,6 +17,14 @@ struct ThinkspaceLibraryToolsIsland: View {
 
     var body: some View {
         CosmoChromeIsland {
+            Menu {
+                Picker("Display", selection: Binding(get: { chrome.prefs.viewMode }, set: { chrome.setViewMode($0) })) {
+                    Text("Grid").tag(ThinkspaceLibraryViewMode.icons)
+                    Text("List").tag(ThinkspaceLibraryViewMode.list)
+                }
+            } label: { Image(systemName: chrome.prefs.viewMode.icon).frame(width: 36, height: 44) }
+            .menuStyle(.borderlessButton).menuIndicator(.hidden)
+            .help("Display materials as a grid or list").accessibilityLabel("Display materials")
             LibrarySortMenu(
                 sortField: chrome.prefs.sortField,
                 sortAscending: chrome.prefs.sortAscending,

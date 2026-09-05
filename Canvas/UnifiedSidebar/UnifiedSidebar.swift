@@ -1,6 +1,12 @@
 // CosmoOS/Canvas/UnifiedSidebar/UnifiedSidebar.swift
-// Main sidebar container — premium docked shell with persisted width
-// March 2026 — Command Center navigation
+// The app sidebar — one floating glass panel, one row grammar.
+//
+// Anatomy (top → bottom): toggle · the five places · the open place's
+// sections · you. Every row is `SidebarRow`; every section is a
+// `SidebarSection` (the one header voice); exactly one row carries the
+// selection wash at a time (the page you are on). The place rows above it
+// mark the open section with weight and an accent glyph — never a second wash.
+// March 2026 — Command Center navigation · Sept 2026 — the Apple pass
 
 import SwiftUI
 import AppKit
@@ -71,61 +77,34 @@ enum MainSidebarButtonPolicy {
     }
 }
 
+/// The five places. Declaration order is sidebar order.
 enum SidebarContext: String, CaseIterable, Equatable, Hashable {
     case thinkspaces
     case commandCenter
-    case inbox
-    case swipeFile
     case content
-    case search
-
-    static var allCases: [SidebarContext] {
-        [.thinkspaces, .commandCenter, .content, .swipeFile, .inbox]
-    }
+    case swipeFile
+    case inbox
 
     var title: String {
         switch self {
         case .thinkspaces: return "Spaces"
         case .commandCenter: return "Command"
-        case .inbox: return "Inbox"
-        case .swipeFile: return "Swipe File"
         case .content: return "Content"
-        case .search: return "Search"
-        }
-    }
-
-    var shortTitle: String {
-        switch self {
-        case .thinkspaces: return "Spaces"
-        case .commandCenter: return "Command"
-        case .inbox: return "Inbox"
         case .swipeFile: return "Swipe File"
-        case .content: return "Content"
-        case .search: return "Search"
+        case .inbox: return "Inbox"
         }
     }
 
-    var icon: String {
+    var cosmoIcon: CosmoIcon {
         switch self {
-        case .thinkspaces: return "house"
-        case .commandCenter: return "target"
-        case .inbox: return "tray"
-        case .swipeFile: return "rectangle.stack"
-        case .content: return "doc.richtext"
-        case .search: return "magnifyingglass"
+        case .thinkspaces: return .space
+        case .commandCenter: return .command
+        case .content: return .content
+        case .swipeFile: return .swipe
+        case .inbox: return .inbox
         }
     }
 
-    var activeIcon: String {
-        switch self {
-        case .thinkspaces: return "house.fill"
-        case .commandCenter: return "target"
-        case .inbox: return "tray.fill"
-        case .swipeFile: return "rectangle.stack.fill"
-        case .content: return "doc.richtext"
-        case .search: return "magnifyingglass"
-        }
-    }
 }
 
 enum SidebarInboxRoute: Equatable, Hashable {
@@ -135,84 +114,29 @@ enum SidebarInboxRoute: Equatable, Hashable {
     case manageCommands
 }
 
-private enum SidebarSearchScope: String, CaseIterable, Identifiable {
-    case all
-    case thinkspaces
-    case sources
-    case notes
-    case claims
-    case questions
-    case outputs
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .all: return "All"
-        case .thinkspaces: return "Thinkspaces"
-        case .sources: return "Sources"
-        case .notes: return "Notes"
-        case .claims: return "Claims"
-        case .questions: return "Questions"
-        case .outputs: return "Outputs"
-        }
-    }
-
-    var atomTypes: [AtomType]? {
-        switch self {
-        case .all:
-            return nil
-        case .thinkspaces:
-            return [.thinkspace]
-        case .sources:
-            return [.research]
-        case .notes:
-            return [.note, .stickyNote, .journalEntry]
-        case .claims:
-            return [.extract]
-        case .questions:
-            return [.question]
-        case .outputs:
-            return [.content, .idea]
-        }
-    }
-}
-
-extension Notification.Name {
-    static let sidebarCreateThinkspace = Notification.Name("com.cosmo.sidebar.createThinkspace")
-    static let sidebarCreateCaptureLane = Notification.Name("com.cosmo.sidebar.createCaptureLane")
-    static let sidebarSearchSubmitted = Notification.Name("com.cosmo.sidebar.searchSubmitted")
-}
-
 // MARK: - Sidebar Metrics
 
 enum UnifiedSidebarMetrics {
     static let defaultExpandedWidth: CGFloat = 304
     static let minExpandedWidth: CGFloat = 288
     static let maxExpandedWidth: CGFloat = 336
-    static let collapsedWidth: CGFloat = 56
 
-    static let headerHeight: CGFloat = 94
-    static let footerHeight: CGFloat = 60
-
-    static let expandedOuterPadding: CGFloat = 14
-    static let collapsedOuterPadding: CGFloat = 8
-    static let contentVerticalPadding: CGFloat = 12
-    static let sectionVerticalPaddingExpanded: CGFloat = 12
-    static let sectionVerticalPaddingCollapsed: CGFloat = 8
-    static let sectionHorizontalPaddingExpanded: CGFloat = 4
-    static let sectionHorizontalPaddingCollapsed: CGFloat = 2
-
-    static let moduleRadius: CGFloat = 12
-    static let rowRadius: CGFloat = 10
     static let panelCornerRadius: CGFloat = 22
+    /// Panel inset. Row radius is concentric with the panel: 22 − 14 = 8.
+    static let outerPadding: CGFloat = 14
+    static let rowRadius: CGFloat = 8
 
-    static let commandPillHeight: CGFloat = 34
-    static let standardRowHeight: CGFloat = 42
-    static let thinkspaceRowHeight: CGFloat = 38
-    static let railHitTarget: CGFloat = 32
+    /// The one row height (the source-list register).
+    static let rowHeight: CGFloat = 30
+    static let rowSpacing: CGFloat = 2
+    /// Horizontal padding inside a row — labels and section headers share it.
+    static let rowInset: CGFloat = 8
+    static let glyphWidth: CGFloat = 20
+    static let nestIndent: CGFloat = 18
+    /// Glyph buttons in the header and footer.
+    static let controlSize: CGFloat = 28
+
     static let hoverRevealTriggerWidth: CGFloat = 18
-    static let iconSize: CGFloat = 16
     static let resizeHandleWidth: CGFloat = 10
     static let floatingMargin: CGFloat = 8
 
@@ -221,94 +145,277 @@ enum UnifiedSidebarMetrics {
     }
 }
 
-// MARK: - Sidebar Feature Flags
+// MARK: - Row Grammar
 
-// MARK: - Shared Sidebar Chrome
-
-struct UnifiedSidebarSection<Content: View>: View {
-    let isCollapsed: Bool
-    let showsDivider: Bool
-    let content: Content
-
-    init(
-        isCollapsed: Bool,
-        showsDivider: Bool = false,
-        @ViewBuilder content: () -> Content
-    ) {
-        self.isCollapsed = isCollapsed
-        self.showsDivider = showsDivider
-        self.content = content()
+/// The one selection law for sidebar rows: a wash of the row's tint, no
+/// stroke. Hover is the same quiet fill on every row.
+enum SidebarRowFill {
+    static func wash(_ tint: Color) -> Color {
+        tint.opacity(DS.palette.isDark ? 0.18 : 0.12)
     }
 
-    var body: some View {
-        VStack(spacing: 0) {
-            content
-                .padding(
-                    .horizontal,
-                    isCollapsed
-                        ? UnifiedSidebarMetrics.sectionHorizontalPaddingCollapsed
-                        : UnifiedSidebarMetrics.sectionHorizontalPaddingExpanded
-                )
-                .padding(
-                    .vertical,
-                    isCollapsed
-                        ? UnifiedSidebarMetrics.sectionVerticalPaddingCollapsed
-                        : UnifiedSidebarMetrics.sectionVerticalPaddingExpanded
-                )
+    static var hover: Color {
+        DS.surfaceHover.opacity(0.7)
+    }
 
-            if showsDivider {
-                Rectangle()
-                    .fill(DS.sepiaSubtle)
-                    .frame(height: 0.5)
-                    .padding(.leading, isCollapsed ? 14 : 6)
-                    .padding(.trailing, 6)
+    static func resolve(isActive: Bool, isHovered: Bool, tint: Color) -> Color {
+        if isActive { return wash(tint) }
+        if isHovered { return hover }
+        return .clear
+    }
+}
+
+private struct SidebarRowChromeModifier: ViewModifier {
+    let isActive: Bool
+    let isHovered: Bool
+    let tint: Color
+
+    func body(content: Content) -> some View {
+        content.background(
+            RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.rowRadius, style: .continuous)
+                .fill(SidebarRowFill.resolve(isActive: isActive, isHovered: isHovered, tint: tint))
+        )
+    }
+}
+
+extension View {
+    func sidebarRowChrome(isActive: Bool, isHovered: Bool, tint: Color = DS.accent) -> some View {
+        modifier(SidebarRowChromeModifier(isActive: isActive, isHovered: isHovered, tint: tint))
+    }
+}
+
+/// What sits in a row's glyph column.
+enum SidebarRowMark {
+    case icon(CosmoIcon)
+    case symbol(String)
+    case emoji(String)
+}
+
+/// How loudly a row speaks.
+enum SidebarRowProminence {
+    /// A page: active = the selection wash.
+    case standard
+    /// A place (the five top rows): active = ink label + accent glyph, no wash —
+    /// the wash belongs to the page row beneath it.
+    case primary
+    /// A creation row that closes a list ("New space…"): muted until hovered.
+    case ghost
+}
+
+/// The one sidebar row. Height, inset, glyph column, type and selection are
+/// fixed here so every list in the panel reads as one list.
+struct SidebarRow: View {
+    let title: String
+    let mark: SidebarRowMark
+    var count: Int? = nil
+    var isActive: Bool = false
+    var prominence: SidebarRowProminence = .standard
+    var help: String? = nil
+    let action: () -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: DS.space8) {
+                glyph
+                    .frame(width: UnifiedSidebarMetrics.glyphWidth, height: UnifiedSidebarMetrics.glyphWidth)
+                    .accessibilityHidden(true)
+
+                Text(title)
+                    .font(labelFont)
+                    .foregroundStyle(labelColor)
+                    .lineLimit(1)
+
+                Spacer(minLength: DS.space8)
+
+                if let count, count > 0 {
+                    Text("\(count)")
+                        .font(DS.caption.monospacedDigit())
+                        .foregroundStyle(isActive ? DS.textSecondary : DS.textMuted)
+                        .contentTransition(.numericText())
+                }
             }
+            .padding(.horizontal, UnifiedSidebarMetrics.rowInset)
+            .frame(maxWidth: .infinity, minHeight: UnifiedSidebarMetrics.rowHeight, alignment: .leading)
+            .contentShape(RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.rowRadius, style: .continuous))
+            .sidebarRowChrome(isActive: isActive && prominence == .standard, isHovered: isHovered)
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .animation(reduceMotion ? nil : ProMotionSprings.hover, value: isHovered)
+        // A tooltip that repeats the label is noise (Finder rows carry none);
+        // rows tooltip only when they have something to add.
+        .help(help ?? "")
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(isActive ? .isSelected : [])
+    }
+
+    @ViewBuilder
+    private var glyph: some View {
+        switch mark {
+        case .icon(let icon):
+            Image(cosmo: icon)
+                .font(DS.title3)
+                .foregroundStyle(glyphColor)
+                .accessibilityHidden(true)
+        case .symbol(let name):
+            Image(systemName: name)
+                .font(DS.title3)
+                .foregroundStyle(glyphColor)
+        case .emoji(let emoji):
+            Text(emoji)
+                .font(DS.headline)
+        }
+    }
+
+    private var labelFont: Font {
+        if prominence == .primary && isActive {
+            return DS.callout.weight(.semibold)
+        }
+        return DS.callout.weight(.medium)
+    }
+
+    private var labelColor: Color {
+        switch prominence {
+        case .ghost:
+            return isHovered ? DS.textSecondary : DS.textMuted
+        case .primary, .standard:
+            return isActive ? DS.text : DS.textSecondary
+        }
+    }
+
+    private var glyphColor: Color {
+        switch prominence {
+        case .ghost:
+            return isHovered ? DS.textSecondary : DS.textMuted
+        case .primary, .standard:
+            return isActive ? DS.accent : DS.textSecondary
         }
     }
 }
 
-private struct UnifiedSidebarRowChromeModifier: ViewModifier {
-    let isActive: Bool
-    let isHovered: Bool
-    let cornerRadius: CGFloat
-    let activeFill: Color
-    let hoverFill: Color
-    let activeBorder: Color
+/// A section: the one header voice (small caps + a trailing live count),
+/// then rows at the one row spacing.
+struct SidebarSection<Content: View>: View {
+    let title: String
+    var count: Int? = nil
+    @ViewBuilder let content: () -> Content
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        VStack(spacing: UnifiedSidebarMetrics.rowSpacing) {
+            header
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var header: some View {
+        HStack(spacing: DS.space8) {
+            Text(title)
+                .font(DS.smallCaps)
+                .tracking(DS.smallCapsTracking)
+                .foregroundStyle(DS.giltInk)
+                .lineLimit(1)
+
+            Spacer(minLength: 0)
+
+            if let count, count > 0 {
+                Text("\(count)")
+                    .font(DS.caption.monospacedDigit())
+                    .foregroundStyle(DS.textMuted)
+                    .contentTransition(.numericText())
+                    .animation(reduceMotion ? nil : ProMotionSprings.snappy, value: count)
+            }
+        }
+        .padding(.horizontal, UnifiedSidebarMetrics.rowInset)
+        .frame(height: 22)
+        .accessibilityAddTraits(.isHeader)
+    }
+}
+
+/// The row a ghost row becomes when clicked: a name field in the row's own
+/// geometry. Return commits, Escape cancels.
+struct SidebarInlineCreateRow: View {
+    let placeholder: String
+    let symbol: String
+    @Binding var text: String
+    var isFocused: FocusState<Bool>.Binding
+    let onSubmit: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        HStack(spacing: DS.space8) {
+            Image(systemName: symbol)
+                .font(DS.title3)
+                .foregroundStyle(DS.accent)
+                .frame(width: UnifiedSidebarMetrics.glyphWidth, height: UnifiedSidebarMetrics.glyphWidth)
+
+            TextField(placeholder, text: $text)
+                .textFieldStyle(.plain)
+                .font(DS.callout.weight(.medium))
+                .foregroundStyle(DS.text)
+                .focused(isFocused)
+                .onSubmit(onSubmit)
+                .onExitCommand(perform: onCancel)
+        }
+        .sidebarInlineFieldChrome()
+    }
+}
+
+/// The chrome of a text field living in a row slot (create, rename): the
+/// row's geometry, an elevated fill, the one focus ring.
+private struct SidebarInlineFieldChromeModifier: ViewModifier {
     func body(content: Content) -> some View {
-        // Liquid Glass panels are brighter than the old synthetic material, so
-        // row fills stay lighter and the rim depth comes from the glass itself.
         content
+            .padding(.horizontal, UnifiedSidebarMetrics.rowInset)
+            .frame(maxWidth: .infinity, minHeight: UnifiedSidebarMetrics.rowHeight, alignment: .leading)
             .background(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(isActive ? activeFill.opacity(0.55) : (isHovered ? hoverFill.opacity(0.40) : Color.clear))
+                RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.rowRadius, style: .continuous)
+                    .fill(DS.surfaceElevated)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(isActive ? activeBorder.opacity(0.5) : Color.clear, lineWidth: 0.75)
+                RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.rowRadius, style: .continuous)
+                    .stroke(DS.focusRing, lineWidth: 1)
             )
     }
 }
 
 extension View {
-    func unifiedSidebarRowChrome(
-        isActive: Bool,
-        isHovered: Bool,
-        cornerRadius: CGFloat = UnifiedSidebarMetrics.rowRadius,
-        activeFill: Color = DS.accentSoft,
-        hoverFill: Color = DS.surfaceHover,
-        activeBorder: Color = DS.sidebarMaterialBorder
-    ) -> some View {
-        modifier(
-            UnifiedSidebarRowChromeModifier(
-                isActive: isActive,
-                isHovered: isHovered,
-                cornerRadius: cornerRadius,
-                activeFill: activeFill,
-                hoverFill: hoverFill,
-                activeBorder: activeBorder
+    func sidebarInlineFieldChrome() -> some View {
+        modifier(SidebarInlineFieldChromeModifier())
+    }
+}
+
+/// Glyph-only control for the header and footer (toggle, settings).
+private struct SidebarGlyphButton: View {
+    let title: String
+    let symbol: String
+    let help: String
+    let action: () -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(title, systemImage: symbol, action: action)
+            .labelStyle(.iconOnly)
+            .font(DS.subheadline.weight(.semibold))
+            .foregroundStyle(isHovered ? DS.text : DS.textSecondary)
+            .frame(width: UnifiedSidebarMetrics.controlSize, height: UnifiedSidebarMetrics.controlSize)
+            .background(
+                RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.rowRadius, style: .continuous)
+                    .fill(isHovered ? SidebarRowFill.hover : Color.clear)
             )
-        )
+            .contentShape(RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.rowRadius, style: .continuous))
+            .buttonStyle(.plain)
+            .onHover { isHovered = $0 }
+            .animation(reduceMotion ? nil : ProMotionSprings.hover, value: isHovered)
+            .help(help)
+            .accessibilityLabel(title)
     }
 }
 
@@ -321,6 +428,7 @@ struct UnifiedSidebar: View {
     @Binding var panelWidth: CGFloat
     var thinkspaceManager: ThinkspaceManager
     var commandCenterViewModel: CommandCenterDashboardViewModel
+    var pipelineModel: PipelinePageModel
     var cornerRadius: CGFloat = UnifiedSidebarMetrics.panelCornerRadius
     var sidebarButtonTitle: String = "Close sidebar"
     var sidebarButtonHelp: String = "Close sidebar"
@@ -329,25 +437,25 @@ struct UnifiedSidebar: View {
 
     @EnvironmentObject var crossDragManager: CrossThinkspaceDragManager
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ObservedObject private var inboxRepository = InboxRepository.shared
 
-    @State private var hoveredFooterItem: String?
     @State private var showCompanionPicker = false
     @State private var companionVitality: CompanionVitality = .resting
-    @State private var hoveredHeaderItem: String?
-    @State private var hoveredContext: SidebarContext?
+    @State private var isCompanionHovered = false
     @State private var isResizeHandleHovered = false
     @State private var resizeStartWidth: CGFloat?
+    @State private var isBrowsingSpaces = false
 
-    private var sidebarWidth: CGFloat {
-        panelWidth
+    private var outerPadding: CGFloat { UnifiedSidebarMetrics.outerPadding }
+
+    private var widthAnimation: Animation? {
+        reduceMotion ? .easeOut(duration: 0.15) : ProMotionSprings.sidebar
     }
 
-    private var outerPadding: CGFloat {
-        UnifiedSidebarMetrics.expandedOuterPadding
-    }
-
-    private var motionAnimation: Animation? {
-        reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.2, dampingFraction: 0.92)
+    /// Switching places swaps the section list; the swap is a quick
+    /// cross-fade, not a slide — the panel itself never moves.
+    private var contextAnimation: Animation? {
+        reduceMotion ? nil : ProMotionSprings.snappy
     }
 
     // NSFullUserName() is a directory-services call — resolve once, not per
@@ -355,53 +463,40 @@ struct UnifiedSidebar: View {
     private static let cachedUserFirstName =
         NSFullUserName().components(separatedBy: " ").first ?? "User"
 
-    private var userFirstName: String {
-        Self.cachedUserFirstName
-    }
-
     var body: some View {
-        CosmoGlassPanel(
-            role: .globalSidebar,
-            cornerRadius: cornerRadius
-        ) {
+        CosmoGlassPanel(role: .globalSidebar, cornerRadius: cornerRadius) {
             VStack(spacing: 0) {
                 sidebarHeader
 
                 ScrollView(.vertical) {
-                    VStack(spacing: 0) {
-                        contextTabRow
-                        Divider().padding(.vertical, DS.space12)
+                    VStack(alignment: .leading, spacing: DS.space16) {
+                        placeRows
                         WorkbenchStripView()
-                        Group {
-                            sidebarBody
-                        }
-                        .id(activeContext)
-                        .transition(.opacity)
+                        sidebarBody
+                            .id(activeContext)
+                            .transition(.opacity)
                     }
                     .padding(.horizontal, outerPadding)
-                    .padding(.vertical, UnifiedSidebarMetrics.contentVerticalPadding)
+                    .padding(.top, DS.space4)
+                    .padding(.bottom, DS.space16)
                 }
                 .scrollIndicators(.hidden)
 
                 sidebarFooter
             }
         }
-        .frame(width: sidebarWidth)
+        .frame(width: panelWidth)
         .frame(maxHeight: .infinity)
         .overlay(alignment: .trailing) {
             resizeHandle
                 .padding(.trailing, 2)
         }
-        .animation(motionAnimation, value: panelWidth)
-        .animation(motionAnimation, value: activeContext)
+        .animation(widthAnimation, value: panelWidth)
+        .animation(contextAnimation, value: activeContext)
         .onAppear {
-            if !SidebarContext.allCases.contains(activeContext) {
-                activeContext = .thinkspaces
-            }
-            let persistedWidth = UnifiedSidebarMetrics.clampedExpandedWidth(
+            panelWidth = UnifiedSidebarMetrics.clampedExpandedWidth(
                 StatePersistence.shared.getSidebarWidth()
             )
-            panelWidth = persistedWidth
         }
         .onChange(of: panelWidth) { _, newWidth in
             let clamped = UnifiedSidebarMetrics.clampedExpandedWidth(newWidth)
@@ -415,181 +510,69 @@ struct UnifiedSidebar: View {
             guard resizeStartWidth == nil else { return }
             StatePersistence.shared.saveSidebarWidth(clamped)
         }
+        .onChange(of: currentDestination) { _, destination in
+            if case .thinkspace = destination { isBrowsingSpaces = false }
+        }
     }
 
     // MARK: - Header
 
+    /// Keep the toggle at the trailing edge with breathing room inside
+    /// the panel and clear of its resize handle.
     private var sidebarHeader: some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Cosmo")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(DS.text)
-                        .lineLimit(1)
-
-                    Text(activeContext.title)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(DS.textMuted)
-                        .lineLimit(1)
-                }
-
-                Spacer(minLength: 8)
-
-                newMenu
-
-                Button(sidebarButtonTitle, systemImage: "sidebar.left") {
-                    withAnimation(motionAnimation) {
-                        onClose()
-                    }
-                }
-                .labelStyle(.iconOnly)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(DS.textMuted)
-                .frame(width: UnifiedSidebarMetrics.railHitTarget, height: UnifiedSidebarMetrics.railHitTarget)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(hoveredHeaderItem == "close" ? DS.surfaceHover : Color.clear)
-                )
-                .buttonStyle(.plain)
-                .onHover { hoveredHeaderItem = $0 ? "close" : nil }
-                .help(sidebarButtonHelp)
-                .accessibilityLabel(sidebarButtonTitle)
+        HStack(spacing: 0) {
+            Spacer(minLength: DS.space8)
+            SidebarGlyphButton(
+                title: sidebarButtonTitle,
+                symbol: "sidebar.left",
+                help: sidebarButtonHelp
+            ) {
+                withAnimation(widthAnimation) { onClose() }
             }
-
+            .padding(.trailing, DS.space4)
         }
         .padding(.horizontal, outerPadding)
-        .frame(height: 64)
+        .padding(.top, DS.space10)
+        .padding(.bottom, DS.space10)
     }
 
-    @ViewBuilder
-    private var newMenu: some View {
-        Menu {
-            switch activeContext {
-            case .thinkspaces:
-                Button {
-                    SpaceComposerRequest.post(.create(parentId: nil))
-                } label: {
-                    Label("New Space", systemImage: "rectangle.badge.plus")
-                }
-            case .commandCenter:
-                Button {
-                    currentDestination = .commandCenter
-                    onNavigate()
-                    NotificationCenter.default.post(
-                        name: Notification.Name("com.cosmo.commandCenter.quickAddTask"),
-                        object: nil
-                    )
-                } label: {
-                    Label("New Task", systemImage: "checkmark.circle")
-                }
-            case .inbox:
-                Button {
-                    inboxRoute = .global
-                    currentDestination = .inbox
-                    onNavigate()
-                } label: {
-                    Label("Capture Thought", systemImage: "tray.and.arrow.down")
-                }
-                Button {
-                    NotificationCenter.default.post(name: .sidebarCreateCaptureLane, object: nil)
-                } label: {
-                    Label("New Capture Lane", systemImage: "tray.2")
-                }
-            case .swipeFile:
-                Button {
-                    currentDestination = .discover(section: .discover)
-                    onNavigate()
-                } label: {
-                    Label("Open Discover", systemImage: "safari")
-                }
-                Button {
-                    currentDestination = .swipeFile(section: .home)
-                    onNavigate()
-                } label: {
-                    Label("Open Swipe File", systemImage: "rectangle.stack")
-                }
-            case .content:
-                Button("Capture an idea", systemImage: "lightbulb") {
-                    currentDestination = .ideas
-                    onNavigate()
-                }
-                Button("Manage clients…", systemImage: "person.2") {
-                    currentDestination = .clients
-                    onNavigate()
-                }
-            case .search:
-                Button {
-                    NotificationCenter.default.post(name: .showCommandPalette, object: nil)
-                } label: {
-                    Label("Open Search", systemImage: "magnifyingglass")
-                }
-            }
-        } label: {
-            Image(systemName: "plus")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(DS.accent)
-                .frame(width: UnifiedSidebarMetrics.railHitTarget, height: UnifiedSidebarMetrics.railHitTarget)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(hoveredHeaderItem == "new" ? DS.accentSoft.opacity(0.86) : DS.accentSoft)
-                )
-        }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .onHover { hoveredHeaderItem = $0 ? "new" : nil }
-        .help("New")
-    }
+    // MARK: - Places
 
-    private var contextTabRow: some View {
-        VStack(spacing: DS.space4) {
+    private var placeRows: some View {
+        VStack(spacing: UnifiedSidebarMetrics.rowSpacing) {
             ForEach(SidebarContext.allCases, id: \.rawValue) { context in
-                contextTab(context)
+                let isActive = activeContext == context
+                SidebarRow(
+                    title: context.title,
+                    mark: .icon(context.cosmoIcon),
+                    count: context == .inbox ? inboxRepository.unreadCount : nil,
+                    isActive: isActive,
+                    prominence: .primary
+                ) {
+                    open(context)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func contextTab(_ context: SidebarContext) -> some View {
-        let isActive = activeContext == context
-        let isHovered = hoveredContext == context
-
-        return Button {
-            withAnimation(motionAnimation) {
-                activeContext = context
-                switch context {
-                case .content: currentDestination = .ideas
-                case .swipeFile: currentDestination = .swipeFile(section: .home)
-                case .commandCenter: currentDestination = .commandCenter
-                case .inbox: currentDestination = .inbox
-                case .thinkspaces:
-                    if let id = thinkspaceManager.currentThinkspace?.id { currentDestination = .thinkspace(id: id) }
-                case .search: break
+    private func open(_ context: SidebarContext) {
+        withAnimation(contextAnimation) {
+            activeContext = context
+            switch context {
+            case .content: currentDestination = .ideas
+            case .swipeFile: currentDestination = .swipeFile(section: .home)
+            case .commandCenter: currentDestination = .commandCenter
+            case .inbox:
+                inboxRoute = .global
+                currentDestination = .inbox
+            case .thinkspaces:
+                if let id = thinkspaceManager.currentThinkspace?.id {
+                    currentDestination = .thinkspace(id: id)
                 }
             }
-        } label: {
-            HStack(spacing: DS.space12) {
-                Image(systemName: isActive ? context.activeIcon : context.icon)
-                    .frame(width: 20)
-                Text(context.title)
-                Spacer(minLength: 0)
-            }
-                .font(DS.callout.weight(isActive ? .semibold : .medium))
-                .foregroundStyle(isActive ? DS.accent : DS.textSecondary)
-                .padding(.horizontal, DS.space12)
-                .frame(maxWidth: .infinity)
-                .frame(height: 44)
-                .background(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(isActive ? DS.accentSoft : (isHovered ? DS.surfaceHover : Color.clear))
-                )
-                .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .onHover { hoveredContext = $0 ? context : nil }
-        .help(context.title)
-        .accessibilityLabel(context.title)
-        .accessibilityAddTraits(isActive ? .isSelected : [])
+        onNavigate()
     }
 
     // MARK: - Body
@@ -598,55 +581,44 @@ struct UnifiedSidebar: View {
     private var sidebarBody: some View {
         switch activeContext {
         case .thinkspaces:
-            UnifiedSidebarSection(isCollapsed: false) {
+            if !isBrowsingSpaces, case .thinkspace(let id) = currentDestination,
+               let space = thinkspaceManager.thinkspaces.first(where: { $0.id == id }) {
+                SpaceContentsNavigator(spaceID: id, name: space.identityLabel) {
+                    withAnimation(contextAnimation) { isBrowsingSpaces = true }
+                }
+            } else {
                 SidebarThinkspaceSection(
                     manager: thinkspaceManager,
                     currentDestination: $currentDestination,
-                    isCollapsed: false,
-                    onNavigate: onNavigate
+                    onNavigate: {
+                        withAnimation(contextAnimation) { isBrowsingSpaces = false }
+                        onNavigate()
+                    }
                 )
             }
         case .commandCenter:
-            UnifiedSidebarSection(isCollapsed: false) {
-                SidebarCommandCenterContext(
-                    viewModel: commandCenterViewModel,
-                    currentDestination: $currentDestination,
-                    onNavigate: onNavigate
-                )
-            }
-        case .inbox:
-            UnifiedSidebarSection(isCollapsed: false) {
-                SidebarInboxContext(
-                    currentDestination: $currentDestination,
-                    inboxRoute: $inboxRoute,
-                    onNavigate: onNavigate
-                )
-            }
-        case .swipeFile:
-            UnifiedSidebarSection(isCollapsed: false) {
-                SidebarSwipeFileContext(
-                    currentDestination: $currentDestination,
-                    onNavigate: onNavigate
-                )
-            }
+            SidebarCommandCenterContext(
+                viewModel: commandCenterViewModel,
+                currentDestination: $currentDestination,
+                onNavigate: onNavigate
+            )
         case .content:
-            VStack(alignment: .leading, spacing: DS.space8) {
-                SidebarContextLabel(title: "Editorial work")
-                SidebarContextRow(title: "Manage clients", icon: "person.2", isActive: false, tint: DS.accent) {
-                    NotificationCenter.default.post(name: CosmoNotification.Navigation.openClients, object: nil)
-                    onNavigate()
-                }
-                Text("Choose a client inside Content. Your scope follows you across ideas, production and publication dates.")
-                    .font(DS.caption).foregroundStyle(DS.textMuted).padding(.horizontal, DS.space12)
-            }
-        case .search:
-            UnifiedSidebarSection(isCollapsed: false) {
-                SidebarSearchContext(
-                    currentDestination: $currentDestination,
-                    onNavigate: onNavigate,
-                    onEscape: onClose
-                )
-            }
+            SidebarContentContext(
+                pipelineModel: pipelineModel,
+                currentDestination: $currentDestination,
+                onNavigate: onNavigate
+            )
+        case .swipeFile:
+            SidebarSwipeFileContext(
+                currentDestination: $currentDestination,
+                onNavigate: onNavigate
+            )
+        case .inbox:
+            SidebarInboxContext(
+                currentDestination: $currentDestination,
+                inboxRoute: $inboxRoute,
+                onNavigate: onNavigate
+            )
         }
     }
 
@@ -659,84 +631,72 @@ struct UnifiedSidebar: View {
                 .frame(height: 0.5)
                 .padding(.horizontal, outerPadding)
 
-            HStack(spacing: 10) {
-                // The companion IS the profile mark — click to choose another.
-                Button {
-                    showCompanionPicker = true
-                } label: {
-                    HStack(spacing: 10) {
-                        CompanionMark(
-                            companion: CompanionStore.shared.companion,
-                            size: 32,
-                            vitality: companionVitality
-                        )
-
-                        Text(userFirstName)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(DS.text)
-                            .lineLimit(1)
-                    }
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 4)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(hoveredFooterItem == "companion" ? DS.surfaceHover : Color.clear)
-                    )
-                    .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            HStack(spacing: DS.space8) {
+                companionButton
+                Spacer(minLength: DS.space8)
+                SidebarGlyphButton(title: "Settings", symbol: "gearshape", help: "Settings (⌘,)") {
+                    NotificationCenter.default.post(name: .showSettings, object: nil)
                 }
-                .buttonStyle(.plain)
-                .onHover { hoveredFooterItem = $0 ? "companion" : nil }
-                .help("\(CompanionStore.shared.companion.name) \(CompanionStore.shared.companion.species) — choose your companion")
-                .popover(isPresented: $showCompanionPicker, arrowEdge: .top) {
-                    CompanionPickerPopover()
-                }
-                .accessibilityLabel("Your companion, \(CompanionStore.shared.companion.accessibilityDescription). Choose a companion.")
-                .task {
-                    await CompanionStore.shared.hydrate()
-                    companionVitality = await CompanionVitality.current()
-                }
-
-                Spacer(minLength: 8)
-
-                Button("Settings", systemImage: "gearshape") {
-                    NotificationCenter.default.post(
-                        name: .showSettings,
-                        object: nil
-                    )
-                }
-                .labelStyle(.iconOnly)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(DS.textSecondary)
-                .frame(width: UnifiedSidebarMetrics.railHitTarget, height: UnifiedSidebarMetrics.railHitTarget)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(hoveredFooterItem == "settings" ? DS.surfaceHover : Color.clear)
-                )
-                .buttonStyle(.plain)
-                .onHover { hoveredFooterItem = $0 ? "settings" : nil }
-                .help("Settings")
             }
             .padding(.horizontal, outerPadding)
-            .frame(height: UnifiedSidebarMetrics.footerHeight)
+            .padding(.vertical, DS.space8)
+        }
+    }
+
+    /// The companion IS the profile mark — click to choose another.
+    private var companionButton: some View {
+        let companion = CompanionStore.shared.companion
+        return Button {
+            showCompanionPicker = true
+        } label: {
+            HStack(spacing: DS.space8) {
+                CompanionMark(companion: companion, size: 24, vitality: companionVitality)
+                Text(Self.cachedUserFirstName)
+                    .font(DS.callout.weight(.medium))
+                    .foregroundStyle(DS.text)
+                    .lineLimit(1)
+            }
+            .padding(.leading, DS.space2)
+            .padding(.trailing, DS.space8)
+            .frame(height: UnifiedSidebarMetrics.controlSize)
+            .background(
+                RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.rowRadius, style: .continuous)
+                    .fill(isCompanionHovered ? SidebarRowFill.hover : Color.clear)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.rowRadius, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { isCompanionHovered = $0 }
+        .animation(reduceMotion ? nil : ProMotionSprings.hover, value: isCompanionHovered)
+        .help("\(companion.name) \(companion.species) — open your companion’s world")
+        .popover(isPresented: $showCompanionPicker, arrowEdge: .top) {
+            CompanionPickerPopover()
+        }
+        .accessibilityLabel("Your companion, \(companion.accessibilityDescription). Open your companion’s world.")
+        .task {
+            await CompanionStore.shared.hydrate()
+            companionVitality = await CompanionVitality.current()
         }
     }
 
     // MARK: - Resize Handle
 
+    /// Invisible at rest (the split-view law); the grip appears on hover.
     private var resizeHandle: some View {
-        Rectangle()
+        let isLive = isResizeHandleHovered || resizeStartWidth != nil
+        return Rectangle()
             .fill(Color.clear)
             .frame(width: UnifiedSidebarMetrics.resizeHandleWidth)
             .contentShape(Rectangle())
             .overlay(alignment: .center) {
                 RoundedRectangle(cornerRadius: 2, style: .continuous)
-                    .fill(isResizeHandleHovered || resizeStartWidth != nil ? DS.borderActive : DS.sidebarMaterialBorder)
+                    .fill(DS.borderActive)
                     .frame(width: 2, height: 52)
-                    .opacity(isResizeHandleHovered || resizeStartWidth != nil ? 1 : 0.5)
+                    .opacity(isLive ? 1 : 0)
                     .padding(.trailing, 2)
             }
             .onHover { hovering in
-                withAnimation(ProMotionSprings.hover) {
+                withAnimation(reduceMotion ? nil : ProMotionSprings.hover) {
                     isResizeHandleHovered = hovering
                 }
                 if hovering {
@@ -751,7 +711,6 @@ struct UnifiedSidebar: View {
                         if resizeStartWidth == nil {
                             resizeStartWidth = panelWidth
                         }
-
                         guard let startWidth = resizeStartWidth else { return }
                         // Seat idiom (SplitPaneContainer): a spring re-targeted
                         // every pointer frame never settles — the width must
@@ -774,91 +733,6 @@ struct UnifiedSidebar: View {
     }
 }
 
-// MARK: - Sidebar Context Shared Views
-
-private struct SidebarContextLabel: View {
-    let title: String
-
-    var body: some View {
-        Text(title)
-            .font(.system(size: 10, weight: .semibold))
-            .textCase(.uppercase)
-            .foregroundStyle(DS.textMuted)
-            .padding(.horizontal, 8)
-            .padding(.top, 4)
-            .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-private struct SidebarContextRow: View {
-    let title: String
-    let icon: String
-    /// When set, the emoji IS the identity mark and replaces the SF symbol —
-    /// same law as the iOS capture lanes (CollectionEmoji).
-    var emoji: String?
-    var count: Int?
-    var subtitle: String?
-    var isActive: Bool
-    var tint: Color = DS.textSecondary
-    var activeTint: Color = DS.accent
-    var action: () -> Void
-
-    @State private var isHovered = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 9) {
-                if let emoji {
-                    Text(emoji)
-                        .font(.system(size: 13))
-                        .frame(width: 18)
-                } else {
-                    Image(systemName: icon)
-                        .font(.system(size: 13, weight: isActive ? .semibold : .medium))
-                        .foregroundStyle(isActive ? activeTint : tint)
-                        .frame(width: 18)
-                }
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title)
-                        .font(.system(size: 13, weight: isActive ? .semibold : .medium))
-                        .foregroundStyle(isActive ? DS.text : DS.textSecondary)
-                        .lineLimit(1)
-
-                    if let subtitle, !subtitle.isEmpty {
-                        Text(subtitle)
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(DS.textMuted)
-                            .lineLimit(1)
-                    }
-                }
-
-                Spacer(minLength: 8)
-
-                if let count, count > 0 {
-                    Text("\(count)")
-                        .font(.system(size: 11, weight: .semibold, design: .rounded))
-                        .foregroundStyle(isActive ? activeTint : DS.textMuted)
-                        .monospacedDigit()
-                }
-            }
-            .padding(.horizontal, 10)
-            .frame(maxWidth: .infinity, minHeight: subtitle == nil ? 34 : 42, alignment: .leading)
-            .contentShape(Rectangle())
-            .unifiedSidebarRowChrome(
-                isActive: isActive,
-                isHovered: isHovered,
-                activeFill: activeTint.opacity(DS.palette.isDark ? 0.18 : 0.12),
-                hoverFill: DS.bg
-            )
-        }
-        .buttonStyle(.plain)
-        .onHover { isHovered = $0 }
-        .accessibilityLabel(title)
-        .accessibilityAddTraits(isActive ? .isSelected : [])
-    }
-}
-
 // MARK: - Command Center Context
 
 private struct SidebarCommandCenterContext: View {
@@ -867,21 +741,17 @@ private struct SidebarCommandCenterContext: View {
     var onNavigate: () -> Void = {}
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            VStack(alignment: .leading, spacing: 4) {
-                SidebarContextLabel(title: "Smart Lists")
+        VStack(alignment: .leading, spacing: DS.space16) {
+            SidebarSection(title: "Smart lists") {
                 ForEach(DashboardViewMode.smartLists, id: \.self) { mode in
-                    smartListRow(mode)
+                    modeRow(mode)
                 }
             }
-
-            VStack(alignment: .leading, spacing: 4) {
-                SidebarContextLabel(title: "Planning")
+            SidebarSection(title: "Planning") {
                 ForEach(DashboardViewMode.planningLists, id: \.self) { mode in
-                    planningRow(mode)
+                    modeRow(mode)
                 }
             }
-
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .task {
@@ -898,97 +768,27 @@ private struct SidebarCommandCenterContext: View {
         }
     }
 
-    private func smartListRow(_ mode: DashboardViewMode) -> some View {
-        SidebarContextRow(
+    private func modeRow(_ mode: DashboardViewMode) -> some View {
+        SidebarRow(
             title: mode.label,
-            icon: mode.icon,
+            mark: .icon(mode.cosmoIcon),
             count: badgeCount(for: mode),
-            isActive: currentDestination == .commandCenter &&
-                viewModel.viewMode == mode &&
-                viewModel.selectedProjectUUID == nil &&
-                viewModel.selectedAreaUUID == nil &&
-                !viewModel.showReports,
-            activeTint: mode.activeTint
+            isActive: currentDestination == .commandCenter
+                && viewModel.viewMode == mode
+                && viewModel.selectedProjectUUID == nil
+                && viewModel.selectedAreaUUID == nil
+                && !viewModel.showReports
         ) {
-            openCommandCenter()
             withAnimation(ProMotionSprings.snappy) {
-                viewModel.selectedProjectUUID = nil
-                viewModel.selectedAreaUUID = nil
-                viewModel.showReports = false
-                viewModel.viewMode = mode
-            }
-        }
-    }
-
-    private func planningRow(_ mode: DashboardViewMode) -> some View {
-        SidebarContextRow(
-            title: mode.label,
-            icon: mode.icon,
-            isActive: currentDestination == .commandCenter &&
-                viewModel.viewMode == mode &&
-                viewModel.selectedProjectUUID == nil &&
-                viewModel.selectedAreaUUID == nil,
-            activeTint: mode.activeTint
-        ) {
-            openCommandCenter()
-            withAnimation(ProMotionSprings.snappy) {
-                viewModel.selectedProjectUUID = nil
-                viewModel.selectedAreaUUID = nil
-                viewModel.showReports = false
-                viewModel.viewMode = mode
-            }
-        }
-    }
-
-    private func areaRow(_ area: Atom) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            SidebarContextRow(
-                title: area.title ?? "Untitled Area",
-                icon: "square.stack",
-                isActive: currentDestination == .commandCenter && viewModel.selectedAreaUUID == area.uuid
-            ) {
-                openCommandCenter()
-                withAnimation(ProMotionSprings.snappy) {
-                    viewModel.selectedProjectUUID = nil
-                    viewModel.selectedAreaUUID = area.uuid
-                    viewModel.viewMode = .area
-                    viewModel.showReports = false
+                if currentDestination != .commandCenter {
+                    currentDestination = .commandCenter
                 }
-            }
-
-            ForEach(projectsForArea(area.uuid), id: \.uuid) { project in
-                projectRow(project, isIndented: true)
-            }
-        }
-    }
-
-    private func projectRow(_ project: Atom, isIndented: Bool) -> some View {
-        SidebarContextRow(
-            title: project.title ?? "Untitled Project",
-            icon: "folder",
-            isActive: currentDestination == .commandCenter && viewModel.selectedProjectUUID == project.uuid,
-            tint: DS.textMuted
-        ) {
-            openCommandCenter()
-            withAnimation(ProMotionSprings.snappy) {
+                viewModel.selectedProjectUUID = nil
                 viewModel.selectedAreaUUID = nil
-                viewModel.selectedProjectUUID = project.uuid
-                viewModel.viewMode = .project
                 viewModel.showReports = false
+                viewModel.viewMode = mode
             }
-        }
-        .padding(.leading, isIndented ? 16 : 0)
-    }
-
-    private var projectsWithoutArea: [Atom] {
-        viewModel.projects.filter { project in
-            project.metadataValue(as: ProjectMetadata.self)?.areaUUID == nil
-        }
-    }
-
-    private func projectsForArea(_ areaUUID: String) -> [Atom] {
-        viewModel.projects.filter { project in
-            project.metadataValue(as: ProjectMetadata.self)?.areaUUID == areaUUID
+            onNavigate()
         }
     }
 
@@ -1000,18 +800,75 @@ private struct SidebarCommandCenterContext: View {
         case .anytime: count = viewModel.anytimeTasks.count
         case .someday: count = viewModel.somedayTasks.count
         case .logbook: count = viewModel.completedTodayTasks.count
-        case .habits, .reports, .queue: count = 0
-        case .project, .area: count = 0
+        case .habits, .reports, .queue, .project, .area: count = 0
         }
         return count > 0 ? count : nil
     }
+}
 
-    private func openCommandCenter() {
-        withAnimation(ProMotionSprings.snappy) {
-            if currentDestination != .commandCenter {
-                currentDestination = .commandCenter
+// MARK: - Content Context
+
+/// The Studio's lenses, one row each — the page's own switcher, mirrored.
+private struct SidebarContentContext: View {
+    var pipelineModel: PipelinePageModel
+    @Binding var currentDestination: SidebarDestination
+    var onNavigate: () -> Void = {}
+
+    private var isOnPipeline: Bool {
+        switch currentDestination {
+        case .pipeline, .client: return true
+        default: return false
+        }
+    }
+
+    var body: some View {
+        SidebarSection(title: "Studio") {
+            SidebarRow(
+                title: "Ideas",
+                mark: .icon(.idea),
+                isActive: currentDestination == .ideas,
+                help: "Ideas — choose what to make (⌘1)"
+            ) {
+                withAnimation(ProMotionSprings.snappy) { currentDestination = .ideas }
+                NotificationCenter.default.post(name: CosmoNotification.Navigation.openIdeas, object: nil)
+                onNavigate()
+            }
+            SidebarRow(
+                title: "Pipeline",
+                mark: .icon(.pipeline),
+                isActive: isOnPipeline && pipelineModel.view != .calendar,
+                help: "Pipeline — content by stage (⌘2)"
+            ) {
+                openPipeline(.board)
+            }
+            SidebarRow(
+                title: "Calendar",
+                mark: .icon(.calendar),
+                isActive: isOnPipeline && pipelineModel.view == .calendar,
+                help: "Calendar — the month plan (⌘3)"
+            ) {
+                openPipeline(.calendar)
+            }
+            SidebarRow(
+                title: "Clients",
+                mark: .icon(.clients),
+                isActive: currentDestination == .clients,
+                help: "Clients — hubs, dossiers, cadence"
+            ) {
+                NotificationCenter.default.post(name: CosmoNotification.Navigation.openClients, object: nil)
+                onNavigate()
             }
         }
+    }
+
+    /// One door for both pipeline lenses: MainView lands on `.pipeline` and
+    /// the workspace picks the tab from the view.
+    private func openPipeline(_ view: PipelineView) {
+        NotificationCenter.default.post(
+            name: CosmoNotification.Navigation.openPipeline,
+            object: nil,
+            userInfo: ["view": view.rawValue]
+        )
         onNavigate()
     }
 }
@@ -1031,90 +888,58 @@ private struct SidebarInboxContext: View {
     @FocusState private var isLaneNameFocused: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            VStack(alignment: .leading, spacing: 4) {
-                SidebarContextLabel(title: "Capture")
-                SidebarContextRow(
+        VStack(alignment: .leading, spacing: DS.space16) {
+            SidebarSection(title: "Capture") {
+                SidebarRow(
                     title: "Global Inbox",
-                    icon: "tray.and.arrow.down",
+                    mark: .icon(.inbox),
                     count: inboxRepository.unreadCount,
-                    isActive: currentDestination == .inbox && inboxRoute == .global,
-                    tint: DS.accent
+                    isActive: currentDestination == .inbox && inboxRoute == .global
                 ) {
                     open(.global)
                 }
-                SidebarContextRow(
+                SidebarRow(
                     title: "Capture Lanes",
-                    icon: "tray.2",
+                    mark: .icon(.captureLanes),
                     count: laneCount,
-                    isActive: currentDestination == .inbox && inboxRoute == .captureLanes,
-                    tint: DS.textSecondary
+                    isActive: currentDestination == .inbox && inboxRoute == .captureLanes
                 ) {
                     open(.captureLanes)
                 }
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    SidebarContextLabel(title: "Lanes")
-                    Spacer()
-                    Button("New lane", systemImage: "plus") {
-                        withAnimation(ProMotionSprings.snappy) {
-                            isCreatingLane = true
-                            newLaneName = ""
-                        }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                            isLaneNameFocused = true
-                        }
-                    }
-                    .labelStyle(.iconOnly)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(DS.accent)
-                    .frame(width: 24, height: 24)
-                    .background(DS.accentSoft, in: .rect(cornerRadius: 8))
-                    .buttonStyle(.plain)
-                    .help("New Capture Lane")
-                }
-
-                if isCreatingLane {
-                    newLaneRow
-                }
-
-                ForEach(destinationRepository.destinations) { destination in
-                    laneRow(destination)
-                }
-
-                if destinationRepository.destinations.isEmpty && !isCreatingLane {
-                    emptyLaneState
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
-                SidebarContextLabel(title: "Telegram Commands")
-                SidebarContextRow(
-                    title: "Manage Commands",
-                    icon: "terminal",
-                    isActive: currentDestination == .inbox && inboxRoute == .manageCommands
+                SidebarRow(
+                    title: "Commands",
+                    mark: .icon(.commands),
+                    isActive: currentDestination == .inbox && inboxRoute == .manageCommands,
+                    help: "The capture aliases that route thoughts into lanes"
                 ) {
                     open(.manageCommands)
                 }
             }
 
+            SidebarSection(title: "Lanes", count: destinationRepository.destinations.count) {
+                ForEach(destinationRepository.destinations) { destination in
+                    laneRow(destination)
+                }
+                if isCreatingLane {
+                    SidebarInlineCreateRow(
+                        placeholder: "Lane name",
+                        symbol: "tray.badge.plus",
+                        text: $newLaneName,
+                        isFocused: $isLaneNameFocused,
+                        onSubmit: createLane,
+                        onCancel: cancelCreatingLane
+                    )
+                } else {
+                    SidebarRow(title: "New lane…", mark: .symbol("plus"), prominence: .ghost, help: "New capture lane") {
+                        beginCreatingLane()
+                    }
+                }
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .task {
             _ = try? await destinationRepository.fetchActive()
             _ = try? await inboxRepository.countUnread()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .sidebarCreateCaptureLane)) { _ in
-            open(.captureLanes)
-            withAnimation(ProMotionSprings.snappy) {
-                isCreatingLane = true
-                newLaneName = ""
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                isLaneNameFocused = true
-            }
         }
         .confirmationDialog(
             "Delete \(pendingDeleteLane?.name ?? "lane")?",
@@ -1138,55 +963,18 @@ private struct SidebarInboxContext: View {
         return count > 0 ? count : nil
     }
 
-    private var newLaneRow: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "tray.badge.plus")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(DS.accent)
-                .frame(width: 22, height: 22)
-                .background(DS.accentSoft, in: .rect(cornerRadius: 7))
-
-            TextField("Lane name", text: $newLaneName)
-                .textFieldStyle(.plain)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(DS.text)
-                .focused($isLaneNameFocused)
-                .onSubmit { createLane() }
-
-            Button("Cancel", systemImage: "xmark") {
-                withAnimation(ProMotionSprings.snappy) {
-                    isCreatingLane = false
-                    newLaneName = ""
-                }
-            }
-            .labelStyle(.iconOnly)
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(DS.textMuted)
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 10)
-        .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
-        .background(DS.bg, in: .rect(cornerRadius: 9))
-        .overlay(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .stroke(DS.borderSubtle, lineWidth: 1)
-        )
-    }
-
     private func laneRow(_ destination: CaptureDestination) -> some View {
-        let alias = destination.aliases.first.map { "\($0):" }
         // Same law as the iOS lanes: an emoji typed into the lane name IS
         // the icon, and the label sheds it. Never a keyword guess over the
         // lane's own explicitly chosen mark.
         let identity = CollectionEmoji.resolve(name: destination.name, matchKeywords: false)
-        return SidebarContextRow(
+        let alias = destination.aliases.first.map { "Capture with \"\($0):\"" }
+        return SidebarRow(
             title: identity.label,
-            icon: destination.icon,
-            emoji: identity.emoji,
+            mark: identity.emoji.map { SidebarRowMark.emoji($0) } ?? SidebarRowMark.symbol(destination.icon),
             count: destination.itemCount,
-            subtitle: alias,
             isActive: currentDestination == .inbox && inboxRoute == .captureLane(id: destination.uuid),
-            tint: DS.textSecondary
+            help: alias
         ) {
             open(.captureLane(id: destination.uuid))
         }
@@ -1205,18 +993,27 @@ private struct SidebarInboxContext: View {
         }
     }
 
-    private var emptyLaneState: some View {
-        Text("No capture lanes yet")
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(DS.textMuted)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity, alignment: .leading)
+    private func beginCreatingLane() {
+        withAnimation(ProMotionSprings.snappy) {
+            isCreatingLane = true
+            newLaneName = ""
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(80))
+            isLaneNameFocused = true
+        }
+    }
+
+    private func cancelCreatingLane() {
+        withAnimation(ProMotionSprings.snappy) {
+            isCreatingLane = false
+            newLaneName = ""
+        }
     }
 
     private func createLane() {
         let trimmed = newLaneName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty else { cancelCreatingLane(); return }
         Task {
             if let lane = try? await destinationRepository.createLane(named: trimmed) {
                 withAnimation(ProMotionSprings.snappy) {
@@ -1265,7 +1062,6 @@ private struct SidebarInboxContext: View {
         }
         onNavigate()
     }
-
 }
 
 // MARK: - Swipe File Context
@@ -1280,49 +1076,70 @@ private struct SidebarSwipeFileContext: View {
     @FocusState private var isBoardNameFocused: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: DS.space16) {
             // The swipe file's rooms: Posts is the always-present landing;
             // every other genre earns its row by having content. A posts-only
             // library shows exactly one row — the spaces reveal themselves as
             // the collection grows (same progressive-disclosure law as the
             // genre facet).
-            VStack(alignment: .leading, spacing: 4) {
-                SidebarContextLabel(title: "Swipe File")
-                swipeFileRow
+            SidebarSection(title: "Saved") {
+                SidebarRow(
+                    title: "Posts",
+                    mark: .icon(.swipe),
+                    isActive: currentDestination == .swipeFile(section: .home)
+                        || currentDestination == .swipeFile(section: .all),
+                    help: "Posts — up next, new saves and everything"
+                ) {
+                    open(.home)
+                }
                 ForEach(SwipeSpaceStore.shared.visibleSpaces, id: \.rawValue) { genre in
-                    spaceRow(genre)
+                    SidebarRow(
+                        title: genre.pluralName,
+                        mark: .symbol(genre.iconName),
+                        count: SwipeSpaceStore.shared.counts[genre],
+                        isActive: currentDestination == .swipeFile(section: .genre(genre))
+                    ) {
+                        open(.genre(genre))
+                    }
                 }
             }
-            VStack(alignment: .leading, spacing: 4) {
-                SidebarContextLabel(title: "Discover")
-                discoveryRow(.discover, icon: "safari", tint: DS.accent)
-                discoveryRow(.creators, icon: "person.2")
+
+            SidebarSection(title: "Explore") {
+                discoveryRow(.discover, icon: .discover)
+                discoveryRow(.creators, icon: .creators)
             }
 
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    SidebarContextLabel(title: "Boards")
-                    Spacer(minLength: 6)
-                    Button("New board", systemImage: "plus") {
+            SidebarSection(title: "Boards", count: SwipeBoardStore.shared.boards.count) {
+                SidebarRow(
+                    title: "All Boards",
+                    mark: .icon(.boards),
+                    isActive: currentDestination == .swipeFile(section: .boards)
+                ) {
+                    open(.boards)
+                }
+                ForEach(SwipeBoardStore.shared.boards) { board in
+                    SidebarRow(
+                        title: board.name,
+                        mark: .symbol(board.icon),
+                        count: SwipeBoardStore.shared.counts[board.uuid],
+                        isActive: currentDestination == .swipeFile(section: .board(board.uuid))
+                    ) {
+                        open(.board(board.uuid))
+                    }
+                }
+                if isCreatingBoard {
+                    SidebarInlineCreateRow(
+                        placeholder: "Board name",
+                        symbol: "rectangle.stack.badge.plus",
+                        text: $draftBoardName,
+                        isFocused: $isBoardNameFocused,
+                        onSubmit: createBoard,
+                        onCancel: cancelCreatingBoard
+                    )
+                } else {
+                    SidebarRow(title: "New board…", mark: .symbol("plus"), prominence: .ghost, help: "New board") {
                         beginCreatingBoard()
                     }
-                    .labelStyle(.iconOnly)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(DS.accent)
-                    .frame(width: 24, height: 24)
-                    .background(DS.accentSoft, in: .rect(cornerRadius: 8))
-                    .buttonStyle(.plain)
-                    .help("New Board")
-                }
-
-                sectionRow(.boards, icon: "square.grid.2x2", subtitle: "All boards")
-
-                if isCreatingBoard {
-                    newBoardRow
-                }
-
-                ForEach(SwipeBoardStore.shared.boards) { board in
-                    boardRow(board)
                 }
             }
         }
@@ -1345,166 +1162,18 @@ private struct SidebarSwipeFileContext: View {
         }
     }
 
-    private func discoveryRow(
-        _ section: SwipeDiscoverySectionSelection,
-        icon: String,
-        tint: Color = DS.textSecondary
-    ) -> some View {
-        SidebarContextRow(
+    private func discoveryRow(_ section: SwipeDiscoverySectionSelection, icon: CosmoIcon) -> some View {
+        SidebarRow(
             title: section.title,
-            icon: icon,
-            subtitle: section.subtitle,
+            mark: .icon(icon),
             isActive: currentDestination == .discover(section: section),
-            tint: tint
-        ) {
-            open(section)
-        }
-    }
-
-    /// The Posts room — the swipe file's landing page, active for `.home` and
-    /// legacy `.all` links (both land on the merged page).
-    private var swipeFileRow: some View {
-        SidebarContextRow(
-            title: "Posts",
-            icon: "rectangle.stack",
-            subtitle: "Up next, new saves & all",
-            isActive: currentDestination == .swipeFile(section: .home)
-                || currentDestination == .swipeFile(section: .all),
-            tint: DS.textSecondary
-        ) {
-            open(.home)
-        }
-    }
-
-    /// An adaptive genre room — rendered only while its genre has content
-    /// (see `SwipeSpaceStore.visibleSpaces`).
-    private func spaceRow(_ genre: SwipeGenre) -> some View {
-        SidebarContextRow(
-            title: genre.pluralName,
-            icon: genre.iconName,
-            count: SwipeSpaceStore.shared.counts[genre],
-            subtitle: nil,
-            isActive: currentDestination == .swipeFile(section: .genre(genre)),
-            tint: DS.textSecondary
-        ) {
-            open(.genre(genre))
-        }
-    }
-
-    /// Ideas sits beside the Swipe File — the pipeline's two rooms.
-    private var ideasRow: some View {
-        SidebarContextRow(
-            title: "Ideas",
-            icon: "lightbulb",
-            subtitle: "Choose what to make",
-            isActive: currentDestination == .ideas,
-            tint: DS.textSecondary
+            help: section.subtitle
         ) {
             withAnimation(ProMotionSprings.snappy) {
-                currentDestination = .ideas
+                currentDestination = .discover(section: section)
             }
             onNavigate()
         }
-    }
-
-    private var pipelineRow: some View {
-        SidebarContextRow(
-            title: "Pipeline",
-            icon: "rectangle.split.3x1",
-            subtitle: "Content by stage and date",
-            isActive: currentDestination == .pipeline,
-            tint: DS.textSecondary
-        ) {
-            withAnimation(ProMotionSprings.snappy) {
-                currentDestination = .pipeline
-            }
-            onNavigate()
-        }
-    }
-
-    private var clientsRow: some View {
-        let isActive: Bool = {
-            switch currentDestination {
-            case .clients, .client: return true
-            default: return false
-            }
-        }()
-        return SidebarContextRow(
-            title: "Clients",
-            icon: "person.crop.circle",
-            subtitle: "Hubs, dossiers, cadence",
-            isActive: isActive,
-            tint: DS.textSecondary
-        ) {
-            withAnimation(ProMotionSprings.snappy) {
-                currentDestination = .clients
-            }
-            onNavigate()
-        }
-    }
-
-    private func sectionRow(
-        _ section: SwipeLibrarySectionSelection,
-        icon: String,
-        subtitle: String? = nil
-    ) -> some View {
-        SidebarContextRow(
-            title: section.title,
-            icon: icon,
-            subtitle: subtitle,
-            isActive: currentDestination == .swipeFile(section: section),
-            tint: DS.textSecondary
-        ) {
-            open(section)
-        }
-    }
-
-    private func boardRow(_ board: SwipeBoard) -> some View {
-        SidebarContextRow(
-            title: board.name,
-            icon: board.icon,
-            count: SwipeBoardStore.shared.counts[board.uuid],
-            subtitle: nil,
-            isActive: currentDestination == .swipeFile(section: .board(board.uuid)),
-            tint: DS.textSecondary
-        ) {
-            open(.board(board.uuid))
-        }
-    }
-
-    private var newBoardRow: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "rectangle.stack.badge.plus")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(DS.accent)
-                .frame(width: 22, height: 22)
-                .background(DS.accentSoft, in: .rect(cornerRadius: 7))
-
-            TextField("Board name", text: $draftBoardName)
-                .textFieldStyle(.plain)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(DS.text)
-                .focused($isBoardNameFocused)
-                .onSubmit { createBoard() }
-
-            Button("Cancel", systemImage: "xmark") {
-                withAnimation(ProMotionSprings.snappy) {
-                    isCreatingBoard = false
-                    draftBoardName = ""
-                }
-            }
-            .labelStyle(.iconOnly)
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(DS.textMuted)
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 10)
-        .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
-        .background(DS.bg, in: .rect(cornerRadius: 9))
-        .overlay(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .stroke(DS.borderSubtle, lineWidth: 1)
-        )
     }
 
     private func beginCreatingBoard() {
@@ -1512,14 +1181,22 @@ private struct SidebarSwipeFileContext: View {
             isCreatingBoard = true
             draftBoardName = ""
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(80))
             isBoardNameFocused = true
+        }
+    }
+
+    private func cancelCreatingBoard() {
+        withAnimation(ProMotionSprings.snappy) {
+            isCreatingBoard = false
+            draftBoardName = ""
         }
     }
 
     private func createBoard() {
         let trimmed = draftBoardName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty else { cancelCreatingBoard(); return }
 
         withAnimation(ProMotionSprings.snappy) {
             draftBoardName = ""
@@ -1532,280 +1209,10 @@ private struct SidebarSwipeFileContext: View {
         }
     }
 
-    private func open(_ section: SwipeDiscoverySectionSelection) {
-        withAnimation(ProMotionSprings.snappy) {
-            currentDestination = .discover(section: section)
-        }
-        onNavigate()
-    }
-
     private func open(_ section: SwipeLibrarySectionSelection) {
         withAnimation(ProMotionSprings.snappy) {
             currentDestination = .swipeFile(section: section)
         }
         onNavigate()
-    }
-}
-
-// MARK: - Search Context
-
-private struct SidebarSearchContext: View {
-    @Binding var currentDestination: SidebarDestination
-    var onNavigate: () -> Void = {}
-    var onEscape: () -> Void = {}
-
-    @AppStorage("unifiedSidebarRecentSearches") private var recentSearchesStorage: String = ""
-    @State private var query = ""
-    @State private var selectedScope: SidebarSearchScope = .all
-    @State private var recentAtoms: [Atom] = []
-    @State private var results: [AtomSearchResult] = []
-    @State private var isSearching = false
-    @FocusState private var isSearchFocused: Bool
-
-    private let searchEngine = AtomSearchEngine()
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            searchField
-            scopeChips
-
-            if !results.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    SidebarContextLabel(title: "Results")
-                    ForEach(results.prefix(6)) { result in
-                        atomRow(result.atom, subtitle: result.snippet ?? result.atom.type.displayName)
-                    }
-                }
-            } else {
-                recentQuerySection
-                recentAtomsSection
-                suggestedSection
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .task {
-            await loadRecentAtoms()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-                isSearchFocused = true
-            }
-        }
-        .onChange(of: selectedScope) { _, _ in
-            performSearch()
-        }
-        .onChange(of: query) { _, _ in
-            performSearch()
-        }
-        .onExitCommand {
-            handleEscape()
-        }
-    }
-
-    private var searchField: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(DS.textMuted)
-
-            TextField("Search everything…", text: $query)
-                .textFieldStyle(.plain)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(DS.text)
-                .focused($isSearchFocused)
-                .onSubmit { submitSearch() }
-                .onExitCommand { handleEscape() }
-
-            if isSearching {
-                ProgressView()
-                    .controlSize(.small)
-                    .scaleEffect(0.62)
-            } else if !query.isEmpty {
-                Button("Clear", systemImage: "xmark.circle.fill") {
-                    query = ""
-                    results = []
-                }
-                .labelStyle(.iconOnly)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(DS.textMuted)
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.horizontal, 11)
-        .frame(height: 36)
-        .background(DS.surfaceElevated, in: .rect(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(isSearchFocused ? DS.focusRing : DS.borderSubtle, lineWidth: 1)
-        )
-    }
-
-    private var scopeChips: some View {
-        ScrollView(.horizontal) {
-            HStack(spacing: 6) {
-                ForEach(SidebarSearchScope.allCases) { scope in
-                    Button {
-                        withAnimation(ProMotionSprings.snappy) {
-                            selectedScope = scope
-                        }
-                    } label: {
-                        Text(scope.title)
-                            .font(.system(size: 11, weight: selectedScope == scope ? .semibold : .medium))
-                            .foregroundStyle(selectedScope == scope ? DS.accent : DS.textMuted)
-                            .padding(.horizontal, 9)
-                            .frame(height: 26)
-                            .background(
-                                selectedScope == scope ? DS.accentSoft : DS.bg,
-                                in: Capsule()
-                            )
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.vertical, 1)
-        }
-        .scrollIndicators(.never)
-    }
-
-    @ViewBuilder
-    private var recentQuerySection: some View {
-        if !recentQueries.isEmpty {
-            VStack(alignment: .leading, spacing: 4) {
-                SidebarContextLabel(title: "Recent Searches")
-                ForEach(recentQueries, id: \.self) { recent in
-                    SidebarContextRow(
-                        title: recent,
-                        icon: "clock.arrow.circlepath",
-                        isActive: false,
-                        tint: DS.textMuted
-                    ) {
-                        query = recent
-                    }
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var recentAtomsSection: some View {
-        if !recentAtoms.isEmpty {
-            VStack(alignment: .leading, spacing: 4) {
-                SidebarContextLabel(title: "Recent")
-                ForEach(recentAtoms.prefix(5), id: \.uuid) { atom in
-                    atomRow(atom, subtitle: atom.type.displayName)
-                }
-            }
-        }
-    }
-
-    private var suggestedSection: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            SidebarContextLabel(title: "Suggested")
-            suggestedRow("Open Loops", icon: "circle.dotted")
-            suggestedRow("Weakest Claims", icon: "exclamationmark.bubble")
-            suggestedRow("Recent Sources", icon: "doc.text.magnifyingglass")
-            suggestedRow("Most Common Problems", icon: "point.3.connected.trianglepath.dotted")
-            suggestedRow("My Daily Review", icon: "sun.max")
-        }
-    }
-
-    private func suggestedRow(_ title: String, icon: String) -> some View {
-        SidebarContextRow(title: title, icon: icon, isActive: false, tint: DS.textMuted) {
-            query = title
-        }
-    }
-
-    private func atomRow(_ atom: Atom, subtitle: String) -> some View {
-        SidebarContextRow(
-            title: atom.title?.isEmpty == false ? atom.title! : "Untitled",
-            icon: atom.type.iconName,
-            subtitle: subtitle,
-            isActive: false,
-            tint: DS.textSecondary
-        ) {
-            open(atom)
-        }
-    }
-
-    private var recentQueries: [String] {
-        recentSearchesStorage
-            .split(separator: "\n")
-            .map(String.init)
-            .filter { !$0.isEmpty }
-    }
-
-    private func performSearch() {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.count >= 2 else {
-            results = []
-            isSearching = false
-            return
-        }
-
-        isSearching = true
-        Task {
-            var options = AtomSearchOptions.default
-            options.types = selectedScope.atomTypes
-            options.limit = 8
-            let found = (try? await searchEngine.search(query: trimmed, options: options)) ?? []
-            await MainActor.run {
-                guard query.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed else { return }
-                results = found
-                isSearching = false
-            }
-        }
-    }
-
-    private func submitSearch() {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            return
-        }
-        saveRecentQuery(trimmed)
-        NotificationCenter.default.post(
-            name: .sidebarSearchSubmitted,
-            object: nil,
-            userInfo: ["query": trimmed, "scope": selectedScope.rawValue]
-        )
-    }
-
-    private func open(_ atom: Atom) {
-        saveRecentQuery(query.trimmingCharacters(in: .whitespacesAndNewlines))
-        if atom.type == .thinkspace {
-            currentDestination = .thinkspace(id: atom.uuid)
-            onNavigate()
-            return
-        }
-        Task {
-            try? await NodeGraphEngine.shared.recordAccess(atomUUID: atom.uuid, type: .view)
-        }
-        NotificationCenter.default.post(
-            name: CosmoNotification.NodeGraph.openAtomFromCommandK,
-            object: nil,
-            userInfo: ["atomUUID": atom.uuid]
-        )
-        onNavigate()
-    }
-
-    private func handleEscape() {
-        if query.isEmpty {
-            onEscape()
-        } else {
-            query = ""
-            results = []
-        }
-    }
-
-    private func saveRecentQuery(_ rawQuery: String) {
-        let trimmed = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        let updated = ([trimmed] + recentQueries.filter { $0.caseInsensitiveCompare(trimmed) != .orderedSame })
-            .prefix(6)
-        recentSearchesStorage = updated.joined(separator: "\n")
-    }
-
-    private func loadRecentAtoms() async {
-        let atoms = (try? await AtomRepository.shared.fetchRecent(limit: 8)) ?? []
-        await MainActor.run {
-            recentAtoms = atoms
-        }
     }
 }

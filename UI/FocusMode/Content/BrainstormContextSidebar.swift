@@ -242,7 +242,7 @@ struct BrainstormContextSidebar: View {
                 .padding(.trailing, 10)
 
             // Type icon
-            Image(systemName: ref.type.iconName)
+            Image(cosmo: ref.type.cosmoIcon)
                 .font(.system(size: 10))
                 .foregroundStyle(colorForAtomType(ref.type))
                 .frame(width: 16)
@@ -321,7 +321,7 @@ struct BrainstormContextSidebar: View {
             .buttonStyle(.plain)
 
             if let detail = detailAtom {
-                Image(systemName: detail.type.iconName)
+                Image(cosmo: detail.type.cosmoIcon)
                     .font(.system(size: 11))
                     .foregroundStyle(colorForAtomType(detail.type))
 
@@ -502,7 +502,7 @@ struct BrainstormContextSidebar: View {
     @ViewBuilder
     private func genericDetailContent(_ detail: Atom) -> some View {
         HStack(spacing: 6) {
-            Image(systemName: detail.type.iconName)
+            Image(cosmo: detail.type.cosmoIcon)
                 .font(.system(size: 9))
                 .foregroundStyle(colorForAtomType(detail.type))
             Text(detail.type.displayName)

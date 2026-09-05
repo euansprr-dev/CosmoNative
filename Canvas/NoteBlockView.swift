@@ -119,6 +119,9 @@ struct NoteBlockView: View {
             }
         }
         .onAppear {
+            saveClosed = false
+            isEditingBody = false
+            isEditingTitle = false
             trackedEntityId = block.entityId
             trackedEntityUuid = block.entityUuid
             loadNote()
@@ -776,6 +779,8 @@ struct NoteBlockView: View {
                         let now = ISO8601.string(from: Date())
 
                         if atomExists != nil {
+                            AtomRevisionWriter.snapshotBeforeRawWrite(db, uuid: uuid,
+                                incomingTitle: snapshot.atomTitle, incomingBody: snapshot.bodyPlainText)
                             // Atom exists — update it
                             // Use bodyText (per-keystroke) instead of fields.body (from RichDocument
                             // which lags 150ms behind due to serialization debounce)
@@ -936,6 +941,8 @@ struct NoteBlockView: View {
                 let now = ISO8601.string(from: Date())
 
                 if atomExists != nil {
+                    AtomRevisionWriter.snapshotBeforeRawWrite(db, uuid: uuid,
+                        incomingTitle: snapshot.atomTitle, incomingBody: snapshot.bodyPlainText)
                     // _local_pending = 1 so cloud sync can't revert this
                     // close-time edit (the async autosave path already sets it).
                     try db.execute(

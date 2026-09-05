@@ -72,7 +72,7 @@ final class SpaceComposerModel {
         case .create(let parentId):
             let kind = SpaceKind.custom
             var draft = SpaceDraft.new(kind: kind, parentId: parentId, accentHex: host.suggestedAccentColorHex())
-            draft.enabledViews = [.home, .library, .canvas, .deepDive]
+            draft.enabledViews = [.canvas, .library, .deepDive]
             draft.emoji = nil
             self.draft = draft
             self.emojiIsExplicit = false

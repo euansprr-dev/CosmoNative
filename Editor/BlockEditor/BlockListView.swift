@@ -135,7 +135,7 @@ struct BlockListView: View {
     /// Set on disappear so the hydration pump's runloop recursion stops
     /// re-scheduling against a closed document; re-armed on appear.
     @State private var hydrationCancelled = false
-    @FocusState private var selectionKeyboardFocused: Bool
+    @Environment(\.cosmoFloatingPanelIsVisible) private var floatingPanelIsVisible
 
     var body: some View {
         let fingerprint = rowEnvironmentFingerprint
@@ -178,11 +178,21 @@ struct BlockListView: View {
                 BlockEditorHoistedOverlays(presenter: ownedOverlayPresenter, geometry: listGeometry)
             }
         }
-        .focusable(resolvedSelectionCoordinator.isActive)
-        .focusEffectDisabled()
-        .focused($selectionKeyboardFocused)
-        .onKeyPress(phases: .down) { press in
-            handleSelectionKeyPress(press)
+        .background { BlockListWindowReader(geometry: listGeometry).frame(width: 0, height: 0) }
+        .onChange(of: resolvedSelectionCoordinator.isActive) { _, active in
+            if active {
+                // A text drag keeps its origin responder until mouse-up.
+                if !ownedDragController.isEscalated { activateSelectionKeyboard() }
+            } else { deactivateSelectionKeyboard() }
+        }
+        .onChange(of: floatingPanelIsVisible) { _, visible in
+            if visible {
+                startHydrationPumpIfNeeded()
+            } else {
+                hydrationCancelled = true
+                resolvedSelectionCoordinator.clear()
+                deactivateSelectionKeyboard()
+            }
         }
         .onGeometryChange(for: CGRect.self) { proxy in
             proxy.frame(in: .global)
@@ -224,7 +234,7 @@ struct BlockListView: View {
             }
         }
         .onDisappear {
-            selectionKeyMonitor.remove()
+            deactivateSelectionKeyboard()
             hydrationCancelled = true
             // Drop the closed document's undo entries from the window
             // UndoManager: cross-document ⌘Z was already broken (the
@@ -233,7 +243,7 @@ struct BlockListView: View {
             // Only the OWNING list clears — nested element lists share the
             // window stack but not ownership.
             if providesNavigationOrder {
-                undoManager?.removeAllActions(withTarget: undoRegistrar)
+                (undoManager ?? listGeometry.hostView?.window?.undoManager)?.removeAllActions(withTarget: undoRegistrar)
             }
         }
     }
@@ -286,11 +296,15 @@ struct BlockListView: View {
                 onMove: moveBlock,
                 onInsertBelow: { insertParagraph(after: block.id, hint: path) },
                 onHandleClick: { handleClicked(block) },
-                onHandleShiftClick: { resolvedSelectionCoordinator.selectRange(to: block.id, in: document) },
+                onHandleShiftClick: {
+                    resolvedSelectionCoordinator.selectRange(to: block.id, in: document)
+                    activateSelectionKeyboard()
+                },
                 handleMenu: { handleMenu(for: block) },
                 onSelectionCatcherTap: { shiftPressed in
                     if shiftPressed {
                         resolvedSelectionCoordinator.selectRange(to: block.id, in: document)
+                        activateSelectionKeyboard()
                     } else {
                         resolvedSelectionCoordinator.clear()
                         deactivateSelectionKeyboard()
@@ -927,76 +941,28 @@ struct BlockListView: View {
         }
     }
 
-    private func handleSelectionKeyPress(_ press: KeyPress) -> KeyPress.Result {
-        let selection = resolvedSelectionCoordinator
-        guard selection.isActive else { return .ignored }
-
-        switch press.key {
-        case .escape:
-            clearSelectionAndResumeEditing()
-            return .handled
-        case .upArrow, .downArrow:
-            let direction: BlockSelectionDirection = press.key == .upArrow ? .up : .down
-            if press.modifiers.contains(.shift) {
-                selection.extend(direction, in: document)
-            } else {
-                selection.step(direction, in: document)
-            }
-            return .handled
-        case .delete, .deleteForward:
-            deleteSelectedBlocks(selection.selectedBlockIDs)
-            return .handled
-        case .return:
-            beginEditingSelection()
-            return .handled
-        default:
-            break
-        }
-
-        if press.modifiers.contains(.command) {
-            switch press.characters {
-            case "d":
-                duplicateSelectedBlocks(selection.selectedBlockIDs)
-                return .handled
-            case "c":
-                copySelectionToPasteboard()
-                return .handled
-            case "x":
-                copySelectionToPasteboard()
-                deleteSelectedBlocks(selection.selectedBlockIDs)
-                return .handled
-            case "a":
-                selection.selectAll(in: document)
-                return .handled
-            default:
-                break
-            }
-        }
-        return .ignored
-    }
-
     /// Moves AppKit first responder off the text views so arrow keys, delete,
     /// and shortcuts land on the block list while blocks are selected. Keys
     /// are handled by an AppKit-level monitor — the SwiftUI focus handoff
     /// races makeFirstResponder(nil) and drops keys (⌘A then ⌫ did nothing).
     private func activateSelectionKeyboard() {
-        selectionKeyMonitor.install { event in
+        guard let window = listGeometry.hostView?.window else { return }
+        selectionKeyMonitor.install(in: window) { event in
             handleSelectionKeyEvent(event)
         }
-        DispatchQueue.main.async {
-            let window = NSApp.keyWindow
+        BlockSelectionClipboardTarget.activate(
+            in: window,
+            owner: selectionKeyMonitor,
+            isActive: { resolvedSelectionCoordinator.isActive },
+            perform: handleBlockSelectionClipboardAction
+        )
+        DispatchQueue.main.async { [weak window] in
+            guard let window, resolvedSelectionCoordinator.isActive else { return }
             FocusModeTextClipboardTarget.collapseActiveSelection(in: window, deactivate: true)
             NotificationCenter.default.post(name: .cosmoDismissEditorOverlays, object: nil)
-            window?.makeFirstResponder(nil)
-            BlockSelectionClipboardTarget.activate(
-                isActive: { resolvedSelectionCoordinator.isActive },
-                perform: handleBlockSelectionClipboardAction
-            )
-            selectionKeyboardFocused = true
-            if let window {
-                selectionKeyMonitor.installMouseObserver { [weak window] event in
-                    handleSelectionOutsideClick(event, hostWindow: window)
-                }
+            window.makeFirstResponder(nil)
+            selectionKeyMonitor.installMouseObserver { [weak window] event in
+                handleSelectionOutsideClick(event, hostWindow: window)
             }
         }
     }
@@ -1024,8 +990,7 @@ struct BlockListView: View {
 
     private func deactivateSelectionKeyboard() {
         selectionKeyMonitor.remove()
-        BlockSelectionClipboardTarget.deactivate()
-        selectionKeyboardFocused = false
+        BlockSelectionClipboardTarget.deactivate(owner: selectionKeyMonitor)
     }
 
     /// AppKit-level key routing while blocks are selected. Returns true when
@@ -1037,13 +1002,12 @@ struct BlockListView: View {
     private func handleSelectionKeyEvent(_ event: NSEvent) -> Bool {
         let selection = resolvedSelectionCoordinator
         guard selection.isActive else { return false }
+        if let action = BlockSelectionClipboardTarget.action(for: event) {
+            return handleBlockSelectionClipboardAction(action)
+        }
         let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
 
         switch event.keyCode {
-        case 51, 117: // delete / forward delete
-            guard flags.isEmpty else { return false }
-            deleteSelectedBlocks(selection.selectedBlockIDs)
-            return true
         case 126, 125: // up / down
             let direction: BlockSelectionDirection = event.keyCode == 126 ? .up : .down
             if flags == .shift {
@@ -1068,18 +1032,8 @@ struct BlockListView: View {
 
         if flags == .command, let characters = event.charactersIgnoringModifiers?.lowercased() {
             switch characters {
-            case "c":
-                copySelectionToPasteboard()
-                return true
-            case "x":
-                copySelectionToPasteboard()
-                deleteSelectedBlocks(selection.selectedBlockIDs)
-                return true
             case "d":
                 duplicateSelectedBlocks(selection.selectedBlockIDs)
-                return true
-            case "a":
-                selection.selectAll(in: document)
                 return true
             default:
                 break
@@ -1112,21 +1066,23 @@ struct BlockListView: View {
     /// (exact kinds, checked state, rich inlines) preferred by block paste.
     @discardableResult
     private func copySelectionToPasteboard() -> Bool {
-        let ids = resolvedSelectionCoordinator.selectedBlockIDs
-        let markdown = BlockOperations.markdown(ofBlocksWithIDs: ids, in: document)
-        guard !markdown.isEmpty else { return false }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(markdown, forType: .string)
+        copyBlocksToPasteboard(resolvedSelectionCoordinator.selectedBlockIDs)
+    }
+
+    @discardableResult
+    private func copyBlocksToPasteboard(_ ids: Set<UUID>) -> Bool {
         let blocks = BlockOperations.blocks(withIDs: ids, in: document)
-        if let data = try? JSONEncoder().encode(blocks) {
-            NSPasteboard.general.setData(data, forType: .cosmoBlocks)
-        }
-        return true
+        guard !blocks.isEmpty, let data = try? JSONEncoder().encode(blocks) else { return false }
+        let item = NSPasteboardItem()
+        item.setString(BlockOperations.markdown(ofBlocksWithIDs: ids, in: document), forType: .string)
+        item.setData(data, forType: .cosmoBlocks)
+        NSPasteboard.general.clearContents()
+        return NSPasteboard.general.writeObjects([item])
     }
 
     private func handleBlockSelectionClipboardAction(_ action: BlockSelectionClipboardAction) -> Bool {
         guard resolvedSelectionCoordinator.isActive else {
-            BlockSelectionClipboardTarget.deactivate()
+            BlockSelectionClipboardTarget.deactivate(owner: selectionKeyMonitor)
             return false
         }
 
@@ -1134,9 +1090,12 @@ struct BlockListView: View {
         case .copy:
             return copySelectionToPasteboard()
         case .cut:
-            let didCopy = copySelectionToPasteboard()
+            guard copySelectionToPasteboard() else { return false }
             deleteSelectedBlocks(resolvedSelectionCoordinator.selectedBlockIDs)
-            return didCopy
+            return true
+        case .delete:
+            deleteSelectedBlocks(resolvedSelectionCoordinator.selectedBlockIDs)
+            return true
         case .selectAll:
             resolvedSelectionCoordinator.selectAll(in: document)
             activateSelectionKeyboard()
@@ -1155,6 +1114,10 @@ struct BlockListView: View {
             onTransform: { kind in transformBlocks(targets, to: kind) },
             onDuplicate: { duplicateSelectedBlocks(targets) },
             onDelete: { deleteSelectedBlocks(targets) },
+            onCopy: { copyBlocksToPasteboard(targets) },
+            onCut: {
+                if copyBlocksToPasteboard(targets) { deleteSelectedBlocks(targets) }
+            },
             onUngroup: kind == .section ? { ungroupSections(targets) } : nil
         )
     }
@@ -1314,7 +1277,7 @@ struct BlockListView: View {
         let before = document
         document = result.document
         undoRegistrar.register(
-            undoManager: undoManager,
+            undoManager: undoManager ?? listGeometry.hostView?.window?.undoManager,
             before: before,
             after: result.document,
             actionName: undoActionName
@@ -1395,11 +1358,24 @@ enum BlockHydrationPolicy {
 /// outside-click monitor reads it, at click time.
 @MainActor
 final class BlockListGeometryBox {
+    weak var hostView: NSView?
     var globalFrame: CGRect = .zero
     /// Last size published through onContentHeightChange — dedup lives here
     /// so height reporting never touches @State (which would re-run the list
     /// body once more per structural edit).
     var lastPublishedSize: CGSize = .zero
+}
+
+/// Capture the actual hosting window, including a nonactivating panel.
+/// Selection must never borrow NSApp.keyWindow from a different surface.
+private struct BlockListWindowReader: NSViewRepresentable {
+    let geometry: BlockListGeometryBox
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        geometry.hostView = view
+        return view
+    }
+    func updateNSView(_ view: NSView, context: Context) {}
 }
 
 /// The hoisted slash / new-element / selection menus for a block list.

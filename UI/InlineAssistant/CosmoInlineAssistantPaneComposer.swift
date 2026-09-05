@@ -29,7 +29,10 @@ private struct CosmoInlinePaneComposerFramePreferenceKey: PreferenceKey {
 struct CosmoInlineAssistantPaneComposer: View {
     @ObservedObject var store: CosmoInlineAssistantStore
 
-    @State private var selectionRange = NSRange(location: 0, length: 0)
+    private var selectionRange: NSRange {
+        get { store.composerSelection }
+        nonmutating set { store.composerSelection = newValue }
+    }
     @State private var isFocused = false
     @State private var isContextMenuVisible = false
     @State private var isSkillMenuVisible = false
@@ -63,7 +66,11 @@ struct CosmoInlineAssistantPaneComposer: View {
             installMouseDownMonitorIfNeeded()
             contextMenuModel.prewarmSearchIndex()
         }
+        .onChange(of: isContextMenuVisible || isSkillMenuVisible) { _, shown in store.composerHasOpenMenu = shown }
+        .onChange(of: store.composerText) { _, text in syncComposerMenus(text: text) }
         .onDisappear {
+            store.composerHasOpenMenu = false
+            store.savePresentationDraft()
             removeKeyDownMonitor()
             removeMouseDownMonitor()
         }
@@ -149,12 +156,13 @@ struct CosmoInlineAssistantPaneComposer: View {
         HStack(alignment: .bottom, spacing: DS.space8) {
             MentionComposerTextView(
                 text: $store.composerText,
-                selection: $selectionRange,
+                selection: Binding(get: { selectionRange }, set: { selectionRange = $0 }),
                 mentionedAtoms: store.selectedContextAtoms,
-                placeholder: "Ask, or describe an edit — @ adds context",
+                placeholder: "Ask anything, or make something…",
                 isFocused: $isFocused,
                 isMentionOverlayVisible: isContextMenuVisible || isSkillMenuVisible,
                 usesPillMentions: true,
+                retainedStorage: store.composerStorage,
                 onSubmit: submit,
                 onTextChange: {
                     syncComposerMenus(text: store.composerText)
@@ -285,12 +293,13 @@ struct CosmoInlineAssistantPaneComposer: View {
     }
 
     private func handleMenuNavigationKey(_ event: NSEvent) -> Bool {
+        guard !store.composerStorage.hasMarkedText else { return false }
         guard event.modifierFlags.intersection([.command, .option, .control]).isEmpty else {
             return false
         }
         if event.keyCode == 53 { // Escape closes the open menu before the pane
             guard isContextMenuVisible || isSkillMenuVisible else { return false }
-            dismissInlineMenus(trimActiveQuery: true)
+            dismissInlineMenus(trimActiveQuery: false)
             return true
         }
         let menuVisible = isContextMenuVisible || isSkillMenuVisible

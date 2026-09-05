@@ -35,6 +35,9 @@ final class NavigationTrail {
             /// space's own arrival moment. `.sidebar(.thinkspace)` is no
             /// longer recorded; every space arrival names its view.
             case spaceView(thinkspaceId: String, view: SpaceView)
+            /// Authored pages and groups remain distinct places even when
+            /// their local representation changes between canvas and writing.
+            case spaceItem(thinkspaceId: String, itemUUID: String)
         }
 
         let id: UUID
@@ -42,6 +45,25 @@ final class NavigationTrail {
         var title: String
         let glyph: String
         let timestamp: Date
+
+        var icon: CosmoIcon {
+            switch destination {
+            case .sidebar(let destination):
+                switch destination {
+                case .commandCenter: return .command
+                case .inbox: return .inbox
+                case .discover(let section): return section == .creators ? .creators : .discover
+                case .swipeFile: return .swipe
+                case .ideas: return .idea
+                case .pipeline: return .pipeline
+                case .clients, .client: return .clients
+                case .thinkspace: return .space
+                }
+            case .focusMode(let selection): return selection.type.cosmoIcon
+            case .libraryFolder: return .project
+            case .spaceView, .spaceItem: return .system(glyph)
+            }
+        }
     }
 
     // MARK: State
@@ -337,6 +359,12 @@ private struct TrailChevronButton: View {
             .help(help)
             .accessibilityLabel(label)
             .accessibilityAddTraits(.isButton)
+            // A tap gesture exposes no AX action — VoiceOver needs the
+            // chevron to press like the Button it isn't.
+            .accessibilityAction {
+                guard enabled else { return }
+                action()
+            }
     }
 
     private var foreground: Color {
@@ -410,7 +438,7 @@ private struct TrailPopoverRow: View {
     var body: some View {
         Button(action: onSelect) {
             HStack(spacing: 8) {
-                Image(systemName: moment.glyph)
+                Image(cosmo: moment.icon)
                     .font(DS.caption)
                     .foregroundStyle(DS.textSecondary)
                     .frame(width: 18)

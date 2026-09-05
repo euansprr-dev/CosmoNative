@@ -4,12 +4,13 @@ import GRDB
 /// Editorial readiness is independent of the publication plan and writing tools.
 /// `phase` remains readable by earlier clients and records the editor's activity.
 enum ContentProductionStage: String, Codable, CaseIterable, Identifiable, Sendable {
-    case inProgress, review, ready, published
+    case notStarted, inProgress, review, ready, published
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
+        case .notStarted: return "Not started"
         case .inProgress: return "In progress"
         case .review: return "Review"
         case .ready: return "Ready"
@@ -19,6 +20,7 @@ enum ContentProductionStage: String, Codable, CaseIterable, Identifiable, Sendab
 
     var icon: String {
         switch self {
+        case .notStarted: return "circle.dashed"
         case .inProgress: return "square.and.pencil"
         case .review: return "text.bubble"
         case .ready: return "checkmark.circle"
@@ -26,17 +28,30 @@ enum ContentProductionStage: String, Codable, CaseIterable, Identifiable, Sendab
         }
     }
 
-    static func resolve(metadata: [String: Any], phase: ContentPhase) -> Self {
+    /// Board law (September 2026, paired with CosmoCoreKit): an explicit
+    /// stage always wins. Absent one, a shipped phase is published; evidence
+    /// of work (a publication date, words on the page, editing activity)
+    /// means in progress; anything else is not started. Derived at read time
+    /// — no migration, no new write path.
+    static func resolve(metadata: [String: Any], phase: ContentPhase, wordCount: Int = 0) -> Self {
         if phase.isShipped { return .published }
         if let raw = metadata["productionStage"] as? String, let explicit = Self(rawValue: raw) {
             return explicit
         }
-        // A legacy date, polish activity, or missing prior phase cannot prove readiness.
-        return .inProgress
+        return showsEvidenceOfWork(phase: phase, scheduled: metadata["scheduledAt"] != nil || metadata["scheduledDate"] != nil,
+                                   wordCount: max(wordCount, (metadata["wordCount"] as? NSNumber)?.intValue ?? 0))
+            ? .inProgress : .notStarted
+    }
+
+    /// The evidence that lifts an unstaged piece onto the board.
+    static func showsEvidenceOfWork(phase: ContentPhase, scheduled: Bool, wordCount: Int) -> Bool {
+        if scheduled || wordCount > 0 { return true }
+        return [.draft, .polish, .scheduled].contains(phase)
     }
 
     static func of(_ atom: Atom) -> Self {
-        resolve(metadata: atom.metadataDict ?? [:], phase: ContentPipelineService.currentPhase(of: atom) ?? .draft)
+        let words = atom.body?.split(whereSeparator: \.isWhitespace).count ?? 0
+        return resolve(metadata: atom.metadataDict ?? [:], phase: ContentPipelineService.currentPhase(of: atom) ?? .draft, wordCount: words)
     }
 }
 

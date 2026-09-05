@@ -6,6 +6,7 @@ import Foundation
 import AuthenticationServices
 import Supabase
 import CryptoKit
+import Security
 
 @MainActor
 @Observable
@@ -141,7 +142,8 @@ final class SupabaseAuthService: NSObject {
 
         self.supabaseSDKClient = Supabase.SupabaseClient(
             supabaseURL: URL(string: url)!,
-            supabaseKey: key
+            supabaseKey: key,
+            options: .init(auth: .init(storage: SupabaseSessionKeychainStorage()))
         )
 
         super.init()
@@ -417,6 +419,83 @@ enum AuthError: LocalizedError {
         switch self {
         case .invalidCredential(let reason): return "Invalid credential: \(reason)"
         case .sessionExpired: return "Session expired — please sign in again"
+        }
+    }
+}
+
+// MARK: - Non-interactive SDK session storage
+
+/// The SDK default uses the file-based login keychain, whose per-build ACL can
+/// prompt repeatedly during SDK migrations and refresh. Keep sessions in the
+/// Data Protection Keychain, matching APIKeys, and never prompt from background
+/// auth work. Never inspect the legacy keychain: its ACL dialogs can ignore
+/// kSecUseAuthenticationUIFail. Accounts stored only there must sign in again.
+struct SupabaseSessionKeychainStorage: AuthLocalStorage {
+    var read: @Sendable ([String: Any]) -> (OSStatus, Data?) = { query in
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        return (status, result as? Data)
+    }
+    var add: @Sendable ([String: Any]) -> OSStatus = {
+        SecItemAdd($0 as CFDictionary, nil)
+    }
+    var update: @Sendable ([String: Any], [String: Any]) -> OSStatus = {
+        SecItemUpdate($0 as CFDictionary, $1 as CFDictionary)
+    }
+
+    private func query(key: String) -> [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "supabase.gotrue.swift",
+            kSecAttrAccount as String: key,
+            kSecUseDataProtectionKeychain as String: true,
+            // This flag is effective for the Data Protection Keychain only.
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail
+        ]
+    }
+
+    func store(key: String, value: Data) throws {
+        let match = query(key: key)
+        let attributes = [kSecValueData as String: value]
+        // Update first: never delete a valid refresh token before a write succeeds.
+        let status = update(match, attributes)
+        if status == errSecItemNotFound {
+            var item = match
+            item[kSecValueData as String] = value
+            item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+            let added = add(item)
+            if added == errSecDuplicateItem {
+                try check(update(match, attributes))
+            } else {
+                try check(added)
+            }
+        } else {
+            try check(status)
+        }
+    }
+
+    func retrieve(key: String) throws -> Data? {
+        var match = query(key: key)
+        match[kSecReturnData as String] = true
+        match[kSecMatchLimit as String] = kSecMatchLimitOne
+        let (status, data) = read(match)
+        if status == errSecItemNotFound { return nil }
+        try check(status)
+        // Honor sign-out tombstones written by previous builds.
+        return data.flatMap { $0.isEmpty ? nil : $0 }
+    }
+
+    func remove(key: String) throws {
+        // Keep the tombstone for compatibility with older installed builds that
+        // still attempt legacy migration. No secret remains in this item.
+        try store(key: key, value: Data())
+    }
+
+    private func check(_ status: OSStatus) throws {
+        guard status == errSecSuccess else {
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status), userInfo: [
+                NSLocalizedDescriptionKey: "Secure session storage is unavailable (\(status)). Sign in again in Settings if needed."
+            ])
         }
     }
 }

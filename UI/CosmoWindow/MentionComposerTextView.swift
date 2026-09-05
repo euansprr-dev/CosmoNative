@@ -24,6 +24,7 @@ struct MentionComposerTextView: NSViewRepresentable {
     /// When true, completed mentions render as atomic capsule pills (icon + title) and
     /// `text` is projected back to plain `"@<title>"` tokens. Opt-in per composer.
     var usesPillMentions: Bool = false
+    var retainedStorage: MentionComposerViewStorage? = nil
     var onSubmit: () -> Void
     var onTextChange: () -> Void
     /// Return true to consume Tab (e.g. accept a skill suggestion).
@@ -38,6 +39,16 @@ struct MentionComposerTextView: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> NSScrollView {
+        if let retained = retainedStorage?.scrollView as? ComposerScrollView,
+           let textView = retained.documentView as? ComposerNSTextView {
+            textView.delegate = context.coordinator
+            textView.onSubmit = onSubmit
+            textView.onTab = onTab
+            context.coordinator.textView = textView
+            context.coordinator.scrollView = retained
+            configureAttachmentFocus(retained, textView: textView)
+            return retained
+        }
         let scrollView = ComposerScrollView()
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
@@ -69,8 +80,18 @@ struct MentionComposerTextView: NSViewRepresentable {
         scrollView.documentView = textView
         context.coordinator.textView = textView
         context.coordinator.scrollView = scrollView
+        retainedStorage?.scrollView = scrollView
+        configureAttachmentFocus(scrollView, textView: textView)
 
         return scrollView
+    }
+
+    private func configureAttachmentFocus(_ scrollView: ComposerScrollView, textView: NSTextView) {
+        scrollView.onWindowAttachment = { [weak retainedStorage, weak textView] in
+            guard let retainedStorage, retainedStorage.wantsFocus,
+                  let textView, let window = textView.window, window.isKeyWindow else { return }
+            if window.makeFirstResponder(textView) { retainedStorage.wantsFocus = false }
+        }
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
@@ -81,6 +102,17 @@ struct MentionComposerTextView: NSViewRepresentable {
         textView.isMentionOverlayVisible = isMentionOverlayVisible
         textView.onTab = onTab
         context.coordinator.parent = self
+
+        if let retainedStorage, retainedStorage.wantsFocus {
+            DispatchQueue.main.async { [weak textView] in
+                guard let textView, let window = textView.window, window.isKeyWindow, retainedStorage.wantsFocus else { return }
+                if window.makeFirstResponder(textView) { retainedStorage.wantsFocus = false }
+            }
+        }
+
+        // Marked text belongs to the input method. Rebuilding attachment
+        // storage while composing CJK would silently commit or erase it.
+        guard !textView.hasMarkedText() else { return }
 
         // Sync text if it changed externally (e.g., mention insertion, clear on send).
         // In pill mode the text view holds attachments, so compare against the plain
@@ -517,7 +549,9 @@ enum MentionComposerTextSelectionPolicy {
     static func clamped(_ range: NSRange, in text: String) -> NSRange {
         let length = (text as NSString).length
         let location = max(0, min(range.location, length))
-        let upperBound = max(location, min(range.location + range.length, length))
+        let (sum, overflow) = range.location.addingReportingOverflow(range.length)
+        let end = overflow ? (range.length > 0 ? Int.max : Int.min) : sum
+        let upperBound = max(location, min(end, length))
         return NSRange(location: location, length: upperBound - location)
     }
 
@@ -542,6 +576,13 @@ private extension String {
 /// can size the composer based on text content, capped at a maximum height.
 final class ComposerScrollView: NSScrollView {
     var intrinsicHeight: CGFloat = MentionComposerSizingPolicy.minimumHeight
+    var onWindowAttachment: (() -> Void)?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard window != nil else { return }
+        DispatchQueue.main.async { [weak self] in self?.onWindowAttachment?() }
+    }
 
     override var intrinsicContentSize: NSSize {
         NSSize(width: NSView.noIntrinsicMetric, height: intrinsicHeight)
@@ -573,6 +614,7 @@ final class ComposerNSTextView: NSTextView {
     }
 
     override func keyDown(with event: NSEvent) {
+        if hasMarkedText() { super.keyDown(with: event); return }
         FocusModeTextClipboardTarget.activate(self)
 
         if event.keyCode == 48, // Tab key

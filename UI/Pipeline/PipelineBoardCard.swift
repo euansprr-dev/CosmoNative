@@ -38,6 +38,7 @@ struct PipelineBoardCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space6) {
+            if let cover = item.coverPath { coverImage(cover) }
             HStack(alignment: .top, spacing: DS.space8) {
                 tick
                 Text(item.atom.title?.isEmpty == false ? item.atom.title! : "Untitled")
@@ -57,15 +58,17 @@ struct PipelineBoardCard: View {
         .padding(.horizontal, DS.space10)
         .padding(.vertical, DS.space8)
         .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
-        .background(cardFill, in: .rect(cornerRadius: 10))
+        // A piece is a document, so the card is paper — never a tinted wall.
+        // A missed date speaks through the date itself.
+        .background(DS.documentSurface, in: .rect(cornerRadius: DS.radiusMedium))
         .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
+            RoundedRectangle(cornerRadius: DS.radiusMedium, style: .continuous)
                 .strokeBorder(isCursor ? DS.accent.opacity(0.55) : DS.palette.sepiaBorder, lineWidth: isCursor ? 1 : 0.5)
         )
         .shadow(color: .black.opacity(isHovered ? 0.08 : 0.04), radius: isHovered ? 6 : 3, y: 2)
         .scaleEffect(isHovered ? 1.01 : 1)
         .animation(ProMotionSprings.hover, value: isHovered)
-        .contentShape(.rect(cornerRadius: 10))
+        .contentShape(.rect(cornerRadius: DS.radiusMedium))
         .onHover { isHovered = $0 }
         .onTapGesture(count: 2) { actions.open() }
         .onDrag {
@@ -80,9 +83,17 @@ struct PipelineBoardCard: View {
         .accessibilityAction { actions.open() }
     }
 
-    private var cardFill: Color {
-        if card.isMissed { return DS.redSoft.opacity(0.35) }
-        return DS.surfaceElevated
+    /// Media routed onto the piece rides the top of the card, edge to edge.
+    private func coverImage(_ path: String) -> some View {
+        LocalFileThumbnail(path: path, maxPixelSize: 640) { image in
+            image.resizable().scaledToFill()
+        } placeholder: {
+            DS.glassSectionFill
+        }
+        .frame(height: 88)
+        .frame(maxWidth: .infinity)
+        .clipShape(.rect(cornerRadius: DS.radiusSmall))
+        .accessibilityHidden(true)
     }
 
     private var tick: some View {
@@ -95,14 +106,7 @@ struct PipelineBoardCard: View {
 
     @ViewBuilder
     private var badge: some View {
-        if card.isMissed {
-            Text("missed")
-                .font(DS.caption2.weight(.semibold))
-                .foregroundStyle(DS.red)
-                .padding(.horizontal, DS.space6)
-                .padding(.vertical, 2)
-                .background(DS.redSoft, in: .capsule)
-        } else if item.phase == .analyzing {
+        if item.phase == .analyzing {
             Text("analyzing")
                 .font(DS.caption2.weight(.medium))
                 .foregroundStyle(DS.textSecondary)
@@ -135,7 +139,7 @@ struct PipelineBoardCard: View {
 
     private var stageMeta: String {
         switch column {
-        case .inProgress, .review, .ready:
+        case .notStarted, .inProgress, .review, .ready:
             let words = item.wordCount > 0 ? "\(item.wordCount)w" : item.updatedAt.cosmoCompactAge
             if let day = item.scheduledAt { return "\(words) · Planned \(PipelinePageModel.dayLabel(day))" }
             return words
@@ -196,97 +200,6 @@ struct PipelineBoardCard: View {
         case 1_000...: return String(format: "%.1fk", Double(value) / 1_000)
         default: return "\(value)"
         }
-    }
-}
-
-// MARK: - Idea card (the Desk's Up-next lane, dashed)
-
-struct PipelineIdeaCard: View {
-    let card: PipelineBoardSnapshot.IdeaCard
-    let isCursor: Bool
-    let onOpen: () -> Void
-    let onBeginWriting: () -> Void
-
-    @State private var isHovered = false
-
-    private var idea: IdeaGalleryItem { card.item }
-    private var tint: Color { idea.clientUUID.map { DS.clientColor(for: $0) } ?? DS.textMuted }
-    private var headline: String {
-        if let hook = idea.hooks.first, !hook.isEmpty { return hook }
-        return idea.title
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: DS.space6) {
-            HStack(alignment: .top, spacing: DS.space8) {
-                RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-                    .fill(tint)
-                    .frame(width: 3, height: 18)
-                    .padding(.top, 2)
-                Text(headline)
-                    .font(DS.callout.weight(.medium))
-                    .foregroundStyle(DS.text)
-                    .lineLimit(2)
-                Spacer(minLength: 0)
-                if idea.isPinned {
-                    Text("Up next")
-                        .font(DS.caption2.weight(.semibold))
-                        .foregroundStyle(DS.accent)
-                        .padding(.horizontal, DS.space6)
-                        .padding(.vertical, 2)
-                        .background(DS.accentSoft, in: .capsule)
-                }
-            }
-            HStack(spacing: DS.space6) {
-                if let format = idea.contentFormat {
-                    Text(CollectionEmoji.formatMark(format)).font(DS.caption2)
-                }
-                Text(ideaMeta)
-                    .font(DS.caption2)
-                    .foregroundStyle(DS.textMuted)
-                    .lineLimit(1)
-                if let day = card.sessionDay {
-                    Text("· Session \(PipelinePageModel.dayLabel(day))")
-                        .font(DS.caption2.weight(.medium))
-                        .foregroundStyle(DS.textSecondary)
-                }
-            }
-        }
-        .padding(.horizontal, DS.space10)
-        .padding(.vertical, DS.space8)
-        .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
-        .background(DS.bg, in: .rect(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(style: StrokeStyle(lineWidth: isCursor ? 1 : 0.75, dash: [4, 3]))
-                .foregroundStyle(isCursor ? DS.accent.opacity(0.55) : DS.palette.sepiaBorder)
-        )
-        .scaleEffect(isHovered ? 1.01 : 1)
-        .animation(ProMotionSprings.hover, value: isHovered)
-        .contentShape(.rect(cornerRadius: 10))
-        .onHover { isHovered = $0 }
-        .onTapGesture(count: 2) { onOpen() }
-        .onDrag {
-            ShelfDragSession.shared.begin(color: tint)
-            return NSItemProvider(object: PipelineDropPayload.idea(idea.atomUUID).dragString as NSString)
-        }
-        .contextMenu {
-            Button { onOpen() } label: { Label("Open idea", systemImage: "lightbulb") }
-            Button { onBeginWriting() } label: { Label("Begin writing", systemImage: "pencil.line") }
-        }
-        .help("\(headline) — drag right to begin writing")
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Idea: \(headline)")
-        .accessibilityAddTraits(isCursor ? [.isButton, .isSelected] : .isButton)
-        .accessibilityAction { onOpen() }
-    }
-
-    private var ideaMeta: String {
-        var parts: [String] = []
-        if let clientName = idea.clientName { parts.append(clientName) }
-        if !idea.hooks.isEmpty { parts.append("\(idea.hooks.count) hook\(idea.hooks.count == 1 ? "" : "s")") }
-        if !idea.outline.isEmpty { parts.append("outline") }
-        return parts.joined(separator: " · ")
     }
 }
 

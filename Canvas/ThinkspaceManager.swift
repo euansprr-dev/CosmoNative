@@ -46,23 +46,24 @@ struct ThinkspaceMetadata: Codable, Sendable {
     var enabledViews: [String]?
     var defaultView: String?
     var lastView: String?
+    var purpose: String? = nil
     var linkedClientUUID: String?
 
     enum CodingKeys: String, CodingKey, CaseIterable {
         case name, lastOpened, zoomLevel, panOffsetX, panOffsetY, blockIds
         case projectUuid, parentThinkspaceId, isRootThinkspace, accentColorHex, clusters, deepDiveProfileUUID
         case places, flows
-        case kind, emoji, enabledViews, defaultView, lastView, linkedClientUUID
+        case kind, emoji, enabledViews, defaultView, lastView, linkedClientUUID, purpose
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         name = try container.decode(String.self, forKey: .name)
-        lastOpened = try container.decode(Date.self, forKey: .lastOpened)
-        zoomLevel = try container.decode(Double.self, forKey: .zoomLevel)
-        panOffsetX = try container.decode(Double.self, forKey: .panOffsetX)
-        panOffsetY = try container.decode(Double.self, forKey: .panOffsetY)
-        blockIds = try container.decode([String].self, forKey: .blockIds)
+        lastOpened = try container.decodeIfPresent(Date.self, forKey: .lastOpened) ?? Date()
+        zoomLevel = try container.decodeIfPresent(Double.self, forKey: .zoomLevel) ?? 1
+        panOffsetX = try container.decodeIfPresent(Double.self, forKey: .panOffsetX) ?? 0
+        panOffsetY = try container.decodeIfPresent(Double.self, forKey: .panOffsetY) ?? 0
+        blockIds = try container.decodeIfPresent([String].self, forKey: .blockIds) ?? []
         projectUuid = try container.decodeIfPresent(String.self, forKey: .projectUuid)
         parentThinkspaceId = try container.decodeIfPresent(String.self, forKey: .parentThinkspaceId)
         isRootThinkspace = try container.decodeIfPresent(Bool.self, forKey: .isRootThinkspace) ?? false
@@ -76,6 +77,7 @@ struct ThinkspaceMetadata: Codable, Sendable {
         enabledViews = try container.decodeIfPresent([String].self, forKey: .enabledViews)
         defaultView = try container.decodeIfPresent(String.self, forKey: .defaultView)
         lastView = try container.decodeIfPresent(String.self, forKey: .lastView)
+        purpose = try container.decodeIfPresent(String.self, forKey: .purpose)
         linkedClientUUID = try container.decodeIfPresent(String.self, forKey: .linkedClientUUID)
     }
 
@@ -99,7 +101,8 @@ struct ThinkspaceMetadata: Codable, Sendable {
         enabledViews: [String]? = nil,
         defaultView: String? = nil,
         lastView: String? = nil,
-        linkedClientUUID: String? = nil
+        linkedClientUUID: String? = nil,
+        purpose: String? = nil
     ) {
         self.name = name
         self.lastOpened = lastOpened
@@ -120,6 +123,7 @@ struct ThinkspaceMetadata: Codable, Sendable {
         self.enabledViews = enabledViews
         self.defaultView = defaultView
         self.lastView = lastView
+        self.purpose = purpose
         self.linkedClientUUID = linkedClientUUID
     }
 }
@@ -136,6 +140,7 @@ struct SpaceShapeMetadataPatch: Encodable, Sendable {
     var defaultView: String
     var parentThinkspaceId: String?
     var accentColorHex: String
+    var purpose: String? = nil
     var linkedClientUUID: String?
 }
 
@@ -164,6 +169,7 @@ struct Thinkspace: Identifiable, Equatable {
     var enabledViews: [SpaceView]
     var defaultView: SpaceView?
     var lastView: SpaceView?
+    var purpose: String? = nil
     var linkedClientUUID: String?
 
     /// Whether this Thinkspace is assigned to a project
@@ -193,6 +199,7 @@ struct Thinkspace: Identifiable, Equatable {
             self.enabledViews = SpaceViewResolver.enabledViews(raw: metadata.enabledViews, kind: kind)
             self.defaultView = metadata.defaultView.flatMap(SpaceView.init(rawValue:))
             self.lastView = metadata.lastView.flatMap(SpaceView.init(rawValue:))
+            self.purpose = metadata.purpose
             self.linkedClientUUID = metadata.linkedClientUUID
         } else {
             self.name = atom.title ?? "Untitled"
@@ -217,6 +224,7 @@ struct Thinkspace: Identifiable, Equatable {
     static func == (lhs: Thinkspace, rhs: Thinkspace) -> Bool {
         lhs.id == rhs.id &&
         lhs.name == rhs.name &&
+        lhs.purpose == rhs.purpose &&
         lhs.projectUuid == rhs.projectUuid &&
         lhs.parentThinkspaceId == rhs.parentThinkspaceId &&
         lhs.accentColorHex == rhs.accentColorHex &&
@@ -609,7 +617,8 @@ class ThinkspaceManager {
             emoji: draft.emoji,
             enabledViews: draft.enabledViews.map(\.rawValue),
             defaultView: draft.defaultView.rawValue,
-            linkedClientUUID: draft.linkedClientUUID
+            linkedClientUUID: draft.linkedClientUUID,
+            purpose: draft.purpose
         )
 
         guard let metadataJson = try? JSONEncoder().encode(metadata),
@@ -669,6 +678,7 @@ class ThinkspaceManager {
                 defaultView: draft.defaultView.rawValue,
                 parentThinkspaceId: draft.parentThinkspaceId,
                 accentColorHex: draft.accentColorHex,
+                purpose: draft.purpose,
                 linkedClientUUID: draft.linkedClientUUID
             )
             atom = atom.mergingMetadataKeys(patch)

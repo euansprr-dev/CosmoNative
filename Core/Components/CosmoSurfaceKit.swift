@@ -38,7 +38,7 @@ struct CosmoSegmentedSwitcher<Option: Hashable>: View {
 
     let options: [Option]
     let label: (Option) -> String
-    var icon: ((Option) -> String)? = nil
+    var icon: ((Option) -> CosmoIcon)? = nil
     var help: ((Option) -> String)? = nil
     var chrome: Chrome = .capsule
     @Binding var selection: Option
@@ -75,7 +75,7 @@ struct CosmoSegmentedSwitcher<Option: Hashable>: View {
         } label: {
             HStack(spacing: DS.space4) {
                 if let icon {
-                    Image(systemName: icon(option))
+                    Image(cosmo: icon(option))
                         .font(DS.caption.weight(.medium))
                         .accessibilityHidden(true)
                 }
@@ -117,12 +117,22 @@ struct CosmoSegmentedSwitcher<Option: Hashable>: View {
 /// an honest object preview; identity previews (thumbnails, favicons,
 /// content excerpts) always outrank it.
 struct CosmoIdentityChip: View {
-    let systemName: String
+    let icon: CosmoIcon
     let tint: Color
     var size: CGFloat = 26
 
+    init(icon: CosmoIcon, tint: Color, size: CGFloat = 26) {
+        self.icon = icon
+        self.tint = tint
+        self.size = size
+    }
+
+    init(systemName: String, tint: Color, size: CGFloat = 26) {
+        self.init(icon: .system(systemName), tint: tint, size: size)
+    }
+
     var body: some View {
-        Image(systemName: systemName)
+        Image(cosmo: icon)
             .font(.system(size: size * 0.62, weight: .medium))
             .foregroundStyle(tint)
             .frame(width: size, height: size)

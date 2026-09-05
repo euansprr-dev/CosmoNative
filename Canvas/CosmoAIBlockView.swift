@@ -308,37 +308,10 @@ final class CosmoAIBlockChatState: ObservableObject {
     // MARK: - Load Conversation from Atom structured JSON
 
     func loadConversation(entityUuid: String) {
-        Task {
-            // Warm store first — the thinkspace switch batch-fetched every
-            // entity atom; the repository round-trip is the fallback.
-            var loadedAtom: Atom? = CanvasAtomWarmStore.shared.atom(uuid: entityUuid)
-            if loadedAtom == nil {
-                loadedAtom = try? await AtomRepository.shared.fetch(uuid: entityUuid)
-            }
-            guard let atom = loadedAtom,
-                  let structured = atom.structured,
-                  let data = structured.data(using: .utf8),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let messagesArray = json["messages"] as? [[String: Any]] else { return }
-
-            let loaded: [CosmoWindowMessage] = messagesArray.compactMap { dict in
-                guard let typeStr = dict["type"] as? String,
-                      let content = dict["content"] as? String else { return nil }
-                let timestamp = (dict["timestamp"] as? Double).map { Date(timeIntervalSince1970: $0) } ?? Date()
-
-                switch typeStr {
-                case "user":
-                    return CosmoWindowMessage(type: .user, content: content, timestamp: timestamp, isStreaming: false)
-                case "assistant":
-                    return CosmoWindowMessage(type: .assistant, content: content, timestamp: timestamp, isStreaming: false)
-                case "system":
-                    return CosmoWindowMessage(type: .system, content: content, timestamp: timestamp, isStreaming: false)
-                default:
-                    return nil
-                }
-            }
-
-            self.messages = loaded
+        do {
+            messages = try CanvasChatArchive.load(entityUUID: entityUuid)
+        } catch {
+            PersistenceHealth.note(.writeFailure, context: "canvasChat.load", detail: "Saved conversation preserved: \(error)")
         }
     }
 
@@ -347,6 +320,7 @@ final class CosmoAIBlockChatState: ObservableObject {
     func sendMessage(_ query: String, entityUuid: String) {
         let userMsg = CosmoWindowMessage.user(query)
         messages.append(userMsg)
+        saveConversation(entityUuid: entityUuid)
 
         isProcessing = true
         lastToolActivitySummary = nil
@@ -488,31 +462,8 @@ final class CosmoAIBlockChatState: ObservableObject {
     // MARK: - Persistence
 
     private func saveConversation(entityUuid: String) {
-        let messagesArray: [[String: Any]] = messages.suffix(50).compactMap { msg in
-            let typeStr: String
-            switch msg.type {
-            case .user: typeStr = "user"
-            case .assistant: typeStr = "assistant"
-            case .system: typeStr = "system"
-            default: return nil
-            }
-            return [
-                "type": typeStr,
-                "content": msg.content,
-                "timestamp": msg.timestamp.timeIntervalSince1970
-            ]
-        }
-
-        let json: [String: Any] = ["messages": messagesArray]
-        if let data = try? JSONSerialization.data(withJSONObject: json),
-           let jsonString = String(data: data, encoding: .utf8) {
-            Task {
-                if var atom = try? await AtomRepository.shared.fetch(uuid: entityUuid) {
-                    atom.structured = jsonString
-                    _ = try? await AtomRepository.shared.update(atom)
-                }
-            }
-        }
+        do { try CanvasChatArchive.save(messages, entityUUID: entityUuid) }
+        catch { PersistenceHealth.note(.writeFailure, context: "canvasChat.save", detail: "\(error)") }
     }
 
     // MARK: - Connected Context Loading

@@ -14,6 +14,12 @@ final class BlockSelectionTests: XCTestCase {
 
     // MARK: - BlockSelectionCoordinator
 
+    func testFloatingPanelReservesKeyboardWithoutTextFirstResponder() {
+        let panel = NSPanel(contentRect: .zero, styleMask: [.nonactivatingPanel], backing: .buffered, defer: false)
+        XCTAssertTrue(MainKeyboardShortcutPolicy.reservesDocumentKeyboard(in: panel))
+        XCTAssertFalse(MainKeyboardShortcutPolicy.reservesDocumentKeyboard(in: nil))
+    }
+
     func testSelectRangeSelectsEverythingBetweenAnchorAndTarget() {
         let document = makeDocument()
         let coordinator = BlockSelectionCoordinator()
@@ -156,6 +162,36 @@ final class BlockSelectionTests: XCTestCase {
         let markdown = BlockOperations.markdown(ofBlocksWithIDs: ids, in: document)
 
         XCTAssertEqual(markdown, "Alpha\n## Gamma\nDelta")
+    }
+
+    func testCopyIncludesNestedAndFoldedContent() {
+        var toggle = RichBlock(kind: .toggle, inlines: [.text("Sources")])
+        toggle.children = [.paragraph("Evidence inside toggle")]
+        var heading = RichBlock(kind: .heading2, inlines: [.text("Draft")])
+        heading.heading = RichHeadingMetadata(isCollapsed: true, collapsedBlocks: [.paragraph("Hidden draft")])
+        let document = RichDocument(blocks: [toggle, heading])
+        let copied = BlockOperations.markdown(ofBlocksWithIDs: Set(document.blocks.map(\.id)), in: document)
+        XCTAssertTrue(copied.contains("Evidence inside toggle"))
+        XCTAssertTrue(copied.contains("Hidden draft"))
+    }
+
+    func testOptionCCopiesBlocksDespiteKeyboardLayoutCharacter() throws {
+        let event = try XCTUnwrap(NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: .option, timestamp: 0,
+            windowNumber: 0, context: nil, characters: "ç",
+            charactersIgnoringModifiers: "ç", isARepeat: false, keyCode: 8
+        ))
+        XCTAssertEqual(BlockSelectionClipboardTarget.action(for: event), .copy)
+    }
+
+    func testDuplicateRegeneratesFoldedAndTableIdentities() {
+        var heading = RichBlock(kind: .heading2, inlines: [.text("Folded")])
+        heading.heading = RichHeadingMetadata(isCollapsed: true, collapsedBlocks: [.paragraph("Inside")])
+        let copy = heading.withRegeneratedIDs()
+        XCTAssertNotEqual(copy.heading?.collapsedBlocks.first?.id, heading.heading?.collapsedBlocks.first?.id)
+        let table = RichBlock(kind: .table, table: RichTable())
+        let tableCopy = table.withRegeneratedIDs()
+        XCTAssertNotEqual(tableCopy.table?.rows.first?.cells.first?.id, table.table?.rows.first?.cells.first?.id)
     }
 
     func testClipboardActionMappingRecognizesCommandKeyEquivalents() throws {

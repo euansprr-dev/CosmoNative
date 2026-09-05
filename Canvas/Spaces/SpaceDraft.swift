@@ -5,6 +5,7 @@
 import Foundation
 
 struct SpaceDraft: Equatable, Sendable {
+    var purpose: String = ""
     var name: String
     /// Explicit identity override only. A leading emoji typed into the name
     /// is lifted here by `normalized()`; rows fall back to the name's own
@@ -41,7 +42,7 @@ struct SpaceDraft: Equatable, Sendable {
             name: name,
             emoji: nil,
             kind: .custom,
-            enabledViews: [.home, .library, .canvas, .deepDive],
+            enabledViews: [.canvas, .library, .deepDive],
             accentColorHex: accentHex,
             parentThinkspaceId: parentId,
             linkedClientUUID: nil
@@ -68,6 +69,7 @@ struct SpaceDraft: Equatable, Sendable {
 
     /// The draft that edits an existing space in place.
     init(thinkspace: Thinkspace) {
+        self.purpose = thinkspace.purpose ?? ""
         self.name = thinkspace.name
         self.emoji = thinkspace.emoji
         self.kind = thinkspace.kind ?? .custom
@@ -81,6 +83,7 @@ struct SpaceDraft: Equatable, Sendable {
     /// (the identity law shared with capture lanes and library folders).
     func normalized() -> SpaceDraft {
         var copy = self
+        copy.purpose = purpose.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolved = CollectionEmoji.resolve(name: trimmed, matchKeywords: false)
         if let leading = resolved.emoji, resolved.label != trimmed {

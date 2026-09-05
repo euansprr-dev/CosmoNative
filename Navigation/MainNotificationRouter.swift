@@ -335,10 +335,10 @@ struct MainNotificationRouter: View {
             // onReceive, not onChange: nothing here may observe the assistant
             // store (its composerText publishes per keystroke and its run
             // state per stream event).
-            .onReceive(CosmoInlineAssistantStore.shared.$isPaneRequested.removeDuplicates()) { isRequested in
-                guard isRequested else { return }
-                actions.openInlineAssistantPane()
-                CosmoInlineAssistantStore.shared.dismissPaneRequest()
+            .onReceive(CosmoInlineAssistantStore.shared.presentationRequests) { intent in
+                let store = CosmoInlineAssistantStore.shared
+                CompanionAssistantCoordinator.shared.receive(intent, panes: paneManager, store: store)
+                store.dismissPaneRequest()
             }
             // Legacy Cosmo toggle requests now open the inline assistant surface.
             .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.CosmoWindow.toggle)) { _ in

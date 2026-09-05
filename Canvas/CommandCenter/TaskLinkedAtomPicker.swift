@@ -203,7 +203,7 @@ struct TaskLinkedAtomPicker: View {
             addLinkedAtom(from: result)
         } label: {
             HStack(spacing: 8) {
-                Image(systemName: result.entityType.icon)
+                Image(cosmo: result.entityType.cosmoIcon)
                     .font(DS.caption2)
                     .foregroundStyle(color)
                     .frame(width: 16)

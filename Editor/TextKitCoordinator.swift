@@ -1067,7 +1067,7 @@ final class CosmoTextView: NSTextView {
         // performing copy on a collapsed text selection swallowed multi-block
         // ⌘C and wrote nothing to the pasteboard.
         if let blockAction = BlockSelectionClipboardTarget.action(for: event),
-           BlockSelectionClipboardTarget.send(blockAction) {
+           BlockSelectionClipboardTarget.send(blockAction, in: window) {
             return true
         }
         // Only claim the clipboard target when we are actually the focused

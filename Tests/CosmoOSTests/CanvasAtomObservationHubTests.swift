@@ -67,6 +67,8 @@ final class CanvasAtomObservationHubTests: XCTestCase {
         // must never overwrite fresher content.
         hub.absorb([base])
         XCTAssertEqual(delivered.map(\.title), ["v2"], "stale atom must not regress a subscriber")
+        XCTAssertEqual(CanvasAtomWarmStore.shared.atom(uuid: base.uuid)?.title, "v2",
+                       "A remounted editor must also receive the newer version")
 
         // Same timestamp, different version (rapid same-second local edits)
         // still delivers.
@@ -75,6 +77,9 @@ final class CanvasAtomObservationHubTests: XCTestCase {
         sameSecondEdit.title = "v3"
         hub.absorb([sameSecondEdit])
         XCTAssertEqual(delivered.map(\.title), ["v2", "v3"])
+        hub.absorb([newer])
+        XCTAssertEqual(delivered.map(\.title), ["v2", "v3"], "Same-second delayed reads must not undo typing")
+        XCTAssertEqual(CanvasAtomWarmStore.shared.atom(uuid: base.uuid)?.title, "v3")
     }
 
     func testHubStopsDeliveringAfterUnsubscribe() {

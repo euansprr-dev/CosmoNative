@@ -166,7 +166,7 @@ struct LiveQueryBlockView: View {
     private func resultRow(_ result: LiveQueryResult) -> some View {
         HStack(spacing: 8) {
             // Type icon
-            Image(systemName: result.typeIcon)
+            Image(cosmo: result.typeIcon)
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(result.typeColor)
                 .frame(width: 16)
@@ -255,7 +255,7 @@ struct LiveQueryBlockView: View {
                 LiveQueryResult(
                     id: atom.uuid,
                     title: atom.title ?? "(untitled)",
-                    typeIcon: atom.type.iconName,
+                    typeIcon: atom.cosmoIcon,
                     typeColor: entityColor(for: atom.type),
                     status: extractStatus(from: atom)
                 )
@@ -317,7 +317,7 @@ struct LiveQueryBlockView: View {
 struct LiveQueryResult: Identifiable {
     let id: String
     let title: String
-    let typeIcon: String
+    let typeIcon: CosmoIcon
     let typeColor: Color
     let status: String?
 }

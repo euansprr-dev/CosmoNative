@@ -83,7 +83,9 @@ struct CommandCenterMasthead: View {
 
     var body: some View {
         Group {
-            if viewModel.viewMode == .upcoming {
+            if viewModel.viewMode == .today {
+                todayMasthead
+            } else if viewModel.viewMode == .upcoming {
                 upcomingMasthead
             } else {
                 standardMasthead
@@ -98,6 +100,50 @@ struct CommandCenterMasthead: View {
         // a page rail distinct from the content rail read as three left
         // edges, not composition.
         .padding(.horizontal, DS.space12)
+    }
+
+    private var todayMasthead: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: DS.space24) {
+                todayTitle
+                Spacer(minLength: DS.space16)
+                todayUtilities
+            }
+            VStack(alignment: .leading, spacing: DS.space12) {
+                todayTitle
+                todayUtilities
+            }
+        }
+        .padding(.bottom, DS.space8)
+    }
+
+    private var todayTitle: some View {
+        VStack(alignment: .leading, spacing: DS.space8) {
+            Text(viewedDayTitle)
+                .font(DS.pageTitle)
+                .foregroundStyle(DS.commandCenterTitleText)
+            Text(dateContext)
+                .font(DS.subheadline)
+                .foregroundStyle(DS.textSecondary)
+                .contentTransition(.numericText())
+                .fixedSize()
+        }
+    }
+
+    private var viewedDayTitle: String {
+        if viewModel.isViewingToday { return "Today" }
+        let calendar = Calendar.current
+        if calendar.isDateInYesterday(viewModel.selectedDate) { return "Yesterday" }
+        if calendar.isDateInTomorrow(viewModel.selectedDate) { return "Tomorrow" }
+        return viewModel.selectedDate.formatted(.dateTime.weekday(.wide))
+    }
+
+    private var todayUtilities: some View {
+        HStack(spacing: DS.space12) {
+            CommandCenterInboxChip()
+            CommandCenterRipeChip()
+            todayDayNavigation
+        }
     }
 
     private var standardMasthead: some View {

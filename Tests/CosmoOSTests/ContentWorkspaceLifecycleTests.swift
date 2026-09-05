@@ -45,13 +45,15 @@ final class ContentWorkspaceLifecycleTests: XCTestCase {
 
     func testRetainedPagesObserveEditsWithoutAnotherStart() async throws {
         let idea = Atom.new(type: .idea, title: "Before retained-page edit", body: nil)
+        var piece = Atom.new(type: .content, title: "Before retained-page edit", body: nil)
+        piece.metadata = #"{"phase":"draft"}"#
         try await CosmoDatabase.shared.asyncWrite { db in
-            try CanvasBlockSyncObserver.suppressingSync { try idea.insert(db) }
+            try CanvasBlockSyncObserver.suppressingSync { try idea.insert(db); try piece.insert(db) }
         }
         addTeardownBlock {
             try await CosmoDatabase.shared.asyncWrite { db in
                 try CanvasBlockSyncObserver.suppressingSync {
-                    try db.execute(sql: "DELETE FROM atoms WHERE uuid = ?", arguments: [idea.uuid])
+                    try db.execute(sql: "DELETE FROM atoms WHERE uuid IN (?, ?)", arguments: [idea.uuid, piece.uuid])
                 }
             }
         }
@@ -61,24 +63,24 @@ final class ContentWorkspaceLifecycleTests: XCTestCase {
         await ideas.start()
         await pipeline.start()
         XCTAssertTrue(ideas.ideas.contains { $0.atomUUID == idea.uuid })
-        XCTAssertTrue(pipeline.ideas.contains { $0.atomUUID == idea.uuid })
+        XCTAssertTrue(pipeline.content.contains { $0.id == piece.uuid })
 
         // A local edit may share updated_at with the previous write. Keeping
         // the page alive must still pick it up through the version change.
         try await CosmoDatabase.shared.asyncWrite { db in
             try CanvasBlockSyncObserver.suppressingSync {
-                try db.execute(sql: "UPDATE atoms SET title = ?, _local_version = _local_version + 1 WHERE uuid = ?",
-                               arguments: ["After retained-page edit", idea.uuid])
+                try db.execute(sql: "UPDATE atoms SET title = ?, _local_version = _local_version + 1 WHERE uuid IN (?, ?)",
+                               arguments: ["After retained-page edit", idea.uuid, piece.uuid])
             }
         }
         let deadline = ContinuousClock.now + .seconds(3)
         while ContinuousClock.now < deadline {
             if ideas.ideas.first(where: { $0.atomUUID == idea.uuid })?.title == "After retained-page edit",
-               pipeline.ideas.first(where: { $0.atomUUID == idea.uuid })?.title == "After retained-page edit" { break }
+               pipeline.content.first(where: { $0.id == piece.uuid })?.title == "After retained-page edit" { break }
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTAssertEqual(ideas.ideas.first { $0.atomUUID == idea.uuid }?.title, "After retained-page edit")
-        XCTAssertEqual(pipeline.ideas.first { $0.atomUUID == idea.uuid }?.title, "After retained-page edit")
+        XCTAssertEqual(pipeline.content.first { $0.id == piece.uuid }?.title, "After retained-page edit")
     }
     #endif
 }

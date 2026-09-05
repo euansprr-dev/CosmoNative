@@ -403,49 +403,27 @@ struct DocumentBlocksLayer: View {
             return
         }
 
-        // Find the block
-        guard let blockIndex = spatialEngine.blocks.firstIndex(where: { $0.id == blockId }) else {
-            return
-        }
-
-        let block = spatialEngine.blocks[blockIndex]
-
-        // If entityId is -1, save as note content in metadata
-        if block.entityId == -1 && !content.isEmpty {
-            Task {
-                spatialEngine.blocks[blockIndex].metadata["content"] = content
-                await spatialEngine.saveBlock(spatialEngine.blocks[blockIndex])
-            }
-        } else if block.entityId != -1 {
-            // Update existing entity in database
-            Task {
-                await updateDatabaseEntry(block: block, content: content)
+        Task { @MainActor in
+            do {
+                var patch = ["content": content]
+                if let title = userInfo["title"] as? String { patch["title"] = title }
+                try spatialEngine.updateBlockMetadata(blockID: blockId, patch: patch)
+            } catch {
+                PersistenceHealth.note(.writeFailure, context: "documentBlocks.content", detail: "\(error)")
             }
         }
     }
 
-    // MARK: - Block Metadata Update Handler
-
     private func handleUpdateBlockMetadata(notification: Notification) {
-        guard let userInfo = notification.userInfo,
-              let blockId = userInfo["blockId"] as? String,
-              let metadata = userInfo["metadata"] as? [String: String] else {
-            return
-        }
-
-        // Find the block and update its metadata
-        guard let blockIndex = spatialEngine.blocks.firstIndex(where: { $0.id == blockId }) else {
-            return
-        }
-
-        // Merge new metadata with existing
-        for (key, value) in metadata {
-            spatialEngine.blocks[blockIndex].metadata[key] = value
-        }
-
-        // Persist to database
-        Task {
-            await spatialEngine.saveBlock(spatialEngine.blocks[blockIndex])
+        guard let blockId = notification.userInfo?["blockId"] as? String,
+              let metadata = notification.userInfo?["metadata"] as? [String: String] else { return }
+        let alreadyPersisted = notification.userInfo?["alreadyPersisted"] as? Bool ?? false
+        Task { @MainActor in
+            do {
+                try spatialEngine.updateBlockMetadata(blockID: blockId, patch: metadata, alreadyPersisted: alreadyPersisted)
+            } catch {
+                PersistenceHealth.note(.writeFailure, context: "documentBlocks.metadata", detail: "\(error)")
+            }
         }
     }
 
@@ -489,9 +467,8 @@ struct DocumentBlocksLayer: View {
             return
         }
 
-        Task {
-            await spatialEngine.saveBlock(spatialEngine.blocks[blockIndex])
-        }
+        let block = spatialEngine.blocks[blockIndex]
+        Task { await spatialEngine.saveBlock(block) }
     }
 
     // MARK: - Toggle Block Pin Handler
@@ -551,8 +528,7 @@ struct DocumentBlocksLayer: View {
             case .note:
                 // Notes are saved as metadata on the block
                 if let index = spatialEngine.blocks.firstIndex(where: { $0.id == block.id }) {
-                    spatialEngine.blocks[index].metadata["content"] = content
-                    await spatialEngine.saveBlock(spatialEngine.blocks[index])
+                    try spatialEngine.updateBlockMetadata(blockID: spatialEngine.blocks[index].id, patch: ["content": content])
                 }
 
             default:
@@ -579,7 +555,7 @@ struct DocumentBlockView: View {
         VStack(alignment: .leading, spacing: 8) {
             // Header
             HStack {
-                Image(systemName: block.entityType.icon)
+                Image(cosmo: block.entityType.cosmoIcon)
                     .font(.system(size: 12))
                     .foregroundColor(entityColor)
 
@@ -673,4 +649,3 @@ struct DocumentBlockView: View {
         }
     }
 }
-

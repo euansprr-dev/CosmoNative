@@ -395,7 +395,7 @@ struct CommandKAskPane: View {
                 Text("[\(source.index)]")
                     .font(DS.caption2.monospacedDigit().weight(.semibold))
                     .foregroundStyle(DS.gilt)
-                Image(systemName: source.atomType.iconName)
+                Image(cosmo: source.atomType.cosmoIcon)
                     .font(DS.caption2)
                     .foregroundStyle(cortexEntityAccent(source.atomType))
                     .accessibilityHidden(true)

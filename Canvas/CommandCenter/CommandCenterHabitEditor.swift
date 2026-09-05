@@ -352,7 +352,7 @@ struct CommandCenterHabitComposer: View {
             CosmoSegmentedSwitcher(
                 options: CadenceKind.allCases,
                 label: { $0.title },
-                icon: { $0.icon },
+                icon: { .system($0.icon) },
                 help: { $0.help },
                 selection: cadenceBinding
             )

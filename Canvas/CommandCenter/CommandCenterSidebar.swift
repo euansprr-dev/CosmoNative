@@ -65,7 +65,7 @@ struct CommandCenterSidebar: View {
                         .frame(width: 4, height: 4)
                 }
 
-                Image(systemName: mode.icon)
+                Image(cosmo: mode.cosmoIcon)
                     .font(DS.callout)
                     .foregroundStyle(isSelected ? mode.activeTint : DS.commandCenterMutedText)
                     .frame(width: DS.space20)

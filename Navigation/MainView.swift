@@ -65,6 +65,13 @@ enum CommandKFocusRestorePolicy {
 }
 
 enum MainKeyboardShortcutPolicy {
+    /// Floating panels own their keyboard grammar. Whole-block selection is
+    /// document input even after its NSTextView has resigned first responder.
+    @MainActor
+    static func reservesDocumentKeyboard(in window: NSWindow?) -> Bool {
+        window is NSPanel || BlockSelectionClipboardTarget.isActive(in: window)
+    }
+
     static func isTextInputFocused(in window: NSWindow?) -> Bool {
         isTypingTarget(window?.firstResponder)
     }
@@ -137,6 +144,7 @@ struct MainView: View {
     @State private var commandKBehindFocusMode = false
     @State private var commandKSearchFocusRequest = 0
     @State private var commandKViewModel = CommandKViewModel()
+    @State private var clearCommandKAfterDismissal = false
 
     // Block context menu (right-click on block).
     // Plain @State reference, NOT @StateObject: MainView reads only the
@@ -235,6 +243,7 @@ struct MainView: View {
             // Main layout: sidebar + content area
             mainContentLayout
 
+
             // App-wide NotificationCenter routing subscribes on this zero-size
             // host, so an arriving notification diffs a Color.clear leaf
             // instead of this whole shell (perf audit W14).
@@ -244,18 +253,6 @@ struct MainView: View {
             // Glass overlay for search results, clarifications, proactive suggestions
             MainGlassOverlayHost()
                 .zIndex(60)
-
-            // Global status indicator (bottom-right)
-            VStack {
-                Spacer()
-                HStack {
-                    Spacer()
-                    GlobalStatusPill()
-                        .padding(.trailing, 20)
-                        .padding(.bottom, 20)
-                }
-            }
-            .zIndex(40)
 
             // Timed goal prompt (top-right): session crossed a task/habit time goal
             VStack {
@@ -289,51 +286,25 @@ struct MainView: View {
             WelcomeGateOverlay()
                 .zIndex(200)
 
-            if CosmoInlineAssistantBarVisibilityPolicy.shouldShow(
-                isInlinePaneOpen: isInlineAssistantPaneOpen,
-                focusedEntityType: appState.focusedEntity?.type,
-                isBlockingOverlayPresented: showSettings
-            ) {
-                // Bottom assistant composer: answers open the side pane, actions stay as diff proposals.
-                VStack {
-                    Spacer()
-                    CosmoInlineAssistantReviewOverlay(store: CosmoInlineAssistantStore.shared)
-                        .padding(.bottom, 8)
-
-                    CosmoInlineAssistantBar(store: CosmoInlineAssistantStore.shared) {
-                        openInlineAssistantPane()
-                    }
-                    .padding(.bottom, 24)
-                }
-                .zIndex(45)
-            }
+            CompanionAssistantDock(
+                panes: paneManager,
+                isSuppressed: showSettings || showCommandK || appState.focusedEntity?.type == .deepDive || appState.focusedEntity?.type == .inquirySession
+            )
+            .zIndex(45)
 
             // Focus mode is now rendered inside SplitPaneContainer above (z-index 195 when active)
 
             // Command-K - The Cognition Hub
-            // The view model lives in MainView, so the palette can preserve
-            // search/domain state without keeping a full-window invisible
-            // hosting view above panes while hidden.
-            //
-            // The hit-test gate MUST live on this persistent Group, not inside
-            // the conditional: a removal-transition snapshot keeps its
-            // last-rendered modifier values, so a gate inside the branch stays
-            // `true` while the palette fades out — and if that removal is ever
-            // interrupted, the invisible full-window backdrop swallows every
-            // click until the palette is presented again. The ancestor gate
-            // re-evaluates live and clamps the lingering subtree.
-            Group {
-                if showCommandK {
-                    CommandKView(
-                        initialTab: commandKReturnTab ?? .database,
-                        isActive: showCommandK,
-                        searchFocusRequest: commandKSearchFocusRequest,
-                        viewModel: commandKViewModel
-                    )
-                        .transition(.opacity)
-                }
-            }
-            .allowsHitTesting(showCommandK)
+            // The host owns the entire entrance/exit. Its live hit-test gate
+            // releases the workspace immediately on close, and it unmounts
+            // the glass only after the visible surfaces have finished leaving.
+            CommandKOverlayHost(
+                initialTab: commandKReturnTab ?? .database,
+                isPresented: showCommandK,
+                searchFocusRequest: commandKSearchFocusRequest,
+                viewModel: commandKViewModel,
+                onDismissed: finishCommandKDismissal
+            )
             .zIndex(200)
 
             // Instagram Swipe File Modal (manual entry for Instagram content)
@@ -515,10 +486,8 @@ struct MainView: View {
             }
         }
         // Global keyboard shortcuts handled via NSEvent monitor (doesn't steal focus from text fields)
-        // Command-K insert/removal is animated solely by the withAnimation
-        // transaction in applyCommandKPresentation — a second implicit driver
-        // here (with a different curve) can interrupt the removal transition
-        // and strand the palette's invisible click-catching snapshot.
+        // Command-K animates locally in its host; presentation never sends a
+        // window-wide animation transaction through the workspace or results.
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: showRadialMenu)
         .animation(.spring(response: 0.2, dampingFraction: 0.75), value: showBlockContextMenu)
         // The glass-overlay and Instagram-modal springs moved INTO their leaf
@@ -573,7 +542,7 @@ struct MainView: View {
                 pipelinePageModel.scope = .all
             }
             currentDestination = info?["tab"] as? String == "ideas" ? .ideas : .pipeline
-            showCommandK = false
+            closeCommandKIfOpen()
         }
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.openClients)) { notification in
             if let clientUUID = notification.userInfo?["clientUUID"] as? String {
@@ -581,7 +550,7 @@ struct MainView: View {
             } else {
                 currentDestination = .clients
             }
-            showCommandK = false
+            closeCommandKIfOpen()
         }
         .onChange(of: appState.focusedEntity) { _, newValue in
             if let newValue {
@@ -946,6 +915,7 @@ struct MainView: View {
             panelWidth: $sidebarPanelWidth,
             thinkspaceManager: thinkspaceManager,
             commandCenterViewModel: commandCenterViewModel,
+            pipelineModel: pipelinePageModel,
             cornerRadius: cornerRadius,
             sidebarButtonTitle: sidebarButtonTitle,
             sidebarButtonHelp: sidebarButtonHelp,
@@ -1675,6 +1645,11 @@ struct MainView: View {
         // A space arrival names its view — the store resolves the opening
         // view synchronously from the manager's cache, before the async switch.
         if case .thinkspace(let id) = destination {
+            if let atom = SpaceWorkspaceStore.shared.selectedItem(in: id) {
+                NavigationTrail.shared.recordArrival(.spaceItem(thinkspaceId: id, itemUUID: atom.uuid),
+                    title: atom.title ?? "Untitled", glyph: atom.spaceCompositionKind?.symbol ?? "doc.text")
+                return
+            }
             let view = SpaceViewStore.shared.activeView(for: id)
             let name = thinkspaceManager.thinkspaces.first(where: { $0.id == id })?.identityLabel ?? "Space"
             NavigationTrail.shared.recordArrival(
@@ -1781,7 +1756,7 @@ struct MainView: View {
                 FocusNavigationCoordinator.shared.open(entity: entity, anchorOverride: .center)
             case .spaceView(let thinkspaceId, let view):
                 FocusNavigationCoordinator.shared.close()
-                SpaceViewStore.shared.select(view, for: thinkspaceId, source: .trail)
+                SpaceWorkspaceStore.shared.showRoot(view, in: thinkspaceId)
                 currentDestination = .thinkspace(id: thinkspaceId)
                 // Landing on a space's library view means its root — any
                 // folder opened after that moment closes with the jump.
@@ -1790,6 +1765,27 @@ struct MainView: View {
                         name: CosmoNotification.Navigation.showLibraryFolder,
                         object: nil
                     )
+                }
+            case .spaceItem(let thinkspaceId, let itemUUID):
+                Task { @MainActor in
+                    let store = SpaceWorkspaceStore.shared
+                    await store.load(thinkspaceId)
+                    guard NavigationTrail.shared.current?.id == moment.id else { return }
+                    guard let atom = store.snapshots[thinkspaceId]?.atomsByUUID[itemUUID] else {
+                        NavigationTrail.shared.prune { $0.destination == moment.destination }
+                        NavigationTrail.shared.applyingJump {
+                            FocusNavigationCoordinator.shared.close()
+                            store.showRoot(.canvas, in: thinkspaceId)
+                            currentDestination = .thinkspace(id: thinkspaceId)
+                        }
+                        store.report(SpaceCompositionError.notFound, in: thinkspaceId)
+                        return
+                    }
+                    NavigationTrail.shared.applyingJump {
+                        FocusNavigationCoordinator.shared.close()
+                        store.open(atom, in: thinkspaceId)
+                        currentDestination = .thinkspace(id: thinkspaceId)
+                    }
                 }
             case .libraryFolder(let thinkspaceId, let folderID):
                 FocusNavigationCoordinator.shared.close()
@@ -1892,7 +1888,7 @@ struct MainView: View {
 
     private func openInlineAssistantPane() {
         withAnimation(ProMotionSprings.snappy) {
-            paneManager.openOrActivateInlineAssistant()
+            CompanionAssistantCoordinator.shared.openPane(using: paneManager)
         }
     }
 
@@ -2014,15 +2010,24 @@ struct MainView: View {
         )
         state.apply(event)
 
-        withAnimation(.spring(response: 0.2)) {
+        withTransaction(Transaction(animation: nil)) {
+            // A rapid reopen supersedes the outgoing completion, but a normal
+            // close still starts the next search with a clean query.
+            if state.isVisible, clearCommandKAfterDismissal {
+                commandKViewModel.clear()
+            }
+            clearCommandKAfterDismissal = !state.isVisible && clearViewModel
             showCommandK = state.isVisible
             commandKBehindFocusMode = state.isPreservedBehindFocusMode
             commandKSearchFocusRequest = state.searchFocusRequest
             appState.isCommandKVisible = state.isVisibleToApp
-            if clearViewModel {
-                commandKViewModel.clear()
-            }
         }
+    }
+
+    private func finishCommandKDismissal() {
+        guard !showCommandK, clearCommandKAfterDismissal else { return }
+        commandKViewModel.clear()
+        clearCommandKAfterDismissal = false
     }
 
     private func presentCommandK() {
@@ -2064,6 +2069,7 @@ struct MainView: View {
     /// Uses NSEvent monitor for Escape key, keyboard shortcuts, and Ctrl+Z undo/redo fallback
     private func setupGlobalKeyMonitor() {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { event in
+            guard !MainKeyboardShortcutPolicy.reservesDocumentKeyboard(in: event.window) else { return event }
             // Cmd+K should always reopen the shared palette, including while a focus mode is active.
             // If Command-K is already visible, let the event continue so its Actions shortcut can handle it.
             if event.type == .keyDown,

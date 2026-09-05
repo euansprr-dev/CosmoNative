@@ -15,7 +15,7 @@ struct SynthesisSourceCard: View {
                     .fill(accentColor.opacity(0.15))
                     .frame(width: 36, height: 36)
 
-                Image(systemName: typeIcon)
+                Image(cosmo: atom.cosmoIcon)
                     .font(.system(size: 14, weight: .medium))
                     .foregroundColor(accentColor)
             }
@@ -56,18 +56,6 @@ struct SynthesisSourceCard: View {
     }
 
     // MARK: - Helpers
-
-    private var typeIcon: String {
-        switch atom.type {
-        case .idea: return "lightbulb"
-        case .research: return "doc.text.magnifyingglass"
-        case .connection: return "link"
-        case .content: return "doc.richtext"
-        case .note: return "note.text"
-        case .task: return "checkmark.circle"
-        default: return "doc"
-        }
-    }
 
     private var accentColor: Color {
         switch atom.type {

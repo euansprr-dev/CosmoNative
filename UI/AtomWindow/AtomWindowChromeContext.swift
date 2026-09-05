@@ -63,7 +63,7 @@ enum AtomWindowChromeTypeColor: Equatable {
 
 struct AtomWindowChromeState: Equatable {
     var title: String
-    var typeIcon: String
+    var typeIcon: CosmoIcon
     var typeColor: AtomWindowChromeTypeColor
     var canGoBack: Bool
     var canGoForward: Bool
@@ -123,7 +123,7 @@ struct AtomWindowChromeLeadingControls: View {
     var body: some View {
         AtomWindowChromeIconButton(
             systemName: "xmark",
-            help: "Close Atom window (⌥E)",
+            help: "Close item window (⌃⌥E)",
             action: context.actions.closeWindow
         )
 
@@ -164,7 +164,7 @@ private struct AtomWindowChromeTitleButton: View {
             }
         } label: {
             HStack(spacing: DS.space6) {
-                Image(systemName: context.state.typeIcon)
+                Image(cosmo: context.state.typeIcon)
                     .font(DS.caption2.weight(.semibold))
                     .foregroundStyle(context.state.typeColor.color)
                     .accessibilityHidden(true)
@@ -223,7 +223,7 @@ struct AtomWindowChromeTrailingControls: View {
 
         AtomWindowChromeIconButton(
             systemName: "magnifyingglass",
-            help: "Search atoms",
+            help: "Search items (⌘K)",
             action: {
                 withAnimation(ProMotionSprings.snappy) {
                     context.actions.showSearch()

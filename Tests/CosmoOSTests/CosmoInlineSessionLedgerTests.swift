@@ -280,24 +280,4 @@ final class CosmoInlineSessionLedgerTests: XCTestCase {
         XCTAssertGreaterThan(conversation.estimatedTokenCount, 1500)
     }
 
-    // MARK: - Conversation folding
-
-    func testFoldingOldMessagesKeepsRecentRunsAndSummarizesTheRest() {
-        var conversation = AgentConversation(id: "cosmo-inline-assistant:content:deck", source: .inApp)
-        for turn in 1...40 {
-            conversation.append(.user("ask \(turn)"))
-            conversation.append(.assistant("receipt \(turn)"))
-        }
-
-        let folded = ConversationMemoryService.foldingOldMessagesIntoSummary(conversation)
-
-        XCTAssertLessThanOrEqual(folded.messages.count, 41)
-        XCTAssertEqual(folded.messages.first?.role, .user)
-        XCTAssertNotNil(folded.summary)
-        XCTAssertTrue(folded.summary!.contains("ask 1"))
-        XCTAssertTrue(folded.messages.contains { $0.content == "ask 40" })
-
-        let untouched = ConversationMemoryService.foldingOldMessagesIntoSummary(folded)
-        XCTAssertEqual(untouched.messages.count, folded.messages.count)
-    }
 }

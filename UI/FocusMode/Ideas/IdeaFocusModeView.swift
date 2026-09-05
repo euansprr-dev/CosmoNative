@@ -887,7 +887,7 @@ extension IdeaFocusModeView {
         let entityType = EntityType(rawValue: mentioned.type.rawValue) ?? .idea
         let chipColor = CosmoMentionColors.color(for: entityType)
         return HStack(spacing: DS.space4) {
-            Image(systemName: mentioned.type.iconName)
+            Image(cosmo: mentioned.type.cosmoIcon)
                 .font(DS.caption2)
                 .accessibilityHidden(true)
             Text(mentioned.title ?? "Untitled")

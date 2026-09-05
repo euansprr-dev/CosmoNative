@@ -223,10 +223,11 @@ final class BlockSelectionKeyMonitor {
 
     /// Installs the local keyDown monitor (idempotent). The handler returns
     /// true when it consumed the event.
-    func install(_ handler: @escaping (NSEvent) -> Bool) {
+    func install(in window: NSWindow, _ handler: @escaping (NSEvent) -> Bool) {
         guard monitor == nil else { return }
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            handler(event) ? nil : event
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak window] event in
+            guard let window, window.isVisible, event.window === window else { return event }
+            return handler(event) ? nil : event
         }
     }
 
@@ -259,18 +260,25 @@ enum BlockSelectionClipboardAction: Equatable {
     case cut
     case copy
     case selectAll
+    case delete
 }
 
 @MainActor
 enum BlockSelectionClipboardTarget {
     private final class Target {
+        weak var window: NSWindow?
+        let owner: AnyObject?
         let isActive: () -> Bool
         let perform: (BlockSelectionClipboardAction) -> Bool
 
         init(
+            window: NSWindow?,
+            owner: AnyObject?,
             isActive: @escaping () -> Bool,
             perform: @escaping (BlockSelectionClipboardAction) -> Bool
         ) {
+            self.window = window
+            self.owner = owner
             self.isActive = isActive
             self.perform = perform
         }
@@ -279,18 +287,39 @@ enum BlockSelectionClipboardTarget {
     private static var activeTarget: Target?
 
     static func activate(
+        in window: NSWindow? = nil,
+        owner: AnyObject? = nil,
         isActive: @escaping () -> Bool,
         perform: @escaping (BlockSelectionClipboardAction) -> Bool
     ) {
-        activeTarget = Target(isActive: isActive, perform: perform)
+        activeTarget = Target(window: window, owner: owner, isActive: isActive, perform: perform)
     }
 
-    static func deactivate() {
+    static func deactivate(owner: AnyObject? = nil) {
+        if let owner, activeTarget?.owner !== owner { return }
         activeTarget = nil
     }
 
+    static var isActiveInKeyWindow: Bool {
+        guard let window = NSApp.keyWindow, window.isKeyWindow else { return false }
+        return isActive(in: window)
+    }
+
+    static func isActive(in window: NSWindow?) -> Bool {
+        guard let target = activeTarget, let host = target.window,
+              host.isVisible, host === window else { return false }
+        return target.isActive()
+    }
+
     static func send(_ action: BlockSelectionClipboardAction) -> Bool {
+        send(action, in: NSApp.keyWindow)
+    }
+
+    static func send(_ action: BlockSelectionClipboardAction, in window: NSWindow?) -> Bool {
         guard let target = activeTarget else { return false }
+        if target.owner != nil {
+            guard let host = target.window, host.isVisible, host === window else { return false }
+        }
         guard target.isActive() else {
             activeTarget = nil
             return false
@@ -302,11 +331,14 @@ enum BlockSelectionClipboardTarget {
     /// requests, or nil when the event isn't one. Text views consult this
     /// before claiming ⌘C/⌘X/⌘A for their own (collapsed) text selection.
     static func action(for event: NSEvent) -> BlockSelectionClipboardAction? {
-        guard event.type == .keyDown,
-              event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
-              let character = event.charactersIgnoringModifiers?.lowercased() else {
-            return nil
-        }
+        guard event.type == .keyDown else { return nil }
+        let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
+        if flags.isEmpty, event.keyCode == 51 || event.keyCode == 117 { return .delete }
+        // Option changes the character to ç on common layouts. The alias is
+        // physical C, and only claims events while blocks own the selection.
+        if flags == .option, event.keyCode == 8 { return .copy }
+        guard flags == .command,
+              let character = event.charactersIgnoringModifiers?.lowercased() else { return nil }
         switch character {
         case "c": return .copy
         case "x": return .cut

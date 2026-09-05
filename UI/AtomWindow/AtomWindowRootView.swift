@@ -10,13 +10,13 @@ struct AtomWindowRootView: View {
 
     var body: some View {
         atomContent
+        .environment(\.cosmoFloatingPanelIsVisible, viewModel.isPresented)
         .background(atomWindowBackdrop)
         .clipShape(.rect(cornerRadius: AtomWindowMetrics.panelCornerRadius))
         .overlay(
             RoundedRectangle(cornerRadius: AtomWindowMetrics.panelCornerRadius, style: .continuous)
                 .stroke(DS.glassBorder.opacity(0.84), lineWidth: 0.6)
         )
-        .compositingGroup()
         .padding(10)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .sheet(item: $historyAtom) { atom in
@@ -105,14 +105,14 @@ struct AtomWindowRootView: View {
     }
 
     private func handleClose() {
-        viewModel.unloadCurrentSession()
+        AtomWindowPanelController.shared.hide()
     }
 
     private func chromePayload(for atom: Atom) -> AtomWindowChromePayload {
         AtomWindowChromePayload(
             state: AtomWindowChromeState(
                 title: atom.title ?? "Untitled",
-                typeIcon: atom.type.iconName,
+                typeIcon: atom.cosmoIcon,
                 typeColor: AtomWindowChromeTypeColor(atomType: atom.type),
                 canGoBack: viewModel.canGoBack,
                 canGoForward: viewModel.canGoForward,
@@ -127,7 +127,7 @@ struct AtomWindowRootView: View {
         AtomWindowChromePayload(
             state: AtomWindowChromeState(
                 title: "Atom Window",
-                typeIcon: "atom",
+                typeIcon: .system("atom"),
                 typeColor: .neutral,
                 canGoBack: viewModel.canGoBack,
                 canGoForward: viewModel.canGoForward,
@@ -245,7 +245,7 @@ struct AtomWindowRootView: View {
             Task { await viewModel.navigate(to: atom.uuid) }
         } label: {
             HStack(spacing: DS.space10) {
-                Image(systemName: atom.type.iconName)
+                Image(cosmo: atom.cosmoIcon)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(AtomWindowViewModel.entityColor(for: atom.type))
                     .frame(width: 24, height: 24)
@@ -316,7 +316,7 @@ struct AtomWindowGenericView: View {
     private var headerSection: some View {
         VStack(alignment: .leading, spacing: DS.space8) {
             HStack(spacing: DS.space8) {
-                Image(systemName: atom.type.iconName)
+                Image(cosmo: atom.cosmoIcon)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(AtomWindowViewModel.entityColor(for: atom.type))
 

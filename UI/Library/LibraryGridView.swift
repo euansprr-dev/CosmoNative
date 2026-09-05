@@ -62,7 +62,7 @@ struct LibraryGridView: View {
                     title: item.title,
                     subtitle: item.typeName,
                     accent: item.color,
-                    symbolName: item.icon,
+                    icon: item.cosmoIcon,
                     thumbnailURL: item.thumbnailURL,
                     selectedUUIDs: { selectedUUIDs }
                 )
@@ -276,7 +276,7 @@ struct LibraryCardView: View {
     @ViewBuilder
     private var typeBadgeLabel: some View {
         HStack(spacing: 4) {
-            Image(systemName: item.icon)
+            Image(cosmo: item.cosmoIcon)
                 .font(.system(size: 10))
             Text(item.typeName)
                 .font(.system(size: 10, weight: .semibold))
@@ -512,7 +512,7 @@ struct LibraryCardView: View {
     private var defaultPreview: some View {
         VStack {
             Spacer(minLength: 0)
-            Image(systemName: item.icon)
+            Image(cosmo: item.cosmoIcon)
                 .font(.system(size: 32))
                 .foregroundColor(item.color.opacity(0.5))
             Spacer(minLength: 0)

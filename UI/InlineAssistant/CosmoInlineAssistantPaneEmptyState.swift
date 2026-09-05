@@ -35,9 +35,9 @@ enum CosmoInlineAssistantPaneEmptyStatePolicy {
             ]
         case nil:
             return [
-                .init(label: "Review this draft", prompt: "Give me honest feedback on this draft — what's working, what's weak?"),
-                .init(label: "Search my brain", prompt: "What have I saved about "),
-                .init(label: "Synthesize", prompt: "/Synthesize ")
+                .init(label: "Help me plan my day", prompt: "Help me plan my day."),
+                .init(label: "Find an idea I saved", prompt: "What have I saved about "),
+                .init(label: "Help me think this through", prompt: "Help me think this through: ")
             ]
         }
     }
@@ -53,6 +53,10 @@ enum CosmoInlineAssistantPaneEmptyStatePolicy {
         from skills: [CosmoInlineSkillDefinition]
     ) -> [CosmoInlineSkillDefinition] {
         switch kind {
+        case nil:
+            return skills.filter {
+                !$0.requiredContext.contains(.canvasState) && !$0.requiredContext.contains(.activeSurface)
+            }
         case .canvas:
             let canvasSkills = skills.filter { $0.requiredContext.contains(.canvasState) }
             let universal = skills.filter {
@@ -75,12 +79,14 @@ struct CosmoInlineAssistantPaneEmptyState: View {
     @State private var shelfSkills: [CosmoInlineSkillDefinition] = []
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DS.space16) {
+        VStack(alignment: .leading, spacing: DS.space24) {
             heading
-            skillShelf
             starterRow
+            if !shelfSkills.isEmpty { skillShelf }
         }
-        .frame(maxWidth: 460, alignment: .leading)
+        .padding(.vertical, DS.space16)
+        .frame(maxWidth: 520, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .center)
         .onAppear { reloadShelf() }
         .onChange(of: store.activeSurfaceKind) { _, _ in reloadShelf() }
         .accessibilityElement(children: .contain)
@@ -94,39 +100,22 @@ struct CosmoInlineAssistantPaneEmptyState: View {
                 for: store.activeSurfaceKind,
                 from: CosmoInlineSkillRegistry().enabledSkills
             )
-            .prefix(CosmoInlineAssistantPaneEmptyStatePolicy.maxSkillCards)
+            .prefix(2)
         )
     }
 
     private var heading: some View {
         VStack(alignment: .leading, spacing: DS.space8) {
-            Image(systemName: "sparkle")
-                .font(DS.title2.weight(.semibold))
-                .foregroundStyle(DS.accent)
-                .frame(width: 36, height: 36)
-                .background(DS.accentSoft, in: Circle())
-                .accessibilityHidden(true)
-
-            // The pane names its scope in ONE voice — the same switcher pill
-            // the header wears (clickable here too: "nothing in focus" is
-            // exactly when you'd reach for the list of open documents).
-            CosmoScopeSwitcherPill(store: store)
-
-            VStack(alignment: .leading, spacing: DS.space4) {
-                if isCanvasScope {
-                    Text("This is a thinkspace — I can see every block and cluster on it.")
-                    Text("Ask how to organize it, or just say \"organize my workspace\".")
-                    Text("Canvas changes stage as a reviewable plan — nothing moves until you approve.")
-                } else {
-                    Text("Select a sentence and tell me what to do with it — \"shorten this\" just works.")
-                    Text("Edits stage as reviewable diffs in place; formatting too (\"bold the headers\").")
-                    Text("Answers cite your documents as pills you can open.")
-                }
-            }
-            .font(DS.subheadline)
-            .italic()
-            .foregroundStyle(DS.textSecondary)
-            .fixedSize(horizontal: false, vertical: true)
+            Text("A little room\nto think together.")
+                .font(DS.displaySerif).foregroundStyle(DS.text)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(store.activeSurfaceKind == .canvas
+                ? "Find the thread, explore an idea, or give your space a new shape."
+                : store.activeSurfaceKind == nil
+                    ? "Find something you saved, work through an idea, or plan your next step."
+                    : "A fresh perspective on your draft, with your sources and your voice.")
+                .font(DS.callout).foregroundStyle(DS.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -151,24 +140,26 @@ struct CosmoInlineAssistantPaneEmptyState: View {
     }
 
     private var starterRow: some View {
-        VStack(alignment: .leading, spacing: DS.space6) {
-            Text("Or start with")
-                .font(DS.caption2.weight(.semibold))
-                .foregroundStyle(DS.textMuted)
-                .textCase(.uppercase)
-                .kerning(0.4)
-
-            HStack(spacing: DS.space6) {
-                ForEach(
-                    CosmoInlineAssistantPaneEmptyStatePolicy.starters(for: store.activeSurfaceKind),
-                    id: \.label
-                ) { starter in
-                    CosmoInlineAssistantStarterChip(label: starter.label) {
-                        store.composerText = starter.prompt
+        VStack(spacing: 0) {
+            ForEach(CosmoInlineAssistantPaneEmptyStatePolicy.starters(for: store.activeSurfaceKind), id: \.label) { starter in
+                Button {
+                    store.composerText = starter.prompt
+                    store.composerSelection = NSRange(location: (starter.prompt as NSString).length, length: 0)
+                    NotificationCenter.default.post(name: .focusCosmoComposer, object: nil)
+                } label: {
+                    HStack(spacing: DS.space12) {
+                        Text(starter.label).font(DS.callout)
+                        Spacer()
+                        Image(systemName: "arrow.up.left").font(DS.caption).foregroundStyle(DS.textMuted)
                     }
-                }
+                    .foregroundStyle(DS.textSecondary)
+                    .padding(.horizontal, DS.space12).frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                }.buttonStyle(CompanionPressStyle()).help(starter.label)
             }
         }
+        .padding(.vertical, DS.space4)
+        .background(DS.surface, in: .rect(cornerRadius: 14))
     }
 }
 

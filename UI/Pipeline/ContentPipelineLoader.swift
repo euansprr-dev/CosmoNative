@@ -36,11 +36,24 @@ struct PipelineContentItem: Identifiable, Equatable, Sendable {
     let wordCount: Int
     let updatedAt: Date
     let phaseEnteredAt: Date?
+    /// The stage written by a deliberate move; nil when the piece has never
+    /// been staged and the board must derive one from evidence.
     var editorialStage: ContentProductionStage? = nil
+    /// Media routed onto the piece (`attachmentUUIDs`), resolved ONCE at load
+    /// to the first rendered thumbnail — the card's cover.
+    var attachmentUUIDs: [String] = []
+    var coverPath: String? = nil
 
     var id: String { atom.uuid }
 
-    var productionStage: ContentProductionStage { phase.isShipped ? .published : (editorialStage ?? .inProgress) }
+    /// Board law: explicit stage wins; shipped phases are published; a date,
+    /// words or editing activity mean in progress; otherwise not started.
+    var productionStage: ContentProductionStage {
+        if phase.isShipped { return .published }
+        if let editorialStage { return editorialStage }
+        return ContentProductionStage.showsEvidenceOfWork(phase: phase, scheduled: scheduledAt != nil, wordCount: wordCount)
+            ? .inProgress : .notStarted
+    }
 
     var isShipped: Bool { productionStage == .published }
 
@@ -112,7 +125,22 @@ enum ContentPipelineLoader {
             return try Workspace(content: rows(archived: false), archived: rows(archived: true), clients: clients)
         }
         ClientColorResolver.shared.refresh(with: workspace.clients.map { (uuid: $0.uuid, colorHex: $0.colorHex) })
-        return workspace
+        return Workspace(content: await withCovers(workspace.content), archived: workspace.archived, clients: workspace.clients)
+    }
+
+    /// One `fetch(uuids:)` for every attachment the batch references; the
+    /// first attachment with a rendered thumbnail is the card's cover.
+    private static func withCovers(_ items: [PipelineContentItem]) async -> [PipelineContentItem] {
+        let uuids = Array(Set(items.flatMap(\.attachmentUUIDs)))
+        guard !uuids.isEmpty,
+              let attachments = try? await MediaAttachmentRepository.shared.fetch(uuids: uuids) else { return items }
+        let thumbs = Dictionary(attachments.compactMap { attachment in attachment.thumbnailPath.map { (attachment.uuid, $0) } },
+                                uniquingKeysWith: { first, _ in first })
+        return items.map { item in
+            var item = item
+            item.coverPath = item.attachmentUUIDs.lazy.compactMap { thumbs[$0] }.first
+            return item
+        }
     }
 
     /// Live (non-archived) content in `scope`, newest edit first, no row cap.
@@ -223,10 +251,11 @@ enum ContentPipelineLoader {
         var scheduledAt: String?
         var scheduledDate: String?
         var status: String?
+        var attachmentUUIDs: [String]?
 
         private enum CodingKeys: String, CodingKey {
             case phase, phaseBeforeSchedule, clientProfileUUID, platform, contentFormat, productionStage
-            case wordCount, sourceIdeaUUID, phaseEnteredAt, scheduledAt, scheduledDate, status
+            case wordCount, sourceIdeaUUID, phaseEnteredAt, scheduledAt, scheduledDate, status, attachmentUUIDs
         }
 
         init(from decoder: Decoder) throws {
@@ -245,6 +274,7 @@ enum ContentPipelineLoader {
             scheduledAt = Self.string(c, .scheduledAt)
             scheduledDate = Self.string(c, .scheduledDate)
             status = Self.string(c, .status)
+            attachmentUUIDs = try? c.decodeIfPresent([String].self, forKey: .attachmentUUIDs)
         }
 
         private static func string(_ c: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys) -> String? {
@@ -265,7 +295,7 @@ enum ContentPipelineLoader {
         for (atom, lens) in zip(atoms, lenses) {
             items.append(makeItem(atom: atom, lens: lens, clientNames: names))
         }
-        return items
+        return await withCovers(items)
     }
 
     private static func makeItem(atom: Atom, lens: RowLens?, clientNames: [String: String]) -> PipelineContentItem {
@@ -286,7 +316,8 @@ enum ContentPipelineLoader {
             wordCount: lens?.wordCount ?? bodyWordCount(atom.body),
             updatedAt: ISO8601.date(from: atom.updatedAt) ?? .distantPast,
             phaseEnteredAt: isoDate(lens?.phaseEnteredAt),
-            editorialStage: lens?.productionStage
+            editorialStage: lens?.productionStage,
+            attachmentUUIDs: lens?.attachmentUUIDs ?? []
         )
     }
 

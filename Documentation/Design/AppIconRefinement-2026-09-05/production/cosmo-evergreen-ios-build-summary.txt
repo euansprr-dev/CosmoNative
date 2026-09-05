@@ -1,0 +1,4 @@
+Command line invocation:
+    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -project CosmoOS-iOS.xcodeproj -scheme CosmoiOS -configuration Debug -destination "platform=iOS Simulator,id=6ED6E5D5-D80B-4B39-BDD3-F83F3A68DA2D" -disableAutomaticPackageResolution -jobs 2 build
+/Users/euanspencer/CosmoOS-iOS/CosmoiOS/Sources/Shared/CosmoMasthead.swift:36:15: error: cannot find type 'CosmoIcon' in scope
+** BUILD FAILED **

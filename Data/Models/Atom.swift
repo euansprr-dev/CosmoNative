@@ -435,16 +435,16 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
     var iconName: String {
         switch self {
         // Core
-        case .idea: return "lightbulb.fill"
-        case .task: return "checkmark.circle.fill"
-        case .project: return "folder.fill"
-        case .content: return "doc.text.fill"
-        case .research: return "magnifyingglass"
-        case .connection: return "link"
+        case .idea: return CosmoIcon.idea.systemName
+        case .task: return CosmoIcon.task.systemName
+        case .project: return CosmoIcon.project.systemName
+        case .content: return CosmoIcon.content.systemName
+        case .research: return CosmoIcon.research.systemName
+        case .connection: return CosmoIcon.concept.systemName
         case .journalEntry: return "book.fill"
-        case .calendarEvent: return "calendar"
+        case .calendarEvent: return CosmoIcon.calendar.systemName
         case .scheduleBlock: return "clock.fill"
-        case .uncommittedItem: return "tray.fill"
+        case .uncommittedItem: return CosmoIcon.inbox.systemName
         // Leveling
         case .xpEvent: return "sparkles"
         case .levelUpdate: return "arrow.up.circle.fill"
@@ -476,7 +476,7 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         case .contentPhase: return "arrow.right.circle.fill"
         case .contentPerformance: return "chart.line.uptrend.xyaxis"
         case .contentPublish: return "paperplane.fill"
-        case .clientProfile: return "person.crop.circle.fill"
+        case .clientProfile: return CosmoIcon.clients.systemName
         // Knowledge
         case .semanticCluster: return "circle.hexagongrid.fill"
         case .connectionLink: return "arrow.triangle.branch"
@@ -502,13 +502,13 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         case .livingInsight: return "sparkle"
         case .syncState: return "arrow.triangle.2.circlepath.circle"
         // Thinkspace
-        case .note: return "note.text"
+        case .note: return CosmoIcon.note.systemName
         case .stickyNote: return "square.and.pencil"
-        case .thinkspace: return "rectangle.3.group"
+        case .thinkspace: return CosmoIcon.space.systemName
         // Planning
         case .objective: return "target"
         // Swipe Intelligence Taxonomy
-        case .creator: return "person.crop.rectangle.fill"
+        case .creator: return CosmoIcon.creators.systemName
         case .taxonomyValue: return "tag.fill"
         // Agent Learning
         case .agentLearning: return "brain"
@@ -517,7 +517,7 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         // File portal
         case .file: return "doc.fill"
         // Areas
-        case .area: return "square.stack.fill"
+        case .area: return CosmoIcon.area.systemName
         // Automation
         case .automation: return "bolt.fill"
         // Smart Templates

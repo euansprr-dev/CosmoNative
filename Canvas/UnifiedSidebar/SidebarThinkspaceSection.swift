@@ -1,7 +1,8 @@
 // CosmoOS/Canvas/UnifiedSidebar/SidebarThinkspaceSection.swift
-// Spaces list with keyboard nav, inline rename, and per-space identity marks.
-// Creation and settings live in the Space composer sheet (one grammar) —
-// this section only asks for it via `presentSpaceComposer`.
+// The spaces list — an outline in the one row grammar, with keyboard nav,
+// inline rename, nest-by-drag and per-space identity marks. Creation and
+// settings live in the Space composer sheet; this section only asks for it
+// via `SpaceComposerRequest`.
 // March 2026 — Command Center navigation · Sept 2026 — Spaces
 
 import SwiftUI
@@ -9,39 +10,16 @@ import AppKit
 
 // MARK: - Sidebar Thinkspace Section
 
-private struct ThinkspaceInquirySidebarSummary: Equatable {
-    var activeSessionCount: Int = 0
-    var questionCount: Int = 0
-    var sourceCount: Int = 0
-    var claimCount: Int = 0
-    var conceptCount: Int = 0
-    var outputCount: Int = 0
-    var unmappedCount: Int = 0
-
-    var hasVisibleSignal: Bool {
-        activeSessionCount + questionCount + sourceCount + claimCount + conceptCount + outputCount + unmappedCount > 0
-    }
-
-    var compactLabel: String {
-        if unmappedCount > 0 { return "\(unmappedCount)" }
-        if activeSessionCount > 0 { return "\(activeSessionCount)" }
-        return "\(questionCount + sourceCount + claimCount)"
-    }
-}
-
 struct SidebarThinkspaceSection: View {
     var manager: ThinkspaceManager
     @Binding var currentDestination: SidebarDestination
-    let isCollapsed: Bool
     var onNavigate: () -> Void = {}
     @EnvironmentObject var crossDragManager: CrossThinkspaceDragManager
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     // Hover
     @State private var hoveredThinkspaceId: String?
-    @State private var isNewSpaceRowHovered = false
     @State private var isEmptyStateHovered = false
-    @State private var hoveredChildDocId: String?
     @State private var hoverPrewarmTask: Task<Void, Never>?
 
     // Rename
@@ -49,26 +27,26 @@ struct SidebarThinkspaceSection: View {
     @State private var renameText: String = ""
     @FocusState private var isRenameFieldFocused: Bool
 
-    // Child docs expand
+    // Outline
     @State private var expandedThinkspaces: Set<String> = []
-    @State private var expandedCanvasItemGroups: Set<String> = []
-    @State private var childDocsLoading: Set<String> = []
-    @State private var inquirySummaries: [String: ThinkspaceInquirySidebarSummary] = [:]
 
-    // Row-to-row nesting drag (reparent a Thinkspace by dragging it onto another)
+    // Row-to-row nesting drag (reparent a space by dragging it onto another)
     @State private var reparentDropTargetId: String?
     @State private var nestDragSourceId: String?
     @State private var nestDragTranslation: CGSize = .zero
 
     // Keyboard
     @State private var selectedIndex: Int = 0
-    @State private var isKeyboardNavigating: Bool = false
     @FocusState private var isSectionFocused: Bool
 
     private let colorOptions = ThinkspaceColorOption.defaultOptions
 
     private var hoverAnimation: Animation? {
-        reduceMotion ? .easeOut(duration: 0.15) : ProMotionSprings.hover
+        reduceMotion ? nil : ProMotionSprings.hover
+    }
+
+    private var actionAnimation: Animation? {
+        reduceMotion ? nil : ProMotionSprings.snappy
     }
 
     /// Hover intent → prewarm: a brief dwell on a sidebar row predicts a
@@ -89,29 +67,30 @@ struct SidebarThinkspaceSection: View {
         }
     }
 
-    private var actionAnimation: Animation? {
-        reduceMotion ? .easeOut(duration: 0.15) : ProMotionSprings.snappy
-    }
+    // MARK: - Data
 
-    // MARK: - Filtered Thinkspaces
-
-    private var filteredThinkspaces: [Thinkspace] {
-        return manager.sidebarThinkspaces
+    private var rootThinkspaces: [Thinkspace] {
+        manager.sidebarThinkspaces
             .filter { $0.parentThinkspaceId == nil }
             .sorted { $0.lastOpened > $1.lastOpened }
     }
 
-    // MARK: - Navigable Items
-
-    private var allNavigableItems: [ThinkspaceNavigatorItem] {
-        var items: [ThinkspaceNavigatorItem] = []
-        for thinkspace in filteredThinkspaces {
-            appendNavigationItems(from: thinkspace, level: 0, into: &items)
+    /// Every row currently on screen, in reading order (keyboard path).
+    private var visibleThinkspaces: [Thinkspace] {
+        var items: [Thinkspace] = []
+        for thinkspace in rootThinkspaces {
+            appendVisible(from: thinkspace, into: &items)
         }
         return items
     }
 
-    // MARK: - Active Thinkspace ID
+    private func appendVisible(from thinkspace: Thinkspace, into items: inout [Thinkspace]) {
+        items.append(thinkspace)
+        guard expandedThinkspaces.contains(thinkspace.id) else { return }
+        for child in manager.childThinkspaces(of: thinkspace.id) {
+            appendVisible(from: child, into: &items)
+        }
+    }
 
     private var activeThinkspaceId: String? {
         if case .thinkspace(let id) = currentDestination {
@@ -123,32 +102,31 @@ struct SidebarThinkspaceSection: View {
     // MARK: - Body
 
     var body: some View {
-        VStack(spacing: isCollapsed ? 10 : 12) {
-            sectionHeader
-
-            if isCollapsed {
-                collapsedThinkspaceStack
+        SidebarSection(title: "Library", count: rootThinkspaces.count) {
+            if rootThinkspaces.isEmpty {
+                emptyState
             } else {
-                thinkspaceList
+                ForEach(rootThinkspaces) { thinkspace in
+                    thinkspaceRow(thinkspace, level: 0)
+                }
+                SidebarRow(title: "New space…", mark: .symbol("plus"), prominence: .ghost, help: "New space") {
+                    SpaceComposerRequest.post(.create(parentId: nil))
+                }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
         .focused($isSectionFocused)
         .focusable()
         .focusEffectDisabled()
-        .onKeyPress(.downArrow) { guard !isCollapsed else { return .ignored }; handleKeyDown(); return .handled }
-        .onKeyPress(.upArrow) { guard !isCollapsed else { return .ignored }; handleKeyUp(); return .handled }
-        .onKeyPress(.return) {
-            guard !isCollapsed else { return .ignored }
-            handleKeyReturn(); return .handled
+        .onKeyPress(.downArrow) { moveSelection(by: 1); return .handled }
+        .onKeyPress(.upArrow) { moveSelection(by: -1); return .handled }
+        .onKeyPress(.return) { handleKeyReturn(); return .handled }
+        .onKeyPress(.escape) {
+            guard renamingThinkspaceId != nil else { return .ignored }
+            cancelRename()
+            return .handled
         }
-        .onKeyPress(.escape) { guard !isCollapsed else { return .ignored }; handleKeyEscape(); return .handled }
-        .onKeyPress(.rightArrow) { guard !isCollapsed else { return .ignored }; handleKeyRight(); return .handled }
-        .onKeyPress(.leftArrow) { guard !isCollapsed else { return .ignored }; handleKeyLeft(); return .handled }
-        // Legacy creation request → the one composer grammar.
-        .onReceive(NotificationCenter.default.publisher(for: .sidebarCreateThinkspace)) { _ in
-            SpaceComposerRequest.post(.create(parentId: nil))
-        }
+        .onKeyPress(.rightArrow) { setSelectedExpanded(true); return .handled }
+        .onKeyPress(.leftArrow) { setSelectedExpanded(false); return .handled }
         // A space made inside another: open the parent so the new row shows.
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.spaceComposerDidCreate)) { notification in
             guard let created = SpaceComposerCreated(from: notification),
@@ -160,116 +138,61 @@ struct SidebarThinkspaceSection: View {
         }
     }
 
-    // MARK: - Section Header
+    // MARK: - Rows
 
-    private var sectionHeader: some View {
-        HStack(spacing: 6) {
-            if isCollapsed {
-                Image(systemName: "rectangle.3.group")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(DS.textSecondary)
-                    .frame(width: UnifiedSidebarMetrics.railHitTarget, height: UnifiedSidebarMetrics.railHitTarget)
-                    .frame(maxWidth: .infinity)
-            } else {
-                Text("Spaces")
-                    .font(.system(size: 10, weight: .semibold))
-                    .textCase(.uppercase)
-                    .foregroundStyle(DS.textMuted)
-                    .padding(.horizontal, 8)
-                    .padding(.top, 4)
-
-                Text("\(filteredThinkspaces.count)")
-                    .font(DS.caption.monospacedDigit())
-                    .foregroundStyle(DS.textMuted)
-                    .contentTransition(.numericText())
-                    .animation(actionAnimation, value: filteredThinkspaces.count)
-                    .padding(.top, 4)
-
-                Spacer()
-
-                createThinkspaceButton
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    // MARK: - Thinkspace List
-
-    @ViewBuilder
-    private var thinkspaceList: some View {
-        let items = filteredThinkspaces
-        if items.isEmpty {
-            thinkspaceEmptyState
-        } else {
-            VStack(spacing: 6) {
-                ForEach(items) { thinkspace in
-                    thinkspaceRow(thinkspace, level: 0)
-                }
-                newSpaceGhostRow
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var collapsedThinkspaceStack: some View {
-        let items = Array(filteredThinkspaces.prefix(4))
-
-        VStack(spacing: 8) {
-            if items.isEmpty {
-                EmptyView()
-            } else {
-                ForEach(items) { thinkspace in
-                    thinkspaceRow(thinkspace, level: 0)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity)
-    }
-
+    /// A row and, when open, its children beneath it. The chrome and the
+    /// drop frame belong to the row surface alone — children are siblings,
+    /// so a drop lands on exactly one row.
     private func thinkspaceRow(_ thinkspace: Thinkspace, level: Int) -> some View {
-        let rowColor = thinkspace.accentColor
+        let isExpanded = expandedThinkspaces.contains(thinkspace.id)
+
+        return VStack(spacing: UnifiedSidebarMetrics.rowSpacing) {
+            rowSurface(thinkspace, level: level)
+
+            if isExpanded {
+                childRows(manager.childThinkspaces(of: thinkspace.id), level: level + 1)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func childRows(_ children: [Thinkspace], level: Int) -> some View {
+        ForEach(children) { child in
+            AnyView(thinkspaceRow(child, level: level))
+        }
+    }
+
+    private func rowSurface(_ thinkspace: Thinkspace, level: Int) -> some View {
+        let color = thinkspace.accentColor
         let isActive = activeThinkspaceId == thinkspace.id
         let isHovered = hoveredThinkspaceId == thinkspace.id
-        let isExpanded = expandedThinkspaces.contains(thinkspace.id)
         let isRenaming = renamingThinkspaceId == thinkspace.id
         let isBlockDropTarget =
             crossDragManager.isDragging &&
             crossDragManager.isOverSidebar &&
             crossDragManager.hoveredThinkspaceId == thinkspace.id
-        // A sibling Thinkspace is being dragged onto this row to nest it.
-        let isReparentTarget = reparentDropTargetId == thinkspace.id
-        let isDropTarget = isBlockDropTarget || isReparentTarget
+        // A sibling space is being dragged onto this row to nest it.
+        let isDropTarget = isBlockDropTarget || reparentDropTargetId == thinkspace.id
         // Discrete flag only — the 60Hz pulse value is read inside the row
         // chrome (via the pulse host), never here, so ticks don't re-evaluate
         // the whole section body.
         let isSpringLoadCandidate = crossDragManager.isSpringLoadCandidate(thinkspace.id)
+        let isDragSource = nestDragSourceId == thinkspace.id
 
-        return VStack(alignment: .leading, spacing: 0) {
-            if isRenaming && !isCollapsed {
-                thinkspaceRenameRow(thinkspace)
+        return Group {
+            if isRenaming {
+                renameRow(thinkspace, level: level)
             } else {
-                thinkspaceRowLabel(
-                    thinkspace,
-                    isActive: isActive,
-                    isHovered: isHovered,
-                    isExpanded: isExpanded,
-                    level: level
-                )
-            }
-
-            if isExpanded && !isCollapsed {
-                childDocsSection(for: thinkspace, level: level)
+                rowLabel(thinkspace, isActive: isActive, isHovered: isHovered, level: level)
             }
         }
         .modifier(ThinkspaceRowChrome(
             thinkspaceId: thinkspace.id,
-            isActive: isActive,
-            isHovered: isHovered,
             isDropTarget: isDropTarget,
             isSpringLoadCandidate: isSpringLoadCandidate,
             pulseHost: crossDragManager.springLoadPulseHost,
-            accentColor: rowColor,
-            fillColor: thinkspaceRowFill(color: rowColor, isActive: isActive, isHovered: isHovered, isDropTarget: isDropTarget)
+            accentColor: color,
+            fillColor: rowFill(color: color, isActive: isActive, isHovered: isHovered, isDropTarget: isDropTarget)
         ))
         .onHover { hovering in
             hoveredThinkspaceId = hovering ? thinkspace.id : nil
@@ -285,10 +208,114 @@ struct SidebarThinkspaceSection: View {
         // sidebar rows (the row chrome/controls swallow the drop), so we
         // detect the target ourselves by hit-testing the live row frames the
         // section already publishes into `crossDragManager.thinkspaceRowFrames`.
-        .opacity(nestDragSourceId == thinkspace.id ? 0.5 : 1)
-        .offset(nestDragSourceId == thinkspace.id ? nestDragTranslation : .zero)
-        .zIndex(nestDragSourceId == thinkspace.id ? 10 : 0)
+        .opacity(isDragSource ? 0.5 : 1)
+        .offset(isDragSource ? nestDragTranslation : .zero)
+        .zIndex(isDragSource ? 10 : 0)
         .gesture(rowNestDragGesture(for: thinkspace))
+        .accessibilityAddTraits(isActive ? .isSelected : [])
+    }
+
+    private func rowLabel(_ thinkspace: Thinkspace, isActive: Bool, isHovered: Bool, level: Int) -> some View {
+        HStack(spacing: DS.space8) {
+            if level > 0 {
+                Color.clear.frame(width: CGFloat(level) * UnifiedSidebarMetrics.nestIndent, height: 1)
+            }
+
+            identityWell(thinkspace, isActive: isActive, isHovered: isHovered)
+
+            // Plain tap target (not a Button): a Button sits frontmost and
+            // swallows the block drop that targets this row. `.onTapGesture`
+            // keeps selection working while letting drops through — same
+            // pattern as the dashboard task rows.
+            HStack(spacing: DS.space8) {
+                Text(thinkspace.identityLabel)
+                    .font(DS.callout.weight(.medium))
+                    .foregroundStyle(isActive ? DS.text : DS.textSecondary)
+                    .lineLimit(1)
+
+                Spacer(minLength: DS.space8)
+
+                if thinkspace.blockCount > 0 {
+                    Text("\(thinkspace.blockCount)")
+                        .font(DS.caption.monospacedDigit())
+                        .foregroundStyle(isActive ? DS.textSecondary : DS.textMuted)
+                        .contentTransition(.numericText())
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: UnifiedSidebarMetrics.rowHeight, alignment: .leading)
+            .contentShape(Rectangle())
+            .onTapGesture { selectThinkspace(thinkspace) }
+            .help("\(thinkspace.identityLabel) · \((thinkspace.kind ?? .custom).title)")
+            // A tap gesture exposes no AX action — VoiceOver (and any
+            // automation) needs the row to press like the Button it isn't.
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityLabel(thinkspace.identityLabel)
+            .accessibilityAction { selectThinkspace(thinkspace) }
+        }
+        .padding(.horizontal, UnifiedSidebarMetrics.rowInset)
+        .frame(maxWidth: .infinity, minHeight: UnifiedSidebarMetrics.rowHeight, alignment: .leading)
+    }
+
+    /// The identity mark rests in the glyph column; hovering a row that holds
+    /// children swaps in the disclosure chevron (Finder's on-hover triangle,
+    /// without a gutter — labels stay on one column).
+    private func identityWell(_ thinkspace: Thinkspace, isActive: Bool, isHovered: Bool) -> some View {
+        let isExpandable = !manager.childThinkspaces(of: thinkspace.id).isEmpty
+        let isExpanded = expandedThinkspaces.contains(thinkspace.id)
+        let showsDisclosure = isExpandable && isHovered
+
+        return ZStack {
+            SpaceIdentityMark(thinkspace: thinkspace, size: UnifiedSidebarMetrics.glyphWidth)
+                .opacity(showsDisclosure ? 0 : (isActive ? 1 : 0.86))
+                .scaleEffect(showsDisclosure ? 0.84 : 1)
+
+            Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                .font(DS.caption2.weight(.bold))
+                .foregroundStyle(thinkspace.accentColor)
+                .opacity(showsDisclosure ? 1 : 0)
+                .scaleEffect(showsDisclosure ? 1 : 0.8)
+        }
+        .frame(width: UnifiedSidebarMetrics.glyphWidth, height: UnifiedSidebarMetrics.glyphWidth)
+        .animation(hoverAnimation, value: showsDisclosure)
+        .animation(hoverAnimation, value: isExpanded)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard isExpandable else { return }
+            toggleExpand(thinkspace)
+        }
+        .accessibilityLabel(
+            isExpandable
+                ? "\(isExpanded ? "Collapse" : "Expand") \(thinkspace.identityLabel)"
+                : thinkspace.identityLabel
+        )
+        .accessibilityAddTraits(isExpandable ? .isButton : [])
+        .accessibilityAction {
+            guard isExpandable else { return }
+            toggleExpand(thinkspace)
+        }
+        .help(isExpandable ? (isExpanded ? "Collapse" : "Expand") : thinkspace.identityLabel)
+    }
+
+    // MARK: - Rename Row
+
+    private func renameRow(_ thinkspace: Thinkspace, level: Int) -> some View {
+        HStack(spacing: DS.space8) {
+            if level > 0 {
+                Color.clear.frame(width: CGFloat(level) * UnifiedSidebarMetrics.nestIndent, height: 1)
+            }
+
+            SpaceIdentityMark(thinkspace: thinkspace, size: UnifiedSidebarMetrics.glyphWidth)
+
+            TextField("Name", text: $renameText)
+                .textFieldStyle(.plain)
+                .font(DS.callout.weight(.medium))
+                .foregroundStyle(DS.text)
+                .focused($isRenameFieldFocused)
+                .onSubmit { commitRename(thinkspace) }
+                .onExitCommand { cancelRename() }
+        }
+        .sidebarInlineFieldChrome()
     }
 
     // MARK: - Row Nesting Drag
@@ -300,8 +327,8 @@ struct SidebarThinkspaceSection: View {
         }?.key
     }
 
-    /// Drag a Thinkspace row onto another to nest it. Reparenting only moves the
-    /// dragged Thinkspace, so anything already nested inside it rides along.
+    /// Drag a space row onto another to nest it. Reparenting only moves the
+    /// dragged space, so anything already nested inside it rides along.
     private func rowNestDragGesture(for thinkspace: Thinkspace) -> some Gesture {
         DragGesture(minimumDistance: 8, coordinateSpace: .global)
             .onChanged { value in
@@ -331,442 +358,6 @@ struct SidebarThinkspaceSection: View {
             }
     }
 
-
-    @ViewBuilder
-    private func thinkspaceRowLabel(
-        _ thinkspace: Thinkspace,
-        isActive: Bool,
-        isHovered: Bool,
-        isExpanded: Bool,
-        level: Int
-    ) -> some View {
-        let color = thinkspace.accentColor
-        let isExpandable = thinkspaceIsExpandable(thinkspace)
-        let rowHeight = level > 0 ? CGFloat(34) : UnifiedSidebarMetrics.thinkspaceRowHeight
-        let textSize = level > 0 ? CGFloat(12) : CGFloat(13)
-        let rowLeadingPadding = level > 0 ? CGFloat(0) : CGFloat(8)
-
-        if isCollapsed {
-            Button {
-                selectThinkspace(thinkspace)
-            } label: {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(isActive ? color.opacity(DS.palette.isDark ? 0.18 : 0.14) : Color.clear)
-                    .frame(width: UnifiedSidebarMetrics.railHitTarget, height: UnifiedSidebarMetrics.railHitTarget)
-                    .overlay(
-                        SpaceIdentityMark(thinkspace: thinkspace, size: 16)
-                            .opacity(isActive ? 1.0 : 0.82)
-                    )
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .frame(maxWidth: .infinity)
-            .help("\(thinkspace.identityLabel) · \((thinkspace.kind ?? .custom).title)")
-            .accessibilityLabel(thinkspace.identityLabel)
-            .accessibilityAddTraits(isActive ? .isSelected : [])
-        } else {
-            HStack(spacing: 8) {
-                if level > 0 {
-                    Rectangle()
-                        .fill(DS.borderSubtle.opacity(isActive ? 0.78 : 0.56))
-                        .frame(width: 10, height: 1)
-                }
-
-                thinkspaceAvatarButton(
-                    thinkspace,
-                    color: color,
-                    isActive: isActive,
-                    isHovered: isHovered,
-                    isExpanded: isExpanded,
-                    isExpandable: isExpandable,
-                    level: level
-                )
-
-                // Plain tap target (not a Button): a Button sits frontmost and
-                // swallows drag-and-drop, blocking the row's `.onDrop` nest
-                // target. `.onTapGesture` keeps selection working while letting
-                // drops through — same pattern as the dashboard task rows.
-                HStack(spacing: 8) {
-                    Text(thinkspace.identityLabel)
-                        .font(.system(size: textSize, weight: isActive ? .semibold : .medium))
-                        .foregroundStyle(isActive ? DS.text : DS.textSecondary)
-                        .lineLimit(1)
-
-                    Spacer()
-
-                    HStack(spacing: 8) {
-                        let nestedCount = manager.childThinkspaces(of: thinkspace.id).count
-                        if nestedCount > 0 && level == 0 {
-                            Label("\(nestedCount)", systemImage: "rectangle.stack")
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(DS.textMuted)
-                        }
-
-                        Text("\(thinkspace.blockCount)")
-                            .font(.system(size: 11, weight: .semibold, design: .rounded))
-                            .foregroundStyle(isActive ? color.opacity(0.92) : DS.textMuted)
-                            .frame(minWidth: 22, alignment: .trailing)
-                    }
-                }
-                .frame(maxWidth: .infinity, minHeight: rowHeight, alignment: .leading)
-                .contentShape(Rectangle())
-                .onTapGesture { selectThinkspace(thinkspace) }
-                .help("\(thinkspace.identityLabel) · \((thinkspace.kind ?? .custom).title)")
-            }
-            .padding(.leading, rowLeadingPadding)
-            .padding(.trailing, 8)
-            .frame(maxWidth: .infinity, minHeight: rowHeight, alignment: .leading)
-        }
-    }
-
-    @ViewBuilder
-    private func thinkspaceAvatarButton(
-        _ thinkspace: Thinkspace,
-        color: Color,
-        isActive: Bool,
-        isHovered: Bool,
-        isExpanded: Bool,
-        isExpandable: Bool,
-        level: Int
-    ) -> some View {
-        let avatarForeground = color.opacity(isActive ? 1.0 : 0.86)
-        let showsDisclosure = isExpandable && isHovered
-        let avatarSize = level > 0 ? CGFloat(22) : CGFloat(24)
-
-        // Plain tap target (not a Button) so it doesn't block the row's drop.
-        Color.clear
-            .frame(width: avatarSize, height: avatarSize)
-            .overlay {
-                ZStack {
-                    // The identity mark rests here; hover swaps in the disclosure
-                    // chevron when the row can actually hold children.
-                    SpaceIdentityMark(thinkspace: thinkspace, size: level > 0 ? 14 : 16)
-                        .opacity(showsDisclosure ? 0 : (isActive ? 1.0 : 0.86))
-                        .scaleEffect(showsDisclosure ? 0.84 : 1)
-
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(avatarForeground)
-                        .opacity(showsDisclosure ? 1 : 0)
-                        .scaleEffect(showsDisclosure ? 1 : 0.8)
-                }
-                .animation(hoverAnimation, value: showsDisclosure)
-                .animation(hoverAnimation, value: isExpanded)
-            }
-            .contentShape(Rectangle())
-            .onTapGesture {
-                guard isExpandable else { return }
-                toggleExpand(thinkspace)
-            }
-            .accessibilityLabel(
-                isExpandable
-                    ? "\(isExpanded ? "Collapse" : "Expand") \(thinkspace.identityLabel)"
-                    : thinkspace.identityLabel
-            )
-            .help(
-                isExpandable
-                    ? (isExpanded ? "Collapse contents" : "Expand contents")
-                    : thinkspace.identityLabel
-            )
-    }
-
-    // MARK: - Rename Row
-
-    private func thinkspaceRenameRow(_ thinkspace: Thinkspace) -> some View {
-        HStack(spacing: 8) {
-            SpaceIdentityMark(thinkspace: thinkspace, size: 16)
-                .frame(width: 24, height: 24)
-
-            TextField("Name", text: $renameText)
-                .textFieldStyle(.plain)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(DS.text)
-                .focused($isRenameFieldFocused)
-                .onSubmit { commitRename(thinkspace) }
-                .onExitCommand { cancelRename() }
-        }
-        .padding(.horizontal, 10)
-        .frame(maxWidth: .infinity, minHeight: UnifiedSidebarMetrics.thinkspaceRowHeight, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.rowRadius, style: .continuous)
-                .fill(DS.bg)
-                .overlay(
-                    RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.rowRadius, style: .continuous)
-                        .stroke(DS.accent.opacity(0.22), lineWidth: 1)
-                )
-        )
-    }
-
-    // MARK: - Child Docs
-
-    @ViewBuilder
-    private func childDocsSection(for thinkspace: Thinkspace, level: Int) -> some View {
-        let childThinkspaces = manager.childThinkspaces(of: thinkspace.id)
-        let hasChildBranch = !childThinkspaces.isEmpty
-
-        // Only draw the branch (connector line + padding) when there's actually
-        // a child to show. Otherwise an expanded-but-empty Thinkspace — e.g.
-        // right after un-nesting its last child — leaves a dangling stub line
-        // and a vertical gap.
-        if hasChildBranch {
-            HStack(alignment: .top, spacing: 10) {
-                Rectangle()
-                    .fill(DS.borderSubtle)
-                    .frame(width: 1)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    childThinkspaceRows(
-                        childThinkspaces,
-                        parent: thinkspace,
-                        level: level
-                    )
-                }
-            }
-            .padding(.leading, level == 0 ? 30 : 48)
-            .padding(.top, 4)
-            .padding(.bottom, 6)
-        }
-    }
-
-    @ViewBuilder
-    private func childThinkspaceRows(_ childThinkspaces: [Thinkspace], parent: Thinkspace, level: Int) -> some View {
-        ForEach(childThinkspaces) { childThinkspace in
-            AnyView(thinkspaceRow(childThinkspace, level: level + 1))
-        }
-    }
-
-    @ViewBuilder
-    private func parentCanvasItemsGroup(_ docs: [ChildDoc], thinkspace: Thinkspace, level: Int, shouldCollapse: Bool) -> some View {
-        if !docs.isEmpty {
-            if shouldCollapse {
-                canvasItemsDisclosureRow(thinkspace: thinkspace, count: docs.count)
-
-                if expandedCanvasItemGroups.contains(thinkspace.id) {
-                    ForEach(docs) { doc in
-                        sidebarChildDocRow(doc, level: level + 2)
-                    }
-                }
-            } else {
-                ForEach(docs) { doc in
-                    sidebarChildDocRow(doc, level: level + 1)
-                }
-            }
-        }
-    }
-
-    private var emptyChildState: some View {
-        Text("No blocks")
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(DS.textMuted)
-    }
-
-    private func branchGroupLabel(_ title: String, count: Int) -> some View {
-        HStack(spacing: 6) {
-            Text(title)
-                .font(.system(size: 9, weight: .semibold))
-                .textCase(.uppercase)
-                .foregroundStyle(DS.textMuted)
-
-            Text("\(count)")
-                .font(.system(size: 9, weight: .semibold, design: .rounded))
-                .foregroundStyle(DS.textMuted.opacity(0.82))
-
-            Spacer()
-        }
-        .padding(.leading, 2)
-        .padding(.top, 2)
-        .frame(maxWidth: .infinity, minHeight: 18, alignment: .leading)
-    }
-
-    private func canvasItemsDisclosureRow(thinkspace: Thinkspace, count: Int) -> some View {
-        let isExpanded = expandedCanvasItemGroups.contains(thinkspace.id)
-
-        return Button {
-            withAnimation(actionAnimation) {
-                if isExpanded {
-                    expandedCanvasItemGroups.remove(thinkspace.id)
-                } else {
-                    expandedCanvasItemGroups.insert(thinkspace.id)
-                }
-            }
-        } label: {
-            HStack(spacing: 7) {
-                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(DS.textMuted)
-                    .frame(width: 10)
-
-                Image(systemName: "square.stack.3d.down.right")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(DS.textMuted)
-                    .frame(width: 14)
-
-                Text("\(thinkspace.identityLabel) Items")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(DS.textSecondary)
-                    .lineLimit(1)
-
-                Spacer()
-
-                Text("\(count)")
-                    .font(.system(size: 10, weight: .semibold, design: .rounded))
-                    .foregroundStyle(DS.textMuted)
-            }
-            .padding(.leading, 2)
-            .padding(.trailing, 8)
-            .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("\(isExpanded ? "Collapse" : "Expand") canvas items in \(thinkspace.identityLabel)")
-    }
-
-    private func inquiryBadge(_ summary: ThinkspaceInquirySidebarSummary) -> some View {
-        HStack(spacing: 3) {
-            Image(systemName: "sparkles")
-                .font(.system(size: 9, weight: .semibold))
-            Text(summary.compactLabel)
-                .font(.system(size: 10, weight: .semibold, design: .rounded))
-        }
-        .foregroundStyle(summary.unmappedCount > 0 ? DS.orange : DS.accent)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2)
-        .background((summary.unmappedCount > 0 ? DS.orange : DS.accent).opacity(0.12), in: Capsule())
-    }
-
-    private func inquirySections(_ summary: ThinkspaceInquirySidebarSummary) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            sidebarInquiryRow(icon: "rectangle.split.3x1", title: "Active Inquiry", count: summary.activeSessionCount)
-            sidebarInquiryRow(icon: "questionmark.bubble", title: "Questions", count: summary.questionCount)
-            sidebarInquiryRow(icon: "doc.text.magnifyingglass", title: "Sources", count: summary.sourceCount)
-            sidebarInquiryRow(icon: "exclamationmark.bubble", title: "Claims", count: summary.claimCount)
-            sidebarInquiryRow(icon: "point.3.connected.trianglepath.dotted", title: "Concepts", count: summary.conceptCount)
-            sidebarInquiryRow(icon: "paperplane", title: "Outputs", count: summary.outputCount)
-            sidebarInquiryRow(icon: "tray.and.arrow.down", title: "Unmapped", count: summary.unmappedCount, tint: summary.unmappedCount > 0 ? DS.orange : DS.textMuted)
-        }
-        .padding(.vertical, 3)
-    }
-
-    private func sidebarInquiryRow(icon: String, title: String, count: Int, tint: Color = DS.textMuted) -> some View {
-        HStack(spacing: 7) {
-            Image(systemName: icon)
-                .font(.system(size: 9, weight: .medium))
-                .foregroundStyle(tint)
-                .frame(width: 14)
-            Text(title)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(DS.textSecondary)
-            Spacer()
-            Text("\(count)")
-                .font(.system(size: 10, weight: .semibold, design: .rounded))
-                .foregroundStyle(tint)
-        }
-        .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading)
-        .padding(.leading, 8)
-        .padding(.trailing, 8)
-    }
-
-    private func sidebarChildDocRow(_ doc: ChildDoc, level: Int) -> some View {
-        let isHovered = hoveredChildDocId == doc.id
-
-        return Button {
-            NotificationCenter.default.post(
-                name: .enterFocusMode,
-                object: nil,
-                userInfo: ["type": doc.entityType, "id": doc.entityId]
-            )
-            onNavigate()
-        } label: {
-            HStack(spacing: 8) {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(doc.entityType.color.opacity(0.14))
-                    .frame(width: 20, height: 20)
-                    .overlay(
-                        Image(systemName: doc.entityType.icon)
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundStyle(doc.entityType.color)
-                    )
-
-                Text(doc.title)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(DS.textSecondary)
-                    .lineLimit(1)
-
-                Spacer()
-
-                if doc.outlineReferenceCount > 0 {
-                    Text("\(doc.outlineReferenceCount)")
-                        .font(.system(size: 10, weight: .semibold, design: .rounded))
-                        .foregroundStyle(DS.textMuted)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(DS.borderSubtle, in: Capsule())
-                }
-            }
-            .padding(.leading, 8 + CGFloat(max(level - 1, 0)) * 18)
-            .padding(.trailing, 8)
-            .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
-            .unifiedSidebarRowChrome(isActive: false, isHovered: isHovered, cornerRadius: 8, hoverFill: DS.bg)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hoveredChildDocId = $0 ? doc.id : nil }
-    }
-
-    // MARK: - Inquiry Summaries
-
-    private func refreshInquirySummaries() async {
-        let ids = Set(filteredThinkspaces.map(\.id) + expandedThinkspaces)
-        for id in ids {
-            await loadInquirySummary(for: id, force: true)
-        }
-    }
-
-    private func loadInquirySummary(for thinkspaceId: String, force: Bool = false) async {
-        if !force, inquirySummaries[thinkspaceId] != nil { return }
-        do {
-            let profiles = try await InquiryRepository.shared.fetchDeepDives(in: thinkspaceId)
-            guard let profile = profiles.first else {
-                inquirySummaries[thinkspaceId] = ThinkspaceInquirySidebarSummary()
-                return
-            }
-
-            let questions = (try? await InquiryRepository.shared.fetchQuestions(forDeepDive: profile.uuid)) ?? []
-            let extracts = (try? await InquiryRepository.shared.fetchExtracts(forDeepDive: profile.uuid)) ?? []
-            let lexicon = (try? await InquiryRepository.shared.fetchLexicon(forDeepDive: profile.uuid)) ?? []
-            let sessions = (try? await InquiryRepository.shared.fetchSessions(forDeepDive: profile.uuid)) ?? []
-            let deepDiveSources = (try? await InquiryRepository.shared.fetchSources(forDeepDive: profile)) ?? []
-            let connections = (try? await InquiryRepository.shared.fetchConnections(forDeepDive: profile)) ?? []
-
-            var sessionSourceUUIDs = Set<String>()
-            var unmappedCount = 0
-            for session in sessions {
-                if let sourceRefs = session.inquirySessionStructured?.sourceRefs {
-                    sessionSourceUUIDs.formUnion(sourceRefs.map(\.sourceUUID))
-                }
-                if let operations = session.inquirySessionStructured?.crystallizationResult?.canvasProjection?.operations {
-                    unmappedCount += operations.filter { op in
-                        op.status == .pending || op.status == .edited || op.status == .deferred
-                    }.count
-                }
-            }
-
-            let summary = ThinkspaceInquirySidebarSummary(
-                activeSessionCount: sessions.filter { $0.inquirySessionMetadata?.status == .active }.count,
-                questionCount: questions.filter { ($0.questionMetadata?.status ?? .open) != .archived }.count,
-                sourceCount: Set(deepDiveSources.map(\.uuid)).union(sessionSourceUUIDs).count,
-                claimCount: extracts.filter { $0.extractMetadata?.kind.isClaimLike == true }.count,
-                conceptCount: connections.count + lexicon.filter { $0.lexiconMetadata?.maturity == .promotedToConnection || $0.lexiconMetadata?.maturity == .entry }.count,
-                outputCount: profile.deepDiveStructured?.outputAngles.count ?? 0,
-                unmappedCount: unmappedCount
-            )
-
-            inquirySummaries[thinkspaceId] = summary
-        } catch {
-            inquirySummaries[thinkspaceId] = ThinkspaceInquirySidebarSummary()
-        }
-    }
-
     // MARK: - Context Menu
 
     @ViewBuilder
@@ -790,11 +381,7 @@ struct SidebarThinkspaceSection: View {
         Divider()
 
         Button {
-            renameText = thinkspace.name
-            renamingThinkspaceId = thinkspace.id
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                isRenameFieldFocused = true
-            }
+            beginRename(thinkspace)
         } label: {
             Label("Rename", systemImage: "pencil")
         }
@@ -851,17 +438,17 @@ struct SidebarThinkspaceSection: View {
     // MARK: - Empty State
 
     /// A teaching row in the row grammar: the first space is one click away.
-    private var thinkspaceEmptyState: some View {
+    private var emptyState: some View {
         Button {
             SpaceComposerRequest.post(.create(parentId: nil))
         } label: {
-            HStack(alignment: .top, spacing: 8) {
+            HStack(alignment: .top, spacing: DS.space8) {
                 Image(systemName: "plus.circle")
-                    .font(DS.callout.weight(.medium))
+                    .font(DS.title3)
                     .foregroundStyle(DS.accent)
-                    .frame(width: 24, height: 24)
+                    .frame(width: UnifiedSidebarMetrics.glyphWidth, height: UnifiedSidebarMetrics.glyphWidth)
 
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: DS.space2) {
                     Text("Create your first space")
                         .font(DS.callout.weight(.semibold))
                         .foregroundStyle(DS.text)
@@ -874,11 +461,11 @@ struct SidebarThinkspaceSection: View {
 
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 8)
+            .padding(.horizontal, UnifiedSidebarMetrics.rowInset)
+            .padding(.vertical, DS.space6)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .unifiedSidebarRowChrome(isActive: false, isHovered: isEmptyStateHovered)
-            .contentShape(Rectangle())
+            .contentShape(RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.rowRadius, style: .continuous))
+            .sidebarRowChrome(isActive: false, isHovered: isEmptyStateHovered)
         }
         .buttonStyle(.plain)
         .onHover { isEmptyStateHovered = $0 }
@@ -887,66 +474,11 @@ struct SidebarThinkspaceSection: View {
         .accessibilityLabel("Create your first space")
     }
 
-    // MARK: - New Space Row
-
-    /// The ghost row that closes the list — the same row chrome, muted until
-    /// hovered, one click to the composer.
-    private var newSpaceGhostRow: some View {
-        Button {
-            SpaceComposerRequest.post(.create(parentId: nil))
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "plus.circle")
-                    .font(DS.callout.weight(.medium))
-                    .foregroundStyle(DS.textMuted)
-                    .frame(width: 24, height: 24)
-
-                Text("New space…")
-                    .font(DS.callout.weight(.medium))
-                    .foregroundStyle(isNewSpaceRowHovered ? DS.textSecondary : DS.textMuted)
-
-                Spacer()
-            }
-            .padding(.horizontal, 8)
-            .frame(maxWidth: .infinity, minHeight: UnifiedSidebarMetrics.thinkspaceRowHeight, alignment: .leading)
-            .unifiedSidebarRowChrome(isActive: false, isHovered: isNewSpaceRowHovered)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { isNewSpaceRowHovered = $0 }
-        .animation(hoverAnimation, value: isNewSpaceRowHovered)
-        .help("New space")
-        .accessibilityLabel("New space")
-    }
-
-    private var createThinkspaceButton: some View {
-        Button("New space", systemImage: "plus") {
-            SpaceComposerRequest.post(.create(parentId: nil))
-        }
-        .labelStyle(.iconOnly)
-        .font(.system(size: 12, weight: .semibold))
-        .foregroundStyle(DS.accent)
-        .frame(width: 28, height: 28)
-        .background(DS.accentSoft, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(DS.accent.opacity(0.12), lineWidth: 1)
-        )
-        .buttonStyle(.plain)
-        .help("New space")
-    }
-
-    private func thinkspaceRowFill(color: Color, isActive: Bool, isHovered: Bool, isDropTarget: Bool) -> Color {
+    private func rowFill(color: Color, isActive: Bool, isHovered: Bool, isDropTarget: Bool) -> Color {
         if isDropTarget {
             return color.opacity(DS.palette.isDark ? 0.22 : 0.16)
         }
-        if isActive {
-            return color.opacity(DS.palette.isDark ? 0.16 : 0.12)
-        }
-        if isHovered {
-            return color.opacity(DS.palette.isDark ? 0.070 : 0.055)
-        }
-        return .clear
+        return SidebarRowFill.resolve(isActive: isActive, isHovered: isHovered, tint: color)
     }
 
     // MARK: - Actions
@@ -957,6 +489,15 @@ struct SidebarThinkspaceSection: View {
             currentDestination = .thinkspace(id: thinkspace.id)
         }
         onNavigate()
+    }
+
+    private func beginRename(_ thinkspace: Thinkspace) {
+        renameText = thinkspace.name
+        renamingThinkspaceId = thinkspace.id
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(80))
+            isRenameFieldFocused = true
+        }
     }
 
     private func commitRename(_ thinkspace: Thinkspace) {
@@ -990,117 +531,39 @@ struct SidebarThinkspaceSection: View {
         }
     }
 
-    // MARK: - Keyboard Handlers
+    // MARK: - Keyboard
 
-    private func handleKeyDown() {
-        isKeyboardNavigating = true
-        let items = allNavigableItems
+    private func moveSelection(by delta: Int) {
+        let items = visibleThinkspaces
         guard !items.isEmpty else { return }
         withAnimation(actionAnimation) {
-            selectedIndex = min(selectedIndex + 1, items.count - 1)
-            updateHoverFromKeyboard()
-        }
-    }
-
-    private func handleKeyUp() {
-        isKeyboardNavigating = true
-        let items = allNavigableItems
-        guard !items.isEmpty else { return }
-        withAnimation(actionAnimation) {
-            selectedIndex = max(selectedIndex - 1, 0)
-            updateHoverFromKeyboard()
+            selectedIndex = min(max(selectedIndex + delta, 0), items.count - 1)
+            hoveredThinkspaceId = items[selectedIndex].id
         }
     }
 
     private func handleKeyReturn() {
-        if let thinkspace = activeRenamingThinkspace() {
+        if let renamingThinkspaceId,
+           let thinkspace = manager.thinkspaces.first(where: { $0.id == renamingThinkspaceId }) {
             commitRename(thinkspace)
             return
         }
-
-        let items = allNavigableItems
+        let items = visibleThinkspaces
         guard selectedIndex < items.count else { return }
-        switch items[selectedIndex] {
-        case .thinkspace(let thinkspace, _):
-            selectThinkspace(thinkspace)
-        case .block(let doc, _, _):
-            NotificationCenter.default.post(
-                name: .enterFocusMode,
-                object: nil,
-                userInfo: ["type": doc.entityType, "id": doc.entityId]
-            )
-            onNavigate()
-        }
+        selectThinkspace(items[selectedIndex])
     }
 
-    private func activeRenamingThinkspace() -> Thinkspace? {
-        guard let renamingThinkspaceId else { return nil }
-        return manager.thinkspaces.first { $0.id == renamingThinkspaceId } ??
-            allNavigableItems.compactMap { item in
-                if case .thinkspace(let thinkspace, _) = item,
-                   thinkspace.id == renamingThinkspaceId {
-                    return thinkspace
-                }
-                return nil
+    private func setSelectedExpanded(_ expanded: Bool) {
+        let items = visibleThinkspaces
+        guard selectedIndex < items.count else { return }
+        let thinkspace = items[selectedIndex]
+        withAnimation(actionAnimation) {
+            if expanded {
+                guard !manager.childThinkspaces(of: thinkspace.id).isEmpty else { return }
+                expandedThinkspaces.insert(thinkspace.id)
+            } else {
+                expandedThinkspaces.remove(thinkspace.id)
             }
-            .first
-    }
-
-    private func handleKeyEscape() {
-        if renamingThinkspaceId != nil {
-            cancelRename()
-        }
-    }
-
-    private func handleKeyRight() {
-        let items = allNavigableItems
-        guard selectedIndex < items.count else { return }
-        if case .thinkspace(let thinkspace, _) = items[selectedIndex] {
-            toggleExpand(thinkspace)
-        }
-    }
-
-    private func handleKeyLeft() {
-        let items = allNavigableItems
-        guard selectedIndex < items.count else { return }
-        if case .thinkspace(let thinkspace, _) = items[selectedIndex] {
-            withAnimation(actionAnimation) {
-                _ = expandedThinkspaces.remove(thinkspace.id)
-            }
-        }
-    }
-
-    private func updateHoverFromKeyboard() {
-        let items = allNavigableItems
-        guard selectedIndex < items.count else { return }
-        switch items[selectedIndex] {
-        case .thinkspace(let thinkspace, _):
-            hoveredThinkspaceId = thinkspace.id
-            hoveredChildDocId = nil
-        case .block(let doc, _, _):
-            hoveredChildDocId = doc.id
-            hoveredThinkspaceId = nil
-        }
-    }
-
-    // MARK: - Helpers
-
-    private func thinkspaceIsExpandable(_ thinkspace: Thinkspace) -> Bool {
-        thinkspace.hasChildren ||
-            !manager.childThinkspaces(of: thinkspace.id).isEmpty
-    }
-
-    private func appendNavigationItems(
-        from thinkspace: Thinkspace,
-        level: Int,
-        into items: inout [ThinkspaceNavigatorItem]
-    ) {
-        items.append(.thinkspace(thinkspace, level: level))
-
-        guard expandedThinkspaces.contains(thinkspace.id) else { return }
-
-        for childThinkspace in manager.childThinkspaces(of: thinkspace.id) {
-            appendNavigationItems(from: childThinkspace, level: level + 1, into: &items)
         }
     }
 }
@@ -1155,19 +618,14 @@ private struct ThinkspaceColorOption: Identifiable {
     }
 }
 
-private enum ThinkspaceNavigatorItem {
-    case thinkspace(Thinkspace, level: Int)
-    case block(ChildDoc, thinkspaceId: String, level: Int)
-}
-
 // MARK: - Thinkspace Row Chrome
 
-/// Extracted ViewModifier to reduce opaque type nesting depth in thinkspaceRow().
-/// The Swift compiler can stack-overflow resolving deeply chained overlays + backgrounds.
+/// The row surface: the one selection wash, plus the drop-target and
+/// spring-load states a block drag needs. Extracted as a ViewModifier to keep
+/// the row's opaque type shallow (deep overlay/background chains have
+/// stack-overflowed the type checker).
 private struct ThinkspaceRowChrome: ViewModifier {
     let thinkspaceId: String
-    let isActive: Bool
-    let isHovered: Bool
     let isDropTarget: Bool
     let isSpringLoadCandidate: Bool
     /// Read here — and only here — so the 60Hz pulse invalidates just this
@@ -1209,13 +667,15 @@ private struct ThinkspaceRowChrome: ViewModifier {
             .opacity(isSpringLoading ? 1 : 0)
     }
 
+    /// A stroke only while a drag is armed on this row — selection is a
+    /// wash, never an outline.
     private var strokeOverlay: some View {
         RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.rowRadius, style: .continuous)
             .strokeBorder(
                 isSpringLoading
                     ? accentColor.opacity(0.24 + springLoadPulse * 0.36)
-                    : (isDropTarget ? accentColor.opacity(0.34) : (isActive ? accentColor.opacity(0.22) : Color.clear)),
-                lineWidth: (isDropTarget || isSpringLoading) ? 1.5 : 1
+                    : (isDropTarget ? accentColor.opacity(0.34) : Color.clear),
+                lineWidth: 1.5
             )
     }
 
@@ -1229,4 +689,3 @@ private struct ThinkspaceRowChrome: ViewModifier {
         }
     }
 }
-

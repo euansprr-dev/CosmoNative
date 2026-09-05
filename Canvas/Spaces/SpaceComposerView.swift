@@ -18,6 +18,9 @@ struct SpaceComposerView: View {
         VStack(alignment: .leading, spacing: 18) {
             SpaceComposerHeader(title: model.title, subtitle: model.subtitle)
             SpaceIdentityRow(model: model, nameFocused: $nameFocused, onSubmit: commit)
+            TextField("Purpose · what is this space for? (optional)", text: $model.draft.purpose, axis: .vertical)
+                .font(DS.body).textFieldStyle(.plain).lineLimit(1...3)
+                .padding(DS.space12).background(DS.surface, in: .rect(cornerRadius: DS.radiusMedium))
             DisclosureGroup("Appearance and location") {
                 VStack(alignment: .leading, spacing: DS.space16) {
                     SpaceComposerSection(label: "Color") {

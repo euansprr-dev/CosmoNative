@@ -11,6 +11,7 @@ final class AtomWindowViewModel {
 
     var currentAtom: Atom?
     var isLoading = false
+    var isPresented = false
 
     // MARK: - Navigation History
 
@@ -43,7 +44,6 @@ final class AtomWindowViewModel {
 
     private let bookmarksKey = "atomWindowBookmarks"
     private let lastAtomKey = "atomWindowLastAtomUUID"
-    private let navHistoryKey = "atomWindowNavHistory"
 
     // User-facing types for search results
     private let searchableTypes: [AtomType] = [
@@ -239,16 +239,22 @@ final class AtomWindowViewModel {
             print("[AtomWindow] restoreLastSession started before database reported ready")
         }
 
-        guard currentAtom == nil else {
+        if let uuid = currentAtom?.uuid {
+            // Keep the mounted editor, but don't keep a deleted item alive or
+            // leave its window title stale after another device changes it.
+            do {
+                let latest = try await AtomRepository.shared.fetch(uuid: uuid)
+                guard !Task.isCancelled, currentAtom?.uuid == uuid else { return }
+                if let latest, !latest.isDeleted {
+                    currentAtom = latest
+                } else {
+                    unloadCurrentSession()
+                    await refreshRecentAtoms()
+                }
+            } catch {
+                print("[AtomWindow] Could not refresh retained item: \(error)")
+            }
             return
-        }
-
-        // Load recent atoms for empty state
-        do {
-            recentAtoms = try await AtomRepository.shared.fetchRecent(limit: 8)
-            guard !Task.isCancelled else { return }
-        } catch {
-            print("[AtomWindow] Failed to fetch recent atoms during restore: \(error)")
         }
 
         // Restore last open atom
@@ -256,6 +262,11 @@ final class AtomWindowViewModel {
             guard !Task.isCancelled else { return }
             print("[AtomWindow] Restoring last session atom uuid=\(uuid)")
             await navigate(to: uuid)
+        }
+        // Recents only serve the empty state; don't put an unused query on
+        // the critical path to opening the last document.
+        if currentAtom == nil, !Task.isCancelled {
+            await refreshRecentAtoms()
         }
     }
 
@@ -334,7 +345,7 @@ extension AtomWindowViewModel {
     }
 
     /// Returns the DS entity color for an atom type
-    static func entityColor(for atomType: AtomType) -> Color {
+    nonisolated static func entityColor(for atomType: AtomType) -> Color {
         switch atomType {
         case .idea: return DS.entityIdea
         case .content, .contentDraft: return DS.entityContent

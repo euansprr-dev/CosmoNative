@@ -339,7 +339,7 @@ struct CrossThinkspaceDragPreview: View {
                         .fill(accent.opacity(0.12))
                         .frame(width: 22, height: 22)
                         .overlay(
-                            Image(systemName: block.entityType.icon)
+                            Image(cosmo: block.entityType.cosmoIcon)
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundColor(accent)
                         )

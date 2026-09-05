@@ -113,33 +113,43 @@ struct CosmoInlineAssistantPersistedSession: Codable, Equatable {
     var ledger: [CosmoInlineTurnRecord]? = nil
     /// Optional so blobs persisted before riff-direction cards decode unchanged.
     var riffDirectionCards: [CosmoAssistantRiffDirectionsCard]? = nil
+    var portableConversationTitle: String? = nil
+    var composerDraft: String? = nil
+    var composerSelectionLocation: Int? = nil
+    var composerSelectionLength: Int? = nil
     var updatedAt = Date()
 
     var isEmpty: Bool {
         paneMessages.isEmpty && proposals.isEmpty && selectedContextAtoms.isEmpty && selectedSkillID == nil
             && (inquiryQuestionProposals?.isEmpty ?? true)
             && (riffDirectionCards?.isEmpty ?? true)
+            && (composerDraft?.isEmpty ?? true)
     }
 }
 
 final class CosmoInlineAssistantSessionPersistence {
-    private let loadData: (String) -> Data?
-    private let saveData: (String, Data) -> Void
-    private let deleteData: (String) -> Void
+    private let loadData: (String) throws -> Data?
+    private let saveData: (String, Data) throws -> Void
+    private let deleteData: (String) throws -> Void
+    private var unreadableSurfaces = Set<String>()
 
     init(
-        loadData: @escaping (String) -> Data?,
-        saveData: @escaping (String, Data) -> Void,
-        deleteData: @escaping (String) -> Void
+        loadData: @escaping (String) throws -> Data?,
+        saveData: @escaping (String, Data) throws -> Void,
+        deleteData: @escaping (String) throws -> Void
     ) {
         self.loadData = loadData
         self.saveData = saveData
         self.deleteData = deleteData
     }
 
-    static let live = CosmoInlineAssistantSessionPersistence.userDefaults()
+    @MainActor static let live = CosmoInlineAssistantSessionPersistence(
+        loadData: { try LocalDocumentArchive.load(key: "cosmo.inlineAssistant.session." + $0) },
+        saveData: { try LocalDocumentArchive.save(key: "cosmo.inlineAssistant.session." + $0, data: $1) },
+        deleteData: { try LocalDocumentArchive.delete(key: "cosmo.inlineAssistant.session." + $0) }
+    )
 
-    static func defaultForRuntime() -> CosmoInlineAssistantSessionPersistence {
+    @MainActor static func defaultForRuntime() -> CosmoInlineAssistantSessionPersistence {
         // `swift test` (SPM) does not set XCTestConfigurationFilePath the way
         // xcodebuild test does — without the class check, test stores restored
         // the USER'S real persisted sessions and every count assertion drifted.
@@ -180,25 +190,45 @@ final class CosmoInlineAssistantSessionPersistence {
     }
 
     func load(surfaceID: String) -> CosmoInlineAssistantPersistedSession? {
-        guard let data = loadData(surfaceID) else { return nil }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return try? decoder.decode(CosmoInlineAssistantPersistedSession.self, from: data)
+        do {
+            guard let data = try loadData(surfaceID) else { return nil }
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            let session = try decoder.decode(CosmoInlineAssistantPersistedSession.self, from: data)
+            unreadableSurfaces.remove(surfaceID)
+            return session
+        } catch {
+            unreadableSurfaces.insert(surfaceID)
+            PersistenceHealth.note(.writeFailure, context: "inlineChat.load", detail: "The saved conversation could not be loaded and has been preserved: \(error)")
+            return nil
+        }
     }
 
     func save(_ session: CosmoInlineAssistantPersistedSession) {
-        guard !session.isEmpty else {
-            delete(surfaceID: session.surfaceID)
+        // A failed read is never evidence that a conversation is empty.
+        guard !unreadableSurfaces.contains(session.surfaceID) else {
+            PersistenceHealth.note(.writeFailure, context: "inlineChat.save", detail: "Preserving an unreadable conversation for \(session.surfaceID).")
             return
         }
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        guard let data = try? encoder.encode(session) else { return }
-        saveData(session.surfaceID, data)
+        do {
+            // Clearing the last unsent character must replace a previously
+            // saved draft. Only brand-new empty scopes can skip the write.
+            if session.isEmpty, try loadData(session.surfaceID) == nil { return }
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            try saveData(session.surfaceID, encoder.encode(session))
+        } catch {
+            PersistenceHealth.note(.writeFailure, context: "inlineChat.save", detail: "\(error)")
+        }
     }
 
     func delete(surfaceID: String) {
-        deleteData(surfaceID)
+        do {
+            try deleteData(surfaceID)
+            unreadableSurfaces.remove(surfaceID)
+        } catch {
+            PersistenceHealth.note(.writeFailure, context: "inlineChat.delete", detail: "\(error)")
+        }
     }
 
     private static func storageKey(namespace: String, surfaceID: String) -> String {
@@ -573,7 +603,41 @@ enum CosmoInlineAssistantToolBundlePolicy {
 final class CosmoInlineAssistantStore: ObservableObject {
     static let shared = CosmoInlineAssistantStore()
 
-    @Published var composerText = ""
+    @Published var composerText = "" {
+        didSet { if oldValue != composerText { scheduleDraftSave() } }
+    }
+    var composerSelection = NSRange(location: 0, length: 0)
+    let composerStorage = MentionComposerViewStorage()
+    let conversationViewport = AssistantConversationViewport()
+    @Published private(set) var portableConversationTitle: String?
+    @Published private(set) var portableSyncError: String?
+    private var exportedSignature: String?
+    private var portableSaveTask: Task<Void, Never>?
+    var retainsPresentedSession = false
+    var composerHasOpenMenu = false
+    private var draftSaveTask: Task<Void, Never>?
+    private(set) var paneRequestIntent: AssistantPresentationIntent = .ensureVisible
+    let presentationRequests = PassthroughSubject<AssistantPresentationIntent, Never>()
+
+    private func scheduleDraftSave() {
+        draftSaveTask?.cancel()
+        draftSaveTask = Task { @MainActor [weak self] in
+            do { try await Task.sleep(for: .milliseconds(350)) } catch { return }
+            self?.persistActiveSession()
+        }
+    }
+
+    func savePresentationDraft() {
+        draftSaveTask?.cancel()
+        persistActiveSession()
+    }
+
+    func requestPresentation(_ intent: AssistantPresentationIntent = .ensureVisible) {
+        paneRequestIntent = intent
+        isPaneRequested = true
+        presentationRequests.send(intent)
+    }
+
     @Published var isProcessing = false
     @Published var statusText: String?
     @Published var phase: CosmoInlineAssistantPhase = .idle
@@ -645,6 +709,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
 
     private let agentBridge: CosmoInlineAssistantAgentBridge
     private let sessionPersistence: CosmoInlineAssistantSessionPersistence
+    private let enablesPortableLibrary: Bool
     private var activeSessionSurfaceID = CosmoInlineAssistantSessionScope.globalSurfaceID
     private(set) var activeSubmissionSkillID: String?
     private var selectedSkillIsExplicit = false
@@ -676,14 +741,18 @@ final class CosmoInlineAssistantStore: ObservableObject {
 
     init(
         agentBridge: CosmoInlineAssistantAgentBridge = .live,
-        sessionPersistence: CosmoInlineAssistantSessionPersistence = .defaultForRuntime()
+        sessionPersistence: CosmoInlineAssistantSessionPersistence? = nil
     ) {
         self.agentBridge = agentBridge
-        self.sessionPersistence = sessionPersistence
+        self.enablesPortableLibrary = sessionPersistence == nil
+            && ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil
+            && NSClassFromString("XCTestCase") == nil
+        self.sessionPersistence = sessionPersistence ?? .defaultForRuntime()
         restoreSession(for: activeSessionSurfaceID)
     }
 
     func submit() async {
+        guard !isProcessing, activeRunTask == nil else { return }
         let rawPrompt = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !rawPrompt.isEmpty else { return }
 
@@ -695,6 +764,12 @@ final class CosmoInlineAssistantStore: ObservableObject {
         // A new ask closes any riff peek — the editor comes back before the run.
         endRiffPreview()
 
+        if retainsPresentedSession, portableConversationTitle == nil,
+           activeSessionSurfaceID != CosmoInlineAssistantSessionScope.globalSurfaceID,
+           CosmoEditableSurfaceRegistry.shared.provider(surfaceID: activeSessionSurfaceID) == nil {
+            errorText = "This document is closed. Reopen it or choose General in the context menu to continue."
+            return
+        }
         bindToLiveSurfaceBeforeSubmission()
 
         // A prompt sent right after rejecting a staged edit is the labeled
@@ -780,7 +855,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
         }
 
         if route == .answer || activeSubmissionShouldOpenPaneForAnswer {
-            isPaneRequested = true
+            requestPresentation()
         } else {
             isPaneRequested = false
         }
@@ -941,7 +1016,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
             runID: currentRunID
         ))
         statusText = nil
-        isPaneRequested = true
+        requestPresentation()
         CosmoInlineAssistantMetrics.shared.paneAnswerDelivered()
         followUpSuggestions = ["Riff on a different beat", "Push the bet further", "Give me 3 more"]
         persistActiveSession()
@@ -1100,7 +1175,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
         ))
         statusText = nil
         phase = .reviewing
-        isPaneRequested = true
+        requestPresentation()
         followUpSuggestions = ["Tighten the clusters", "Name them better", "Try a different grouping"]
         persistActiveSession()
     }
@@ -1144,7 +1219,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
             runID: currentRunID
         ))
         statusText = nil
-        isPaneRequested = true
+        requestPresentation()
         persistActiveSession()
     }
 
@@ -1203,7 +1278,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
 
         let effectiveRoute = activeSubmissionRoute
         if effectiveRoute != .action || activeSubmissionShouldOpenPaneForAnswer {
-            isPaneRequested = true
+            requestPresentation()
         }
         // The message's content stays empty while it streams; the buffer is
         // the live text and the finalize (or cancel) writes the content once.
@@ -1272,7 +1347,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
         }
 
         if shouldOpenPane {
-            isPaneRequested = true
+            requestPresentation()
         }
         statusText = nil
         CosmoInlineAssistantMetrics.shared.paneAnswerDelivered()
@@ -1350,7 +1425,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
     }
 
     func requestPane() {
-        isPaneRequested = true
+        requestPresentation(.pane)
     }
 
     var shouldOpenPaneForCurrentActionExplanation: Bool {
@@ -1932,27 +2007,42 @@ final class CosmoInlineAssistantStore: ObservableObject {
     /// bar, ⌥A, the margins' "ask cosmo →", Command-K, the Notes rail card):
     /// scope the assistant to the calling surface and open the pane.
     func openPane(forSurfaceID surfaceID: String? = nil) {
-        if let surfaceID {
+        if let surfaceID, !isScopeSwitchLocked, !composerStorage.hasMarkedText {
             // An explicit per-document ask outranks an older pin — the user's
             // most recent gesture names the scope.
             releasePinIfOverridden(byExplicitSurfaceID: surfaceID)
             CosmoEditableSurfaceRegistry.shared.activateIfNeeded(surfaceID: surfaceID)
-            activateSessionIfIdle(surfaceID: surfaceID)
+            activateSession(surfaceID: surfaceID)
         }
-        isPaneRequested = true
+        requestPresentation(.pane)
     }
 
     /// Submit a prompt programmatically on behalf of a surface affordance
     /// ("improve selected text") — binds, fills the composer, and sends.
     func submitPrompt(_ prompt: String, forSurfaceID surfaceID: String? = nil) {
+        guard !isScopeSwitchLocked, !composerStorage.hasMarkedText else {
+            errorText = "Finish or stop the current response before starting another request."
+            requestPresentation()
+            return
+        }
         if let surfaceID {
             // A surface-scoped programmatic ask must land on that surface —
             // a stale pin hijacking it would edit the wrong document.
             releasePinIfOverridden(byExplicitSurfaceID: surfaceID)
             CosmoEditableSurfaceRegistry.shared.activateIfNeeded(surfaceID: surfaceID)
+            activateSession(surfaceID: surfaceID)
         }
+        let previousDraft = composerText
+        let previousSelection = composerSelection
+        let submittedScope = activeSessionSurfaceID
         composerText = prompt
-        Task { await submit() }
+        Task {
+            await submit()
+            if activeSessionSurfaceID == submittedScope, composerText.isEmpty, !previousDraft.isEmpty {
+                composerText = previousDraft
+                composerSelection = previousSelection
+            }
+        }
     }
 
     // MARK: Scope switcher
@@ -2084,6 +2174,9 @@ final class CosmoInlineAssistantStore: ObservableObject {
             sessionKey: activeSessionSurfaceID,
             ledger: sessionLedger
         )
+        composerStorage.reset()
+        conversationViewport.firstVisibleRunID = nil
+        conversationViewport.followsLatest = true
         activeSessionSurfaceID = surfaceID
         followUpSuggestions = []
         restoreSession(for: surfaceID)
@@ -2096,7 +2189,10 @@ final class CosmoInlineAssistantStore: ObservableObject {
     /// unsafe time to retarget is while a request is actively running.
     func activateSessionIfIdle(surfaceID rawSurfaceID: String?) {
         guard !isProcessing,
-              activeRunTask == nil else {
+              activeRunTask == nil,
+              !retainsPresentedSession,
+              composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              activePendingProposal == nil else {
             return
         }
         // A pinned scope is the user's explicit pick — passive registration
@@ -2115,6 +2211,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
     /// Mid-run the release is skipped (retargeting a live run is unsafe);
     /// `submit` re-settles the scope once the run ends.
     func releaseSessionIfScoped(toSurfaceID rawSurfaceID: String) {
+        guard !retainsPresentedSession, composerText.isEmpty, activePendingProposal == nil else { return }
         let closedSurfaceID = CosmoInlineAssistantSessionScope.surfaceID(for: rawSurfaceID)
         // A pin dies with its document — never leave the session pinned to a
         // surface that no longer exists.
@@ -2130,6 +2227,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
     /// unregister path rightly refuses to retarget a live run, so the scope
     /// is settled here instead, after the run (and `submit`'s defers) finish.
     func releaseSessionIfScopedSurfaceClosed() {
+        guard !retainsPresentedSession, composerText.isEmpty, activePendingProposal == nil else { return }
         if let pinned = pinnedScopeSurfaceID,
            pinned != CosmoInlineAssistantSessionScope.globalSurfaceID,
            CosmoEditableSurfaceRegistry.shared.provider(surfaceID: pinned) == nil {
@@ -2141,6 +2239,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
     }
 
     private func bindToLiveSurfaceBeforeSubmission() {
+        guard !retainsPresentedSession, portableConversationTitle == nil else { return }
         // A pinned scope wins over the registry's focus order: the pill said
         // where this ask goes, and key-window churn or typing elsewhere must
         // not silently rebind the message at the last moment.
@@ -2517,6 +2616,49 @@ final class CosmoInlineAssistantStore: ObservableObject {
         }
     }
 
+    func continuePortableConversation(_ record: CompanionConversationRecord) {
+        guard !isProcessing, !composerStorage.hasMarkedText else { return }
+        activateSession(surfaceID: "conversation:" + UUID().uuidString)
+        portableConversationTitle = record.title
+        pinnedScopeSurfaceID = nil
+        paneMessages = record.messages.filter { $0.role == "user" || $0.role == "assistant" }.map {
+            CosmoInlineAssistantPaneMessage(role: $0.role == "user" ? .user : .assistant, content: $0.text)
+        }
+        paneMessages.append(.init(role: .system, content: "Continued from \(record.origin). Original tool receipts and pending edits remain in the source conversation."))
+        retainsPresentedSession = true
+        persistActiveSession()
+    }
+
+    func retryPortableConversationSave() {
+        exportedSignature = nil
+        exportPortableConversationIfNeeded()
+    }
+
+    private func exportPortableConversationIfNeeded() {
+        guard enablesPortableLibrary, !isProcessing, !paneMessages.isEmpty else { return }
+        let messages = paneMessages.compactMap { message -> CompanionConversationRecord.Message? in
+            guard message.role == .user || message.role == .assistant, !message.content.isEmpty else { return nil }
+            return .init(id: message.id.uuidString, role: message.role == .user ? "user" : "assistant", text: message.content, createdAt: message.createdAt)
+        }
+        guard !messages.isEmpty else { return }
+        let signature = activeSessionSurfaceID + ":" + String(messages.map { $0.id + $0.text }.joined().hashValue)
+        guard exportedSignature != signature else { return }
+        exportedSignature = signature
+        let record = CompanionConversationRecord(id: "mac:" + CompanionConversationExchange.localOriginID + ":" + activeSessionSurfaceID, origin: "Mac",
+            title: String((messages.first(where: { $0.role == "user" })?.text ?? "Conversation").prefix(100)), messages: messages, updatedAt: .now)
+        let previous = portableSaveTask
+        portableSaveTask = Task { @MainActor [weak self] in
+            await previous?.value
+            do {
+                try await CompanionConversationExchange.save(record)
+                self?.portableSyncError = nil
+            } catch {
+                self?.exportedSignature = nil
+                self?.portableSyncError = "Your conversation is saved on this Mac. Library sharing will retry when available."
+            }
+        }
+    }
+
     private func persistActiveSession() {
         sessionPersistence.save(CosmoInlineAssistantPersistedSession(
             surfaceID: activeSessionSurfaceID,
@@ -2529,8 +2671,13 @@ final class CosmoInlineAssistantStore: ObservableObject {
             lastSubmissionRoute: lastSubmissionRoute,
             inquiryQuestionProposals: inquiryQuestionProposals,
             ledger: sessionLedger.isEmpty ? nil : sessionLedger,
-            riffDirectionCards: riffDirectionCards.isEmpty ? nil : riffDirectionCards
+            riffDirectionCards: riffDirectionCards.isEmpty ? nil : riffDirectionCards,
+            portableConversationTitle: portableConversationTitle,
+            composerDraft: composerText.isEmpty ? nil : composerText,
+            composerSelectionLocation: composerSelection.location,
+            composerSelectionLength: composerSelection.length
         ))
+        exportPortableConversationIfNeeded()
     }
 
     private func restoreSession(for surfaceID: String) {
@@ -2539,6 +2686,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
             return
         }
 
+        portableConversationTitle = session.portableConversationTitle
         let repairedPaneMessages = CraftPaneAnswerRepair.repairedMessages(session.paneMessages)
         paneMessages = repairedPaneMessages.messages
         proposals = session.proposals
@@ -2549,7 +2697,8 @@ final class CosmoInlineAssistantStore: ObservableObject {
         selectedContextAtoms = ContextSourcePolicy.filteredAtoms(session.selectedContextAtoms, query: "")
         selectedSkillID = session.selectedSkillIsExplicit == true ? session.selectedSkillID : nil
         lastSubmissionRoute = session.lastSubmissionRoute
-        composerText = ""
+        composerText = session.composerDraft ?? ""
+        composerSelection = MentionComposerTextSelectionPolicy.clamped(NSRange(location: max(0, session.composerSelectionLocation ?? 0), length: max(0, session.composerSelectionLength ?? 0)), in: composerText)
         errorText = nil
         statusText = nil
         phase = .idle
@@ -2563,6 +2712,8 @@ final class CosmoInlineAssistantStore: ObservableObject {
     }
 
     private func resetSessionState() {
+        portableConversationTitle = nil
+        composerSelection = NSRange(location: 0, length: 0)
         composerText = ""
         paneMessages = []
         proposals = []

@@ -276,7 +276,7 @@ struct MentionRow: View {
                 .fill(entityColor.opacity(isSelected ? 0.16 : 0.12))
                 .frame(width: 34, height: 34)
                 .overlay(
-                    Image(systemName: entity.type.icon)
+                    Image(cosmo: entity.type.cosmoIcon)
                         .font(DS.rowTitle)
                         .foregroundStyle(entityColor)
                 )

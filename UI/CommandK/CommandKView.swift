@@ -5,6 +5,75 @@
 import SwiftUI
 import AppKit
 
+// MARK: - Presentation Host
+
+/// Mount the glass at its final geometry without an insertion animation, then
+/// animate only the two floating surfaces. Keep the same subtree for dismissal
+/// and interrupted reopenings; an old completion must never remove a new search.
+struct CommandKOverlayHost: View {
+    var initialTab: CommandKTab
+    var isPresented: Bool
+    var searchFocusRequest: Int
+    var viewModel: CommandKViewModel
+    var onDismissed: () -> Void
+
+    @State private var isMounted = false
+    @State private var isRevealed = false
+    @State private var presentationRevision = 0
+
+    var body: some View {
+        Group {
+            if isMounted {
+                CommandKView(
+                    initialTab: initialTab,
+                    isActive: isPresented,
+                    searchFocusRequest: searchFocusRequest,
+                    viewModel: viewModel,
+                    isRevealed: isRevealed
+                )
+                .transition(.identity)
+                .task(id: isPresented) {
+                    // Let the mounted surfaces establish their first frame.
+                    // This task is cancelled if dismissal wins the race.
+                    await Task.yield()
+                    guard !Task.isCancelled, isPresented else { return }
+                    isRevealed = true
+                }
+            }
+        }
+        // Live ancestor gates also cover a closing or interrupted subtree.
+        .allowsHitTesting(isPresented)
+        .accessibilityHidden(!isPresented)
+        .onChange(of: isPresented, initial: true) { _, presented in
+            updatePresentation(presented)
+        }
+    }
+
+    private func updatePresentation(_ presented: Bool) {
+        presentationRevision += 1
+        let revision = presentationRevision
+
+        if presented {
+            var transaction = Transaction(animation: nil)
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { isMounted = true }
+        } else {
+            guard isMounted else { return }
+            withAnimation(ProMotionSprings.snappy, completionCriteria: .removed) {
+                isRevealed = false
+            } completion: {
+                guard presentationRevision == revision, !isPresented else { return }
+                var transaction = Transaction(animation: nil)
+                transaction.disablesAnimations = true
+                withTransaction(transaction) {
+                    isMounted = false
+                    onDismissed()
+                }
+            }
+        }
+    }
+}
+
 // MARK: - CommandKView
 
 public struct CommandKView: View {
@@ -16,6 +85,8 @@ public struct CommandKView: View {
     var initialTab: CommandKTab?
     var isActive: Bool
     var searchFocusRequest: Int
+    var isRevealed: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var viewModel: CommandKViewModel
     @FocusState private var isSearchFocused: Bool
     @Namespace private var cortexNamespace
@@ -42,7 +113,8 @@ public struct CommandKView: View {
         initialTab: CommandKTab = .database,
         isActive: Bool = true,
         searchFocusRequest: Int = 0,
-        viewModel: CommandKViewModel
+        viewModel: CommandKViewModel,
+        isRevealed: Bool = true
     ) {
         if initialTab == .database {
             self.initialTab = nil
@@ -51,6 +123,7 @@ public struct CommandKView: View {
         }
         self.isActive = isActive
         self.searchFocusRequest = searchFocusRequest
+        self.isRevealed = isRevealed
         _viewModel = State(initialValue: viewModel)
     }
 
@@ -68,7 +141,8 @@ public struct CommandKView: View {
         GeometryReader { geometry in
             ZStack {
                 backgroundLayer
-                    .opacity(isDragGhosted ? 0 : 1)
+                    .opacity(isRevealed && !isDragGhosted ? 1 : 0)
+                    .animation(presentationAnimation, value: isRevealed)
                 panelContainer(geometry: geometry)
                     .opacity(isDragGhosted ? 0.12 : 1)
                     .onGeometryChange(for: CGRect.self) { proxy in
@@ -81,7 +155,7 @@ public struct CommandKView: View {
             // this session-scoped gate lives INSIDE the ⌘K subtree — the
             // ancestor gate in MainView (dead-clicks invariant) stays intact.
             .allowsHitTesting(!isDragGhosted)
-            .animation(ProMotionSprings.snappy, value: isDragGhosted)
+            .animation(reduceMotion ? nil : ProMotionSprings.snappy, value: isDragGhosted)
             .ignoresSafeArea()
             .onAppear {
                 searchText = viewModel.query
@@ -94,8 +168,8 @@ public struct CommandKView: View {
                 }
             }
             .onChange(of: isActive) { _, active in
-                viewModel.setSurfaceActive(active)
                 if active {
+                    viewModel.setSurfaceActive(true)
                     viewModel.initialExpandedTab = initialTab
                     viewModel.initializeCortexMode()
                     requestSearchFocus()
@@ -103,9 +177,10 @@ public struct CommandKView: View {
                 } else {
                     domainTransitionTask?.cancel()
                     searchFocusTask?.cancel()
-                    isExpandedBrowserMounted = false
                     isSearchFocused = false
-                    viewModel.isActionPanelPresented = false
+                    // Retain the visible domain, selection and actions until
+                    // the exit finishes. Clearing them here flashes an empty
+                    // panel (or a smaller compact panel) during dismissal.
                 }
             }
             .onChange(of: searchFocusRequest) { _, _ in
@@ -152,7 +227,9 @@ public struct CommandKView: View {
                 }
             }
             .onDisappear {
+                domainTransitionTask?.cancel()
                 searchFocusTask?.cancel()
+                viewModel.setSurfaceActive(false)
                 clearSearchFieldUndoStack()
             }
         }
@@ -179,7 +256,7 @@ public struct CommandKView: View {
     // MARK: - Background
 
     private var backgroundLayer: some View {
-        CortexOverlayBackdrop { closeWithDomainCollapseIfNeeded() }
+        CortexOverlayBackdrop { dismissPalette() }
     }
 
     // MARK: - Panel Container
@@ -188,11 +265,28 @@ public struct CommandKView: View {
         GlassEffectContainer(spacing: DS.space12) {
             VStack(spacing: DS.space12) {
                 searchBarPill(geometry: geometry)
+                    // One resting scale keeps an interrupted close/reopen
+                    // continuous, including its in-flight spring velocity.
+                    .scaleEffect(reduceMotion || isRevealed ? 1 : 0.97)
+                    .opacity(isRevealed ? 1 : 0)
+                    .animation(presentationAnimation, value: isRevealed)
                     .zIndex(2)
                 contentPanel(geometry: geometry)
+                    .scaleEffect(reduceMotion || isRevealed ? 1 : 0.985, anchor: .top)
+                    .opacity(isRevealed ? 1 : 0)
+                    .animation(
+                        isRevealed && !reduceMotion
+                            ? ProMotionSprings.gentle.delay(0.035)
+                            : presentationAnimation,
+                        value: isRevealed
+                    )
                     .zIndex(3)
             }
         }
+    }
+
+    private var presentationAnimation: Animation {
+        isRevealed && !reduceMotion ? ProMotionSprings.gentle : ProMotionSprings.snappy
     }
 
     @MainActor
@@ -260,6 +354,7 @@ public struct CommandKView: View {
             Image(systemName: searchIcon)
                 .font(DS.title2)
                 .foregroundStyle(isSearchFocused ? DS.accent : DS.textSecondary)
+                .animation(reduceMotion ? nil : ProMotionSprings.gentle, value: isSearchFocused)
                 .frame(width: 22)
 
             // Text field
@@ -301,7 +396,10 @@ public struct CommandKView: View {
         .cortexSearchBarPanel(glassID: "cortex-pill", in: cortexNamespace)
         .overlay(
             RoundedRectangle(cornerRadius: CommandKMetrics.searchBarHeight / 2, style: .continuous)
-                .strokeBorder(isSearchFocused ? DS.focusRing : Color.clear, lineWidth: isSearchFocused ? 1 : 0)
+                .strokeBorder(DS.focusRing, lineWidth: 1)
+                .opacity(isSearchFocused && isActive ? 1 : 0)
+                .animation(reduceMotion ? nil : ProMotionSprings.gentle, value: isSearchFocused)
+                .allowsHitTesting(false)
         )
     }
 
@@ -429,7 +527,7 @@ public struct CommandKView: View {
     @ViewBuilder
     private func typePrefixBadge(_ type: AtomType) -> some View {
         HStack(spacing: DS.space4) {
-            Image(systemName: iconForType(type))
+            Image(cosmo: type.cosmoIcon)
                 .font(DS.caption2)
             Text(type.displayName)
                 .font(DS.caption)
@@ -492,19 +590,6 @@ public struct CommandKView: View {
         case .connection: return DS.entityConnection
         case .project: return DS.entityIdea
         default: return DS.textSecondary
-        }
-    }
-
-    private func iconForType(_ type: AtomType) -> String {
-        switch type {
-        case .idea: return "lightbulb"
-        case .task: return "checkmark.circle"
-        case .research: return "book"
-        case .content: return "doc.richtext"
-        case .note: return "doc.text"
-        case .connection: return "point.3.connected.trianglepath.dotted"
-        case .project: return "folder"
-        default: return "circle"
         }
     }
 
@@ -600,15 +685,11 @@ public struct CommandKView: View {
         return .handled
     }
 
-    private func closeWithDomainCollapseIfNeeded() {
-        if case .expandedDomain = viewModel.cortexMode {
-            closeExpandedDomain()
-            DispatchQueue.main.asyncAfter(deadline: .now() + CommandKDomainTransitionPolicy.closeNotificationDelay) {
-                NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
-            }
-        } else {
-            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
-        }
+    private func dismissPalette() {
+        // Dismiss the current surface in place. Collapsing its domain first
+        // made it jump in size and left a delayed close that could dismiss a
+        // subsequent opening. Escape still steps back through scopes.
+        NotificationCenter.default.post(name: CosmoNotification.NodeGraph.closeCommandK, object: nil)
     }
 
     private func openExpandedDomain(_ tab: CommandKTab) {

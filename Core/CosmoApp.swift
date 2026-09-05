@@ -461,19 +461,21 @@ public enum NavigationSection: String, CaseIterable, Identifiable, Sendable {
         [.home, .today, .ideas, .content, .connections, .research, .calendar, .canvas, .library, .cosmo]
     }
 
-    public var icon: String {
+    public var icon: String { cosmoIcon.systemName }
+
+    var cosmoIcon: CosmoIcon {
         switch self {
-        case .home: return "house.fill"
-        case .today: return "calendar.badge.clock"
-        case .ideas: return "lightbulb.fill"
-        case .content: return "doc.text.fill"
-        case .connections: return "person.2.fill"
-        case .research: return "magnifyingglass"
-        case .projects: return "folder.fill"
-        case .calendar: return "calendar"
-        case .canvas: return "square.on.square.dashed"
-        case .library: return "books.vertical.fill"
-        case .cosmo: return "brain.head.profile"
+        case .home: return .system("house.fill")
+        case .today: return .today
+        case .ideas: return .idea
+        case .content: return .content
+        case .connections: return .concept
+        case .research: return .research
+        case .projects: return .project
+        case .calendar: return .calendar
+        case .canvas: return .space
+        case .library: return .library
+        case .cosmo: return .system("brain.head.profile")
         }
     }
 }
@@ -524,30 +526,32 @@ public enum EntityType: String, Codable, Sendable {
     case file                       // File portal block (PDF/XLSX/CSV/any file previewed in place)
     case extract                    // Inquiry capture (verbatim unit of meaning) — opens the peek reader, never a workbench
 
-    public var icon: String {
+    public var icon: String { cosmoIcon.systemName }
+
+    var cosmoIcon: CosmoIcon {
         switch self {
-        case .idea: return "lightbulb.fill"
-        case .content: return "doc.text.fill"
-        case .connection: return "person.2.fill"
-        case .research: return "magnifyingglass"
-        case .task: return "checkmark.circle.fill"
-        case .project: return "folder.fill"
-        case .note: return "note.text"
-        case .stickyNote: return "square.and.pencil"
-        case .thinkspace: return "rectangle.3.group"
-        case .cosmo, .cosmoAI: return "brain.head.profile"
-        case .calendar: return "calendar"
-        case .journal: return "book.fill"
-        case .swipeFile: return "bookmark.fill"
-        case .image: return "photo.fill"
-        case .liveQuery: return "bolt.horizontal.fill"
-        case .ideaBoard: return "list.bullet.rectangle.portrait.fill"
-        case .template: return "rectangle.3.group.fill"
-        case .deepDive: return "circle.hexagongrid.circle.fill"
-        case .inquirySession: return "rectangle.split.3x1.fill"
-        case .portal: return "arrow.up.forward.app"
-        case .file: return "doc.fill"
-        case .extract: return "quote.opening"
+        case .idea: return .idea
+        case .content: return .content
+        case .connection: return .concept
+        case .research: return .research
+        case .task: return .task
+        case .project: return .project
+        case .note: return .note
+        case .stickyNote: return .system("square.and.pencil")
+        case .thinkspace: return .space
+        case .cosmo, .cosmoAI: return .system("brain.head.profile")
+        case .calendar: return .calendar
+        case .journal: return .system("book.fill")
+        case .swipeFile: return .swipe
+        case .image: return .system("photo.fill")
+        case .liveQuery: return .system("bolt.horizontal.fill")
+        case .ideaBoard: return .system("list.bullet.rectangle.portrait.fill")
+        case .template: return .system("rectangle.3.group.fill")
+        case .deepDive: return .system("circle.hexagongrid.circle.fill")
+        case .inquirySession: return .system("rectangle.split.3x1.fill")
+        case .portal: return .system("arrow.up.forward.app")
+        case .file: return .system("doc.fill")
+        case .extract: return .system("quote.opening")
         }
     }
 

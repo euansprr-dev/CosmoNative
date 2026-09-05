@@ -538,9 +538,7 @@ struct DashboardTaskRow: View {
         }
 
         let timings = CommandCenterCompletionTimings(reduceMotion: reduceMotion)
-        // The signature cue rides the animation keyframes: swish with the ring,
-        // pen stroke with the check, landing note with the strike.
-        Sound.taskCompletion(timings: timings)
+        // One compact cue lands with the checkmark below.
         completion = .initial
 
         // Duration-based springs preserve the settle points the sound
@@ -556,6 +554,9 @@ struct DashboardTaskRow: View {
 
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(timings.checkDelay))
+            guard !Task.isCancelled else { return }
+            Sound.taskComplete()
+            CosmicHaptics.shared.play(.success)
             withAnimation(.spring(response: timings.checkResponse, dampingFraction: 0.78)) {
                 update { $0.checkProgress = 1 }
             }

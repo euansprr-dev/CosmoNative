@@ -203,21 +203,20 @@ struct CommandCenterDashboard: View {
                 CommandCenterMasthead(viewModel: viewModel)
 
                 if viewModel.viewMode == .today {
-                    // On the content rail like every sibling band — the brief
-                    // was the page's only element still at x=0.
-                    DailyBriefCard()
-                        .padding(.horizontal, DS.space12)
-                        .cascadeIn(hasAppeared, index: 0)
+                    if viewModel.isViewingToday {
+                        DailyBriefCard()
+                            .padding(.horizontal, DS.space12)
+                            .cascadeIn(hasAppeared, index: 0)
 
-                    // The deep-work gauge is Today's hero — Anytime/Someday/
-                    // Logbook are ledgers, not the day's cockpit.
-                    DashboardTimeTracker(viewModel: viewModel)
-                        .cascadeIn(hasAppeared, index: 1)
+                        DashboardTimeTracker(
+                            viewModel: viewModel,
+                            contentWidth: max(0, min(seats.centerWidth, Self.ledgerGroupWidth) - DS.space12 * 2 - DS.space24 * 2)
+                        )
+                            .cascadeIn(hasAppeared, index: 1)
+                    }
 
-                    // Divider only where the gauge sits above the list — the
-                    // ledger lists already end their masthead with a hairline.
-                    gradientDivider
-
+                    // Historical pages show their own work, never a live total
+                    // from today under another day's title.
                     HStack(alignment: .top, spacing: DS.space24) {
                         selectingTaskList
                             .cascadeIn(hasAppeared, index: 2)
@@ -600,10 +599,7 @@ struct CommandCenterDashboard: View {
     // The one rule voice at the page's most structural seam — the doubled
     // Akashic hairline was a third rule dialect inside 200 vertical points
     // (the premium ornament register spent on a plain divider).
-    private var gradientDivider: some View {
-        CosmoPageRule()
-            .padding(.horizontal, DS.space12)
-    }
+
 
 }
 
@@ -703,6 +699,7 @@ struct DashboardColumnSeats: Equatable {
     var internalSidebar: Bool
     var rail: Bool
     var timeline: Bool
+    var centerWidth: CGFloat = 0
 }
 
 /// The dashboard's column arithmetic, derived from the columns the layout
@@ -747,6 +744,7 @@ enum DashboardLayoutMetrics {
         if budget - timelineSpan >= minimumLedgerMeasure {
             seats.timeline = true
         }
+        seats.centerWidth = max(0, budget)
         return seats
     }
 }

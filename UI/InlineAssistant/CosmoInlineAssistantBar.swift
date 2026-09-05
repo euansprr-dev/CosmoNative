@@ -1039,7 +1039,7 @@ private struct CosmoInlineAssistantSelectedContextChip: View {
 
     var body: some View {
         HStack(spacing: 5) {
-            Image(systemName: atom.isSwipeFileAtom ? "bookmark.fill" : atom.type.iconName)
+            Image(cosmo: atom.cosmoIcon)
                 .font(.system(size: 10, weight: .semibold))
             Text(atom.title ?? "Untitled")
                 .font(.system(size: 11, weight: .semibold))

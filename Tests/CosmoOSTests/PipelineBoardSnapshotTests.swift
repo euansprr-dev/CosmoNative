@@ -1,8 +1,8 @@
 // Tests/CosmoOSTests/PipelineBoardSnapshotTests.swift
-// The board deal: phases land in fixed columns, shipped work ages out of
-// the window, every column has a total order, filters reach every column,
-// grouping is a stable partition, and the keyboard cursor walks exactly
-// what is rendered.
+// The board deal: an unstaged piece needs evidence of work to leave the
+// backlog, phases land in fixed columns, shipped work ages out of the
+// window, every column has a total order, filters reach every column, and
+// the keyboard cursor walks exactly what is rendered.
 
 import XCTest
 @testable import CosmoOS
@@ -30,7 +30,8 @@ final class PipelineBoardSnapshotTests: XCTestCase {
         _ uuid: String,
         title: String? = nil,
         phase: ContentPhase,
-        stage: ContentProductionStage = .inProgress,
+        stage: ContentProductionStage? = .inProgress,
+        wordCount: Int = 120,
         client: String? = nil,
         clientName: String? = nil,
         platform: SocialPlatform? = nil,
@@ -54,43 +55,23 @@ final class PipelineBoardSnapshotTests: XCTestCase {
             format: format?.rawValue,
             sourceIdeaUUID: nil,
             latestPublish: publishedAt.map { ContentPublishRecord(platform: "instagram", url: nil, publishedAt: $0) },
-            wordCount: 120,
+            wordCount: wordCount,
             updatedAt: date(updatedAt),
             phaseEnteredAt: phaseEnteredAt.map(date),
             editorialStage: stage
         )
     }
 
-    private func idea(
-        _ uuid: String,
-        title: String? = nil,
-        client: String? = nil,
-        platform: IdeaPlatform? = nil,
-        format: ContentFormat? = nil
-    ) -> IdeaGalleryItem {
-        IdeaGalleryItem(
-            id: uuid, atomUUID: uuid, entityId: 1, title: title ?? "Idea \(uuid)", body: nil,
-            status: .spark, contentFormat: format, platform: platform,
-            clientName: client, clientUUID: client, tags: [], insightScore: nil,
-            matchingSwipeCount: nil, suggestedFramework: nil, isPinned: false, contentCount: 0,
-            createdAt: "2030-05-01T09:00:00Z", updatedAt: "2030-05-01T09:00:00Z"
-        )
-    }
-
     private func build(
         _ content: [PipelineContentItem],
-        ideas: [IdeaGalleryItem] = [],
-        sessionDaysByIdea: [String: Date] = [:],
         sessionDaysByContent: [String: Date] = [:],
         perf: [String: ContentPerfSnapshot] = [:],
         filters: PipelineFilters = PipelineFilters(),
-        groupByClient: Bool = false,
         shippedWindowDays: Int = 30
     ) -> PipelineBoardSnapshot {
         PipelineBoardSnapshot.build(
-            content: content, ideas: ideas,
-            sessionDaysByIdea: sessionDaysByIdea, sessionDaysByContent: sessionDaysByContent,
-            perf: perf, filters: filters, groupByClient: groupByClient,
+            content: content, sessionDaysByContent: sessionDaysByContent,
+            perf: perf, filters: filters,
             shippedWindowDays: shippedWindowDays, today: today, calendar: utc
         )
     }
@@ -102,12 +83,43 @@ final class PipelineBoardSnapshotTests: XCTestCase {
     // MARK: - Columns
 
     func testEditorialColumnsAreIndependentOfEditorActivity() {
-        for phase in [ContentPhase.ideation, .draft, .polish, .scheduled] {
+        XCTAssertEqual(Column.column(for: ContentPhase.ideation), .notStarted)
+        for phase in [ContentPhase.draft, .polish, .scheduled] {
             XCTAssertEqual(Column.column(for: phase), .inProgress)
         }
         XCTAssertEqual(Column.column(for: ContentPhase.published), .shipped)
         XCTAssertNil(Column.column(for: ContentPhase.archived))
-        XCTAssertEqual(Column.contentColumns, [.inProgress, .review, .ready, .shipped])
+        XCTAssertEqual(Column.contentColumns, [.notStarted, .inProgress, .review, .ready, .shipped])
+        XCTAssertEqual(Column.collapsedByDefault, [.notStarted])
+    }
+
+    // MARK: - Backlog (evidence of work)
+
+    func testUnstagedPieceNeedsEvidenceOfWorkToLeaveTheBacklog() {
+        let untouched = content("untouched", phase: .ideation, stage: nil, wordCount: 0)
+        let written = content("written", phase: .ideation, stage: nil, wordCount: 40)
+        let dated = content("dated", phase: .ideation, stage: nil, wordCount: 0, scheduledAt: "2030-05-12T09:00:00Z")
+        let edited = content("edited", phase: .draft, stage: nil, wordCount: 0)
+        let parked = content("parked", phase: .draft, stage: .notStarted, wordCount: 500)
+        XCTAssertEqual(untouched.productionStage, .notStarted, "no stage, no words, no date: backlog")
+        XCTAssertEqual(written.productionStage, .inProgress, "words on the page are work")
+        XCTAssertEqual(dated.productionStage, .inProgress, "a publication date is a commitment")
+        XCTAssertEqual(edited.productionStage, .inProgress, "editing activity is work")
+        XCTAssertEqual(parked.productionStage, .notStarted, "an explicit stage always wins")
+
+        let snapshot = build([untouched, written, dated, edited, parked])
+        XCTAssertEqual(Set(ids(snapshot, .notStarted)), ["untouched", "parked"])
+        XCTAssertEqual(Set(ids(snapshot, .inProgress)), ["written", "dated", "edited"])
+    }
+
+    func testBookedSessionLiftsOnlyUnstagedPiecesOutOfTheBacklog() {
+        let day = date("2030-05-13T00:00:00Z")
+        let untouched = content("untouched", phase: .ideation, stage: nil, wordCount: 0)
+        let parked = content("parked", phase: .ideation, stage: .notStarted, wordCount: 0)
+        let snapshot = build([untouched, parked], sessionDaysByContent: ["untouched": day, "parked": day])
+        XCTAssertEqual(ids(snapshot, .inProgress), ["untouched"])
+        XCTAssertEqual(ids(snapshot, .notStarted), ["parked"], "a deliberate Not started survives a booked session")
+        XCTAssertEqual(snapshot.cards(in: .inProgress).first?.sessionDay, day)
     }
 
 
@@ -181,57 +193,26 @@ final class PipelineBoardSnapshotTests: XCTestCase {
 
     // MARK: - Filters
 
-    func testFiltersReachEveryColumnIncludingIdeas() {
+    func testFiltersReachEveryColumn() {
         let rows = [
             content("ig-draft", title: "Reel about hooks", phase: .draft, client: "josh", clientName: "Josh", platform: .instagram, format: .reel),
             content("li-draft", title: "Post about hooks", phase: .draft, client: "ben", clientName: "Ben", platform: .linkedin, format: .post),
             content("ig-ship", title: "Shipped reel", phase: .published, client: "josh", clientName: "Josh", platform: .instagram, format: .reel, publishedAt: "2030-05-08T09:00:00Z"),
         ]
-        let ideas = [
-            idea("idea-ig", title: "Hook ideas", client: "Josh", platform: .instagram, format: .reel),
-            idea("idea-li", title: "Career ladder", client: "Ben", platform: .linkedin, format: .post),
-        ]
-
-        let byPlatform = build(rows, ideas: ideas, filters: PipelineFilters(platform: .instagram))
+        let byPlatform = build(rows, filters: PipelineFilters(platform: .instagram))
         XCTAssertEqual(ids(byPlatform, .inProgress), ["ig-draft"])
         XCTAssertEqual(ids(byPlatform, .shipped), ["ig-ship"])
-        XCTAssertEqual(byPlatform.ideas.map(\.item.id), ["idea-ig"])
 
-        let byFormat = build(rows, ideas: ideas, filters: PipelineFilters(format: .post))
+        let byFormat = build(rows, filters: PipelineFilters(format: .post))
         XCTAssertEqual(ids(byFormat, .inProgress), ["li-draft"])
         XCTAssertTrue(ids(byFormat, .shipped).isEmpty)
-        XCTAssertEqual(byFormat.ideas.map(\.item.id), ["idea-li"])
 
-        let byQuery = build(rows, ideas: ideas, filters: PipelineFilters(query: "hooks josh"))
+        let byQuery = build(rows, filters: PipelineFilters(query: "hooks josh"))
         XCTAssertEqual(ids(byQuery, .inProgress), ["ig-draft"], "tokens match title + client name in any order")
         XCTAssertTrue(ids(byQuery, .shipped).isEmpty)
-        let reversed = build(rows, ideas: ideas, filters: PipelineFilters(query: "JOSH hooks"))
+        let reversed = build(rows, filters: PipelineFilters(query: "JOSH hooks"))
         XCTAssertEqual(ids(reversed, .inProgress), ["ig-draft"])
-        XCTAssertEqual(reversed.ideas.map(\.item.id), [], "\"hooks\" ≠ \"hook\" — every token must appear")
-
-        let ideaQuery = build(rows, ideas: ideas, filters: PipelineFilters(query: "ben ladder"))
-        XCTAssertEqual(ideaQuery.ideas.map(\.item.id), ["idea-li"])
-        XCTAssertEqual(ideaQuery.ideas.count, 1)
-    }
-
-    // MARK: - Grouping
-
-    func testGroupByClientIsAStablePartitionWithUnassignedLast() {
-        let rows = [
-            content("z1", phase: .draft, client: "zed", clientName: "Zed", updatedAt: "2030-05-09T09:00:00Z"),
-            content("u1", phase: .draft, updatedAt: "2030-05-08T09:00:00Z"),
-            content("a1", phase: .draft, client: "amy", clientName: "amy", updatedAt: "2030-05-07T09:00:00Z"),
-            content("z2", phase: .draft, client: "zed", clientName: "Zed", updatedAt: "2030-05-06T09:00:00Z"),
-            content("u2", phase: .draft, updatedAt: "2030-05-05T09:00:00Z"),
-            content("a2", phase: .draft, client: "amy", clientName: "amy", updatedAt: "2030-05-04T09:00:00Z"),
-        ]
-        let grouped = build(rows, groupByClient: true)
-        XCTAssertEqual(ids(grouped, .inProgress), ["a1", "a2", "z1", "z2", "u1", "u2"])
-        XCTAssertEqual(grouped.cards(in: .inProgress).map(\.clientGroup), ["amy", "amy", "Zed", "Zed", "Unassigned", "Unassigned"])
-
-        let flat = build(rows, groupByClient: false)
-        XCTAssertEqual(ids(flat, .inProgress), ["z1", "u1", "a1", "z2", "u2", "a2"])
-        XCTAssertTrue(flat.cards(in: .inProgress).allSatisfy { $0.clientGroup == nil })
+        XCTAssertTrue(ids(build(rows, filters: PipelineFilters(query: "hook ladder")), .inProgress).isEmpty, "every token must appear")
     }
 
     // MARK: - Cursor order
@@ -244,22 +225,17 @@ final class PipelineBoardSnapshotTests: XCTestCase {
             content("s2", phase: .scheduled, scheduledAt: "2030-05-02T09:00:00Z"),
             content("p1", phase: .published, publishedAt: "2030-05-08T09:00:00Z"),
         ]
-        let ideas = [idea("i2"), idea("i1")]
-        for groupByClient in [false, true] {
-            let snapshot = build(rows, ideas: ideas, groupByClient: groupByClient)
-            XCTAssertEqual(snapshot.cursorOrder.count, Column.allCases.count)
-            for (index, column) in Column.allCases.enumerated() {
-                let rendered = snapshot.cards(in: column).map(\.id)
-                XCTAssertEqual(snapshot.cursorOrder[index], rendered, "\(column) cursor must walk rendered order (group=\(groupByClient))")
-            }
-            XCTAssertFalse(snapshot.cursorOrder.flatMap { $0 }.contains { $0.hasPrefix("idea:") })
+        let snapshot = build(rows)
+        XCTAssertEqual(snapshot.cursorOrder.count, Column.allCases.count)
+        for (index, column) in Column.allCases.enumerated() {
+            let rendered = snapshot.cards(in: column).map(\.id)
+            XCTAssertEqual(snapshot.cursorOrder[index], rendered, "\(column) cursor must walk rendered order")
         }
     }
 
     // MARK: - Session chips + perf
 
-    func testSessionDaysComeFromBothMapsAndPerfRidesShippedCards() {
-        let ideaDay = date("2030-05-13T00:00:00Z")
+    func testSessionDaysAndPerfRideTheRightCards() {
         let contentDay = date("2030-05-14T00:00:00Z")
         let perf = ContentPerfSnapshot(
             id: nil, contentUuid: "p1", platform: "instagram", views: 900, likes: 10,
@@ -267,32 +243,18 @@ final class PipelineBoardSnapshotTests: XCTestCase {
         )
         let snapshot = build(
             [content("d1", phase: .draft), content("p1", phase: .published, publishedAt: "2030-05-08T09:00:00Z")],
-            ideas: [idea("i1"), idea("i2")],
-            sessionDaysByIdea: ["i1": ideaDay],
             sessionDaysByContent: ["d1": contentDay],
             perf: ["p1": perf]
         )
-        XCTAssertEqual(snapshot.ideas.map(\.sessionDay), [ideaDay, nil])
         XCTAssertEqual(snapshot.cards(in: .inProgress).first?.sessionDay, contentDay)
         XCTAssertNil(snapshot.cards(in: .shipped).first?.sessionDay)
         XCTAssertEqual(snapshot.cards(in: .shipped).first?.perf?.views, 900)
         XCTAssertNil(snapshot.cards(in: .inProgress).first?.perf)
     }
 
-    // MARK: - Ideas order
-
-    func testIdeasKeepInputOrderEvenWhenGrouping() {
-        let ideas = [idea("c", client: "zed"), idea("a"), idea("b", client: "amy")]
-        XCTAssertEqual(build([], ideas: ideas).ideas.map(\.item.id), ["c", "a", "b"])
-        XCTAssertEqual(build([], ideas: ideas, groupByClient: true).ideas.map(\.item.id), ["c", "a", "b"])
-        XCTAssertEqual(build([], ideas: ideas).ideas.map(\.id), ["idea:c", "idea:a", "idea:b"])
-        XCTAssertEqual(build([], ideas: ideas).ideas.count, 3)
-    }
-
     func testSnapshotEqualityTracksRenderedState() {
         let rows = [content("d1", phase: .draft)]
         XCTAssertEqual(build(rows), build(rows))
         XCTAssertNotEqual(build(rows), build(rows, sessionDaysByContent: ["d1": today]))
-        XCTAssertNotEqual(build(rows, ideas: [idea("i1")]), build(rows, ideas: [idea("i1", title: "Renamed")]))
     }
 }

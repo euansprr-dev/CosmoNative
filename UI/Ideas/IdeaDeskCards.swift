@@ -158,7 +158,7 @@ private struct IdeaDeskCardManners: ViewModifier {
                 title: headline,
                 subtitle: idea.clientName ?? "Idea",
                 accent: DS.entityIdea,
-                symbolName: "lightbulb",
+                icon: .idea,
                 thumbnailURL: thumbnailURL
             ))
             .dropDestination(for: String.self) { items, _ in

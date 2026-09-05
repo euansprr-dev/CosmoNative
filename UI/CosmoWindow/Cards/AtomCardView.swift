@@ -31,7 +31,7 @@ struct AtomCardView: View {
 
     private var typeBadge: some View {
         HStack(spacing: 4) {
-            Image(systemName: iconForType(data.type))
+            Image(cosmo: typeIcon)
                 .font(.caption2)
                 .accessibilityLabel("\(data.type) type")
             Text(data.type.capitalized)
@@ -80,17 +80,9 @@ struct AtomCardView: View {
         )
     }
 
-    private func iconForType(_ type: String) -> String {
-        switch type.lowercased() {
-        case "idea": return "lightbulb.fill"
-        case "research": return "magnifyingglass"
-        case "content": return "doc.text.fill"
-        case "note": return "note.text"
-        case "connection": return "person.fill"
-        case "swipe": return "rectangle.stack.fill"
-        case "task": return "checkmark.circle.fill"
-        default: return "atom"
-        }
+    private var typeIcon: CosmoIcon {
+        let type = data.type.lowercased()
+        return type == "swipe" ? .swipe : (AtomType(rawValue: type)?.cosmoIcon ?? .system("atom"))
     }
 
     private func colorForType(_ type: String) -> Color {

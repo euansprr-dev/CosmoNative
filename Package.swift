@@ -27,6 +27,7 @@ let package = Package(
             path: ".",
             exclude: [
                 "Tests",
+                "Documentation",  // Design tooling includes standalone Swift executables
                 "scripts",  // Python tooling (.venv contains C sources SPM chokes on)
                 "marketing",  // Video tooling (node_modules contains C sources)
                 "cosmo-cloud-agent",  // Railway worker (TS/JS + node_modules — breaks `swift test`)

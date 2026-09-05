@@ -32,16 +32,6 @@ public enum CommandKTab: String, CaseIterable, Equatable {
         }
     }
 
-    var icon: String {
-        switch self {
-        case .database: return "tray.full.fill"
-        case .swipeGallery: return "rectangle.stack.fill"
-        case .ideas: return "lightbulb.fill"
-        case .readwise: return "books.vertical.fill"
-        case .inquiry: return "circle.hexagongrid.circle.fill"
-        }
-    }
-
     var accentColor: Color {
         switch self {
         case .database: return DS.accent

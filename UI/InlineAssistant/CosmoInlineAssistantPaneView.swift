@@ -31,26 +31,89 @@ enum CosmoInlineAssistantPaneProgressPolicy {
 struct CosmoInlineAssistantPaneView: View {
     @ObservedObject var store: CosmoInlineAssistantStore
     let onClose: () -> Void
+    @State private var windowNumber: Int?
 
     var body: some View {
         VStack(spacing: CosmoSurfaceMetrics.chromeGap) {
             CosmoInlineAssistantPaneToolbar(store: store, onClose: onClose)
                 .cosmoChromeBandInsets()
 
-            contentWell
-                .cosmoInnerWindow()
+            if let windowNumber, CompanionAssistantCoordinator.shared.isOwner(windowNumber: windowNumber) {
+                contentWell.cosmoInnerWindow()
+            } else {
+                VStack(spacing: DS.space12) {
+                    Text("Your conversation is open in another window.").font(DS.callout).foregroundStyle(DS.textSecondary)
+                    Button("Go to conversation") { CompanionAssistantCoordinator.shared.focusOwner() }
+                        .buttonStyle(CompanionPressStyle()).help("Bring the conversation window forward")
+                }.frame(maxWidth: .infinity, maxHeight: .infinity).background(DS.bg)
+            }
         }
         .background(DS.bg)
+        .background(AssistantWindowReader { windowNumber = $0?.windowNumber })
     }
 
     private var contentWell: some View {
+        AssistantConversationSurface(store: store)
+    }
+}
+
+/// Both hosts render this surface. Context, review cards and the native composer
+/// never fork into a second implementation when the user makes more room.
+struct AssistantConversationSurface: View {
+    @ObservedObject var store: CosmoInlineAssistantStore
+    @State private var showConversations = false
+
+    var body: some View {
         VStack(spacing: 0) {
+            HStack(spacing: DS.space8) {
+                CosmoScopeSwitcherPill(store: store)
+                Spacer(minLength: 0)
+                Button { showConversations = true } label: {
+                    Image(systemName: "clock.arrow.circlepath").font(DS.callout).frame(width: 36, height: 36)
+                }.buttonStyle(CompanionPressStyle()).help("Continue a conversation from your library").accessibilityLabel("Conversation library")
+                Button {
+                    store.composerText = "/"
+                    NotificationCenter.default.post(name: .focusCosmoComposer, object: nil)
+                } label: {
+                    Label("Skills", systemImage: "square.stack.3d.up")
+                        .font(DS.caption).frame(minHeight: 36)
+                }.buttonStyle(CompanionPressStyle()).help("Choose a skill or open Assistant Studio")
+            }
+            .foregroundStyle(DS.textSecondary)
+            .padding(.horizontal, DS.space16).padding(.vertical, DS.space8)
+            AssistantConversationNotice(store: store)
             CosmoInlineAssistantPaneMessages(store: store)
             CosmoInlineAssistantAutoSkillChip(store: store)
             CosmoInlineAssistantPaneFollowUps(store: store)
             CosmoInlineAssistantPaneComposer(store: store)
         }
         .background(DS.bg)
+        .sheet(isPresented: $showConversations) { CompanionConversationLibrary(store: store) }
+    }
+}
+
+private struct AssistantConversationNotice: View {
+    @ObservedObject var store: CosmoInlineAssistantStore
+    private var coordinator: CompanionAssistantCoordinator { .shared }
+    var body: some View {
+        if let message = coordinator.message ?? store.errorText ?? store.portableSyncError {
+            HStack(alignment: .top, spacing: DS.space8) {
+                Image(systemName: "info.circle").accessibilityHidden(true)
+                Text(message).font(DS.caption).fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                if store.portableSyncError != nil {
+                    Button("Retry") { store.retryPortableConversationSave() }.buttonStyle(CompanionPressStyle()).help("Retry sharing this conversation with your library")
+                }
+                Button {
+                    coordinator.clearMessage()
+                    store.errorText = nil
+                } label: {
+                    Image(systemName: "xmark").frame(width: 32, height: 32)
+                }.buttonStyle(CompanionPressStyle()).help("Dismiss message").accessibilityLabel("Dismiss message")
+            }
+            .foregroundStyle(DS.textSecondary).padding(.horizontal, DS.space16).padding(.vertical, DS.space8)
+            .background(DS.surface)
+        }
     }
 }
 
@@ -122,6 +185,7 @@ private struct CosmoInlineAssistantPaneToolbar: View {
     let onClose: () -> Void
 
     @Environment(\.paneDeckChrome) private var paneDeckChrome
+    @State private var showWorld = false
     @State private var memoryFacts: [String] = []
     @State private var memoryTotal = 0
     @State private var isMemoryPopoverShown = false
@@ -130,14 +194,10 @@ private struct CosmoInlineAssistantPaneToolbar: View {
         HStack(spacing: DS.space6) {
             deckTabStrip
             CosmoBrowserToolbarButton(icon: "xmark", help: "Close assistant pane (Esc)", action: onClose)
-            orb
-            if !showsDeckTabs {
-                Text("Cosmo")
-                    .font(DS.headline)
-                    .foregroundStyle(DS.text)
-                    .fixedSize()
+            CompanionAssistantIdentity { showWorld = true }
+            CosmoBrowserToolbarButton(icon: "arrow.down.right.and.arrow.up.left", help: "Return this conversation to the corner") {
+                CompanionAssistantCoordinator.shared.returnToCompact(closePane: onClose, store: store)
             }
-            CosmoScopeSwitcherPill(store: store)
             Spacer(minLength: DS.space8)
             sessionSpine
         }
@@ -158,6 +218,7 @@ private struct CosmoInlineAssistantPaneToolbar: View {
             castsShadow: false
         )
         .background(escapeShortcut)
+        .sheet(isPresented: $showWorld) { CompanionPickerPopover() }
         .animation(ProMotionSprings.gentle, value: store.activeSurfaceTitle)
         .task { await refreshMemoryFacts() }
         .task {
@@ -483,16 +544,15 @@ struct CosmoScopePill: View {
                 .font(DS.caption.weight(.semibold))
                 .foregroundStyle(DS.text)
         } else {
-            Text("nothing in focus")
+            Text("General · no document")
                 .font(DS.caption)
-                .italic()
                 .foregroundStyle(DS.textMuted)
         }
     }
 
     private var accessibilityDescription: String {
         if let title { return "Cosmo is scoped to \(title)\(isPinned ? ", pinned" : "")" }
-        return isGeneral ? "General — no document in context" : "Nothing in focus"
+        return "General — no document in context"
     }
 }
 
@@ -750,6 +810,11 @@ struct CosmoInlineAssistantPaneMessages: View {
                 }
                 .onAppear {
                     follower.isPaneExpanded = isPaneExpanded
+                    isNearBottom = store.conversationViewport.followsLatest
+                    follower.isNearBottom = isNearBottom
+                    if !isNearBottom, let anchor = store.conversationViewport.firstVisibleRunID {
+                        proxy.scrollTo(anchor, anchor: .top)
+                    }
                     follower.scrollToBottom = { animated in scrollToBottom(proxy, animated: animated) }
                 }
                 .onChange(of: store.paneMessages.count) {
@@ -767,7 +832,7 @@ struct CosmoInlineAssistantPaneMessages: View {
                     // the user reads another tab was scrolling an invisible
                     // transcript); re-expanding catches up on what streamed.
                     follower.isPaneExpanded = expanded
-                    if expanded { scrollToBottom(proxy, animated: false) }
+                    if expanded && store.conversationViewport.followsLatest { scrollToBottom(proxy, animated: false) }
                 }
         }
         // Select→mint: highlighting a concept-shaped phrase in the transcript
@@ -791,9 +856,12 @@ struct CosmoInlineAssistantPaneMessages: View {
                 .frame(height: 1)
                 .id(Self.bottomAnchorID)
         }
-        .defaultScrollAnchor(.bottom, for: .initialOffset)
+        .onScrollTargetVisibilityChange(idType: UUID.self, threshold: 0.1) { visible in
+            if !isNearBottom { store.conversationViewport.firstVisibleRunID = visible.first }
+        }
+        .defaultScrollAnchor(store.paneMessages.isEmpty ? .top : store.conversationViewport.followsLatest ? .bottom : .top, for: .initialOffset)
         .defaultScrollAnchor(
-            CosmoInlineAssistantScrollFollowPolicy.sizeChangeAnchor(isNearBottom: isNearBottom),
+            store.paneMessages.isEmpty ? .top : CosmoInlineAssistantScrollFollowPolicy.sizeChangeAnchor(isNearBottom: isNearBottom),
             for: .sizeChanges
         )
         .onScrollGeometryChange(for: Bool.self) { geometry in
@@ -803,6 +871,7 @@ struct CosmoInlineAssistantPaneMessages: View {
             )
         } action: { _, nearBottom in
             follower.isNearBottom = nearBottom
+            store.conversationViewport.followsLatest = nearBottom
             guard isNearBottom != nearBottom else { return }
             withAnimation(ProMotionSprings.gentle) {
                 isNearBottom = nearBottom
@@ -811,6 +880,7 @@ struct CosmoInlineAssistantPaneMessages: View {
     }
 
     private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool) {
+        guard !store.paneMessages.isEmpty || store.isProcessing else { return }
         if animated {
             withAnimation(ProMotionSprings.gentle) {
                 proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
@@ -836,6 +906,7 @@ struct CosmoInlineAssistantPaneMessages: View {
         LazyVStack(alignment: .leading, spacing: DS.space12) {
             ForEach(runs) { run in
                 runView(run)
+                    .id(run.id)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
 
@@ -847,6 +918,9 @@ struct CosmoInlineAssistantPaneMessages: View {
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
         }
+        .scrollTargetLayout()
+        .frame(maxWidth: 700)
+        .frame(maxWidth: .infinity)
         .padding(DS.space16)
         .animation(ProMotionSprings.gentle, value: store.paneMessages.count)
         .animation(ProMotionSprings.gentle, value: store.isProcessing)

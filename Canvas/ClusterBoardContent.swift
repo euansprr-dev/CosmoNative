@@ -131,7 +131,7 @@ struct ClusterBoardCard: View {
             .fill(CosmoMentionColors.color(for: block.entityType))
             .frame(width: 18, height: 18)
             .overlay(
-                Image(systemName: block.entityType.icon)
+                Image(cosmo: block.entityType.cosmoIcon)
                     .font(.system(size: 7, weight: .semibold))
                     .foregroundStyle(DS.textOnAccent)
             )

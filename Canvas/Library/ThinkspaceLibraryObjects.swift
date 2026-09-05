@@ -561,7 +561,7 @@ struct LibraryListObjectMark: View {
                     )
             } else {
                 CosmoIdentityChip(
-                    systemName: model.kindGlyph,
+                    icon: model.cosmoIcon,
                     tint: model.item.entityType.color,
                     size: size
                 )

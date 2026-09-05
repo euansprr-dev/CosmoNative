@@ -319,7 +319,8 @@ class DeepWorkSessionEngine: ObservableObject {
         stopTimer()
         stopDistractionDetection()
 
-        let actualMinutes = Int(session.elapsedActiveSeconds / 60)
+        let actualSeconds = Int(session.elapsedActiveSeconds)
+        let actualMinutes = actualSeconds / 60
         let effectivePlannedMinutes = session.isOpenEnded ? max(actualMinutes, 1) : session.plannedMinutes
 
         // Find atoms created during this session
@@ -347,7 +348,7 @@ class DeepWorkSessionEngine: ObservableObject {
         )
 
         // Save session atom
-        await saveSessionAtom(session: session, metadata: sessionMetadata)
+        await saveSessionAtom(session: session, metadata: sessionMetadata, actualSeconds: actualSeconds)
 
         // Update parent task metadata
         if let taskUUID = session.taskUUID {
@@ -653,6 +654,10 @@ class DeepWorkSessionEngine: ObservableObject {
 
             // Habit credit only after the completion actually persisted (dashboard contract).
             await CommandCenterHabitEngine.shared.recordTaskCompletion(taskUUID: context.taskUUID)
+            let companionEvent = context.isRecurring
+                ? "\(context.taskUUID):\(RecurringSeriesEngine.dayKey(for: Date()))"
+                : context.taskUUID
+            await CompanionStore.shared.notice(.taskCompleted, eventID: companionEvent, repository: atomRepository)
             NotificationCenter.default.post(
                 name: .timedGoalTaskCompleted,
                 object: nil,
@@ -758,14 +763,14 @@ class DeepWorkSessionEngine: ObservableObject {
         }
     }
 
-    private func saveSessionAtom(session: ActiveDeepWorkSession, metadata: DeepWorkSessionMetadata) async {
-        let metadataString: String
-        if let data = try? JSONEncoder().encode(metadata),
-           let json = String(data: data, encoding: .utf8) {
-            metadataString = json
-        } else {
-            metadataString = "{}"
-        }
+    private func saveSessionAtom(session: ActiveDeepWorkSession, metadata: DeepWorkSessionMetadata, actualSeconds: Int) async {
+        // Match iPhone’s saved-time contract: a deliberate sub-minute session
+        // still belongs in the journey. Keep whole minutes for older readers.
+        guard let data = try? JSONEncoder().encode(metadata),
+              var fields = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+        fields["actualSeconds"] = max(0, actualSeconds)
+        guard let encoded = try? JSONSerialization.data(withJSONObject: fields) else { return }
+        let metadataString = String(decoding: encoded, as: UTF8.self)
 
         let atom = Atom.new(
             type: .deepWorkBlock,
@@ -776,6 +781,9 @@ class DeepWorkSessionEngine: ObservableObject {
 
         do {
             try await atomRepository.create(atom)
+            if actualSeconds >= 3 {
+                await CompanionStore.shared.notice(.focusFinished, eventID: atom.uuid, repository: atomRepository)
+            }
         } catch {
             print("DeepWorkSessionEngine: Failed to save session atom - \(error)")
         }

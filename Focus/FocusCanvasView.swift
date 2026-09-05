@@ -907,7 +907,7 @@ struct FocusCanvasHeader: View {
 
             // Entity badge
             HStack(spacing: 6) {
-                Image(systemName: entity.type.icon)
+                Image(cosmo: entity.type.cosmoIcon)
                     .font(.system(size: 11))
                 Text(entity.type.rawValue.capitalized)
                     .font(CosmoTypography.labelSmall)
@@ -980,7 +980,7 @@ struct FocusBlockView: View {
         VStack(alignment: .leading, spacing: 8) {
             // Header
             HStack {
-                Image(systemName: block.entityType.icon)
+                Image(cosmo: block.entityType.cosmoIcon)
                     .font(.system(size: 12))
                     .foregroundColor(blockColor)
 

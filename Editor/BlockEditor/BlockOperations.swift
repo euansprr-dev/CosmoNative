@@ -1127,12 +1127,18 @@ extension BlockOperations {
         for block in blocks {
             numberedIndex = block.kind == .numberedList ? numberedIndex + 1 : 0
             lines.append(markdownLine(for: block, numberedIndex: max(1, numberedIndex)))
+            // Visibility is presentation state. Copy includes the complete
+            // selected object, including nested and folded content.
+            lines.append(contentsOf: markdownLines(for: block.children))
+            if let folded = block.heading?.collapsedBlocks {
+                lines.append(contentsOf: markdownLines(for: folded))
+            }
         }
         return lines
     }
 
     private static func markdownLine(for block: RichBlock, numberedIndex: Int) -> String {
-        let text = block.plainInlineText
+        let text = block.kind == .code ? block.plainInlineText : block.inlines.map(markdownInline).joined()
         switch block.kind {
         case .heading1: return "# " + text
         case .heading2: return "## " + text
@@ -1142,14 +1148,39 @@ extension BlockOperations {
         case .checklist: return (block.checked == true ? "- [x] " : "- [ ] ") + text
         case .quote: return "> " + text
         case .callout: return "!! " + text
-        case .code: return "```\n" + text.replacingOccurrences(of: "\u{2028}", with: "\n") + "\n```"
+        case .code:
+            var fence = "```"
+            while text.contains(fence) { fence += "`" }
+            return fence + "\n" + text.replacingOccurrences(of: "\u{2028}", with: "\n") + "\n" + fence
         case .divider: return "---"
         case .table: return (block.table ?? RichTable()).markdownLines().joined(separator: "\n")
         case .section:
-            // A section copies as a level-2 heading over its body.
-            return (["## " + text] + markdownLines(for: block.children)).joined(separator: "\n")
+            return "## " + text
+        case .element:
+            return "## " + (block.element?.instanceTitleSnapshot ?? block.element?.titleSnapshot ?? "Element")
+        case .image: return text.isEmpty ? "[Image]" : text
+        case .sketch: return "[Sketch]"
         default: return text
         }
+    }
+
+    private static func markdownInline(_ inline: RichInlineNode) -> String {
+        if inline.kind == .imageRef {
+            guard let url = inline.image?.remoteURL, URL(string: url)?.scheme == "https" else { return "[Image]" }
+            return "![Image](\(url))"
+        }
+        var text = inline.plainText
+        for character in ["\\", "*", "_", "[", "]", "`", "~"] {
+            text = text.replacingOccurrences(of: character, with: "\\" + character)
+        }
+        if inline.marks.contains(.bold) { text = "**" + text + "**" }
+        if inline.marks.contains(.italic) { text = "_" + text + "_" }
+        if inline.marks.contains(.strikethrough) { text = "~~" + text + "~~" }
+        if let href = inline.href, let scheme = URL(string: href)?.scheme?.lowercased(),
+           ["https", "http", "mailto"].contains(scheme) {
+            text = "[\(text)](<\(href.replacingOccurrences(of: ">", with: "%3E"))>)"
+        }
+        return text
     }
 
     /// The selected root blocks themselves, in document order — the
@@ -1235,6 +1266,22 @@ extension RichBlock {
         }
         copy.element?.id = UUID()
         copy.children = children.map { $0.withRegeneratedIDs() }
+        copy.heading?.collapsedBlocks = heading?.collapsedBlocks.map { $0.withRegeneratedIDs() } ?? []
+        if var table = copy.table {
+            for index in table.columns.indices { table.columns[index].id = UUID() }
+            for row in table.rows.indices {
+                table.rows[row].id = UUID()
+                for cell in table.rows[row].cells.indices {
+                    table.rows[row].cells[cell].id = UUID()
+                    table.rows[row].cells[cell].inlines = table.rows[row].cells[cell].inlines.map {
+                        var inline = $0
+                        inline.id = UUID()
+                        return inline
+                    }
+                }
+            }
+            copy.table = table
+        }
         return copy
     }
 }

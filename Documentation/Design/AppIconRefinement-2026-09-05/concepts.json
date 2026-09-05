@@ -1,0 +1,64 @@
+[
+  {
+    "id": "01-living-orbit",
+    "name": "Living Orbit",
+    "description": "A precise restoration of the original.",
+    "bg": "#F6F2E8",
+    "fg": "#285D46",
+    "weight": 26,
+    "secondary": 25,
+    "vein": 20,
+    "seed": 40,
+    "tonal": false
+  },
+  {
+    "id": "02-verdant",
+    "name": "Verdant",
+    "description": "A sculpted leaf with open, legible veins.",
+    "bg": "#F6F2E8",
+    "fg": "#285D46",
+    "weight": 32,
+    "secondary": 27,
+    "vein": 22,
+    "seed": 44,
+    "tonal": true
+  },
+  {
+    "id": "03-folio",
+    "name": "Folio",
+    "description": "A flowing orbital C and a botanical counterpoint.",
+    "bg": "#F6F2E8",
+    "fg": "#285D46",
+    "weight": 40,
+    "secondary": 24,
+    "vein": 20,
+    "seed": 41,
+    "tonal": false,
+    "folio": true
+  },
+  {
+    "id": "04-meridian",
+    "name": "Meridian",
+    "description": "Fine orbital geometry and a single gilt seed.",
+    "bg": "#F3EFE5",
+    "fg": "#2C5945",
+    "weight": 25,
+    "secondary": 23,
+    "vein": 19,
+    "seed": 40,
+    "tonal": false,
+    "meridian": true
+  },
+  {
+    "id": "05-evergreen",
+    "name": "Evergreen",
+    "description": "A luminous leaf, held in a forest-green orbit.",
+    "bg": "#153E30",
+    "fg": "#F5F0E3",
+    "weight": 32,
+    "secondary": 28,
+    "vein": 22,
+    "seed": 44,
+    "tonal": true
+  }
+]

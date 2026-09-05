@@ -577,7 +577,7 @@ struct DashboardTaskList: View {
     private func emptyStatePresentation(message: String, icon: String) -> (title: String, subtitle: String) {
         switch icon {
         case "calendar":
-            return ("Today is clear", "Add a task or drag one into Today when you are ready to schedule it.")
+            return ("Nothing scheduled", "Tasks planned for this day will appear here.")
         case "checkmark.circle":
             return ("No completed tasks yet", "Completed tasks will collect here as you finish the day.")
         case "tray.full":

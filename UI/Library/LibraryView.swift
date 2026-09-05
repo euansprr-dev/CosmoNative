@@ -191,7 +191,7 @@ struct LibraryView: View {
         } label: {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 10) {
-                    Image(systemName: item.icon)
+                    Image(cosmo: item.cosmoIcon)
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundColor(item.color)
                         .frame(width: 30, height: 30)
@@ -472,7 +472,7 @@ struct LibraryView: View {
     private func libraryListRow(_ item: LibraryItem) -> some View {
         HStack(spacing: 12) {
             // Icon
-            Image(systemName: item.icon)
+            Image(cosmo: item.cosmoIcon)
                 .font(.system(size: 14))
                 .foregroundColor(item.color)
                 .frame(width: 28)
@@ -597,7 +597,8 @@ struct LibraryItem: Identifiable {
     let entityId: Int64
     let title: String
     let atomType: AtomType
-    let icon: String
+    let cosmoIcon: CosmoIcon
+    var icon: String { cosmoIcon.systemName }
     let color: Color
     let typeName: String
     let relativeDate: String
@@ -795,44 +796,12 @@ struct LibraryItem: Identifiable {
         }
         self.faviconHost = atom.type == .research ? atom.domain : nil
 
-        // Type-specific formatting
-        switch atom.type {
-        case .idea:
-            self.icon = "lightbulb.fill"
-            self.color = Color(hex: "#CAB8E8")
-            self.typeName = "Idea"
-        case .task:
-            self.icon = "checkmark.circle.fill"
-            self.color = Color(hex: "#F4AFA0")
-            self.typeName = "Task"
-        case .content:
-            self.icon = "doc.text.fill"
-            self.color = Color(hex: "#A8CCE8")
-            self.typeName = "Content"
-        case .research:
-            self.icon = "book.fill"
-            self.color = Color(hex: "#8FC7A2")
-            self.typeName = "Research"
-        case .connection:
-            self.icon = "link.circle.fill"
-            self.color = Color(hex: "#8B5CF6")
-            self.typeName = "Concept"
-        case .project:
-            self.icon = "folder.fill"
-            self.color = Color(hex: "#6366F1")
-            self.typeName = "Project"
-        case .thinkspace:
-            self.icon = "rectangle.3.group"
-            self.color = thinkspaceMetadata?.accentColorHex.map { Color(hex: $0) } ?? DS.accent
-            self.typeName = "Thinkspace"
-        case .image:
-            self.icon = "photo.fill"
-            self.color = DS.entityImage
-            self.typeName = "Image"
-        default:
-            self.icon = "circle.fill"
-            self.color = Color(hex: "#6366F1")
-            self.typeName = atom.type.displayName
+        self.cosmoIcon = atom.cosmoIcon
+        self.typeName = atom.isSwipeFileAtom ? "Swipe" : atom.type.displayName
+        if atom.type == .thinkspace, let hex = thinkspaceMetadata?.accentColorHex {
+            self.color = Color(hex: hex)
+        } else {
+            self.color = atom.isSwipeFileAtom ? DS.entitySwipe : (EntityType(rawValue: atom.type.rawValue)?.color ?? DS.textSecondary)
         }
 
         self.childCount = childCount
@@ -854,7 +823,7 @@ struct LibraryItem: Identifiable {
         self.entityId = 0
         self.title = thinkspace.name
         self.atomType = .thinkspace
-        self.icon = "rectangle.3.group"
+        self.cosmoIcon = .space
         if let colorHex = thinkspace.accentColorHex {
             self.color = Color(hex: colorHex)
         } else {

@@ -94,18 +94,20 @@ enum DashboardViewMode: String, CaseIterable {
         }
     }
 
-    var icon: String {
+    var icon: String { cosmoIcon.systemName }
+
+    var cosmoIcon: CosmoIcon {
         switch self {
-        case .today: return "sun.max"
-        case .upcoming: return "calendar"
-        case .anytime: return "tray.full"
-        case .someday: return "archivebox"
-        case .logbook: return "book.closed"
-        case .habits: return "repeat"
-        case .reports: return "chart.bar"
-        case .queue: return "paperplane"
-        case .project: return "folder.fill"
-        case .area: return "square.stack.fill"
+        case .today: return .today
+        case .upcoming: return .upcoming
+        case .anytime: return .anytime
+        case .someday: return .someday
+        case .logbook: return .logbook
+        case .habits: return .habits
+        case .reports: return .reports
+        case .queue: return .calendar
+        case .project: return .project
+        case .area: return .area
         }
     }
 

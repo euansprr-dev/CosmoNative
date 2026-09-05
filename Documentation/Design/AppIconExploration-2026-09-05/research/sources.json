@@ -1,0 +1,332 @@
+[
+  {
+    "name": "Voice Dream Reader",
+    "year": 2021,
+    "award": "Apple Design Award winner",
+    "source": "https://developer.apple.com/design/awards/2021/",
+    "image_url": "https://developer.apple.com/design/awards/2021/images/Voice-Dream-Reader.png",
+    "file": "2021-voice-dream-reader.png",
+    "app_url": "",
+    "platform": "iPhone"
+  },
+  {
+    "name": "Pok Pok Playroom",
+    "year": 2021,
+    "award": "Apple Design Award winner",
+    "source": "https://developer.apple.com/design/awards/2021/",
+    "image_url": "https://developer.apple.com/design/awards/2021/images/pokpok.png",
+    "file": "2021-pok-pok-playroom.png",
+    "app_url": "https://apps.apple.com/us/app/pok-pok-playroom/id1550204730",
+    "platform": "iPhone"
+  },
+  {
+    "name": "CARROT Weather",
+    "year": 2021,
+    "award": "Apple Design Award winner",
+    "source": "https://developer.apple.com/design/awards/2021/",
+    "image_url": "https://developer.apple.com/design/awards/2021/images/Carrot-Weather.png",
+    "file": "2021-carrot-weather.png",
+    "app_url": "",
+    "platform": "iPhone"
+  },
+  {
+    "name": "Be My Eyes",
+    "year": 2021,
+    "award": "Apple Design Award winner",
+    "source": "https://developer.apple.com/design/awards/2021/",
+    "image_url": "https://developer.apple.com/design/awards/2021/images/Be-my-Eyes.png",
+    "file": "2021-be-my-eyes.png",
+    "app_url": "https://apps.apple.com/app/apple-store/id905177575",
+    "platform": "iPhone"
+  },
+  {
+    "name": "Lo\u00f3na",
+    "year": 2021,
+    "award": "Apple Design Award winner",
+    "source": "https://developer.apple.com/design/awards/2021/",
+    "image_url": "https://developer.apple.com/design/awards/2021/images/Loona.png",
+    "file": "2021-lo-na.png",
+    "app_url": "https://apps.apple.com/us/app/lo\u00f3na-relax-calm-happiness/id1465238901",
+    "platform": "iPhone"
+  },
+  {
+    "name": "NaadSadhana",
+    "year": 2021,
+    "award": "Apple Design Award winner",
+    "source": "https://developer.apple.com/design/awards/2021/",
+    "image_url": "https://developer.apple.com/design/awards/2021/images/Naadsadhana.png",
+    "file": "2021-naadsadhana.png",
+    "app_url": "",
+    "platform": "iPhone"
+  },
+  {
+    "name": "Procreate",
+    "year": 2022,
+    "award": "Apple Design Award winner",
+    "source": "https://developer.apple.com/design/awards/2022/",
+    "image_url": "https://developer.apple.com/design/awards/2022/images/procreate_2x.png",
+    "file": "2022-procreate.png",
+    "app_url": "",
+    "platform": "iPad"
+  },
+  {
+    "name": "(Not Boring) Habits",
+    "year": 2022,
+    "award": "Apple Design Award winner",
+    "source": "https://developer.apple.com/design/awards/2022/",
+    "image_url": "https://developer.apple.com/design/awards/2022/images/not-boring-habits_2x.png",
+    "file": "2022-not-boring-habits.png",
+    "app_url": "",
+    "platform": "iPhone"
+  },
+  {
+    "name": "Slopes",
+    "year": 2022,
+    "award": "Apple Design Award winner",
+    "source": "https://developer.apple.com/design/awards/2022/",
+    "image_url": "https://developer.apple.com/design/awards/2022/images/slopes_2x.png",
+    "file": "2022-slopes.png",
+    "app_url": "",
+    "platform": "iPhone"
+  },
+  {
+    "name": "Rebel Girls",
+    "year": 2022,
+    "award": "Apple Design Award winner",
+    "source": "https://developer.apple.com/design/awards/2022/",
+    "image_url": "https://developer.apple.com/design/awards/2022/images/rebel-girls_2x.png",
+    "file": "2022-rebel-girls.png",
+    "app_url": "",
+    "platform": "iPhone"
+  },
+  {
+    "name": "Halide Mark II",
+    "year": 2022,
+    "award": "Apple Design Award winner",
+    "source": "https://developer.apple.com/design/awards/2022/",
+    "image_url": "https://developer.apple.com/design/awards/2022/images/halide_2x.png",
+    "file": "2022-halide-mark-ii.png",
+    "app_url": "",
+    "platform": "iPhone"
+  },
+  {
+    "name": "Odio",
+    "year": 2022,
+    "award": "Apple Design Award winner",
+    "source": "https://developer.apple.com/design/awards/2022/",
+    "image_url": "https://developer.apple.com/design/awards/2022/images/odio_2x.png",
+    "file": "2022-odio.png",
+    "app_url": "",
+    "platform": "iPhone"
+  },
+  {
+    "name": "Universe \u2014 Website Builder",
+    "year": 2023,
+    "award": "Apple Design Award winner",
+    "source": "https://developer.apple.com/design/awards/2023/",
+    "image_url": "https://developer.apple.com/design/awards/2023/images/universe_2x.jpg",
+    "file": "2023-universe-website-builder.png",
+    "app_url": "",
+    "platform": "iPhone"
+  },
+  {
+    "name": "Duolingo",
+    "year": 2023,
+    "award": "Apple Design Award winner",
+    "source": "https://developer.apple.com/design/awards/2023/",
+    "image_url": "https://developer.apple.com/design/awards/2023/images/duolingo_2x.jpg",
+    "file": "2023-duolingo.png",
+    "app_url": "",
+    "platform": "iPhone"
+  },
+  {
+    "name": "Flighty",
+    "year": 2023,
+    "award": "Apple Design Award winner",
+    "source": "https://developer.apple.com/design/awards/2023/",
+    "image_url": "https://developer.apple.com/design/awards/2023/images/flighty_2x.png",
+    "file": "2023-flighty.png",
+    "app_url": "",
+    "platform": "iPhone"
+  },
+  {
+    "name": "Headspace",
+    "year": 2023,
+    "award": "Apple Design Award winner",
+    "source": "https://developer.apple.com/design/awards/2023/",
+    "image_url": "https://developer.apple.com/design/awards/2023/images/headspace_2x.jpg",
+    "file": "2023-headspace.png",
+    "app_url": "",
+    "platform": "iPhone"
+  },
+  {
+    "name": "Any Distance",
+    "year": 2023,
+    "award": "Apple Design Award winner",
+    "source": "https://developer.apple.com/design/awards/2023/",
+    "image_url": "https://developer.apple.com/design/awards/2023/images/any-distance_2x.jpg",
+    "file": "2023-any-distance.png",
+    "app_url": "",
+    "platform": "iPhone"
+  },
+  {
+    "name": "SwingVision: A.I. Tennis App",
+    "year": 2023,
+    "award": "Apple Design Award winner",
+    "source": "https://developer.apple.com/design/awards/2023/",
+    "image_url": "https://developer.apple.com/design/awards/2023/images/swingvision_2x.jpg",
+    "file": "2023-swingvision-a-i-tennis-app.png",
+    "app_url": "",
+    "platform": "iPhone"
+  },
+  {
+    "name": "Bears Gratitude",
+    "year": 2024,
+    "award": "Apple Design Award winner",
+    "source": "https://developer.apple.com/design/awards/2024/",
+    "image_url": "https://developer.apple.com/design/awards/2024/images/bear-gratitude_2x.png",
+    "file": "2024-bears-gratitude.png",
+    "app_url": "https://apps.apple.com/us/app/bears-gratitude/id6443609622",
+    "platform": "iPhone"
+  },
+  {
+    "name": "oko",
+    "year": 2024,
+    "award": "Apple Design Award winner",
+    "source": "https://developer.apple.com/design/awards/2024/",
+    "image_url": "https://developer.apple.com/design/awards/2024/images/oko_2x.png",
+    "file": "2024-oko.png",
+    "app_url": "https://apps.apple.com/us/app/oko-accessible-navigation/id1583614988",
+    "platform": "iPhone"
+  },
+  {
+    "name": "Procreate Dreams",
+    "year": 2024,
+    "award": "Apple Design Award winner",
+    "source": "https://developer.apple.com/design/awards/2024/",
+    "image_url": "https://developer.apple.com/design/awards/2024/images/procreate-dreams_2x.png",
+    "file": "2024-procreate-dreams.png",
+    "app_url": "https://apps.apple.com/us/app/procreate-dreams/id1595520602",
+    "platform": "iPad"
+  },
+  {
+    "name": "Crouton",
+    "year": 2024,
+    "award": "Apple Design Award winner",
+    "source": "https://developer.apple.com/design/awards/2024/",
+    "image_url": "https://developer.apple.com/design/awards/2024/images/crouton-b_2x.png",
+    "file": "2024-crouton.png",
+    "app_url": "https://apps.apple.com/us/app/crouton-recipe-manager/id1461650987",
+    "platform": "iPhone"
+  },
+  {
+    "name": "Gentler Streak Fitness Tracker",
+    "year": 2024,
+    "award": "Apple Design Award winner",
+    "source": "https://developer.apple.com/design/awards/2024/",
+    "image_url": "https://developer.apple.com/design/awards/2024/images/gentler-streaks_2x.png",
+    "file": "2024-gentler-streak-fitness-tracker.png",
+    "app_url": "https://apps.apple.com/us/app/gentler-streak-workout-tracker/id1576857102",
+    "platform": "iPhone"
+  },
+  {
+    "name": "Rooms",
+    "year": 2024,
+    "award": "Apple Design Award winner",
+    "source": "https://developer.apple.com/design/awards/2024/",
+    "image_url": "https://developer.apple.com/design/awards/2024/images/rooms_2x.png",
+    "file": "2024-rooms.png",
+    "app_url": "https://apps.apple.com/fr/app/rooms/id6443548715?l=en-GB",
+    "platform": "iPhone"
+  },
+  {
+    "name": "CapWords",
+    "year": 2025,
+    "award": "Apple Design Award winner",
+    "source": "https://developer.apple.com/design/awards/2025/",
+    "image_url": "https://developer.apple.com/design/awards/2025/images/capwords_2x.jpg",
+    "file": "2025-capwords.png",
+    "app_url": "https://apps.apple.com/us/app/id6738896465",
+    "platform": "iPhone"
+  },
+  {
+    "name": "Speechify",
+    "year": 2025,
+    "award": "Apple Design Award winner",
+    "source": "https://developer.apple.com/design/awards/2025/",
+    "image_url": "https://developer.apple.com/design/awards/2025/images/speechify_2x.jpg",
+    "file": "2025-speechify.png",
+    "app_url": "https://apps.apple.com/us/app/speechify-text-to-speech/id1209815023",
+    "platform": "iPhone"
+  },
+  {
+    "name": "Play",
+    "year": 2025,
+    "award": "Apple Design Award winner",
+    "source": "https://developer.apple.com/design/awards/2025/",
+    "image_url": "https://developer.apple.com/design/awards/2025/images/play_2x.jpg",
+    "file": "2025-play.png",
+    "app_url": "https://apps.apple.com/us/app/id6669873480",
+    "platform": "iPhone"
+  },
+  {
+    "name": "Watch Duty: Wildfire Maps",
+    "year": 2025,
+    "award": "Apple Design Award winner",
+    "source": "https://developer.apple.com/design/awards/2025/",
+    "image_url": "https://developer.apple.com/design/awards/2025/images/watchduty_2x.jpg",
+    "file": "2025-watch-duty-wildfire-maps.png",
+    "app_url": "https://apps.apple.com/us/app/id1574452924",
+    "platform": "iPhone"
+  },
+  {
+    "name": "Feather: Draw in 3D",
+    "year": 2025,
+    "award": "Apple Design Award winner",
+    "source": "https://developer.apple.com/design/awards/2025/",
+    "image_url": "https://developer.apple.com/design/awards/2025/images/feather_2x.jpg",
+    "file": "2025-feather-draw-in-3d.png",
+    "app_url": "https://apps.apple.com/us/app/id6737254232",
+    "platform": "iPad"
+  },
+  {
+    "name": "grug",
+    "year": 2026,
+    "award": "Apple Design Award winner",
+    "source": "https://developer.apple.com/design/awards/",
+    "image_url": "https://developer.apple.com/design/awards/2026/images/grug_2x.png",
+    "file": "2026-grug.png",
+    "app_url": "https://apps.apple.com/us/app/grug/id6751649802",
+    "platform": "iPhone"
+  },
+  {
+    "name": "Guitar Wiz",
+    "year": 2026,
+    "award": "Apple Design Award winner",
+    "source": "https://developer.apple.com/design/awards/",
+    "image_url": "https://developer.apple.com/design/awards/2026/images/guitarwiz_2x.png",
+    "file": "2026-guitar-wiz.png",
+    "app_url": "https://apps.apple.com/us/app/guitar-wiz-chords-tuner/id6740015002",
+    "platform": "iPhone"
+  },
+  {
+    "name": "Moonlitt: Moon Phase Tracker",
+    "year": 2026,
+    "award": "Apple Design Award winner",
+    "source": "https://developer.apple.com/design/awards/",
+    "image_url": "https://developer.apple.com/design/awards/2026/images/moonlitt_2x.png",
+    "file": "2026-moonlitt-moon-phase-tracker.png",
+    "app_url": "https://apps.apple.com/us/app/moonlitt-moon-phase-tracker/id6444718902",
+    "platform": "iPhone"
+  },
+  {
+    "name": "Tide Guide: Charts & Tables",
+    "year": 2026,
+    "award": "Apple Design Award winner",
+    "source": "https://developer.apple.com/design/awards/",
+    "image_url": "https://developer.apple.com/design/awards/2026/images/tide-guide-charts-tables_2x.png",
+    "file": "2026-tide-guide-charts-tables.png",
+    "app_url": "https://apps.apple.com/us/app/tide-guide-charts-tables/id1406371071",
+    "platform": "iPhone"
+  }
+]

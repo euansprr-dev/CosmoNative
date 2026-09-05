@@ -198,7 +198,7 @@ struct SearchResultRow: View {
                 .frame(width: 16)
 
             // Entity icon
-            Image(systemName: entityIcon)
+            Image(cosmo: entityIcon)
                 .font(.system(size: 12))
                 .foregroundColor(entityColor)
 
@@ -258,15 +258,8 @@ struct SearchResultRow: View {
         }
     }
 
-    private var entityIcon: String {
-        switch entity.entityType {
-        case "idea": return "lightbulb"
-        case "task": return "checkmark.circle"
-        case "content": return "doc.text"
-        case "research": return "magnifyingglass"
-        case "project": return "folder"
-        default: return "doc"
-        }
+    private var entityIcon: CosmoIcon {
+        EntityType(rawValue: entity.entityType)?.cosmoIcon ?? .system("doc")
     }
 
     private var entityColor: Color {
@@ -752,7 +745,7 @@ struct InlineEntityCard: View {
         Button(action: openEntity) {
             HStack(spacing: 6) {
                 // Entity icon
-                Image(systemName: entityIcon)
+                Image(cosmo: entityIcon)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundColor(entityColor)
 
@@ -791,15 +784,8 @@ struct InlineEntityCard: View {
         }
     }
 
-    private var entityIcon: String {
-        switch reference.entityType {
-        case "connection": return "brain"
-        case "swipe_file": return "doc.text"
-        case "idea": return "lightbulb"
-        case "research": return "magnifyingglass"
-        case "content": return "doc.richtext"
-        default: return "link"
-        }
+    private var entityIcon: CosmoIcon {
+        EntityType(rawValue: reference.entityType)?.cosmoIcon ?? .system("link")
     }
 
     private var entityColor: Color {

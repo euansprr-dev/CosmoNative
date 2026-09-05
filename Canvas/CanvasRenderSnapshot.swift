@@ -413,6 +413,11 @@ final class ThinkspaceCanvasSnapshotCache {
         entries.removeValue(forKey: key(for: thinkspaceId))
     }
 
+    func invalidate(blockID: String) {
+        let staleKeys = entries.filter { $0.value.blocks.contains { $0.id == blockID } }.map(\.key)
+        for key in staleKeys { entries.removeValue(forKey: key) }
+    }
+
     private func trimIfNeeded() {
         guard entries.count > limit else { return }
         let keysToRemove = entries

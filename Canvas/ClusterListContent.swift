@@ -330,7 +330,7 @@ struct ClusterListRow: View {
             .fill(CosmoMentionColors.color(for: block.entityType))
             .frame(width: 22, height: 22)
             .overlay(
-                Image(systemName: block.entityType.icon)
+                Image(cosmo: block.entityType.cosmoIcon)
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(DS.textOnAccent)
             )

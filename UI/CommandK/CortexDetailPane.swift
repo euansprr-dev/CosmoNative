@@ -811,7 +811,7 @@ private struct CortexResearchDomainPreview: View {
         VStack(spacing: DS.space8) {
             CommandKFavicon(host: model.host ?? "", size: 44) {
                 CosmoIdentityChip(
-                    systemName: "doc.text.magnifyingglass",
+                    icon: .research,
                     tint: DS.entityResearch,
                     size: 44
                 )

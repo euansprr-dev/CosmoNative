@@ -1,0 +1,61 @@
+{
+  "version": 3,
+  "sample_rate": 48000,
+  "channels": 1,
+  "cues": {
+    "complete": {
+      "duration_ms": 272,
+      "peak_dbfs": -15.0,
+      "rms_dbfs": -27.71,
+      "sha256": "3b11bc1bfb499bbc73ad77c68980ae65b05d43a53c5be95128e05055a6f47bc0"
+    },
+    "milestone": {
+      "duration_ms": 440,
+      "peak_dbfs": -16.0,
+      "rms_dbfs": -29.99,
+      "sha256": "719f4afd03489db74191d1d05e08ea5f9c71d95112eaed984b79e108f89ed782"
+    },
+    "confirm": {
+      "duration_ms": 156,
+      "peak_dbfs": -19.0,
+      "rms_dbfs": -31.68,
+      "sha256": "3f1ec3b367c28afd3b8819ef19bc6b65a44f535b56265f20c2944e0c60a9ed75"
+    },
+    "open": {
+      "duration_ms": 132,
+      "peak_dbfs": -23.0,
+      "rms_dbfs": -35.78,
+      "sha256": "4270377b30a07a8bee29b4b50cb0568b7dd3f7f0c0026eb414178884423a427f"
+    },
+    "close": {
+      "duration_ms": 120,
+      "peak_dbfs": -24.0,
+      "rms_dbfs": -36.85,
+      "sha256": "4a436de99fe47543d39cd4502c56b677751f5c5de89232b8c4c9cb95efc172df"
+    },
+    "place": {
+      "duration_ms": 100,
+      "peak_dbfs": -22.0,
+      "rms_dbfs": -36.19,
+      "sha256": "e06b9d9ce92bd2dfaed4cb3042f81b03c5c61a7a8ddfba093cefd1187f5b4816"
+    },
+    "remove": {
+      "duration_ms": 150,
+      "peak_dbfs": -23.0,
+      "rms_dbfs": -35.54,
+      "sha256": "270dc575dae171ee18742a7b14dedf52b97c6138884ef40bd5454d18e3a2f4b7"
+    },
+    "undo": {
+      "duration_ms": 188,
+      "peak_dbfs": -22.0,
+      "rms_dbfs": -34.79,
+      "sha256": "e2e3a3f68c3b6bff48f28dcde730df2bce3bc52f766ac758807a5518b250b8a3"
+    },
+    "focus": {
+      "duration_ms": 328,
+      "peak_dbfs": -19.0,
+      "rms_dbfs": -32.42,
+      "sha256": "da280fd5765763758a2c795a548ce4cdc7d6cef5108475da951ec5a78a2c6839"
+    }
+  }
+}

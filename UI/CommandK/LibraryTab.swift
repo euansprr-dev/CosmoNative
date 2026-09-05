@@ -613,7 +613,7 @@ struct LibraryTab: View {
                     .foregroundColor(DS.accent)
                     .frame(width: 28)
             } else {
-                Image(systemName: item.icon)
+                Image(cosmo: item.cosmoIcon)
                     .font(.system(size: 14))
                     .foregroundColor(item.color)
                     .frame(width: 28)
@@ -768,7 +768,7 @@ struct LibraryTab: View {
     @ViewBuilder
     private func recentlyDeletedRow(_ item: LibraryItem) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: item.icon)
+            Image(cosmo: item.cosmoIcon)
                 .font(.system(size: 14))
                 .foregroundColor(item.color.opacity(0.5))
                 .frame(width: 28)

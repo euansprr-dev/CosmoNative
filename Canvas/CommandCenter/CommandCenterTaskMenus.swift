@@ -954,7 +954,7 @@ struct CommandCenterTaskActionComposer: View {
                     CosmoSegmentedSwitcher(
                         options: ActionTab.allCases,
                         label: { $0.label },
-                        icon: { $0.icon },
+                        icon: { .system($0.icon) },
                         selection: tabBinding
                     )
 

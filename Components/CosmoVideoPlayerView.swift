@@ -32,6 +32,8 @@ struct CosmoVideoPlayerView: NSViewRepresentable {
     var videoGravity: AVLayerVideoGravity = .resizeAspect
     var showsFullScreenToggleButton: Bool = false
 
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
     func makeNSView(context: Context) -> AVPlayerView {
         let view = AVPlayerView()
         view.controlsStyle = controlsStyle
@@ -41,6 +43,7 @@ struct CosmoVideoPlayerView: NSViewRepresentable {
         // Let the surrounding SwiftUI layout own the background; AVPlayerView
         // paints its own black bars for letterboxing within that frame.
         view.player = player
+        context.coordinator.observe(player)
         return view
     }
 
@@ -51,6 +54,7 @@ struct CosmoVideoPlayerView: NSViewRepresentable {
         if view.player !== player {
             view.player = player
         }
+        context.coordinator.observe(player)
         if view.controlsStyle != controlsStyle {
             view.controlsStyle = controlsStyle
         }
@@ -59,9 +63,50 @@ struct CosmoVideoPlayerView: NSViewRepresentable {
         }
     }
 
-    static func dismantleNSView(_ view: AVPlayerView, coordinator: ()) {
+    static func dismantleNSView(_ view: AVPlayerView, coordinator: Coordinator) {
         // Detach the player so AVKit tears down its render pipeline promptly
         // when the surface leaves the hierarchy.
         view.player = nil
+        coordinator.observe(nil)
+    }
+
+    /// Native playback controls can change rate and mute outside SwiftUI.
+    /// Observe the actual player so every video surface yields audio focus.
+    @MainActor final class Coordinator {
+        private weak var player: AVPlayer?
+        private var observations: [NSKeyValueObservation] = []
+        private var holdsSuppression = false
+
+        func observe(_ player: AVPlayer?) {
+            // The old weak player can already be gone when SwiftUI dismantles
+            // the view. Still balance its outstanding suppression in that case.
+            guard self.player !== player || (player == nil && (!observations.isEmpty || holdsSuppression)) else { return }
+            observations.removeAll()
+            self.player = player
+            if let player {
+                observations = [
+                    player.observe(\.timeControlStatus, options: [.new]) { [weak self] _, _ in
+                        Task { @MainActor in self?.updateSuppression() }
+                    },
+                    player.observe(\.isMuted, options: [.new]) { [weak self] _, _ in
+                        Task { @MainActor in self?.updateSuppression() }
+                    },
+                    player.observe(\.volume, options: [.new]) { [weak self] _, _ in
+                        Task { @MainActor in self?.updateSuppression() }
+                    }
+                ]
+            }
+            updateSuppression()
+        }
+
+        private func updateSuppression() {
+            let needsSuppression = player.map {
+                !$0.isMuted && $0.volume > 0 && $0.timeControlStatus != .paused
+            } ?? false
+            guard needsSuppression != holdsSuppression else { return }
+            holdsSuppression = needsSuppression
+            if needsSuppression { SoundEngine.shared.beginSuppression() }
+            else { SoundEngine.shared.endSuppression() }
+        }
     }
 }

@@ -257,7 +257,7 @@ struct ProfileComposerView: View {
             addLibraryDocument(atom)
         } label: {
             HStack(spacing: DS.space10) {
-                Image(systemName: atom.type.iconName)
+                Image(cosmo: atom.cosmoIcon)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(DS.textSecondary)
                     .frame(width: 22)

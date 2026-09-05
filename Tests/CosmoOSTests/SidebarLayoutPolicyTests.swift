@@ -5,7 +5,7 @@ final class SidebarLayoutPolicyTests: XCTestCase {
     func testVisibleSidebarContextsUseRequestedTopLevelOrder() {
         XCTAssertEqual(
             SidebarContext.allCases.map(\.title),
-            ["Home", "Command", "Inbox", "Studio"]
+            ["Spaces", "Command", "Content", "Swipe File", "Inbox"]
         )
     }
 
@@ -141,7 +141,7 @@ final class SidebarLayoutPolicyTests: XCTestCase {
     func testVisibleSidebarContextsUseSwipeFileTopLevelOrder() {
         XCTAssertEqual(
             SidebarContext.allCases.map(\.title),
-            ["Home", "Command", "Inbox", "Studio"]
+            ["Spaces", "Command", "Content", "Swipe File", "Inbox"]
         )
     }
 

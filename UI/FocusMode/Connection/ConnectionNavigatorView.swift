@@ -260,7 +260,7 @@ struct ConnectionNavigatorSourceRow: View {
 
     var body: some View {
         HStack(spacing: DS.space8) {
-            Image(systemName: source.type.iconName)
+            Image(cosmo: source.cosmoIcon)
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(DS.textMuted)
                 .frame(width: 16)
@@ -303,7 +303,7 @@ struct ConnectionNavigatorSuggestedRow: View {
 
     var body: some View {
         HStack(spacing: DS.space8) {
-            Image(systemName: source.type.iconName)
+            Image(cosmo: source.cosmoIcon)
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(DS.textMuted)
                 .frame(width: 16)

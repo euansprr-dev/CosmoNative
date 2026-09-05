@@ -260,11 +260,7 @@ final class FocusCosmoSession: ObservableObject {
     func reset() async {
         messages = []
         // Wipe the conversation atom
-        if let conv = await ConversationMemoryService.shared.loadConversation(id: conversationId) {
-            var cleared = conv
-            cleared.messages = []
-            await ConversationMemoryService.shared.saveConversation(cleared)
-        }
+        await ConversationMemoryService.shared.deleteConversation(id: conversationId)
     }
 
     // MARK: - System prompt

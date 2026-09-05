@@ -178,15 +178,15 @@ final class HotkeyManager {
         print("📥 Capture Anywhere hotkey (\(captureHotkey.displayName)) callback registered")
     }
 
-    // MARK: - Atom Window Hotkey (Option+W)
+    // MARK: - Atom Window Hotkey (Control+Option+E, with Option+E alias)
     private var atomWindowCallback: (() -> Void)?
     private let atomWindowHotkey = HotkeyConfig(
         keyCode: 14,  // 'E' key (same position on QWERTY/AZERTY)
         modifiers: CGEventFlags.maskAlternate.rawValue,
-        displayName: "⌥E"
+        displayName: "⌃⌥E"
     )
 
-    /// Register callback for Option+W to toggle the floating atom viewer
+    /// Register the floating item window shortcut.
     func registerAtomWindowHotkey(onTrigger: @escaping () -> Void) {
         self.atomWindowCallback = onTrigger
         print("📄 Atom Window hotkey (⌥E) callback registered")
@@ -418,8 +418,7 @@ final class HotkeyManager {
 
             let hasOnlyAtomMods = hasAtomMods &&
                 !flags.contains(.maskCommand) &&
-                !flags.contains(.maskShift) &&
-                !flags.contains(.maskControl)
+                !flags.contains(.maskShift)
 
             if hasOnlyAtomMods {
                 print("📄 Atom Window hotkey triggered (⌥E)")
@@ -432,6 +431,13 @@ final class HotkeyManager {
         // No isInTextField() guard — capture must fire from anywhere,
         // including while the user is typing in another app.
         if type == .keyDown && keyCode == Int64(captureHotkey.keyCode) {
+            // An active note selection owns Option-C. Let its window handle
+            // the event before the global capture shortcut claims it.
+            if keyCode == 8,
+               flagsExactlyMatch(.maskAlternate, in: flags),
+               BlockSelectionClipboardTarget.isActiveInKeyWindow {
+                return Unmanaged.passRetained(event)
+            }
             if flagsExactlyMatch(captureHotkey.modifierFlags, in: flags) {
                 print("📥 Capture Anywhere hotkey triggered (\(captureHotkey.displayName))")
                 captureCallback?()

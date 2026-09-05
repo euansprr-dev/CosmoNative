@@ -137,13 +137,20 @@ enum CommandKDomainRailItem: Identifiable {
     var visualIdentity: CommandKVisualIdentity {
         switch self {
         case .library(let item):
-            return item.kind == .thinkspace
+            let identity = item.kind == .thinkspace
                 ? CommandKVisualIdentity.atom(type: .thinkspace)
                 : CommandKVisualIdentity.atom(type: item.atomType)
+            return CommandKVisualIdentity(
+                style: identity.style,
+                icon: item.cosmoIcon,
+                title: item.typeName,
+                subtitle: identity.subtitle,
+                badge: identity.badge
+            )
         case .swipe:
             return CommandKVisualIdentity(
                 style: .swipeFile,
-                symbolName: "bolt",
+                icon: .swipe,
                 title: "Swipe File",
                 subtitle: "Hook capture",
                 badge: "SWIPE"
@@ -514,7 +521,7 @@ struct CortexResultRail: View {
                     title: item.title,
                     subtitle: "\(item.type.displayName) · \(item.relativeDate)",
                     accent: cortexEntityAccent(item.type),
-                    symbolName: CommandKVisualIdentity.atom(type: item.type).symbolName,
+                    icon: item.type.cosmoIcon,
                     thumbnailURL: item.thumbnailURL
                 ))
                 .commandKCardContextMenu(atomUUID: item.id, entityId: item.entityId, atomType: item.type)
@@ -697,7 +704,7 @@ struct CortexResultRail: View {
             title: result.title,
             subtitle: result.subtitle ?? result.snippet ?? "",
             accent: result.accentColor,
-            symbolName: CommandKVisualIdentity.result(result).symbolName,
+            icon: CommandKVisualIdentity.result(result).icon,
             thumbnailURL: result.thumbnailURL,
             faviconHost: faviconHost(for: result)
         )
@@ -802,7 +809,7 @@ struct CortexResultRail: View {
                 title: item.title,
                 subtitle: item.subtitle,
                 accent: item.accent,
-                symbolName: item.visualIdentity.symbolName,
+                icon: item.visualIdentity.icon,
                 thumbnailURL: item.thumbnailURL,
                 faviconHost: item.faviconHost
             ))
@@ -911,7 +918,7 @@ private struct CortexRailRow: View {
     @ViewBuilder
     private var identityChip: some View {
         if let visualIdentity {
-            CosmoIdentityChip(systemName: visualIdentity.symbolName, tint: accent)
+            CosmoIdentityChip(icon: visualIdentity.icon, tint: accent)
         }
     }
 

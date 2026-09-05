@@ -29,10 +29,7 @@ struct ConnectionSectionNavigator: View {
                     }
                     onSectionTap(section)
                     // Haptic feedback
-                    NSHapticFeedbackManager.defaultPerformer.perform(
-                        .levelChange,
-                        performanceTime: .default
-                    )
+                    CosmicHaptics.shared.play(.selection)
                 }
                 .onHover { isHovered in
                     withAnimation(BlockAnimations.hover) {
@@ -137,10 +134,7 @@ struct CompactSectionNavigator: View {
                             selectedSection = section
                         }
                         onSectionTap(section)
-                        NSHapticFeedbackManager.defaultPerformer.perform(
-                            .levelChange,
-                            performanceTime: .default
-                        )
+                        CosmicHaptics.shared.play(.selection)
                     }
                 }
             }
@@ -284,4 +278,3 @@ struct ConnectionSectionNavigator_Previews: PreviewProvider {
     }
 }
 #endif
-

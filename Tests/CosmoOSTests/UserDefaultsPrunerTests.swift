@@ -8,7 +8,7 @@ final class UserDefaultsPrunerTests: XCTestCase {
         XCTAssertEqual(UserDefaultsPruner.atomUUID(inKey: "connectionFocusMode_\(uuid)"), uuid)
         XCTAssertEqual(UserDefaultsPruner.atomUUID(inKey: "researchFocusMode_\(uuid)"), uuid)
         XCTAssertEqual(UserDefaultsPruner.atomUUID(inKey: "ideaFocus_\(uuid)_intelligencePanelCollapsed"), uuid)
-        XCTAssertEqual(UserDefaultsPruner.atomUUID(inKey: "cosmo.inlineAssistant.session.content:\(uuid)"), uuid)
+        XCTAssertNil(UserDefaultsPruner.atomUUID(inKey: "cosmo.inlineAssistant.session.content:\(uuid)"))
     }
 
     func testNeverMatchesNonAtomKeys() {
@@ -21,11 +21,4 @@ final class UserDefaultsPrunerTests: XCTestCase {
         XCTAssertNil(UserDefaultsPruner.atomUUID(inKey: "agent_custom_system_prompt"))
     }
 
-    func testTrailingUUIDParsesCollaboratorConversationIds() {
-        XCTAssertEqual(
-            UserDefaultsPruner.trailingUUID(of: "cosmo-collaborator-outline-\(uuid)"),
-            uuid
-        )
-        XCTAssertNil(UserDefaultsPruner.trailingUUID(of: "cosmo-window-ded03665"))
-    }
 }

@@ -26,7 +26,7 @@ enum SpaceView: String, Codable, CaseIterable, Identifiable, Sendable {
         case .home: return "Overview"
         case .canvas: return "Canvas"
         case .library: return "Materials"
-        case .deepDive: return "Deep Dive"
+        case .deepDive: return "Inquiries"
         case .board: return "Board"
         case .calendar: return "Calendar"
         case .tasks: return "Tasks"
@@ -38,7 +38,7 @@ enum SpaceView: String, Codable, CaseIterable, Identifiable, Sendable {
         case .home: return "doc.text"
         case .canvas: return "square.grid.3x3"
         case .library: return "folder"
-        case .deepDive: return "circle.hexagongrid.circle"
+        case .deepDive: return "questionmark.bubble"
         case .board: return "rectangle.split.3x1"
         case .calendar: return "calendar"
         case .tasks: return "checklist"
@@ -62,7 +62,7 @@ enum SpaceView: String, Codable, CaseIterable, Identifiable, Sendable {
 
     /// What this build can render. Views persisted for a future build are
     /// kept in metadata but filtered out of the switcher.
-    static var renderable: Set<SpaceView> { [.home, .canvas, .library, .deepDive] }
+    static var renderable: Set<SpaceView> { [.canvas, .library, .deepDive] }
 
     /// Every space created before kinds existed: the three modes the canvas
     /// always offered, opening on the canvas.
@@ -167,7 +167,7 @@ enum SpaceViewResolver {
     static func renderableViews(_ enabled: [SpaceView]) -> [SpaceView] {
         // Tools are available in every Space; legacy view preferences no longer
         // prevent a collection from becoming research or a whiteboard gaining notes.
-        [.home, .library, .canvas, .deepDive]
+        [.canvas, .library, .deepDive]
     }
 
     /// The opening ladder: where you left it → where the space prefers →
@@ -178,17 +178,9 @@ enum SpaceViewResolver {
         defaultRaw: String?,
         kind: SpaceKind?
     ) -> SpaceView {
-        if let last = lastRaw.flatMap(SpaceView.init(rawValue:)), renderable.contains(last) {
-            return last
-        }
-        if let preferred = defaultRaw.flatMap(SpaceView.init(rawValue:)), renderable.contains(preferred) {
-            return preferred
-        }
-        if let kind, renderable.contains(kind.preset.opens) {
-            return kind.preset.opens
-        }
-        if kind == nil, lastRaw == nil, defaultRaw == nil, renderable.contains(.canvas) { return .canvas }
-        return renderable.first ?? .home
+        // Legacy Overview/default-kind preferences must not resurrect removed rooms.
+        if let last = lastRaw.flatMap(SpaceView.init(rawValue:)), renderable.contains(last) { return last }
+        return renderable.contains(.canvas) ? .canvas : (renderable.first ?? .canvas)
     }
 }
 

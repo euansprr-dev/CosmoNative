@@ -29,11 +29,11 @@ final class SpaceComposerModelTests: XCTestCase {
 
     // MARK: - Last-used kind
 
-    func testCreateModeNeedsOnlyANameAndOpensItsOverview() {
+    func testCreateModeNeedsOnlyANameAndOpensItsCanvas() {
         let model = makeCreateModel()
 
         XCTAssertEqual(model.draft.kind, .custom)
-        XCTAssertEqual(model.draft.enabledViews, [.home, .library, .canvas, .deepDive])
+        XCTAssertEqual(model.draft.enabledViews, [.canvas, .library, .deepDive])
         XCTAssertEqual(model.draft.accentColorHex, host.accentHex)
         XCTAssertNil(model.draft.emoji)
         XCTAssertTrue(model.isCreate)
@@ -54,7 +54,7 @@ final class SpaceComposerModelTests: XCTestCase {
 
         let second = makeCreateModel()
         XCTAssertEqual(second.draft.kind, .custom)
-        XCTAssertEqual(second.draft.enabledViews, [.home, .library, .canvas, .deepDive])
+        XCTAssertEqual(second.draft.enabledViews, [.canvas, .library, .deepDive])
         XCTAssertNil(second.draft.emoji)
     }
 
@@ -117,7 +117,7 @@ final class SpaceComposerModelTests: XCTestCase {
         let model = makeCreateModel()
         model.selectKind(.collection)
 
-        XCTAssertEqual(model.viewChoices, [.library, .canvas, .home, .deepDive])
+        XCTAssertEqual(model.viewChoices, [.library, .canvas, .deepDive])
         XCTAssertTrue(model.isEnabled(.library))
         XCTAssertFalse(model.isEnabled(.deepDive))
     }

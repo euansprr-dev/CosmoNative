@@ -95,6 +95,39 @@ final class BlockTypingReachesDocumentTests: XCTestCase {
         return model.document.blocks[index].plainInlineText
     }
 
+    func testSelectedBlocksCopyAndDeleteThroughRealEditor() throws {
+        let original = RichDocument(blocks: [.paragraph("First"), .paragraph("Second"), .paragraph("Third")])
+        let (window, model, views) = mount(original)
+        defer { window.contentView = nil; window.orderOut(nil) }
+        let row = try XCTUnwrap(views.first)
+        window.makeFirstResponder(row)
+        XCTAssertTrue(row.onSelectAllEscalation?() == true)
+        pump(0.15)
+
+        XCTAssertTrue(MainKeyboardShortcutPolicy.reservesDocumentKeyboard(in: window))
+        XCTAssertTrue(BlockSelectionClipboardTarget.send(.copy, in: window))
+        let data = try XCTUnwrap(NSPasteboard.general.data(forType: .cosmoBlocks))
+        XCTAssertEqual(try JSONDecoder().decode([RichBlock].self, from: data), original.blocks)
+
+        let otherWindow = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
+        XCTAssertFalse(BlockSelectionClipboardTarget.send(.delete, in: otherWindow))
+        XCTAssertEqual(model.document, original, "A different window must never delete the note's selection")
+
+        let delete = try XCTUnwrap(NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, characters: "\u{7f}",
+            charactersIgnoringModifiers: "\u{7f}", isARepeat: false, keyCode: 51
+        ))
+        XCTAssertTrue(row.performKeyEquivalent(with: delete))
+        pump(0.2)
+        XCTAssertEqual(model.document.blocks.count, 1)
+        XCTAssertEqual(model.document.blocks.first?.plainInlineText, "")
+        XCTAssertTrue(window.undoManager?.canUndo == true)
+        window.undoManager?.undo()
+        pump(0.15)
+        XCTAssertEqual(model.document, original)
+    }
+
     /// THE BUG: type several characters into a bullet row; every one of them
     /// must reach the document. Before the fix only the first landed.
     func testTypingMultipleCharactersReachesDocument() throws {
@@ -150,4 +183,3 @@ final class BlockTypingReachesDocumentTests: XCTestCase {
         XCTAssertEqual(text(of: model, at: 0), "Claude")
     }
 }
-

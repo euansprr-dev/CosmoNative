@@ -112,7 +112,7 @@ struct CanvasSelectionInspector: View {
                             .strokeBorder(color(for: atom.type).opacity(0.25), lineWidth: 0.5)
                     )
                     .overlay(
-                        Image(systemName: atom.type.iconName)
+                        Image(cosmo: atom.cosmoIcon)
                             .font(.system(size: 16, weight: .semibold))
                             .foregroundStyle(color(for: atom.type))
                     )
@@ -644,7 +644,7 @@ struct CanvasSelectionInspector: View {
             addReference(candidate)
         } label: {
             HStack(spacing: 8) {
-                Image(systemName: candidate.type.iconName)
+                Image(cosmo: candidate.type.cosmoIcon)
                     .font(.system(size: 10))
                     .foregroundStyle(color(for: candidate.type))
                 VStack(alignment: .leading, spacing: 2) {
@@ -678,7 +678,7 @@ struct CanvasSelectionInspector: View {
             openInFocusMode(backlink)
         } label: {
             HStack(spacing: 8) {
-                Image(systemName: backlink.type.iconName)
+                Image(cosmo: backlink.type.cosmoIcon)
                     .font(.system(size: 10))
                     .foregroundStyle(color(for: backlink.type))
                 VStack(alignment: .leading, spacing: 2) {

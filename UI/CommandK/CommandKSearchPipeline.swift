@@ -217,7 +217,8 @@ enum CommandKVisualStyle: String, Equatable {
 
 struct CommandKVisualIdentity: Equatable {
     let style: CommandKVisualStyle
-    let symbolName: String
+    let icon: CosmoIcon
+    var symbolName: String { icon.systemName }
     let title: String
     let subtitle: String
     let badge: String
@@ -227,7 +228,7 @@ struct CommandKVisualIdentity: Equatable {
         case .captureSwipe, .captureSwipeWithIdea:
             return CommandKVisualIdentity(
                 style: .swipeFile,
-                symbolName: "bolt",
+                icon: .swipe,
                 title: "Swipe File",
                 subtitle: "Hook capture",
                 badge: "SWIPE"
@@ -235,7 +236,7 @@ struct CommandKVisualIdentity: Equatable {
         case .captureLane, .createCaptureLane, .captureResearch:
             return CommandKVisualIdentity(
                 style: .research,
-                symbolName: action.icon,
+                icon: action.kind == .captureResearch ? .research : .system(action.icon),
                 title: "Research",
                 subtitle: "Capture route",
                 badge: "SRC"
@@ -251,7 +252,7 @@ struct CommandKVisualIdentity: Equatable {
         case .captureInbox:
             return CommandKVisualIdentity(
                 style: .research,
-                symbolName: "tray.and.arrow.down",
+                icon: .inbox,
                 title: "Inbox",
                 subtitle: "Capture for triage",
                 badge: "INBOX"
@@ -259,7 +260,7 @@ struct CommandKVisualIdentity: Equatable {
         case .createThinkspace, .navigateLastThinkspace, .openThinkspace:
             return CommandKVisualIdentity(
                 style: .thinkspace,
-                symbolName: "rectangle.3.group",
+                icon: .space,
                 title: "Thinkspace",
                 subtitle: "Canvas workspace",
                 badge: "SPACE"
@@ -267,7 +268,7 @@ struct CommandKVisualIdentity: Equatable {
         case .navigateCommandCenter:
             return CommandKVisualIdentity(
                 style: .commandCenter,
-                symbolName: "command",
+                icon: .command,
                 title: "Command Center",
                 subtitle: "Planning dashboard",
                 badge: "HOME"
@@ -281,7 +282,7 @@ struct CommandKVisualIdentity: Equatable {
                 badge: "WEB"
             )
         case .openSwipeGallery:
-            return CommandKVisualIdentity(style: .swipeGalleryPage, symbolName: "rectangle.stack", title: "Swipe Gallery", subtitle: "All Swipes", badge: "OPEN")
+            return CommandKVisualIdentity(style: .swipeGalleryPage, icon: .swipe, title: "Swipe Gallery", subtitle: "All Swipes", badge: "OPEN")
         case .openDomain:
             return domain(action.payload.domain, title: action.title, symbolName: action.icon)
         case .openAtom:
@@ -348,7 +349,7 @@ struct CommandKVisualIdentity: Equatable {
         case .thinkspace:
             return CommandKVisualIdentity(
                 style: .thinkspace,
-                symbolName: result.icon,
+                icon: .space,
                 title: "Thinkspace",
                 subtitle: result.subtitle ?? "Canvas workspace",
                 badge: "SPACE"
@@ -365,7 +366,7 @@ struct CommandKVisualIdentity: Equatable {
             if result.source == .swipes {
                 return CommandKVisualIdentity(
                     style: .swipeFile,
-                    symbolName: "bolt",
+                    icon: .swipe,
                     title: "Swipe File",
                     subtitle: result.subtitle ?? "Hook capture",
                     badge: "SWIPE"
@@ -387,23 +388,23 @@ struct CommandKVisualIdentity: Equatable {
     static func atom(type: AtomType) -> CommandKVisualIdentity {
         switch type {
         case .idea:
-            return CommandKVisualIdentity(style: .idea, symbolName: "lightbulb", title: "Idea", subtitle: "Spark", badge: "IDEA")
+            return CommandKVisualIdentity(style: .idea, icon: .idea, title: "Idea", subtitle: "Spark", badge: "IDEA")
         case .task:
-            return CommandKVisualIdentity(style: .task, symbolName: "checkmark.circle", title: "Task", subtitle: "Next action", badge: "TASK")
+            return CommandKVisualIdentity(style: .task, icon: .task, title: "Task", subtitle: "Next action", badge: "TASK")
         case .research:
-            return CommandKVisualIdentity(style: .research, symbolName: "doc.text.magnifyingglass", title: "Research", subtitle: "Source", badge: "SRC")
+            return CommandKVisualIdentity(style: .research, icon: .research, title: "Research", subtitle: "Source", badge: "SRC")
         case .content:
             // The library's kind mark (doc.richtext) — one content identity
             // everywhere; the paper plane read as "send", not "writing".
-            return CommandKVisualIdentity(style: .content, symbolName: "doc.richtext", title: "Content", subtitle: "Writing", badge: "POST")
+            return CommandKVisualIdentity(style: .content, icon: .content, title: "Content", subtitle: "Writing", badge: "POST")
         case .note:
-            return CommandKVisualIdentity(style: .document, symbolName: "doc.text", title: "Note", subtitle: "Page", badge: "NOTE")
+            return CommandKVisualIdentity(style: .document, icon: .note, title: "Note", subtitle: "Page", badge: "NOTE")
         case .connection:
-            return CommandKVisualIdentity(style: .connection, symbolName: "point.3.connected.trianglepath.dotted", title: "Concept", subtitle: "Relationship", badge: "LINK")
+            return CommandKVisualIdentity(style: .connection, icon: .concept, title: "Concept", subtitle: "Relationship", badge: "LINK")
         case .image:
             return CommandKVisualIdentity(style: .image, symbolName: "photo", title: "Image", subtitle: "Visual", badge: "IMG")
         case .thinkspace:
-            return CommandKVisualIdentity(style: .thinkspace, symbolName: "rectangle.3.group", title: "Thinkspace", subtitle: "Canvas workspace", badge: "SPACE")
+            return CommandKVisualIdentity(style: .thinkspace, icon: .space, title: "Thinkspace", subtitle: "Canvas workspace", badge: "SPACE")
         default:
             return CommandKVisualIdentity(style: .document, symbolName: type.iconName, title: type.displayName, subtitle: "Object", badge: "OPEN")
         }
@@ -412,9 +413,9 @@ struct CommandKVisualIdentity: Equatable {
     private static func domain(_ rawDomain: String?, title: String, symbolName: String) -> CommandKVisualIdentity {
         switch rawDomain {
         case "swipeGallery":
-            return CommandKVisualIdentity(style: .swipeShelf, symbolName: "rectangle.stack", title: "Swipe File", subtitle: "Captures and hooks", badge: "BROWSE")
+            return CommandKVisualIdentity(style: .swipeShelf, icon: .swipe, title: "Swipe File", subtitle: "Captures and hooks", badge: "BROWSE")
         case "ideas":
-            return CommandKVisualIdentity(style: .idea, symbolName: "lightbulb", title: "Ideas", subtitle: "Sparks and notes", badge: "IDEA")
+            return CommandKVisualIdentity(style: .idea, icon: .idea, title: "Ideas", subtitle: "Sparks and notes", badge: "IDEA")
         case "readwise":
             return CommandKVisualIdentity(style: .readwise, symbolName: "books.vertical", title: "Library", subtitle: "Books and highlights", badge: "BOOK")
         case "database":
@@ -422,6 +423,14 @@ struct CommandKVisualIdentity: Equatable {
         default:
             return CommandKVisualIdentity(style: .domain, symbolName: symbolName, title: title, subtitle: "Command-K domain", badge: "OPEN")
         }
+    }
+}
+
+// SF-only and user-authored identities still enter through their explicit name.
+// This initializer is a boundary adapter, not a string-to-meaning lookup table.
+extension CommandKVisualIdentity {
+    init(style: CommandKVisualStyle, symbolName: String, title: String, subtitle: String, badge: String) {
+        self.init(style: style, icon: .system(symbolName), title: title, subtitle: subtitle, badge: badge)
     }
 }
 

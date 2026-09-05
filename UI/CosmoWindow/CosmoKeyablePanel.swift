@@ -87,6 +87,10 @@ struct CosmoWindowIsFloatingKey: EnvironmentKey {
 }
 
 extension EnvironmentValues {
+    /// Non-panel editors are visible by default. A retained note pauses its
+    /// editing session while the floating window is ordered out.
+    @Entry var cosmoFloatingPanelIsVisible = true
+
     var cosmoWindowIsFloating: Bool {
         get { self[CosmoWindowIsFloatingKey.self] }
         set { self[CosmoWindowIsFloatingKey.self] = newValue }

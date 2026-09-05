@@ -28,11 +28,19 @@ final class ActiveFocusSignal {
     /// Whether any session's clock is moving. Ticks twice per session, not once
     /// per second.
     private(set) var isTimerRunning = false
+    /// Includes paused sessions, so companion actions never replace an unfinished sitting.
+    private(set) var hasSession = false
 
     @ObservationIgnored private var cancellables: Set<AnyCancellable> = []
 
     private init() {
         let engine = DeepWorkSessionEngine.shared
+
+        engine.$activeSession
+            .map { $0 != nil }
+            .removeDuplicates()
+            .sink { [weak self] in self?.hasSession = $0 }
+            .store(in: &cancellables)
 
         engine.$isTimerRunning
             .removeDuplicates()

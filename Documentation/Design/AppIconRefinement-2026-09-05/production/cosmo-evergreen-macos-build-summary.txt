@@ -1,0 +1,4 @@
+Command line invocation:
+    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -project CosmoOS.xcodeproj -scheme CosmoOS -configuration Debug -destination platform=macOS build
+error: unable to attach DB: error: accessing build database "/Users/euanspencer/Library/Developer/Xcode/DerivedData/CosmoOS-clyarqsdnslgksamwzfbemggmthq/Build/Intermediates.noindex/XCBuildData/build.db": database is locked Possibly there are two concurrent builds running in the same filesystem location.
+** BUILD FAILED **

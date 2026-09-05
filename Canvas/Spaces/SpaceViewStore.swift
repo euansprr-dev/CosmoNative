@@ -48,7 +48,8 @@ final class SpaceViewStore {
     /// The persisted opening view. Prefers `currentThinkspace` when the ids
     /// match — it carries the freshest `lastView` before the next reload.
     func openingView(for thinkspaceId: String) -> SpaceView {
-        space(thinkspaceId)?.openingView ?? .canvas
+        let raw = UserDefaults.standard.string(forKey: "cosmo.space.opening.mac.\(thinkspaceId)")
+        return SpaceViewResolver.openingView(renderable: renderableViews(for: thinkspaceId), lastRaw: raw, defaultRaw: nil, kind: nil)
     }
 
     func renderableViews(for thinkspaceId: String) -> [SpaceView] {
@@ -63,11 +64,16 @@ final class SpaceViewStore {
     /// schedules the persisted `lastView` write.
     @discardableResult
     func select(_ view: SpaceView, for thinkspaceId: String, source: Source = .user) -> Bool {
+        let view: SpaceView = view == .home ? .canvas : view
         guard renderableViews(for: thinkspaceId).contains(view) else { return false }
+        if view != .canvas || source == .trail {
+            SpaceWorkspaceStore.shared.leaveObject(in: thinkspaceId)
+        }
         guard activeView(for: thinkspaceId) != view else {
             // Re-affirming the current view is still an arrival (a trail
             // replay landing where we already are must not be lost).
             if source == .trail { return true }
+            recordTrailMoment(view, for: thinkspaceId)
             return false
         }
         withAnimation(ProMotionSprings.focusTransition) {
@@ -81,6 +87,13 @@ final class SpaceViewStore {
     /// ⌘digit — index into the space's renderable views.
     @discardableResult
     func select(index: Int, for thinkspaceId: String) -> Bool {
+        let workspace = SpaceWorkspaceStore.shared
+        if let atom = workspace.selectedItem(in: thinkspaceId) {
+            let localViews = workspace.views(for: atom, in: thinkspaceId)
+            guard localViews.indices.contains(index) else { return false }
+            workspace.selectView(localViews[index], in: thinkspaceId)
+            return true
+        }
         let views = renderableViews(for: thinkspaceId)
         guard views.indices.contains(index) else { return false }
         return select(views[index], for: thinkspaceId, source: .user)
@@ -113,6 +126,9 @@ final class SpaceViewStore {
     }
 
     private func recordTrailMoment(_ view: SpaceView, for thinkspaceId: String) {
+        // Object opening records its own moment immediately after selecting the
+        // host canvas; the hosting view isn't an extra stop in Back history.
+        if view == .canvas && SpaceWorkspaceStore.shared.isPresenting(in: thinkspaceId) { return }
         let name = space(thinkspaceId)?.identityLabel ?? "Space"
         let title = view == .canvas ? name : "\(name) · \(view.title)"
         NavigationTrail.shared.recordArrival(
@@ -128,7 +144,7 @@ final class SpaceViewStore {
         lastViewWrites[thinkspaceId] = Task { @MainActor [weak self] in
             try? await Task.sleep(for: delay)
             guard !Task.isCancelled, let self else { return }
-            await manager.updateLastView(view, for: thinkspaceId)
+            UserDefaults.standard.set(view.rawValue, forKey: "cosmo.space.opening.mac.\(thinkspaceId)")
             lastViewWrites[thinkspaceId] = nil
         }
     }

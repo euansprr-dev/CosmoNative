@@ -9,7 +9,7 @@ final class AtomWindowChromeContextTests: XCTestCase {
     func testVisibleControlsReflectCurrentAtomCapabilities() {
         let state = AtomWindowChromeState(
             title: "Call Notes",
-            typeIcon: "note.text",
+            typeIcon: .note,
             typeColor: .note,
             canGoBack: true,
             canGoForward: false,
@@ -18,7 +18,7 @@ final class AtomWindowChromeContextTests: XCTestCase {
         )
 
         XCTAssertEqual(state.title, "Call Notes")
-        XCTAssertEqual(state.typeIcon, "note.text")
+        XCTAssertEqual(state.typeIcon, .note)
         XCTAssertTrue(state.canGoBack)
         XCTAssertFalse(state.canGoForward)
         XCTAssertTrue(state.canBookmark)

@@ -674,7 +674,7 @@ struct TableBlockView: View {
     }
 
     private func showHint(_ text: String) {
-        NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)
+        CosmicHaptics.shared.play(.warning)
         hintTask?.cancel()
         withAnimation(reduceMotion ? nil : ProMotionSprings.snappy) { hint = text }
         hintTask = Task { @MainActor in

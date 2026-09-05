@@ -38,6 +38,8 @@ struct BlockHandleMenuView: View {
     var onTransform: (RichBlockKind) -> Void
     var onDuplicate: () -> Void
     var onDelete: () -> Void
+    var onCopy: (() -> Void)? = nil
+    var onCut: (() -> Void)? = nil
     /// Sections only: hoist the children, drop the box. nil hides the row.
     var onUngroup: (() -> Void)? = nil
 
@@ -83,6 +85,14 @@ struct BlockHandleMenuView: View {
     private var actionRows: some View {
         let base = BlockTransformOption.all.count
         return VStack(alignment: .leading, spacing: 0) {
+            if let onCopy {
+                menuRow(id: "copy", icon: "doc.on.doc", label: "Copy",
+                        trailing: .shortcut("⌘C / ⌥C"), isDestructive: false, index: base) { onCopy() }
+            }
+            if let onCut {
+                menuRow(id: "cut", icon: "scissors", label: "Cut",
+                        trailing: .shortcut("⌘X"), isDestructive: false, index: base) { onCut() }
+            }
             if let onUngroup, currentKind == .section {
                 menuRow(
                     id: "ungroup", icon: "square.dashed", label: "Ungroup",

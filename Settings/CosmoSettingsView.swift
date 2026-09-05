@@ -30,6 +30,7 @@ enum ConnectionStatus: String {
 
 enum SettingsTab: String, CaseIterable {
     case appearance = "Appearance"
+    case sound = "Sound & Haptics"
     case accountSync = "Account & Sync"
     case connections = "Connections"
     case writingAI = "Writing & AI"
@@ -38,6 +39,7 @@ enum SettingsTab: String, CaseIterable {
     var icon: String {
         switch self {
         case .appearance: return "paintbrush.fill"
+        case .sound: return "waveform"
         case .accountSync: return "icloud.fill"
         case .connections: return "link"
         case .writingAI: return "sparkles.rectangle.stack"
@@ -357,13 +359,7 @@ struct CosmoSettingsView: View {
             .padding(.horizontal, DS.space8)
             .padding(.vertical, DS.space10)
             .contentShape(RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.rowRadius, style: .continuous))
-            .unifiedSidebarRowChrome(
-                isActive: isSelected,
-                isHovered: isHovered,
-                activeFill: DS.accentSoft,
-                hoverFill: DS.surfaceHover,
-                activeBorder: DS.sidebarMaterialBorder
-            )
+            .sidebarRowChrome(isActive: isSelected, isHovered: isHovered)
         }
         .buttonStyle(.plain)
         .onHover { hovering in
@@ -382,6 +378,8 @@ struct CosmoSettingsView: View {
                 switch selectedTab {
                 case .appearance:
                     ThemePickerView()
+                case .sound:
+                    SoundSettingsView()
                 case .accountSync:
                     accountSyncTab
                 case .connections:

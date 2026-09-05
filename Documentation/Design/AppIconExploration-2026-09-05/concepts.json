@@ -1,0 +1,47 @@
+[
+  {
+    "id": "01-living-orbit",
+    "name": "Living Orbit",
+    "tag": "The faithful evolution",
+    "rationale": "A fuller orbit, quieter intersections, and one decisive leaf. Closest to the original.",
+    "bg": "#F6F2E7",
+    "fg": "#245B43",
+    "accent": "#245B43"
+  },
+  {
+    "id": "02-verdant",
+    "name": "Verdant",
+    "tag": "The confident signature",
+    "rationale": "A single broad, rising orbit and a leaf cut from its terminal. Strongest balance of warmth and clarity.",
+    "bg": "#F6F2E7",
+    "fg": "#245B43",
+    "accent": "#245B43"
+  },
+  {
+    "id": "03-folio",
+    "name": "Folio",
+    "tag": "The editorial emblem",
+    "rationale": "An orbital C and a folded leaf share one silhouette. Knowledge, growth, and the Cosmo initial.",
+    "bg": "#F6F2E7",
+    "fg": "#245B43",
+    "accent": "#245B43"
+  },
+  {
+    "id": "04-meridian",
+    "name": "Meridian",
+    "tag": "The considered instrument",
+    "rationale": "Two measured orbits and a small gilt seed. A quieter, more scholarly expression of the same idea.",
+    "bg": "#F3EFE4",
+    "fg": "#245B43",
+    "accent": "#B69B62"
+  },
+  {
+    "id": "05-evergreen",
+    "name": "Evergreen",
+    "tag": "The bold seal",
+    "rationale": "Parchment on deep forest, with a broad open orbit and an integrated leaf. The strongest Home Screen presence.",
+    "bg": "#173F32",
+    "fg": "#F5F0E2",
+    "accent": "#F5F0E2"
+  }
+]

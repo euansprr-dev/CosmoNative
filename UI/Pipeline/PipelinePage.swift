@@ -155,7 +155,7 @@ struct PipelinePage: View {
             CosmoSegmentedSwitcher(
                 options: [PipelineView.board, .list],
                 label: { $0.title },
-                icon: { $0.icon },
+                icon: { $0.cosmoIcon },
                 help: { $0.help },
                 selection: Binding(get: { currentView == .calendar ? .board : currentView }, set: { switchView($0) })
             )
@@ -171,7 +171,7 @@ struct PipelinePage: View {
         CosmoSegmentedSwitcher(
             options: PipelineView.allCases,
             label: { $0.title },
-            icon: { $0.icon },
+            icon: { $0.cosmoIcon },
             help: { $0.help },
             selection: Binding(get: { currentView }, set: { switchView($0) })
         )
@@ -215,9 +215,6 @@ struct PipelinePage: View {
             Menu {
                 platformMenu
                 formatMenu
-                if currentView == .board {
-                    Button(model.groupByClient ? "Ungroup clients" : "Group by client") { model.groupByClient.toggle() }
-                }
                 if currentView == .list {
                     Divider()
                     Button(model.filters.showArchived ? "Show active content" : "Show archived content") { model.filters.showArchived.toggle() }
@@ -244,9 +241,6 @@ struct PipelinePage: View {
             .help("Find in content (⌘F)")
             platformMenu
             formatMenu
-            if currentView == .board {
-                groupToggle
-            }
             if currentView == .list {
                 archivedToggle
                 Spacer(minLength: DS.space8)
@@ -318,22 +312,6 @@ struct PipelinePage: View {
         .padding(.horizontal, DS.space10)
         .frame(height: 30)
         .background(active ? DS.accentSoft : DS.glassSectionFill, in: .capsule)
-    }
-
-    private var groupToggle: some View {
-        Button {
-            withAnimation(ProMotionSprings.snappy) { model.groupByClient.toggle() }
-        } label: {
-            Label("Group by client", systemImage: model.groupByClient ? "person.2.fill" : "person.2")
-                .font(DS.callout.weight(.medium))
-                .foregroundStyle(model.groupByClient ? DS.accent : DS.textSecondary)
-                .padding(.horizontal, DS.space10)
-                .frame(height: 30)
-                .background(model.groupByClient ? DS.accentSoft : DS.glassSectionFill, in: .capsule)
-        }
-        .buttonStyle(.plain)
-        .help("Group content by client")
-        .accessibilityAddTraits(model.groupByClient ? [.isButton, .isSelected] : .isButton)
     }
 
     private var archivedToggle: some View {
@@ -629,11 +607,6 @@ struct PipelinePage: View {
 
     private func openCursor() -> Bool {
         guard let cursorID else { return false }
-        if cursorID.hasPrefix("idea:"),
-           let idea = model.snapshot.ideas.first(where: { $0.id == cursorID }) {
-            model.openIdea(idea.item)
-            return true
-        }
         let uuid = cursorID.replacingOccurrences(of: "content:", with: "")
         guard let item = model.item(uuid) else { return false }
         model.open(item)
@@ -641,7 +614,7 @@ struct PipelinePage: View {
     }
 
     private func quickLookCursor() -> Bool {
-        guard let cursorID, !cursorID.hasPrefix("idea:") else { return false }
+        guard let cursorID else { return false }
         let uuid = cursorID.replacingOccurrences(of: "content:", with: "")
         guard model.item(uuid) != nil else { return false }
         model.quickLookID = model.quickLookID == uuid ? nil : uuid
@@ -657,7 +630,7 @@ struct PipelinePage: View {
 
     /// ⌘→ / ⌘← on the cursored card: the adjacent stage (Scheduled asks for a date).
     private func stepCursorStage(forward: Bool) {
-        guard let cursorID, !cursorID.hasPrefix("idea:") else { return }
+        guard let cursorID else { return }
         let uuid = cursorID.replacingOccurrences(of: "content:", with: "")
         guard let item = model.item(uuid) else { return }
         let column = PipelineBoardSnapshot.Column.column(for: item.productionStage)

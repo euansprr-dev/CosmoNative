@@ -1,7 +1,6 @@
 // CosmoOS/Canvas/ThinkspaceLibraryView.swift
 // Thinkspace Library — a Finder-grade browser for everything in a thinkspace.
-// One chrome row on the app's island baseline (trail + breadcrumb + lenses +
-// sort + search), three lenses (Icons / List / Gallery), and the full Finder
+// Grid and List share a compact content toolbar and the full Finder
 // selection grammar: multi-select, marquee, arrow keys, type-to-select,
 // Space to peek, Enter to rename. The lenses live in Canvas/Library/.
 
@@ -16,9 +15,7 @@ struct ThinkspaceLibraryModeView: View {
     /// and out of folders (the breadcrumb is the in-page echo of it).
     @Binding var selectedFolderID: UUID?
     let actions: ThinkspaceLibraryActions
-    /// The library's chrome state (lenses, sort, search) — owned by the
-    /// canvas so the SPACE chrome row renders the controls on the app's one
-    /// island baseline; this view renders only the lens content beneath it.
+    /// Hoisted state keeps display, sorting, and search intact across visits.
     let chrome: ThinkspaceLibraryChromeModel
 
     @State private var selection = ThinkspaceLibrarySelectionModel()
@@ -34,8 +31,23 @@ struct ThinkspaceLibraryModeView: View {
         ZStack(alignment: .top) {
             background
             VStack(alignment: .leading, spacing: DS.space12) {
+                HStack {
+                    Spacer(minLength: 0)
+                    ViewThatFits(in: .horizontal) {
+                        ThinkspaceLibraryToolsIsland(chrome: chrome)
+                        ThinkspaceLibraryToolsIsland(chrome: chrome, compact: true)
+                    }
+                }.padding(.horizontal, DS.space32)
                 if isSearching { searchChipsRow }
-                lensContent
+                if !selectedItems.isEmpty {
+                    HStack {
+                        Text("\(selectedItems.count) selected").font(DS.subheadline).foregroundStyle(DS.textSecondary)
+                        Spacer()
+                        Button("Explore a question", systemImage: "questionmark.bubble") { actions.startInquiry(selectedItems.map(\.entityUuid)) }
+                            .buttonStyle(.plain).foregroundStyle(DS.accent).frame(minHeight: 44).help("Start an inquiry using these materials")
+                    }.padding(.horizontal, DS.space48)
+                }
+                browserScroll
             }
             // Beneath the space chrome row, on its baseline.
             .padding(.top, SpaceChromeMetrics.contentTopInset)
@@ -44,6 +56,7 @@ struct ThinkspaceLibraryModeView: View {
         .background(keyboardShortcutButtons)
         .onAppear(perform: prepare)
         .onChange(of: thinkspaceId) { _, _ in prepare() }
+        .onChange(of: selection.selectedIDs, initial: true) { _, _ in chrome.inquirySourceIDs = selectedItems.map(\.entityUuid) }
         .onChange(of: snapshot) { _, newValue in previewStore.ensureLoaded(newValue) }
         .onChange(of: visibleIDs) { _, _ in syncSelection() }
         .onChange(of: chrome.isSearchFocused) { _, focused in
@@ -128,40 +141,6 @@ struct ThinkspaceLibraryModeView: View {
     // MARK: Lens content
 
     @ViewBuilder
-    private var lensContent: some View {
-        if chrome.prefs.viewMode == .gallery {
-            galleryLens
-        } else {
-            browserScroll
-        }
-    }
-
-    private var galleryLens: some View {
-        ThinkspaceLibraryGalleryView(
-            items: currentVisibleItems,
-            provenance: provenanceLabel,
-            context: lensContext
-        )
-        .padding(.horizontal, DS.space48)
-        .padding(.bottom, DS.space24)
-        .coordinateSpace(name: ThinkspaceLibrarySpace.name)
-        .onTapGesture {
-            clearSelection()
-            browserFocused = true
-        }
-        .focusable()
-        .focusEffectDisabled()
-        .focused($browserFocused)
-        .overlay { if shouldShowEmptyState { emptyState } }
-        .modifier(LibraryKeyboardModifier(
-            selection: selection,
-            onMoveScroll: { keyboardScrollTarget = $0 },
-            onPeek: peekSelection,
-            onRename: beginRenameSelection,
-            onEscape: handleEscape
-        ))
-    }
-
     private var browserScroll: some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -546,7 +525,7 @@ struct ThinkspaceLibraryModeView: View {
 
     /// ⇧⌘1/2/3 — the plain ⌘digits now switch the SPACE's views.
     private var viewModeShortcuts: some View {
-        ForEach(Array(ThinkspaceLibraryViewMode.allCases.enumerated()), id: \.element) { index, mode in
+        ForEach(Array([ThinkspaceLibraryViewMode.icons, .list].enumerated()), id: \.element) { index, mode in
             Button {
                 chrome.setViewMode(mode)
             } label: {}
@@ -600,7 +579,7 @@ struct ThinkspaceLibraryModeView: View {
     private var emptyTitle: String {
         if isSearching { return "No matches for “\(trimmedSearch)”" }
         if selectedFolder != nil { return "This folder is empty" }
-        return "This Thinkspace is empty"
+        return "Build a useful collection"
     }
 
     private var emptyMessage: String {
@@ -613,7 +592,7 @@ struct ThinkspaceLibraryModeView: View {
         if selectedFolder != nil {
             return "Drag any document onto this folder to file it."
         }
-        return "Add blocks on the canvas or press ⌘K to capture something — everything lands here."
+        return "Use + to add notes and sources to this space. Anything you place on its canvas also appears here."
     }
 }
 

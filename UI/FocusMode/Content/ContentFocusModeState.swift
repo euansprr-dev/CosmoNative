@@ -838,8 +838,8 @@ extension ContentFocusModeState {
             metadataDict["polishAnalysis"] = analysisDict
         }
 
-        // Encode generation history (keep last 50 records to avoid bloat)
-        let recentHistory = Array(generationHistory.suffix(50))
+        // Generation history is user content; preserve every saved result.
+        let recentHistory = generationHistory
         if !recentHistory.isEmpty,
            let historyData = try? JSONEncoder().encode(recentHistory),
            let historyArray = try? JSONSerialization.jsonObject(with: historyData) {
@@ -848,9 +848,8 @@ extension ContentFocusModeState {
             metadataDict["generationHistory"] = nil
         }
 
-        // Encode conversation history (keep last 30 messages — was 100 which caused
-        // massive metadata blobs and expensive JSON decode on every focus mode open)
-        let recentConversation = Array(conversationHistory.suffix(30))
+        // Persist the complete conversation; prompt windows may be bounded separately.
+        let recentConversation = conversationHistory
         if !recentConversation.isEmpty,
            let conversationData = try? JSONEncoder().encode(recentConversation),
            let conversationArray = try? JSONSerialization.jsonObject(with: conversationData) {

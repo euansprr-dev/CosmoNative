@@ -722,7 +722,7 @@ struct CosmoDocumentEditor: View {
         if titleConfiguration != nil {
             let payload = TitleDocumentChangePayloadFactory.payload(from: syncBox.attributedText)
             // Also check if plain text diverged from what attributedText reports
-            let plainTextDiverged = latestPlainText != payload.plainText && latestPlainText != syncBox.lastEmittedPlainText
+            let plainTextDiverged = latestPlainText != payload.plainText
             guard payload.document != document || plainTextDiverged else { return }
             syncBox.isSyncingFromEditor = true
             syncBox.lastSelfWrittenDocument = payload.document
@@ -739,7 +739,7 @@ struct CosmoDocumentEditor: View {
         let updated = RichDocumentSerializer.document(from: syncBox.attributedText)
         // Check if plain text advanced beyond what attributedText contains
         // (i.e. user typed but the 50ms deferred sync hasn't fired yet)
-        let plainTextDiverged = latestPlainText != updated.plainText && latestPlainText != syncBox.lastEmittedPlainText
+        let plainTextDiverged = latestPlainText != updated.plainText && !updated.containsCollapsedHiddenContent
         guard updated != document || plainTextDiverged else { return }
         syncBox.isSyncingFromEditor = true
         syncBox.lastSelfWrittenDocument = updated

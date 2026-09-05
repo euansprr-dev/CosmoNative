@@ -20,7 +20,7 @@ enum ThinkspaceLibraryViewMode: String, CaseIterable, Identifiable, Codable {
 
     var title: String {
         switch self {
-        case .icons: return "Icons"
+        case .icons: return "Grid"
         case .list: return "List"
         case .gallery: return "Gallery"
         }
@@ -463,19 +463,11 @@ struct ThinkspaceLibraryCardModel {
     /// The kind mark for icon-territory rows (list view) — identity outranks
     /// type, so media rows show thumbnails and everything else gets its kind
     /// glyph in the entity tint.
-    var kindGlyph: String {
-        switch item.entityType {
-        case .note: return "doc.text"
-        case .content: return "doc.richtext"
-        case .research: return metadata["isSwipeFile"] == "true" ? "bolt.square" : "books.vertical"
-        case .connection: return "point.3.connected.trianglepath.dotted"
-        case .task: return "checkmark.circle"
-        case .image: return "photo"
-        case .stickyNote: return "note.text"
-        case .portal: return "rectangle.portrait.on.rectangle.portrait"
-        case .cosmoAI, .cosmo: return "circle.hexagongrid.circle"
-        default: return "doc"
+    var cosmoIcon: CosmoIcon {
+        if item.entityType == .research, metadata["isSwipeFile"] == "true" {
+            return .swipe
         }
+        return item.entityType.cosmoIcon
     }
 
     /// True for video-bearing media — gets a small play badge on the object.
@@ -528,6 +520,7 @@ struct ThinkspaceLibraryActions {
     /// camera. Optional so older call sites keep compiling.
     var placeOnCanvas: (ThinkspaceLibraryItem) -> Void = { _ in }
     var removeFromSpace: (ThinkspaceLibraryItem) -> Void = { _ in }
+    var startInquiry: ([String]) -> Void = { _ in }
 }
 
 // MARK: - Sorting

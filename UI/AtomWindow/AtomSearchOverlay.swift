@@ -212,7 +212,7 @@ struct AtomSearchOverlay: View {
     }
 
     private func typeIcon(for type: AtomType) -> some View {
-        Image(systemName: type.iconName)
+        Image(cosmo: type.cosmoIcon)
             .font(.system(size: 13, weight: .semibold))
             .foregroundStyle(AtomWindowViewModel.entityColor(for: type))
             .frame(width: 28, height: 28)

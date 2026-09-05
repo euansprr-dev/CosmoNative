@@ -191,7 +191,7 @@ struct CanvasDatabasePicker: View {
                     .fill(entityColor.opacity(isActive ? 0.16 : 0.12))
                     .frame(width: 30, height: 30)
                     .overlay(
-                        Image(systemName: result.entityType.icon)
+                        Image(cosmo: result.entityType.cosmoIcon)
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundColor(entityColor)
                     )

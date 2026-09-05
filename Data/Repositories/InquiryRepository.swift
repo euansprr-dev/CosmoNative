@@ -557,10 +557,25 @@ final class InquiryRepository {
     /// Save the session's metadata/structured (called frequently — debounce externally).
     @discardableResult
     func saveSession(_ atom: Atom, metadata: InquirySessionMetadata?, structured: InquirySessionStructured?) async throws -> Atom {
-        var copy = atom
-        if let metadata { copy = copy.withMetadata(metadata) }
-        if let structured { copy = copy.withStructured(structured) }
-        return try await atoms.update(copy)
+        let saved = try await CosmoDatabase.shared.asyncWrite { db in
+            guard var fresh = try Atom.filter(Column("uuid") == atom.uuid).filter(Column("is_deleted") == false).fetchOne(db) else { throw SpaceResearchSchema.Failure.missing }
+            if let metadata {
+                let incoming = try SpaceResearchSchema.object(String(decoding: JSONEncoder().encode(metadata), as: UTF8.self))
+                let base = try atom.inquirySessionMetadata.map { try SpaceResearchSchema.object(String(decoding: JSONEncoder().encode($0), as: UTF8.self)) } ?? [:]
+                fresh.metadata = try SpaceResearchSchema.json(SpaceResearchSchema.mergingChanges(base: base, incoming: incoming, current: try SpaceResearchSchema.object(fresh.metadata)))
+            }
+            if let structured {
+                let incoming = try SpaceResearchSchema.object(String(decoding: JSONEncoder().encode(structured), as: UTF8.self))
+                let base = try atom.inquirySessionStructured.map { try SpaceResearchSchema.object(String(decoding: JSONEncoder().encode($0), as: UTF8.self)) } ?? [:]
+                fresh.structured = try SpaceResearchSchema.json(SpaceResearchSchema.mergingChanges(base: base, incoming: incoming, current: try SpaceResearchSchema.object(fresh.structured)))
+            }
+            fresh.localVersion += 1; fresh.updatedAt = ISO8601.string(from: .now)
+            try fresh.update(db)
+            try db.execute(sql: "UPDATE atoms SET _local_pending = 1 WHERE uuid = ?", arguments: [fresh.uuid])
+            return fresh
+        }
+        await ChangeTracker.shared.trackUpdate(table: "atoms", entity: saved, skipVersionIncrement: true)
+        return saved
     }
 
     /// Mark a session paused.
@@ -569,8 +584,7 @@ final class InquiryRepository {
         guard var meta = atom.inquirySessionMetadata else { return atom }
         meta.status = .paused
         meta.lastActiveAt = ISO8601.string(from: Date())
-        let copy = atom.withMetadata(meta)
-        return try await atoms.update(copy)
+        return try await saveSession(atom, metadata: meta, structured: nil)
     }
 
     /// Mark a session crystallized and persist crystallization output.
@@ -581,9 +595,11 @@ final class InquiryRepository {
         meta.status = .crystallized
         meta.crystallizedAt = ISO8601.string(from: Date())
         structured.crystallizationResult = output
-        var copy = atom.withMetadata(meta).withStructured(structured)
+        var copy = try await saveSession(atom, metadata: meta, structured: structured)
         copy.body = summary
-        return try await atoms.update(copy)
+        let saved = try await atoms.update(copy)
+        try await SpaceResearchService.saveFindings(from: saved, summary: summary)
+        return saved
     }
 
     // MARK: - Question

@@ -217,7 +217,7 @@ struct ContentDraftView: View {
                 } else {
                     ForEach(state.relatedAtoms.prefix(5)) { ref in
                         HStack(spacing: 6) {
-                            Image(systemName: ref.type.iconName)
+                            Image(cosmo: ref.type.cosmoIcon)
                                 .font(.system(size: 10))
                                 .foregroundStyle(relatedTypeColor(ref.type))
                             Text(ref.title)

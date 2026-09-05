@@ -55,7 +55,6 @@ class SpatialEngine {
     private func flushPendingGeometryWritesSync() {
         guard !pendingGeometryWrites.isEmpty else { return }
         let writes = pendingGeometryWrites
-        pendingGeometryWrites.removeAll()
         do {
             try database.write { db in
                 for (blockId, geometry) in writes {
@@ -79,6 +78,7 @@ class SpatialEngine {
                     }
                 }
             }
+            pendingGeometryWrites.removeAll()
         } catch {
             PersistenceHealth.note(.writeFailure, context: "spatialEngine.terminateFlush", detail: "\(writes.count) pending geometry write(s) lost: \(error)")
             print("❌ Failed to flush pending geometry writes: \(error)")
@@ -212,8 +212,8 @@ class SpatialEngine {
 
             async let atomsByIDTask = AtomRepository.shared.fetchBatch(ids: Array(Set(idsToFetch)))
             async let atomsByUUIDTask = AtomRepository.shared.fetchBatch(uuids: Array(Set(uuidsToFetch)))
-            let fetchedAtomsByID = (try? await atomsByIDTask) ?? []
-            let fetchedAtomsByUUID = (try? await atomsByUUIDTask) ?? []
+            let fetchedAtomsByID = try await atomsByIDTask
+            let fetchedAtomsByUUID = try await atomsByUUIDTask
 
             // Warm the shared atom store BEFORE returning, so views mounting
             // off this snapshot (and off the cached snapshot the hub keeps
@@ -241,6 +241,7 @@ class SpatialEngine {
                 return blocks
             }.value
         } catch {
+            PersistenceHealth.note(.writeFailure, context: "canvas.load", detail: "Could not load saved canvas data: \(error)")
             print("❌ Failed to load canvas blocks: \(error)")
             return nil
         }
@@ -408,17 +409,18 @@ class SpatialEngine {
                 let atomUUID: String? = block.entityType == .note ? block.entityUuid : nil
                 let metadataJSON = Self.encodeBlockMetadataJSON(block.metadata)
 
-                let existingBlockId = try String.fetchOne(
+                let existingBlock = try Row.fetchOne(
                     db,
                     sql: """
-                        SELECT id FROM canvas_blocks
-                        WHERE id = ? AND is_deleted = 0
-                        LIMIT 1
+                        SELECT id, is_deleted FROM canvas_blocks
+                        WHERE id = ? LIMIT 1
                     """,
                     arguments: [block.id]
                 )
 
-                if existingBlockId != nil {
+                if let existingBlock {
+                    // A delayed layout save must never resurrect a deleted row.
+                    guard !(existingBlock["is_deleted"] as Bool) else { return }
                     // NOTE: deliberately does NOT rewrite thinkspace_id — during a
                     // thinkspace-switch overlap window the engine context can lag,
                     // and rewriting it here re-homed blocks into the wrong space.
@@ -426,16 +428,17 @@ class SpatialEngine {
                     try db.execute(
                         sql: """
                             UPDATE canvas_blocks
-                            SET entity_type = ?, entity_id = ?, entity_uuid = ?, atom_uuid = ?, entity_title = ?,
+                            SET entity_type = ?, entity_id = CASE WHEN entity_id > 0 THEN entity_id ELSE ? END,
+                                entity_uuid = COALESCE(NULLIF(entity_uuid, ''), ?), atom_uuid = COALESCE(atom_uuid, ?),
                                 position_x = ?, position_y = ?, width = ?, height = ?,
-                                z_index = ?, note_content = ?, metadata = ?, is_pinned = ?, is_placed = ?, updated_at = ?
+                                z_index = ?, is_pinned = ?, is_placed = ?, updated_at = ?
                             WHERE id = ?
                         """,
                         arguments: [
-                            block.entityType.rawValue, block.entityId, block.entityUuid, atomUUID, block.title,
+                            block.entityType.rawValue, block.entityId, block.entityUuid, atomUUID,
                             Int(block.position.x), Int(block.position.y),
                             Int(block.size.width), Int(block.size.height),
-                            block.zIndex, noteContent, metadataJSON, block.isPinned, block.isPlaced,
+                            block.zIndex, block.isPinned, block.isPlaced,
                             ISO8601.string(from: Date()),
                             block.id
                         ]
@@ -459,16 +462,17 @@ class SpatialEngine {
                         try db.execute(
                             sql: """
                                 UPDATE canvas_blocks
-                                SET entity_type = ?, entity_id = ?, entity_uuid = ?, atom_uuid = ?, entity_title = ?,
+                                SET entity_type = ?, entity_id = CASE WHEN entity_id > 0 THEN entity_id ELSE ? END,
+                                entity_uuid = COALESCE(NULLIF(entity_uuid, ''), ?), atom_uuid = COALESCE(atom_uuid, ?),
                                     position_x = ?, position_y = ?, width = ?, height = ?,
-                                    z_index = ?, note_content = ?, metadata = ?, is_pinned = ?, is_placed = ?, updated_at = ?
+                                    z_index = ?, is_pinned = ?, is_placed = ?, updated_at = ?
                                 WHERE id = ?
                             """,
                             arguments: [
-                                block.entityType.rawValue, block.entityId, block.entityUuid, atomUUID, block.title,
+                                block.entityType.rawValue, block.entityId, block.entityUuid, atomUUID,
                                 Int(block.position.x), Int(block.position.y),
                                 Int(block.size.width), Int(block.size.height),
-                                block.zIndex, noteContent, metadataJSON, block.isPinned, block.isPlaced,
+                                block.zIndex, block.isPinned, block.isPlaced,
                                 ISO8601.string(from: Date()),
                                 existingId
                             ]
@@ -480,7 +484,7 @@ class SpatialEngine {
                 // No existing row (or empty entityUuid for notes) — insert new
                 try db.execute(
                     sql: """
-                    INSERT OR REPLACE INTO canvas_blocks
+                    INSERT INTO canvas_blocks
                     (id, document_type, document_id, entity_type, entity_id, entity_uuid, atom_uuid, entity_title,
                      position_x, position_y, width, height, z_index, note_content, metadata, is_pinned, is_placed, thinkspace_id, is_deleted, created_at, updated_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
@@ -512,6 +516,47 @@ class SpatialEngine {
             PersistenceHealth.note(.writeFailure, context: "spatialEngine.saveBlock", detail: "block \(block.id) (\(block.entityType.rawValue)): \(error)")
             print("❌ Failed to save block: \(error)")
         }
+    }
+
+    /// Content changes patch the current row. Layout saves above never own
+    /// note_content/metadata, so a delayed resize cannot erase a newer edit.
+    func updateBlockMetadata(blockID: String, patch: [String: String], alreadyPersisted: Bool = false) throws {
+        var committed = patch
+        if !alreadyPersisted {
+            committed = try database.write { db in
+                guard let row = try Row.fetchOne(db,
+                    sql: "SELECT metadata FROM canvas_blocks WHERE id = ? AND is_deleted = 0",
+                    arguments: [blockID]
+                ) else { throw CanvasNotePersistence.SaveError.missingBlock }
+                let json: String? = row["metadata"]
+                var merged = [String: String]()
+                if let json, !json.isEmpty {
+                    merged = try JSONDecoder().decode([String: String].self, from: Data(json.utf8))
+                }
+                merged.merge(patch) { _, new in new }
+                if let content = patch["content"], patch[RichDocumentMetadataKeys.bodyDocument] == nil {
+                    merged = RichDocumentPersistence.writeBlockDocument(
+                        RichDocument.migrateLegacy(content), key: RichDocumentMetadataKeys.bodyDocument, metadata: merged
+                    )
+                }
+                try db.execute(sql: """
+                    UPDATE canvas_blocks SET metadata = ?,
+                        note_content = CASE WHEN ? THEN ? ELSE note_content END,
+                        entity_title = CASE WHEN ? THEN ? ELSE entity_title END,
+                        updated_at = ?, _local_version = _local_version + 1, _local_pending = 1
+                    WHERE id = ? AND is_deleted = 0
+                    """, arguments: [Self.encodeBlockMetadataJSON(merged),
+                                      patch["content"] != nil, patch["content"],
+                                      patch["title"] != nil, patch["title"],
+                                      ISO8601.string(from: Date()), blockID])
+                return merged
+            }
+        }
+        if let index = blocks.firstIndex(where: { $0.id == blockID }) {
+            blocks[index].metadata.merge(committed) { _, new in new }
+            if let title = committed["title"] { blocks[index].title = title }
+        }
+        ThinkspaceCanvasSnapshotCache.shared.invalidate(blockID: blockID)
     }
 
     // MARK: - Update Block Position

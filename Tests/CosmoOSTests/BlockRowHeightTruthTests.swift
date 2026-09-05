@@ -182,7 +182,10 @@ final class BlockRowHeightTruthTests: XCTestCase {
         view.setSelectedRange(NSRange(location: 2, length: 9))
         pump(0.3)
         let root = try XCTUnwrap(window.contentView)
-        let point = view.convert(NSPoint(x: view.bounds.midX, y: view.bounds.midY), to: root)
+        // NSView.hitTest takes its SUPERview's coordinates. NSHostingView
+        // is flipped relative to the window frame, so root-local coordinates
+        // otherwise probe blank scroll space instead of this paragraph.
+        let point = view.convert(NSPoint(x: view.bounds.midX, y: view.bounds.midY), to: root.superview)
         let hit = root.hitTest(point)
         XCTAssertTrue(hit === view || hit?.isDescendant(of: view) == true,
                       "Formatting chrome must not consume the next caret click: \(String(describing: hit))")

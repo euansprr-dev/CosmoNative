@@ -2708,10 +2708,10 @@ final class CommandKSearchPipelineTests: XCTestCase {
             encoding: .utf8
         )
         let anytimeBody = try XCTUnwrap(
-            source.slice(from: "func loadAnytimeTasks() async", to: "// MARK: - Someday Tasks")
+            source.slice(from: "func loadAnytimeTasks(", to: "// MARK: - Someday Tasks")
         )
         let somedayBody = try XCTUnwrap(
-            source.slice(from: "func loadSomedayTasks() async", to: "// MARK: - Project Tasks")
+            source.slice(from: "func loadSomedayTasks(", to: "// MARK: - Project Tasks")
         )
 
         XCTAssertTrue(anytimeBody.contains("let state = vm.schedulingState"))

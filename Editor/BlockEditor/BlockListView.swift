@@ -976,6 +976,10 @@ struct BlockListView: View {
     /// races makeFirstResponder(nil) and drops keys (⌘A then ⌫ did nothing).
     private func activateSelectionKeyboard() {
         guard let window = listGeometry.hostView?.window else { return }
+        // Whole-block selection owns focus now. Leaving the row marked
+        // focused lets an already queued auto-focus reclaim its text view
+        // after the blur below; onActivate would then clear this selection.
+        resolvedFocusCoordinator.focusOutOf(elementID: resolvedFocusCoordinator.focusedBlockID)
         selectionKeyMonitor.install(in: window) { event in
             handleSelectionKeyEvent(event)
         }

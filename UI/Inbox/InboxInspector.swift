@@ -376,9 +376,11 @@ struct InboxInspector: View {
     private var verbGrid: some View {
         VStack(spacing: DS.space12) {
             primaryVerb
-            Button("Change destination…") { viewModel.showOverride(for: item) }
-                .buttonStyle(.plain).font(DS.callout).foregroundStyle(DS.accent)
-                .frame(maxWidth: .infinity, minHeight: 44).help("Choose where and how to save this capture")
+            if item.hasActionableSuggestion {
+                Button("Change destination…") { viewModel.showOverride(for: item) }
+                    .buttonStyle(.plain).font(DS.callout).foregroundStyle(DS.accent)
+                    .frame(maxWidth: .infinity, minHeight: 44).help("Choose where and how to save this capture")
+            }
             HStack {
                 Menu {
                     Button("Create task", systemImage: "checkmark.circle") { Task { await viewModel.makeTask(item) } }

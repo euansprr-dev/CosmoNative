@@ -413,7 +413,7 @@ private struct InboxUndoToast: View {
                         .background(DS.accent, in: .capsule)
                 }
                 .buttonStyle(.plain)
-                .help("Open the development conversation")
+                .help(actionLabel == "Open" ? "Open the filed item" : "Open the development conversation")
             }
 
             if !viewModel.undoToastIsError {

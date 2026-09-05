@@ -114,7 +114,9 @@ struct CanvasCluster: Identifiable, Equatable {
     /// Canvas mode is grow-only by default so clusters don't jitter while dragging blocks.
     /// Non-canvas modes are explicitly fitted by the cluster engine.
     mutating func updateBoundingRect(blocks: [CanvasBlock], padding: CGFloat = 40, growOnly: Bool = true) {
-        let memberBlocks = blocks.filter { blockUUIDs.contains($0.entityUuid) }
+        // Unplaced members (in the tray) belong to the folder but have no
+        // geometry — they must never stretch the zone.
+        let memberBlocks = blocks.filter { blockUUIDs.contains($0.entityUuid) && $0.isPlaced }
         guard !memberBlocks.isEmpty else { return }
 
         var minX = CGFloat.greatestFiniteMagnitude
@@ -354,7 +356,7 @@ struct CodableCluster: Codable, Sendable {
             boardGrouping: boardGrouping.flatMap { ClusterBoardGrouping(rawValue: $0) } ?? .auto
         )
 
-        let memberBlocks = blocks.filter { blockUUIDs.contains($0.entityUuid) }
+        let memberBlocks = blocks.filter { blockUUIDs.contains($0.entityUuid) && $0.isPlaced }
         if !memberBlocks.isEmpty {
             if cluster.viewMode == .canvas {
                 // Persisted user cluster rects are authoritative. A member whose

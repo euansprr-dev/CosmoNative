@@ -13,7 +13,9 @@ final class ProfileStudioMergeTests: XCTestCase {
         handle: String = "@voice",
         documents: [ProfileDocument] = [],
         niche: String = "",
-        signaturePhrases: [String] = []
+        signaturePhrases: [String] = [],
+        colorHex: String = "",
+        postingFrequency: String = ""
     ) -> ProfileStudioOverlay {
         ProfileStudioOverlay(
             clientId: "client-1",
@@ -31,7 +33,9 @@ final class ProfileStudioMergeTests: XCTestCase {
             notes: "",
             brandStory: "",
             voiceNotes: "",
-            topPerformingPosts: []
+            topPerformingPosts: [],
+            colorHex: colorHex,
+            postingFrequency: postingFrequency
         )
     }
 
@@ -70,6 +74,23 @@ final class ProfileStudioMergeTests: XCTestCase {
 
         XCTAssertNil(decoded.handle, "a cleared handle must not resurrect the old value")
         XCTAssertNil(decoded.niche, "a cleared niche must not resurrect the old value")
+    }
+
+    func testColourAndCadenceRoundTripAndClearAsDeletions() throws {
+        var atom = Atom.new(type: .clientProfile, title: "Existing", body: nil)
+        atom.metadata = #"{"clientName":"Existing","colorHex":"2E86AB","postingFrequency":"3x/week"}"#
+
+        let set = atom.mergingMetadataKeys(makeOverlay(colorHex: "A23B72", postingFrequency: "daily"))
+        let setDecoded = try XCTUnwrap(set.metadataValue(as: ClientProfileMetadata.self))
+        XCTAssertEqual(setDecoded.colorHex, "A23B72")
+        XCTAssertEqual(setDecoded.postingFrequency, "daily")
+
+        // Studio cleared both → explicit nulls, never the old values.
+        let cleared = atom.mergingMetadataKeys(makeOverlay())
+        let clearedDecoded = try XCTUnwrap(cleared.metadataValue(as: ClientProfileMetadata.self))
+        XCTAssertNil(clearedDecoded.colorHex, "a cleared swatch must fall back to the automatic colour")
+        XCTAssertNil(clearedDecoded.postingFrequency, "a cleared cadence must not resurrect the old value")
+        XCTAssertEqual(clearedDecoded.clientName, "Test Voice")
     }
 
     func testDocumentsAndContextRoundTrip() throws {

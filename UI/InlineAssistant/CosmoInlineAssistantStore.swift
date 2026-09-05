@@ -654,6 +654,16 @@ final class CosmoInlineAssistantStore: ObservableObject {
     /// The pane message currently being streamed token-by-token, if any.
     /// Finalized (replaced with the complete answer) when the tool call lands.
     private(set) var streamingPaneMessageID: UUID?
+    /// The streaming text itself. Observable on its own so a delta invalidates
+    /// ONLY the row rendering it — never the store's ObservableObject fan-out
+    /// (every card in the transcript, the composer, the toolbar) the way
+    /// `paneMessages[index].content += delta` did on every SSE chunk.
+    let streamingAnswer = CosmoInlineAssistantStreamingAnswer()
+    /// Deltas waiting for the next flush. SSE chunks arrive far faster than a
+    /// frame; the buffer lands them at most every `streamFlushInterval`.
+    private var pendingStreamDelta = ""
+    private var streamFlushTask: Task<Void, Never>?
+    static let streamFlushInterval: Duration = .milliseconds(40)
     /// Supplies the sources actually read for the in-flight request — set by the
     /// agent bridge for the request's duration, attached to answers/proposals as
     /// clickable context chips.
@@ -837,7 +847,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
 
         isProcessing = false
         statusText = nil
-        streamingPaneMessageID = nil
+        endStreaming()
         currentRunSteps = []
         phase = activePendingProposal != nil ? .reviewing : .idle
 
@@ -871,6 +881,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
     private func finalizeCancelledRun() {
         if let streamingID = streamingPaneMessageID,
            let index = paneMessages.firstIndex(where: { $0.id == streamingID }) {
+            paneMessages[index].content = streamedAnswerText
             paneMessages[index].sourceRefs = currentSourceRefs
             paneMessages[index].activitySteps = takeFinalizedRunSteps()
         } else {
@@ -1178,13 +1189,15 @@ final class CosmoInlineAssistantStore: ObservableObject {
     /// token-by-token instead of landing as a wall of text seconds later.
     func receivePaneAnswerDelta(_ delta: String) {
         guard !delta.isEmpty else { return }
-        phase = .drafting
-        statusText = nil
+        // `@Published` publishes on every set, changed or not — guard so a
+        // run's hundreds of deltas don't each republish the whole store.
+        if phase != .drafting { phase = .drafting }
+        if statusText != nil { statusText = nil }
         CosmoInlineAssistantMetrics.shared.firstTokenArrived()
 
-        if let streamingID = streamingPaneMessageID,
-           let index = paneMessages.firstIndex(where: { $0.id == streamingID }) {
-            paneMessages[index].content += delta
+        if streamingPaneMessageID != nil {
+            pendingStreamDelta += delta
+            scheduleStreamFlush()
             return
         }
 
@@ -1192,9 +1205,53 @@ final class CosmoInlineAssistantStore: ObservableObject {
         if effectiveRoute != .action || activeSubmissionShouldOpenPaneForAnswer {
             isPaneRequested = true
         }
-        let message = CosmoInlineAssistantPaneMessage(role: .assistant, content: delta, runID: currentRunID)
+        // The message's content stays empty while it streams; the buffer is
+        // the live text and the finalize (or cancel) writes the content once.
+        let message = CosmoInlineAssistantPaneMessage(role: .assistant, content: "", runID: currentRunID)
         streamingPaneMessageID = message.id
+        streamingAnswer.begin(messageID: message.id)
+        streamingAnswer.append(delta)
         paneMessages.append(message)
+    }
+
+    private func scheduleStreamFlush() {
+        guard streamFlushTask == nil else { return }
+        streamFlushTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.streamFlushInterval)
+            guard !Task.isCancelled else { return }
+            self?.flushPendingStreamDelta()
+        }
+    }
+
+    /// Lands buffered deltas in the streaming answer. Called by the flush
+    /// timer; exposed so tests can drive it deterministically.
+    func flushPendingStreamDelta() {
+        streamFlushTask = nil
+        guard !pendingStreamDelta.isEmpty else { return }
+        streamingAnswer.append(pendingStreamDelta)
+        pendingStreamDelta = ""
+    }
+
+    /// The text streamed so far, buffered deltas included.
+    var streamedAnswerText: String {
+        streamingAnswer.text + pendingStreamDelta
+    }
+
+    /// Closes the streaming buffer. A message that was never finalized (the
+    /// run errored or was stopped) keeps whatever streamed as its content.
+    private func endStreaming() {
+        streamFlushTask?.cancel()
+        streamFlushTask = nil
+        let streamed = streamedAnswerText
+        pendingStreamDelta = ""
+        if let streamingID = streamingPaneMessageID,
+           let index = paneMessages.firstIndex(where: { $0.id == streamingID }),
+           paneMessages[index].content.isEmpty,
+           !streamed.isEmpty {
+            paneMessages[index].content = streamed
+        }
+        streamingAnswer.end()
+        streamingPaneMessageID = nil
     }
 
     func receivePaneAnswer(
@@ -1234,7 +1291,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
                 paneMessages[index].sourceRefs = currentSourceRefs
                 paneMessages[index].activitySteps = takeFinalizedRunSteps()
             }
-            streamingPaneMessageID = nil
+            endStreaming()
             followUpSuggestions = Self.followUps(afterAnswerRoute: effectiveRoute, skillID: activeSubmissionSkillID)
             persistActiveSession()
             return
@@ -2496,7 +2553,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
         errorText = nil
         statusText = nil
         phase = .idle
-        streamingPaneMessageID = nil
+        endStreaming()
         currentRunSteps = []
         isPaneRequested = false
 
@@ -2521,7 +2578,7 @@ final class CosmoInlineAssistantStore: ObservableObject {
         errorText = nil
         statusText = nil
         phase = .idle
-        streamingPaneMessageID = nil
+        endStreaming()
         currentRunSteps = []
         isPaneRequested = false
     }
@@ -2544,5 +2601,36 @@ final class CosmoFirstStreamTokenRelay: @unchecked Sendable {
         guard !claimed else { return false }
         claimed = true
         return true
+    }
+}
+
+/// The answer currently streaming into the pane, as its own observable so the
+/// per-tick growth invalidates only the row that renders it. `revision` lets
+/// a row react to a tick (scroll-follow) without diffing the text.
+@MainActor
+@Observable
+final class CosmoInlineAssistantStreamingAnswer {
+    private(set) var messageID: UUID?
+    private(set) var text = ""
+    private(set) var revision = 0
+
+    var isActive: Bool { messageID != nil }
+
+    func begin(messageID: UUID) {
+        self.messageID = messageID
+        text = ""
+        revision += 1
+    }
+
+    func append(_ delta: String) {
+        guard !delta.isEmpty else { return }
+        text += delta
+        revision += 1
+    }
+
+    func end() {
+        messageID = nil
+        text = ""
+        revision += 1
     }
 }

@@ -159,7 +159,7 @@ struct IdeaBoardBlockView: View {
 
             let clientItems: [IdeaGalleryItem] = allIdeas.compactMap { atom -> IdeaGalleryItem? in
                 // Activated ideas are content pieces now — boards only show unwritten ideas
-                if atom.ideaMetadata?.ideaStatus?.isActivated ?? false { return nil }
+                if atom.ideaMetadata?.ideaStatus == .archived { return nil }
                 // Filter to this client
                 if let uuid = clientUUID {
                     let meta = atom.ideaMetadata

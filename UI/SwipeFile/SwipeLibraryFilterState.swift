@@ -181,31 +181,6 @@ extension SocialDiscoverySort {
     }
 }
 
-enum SwipeLibraryShelfID: String, CaseIterable, Identifiable {
-    case recentlyAdded
-    case highPerforming
-    case hooksToTry
-    case continueStudying
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .recentlyAdded: return "Recently Added"
-        case .highPerforming: return "High-Performing Patterns"
-        case .hooksToTry: return "Hooks to Try"
-        case .continueStudying: return "Continue Studying"
-        }
-    }
-}
-
-struct SwipeLibraryShelf: Identifiable {
-    let id: SwipeLibraryShelfID
-    let items: [SwipeGalleryItem]
-
-    var title: String { id.title }
-}
-
 struct SwipeLibraryFacetSummary: Equatable {
     var totalCount: Int
     var filteredCount: Int

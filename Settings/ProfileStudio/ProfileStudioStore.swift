@@ -26,6 +26,10 @@ final class ProfileStudioStore {
     var signaturePhrases: [String] = [] { didSet { fieldChanged(oldValue != signaturePhrases) } }
     var coreBeliefs: [String] = [] { didSet { fieldChanged(oldValue != coreBeliefs) } }
     var notes: String = "" { didSet { fieldChanged(oldValue != notes) } }
+    /// Pinned identity swatch (6-digit hex, no "#"); nil = automatic hash colour.
+    var colorHex: String? = nil { didSet { fieldChanged(oldValue != colorHex) } }
+    /// Free-text cadence ("3x/week") — `ClientCadence.parse` turns it into a quota.
+    var postingFrequency: String = "" { didSet { fieldChanged(oldValue != postingFrequency) } }
 
     // MARK: - Read-only state
 
@@ -103,6 +107,8 @@ final class ProfileStudioStore {
         signaturePhrases = meta.signaturePhrases ?? []
         coreBeliefs = meta.coreBeliefs ?? []
         notes = meta.notes ?? ""
+        colorHex = ClientColorResolver.normalizedHex(meta.colorHex)
+        postingFrequency = meta.postingFrequency ?? ""
         intelligenceModel = meta.intelligenceModel
     }
 
@@ -203,6 +209,8 @@ final class ProfileStudioStore {
                 atom = saved
                 onProfileCreated?(saved)
             }
+            // The colour map is app-wide; re-read it before the list repaints.
+            await ClientColorResolver.shared.refresh()
             onProfileListChanged()
             pulseSaved()
             suggestContextIfNeeded()
@@ -267,7 +275,9 @@ final class ProfileStudioStore {
             notes: notes,
             brandStory: brandStory,
             voiceNotes: voiceNotes,
-            topPerformingPosts: topPosts
+            topPerformingPosts: topPosts,
+            colorHex: colorHex ?? "",
+            postingFrequency: postingFrequency.trimmingCharacters(in: .whitespacesAndNewlines)
         )
     }
 
@@ -396,11 +406,16 @@ struct ProfileStudioOverlay: Encodable {
     let brandStory: String
     let voiceNotes: String
     let topPerformingPosts: [TopPost]
+    /// Empty = automatic (encodes null so a cleared swatch really clears).
+    var colorHex: String = ""
+    /// Empty = no cadence (encodes null so a cleared cadence really clears).
+    var postingFrequency: String = ""
 
     enum CodingKeys: String, CodingKey {
         case clientId, clientName, activeStatus, handle, platforms, primaryPlatform
         case documents, targetAudience, niche, uniqueAngle, signaturePhrases
         case coreBeliefs, notes, brandStory, voiceNotes, topPerformingPosts
+        case colorHex, postingFrequency
     }
 
     func encode(to encoder: Encoder) throws {
@@ -418,6 +433,8 @@ struct ProfileStudioOverlay: Encodable {
         try encodeOrNull(notes, forKey: .notes, in: &container)
         try encodeOrNull(brandStory, forKey: .brandStory, in: &container)
         try encodeOrNull(voiceNotes, forKey: .voiceNotes, in: &container)
+        try encodeOrNull(colorHex, forKey: .colorHex, in: &container)
+        try encodeOrNull(postingFrequency, forKey: .postingFrequency, in: &container)
         try encodeListOrNull(signaturePhrases, forKey: .signaturePhrases, in: &container)
         try encodeListOrNull(coreBeliefs, forKey: .coreBeliefs, in: &container)
         if topPerformingPosts.isEmpty {

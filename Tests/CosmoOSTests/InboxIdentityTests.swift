@@ -2,6 +2,31 @@ import XCTest
 @testable import CosmoOS
 
 final class InboxIdentityTests: XCTestCase {
+    @MainActor
+    func testRepositoryUpdateAppliesImmediatelyAndPreservesDraft() {
+        let model = InboxViewModel()
+        let first = makeItem(title: "First")
+        let second = makeItem(title: "Second")
+        model.captureText = "My next thought"
+        model.applyItems([first, second])
+        model.focusedItemId = first.uuid
+        model.isInspectorOpen = true
+        model.selectedItemIds = [first.uuid, second.uuid]
+
+        var updated = first
+        updated.title = "Classified"
+        model.applyItems([updated, second])
+        XCTAssertEqual(model.focusedItem?.title, "Classified")
+        XCTAssertTrue(model.isInspectorOpen)
+        XCTAssertEqual(model.captureText, "My next thought")
+
+        model.applyItems([second])
+        XCTAssertEqual(model.groupedItems.flatMap(\.items).map(\.uuid), [second.uuid])
+        XCTAssertEqual(model.selectedItemIds, [second.uuid])
+        XCTAssertNil(model.focusedItemId)
+        XCTAssertFalse(model.isInspectorOpen)
+    }
+
     func testSectionIdentityIgnoresItemContentChangesButTracksOrder() {
         let first = makeItem(title: "First")
         let second = makeItem(title: "Second")

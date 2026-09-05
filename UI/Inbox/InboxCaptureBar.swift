@@ -55,13 +55,17 @@ struct InboxCaptureBar: View {
             guard case .success(let urls) = result else { return }
             // Uploaded pictures attach without transcription — only the
             // scan intakes (Continuity Camera / iPhone scan) digitize.
-            let files = urls.compactMap { url -> (data: Data, filename: String)? in
-                let scoped = url.startAccessingSecurityScopedResource()
-                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-                guard let data = try? Data(contentsOf: url) else { return nil }
-                return (data, url.lastPathComponent)
+            Task {
+                let files = await Task.detached(priority: .userInitiated) {
+                    urls.compactMap { url -> (data: Data, filename: String)? in
+                        let scoped = url.startAccessingSecurityScopedResource()
+                        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                        guard let data = try? Data(contentsOf: url) else { return nil }
+                        return (data, url.lastPathComponent)
+                    }
+                }.value
+                await viewModel.ingestUploadedImages(files)
             }
-            Task { await viewModel.ingestUploadedImages(files) }
         }
     }
 

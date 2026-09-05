@@ -83,7 +83,7 @@ struct SwipeLibraryResults: View {
     let onStudy: (String) -> Void
 
     var body: some View {
-        if viewModel.isLoading && viewModel.allItems.isEmpty {
+        if viewModel.isLoading && !viewModel.hasLoaded {
             SwipeSkeletonGrid()
         } else if let error = viewModel.errorMessage, viewModel.allItems.isEmpty {
             SwipeLibraryErrorState(message: error) {

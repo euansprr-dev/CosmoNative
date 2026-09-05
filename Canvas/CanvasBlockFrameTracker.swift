@@ -99,10 +99,16 @@ final class CanvasBlockFrameTracker: ObservableObject {
     /// capture right-clicks that belong to the overlay UI.
     var isCanvasSurfaceActive = true
 
+    /// Chrome floating over the canvas (the tray) in window-flipped screen
+    /// space. A right-click inside one belongs to that chrome's own SwiftUI
+    /// context menu — never to the radial or block menus underneath.
+    var chromeExclusionRects: [String: CGRect] = [:]
+
     /// Hit-test a right-click. Returns nil when the canvas surface isn't the
     /// active interaction layer — the caller must pass the event through.
     func rightClickHitTest(at screenPoint: CGPoint) -> CanvasRightClickHit? {
         guard isCanvasSurfaceActive else { return nil }
+        if chromeExclusionRects.values.contains(where: { $0.contains(screenPoint) }) { return nil }
         guard let transform = liveTransformProvider?() ?? nil else { return nil }
 
         let canvasPoint = transform.screenToCanvas(screenPoint)

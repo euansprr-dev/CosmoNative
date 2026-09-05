@@ -167,10 +167,13 @@ private struct SwipeStudyFrameImage: View {
             // picture never changed. Clearing first also gives the loading
             // state something honest to show.
             image = nil
-            if let url = await AttachmentCloudStore.shared.localOriginalURL(for: attachment),
-               let loaded = NSImage(contentsOf: url) {
-                image = loaded
-            }
+            guard let url = await AttachmentCloudStore.shared.localOriginalURL(for: attachment),
+                  !Task.isCancelled else { return }
+            let loaded = await Task.detached(priority: .userInitiated) {
+                NSImage(contentsOf: url)
+            }.value
+            guard !Task.isCancelled else { return }
+            image = loaded
         }
         .accessibilityHidden(true)
     }

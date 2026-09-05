@@ -28,6 +28,10 @@ final class CosmoMentionPillAttachment: NSTextAttachment {
     let token: String
     let title: String
     let tint: NSColor
+    /// The document a pane-answer pill cites — read back by hover previews
+    /// straight from the text storage, so previews never depend on a stale
+    /// segment list.
+    private(set) var sourceRef: CosmoAssistantSourceRef?
 
     private init(token: String, title: String, iconName: String, tint: NSColor) {
         self.token = token
@@ -60,6 +64,7 @@ final class CosmoMentionPillAttachment: NSTextAttachment {
             iconName: sourceRef.icon,
             tint: CosmoMentionPillTint.nsColor(forSourceKind: sourceRef.kind)
         )
+        self.sourceRef = sourceRef
     }
 
     @available(*, unavailable)

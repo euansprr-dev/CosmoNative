@@ -1649,7 +1649,8 @@ private struct CosmoAgentManagerSheet: View {
                 )) {
                     Text("Auto").tag("auto")
                     Text("Haiku").tag(AgentModelTier.sensor.rawValue)
-                    Text("Sonnet").tag(AgentModelTier.strategist.rawValue)
+                    Text("GPT-5.6 Sol").tag(AgentModelTier.strategist.rawValue)
+                    Text("Sonnet 5").tag(AgentModelTier.sonnet5.rawValue)
                     Text("Opus").tag(AgentModelTier.writer.rawValue)
                 }
                 .pickerStyle(.segmented)

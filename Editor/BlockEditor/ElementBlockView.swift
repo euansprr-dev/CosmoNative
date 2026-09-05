@@ -25,37 +25,40 @@ struct ElementBlockView: View {
     @State private var isHovered = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ElementBlockHeader(
-                title: titleBinding,
-                isCollapsed: isCollapsed,
-                iconName: iconName,
-                tone: tone,
-                darkMode: darkMode,
-                collapsedChildCount: block.children.count,
-                titleColor: titleColor,
-                chevronColor: chevronColor,
-                // Per-row focus read — the whole-coordinator focusedBlockID
-                // would re-render this element on every focus change anywhere.
-                autoFocusTitle: focusCoordinator.rowState(for: block.id).isFocused,
-                onToggleCollapse: toggleCollapse,
-                onSubmitTitle: focusBody,
-                onTitleFocusChange: handleTitleFocusChange
-            )
-
-            if !isCollapsed {
-                bodyContent
-                    .transition(.asymmetric(insertion: .opacity, removal: .opacity))
+        // One container grammar: the Element card and the Section box draw
+        // through the same surface (ContainerBlockChrome) — an Element is
+        // simply a container backed by a reusable definition.
+        ContainerBlockSurface(chrome: chrome, isCollapsed: isCollapsed) {
+            VStack(alignment: .leading, spacing: 0) {
+                header
+                if !isCollapsed {
+                    bodyContent
+                        .transition(.asymmetric(insertion: .opacity, removal: .opacity))
+                }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(cardBackground)
-        .clipShape(.rect(cornerRadius: 10, style: .continuous))
-        .overlay(cardBorder)
-        .animation(ProMotionSprings.snappy, value: isCollapsed)
         .onHover { isHovered = $0 }
         .onAppear { focusCoordinator.register(block.id) }
         .onDisappear { focusCoordinator.unregister(block.id) }
+    }
+
+    private var header: some View {
+        ElementBlockHeader(
+            title: titleBinding,
+            isCollapsed: isCollapsed,
+            iconName: iconName,
+            tone: tone,
+            darkMode: darkMode,
+            collapsedChildCount: block.children.count,
+            titleColor: titleColor,
+            chevronColor: chevronColor,
+            // Per-row focus read — the whole-coordinator focusedBlockID
+            // would re-render this element on every focus change anywhere.
+            autoFocusTitle: focusCoordinator.rowState(for: block.id).isFocused,
+            onToggleCollapse: toggleCollapse,
+            onSubmitTitle: focusBody,
+            onTitleFocusChange: handleTitleFocusChange
+        )
     }
 
     private var bodyContent: some View {
@@ -120,17 +123,9 @@ struct ElementBlockView: View {
 
     /// At rest the card is a whisper of its tone; hover firms the hairline.
     /// No drop shadow — the wash and hairline are all the depth it needs.
-    private var cardBackground: some View {
-        RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .fill(tone.wash(darkMode: darkMode).opacity(0.55))
-    }
-
-    private var cardBorder: some View {
-        RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .strokeBorder(
-                tone.hairline(darkMode: darkMode).opacity(isHovered ? 1 : 0.65),
-                lineWidth: 1
-            )
+    /// Elements always wear the `.wash` appearance.
+    private var chrome: ContainerBlockChrome {
+        ContainerBlockChrome(appearance: .wash, tone: tone, darkMode: darkMode, isHovered: isHovered)
     }
 
     private var titleColor: Color {

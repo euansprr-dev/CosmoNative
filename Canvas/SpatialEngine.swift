@@ -142,6 +142,9 @@ class SpatialEngine {
                     // without this filter they'd fall into the default block
                     // chrome as inert cards.
                     .filter(Column("entity_type") != "portal")
+                    // Membership without position: only PLACED rows are world
+                    // blocks. Unplaced members show in the tray/library/board.
+                    .filter(Column("is_placed") == true)
 
                 // Filter by ThinkSpace if provided
                 if let thinkspaceId = tsId {
@@ -182,7 +185,7 @@ class SpatialEngine {
                     db,
                     sql: """
                         SELECT id, metadata FROM canvas_blocks
-                        WHERE document_type = ? AND document_id = ? AND is_deleted = 0 AND thinkspace_id IS ?
+                        WHERE document_type = ? AND document_id = ? AND is_deleted = 0 AND is_placed = 1 AND thinkspace_id IS ?
                     """,
                     arguments: [documentType, documentId, tsId]
                 )
@@ -283,7 +286,7 @@ class SpatialEngine {
         }
     }
 
-    nonisolated private static func buildBlocks(
+    nonisolated static func buildBlocks(
         records savedBlocks: [CanvasBlockRecord],
         metadataJSONByBlockId: [String: String] = [:],
         fetchedAtomsByID: [Atom],
@@ -335,7 +338,9 @@ class SpatialEngine {
                     title: record.entityTitle ?? "Untitled",
                     metadata: metadata
                 )
-                loadedBlocks.append(block)
+                var placedBlock = block
+                placedBlock.isPlaced = record.isPlaced ?? true
+                loadedBlocks.append(placedBlock)
             }
 
             let atomsByID = Dictionary(uniqueKeysWithValues: fetchedAtomsByID.compactMap { atom in
@@ -423,14 +428,15 @@ class SpatialEngine {
                             UPDATE canvas_blocks
                             SET entity_type = ?, entity_id = ?, entity_uuid = ?, atom_uuid = ?, entity_title = ?,
                                 position_x = ?, position_y = ?, width = ?, height = ?,
-                                z_index = ?, note_content = ?, metadata = ?, is_pinned = ?, updated_at = CURRENT_TIMESTAMP
+                                z_index = ?, note_content = ?, metadata = ?, is_pinned = ?, is_placed = ?, updated_at = ?
                             WHERE id = ?
                         """,
                         arguments: [
                             block.entityType.rawValue, block.entityId, block.entityUuid, atomUUID, block.title,
                             Int(block.position.x), Int(block.position.y),
                             Int(block.size.width), Int(block.size.height),
-                            block.zIndex, noteContent, metadataJSON, block.isPinned,
+                            block.zIndex, noteContent, metadataJSON, block.isPinned, block.isPlaced,
+                            ISO8601.string(from: Date()),
                             block.id
                         ]
                     )
@@ -455,14 +461,15 @@ class SpatialEngine {
                                 UPDATE canvas_blocks
                                 SET entity_type = ?, entity_id = ?, entity_uuid = ?, atom_uuid = ?, entity_title = ?,
                                     position_x = ?, position_y = ?, width = ?, height = ?,
-                                    z_index = ?, note_content = ?, metadata = ?, is_pinned = ?, updated_at = CURRENT_TIMESTAMP
+                                    z_index = ?, note_content = ?, metadata = ?, is_pinned = ?, is_placed = ?, updated_at = ?
                                 WHERE id = ?
                             """,
                             arguments: [
                                 block.entityType.rawValue, block.entityId, block.entityUuid, atomUUID, block.title,
                                 Int(block.position.x), Int(block.position.y),
                                 Int(block.size.width), Int(block.size.height),
-                                block.zIndex, noteContent, metadataJSON, block.isPinned,
+                                block.zIndex, noteContent, metadataJSON, block.isPinned, block.isPlaced,
+                                ISO8601.string(from: Date()),
                                 existingId
                             ]
                         )
@@ -475,8 +482,8 @@ class SpatialEngine {
                     sql: """
                     INSERT OR REPLACE INTO canvas_blocks
                     (id, document_type, document_id, entity_type, entity_id, entity_uuid, atom_uuid, entity_title,
-                     position_x, position_y, width, height, z_index, note_content, metadata, is_pinned, thinkspace_id, is_deleted, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                     position_x, position_y, width, height, z_index, note_content, metadata, is_pinned, is_placed, thinkspace_id, is_deleted, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     """,
                     arguments: [
                         block.id,
@@ -495,6 +502,7 @@ class SpatialEngine {
                         noteContent,
                         metadataJSON,
                         block.isPinned,
+                        block.isPlaced,
                         tsId
                     ]
                 )
@@ -581,10 +589,10 @@ class SpatialEngine {
             try db.execute(
                 sql: """
                 UPDATE canvas_blocks
-                SET thinkspace_id = ?, position_x = ?, position_y = ?, updated_at = CURRENT_TIMESTAMP
+                SET thinkspace_id = ?, position_x = ?, position_y = ?, is_placed = 0, updated_at = ?
                 WHERE id = ?
                 """,
-                arguments: [targetThinkspaceId, Int(position.x), Int(position.y), blockId]
+                arguments: [targetThinkspaceId, Int(position.x), Int(position.y), ISO8601.string(from: Date()), blockId]
             )
         }
     }
@@ -612,7 +620,7 @@ class SpatialEngine {
     /// space. Thinkspace canvases live under document ("home", 0). Dedupes on
     /// (entity_uuid, thinkspace_id) like `saveBlock`'s insert path; an existing
     /// row is left untouched (filing is idempotent, not a move).
-    static func persistBlockToUnmountedThinkspace(_ block: CanvasBlock, thinkspaceId: String) async throws {
+    static func persistBlockToUnmountedThinkspace(_ block: CanvasBlock, thinkspaceId: String, isPlaced: Bool = false) async throws {
         try await CosmoDatabase.shared.asyncWrite { db in
             if !block.entityUuid.isEmpty {
                 let existing = try String.fetchOne(db,
@@ -636,8 +644,8 @@ class SpatialEngine {
                 sql: """
                 INSERT OR REPLACE INTO canvas_blocks
                 (id, document_type, document_id, entity_type, entity_id, entity_uuid, atom_uuid, entity_title,
-                 position_x, position_y, width, height, z_index, note_content, metadata, is_pinned, thinkspace_id, is_deleted, created_at, updated_at)
-                VALUES (?, 'home', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                 position_x, position_y, width, height, z_index, note_content, metadata, is_pinned, is_placed, thinkspace_id, is_deleted, created_at, updated_at)
+                VALUES (?, 'home', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 """,
                 arguments: [
                     block.id,
@@ -654,6 +662,7 @@ class SpatialEngine {
                     noteContent,
                     metadataJSON,
                     block.isPinned,
+                    isPlaced,
                     thinkspaceId
                 ]
             )
@@ -811,16 +820,21 @@ class SpatialEngine {
 
         // Database-level check (catches duplicates after app restart when memory is empty)
         if !block.entityUuid.isEmpty {
-            switch await entityExistsInDb(block.entityUuid) {
-            case true?:
+            switch await entityPlacement(block.entityUuid) {
+            case .placed:
                 print("⚠️ addBlock: entity \(block.entityUuid) already in DB, skipping")
                 return
-            case nil:
+            case .unplaced:
+                // The atom is a member waiting in the tray — a gesture that
+                // adds it again PLACES it (the tray must never be a trap).
+                _ = await placeMember(entityUuid: block.entityUuid, at: block.position)
+                return
+            case .unknown:
                 // Unknown (DB error) — creating anyway could produce a duplicate row.
                 PersistenceHealth.note(.writeFailure, context: "spatialEngine.addBlock", detail: "duplicate check failed for \(block.entityUuid); skipping create")
                 print("⚠️ addBlock: duplicate check failed for \(block.entityUuid), skipping create")
                 return
-            case false?:
+            case .absent:
                 break
             }
         }
@@ -834,28 +848,215 @@ class SpatialEngine {
         }
     }
 
-    /// Check if an entity already has a canvas_block row in the current thinkspace/document.
-    /// Returns nil when the check itself failed (unknown) — callers must NOT
-    /// treat unknown as "doesn't exist" or they can create duplicate rows.
-    private func entityExistsInDb(_ entityUuid: String) async -> Bool? {
+    /// How an entity already sits in the current thinkspace/document.
+    enum EntityPlacement: Equatable {
+        case absent
+        case placed
+        case unplaced(blockId: String)
+        /// The check itself failed — callers must NOT treat this as absent or
+        /// they can create duplicate rows.
+        case unknown
+    }
+
+    private func entityPlacement(_ entityUuid: String) async -> EntityPlacement {
         let docType = currentDocumentType
         let docId = currentDocumentId
         let tsId = currentThinkspaceId
         do {
             return try await database.asyncRead { db in
-                let count = try Int.fetchOne(db,
+                let row = try Row.fetchOne(db,
                     sql: """
-                        SELECT COUNT(*) FROM canvas_blocks
+                        SELECT id, is_placed FROM canvas_blocks
                         WHERE entity_uuid = ? AND thinkspace_id IS ? AND document_type = ? AND document_id = ? AND is_deleted = 0
+                        ORDER BY is_placed DESC
+                        LIMIT 1
                     """,
                     arguments: [entityUuid, tsId, docType, docId]
-                ) ?? 0
-                return count > 0
+                )
+                guard let row else { return .absent }
+                let placed = (row["is_placed"] as Bool?) ?? true
+                let id: String = row["id"]
+                return placed ? .placed : .unplaced(blockId: id)
             }
         } catch {
-            print("❌ entityExistsInDb failed for \(entityUuid): \(error)")
+            print("❌ entityPlacement failed for \(entityUuid): \(error)")
+            return .unknown
+        }
+    }
+
+    // MARK: - Membership without position (the tray)
+
+    /// Every membership row of a space — placed or not — for the library,
+    /// the board and the tray. Static: no engine needs to be mounted.
+    static func fetchMembers(thinkspaceId: String, placedOnly: Bool? = nil) async throws -> [CanvasBlockRecord] {
+        try await CosmoDatabase.shared.asyncRead { db in
+            var query = CanvasBlockRecord
+                .filter(Column("document_type") == "home")
+                .filter(Column("document_id") == 0)
+                .filter(Column("thinkspace_id") == thinkspaceId)
+                .filter(Column("is_deleted") == false)
+                .filter(Column("entity_type") != "portal")
+            if let placedOnly {
+                query = query.filter(Column("is_placed") == placedOnly)
+            }
+            var records = try query.order(Column("updated_at").desc).fetchAll(db)
+            // Tombstone shield (same law as the world fetch).
+            let atomUuids = records.compactMap(\.entityUuid).filter { !$0.isEmpty }
+            if !atomUuids.isEmpty {
+                let tombstoned = try String.fetchSet(
+                    db,
+                    Atom.filter(atomUuids.contains(Column("uuid")))
+                        .filter(Column("is_deleted") == true)
+                        .select(Column("uuid"), as: String.self)
+                )
+                if !tombstoned.isEmpty {
+                    records.removeAll { record in
+                        guard let uuid = record.entityUuid, !uuid.isEmpty else { return false }
+                        return tombstoned.contains(uuid)
+                    }
+                }
+            }
+            // First wins per entity (a placed row outranks an unplaced twin).
+            var seen = Set<String>()
+            return records.filter { record in
+                guard let uuid = record.entityUuid, !uuid.isEmpty else { return true }
+                return seen.insert(uuid).inserted
+            }
+        }
+    }
+
+    static func fetchUnplacedMembers(thinkspaceId: String) async throws -> [CanvasBlockRecord] {
+        try await fetchMembers(thinkspaceId: thinkspaceId, placedOnly: false)
+    }
+
+    /// "Remove from canvas": the row stays (the atom is still a member of the
+    /// space) but leaves the world; it waits in the tray. Returns the block
+    /// for the undo action. ISO8601 stamp — the observer pushes it to the cloud.
+    @discardableResult
+    func unplaceBlock(_ blockId: String) async -> CanvasBlock? {
+        let removed = blocks.first { $0.id == blockId }
+        withAnimation(.easeOut(duration: 0.15)) {
+            blocks.removeAll { $0.id == blockId }
+        }
+        let now = ISO8601.string(from: Date())
+        do {
+            try await database.asyncWrite { db in
+                try db.execute(
+                    sql: "UPDATE canvas_blocks SET is_placed = 0, updated_at = ? WHERE id = ?",
+                    arguments: [now, blockId]
+                )
+            }
+        } catch {
+            PersistenceHealth.note(.writeFailure, context: "spatialEngine.unplaceBlock", detail: "block \(blockId): \(error)")
+        }
+        NotificationCenter.default.post(name: Notification.Name("com.cosmo.canvasBlocksChanged"), object: nil)
+        return removed
+    }
+
+    /// Undo of `unplaceBlock`: the exact placement comes back.
+    func restorePlacement(_ block: CanvasBlock) async {
+        var placed = block
+        placed.isPlaced = true
+        if !blocks.contains(where: { $0.id == block.id }) {
+            blocks.append(placed)
+        }
+        let now = ISO8601.string(from: Date())
+        do {
+            try await database.asyncWrite { db in
+                try db.execute(
+                    sql: "UPDATE canvas_blocks SET is_placed = 1, position_x = ?, position_y = ?, updated_at = ? WHERE id = ?",
+                    arguments: [Int(block.position.x), Int(block.position.y), now, block.id]
+                )
+            }
+        } catch {
+            PersistenceHealth.note(.writeFailure, context: "spatialEngine.restorePlacement", detail: "block \(block.id): \(error)")
+        }
+        NotificationCenter.default.post(name: Notification.Name("com.cosmo.canvasBlocksChanged"), object: nil)
+    }
+
+    /// Place a tray member at a canvas point: the membership row gains a
+    /// position and joins the world. Returns the live block.
+    @discardableResult
+    func placeMember(entityUuid: String, at position: CGPoint) async -> CanvasBlock? {
+        guard !entityUuid.isEmpty, let tsId = currentThinkspaceId else { return nil }
+        if let existing = blocks.first(where: { $0.entityUuid == entityUuid }) {
+            return existing
+        }
+        do {
+            let record: CanvasBlockRecord? = try await database.asyncRead { db in
+                try CanvasBlockRecord
+                    .filter(Column("entity_uuid") == entityUuid)
+                    .filter(Column("thinkspace_id") == tsId)
+                    .filter(Column("document_type") == "home")
+                    .filter(Column("document_id") == 0)
+                    .filter(Column("is_deleted") == false)
+                    .fetchOne(db)
+            }
+            guard let record else { return nil }
+            let atoms = (try? await AtomRepository.shared.fetchBatch(uuids: [entityUuid])) ?? []
+            let metadataJSON: [String: String] = try await database.asyncRead { db in
+                let json = try String.fetchOne(db, sql: "SELECT metadata FROM canvas_blocks WHERE id = ?", arguments: [record.id])
+                return json.map { [record.id: $0] } ?? [:]
+            }
+            guard var block = Self.buildBlocks(
+                records: [record],
+                metadataJSONByBlockId: metadataJSON,
+                fetchedAtomsByID: atoms,
+                fetchedAtomsByUUID: atoms
+            ).first else { return nil }
+            block.position = position
+            block.isPlaced = true
+            block.zIndex = (blocks.map(\.zIndex).max() ?? 0) + 1
+            let now = ISO8601.string(from: Date())
+            try await database.asyncWrite { db in
+                try db.execute(
+                    sql: "UPDATE canvas_blocks SET is_placed = 1, position_x = ?, position_y = ?, z_index = ?, updated_at = ? WHERE id = ?",
+                    arguments: [Int(position.x), Int(position.y), block.zIndex, now, record.id]
+                )
+            }
+            withAnimation(.easeOut(duration: 0.18)) {
+                blocks.append(block)
+            }
+            NotificationCenter.default.post(name: Notification.Name("com.cosmo.canvasBlocksChanged"), object: nil)
+            return block
+        } catch {
+            PersistenceHealth.note(.writeFailure, context: "spatialEngine.placeMember", detail: "atom \(entityUuid.prefix(8)): \(error)")
             return nil
         }
+    }
+
+    /// Lay every unplaced member out on a grid around the anchor — one undo.
+    @discardableResult
+    func placeAllUnplaced(anchor: CGPoint) async -> [String] {
+        guard let tsId = currentThinkspaceId,
+              let members = try? await Self.fetchUnplacedMembers(thinkspaceId: tsId),
+              !members.isEmpty else { return [] }
+        let columns = max(1, Int(Double(members.count).squareRoot().rounded(.up)))
+        let cell = CGSize(width: 320, height: 300)
+        var placed: [(entityUuid: String, position: CGPoint, blockId: String)] = []
+        for (index, member) in members.enumerated() {
+            guard let uuid = member.entityUuid, !uuid.isEmpty else { continue }
+            let column = index % columns
+            let row = index / columns
+            let position = CGPoint(
+                x: anchor.x + (CGFloat(column) - CGFloat(columns - 1) / 2) * cell.width,
+                y: anchor.y + CGFloat(row) * cell.height
+            )
+            if let block = await placeMember(entityUuid: uuid, at: position) {
+                placed.append((uuid, position, block.id))
+            }
+        }
+        let snapshot = placed
+        CosmoUndoManager.shared.register(InlineUndoAction(
+            actionDescription: "Place all",
+            undo: { [weak self] in
+                for entry in snapshot { _ = await self?.unplaceBlock(entry.blockId) }
+            },
+            redo: { [weak self] in
+                for entry in snapshot { _ = await self?.placeMember(entityUuid: entry.entityUuid, at: entry.position) }
+            }
+        ))
+        return placed.map(\.entityUuid)
     }
 
     // MARK: - Voice-Driven Placement

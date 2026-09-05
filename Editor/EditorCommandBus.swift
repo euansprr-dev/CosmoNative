@@ -86,6 +86,86 @@ final class EditorCommandBus: ObservableObject {
             userInfo: ["type": type]
         )
     }
+
+    // MARK: - Inline colour (ink / highlight / link)
+    //
+    // Contract with TextKitCoordinator: one `.applyEditorInlineStyle` post
+    // carries EXACTLY ONE of the keys "ink" / "highlight" / "link" (a
+    // NoteInkPalette tone id or a URL; "" clears) plus an optional
+    // "targetEditorID". The coordinator applies it to the selection, or to
+    // the typing attributes when the caret is collapsed.
+
+    /// Colour the selection's text with a palette tone; nil restores the
+    /// document ink. A chosen tone is remembered for the next session.
+    func applyInk(_ toneID: String?, targetEditorID: String? = nil) {
+        if let toneID, !toneID.isEmpty { InlineStyleMemory.shared.lastInkTone = toneID }
+        postInlineStyle(key: "ink", value: toneID, targetEditorID: targetEditorID)
+    }
+
+    /// Wash the selection with a palette tone; nil removes the highlight.
+    /// A chosen tone becomes what ⌘⇧H re-applies.
+    func applyHighlight(_ toneID: String?, targetEditorID: String? = nil) {
+        if let toneID, !toneID.isEmpty { InlineStyleMemory.shared.lastHighlightTone = toneID }
+        postInlineStyle(key: "highlight", value: toneID, targetEditorID: targetEditorID)
+    }
+
+    /// Attach an http(s)/mailto link to the selection; nil removes it.
+    func applyLink(_ url: String?, targetEditorID: String? = nil) {
+        postInlineStyle(key: "link", value: url, targetEditorID: targetEditorID)
+    }
+
+    /// ⌘⇧H — posts the remembered highlight tone. Toggling is the
+    /// coordinator's call: a selection already carrying that tone clears.
+    func toggleLastHighlight(targetEditorID: String? = nil) {
+        applyHighlight(InlineStyleMemory.shared.lastHighlightTone, targetEditorID: targetEditorID)
+    }
+
+    private func postInlineStyle(key: String, value: String?, targetEditorID: String?) {
+        NotificationCenter.default.post(
+            name: .applyEditorInlineStyle,
+            object: nil,
+            userInfo: EditorCommandPayload.inlineStyle(key: key, value: value, targetEditorID: targetEditorID)
+        )
+    }
+}
+
+/// The last-used inline colour tones — what ⌘⇧H re-applies and what the
+/// quill bar's swatches pre-select. Persisted so the choice survives launches.
+@MainActor
+final class InlineStyleMemory {
+    static let shared = InlineStyleMemory()
+
+    static let highlightKey = "editor.lastHighlightTone"
+    static let inkKey = "editor.lastInkTone"
+    static let defaultHighlightTone = "gilt"
+    static let defaultInkTone = "clay"
+
+    private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
+    var lastHighlightTone: String {
+        get { knownTone(defaults.string(forKey: Self.highlightKey)) ?? Self.defaultHighlightTone }
+        set { store(newValue, forKey: Self.highlightKey) }
+    }
+
+    var lastInkTone: String {
+        get { knownTone(defaults.string(forKey: Self.inkKey)) ?? Self.defaultInkTone }
+        set { store(newValue, forKey: Self.inkKey) }
+    }
+
+    /// Unknown ids never persist — a stale or foreign tone would otherwise
+    /// resolve to the palette's fallback and lie about what ⌘⇧H applies.
+    private func store(_ toneID: String, forKey key: String) {
+        guard RichInlineColor.isKnownTone(toneID) else { return }
+        defaults.set(toneID, forKey: key)
+    }
+
+    private func knownTone(_ id: String?) -> String? {
+        RichInlineColor.isKnownTone(id) ? id : nil
+    }
 }
 
 enum EditorCommandTarget {
@@ -126,6 +206,20 @@ enum EditorCommandPayload {
         }
         return payload
     }
+
+    /// `.applyEditorInlineStyle` userInfo: exactly one of "ink" /
+    /// "highlight" / "link" per post; nil becomes "" (clear/remove).
+    static func inlineStyle(
+        key: String,
+        value: String?,
+        targetEditorID: String? = nil
+    ) -> [String: Any] {
+        var payload: [String: Any] = [key: value ?? ""]
+        if let targetEditorID, !targetEditorID.isEmpty {
+            payload["targetEditorID"] = targetEditorID
+        }
+        return payload
+    }
 }
 
 enum FormattingType: String {
@@ -146,6 +240,9 @@ extension Notification.Name {
     static let insertTextInEditor = Notification.Name("com.cosmo.insertTextInEditor")
     static let replaceSelectionInEditor = Notification.Name("com.cosmo.replaceSelectionInEditor")
     static let toggleEditorFormatting = Notification.Name("com.cosmo.toggleEditorFormatting")
+    /// Inline ink / highlight / link — see `EditorCommandBus.applyInk` for the
+    /// userInfo contract the TextKit coordinator observes.
+    static let applyEditorInlineStyle = Notification.Name("ApplyEditorInlineStyle")
     // Re-declare internal ones here if needed, or rely on TextKitCoordinator's own
     static let insertMentionInEditor = Notification.Name("insertMentionInEditor") 
 }

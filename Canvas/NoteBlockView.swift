@@ -345,7 +345,15 @@ struct NoteBlockView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .contentShape(Rectangle())
             .onTapGesture {
-                isEditingBody = true
+                // Tables, sections, callouts, toggles, code and sketches
+                // exist only in the block editor — the card's continuous
+                // editor would flatten them on the way back. Such a note is
+                // entered through focus mode (inert-until-entered).
+                if noteBodyDocument.requiresBlockEditor {
+                    openFocusMode()
+                } else {
+                    isEditingBody = true
+                }
             }
         }
     }

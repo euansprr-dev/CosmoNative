@@ -378,14 +378,28 @@ struct CanvasView: View {
     // Minimap overlay
     @State private var showMinimap = false
 
-    // Thinkspace mode switcher
-    @State private var thinkspaceMode: ThinkspaceCanvasMode = .canvas
-    @State private var isModeSwitcherExpanded = false
+    // Space shell — the active view lives in SpaceViewStore, per space, so a
+    // switch to another space never carries this one's view along. The two
+    // chrome models are the row's state for the library and deep-dive views.
+    @State private var libraryChrome = ThinkspaceLibraryChromeModel()
+    @State private var deepDiveChrome = DeepDiveStudyChromeModel()
+    @State private var materialsStore = SpaceMaterialsStore()
+    @State private var showingMaterialPicker = false
     @State private var libraryInventory: [ChildDoc] = []
     @State private var libraryLoadTask: Task<Void, Never>?
     /// Library folder currently open — hoisted here so the navigation trail
     /// can drive it (back/forward walks in and out of folders).
     @State private var librarySelectedFolderID: UUID?
+
+    /// The view this space is showing. Resolved through the store so every
+    /// space remembers its own; a nil thinkspace (never mounted today) is a canvas.
+    private var activeSpaceView: SpaceView {
+        thinkspaceId.map { SpaceViewStore.shared.activeView(for: $0) } ?? .canvas
+    }
+
+    /// The canvas world takes gestures, drops and right-clicks only while it
+    /// is the active view — every other view is a surface laid over it.
+    private var isCanvasViewActive: Bool { activeSpaceView == .canvas }
 
     // Notification observer management - prevent duplicate registrations
     @State private var observersRegistered = false
@@ -462,7 +476,8 @@ struct CanvasView: View {
                 // In library mode the world is only a backdrop behind the
                 // browser overlay — kill hit-testing so covered blocks can't
                 // capture right-clicks and show another document's menu.
-                .allowsHitTesting(thinkspaceMode == .canvas)
+                .allowsHitTesting(isCanvasViewActive)
+                .accessibilityHidden(!isCanvasViewActive)
 
                 // Screen-space layers (outside the scaled container to
                 // prevent frame clipping at non-100% zoom). The reader hands
@@ -485,17 +500,31 @@ struct CanvasView: View {
                 // opacity, the outgoing space's drawings visibly hung over
                 // the incoming one until its own drawings loaded.
                 .opacity(canvasContentOpacity)
-                .allowsHitTesting(thinkspaceMode == .canvas)
+                .allowsHitTesting(isCanvasViewActive)
+                .accessibilityHidden(!isCanvasViewActive)
 
-                if thinkspaceMode == .library {
-                    thinkspaceLibraryView
-                        .transition(.opacity.combined(with: .scale(scale: 0.99)))
-                        .zIndex(2000)
+                // The space's other views ride over the canvas world. The
+                // GeometryReader window + clip keeps them LAYOUT-INERT: the
+                // dossier's fixed columns must never propose a size to this
+                // ZStack (the union would misplace every overlay below).
+                GeometryReader { window in
+                    SpaceViewHost(
+                        thinkspaceId: thinkspaceId,
+                        activeView: activeSpaceView,
+                        deepDiveChrome: deepDiveChrome,
+                        contentLeadingInset: crossDragManager.sidebarTotalWidth
+                    ) {
+                        thinkspaceLibraryView
+                    }
+                    .frame(width: window.size.width, height: window.size.height, alignment: .topLeading)
+                    .clipped()
                 }
+                .allowsHitTesting(!isCanvasViewActive)
+                .zIndex(2000)
 
                 // Space+drag pan overlay — sits above everything so dragging
                 // works even over blocks and clusters (like Figma hand tool)
-                if isSpaceHeld && thinkspaceMode == .canvas {
+                if isSpaceHeld && isCanvasViewActive {
                     Color.clear
                         .contentShape(Rectangle())
                         .gesture(
@@ -522,17 +551,22 @@ struct CanvasView: View {
             .onDrop(of: CanvasDropDelegate.supportedTypes, delegate: CanvasDropDelegate(
                 // Never place things on the canvas from an overlay mode — a
                 // drop released over the library must not fall through here.
-                isEnabled: { [self] in thinkspaceMode == .canvas },
+                isEnabled: { [self] in isCanvasViewActive },
                 screenToCanvas: { [self] screenPos in screenToCanvasPosition(screenPos) },
                 onClusterDrop: { [self] blockUUID, canvasPosition in
                     handleClusterToCanvasDrop(blockUUID: blockUUID, canvasPosition: canvasPosition)
                 },
                 onExternalDrop: { [self] providers, canvasPosition in
                     handleCanvasExternalDrop(providers: providers, canvasPosition: canvasPosition)
+                },
+                onTrayDrop: { [self] entityUuid, canvasPosition in
+                    placeTrayMember(entityUuid: entityUuid, at: canvasPosition)
                 }
             ))
             .overlay(alignment: .bottomTrailing) {
-                bottomCanvasControls
+                zoomIndicator
+                    .padding(.trailing, 20)
+                    .padding(.bottom, 20)
             }
             .overlay(alignment: .bottomLeading) {
                 CanvasLiveTransformReader(viewportState: viewportState) { liveTransform in
@@ -548,7 +582,7 @@ struct CanvasView: View {
             .overlay(alignment: .topTrailing) {
                 // Drawing tools + view layers + unified inspector — canvas-mode chrome
                 // only; the library is a browsing surface and hides them.
-                if thinkspaceMode == .canvas {
+                if isCanvasViewActive {
                     VStack(alignment: .trailing, spacing: 12) {
                         CanvasDrawingToolbar(drawingState: drawingState)
                             // Sub-tool dropdown overlays the inspector slot below
@@ -558,11 +592,16 @@ struct CanvasView: View {
                         canvasInspectorPanel
                     }
                     .padding(.trailing, 16)
-                    .padding(.top, 16)
+                    // Below the space chrome row — the row owns the baseline.
+                    .padding(.top, SpaceChromeMetrics.contentTopInset)
                     .animation(ProMotionSprings.gentle, value: selectedBlockId)
                     .animation(ProMotionSprings.gentle, value: clusterEngine.selectedClusterId)
                     .transition(.opacity.combined(with: .offset(y: -10)))
                 }
+            }
+            // The space chrome row — last overlay, so it is frontmost.
+            .overlay(alignment: .top) {
+                spaceChromeRow
             }
             // Thinkspace sidebar trigger + overlay disabled — UnifiedSidebar + peek rail handle navigation
             // PERF: Debounced frame tracker updates — only needed for right-click hit testing,
@@ -601,25 +640,15 @@ struct CanvasView: View {
             .onChange(of: clusterEngine.userClustersDataRevision) { _, _ in
                 scheduleFrameUpdate()
             }
-            // Library mode covers the canvas with its own browser UI — the
-            // right-click monitor must stand down (mirrors the world layer's
-            // allowsHitTesting gate).
-            .onChange(of: thinkspaceMode) { _, newMode in
-                blockFrameTracker.isCanvasSurfaceActive = (newMode == .canvas)
-                // The library owns its chrome row (trail island embedded) —
-                // MainView's floating trail island stands down while it's up.
-                NotificationCenter.default.post(
-                    name: CosmoNotification.Canvas.thinkspaceModeChanged,
-                    object: nil,
-                    userInfo: ["isLibrary": newMode == .library]
-                )
-            }
-            .onDisappear {
-                NotificationCenter.default.post(
-                    name: CosmoNotification.Canvas.thinkspaceModeChanged,
-                    object: nil,
-                    userInfo: ["isLibrary": false]
-                )
+            // Any non-canvas view covers the canvas with its own surface —
+            // the right-click monitor must stand down (mirrors the world
+            // layer's allowsHitTesting gate).
+            .onChange(of: activeSpaceView, initial: true) { _, view in
+                blockFrameTracker.isCanvasSurfaceActive = (view == .canvas)
+                if view == .library {
+                    refreshLibraryInventory()
+                    libraryChrome.refocusBrowser()
+                }
             }
         }
         // NOTE: Removed .drawingGroup() from here - it was breaking async image loading
@@ -627,98 +656,179 @@ struct CanvasView: View {
         // selectively to specific components (GridPatternView, RadialMenuView) instead.
     }
 
-    // MARK: - Bottom Canvas Controls
-    private var bottomCanvasControls: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            thinkspaceModeSwitcher
-            zoomIndicator
+    // MARK: - Space chrome row
+
+    /// The one chrome row every space wears: sidebar + trail, identity, the
+    /// view switcher (only this space's enabled views, ⌘1…⌘n), the active
+    /// view's own controls, then ＋ and ⋯.
+    /// Hidden while empty, and on any view but the canvas (the library lists
+    /// the same members with an honest "not on canvas" mark).
+    /// A tray member lands on the canvas (drag-out, "Place here", library
+    /// "Place on Canvas"). ⌘Z sends it back to the tray.
+    private func placeTrayMember(entityUuid: String, at position: CGPoint) {
+        CanvasTrayDragSession.draggingEntityUuid = nil
+        Task { @MainActor in
+            guard let block = await spatialEngine.placeMember(entityUuid: entityUuid, at: position) else { return }
+            CosmoUndoManager.shared.register(
+                PlaceMemberAction(entityUuid: entityUuid, position: position, placedBlockId: block.id, spatialEngine: spatialEngine)
+            )
+            refreshLibraryInventory()
         }
-        .padding(.trailing, 20)
-        .padding(.bottom, 20)
     }
 
-    private var bottomControlHeight: CGFloat { 34 }
-    private var modeSwitcherCollapsedWidth: CGFloat { 34 }
-    private var modeSwitcherButtonHeight: CGFloat { 24 }
+    private var spaceChromeRow: some View {
+        SpaceChromeRow(
+            thinkspace: currentSpace,
+            activeView: activeSpaceView,
+            renderableViews: thinkspaceId.map { SpaceViewStore.shared.renderableViews(for: $0) } ?? [.canvas],
+            libraryFolder: librarySelectedFolderID.flatMap { id in
+                thinkspaceLibrarySnapshot.folders.first { $0.id == id }
+            },
+            libraryChrome: libraryChrome,
+            deepDiveChrome: deepDiveChrome,
+            // Past the pinned sidebar when it's open; the row's own side
+            // inset already clears the window edge when it's hidden.
+            leadingInset: crossDragManager.sidebarTotalWidth > 0
+                ? max(0, crossDragManager.sidebarTotalWidth - CosmoChromeMetrics.sideInset)
+                : 0,
+            actions: spaceChromeActions,
+            onSelectView: { view in
+                guard let thinkspaceId else { return }
+                SpaceViewStore.shared.select(view, for: thinkspaceId)
+            },
+            availableWidth: canvasSize.width
+        )
+        .sheet(isPresented: $showingMaterialPicker) {
+            if let thinkspaceId { SpaceMaterialPicker(spaceID: thinkspaceId) }
+        }
 
-    private var modeSwitcherAnimation: Animation {
-        reduceMotion
-            ? .easeOut(duration: 0.14)
-            : .spring(response: 0.28, dampingFraction: 0.86, blendDuration: 0.08)
     }
 
-    private var modeSwitcherItemTransition: AnyTransition {
-        .asymmetric(
-            insertion: .offset(y: 9)
-                .combined(with: .opacity)
-                .combined(with: .scale(scale: 0.97, anchor: .bottom)),
-            removal: .offset(y: 5)
-                .combined(with: .opacity)
-                .combined(with: .scale(scale: 0.98, anchor: .bottom))
+    private var currentSpace: Thinkspace? {
+        if let current = thinkspaceManager.currentThinkspace, current.id == thinkspaceId {
+            return current
+        }
+        return thinkspaceManager.thinkspaces.first { $0.id == thinkspaceId }
+    }
+
+    private var spaceChromeActions: SpaceChromeActions {
+        SpaceChromeActions(
+            rename: { newName in
+                guard let space = currentSpace else { return }
+                Task { await thinkspaceManager.rename(space, to: newName) }
+            },
+            openSettings: { presentSpaceComposer(edit: true) },
+            openAsPane: {
+                guard let thinkspaceId else { return }
+                NotificationCenter.default.post(
+                    name: CosmoNotification.Navigation.openAsPane,
+                    object: nil,
+                    userInfo: ["thinkspaceId": thinkspaceId]
+                )
+            },
+            pickEmoji: { presentSpaceComposer(edit: true) },
+            recolor: { hex in
+                guard let space = currentSpace else { return }
+                Task { await thinkspaceManager.updateColor(space, to: hex) }
+            },
+            delete: {
+                guard let space = currentSpace else { return }
+                Task { await thinkspaceManager.delete(space) }
+            },
+            addAtCamera: { kind in addFromChromeRow(kind) },
+            organizeWorkspace: { requestOrganizeWorkspace() },
+            savePlace: { presentPlaceCapture() },
+            showPlaces: { _ = jumpToPlace(atRecencyIndex: 0) },
+            exitFolder: { exitLibraryFolderFromChrome() },
+            renameFolder: { id, name in materialsStore.rename(id, to: name) },
+            dropToRoot: { uuid in
+                guard let folderID = librarySelectedFolderID else { return false }
+                removeLibraryItemFromFolder(itemUUID: uuid, clusterID: folderID)
+                return true
+            }
         )
     }
 
-    private var thinkspaceModeSwitcher: some View {
-        HStack(spacing: isModeSwitcherExpanded ? 3 : 0) {
-            if isModeSwitcherExpanded {
-                ForEach(ThinkspaceCanvasMode.allCases) { mode in
-                    Button {
-                        selectThinkspaceMode(mode)
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: mode.icon)
-                                .font(DS.footnote.weight(.semibold))
-                            Text(mode.title)
-                                .font(DS.footnote.weight(.semibold))
-                        }
-                        .foregroundStyle(thinkspaceMode == mode ? DS.accent : DS.textSecondary)
-                        .padding(.horizontal, 10)
-                        .frame(height: modeSwitcherButtonHeight)
-                        .background(
-                            Capsule()
-                                .fill(thinkspaceMode == mode ? DS.accentSoft : Color.clear)
-                        )
-                        .overlay(
-                            Capsule()
-                                .strokeBorder(thinkspaceMode == mode ? DS.accent.opacity(0.4) : Color.clear, lineWidth: 1)
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("\(mode.title) mode")
-                    .accessibilityAddTraits(thinkspaceMode == mode ? [.isButton, .isSelected] : .isButton)
-                    .transition(modeSwitcherItemTransition)
+    private func presentSpaceComposer(edit: Bool) {
+        guard let thinkspaceId else { return }
+        NotificationCenter.default.post(
+            name: CosmoNotification.Navigation.presentSpaceComposer,
+            object: nil,
+            userInfo: ["mode": edit ? "edit" : "create", "thinkspaceId": thinkspaceId]
+        )
+    }
+
+    private func exitLibraryFolderFromChrome() {
+        guard librarySelectedFolderID != nil, let thinkspaceId else { return }
+        withAnimation(ProMotionSprings.focusTransition) { librarySelectedFolderID = nil }
+        NavigationTrail.shared.recordArrival(
+            .spaceView(thinkspaceId: thinkspaceId, view: .library),
+            title: "\(currentSpace?.identityLabel ?? "Space") · Library",
+            glyph: SpaceView.library.trailGlyph
+        )
+    }
+
+    /// ＋ from the chrome row: create at the camera centre (canvas), or the
+    /// same creation without a position for the other views — the block
+    /// still lands on this space's canvas, the library shows it at once.
+    private func addFromChromeRow(_ kind: SpaceAddKind) {
+        switch kind {
+        case .existing:
+            showingMaterialPicker = true
+        case .group:
+            materialsStore.create()
+        case .file:
+            presentFilePortalOpenPanel(at: viewportCenterCanvasPoint())
+        case .question:
+            Task { @MainActor in
+                guard let thinkspaceId else { return }
+                if let uuid = await thinkspaceManager.ensureDeepDiveProfileUUID(for: thinkspaceId) {
+                    NotificationCenter.default.post(
+                        name: CosmoNotification.Inquiry.openDeepDive,
+                        object: nil,
+                        userInfo: ["uuid": uuid, "composeQuestion": true]
+                    )
                 }
-            } else {
-                Button {
-                    withAnimation(modeSwitcherAnimation) {
-                        isModeSwitcherExpanded.toggle()
-                    }
-                } label: {
-                    Image(systemName: thinkspaceMode.icon)
-                        .font(DS.footnote.weight(.semibold))
-                        .foregroundStyle(DS.textSecondary)
-                        .frame(width: modeSwitcherButtonHeight, height: modeSwitcherButtonHeight)
+            }
+        default:
+            let entityType: EntityType
+            switch kind {
+            case .note: entityType = .note
+            case .idea: entityType = .idea
+            case .task: entityType = .task
+            case .content: entityType = .content
+            case .stickyNote: entityType = .stickyNote
+            case .deepDive: entityType = .deepDive
+            default: return
+            }
+            if isCanvasViewActive {
+                NotificationCenter.default.post(name: CosmoNotification.Canvas.createEntityAtPosition, object: nil,
+                    userInfo: ["type": entityType, "position": viewportCenterCanvasPoint()])
+            } else if let thinkspaceId, let atomType = AtomType(rawValue: entityType.rawValue) {
+                Task {
+                    do {
+                        let atom = try await SpaceMembershipService.create(type: atomType, title: "Untitled \(kind.title.lowercased())", in: thinkspaceId)
+                        refreshLibraryInventory()
+                        NotificationCenter.default.post(name: CosmoNotification.Navigation.openBlockInFocusMode, object: nil,
+                                                        userInfo: ["atomUUID": atom.uuid])
+                    } catch { materialsStore.errorMessage = "Couldn't create the document. Try again." }
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Switch view, currently \(thinkspaceMode.title)")
-                .transition(modeSwitcherItemTransition)
             }
         }
-        .padding(.horizontal, 5)
-        .padding(.vertical, 4)
-        .frame(minWidth: modeSwitcherCollapsedWidth)
-        .frame(height: bottomControlHeight)
-        .background(DS.glassInputFill, in: Capsule())
-        .overlay(Capsule().strokeBorder(DS.glassBorder, lineWidth: 1))
-        .clipShape(Capsule())
-        .dsFloatingShadow()
-        .onHover { hovering in
-            withAnimation(modeSwitcherAnimation) {
-                isModeSwitcherExpanded = hovering
-            }
-        }
-        .animation(modeSwitcherAnimation, value: isModeSwitcherExpanded)
-        .animation(modeSwitcherAnimation, value: thinkspaceMode)
+    }
+
+    /// The canvas point under the middle of the viewport — where ＋ creates.
+    private func viewportCenterCanvasPoint() -> CGPoint {
+        screenToCanvasPosition(CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2))
+    }
+
+    /// Hand the workspace to the inline assistant — its canvas-scoped shelf
+    /// leads with the Organize Workspace skill once the pane is up.
+    private func requestOrganizeWorkspace() {
+        NotificationCenter.default.post(
+            name: CosmoNotification.Navigation.openInlineAssistantPane,
+            object: nil
+        )
     }
 
     // MARK: - Zoom Indicator
@@ -726,7 +836,7 @@ struct CanvasView: View {
         CanvasLiveTransformReader(viewportState: viewportState) { liveTransform in
             let scale = liveTransform.effectiveScale
             Group {
-                if scale != 1.0 && thinkspaceMode == .canvas {
+                if scale != 1.0 && isCanvasViewActive {
                     HStack(spacing: 8) {
                         // Zoom level display
                         Text("\(Int(scale * 100))%")
@@ -749,7 +859,7 @@ struct CanvasView: View {
                         .accessibilityLabel("Reset zoom to 100 percent")
                     }
                     .padding(.horizontal, 12)
-                    .frame(height: bottomControlHeight)
+                    .frame(height: 34)
                     .background(DS.glassInputFill, in: Capsule())
                     .overlay(Capsule().strokeBorder(DS.glassBorder, lineWidth: 1))
                     .clipShape(Capsule())
@@ -758,7 +868,7 @@ struct CanvasView: View {
                 }
             }
             .animation(ProMotionSprings.gentle, value: scale != 1.0)
-            .animation(ProMotionSprings.gentle, value: thinkspaceMode)
+            .animation(ProMotionSprings.gentle, value: activeSpaceView)
         }
     }
 
@@ -821,6 +931,14 @@ struct CanvasView: View {
                         object: nil,
                         userInfo: ["blockId": selectedBlock.id]
                     )
+                },
+                onRemoveFromCanvas: {
+                    NotificationCenter.default.post(
+                        name: .removeBlockFromCanvas,
+                        object: nil,
+                        userInfo: ["blockId": selectedBlock.id]
+                    )
+                    clearSelectedBlock()
                 },
                 onRemoveFromThinkspace: {
                     NotificationCenter.default.post(
@@ -1121,7 +1239,8 @@ struct CanvasView: View {
         ThinkspaceLibrarySnapshot.make(
             blocks: spatialEngine.blocks,
             clusters: clusterEngine.userClusters,
-            inventory: libraryInventory
+            inventory: libraryInventory,
+            materialGroups: materialsStore.groups
         )
     }
 
@@ -1136,21 +1255,24 @@ struct CanvasView: View {
                 revealOnCanvas: { revealLibraryItemOnCanvas($0) },
                 fileIntoFolder: { fileLibraryItemIntoFolder(itemUUID: $0, clusterID: $1) },
                 removeFromFolder: { removeLibraryItemFromFolder(itemUUID: $0, clusterID: $1) },
-                renameFolder: { clusterEngine.renameUserCluster(id: $0, to: $1) },
-                recolorFolder: { clusterEngine.changeClusterColor(id: $0, colorIndex: $1) },
-                deleteFolder: { clusterEngine.removeUserCluster(id: $0) },
+                renameFolder: { materialsStore.rename($0, to: $1) },
+                recolorFolder: { materialsStore.recolor($0, to: $1) },
+                deleteFolder: { materialsStore.delete($0) },
                 renameItem: { item, newName in renameLibraryItem(item, to: newName) },
-                deleteItem: { item in deleteLibraryItem(item) }
+                deleteItem: { item in deleteLibraryItem(item) },
+                placeOnCanvas: { placeLibraryItemOnCanvas($0) },
+                removeFromSpace: { removeLibraryMember($0) }
             ),
-            // The library stays full-bleed like the canvas — the floating
-            // glass sidebar opens OVER it and lenses the folders behind.
-            // Only the chrome row steps aside: past the pinned sidebar when
-            // it's open, past the sidebar toggle island when it's hidden
-            // (16 inset + 44 capsule + 10 gap − the row's own 16 side inset).
-            chromeLeadingInset: crossDragManager.sidebarTotalWidth > 0
-                ? crossDragManager.sidebarTotalWidth - 8
-                : 54
+            chrome: libraryChrome
         )
+        .overlay(alignment: .bottom) {
+            if let error = materialsStore.errorMessage {
+                HStack {
+                    Text(error).font(DS.callout)
+                    Button("Retry") { refreshLibraryInventory() }
+                }.padding(DS.space16).background(DS.surface, in: .rect(cornerRadius: 14)).padding(DS.space24)
+            }
+        }
         .onAppear {
             refreshLibraryInventory()
         }
@@ -1160,71 +1282,35 @@ struct CanvasView: View {
     /// Reuses the same atomic membership mutation the canvas drop uses, so the change
     /// persists; the computed `thinkspaceLibrarySnapshot` then refreshes the grid.
     private func fileLibraryItemIntoFolder(itemUUID: String, clusterID: UUID) {
-        guard let blockIndex = spatialEngine.blocks.firstIndex(where: { $0.entityUuid == itemUUID }) else { return }
-        guard let cluster = clusterEngine.userClusters.first(where: { $0.id == clusterID }),
-              !cluster.blockUUIDs.contains(itemUUID) else { return }
-
-        if cluster.viewMode == .canvas,
-           let containedPosition = clusterEngine.containedDropPosition(
-            blockSize: spatialEngine.blocks[blockIndex].size,
-            inCluster: clusterID
-           ) {
-            spatialEngine.blocks[blockIndex].position = containedPosition
-            spatialEngine.updateBlockPosition(spatialEngine.blocks[blockIndex].id, position: containedPosition)
-        }
-
-        let block = spatialEngine.blocks[blockIndex]
-        clusterEngine.updateMembership(
-            blockUUID: itemUUID,
-            targetClusterId: clusterID,
-            blockPosition: block.position,
-            ejectInset: -40,
-            blocks: spatialEngine.blocks
-        )
-        clusterEngine.updateUserClusterBounds(blocks: spatialEngine.blocks)
+        materialsStore.file(itemUUID, in: clusterID)
     }
 
-    /// Un-file an item from a folder via the library's context menu or a drop on the
-    /// breadcrumb. Persists through the cluster engine, which also dissolves
-    /// empty non-zone clusters.
     private func removeLibraryItemFromFolder(itemUUID: String, clusterID: UUID) {
-        clusterEngine.removeBlockFromCluster(
-            blockUUID: itemUUID,
-            clusterId: clusterID,
-            blocks: spatialEngine.blocks
-        )
-        clusterEngine.updateUserClusterBounds(blocks: spatialEngine.blocks)
+        materialsStore.remove(itemUUID, from: clusterID)
     }
 
-    /// "Reveal on Canvas" — flip back to canvas mode, then glide the camera to the block.
-    private func revealLibraryItemOnCanvas(_ item: ThinkspaceLibraryItem) {
-        guard item.isOnCanvas else { return }
-        withAnimation(ProMotionSprings.focusTransition) {
-            thinkspaceMode = .canvas
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+    /// "Place on Canvas" — a member with no position gets a spot at the camera,
+    /// then the canvas view opens on it.
+    private func placeLibraryItemOnCanvas(_ item: ThinkspaceLibraryItem) {
+        guard !item.isOnCanvas, let thinkspaceId else { return }
+        SpaceViewStore.shared.select(.canvas, for: thinkspaceId)
+        let position = viewportCenterCanvasPoint()
+        Task { @MainActor in
+            guard let block = await spatialEngine.placeMember(entityUuid: item.entityUuid, at: position) else { return }
+            CosmoUndoManager.shared.register(
+                PlaceMemberAction(entityUuid: item.entityUuid, position: position, placedBlockId: block.id, spatialEngine: spatialEngine)
+            )
+            refreshLibraryInventory()
             flyCameraToBlock(atomUUID: item.entityUuid)
         }
     }
 
-    private func selectThinkspaceMode(_ mode: ThinkspaceCanvasMode) {
-        if mode == .deepDive {
-            openCurrentThinkspaceDeepDive()
-            withAnimation(modeSwitcherAnimation) {
-                isModeSwitcherExpanded = false
-            }
-            return
-        }
-
-        // The surface swap speaks the document dialect (focusTransition);
-        // only the switcher pill itself keeps its snappier collapse.
-        withAnimation(ProMotionSprings.focusTransition) {
-            thinkspaceMode = mode
-            isModeSwitcherExpanded = false
-        }
-
-        if mode == .library {
-            refreshLibraryInventory()
+    /// "Reveal on Canvas" — flip back to the canvas view, then glide the camera to the block.
+    private func revealLibraryItemOnCanvas(_ item: ThinkspaceLibraryItem) {
+        guard item.isOnCanvas, let thinkspaceId else { return }
+        SpaceViewStore.shared.select(.canvas, for: thinkspaceId)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            flyCameraToBlock(atomUUID: item.entityUuid)
         }
     }
 
@@ -1236,6 +1322,7 @@ struct CanvasView: View {
 
         libraryLoadTask?.cancel()
         libraryLoadTask = Task { @MainActor in
+            await materialsStore.load(spaceID: activeThinkspaceId)
             await thinkspaceManager.fetchNavigationData(for: activeThinkspaceId)
             guard !Task.isCancelled else { return }
             libraryInventory = thinkspaceManager.navigationCache[activeThinkspaceId]?.blockInventory ?? []
@@ -1259,13 +1346,29 @@ struct CanvasView: View {
     /// in-memory canvas block leaves immediately so both views agree now.
     /// Atomless sticky/note blocks (entityId <= 0) have nothing to tombstone
     /// — removing the block IS the delete the user asked for.
+    private func removeLibraryMember(_ item: ThinkspaceLibraryItem) {
+        guard let thinkspaceId else { return }
+        CosmoUndoManager.shared.register(DetachAtomAction(entityUuid: item.entityUuid, thinkspaceId: thinkspaceId, spatialEngine: spatialEngine))
+        Task {
+            await spatialEngine.removeAtomFromThinkspace(entityUuid: item.entityUuid, thinkspaceId: thinkspaceId)
+            refreshLibraryInventory()
+        }
+    }
+
     private func deleteLibraryItem(_ item: ThinkspaceLibraryItem) {
         Task { @MainActor in
             if let block = spatialEngine.blocks.first(where: { $0.entityUuid == item.entityUuid }) {
                 await spatialEngine.removeBlock(block.id)
             }
             if !item.entityUuid.isEmpty {
-                try? await AtomRepository.shared.delete(uuid: item.entityUuid)
+                do {
+                    try await AtomRepository.shared.delete(uuid: item.entityUuid)
+                    CosmoUndoManager.shared.register(InlineUndoAction(
+                        actionDescription: "Delete material",
+                        undo: { try? await AtomRepository.shared.restore(uuid: item.entityUuid); SpaceMembershipService.notifyMembersChanged() },
+                        redo: { try? await AtomRepository.shared.delete(uuid: item.entityUuid); SpaceMembershipService.notifyMembersChanged() }
+                    ))
+                } catch { materialsStore.errorMessage = "Couldn't delete the material. Try again." }
             }
             refreshLibraryInventory()
         }
@@ -1286,30 +1389,6 @@ struct CanvasView: View {
             atom.updatedAt = ISO8601.string(from: Date())
             _ = try? await AtomRepository.shared.update(atom)
             refreshLibraryInventory()
-        }
-    }
-
-    private func openCurrentThinkspaceDeepDive() {
-        let activeThinkspaceId = thinkspaceId ?? spatialEngine.currentThinkspaceId
-        guard let activeThinkspace = thinkspaceManager.currentThinkspace
-            ?? thinkspaceManager.thinkspaces.first(where: { $0.id == activeThinkspaceId }) else {
-            return
-        }
-
-        Task { @MainActor in
-            do {
-                let profile = try await InquiryRepository.shared.resolveDeepDiveProfile(
-                    forThinkspace: activeThinkspace.id,
-                    title: activeThinkspace.name
-                )
-                NotificationCenter.default.post(
-                    name: CosmoNotification.Inquiry.openDeepDive,
-                    object: nil,
-                    userInfo: ["uuid": profile.uuid]
-                )
-            } catch {
-                print("⚠️ Failed to open Thinkspace Deep Dive: \(error)")
-            }
         }
     }
 
@@ -1583,7 +1662,11 @@ struct CanvasView: View {
         if librarySelectedFolderID != nil {
             librarySelectedFolderID = nil
         }
-        if thinkspaceMode == .library {
+        // Idempotent — this runs twice per switch; the model loads prefs once.
+        if let activeId = thinkspaceId ?? spatialEngine.currentThinkspaceId {
+            libraryChrome.activate(thinkspaceId: activeId)
+        }
+        if activeSpaceView == .library {
             refreshLibraryInventory()
         }
     }
@@ -1639,7 +1722,7 @@ struct CanvasView: View {
     private var panGestureBackground: some View {
         Color.clear
             .contentShape(Rectangle())
-            .allowsHitTesting(drawingState.toolMode == .select && thinkspaceMode == .canvas)
+            .allowsHitTesting(drawingState.toolMode == .select && isCanvasViewActive)
             .onTapGesture(count: 2) {
                 handleEmptyCanvasDoubleClick()
             }
@@ -1775,7 +1858,7 @@ struct CanvasView: View {
                     blockFrameTracker.liveTransformProvider = { [weak viewportState] in
                         viewportState?.transform
                     }
-                    blockFrameTracker.isCanvasSurfaceActive = (thinkspaceMode == .canvas)
+                    blockFrameTracker.isCanvasSurfaceActive = (isCanvasViewActive)
 
                 // Register context provider for global Cosmo window. A hidden
                 // launch prewarm must not claim the context — the user is
@@ -1883,7 +1966,7 @@ struct CanvasView: View {
                     queue: .main,
                     activeOnly: true
                 ) { [self] notification in
-                    guard thinkspaceMode == .canvas,
+                    guard isCanvasViewActive,
                           let uuids = notification.userInfo?["uuids"] as? [String],
                           let x = notification.userInfo?["x"] as? CGFloat,
                           let y = notification.userInfo?["y"] as? CGFloat else { return }
@@ -1971,6 +2054,27 @@ struct CanvasView: View {
                     nonisolated(unsafe) let notification = notification
                     handleRemoveBlock(notification: notification)
                 }
+
+                // Listen for "remove from canvas" (unplace; stays a member)
+                addCanvasObserver(
+                    forName: .removeBlockFromCanvas,
+                    object: nil,
+                    queue: .main,
+                    activeOnly: true
+                ) { [self] notification in
+                    nonisolated(unsafe) let notification = notification
+                    handleRemoveBlockFromCanvas(notification: notification)
+                }
+
+                // Membership rows changed anywhere (Inbox routing, ⌘K filing,
+                // promotion, sync) — the tray re-counts.
+                addCanvasObserver(
+                    forName: .canvasBlocksChanged,
+                    object: nil,
+                    queue: .main,
+                    activeOnly: true
+                ) { [self] _ in
+                        }
 
                 // Listen for "remove from thinkspace" (detach all placements)
                 addCanvasObserver(
@@ -2544,10 +2648,12 @@ struct CanvasView: View {
                         presentPlaceCapture()
                         return nil
                     }
-                    // Cmd+Opt+1…9 — jump to a Place by recency
+                    // Cmd+Opt+1…9 — jump to a Place by recency (canvas view only:
+                    // a camera flight under the library is invisible)
                     if event.type == .keyDown,
                        event.modifierFlags.contains(.command),
                        event.modifierFlags.contains(.option),
+                       isCanvasViewActive,
                        !isTextInputFocused(in: event.window) {
                         let digitKeyCodes: [UInt16: Int] = [18: 1, 19: 2, 20: 3, 21: 4, 23: 5, 22: 6, 26: 7, 28: 8, 25: 9]
                         if let digit = digitKeyCodes[event.keyCode],
@@ -2758,24 +2864,16 @@ struct CanvasView: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.showLibraryFolder)) { notification in
                 if let folderID = notification.userInfo?["folderID"] as? UUID {
+                    if let thinkspaceId {
+                        SpaceViewStore.shared.select(.library, for: thinkspaceId, source: .trail)
+                    }
                     withAnimation(ProMotionSprings.focusTransition) {
-                        thinkspaceMode = .library
                         librarySelectedFolderID = folderID
                     }
                 } else if librarySelectedFolderID != nil {
                     withAnimation(ProMotionSprings.focusTransition) {
                         librarySelectedFolderID = nil
                     }
-                }
-            }
-            .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Canvas.setThinkspaceMode)) { notification in
-                // The study's bottom switcher lands here when the user picks
-                // Canvas or Library while leaving the deep dive.
-                guard let raw = notification.userInfo?["mode"] as? String,
-                      let mode = ThinkspaceCanvasMode(rawValue: raw),
-                      mode != .deepDive, thinkspaceMode != mode else { return }
-                withAnimation(ProMotionSprings.focusTransition) {
-                    thinkspaceMode = mode
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Automation.flowDidRun)) { notification in
@@ -3324,6 +3422,11 @@ struct CanvasView: View {
     /// Wired into CanvasEscapeCoordinator so MainView's global key monitor
     /// gives these overlays priority over pane-closing / thinkspace-exit.
     private func dismissTopCanvasOverlay() -> Bool {
+        // The library's own ladder (search → rename → selection → folder)
+        // runs before the shell sends the user home.
+        if activeSpaceView == .library, libraryChrome.handleEscape() {
+            return true
+        }
         if showPlaceCapture {
             dismissPlaceCapture()
             return true
@@ -4952,6 +5055,25 @@ struct CanvasView: View {
     /// never tombstoned, so re-attaching can't strand a ghost block. Falls back
     /// to plain block removal for an atomless block, or when there's no thinkspace
     /// context (the home canvas) to scope to.
+    /// "Remove from canvas" tier: the block leaves the world but the atom stays
+    /// a member of this space (it waits in the tray). ⌘Z restores the exact
+    /// placement. An atomless block has no membership to keep, so it falls
+    /// through to plain removal.
+    private func handleRemoveBlockFromCanvas(notification: Notification) {
+        guard let blockId = notification.userInfo?["blockId"] as? String else { return }
+        guard let block = spatialEngine.blocks.first(where: { $0.id == blockId }),
+              !block.entityUuid.isEmpty,
+              (spatialEngine.currentThinkspaceId ?? self.thinkspaceId) != nil else {
+            removeBlockSafely(blockId)
+            return
+        }
+        CosmoUndoManager.shared.register(UnplaceBlockAction(block: block, spatialEngine: spatialEngine))
+        Task { @MainActor in
+            _ = await spatialEngine.unplaceBlock(blockId)
+            refreshLibraryInventory()
+        }
+    }
+
     private func handleRemoveAtomFromThinkspace(notification: Notification) {
         guard let blockId = notification.userInfo?["blockId"] as? String else { return }
         guard let block = spatialEngine.blocks.first(where: { $0.id == blockId }),
@@ -5998,15 +6120,26 @@ struct CanvasView: View {
     /// ⌘K / menu creation path: pick a file, portal it at the target position.
     private func presentFilePortalOpenPanel(at position: CGPoint) {
         let panel = NSOpenPanel()
-        panel.title = "Add File to Canvas"
+        panel.title = isCanvasViewActive ? "Add File to Canvas" : "Add Material to Space"
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
         guard panel.runModal() == .OK else { return }
         let urls = panel.urls.filter { FilePortalImportService.acceptsFileURL($0) }
         guard !urls.isEmpty else { return }
+        let place = isCanvasViewActive
+        let destination = thinkspaceId
         Task {
-            await createFilePortalBlocks(fileURLs: urls, position: position)
+            if place { await createFilePortalBlocks(fileURLs: urls, position: position) }
+            else if let destination {
+                for url in urls {
+                    do {
+                        let imported = try await FilePortalImportService.shared.importFile(at: url)
+                        try await SpaceMembershipService.add(imported.atom, to: destination)
+                    } catch { presentFilePortalImportError(error) }
+                }
+                refreshLibraryInventory()
+            }
         }
     }
 
@@ -6619,11 +6752,17 @@ private struct CanvasDropDelegate: DropDelegate {
     let screenToCanvas: (CGPoint) -> CGPoint
     let onClusterDrop: (String, CGPoint) -> Void
     let onExternalDrop: ([NSItemProvider], CGPoint) -> Void
+    /// A tray member dragged out onto the canvas: entity uuid + canvas point.
+    let onTrayDrop: (String, CGPoint) -> Void
 
     func validateDrop(info: DropInfo) -> Bool {
         guard isEnabled() else {
             CanvasDropDebugLog.note("validateDrop: REJECTED — canvas not enabled (overlay mode)")
             return false
+        }
+        if CanvasTrayDragSession.draggingEntityUuid != nil && info.hasItemsConforming(to: [.text]) {
+            CanvasDropDebugLog.note("validateDrop: accepted as TRAY drag")
+            return true
         }
         if ClusterViewDragSession.sourceClusterId != nil && info.hasItemsConforming(to: [.text]) {
             CanvasDropDebugLog.note("validateDrop: accepted as CLUSTER drag (sourceClusterId set)")
@@ -6668,6 +6807,20 @@ private struct CanvasDropDelegate: DropDelegate {
             // consumes the SwiftUI drop so it doesn't read as a failed drag.
             // Releasing over the palette is a miss, not a drop-behind.
             return CommandKDragSession.shared.isPointerOutsidePalette
+        }
+
+        if let draggingUuid = CanvasTrayDragSession.draggingEntityUuid {
+            // The session is the truth (the pasteboard string is a courtesy
+            // copy); either way the drop places exactly that member.
+            for provider in info.itemProviders(for: [.text]) {
+                _ = provider.loadObject(ofClass: NSString.self) { item, _ in
+                    let payload = (item as? String).flatMap(CanvasTrayDragSession.entityUuid(from:)) ?? draggingUuid
+                    DispatchQueue.main.async {
+                        onTrayDrop(payload, canvasPosition)
+                    }
+                }
+            }
+            return true
         }
 
         if ClusterViewDragSession.sourceClusterId != nil {
@@ -6830,6 +6983,9 @@ extension Notification.Name {
     /// Detach an atom from every canvas/thinkspace (all its placements) while
     /// keeping the atom alive in the Library. userInfo: ["blockId": String].
     static let removeAtomFromThinkspace = Notification.Name("removeAtomFromThinkspace")
+    /// "Remove from canvas": unplace one block — it stays a member of the
+    /// space and waits in the tray. userInfo: ["blockId": String].
+    static let removeBlockFromCanvas = Notification.Name("removeBlockFromCanvas")
     /// Tombstone an atom (→ Recently Deleted) and drop its blocks everywhere.
     /// userInfo: ["blockId": String].
     static let deleteAtomEntirely = Notification.Name("deleteAtomEntirely")

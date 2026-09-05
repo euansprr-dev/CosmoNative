@@ -2349,6 +2349,66 @@ final class CommandKSearchPipelineTests: XCTestCase {
         XCTAssertFalse(surfaceInvalidated)
     }
 
+    /// The complement of the test above. `query` staying untracked is what
+    /// keeps typing cheap — but the expanded domain rail (Swipe File and
+    /// friends) filters locally and returns early out of `performSearch`, so
+    /// it needs a tracked signal or its cached rows never refresh and the
+    /// list ignores what you type. `domainFilterQuery` is that signal.
+    @MainActor
+    func testTypingPublishesTrackedDomainFilterQueryForExpandedDomainScopes() async {
+        let viewModel = CommandKViewModel(
+            userCommandStore: CommandKUserCommandStore(
+                fileURL: FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString)
+                    .appendingPathExtension("json"),
+                seedBuiltIns: false
+            )
+        )
+        defer { viewModel.setSurfaceActive(false) }
+
+        var railInvalidated = false
+        withObservationTracking {
+            _ = viewModel.domainFilterQuery
+        } onChange: {
+            railInvalidated = true
+        }
+
+        viewModel.updateQuery("foreclosures")
+
+        XCTAssertTrue(
+            railInvalidated,
+            "domainFilterQuery must be observation-tracked — the domain rail's onChange key rides it"
+        )
+        XCTAssertEqual(viewModel.domainFilterQuery, viewModel.query)
+    }
+
+    /// Guard the read site itself: `domainItemsKey` and the filter compute in
+    /// CortexMasterDetailView must never reach for `viewModel.query`. That
+    /// read is invisible to SwiftUI, and the whole surface is built from just
+    /// (viewModel, isDomainHydrated) — so the body never re-runs on a
+    /// keystroke and the Swipe File list silently stays unfiltered.
+    func testDomainRailFilterReadsTheTrackedQueryMirror() throws {
+        let source = try String(
+            contentsOf: repositoryRoot
+                .appendingPathComponent("UI/CommandK/CortexMasterDetailView.swift"),
+            encoding: .utf8
+        )
+
+        let key = try XCTUnwrap(
+            source.slice(from: "private var domainItemsKey: String {", to: "\n    }"),
+            "domainItemsKey moved — re-anchor this guard"
+        )
+        XCTAssertTrue(key.contains("viewModel.domainFilterQuery"))
+        XCTAssertFalse(key.contains("viewModel.query"))
+
+        let compute = try XCTUnwrap(
+            source.slice(from: "private func computeDomainItems()", to: "\n    }"),
+            "computeDomainItems moved — re-anchor this guard"
+        )
+        XCTAssertTrue(compute.contains("query: viewModel.domainFilterQuery"))
+        XCTAssertFalse(compute.contains("query: viewModel.query"))
+    }
+
     @MainActor
     func testClearingQueryDropsVisibleSearchStateImmediately() async {
         let viewModel = CommandKViewModel(

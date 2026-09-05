@@ -7,6 +7,9 @@ import SwiftUI
 /// The two faces of Upcoming: the week schedule (tasks, time blocks,
 /// external events) and the content calendar (posts on a month grid with
 /// the idea/draft shelf in the rail).
+/// `.content` is RETIRED (September 2026): the month calendar lives in
+/// Studio › Pipeline. The case stays so persisted rawValues decode and old
+/// jump targets redirect; the switcher no longer offers it.
 enum UpcomingLens: String, CaseIterable {
     case schedule
     case content

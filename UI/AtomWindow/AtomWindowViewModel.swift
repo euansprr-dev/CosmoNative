@@ -325,6 +325,10 @@ extension AtomWindowViewModel {
         case .project: return .project
         case .note: return .note
         case .extract, .question: return .extract
+        // Study surfaces route to their own focus modes — falling through to
+        // `.idea` opened a Deep Dive as an Idea from ⌘K.
+        case .deepDive: return .deepDive
+        case .inquirySession: return .inquirySession
         default: return .idea
         }
     }

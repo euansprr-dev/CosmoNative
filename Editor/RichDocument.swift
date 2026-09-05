@@ -2,7 +2,7 @@ import AppKit
 import Foundation
 import SwiftUI
 
-enum RichTextMark: String, Codable, CaseIterable, Hashable, Sendable {
+public enum RichTextMark: String, Codable, CaseIterable, Hashable, Sendable {
     case bold
     case italic
     case underline
@@ -27,6 +27,11 @@ enum RichBlockKind: String, Codable, CaseIterable, Hashable, Sendable {
     case toggle
     case code
     case sketch
+    /// Rows × columns of rich cells. Payload: `RichBlock.table`.
+    case table
+    /// A titled, tinted, collapsible container. Title = `inlines`, body =
+    /// `children`, style = `RichBlock.section`.
+    case section
 
     var headingLevelInt: Int? {
         switch self {
@@ -40,11 +45,29 @@ enum RichBlockKind: String, Codable, CaseIterable, Hashable, Sendable {
     var isTextEditableBlock: Bool {
         switch self {
         case .paragraph, .heading1, .heading2, .heading3, .quote, .bulletList, .numberedList, .checklist, .content, .research,
-             .callout, .toggle, .code:
+             .callout, .toggle, .code, .section:
             return true
-        case .divider, .image, .element, .sketch:
+        case .divider, .image, .element, .sketch, .table:
             return false
         }
+    }
+
+    /// Kinds only the block editor can render or edit safely. The
+    /// continuous editor (canvas card, Content/Idea) round-trips them as
+    /// opaque lines and the canvas card opens focus mode instead of
+    /// editing in place.
+    var requiresBlockEditor: Bool {
+        switch self {
+        case .table, .section, .callout, .toggle, .code, .sketch, .element:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Kinds the continuous TextKit editor carries as opaque lines.
+    var isOpaqueInContinuousEditor: Bool {
+        self == .table || self == .section
     }
 
     var splitContinuationKind: RichBlockKind {
@@ -63,7 +86,7 @@ enum RichBlockKind: String, Codable, CaseIterable, Hashable, Sendable {
             // Return inside a code block inserts a soft break; a structural
             // split (hard-newline backstop) keeps the continuation as code.
             return .code
-        case .divider, .image, .element, .toggle, .sketch:
+        case .divider, .image, .element, .toggle, .sketch, .table, .section:
             return .paragraph
         }
     }
@@ -201,7 +224,7 @@ public struct RichMention: Codable, Equatable, Hashable, Sendable {
     }
 }
 
-struct RichImageReference: Codable, Equatable, Hashable, Sendable {
+public struct RichImageReference: Codable, Equatable, Hashable, Sendable {
     var path: String
     /// Intrinsic pixel dimensions of the source image.
     var width: CGFloat
@@ -266,22 +289,110 @@ enum ImageResizeMath {
     }
 }
 
-struct RichInlineNode: Identifiable, Codable, Equatable, Hashable, Sendable {
-    enum Kind: String, Codable, Hashable, Sendable {
+public struct RichInlineNode: Identifiable, Codable, Equatable, Hashable, Sendable {
+    public enum Kind: String, Codable, Hashable, Sendable {
         case text
         case mention
         case imageRef
     }
 
-    var id: UUID = UUID()
-    var kind: Kind
-    var text: String?
-    var marks: Set<RichTextMark> = []
-    var mention: RichMention?
-    var image: RichImageReference?
+    public var id: UUID = UUID()
+    public var kind: Kind
+    public var text: String?
+    public var marks: Set<RichTextMark> = []
+    public var mention: RichMention?
+    public var image: RichImageReference?
+    /// NoteInkPalette tone for the text colour; nil = default ink.
+    public var inkID: String? = nil
+    /// NoteInkPalette tone for the background wash; nil = none.
+    public var highlightID: String? = nil
+    /// An http(s)/mailto link on this run. Mentions keep using `mention`.
+    public var href: String? = nil
+    /// Unknown JSON keys, re-emitted verbatim (forward compatibility).
+    public var passthrough: [String: JSONValue] = [:]
 
-    static func text(_ text: String, marks: Set<RichTextMark> = []) -> RichInlineNode {
+    public init(
+        id: UUID = UUID(),
+        kind: Kind,
+        text: String? = nil,
+        marks: Set<RichTextMark> = [],
+        mention: RichMention? = nil,
+        image: RichImageReference? = nil,
+        inkID: String? = nil,
+        highlightID: String? = nil,
+        href: String? = nil,
+        passthrough: [String: JSONValue] = [:]
+    ) {
+        self.id = id
+        self.kind = kind
+        self.text = text
+        self.marks = marks
+        self.mention = mention
+        self.image = image
+        self.inkID = inkID
+        self.highlightID = highlightID
+        self.href = href
+        self.passthrough = passthrough
+    }
+
+    /// Everything that styles a run apart from the text itself — used to
+    /// decide whether two adjacent runs may merge.
+    public struct Styling: Hashable, Sendable {
+        public var marks: Set<RichTextMark>
+        public var inkID: String?
+        public var highlightID: String?
+        public var href: String?
+
+        public init(marks: Set<RichTextMark>, inkID: String?, highlightID: String?, href: String?) {
+            self.marks = marks
+            self.inkID = inkID
+            self.highlightID = highlightID
+            self.href = href
+        }
+    }
+
+    public var styling: Styling {
+        Styling(marks: marks, inkID: inkID, highlightID: highlightID, href: href)
+    }
+
+    public static func text(_ text: String, marks: Set<RichTextMark> = []) -> RichInlineNode {
         RichInlineNode(kind: .text, text: text, marks: marks)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, kind, text, marks, mention, image, inkID, highlightID, href
+        static var known: Set<String> { Set(["id", "kind", "text", "marks", "mention", "image", "inkID", "highlightID", "href"]) }
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = (try? container.decodeIfPresent(UUID.self, forKey: .id)) ?? UUID()
+        kind = (try? container.decodeIfPresent(Kind.self, forKey: .kind)) ?? .text
+        text = try? container.decodeIfPresent(String.self, forKey: .text)
+        // Lenient marks: a mark this build doesn't know is dropped, never
+        // allowed to throw the whole body away.
+        let rawMarks = (try? container.decodeIfPresent([String].self, forKey: .marks)) ?? []
+        marks = Set(rawMarks.compactMap(RichTextMark.init(rawValue:)))
+        mention = try? container.decodeIfPresent(RichMention.self, forKey: .mention)
+        image = try? container.decodeIfPresent(RichImageReference.self, forKey: .image)
+        inkID = try? container.decodeIfPresent(String.self, forKey: .inkID)
+        highlightID = try? container.decodeIfPresent(String.self, forKey: .highlightID)
+        href = try? container.decodeIfPresent(String.self, forKey: .href)
+        passthrough = RichPassthrough.unknownKeys(from: decoder, known: CodingKeys.known)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(kind, forKey: .kind)
+        try container.encodeIfPresent(text, forKey: .text)
+        try container.encode(marks.map(\.rawValue).sorted(), forKey: .marks)
+        try container.encodeIfPresent(mention, forKey: .mention)
+        try container.encodeIfPresent(image, forKey: .image)
+        try container.encodeIfPresent(inkID, forKey: .inkID)
+        try container.encodeIfPresent(highlightID, forKey: .highlightID)
+        try container.encodeIfPresent(href, forKey: .href)
+        try RichPassthrough.encode(passthrough, to: encoder, known: CodingKeys.known)
     }
 
     static func mention(_ mention: RichMention, marks: Set<RichTextMark> = []) -> RichInlineNode {
@@ -307,10 +418,17 @@ struct RichBlock: Identifiable, Codable, Equatable, Hashable, Sendable {
     var toggleCollapsed: Bool? = nil
     /// Freehand drawing payload. Only meaningful when `kind == .sketch`.
     var sketch: RichSketchDrawing? = nil
+    /// Table grid. Only meaningful when `kind == .table`.
+    var table: RichTable? = nil
+    /// Section chrome. Only meaningful when `kind == .section`.
+    var section: RichSectionStyle? = nil
     /// Forward-compat: a kind raw value this build doesn't know. The block
     /// renders/edits as a paragraph, but the original kind is preserved on
     /// re-encode so newer builds get their block back intact.
     var rawKind: String? = nil
+    /// Forward-compat: JSON keys this build doesn't know, re-emitted
+    /// verbatim on encode so a newer build's payload survives a round trip.
+    var passthrough: [String: JSONValue] = [:]
 
     init(
         id: UUID = UUID(),
@@ -322,7 +440,9 @@ struct RichBlock: Identifiable, Codable, Equatable, Hashable, Sendable {
         children: [RichBlock] = [],
         callout: RichCalloutStyle? = nil,
         toggleCollapsed: Bool? = nil,
-        sketch: RichSketchDrawing? = nil
+        sketch: RichSketchDrawing? = nil,
+        table: RichTable? = nil,
+        section: RichSectionStyle? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -334,6 +454,20 @@ struct RichBlock: Identifiable, Codable, Equatable, Hashable, Sendable {
         self.callout = kind == .callout ? (callout ?? .default) : callout
         self.toggleCollapsed = kind == .toggle ? (toggleCollapsed ?? false) : toggleCollapsed
         self.sketch = kind == .sketch ? (sketch ?? RichSketchDrawing()) : sketch
+        self.table = kind == .table ? (table ?? RichTable()) : table
+        self.section = kind == .section ? (section ?? .default) : section
+    }
+
+    static func table(_ table: RichTable = RichTable()) -> RichBlock {
+        RichBlock(kind: .table, table: table)
+    }
+
+    static func section(
+        title: String,
+        style: RichSectionStyle = .default,
+        children: [RichBlock] = []
+    ) -> RichBlock {
+        RichBlock(kind: .section, inlines: title.isEmpty ? [] : [.text(title)], children: children, section: style)
     }
 
     static func paragraph(_ text: String) -> RichBlock {
@@ -379,6 +513,12 @@ struct RichBlock: Identifiable, Codable, Equatable, Hashable, Sendable {
         case callout
         case toggleCollapsed
         case sketch
+        case table
+        case section
+
+        static var known: Set<String> {
+            Set(["id", "kind", "inlines", "checked", "element", "heading", "children", "callout", "toggleCollapsed", "sketch", "table", "section"])
+        }
     }
 
     init(from decoder: Decoder) throws {
@@ -416,6 +556,15 @@ struct RichBlock: Identifiable, Codable, Equatable, Hashable, Sendable {
         if kind == .sketch, sketch == nil {
             sketch = RichSketchDrawing()
         }
+        table = try? container.decodeIfPresent(RichTable.self, forKey: .table)
+        if kind == .table, table == nil {
+            table = RichTable()
+        }
+        section = try? container.decodeIfPresent(RichSectionStyle.self, forKey: .section)
+        if kind == .section, section == nil {
+            section = .default
+        }
+        passthrough = RichPassthrough.unknownKeys(from: decoder, known: CodingKeys.known)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -434,6 +583,9 @@ struct RichBlock: Identifiable, Codable, Equatable, Hashable, Sendable {
         try container.encodeIfPresent(callout, forKey: .callout)
         try container.encodeIfPresent(toggleCollapsed, forKey: .toggleCollapsed)
         try container.encodeIfPresent(sketch, forKey: .sketch)
+        try container.encodeIfPresent(table, forKey: .table)
+        try container.encodeIfPresent(section, forKey: .section)
+        try RichPassthrough.encode(passthrough, to: encoder, known: CodingKeys.known)
     }
 }
 
@@ -451,7 +603,7 @@ struct RichDocument: Codable, Equatable, Hashable, Sendable {
     var isEmpty: Bool {
         blocks.allSatisfy { block in
             switch block.kind {
-            case .divider, .image, .element, .sketch:
+            case .divider, .image, .element, .sketch, .table, .section:
                 return false
             case .toggle where !block.children.isEmpty:
                 return false
@@ -478,6 +630,22 @@ struct RichDocument: Codable, Equatable, Hashable, Sendable {
         Self.containsCollapsedHiddenContent(in: blocks)
     }
 
+    /// True when any block (at any depth) can only be edited by the block
+    /// editor. The canvas note card opens focus mode for such notes
+    /// instead of its continuous editor, which would flatten them.
+    var requiresBlockEditor: Bool {
+        Self.requiresBlockEditor(in: blocks)
+    }
+
+    private static func requiresBlockEditor(in blocks: [RichBlock]) -> Bool {
+        for block in blocks {
+            if block.kind.requiresBlockEditor { return true }
+            if requiresBlockEditor(in: block.children) { return true }
+            if let collapsed = block.heading?.collapsedBlocks, requiresBlockEditor(in: collapsed) { return true }
+        }
+        return false
+    }
+
     /// True when any block (at any depth, including collapsed-away content)
     /// carries a visual or structured body — a sketch canvas, an image, an
     /// element container — that a plain-text rendering cannot represent.
@@ -490,7 +658,7 @@ struct RichDocument: Codable, Equatable, Hashable, Sendable {
     private static func containsVisualBlocks(in blocks: [RichBlock]) -> Bool {
         for block in blocks {
             switch block.kind {
-            case .sketch, .image, .element:
+            case .sketch, .image, .element, .table, .section:
                 return true
             default:
                 break
@@ -579,6 +747,14 @@ struct RichDocument: Codable, Equatable, Hashable, Sendable {
                     return indentation + title
                 }
                 return indentation + title + "\n" + childText
+            case .table:
+                let lines = (block.table ?? RichTable()).markdownLines()
+                return lines.map { indentation + $0 }.joined(separator: "\n")
+            case .section:
+                let title = block.inlines.map(\.plainText).joined()
+                let childText = plainText(for: block.children, depth: depth + 1)
+                let headerLine = indentation + "▣ " + title
+                return childText.isEmpty ? headerLine : headerLine + "\n" + childText
             }
 
             let body = block.inlines.map(\.plainText).joined()
@@ -814,6 +990,12 @@ enum RichDocumentAttributeKeys {
     static let elementIcon = NSAttributedString.Key("CosmoElementIcon")
     static let elementCollapsed = NSAttributedString.Key("CosmoElementCollapsed")
     static let elementChildrenJSON = NSAttributedString.Key("CosmoElementChildrenJSON")
+    /// Inline colour round trip — tone IDs, never resolved colours.
+    static let inkID = NSAttributedString.Key("CosmoInkID")
+    static let highlightID = NSAttributedString.Key("CosmoHighlightID")
+    /// A block the continuous editor cannot render (table, section): one
+    /// placeholder line carrying the block's JSON, restored on parse.
+    static let opaqueBlockJSON = NSAttributedString.Key("CosmoOpaqueBlockJSON")
 }
 
 enum RichDocumentSerializer {
@@ -920,6 +1102,12 @@ enum RichDocumentSerializer {
                 continue
             }
 
+            if block.kind.isOpaqueInContinuousEditor {
+                result.append(opaqueBlockAttributedString(for: block, fontSize: fontSize, darkMode: darkMode))
+                addDepth(depth, to: result, from: blockStart)
+                continue
+            }
+
             if block.kind == .element {
                 result.append(elementHeaderAttributedString(for: block, depth: depth, fontSize: fontSize, darkMode: darkMode))
                 if !(block.element?.isCollapsed ?? false), !block.children.isEmpty {
@@ -957,7 +1145,7 @@ enum RichDocumentSerializer {
                 switch node.kind {
                 case .text:
                     let string = node.text ?? ""
-                    result.append(NSAttributedString(string: string, attributes: inlineAttributes(
+                    var textAttributes = inlineAttributes(
                         marks: node.marks,
                         block: block,
                         fontSize: fontSize,
@@ -965,7 +1153,9 @@ enum RichDocumentSerializer {
                         singleLine: singleLine,
                         baseFontWeight: baseFontWeight,
                         titleMode: titleMode
-                    )))
+                    )
+                    applyInlineColorAttributes(&textAttributes, node: node, darkMode: darkMode)
+                    result.append(NSAttributedString(string: string, attributes: textAttributes))
                 case .mention:
                     guard let mention = node.mention else { continue }
                     var attrs = inlineAttributes(
@@ -1126,6 +1316,10 @@ enum RichDocumentSerializer {
             return RichBlock(kind: .image, inlines: inlineNodes(from: line))
         }
 
+        if let opaque = opaqueBlock(from: line) {
+            return opaque
+        }
+
         let text = line.string
         if text == "───────────────" {
             return RichBlock(kind: .divider)
@@ -1187,6 +1381,42 @@ enum RichDocumentSerializer {
             return (.numberedList, text.distance(from: text.startIndex, to: range.upperBound), nil)
         }
         return (.paragraph, 0, nil)
+    }
+
+    /// The continuous editor's representation of a table/section: a single
+    /// object-replacement line whose attribute carries the whole block.
+    /// Rendered muted ("Table · 3 × 4"), never editable in place; the
+    /// block editor is the only editor for these kinds.
+    static func opaqueBlockAttributedString(for block: RichBlock, fontSize: CGFloat, darkMode: Bool) -> NSAttributedString {
+        let label: String
+        switch block.kind {
+        case .table:
+            let table = block.table ?? RichTable()
+            label = "Table · \(table.rowCount) × \(table.columnCount)"
+        case .section:
+            let title = block.inlines.map(\.plainText).joined().trimmingCharacters(in: .whitespaces)
+            label = title.isEmpty ? "Section" : "Section · \(title)"
+        default:
+            label = block.kind.rawValue.capitalized
+        }
+        var attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: max(11, fontSize - 3), weight: .medium),
+            .foregroundColor: (darkMode ? NSColor.white : NSColor.black).withAlphaComponent(0.45),
+        ]
+        if let data = try? JSONEncoder().encode(block), let json = String(data: data, encoding: .utf8) {
+            attributes[RichDocumentAttributeKeys.opaqueBlockJSON] = json
+        }
+        return NSAttributedString(string: "\u{FFFC} " + label, attributes: attributes)
+    }
+
+    private static func opaqueBlock(from line: NSAttributedString) -> RichBlock? {
+        guard line.length > 0,
+              let json = line.attribute(RichDocumentAttributeKeys.opaqueBlockJSON, at: 0, effectiveRange: nil) as? String,
+              let data = json.data(using: .utf8),
+              let block = try? JSONDecoder().decode(RichBlock.self, from: data) else {
+            return nil
+        }
+        return block
     }
 
     private static func elementBlock(from line: NSAttributedString) -> RichBlock? {
@@ -1267,15 +1497,22 @@ enum RichDocumentSerializer {
 
             let text = (attributedString.string as NSString).substring(with: range)
             guard !text.isEmpty else { return }
-            let marks = marks(from: attributes)
+            let styling = inlineStyling(from: attributes)
             if case let .some(last) = nodes.last,
                last.kind == .text,
-               last.marks == marks {
+               last.styling == styling {
                 var merged = last
                 merged.text = (last.text ?? "") + text
                 nodes[nodes.count - 1] = merged
             } else {
-                nodes.append(.text(text, marks: marks))
+                nodes.append(RichInlineNode(
+                    kind: .text,
+                    text: text,
+                    marks: styling.marks,
+                    inkID: styling.inkID,
+                    highlightID: styling.highlightID,
+                    href: styling.href
+                ))
             }
         }
         return nodes
@@ -1337,6 +1574,42 @@ enum RichDocumentSerializer {
             return value.boolValue
         }
         return nil
+    }
+
+    /// Ink / highlight / link → attributes. Tone IDs ride custom keys so the
+    /// parser restores them without ever reading a resolved colour back.
+    static func applyInlineColorAttributes(
+        _ attributes: inout [NSAttributedString.Key: Any],
+        node: RichInlineNode,
+        darkMode: Bool
+    ) {
+        if let inkID = node.inkID, RichInlineColor.isKnownTone(inkID) {
+            let tone = NoteInkPalette.tone(inkID)
+            attributes[.foregroundColor] = NSColor(tone.ink(darkMode: darkMode))
+            attributes[RichDocumentAttributeKeys.inkID] = inkID
+        }
+        if let highlightID = node.highlightID, RichInlineColor.isKnownTone(highlightID) {
+            let tone = NoteInkPalette.tone(highlightID)
+            attributes[.backgroundColor] = NSColor(tone.ink(darkMode: darkMode)).withAlphaComponent(darkMode ? 0.28 : 0.18)
+            attributes[RichDocumentAttributeKeys.highlightID] = highlightID
+        }
+        if let href = node.href, let url = URL(string: href) {
+            attributes[.link] = url
+        }
+    }
+
+    private static func inlineStyling(from attributes: [NSAttributedString.Key: Any]) -> RichInlineNode.Styling {
+        var href: String?
+        if let link = attributes[.link] {
+            let string = (link as? URL)?.absoluteString ?? (link as? String)
+            if let string, !string.hasPrefix("cosmo://") { href = string }
+        }
+        return RichInlineNode.Styling(
+            marks: marks(from: attributes),
+            inkID: attributes[RichDocumentAttributeKeys.inkID] as? String,
+            highlightID: attributes[RichDocumentAttributeKeys.highlightID] as? String,
+            href: href
+        )
     }
 
     private static func marks(from attributes: [NSAttributedString.Key: Any]) -> Set<RichTextMark> {
@@ -1516,7 +1789,7 @@ enum RichDocumentSerializer {
 
     private static func blockPrefix(for block: RichBlock, listPosition: Int) -> String {
         switch block.kind {
-        case .paragraph, .image, .element, .content, .research, .callout, .toggle, .code, .sketch:
+        case .paragraph, .image, .element, .content, .research, .callout, .toggle, .code, .sketch, .table, .section:
             return ""
         case .heading1, .heading2, .heading3:
             return ""  // Headings use attribute-based detection, no visible prefix

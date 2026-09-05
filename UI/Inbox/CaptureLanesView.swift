@@ -91,15 +91,22 @@ final class CaptureLanesViewModel {
     private let destinationRepo = CaptureDestinationRepository.shared
     private let capturedRepo = CapturedItemRepository.shared
     private let mediaRepo = MediaAttachmentRepository.shared
+    @ObservationIgnored private let refreshCoordinator = CoalescingRefresh()
+    @ObservationIgnored private var itemsGeneration = 0
 
     var selectedDestination: CaptureDestination? {
         destinations.first { $0.uuid == selectedDestinationId }
     }
 
     func refresh() async {
+        await refreshCoordinator.run { [weak self] in await self?.refreshSnapshot() }
+    }
+
+    private func refreshSnapshot() async {
         destinations = (try? await destinationRepo.fetchActive()) ?? destinationRepo.destinations
-        await loadNeedsReview()
-        await loadItems()
+        async let review: Void = loadNeedsReview()
+        async let items: Void = loadItems()
+        _ = await (review, items)
     }
 
     func loadNeedsReview() async {
@@ -161,11 +168,14 @@ final class CaptureLanesViewModel {
     }
 
     func select(_ destination: CaptureDestination?) {
+        guard selectedDestinationId != destination?.uuid else { return }
+        clearSelection()
         selectedDestinationId = destination?.uuid
         Task { await loadItems() }
     }
 
     func clearSelection() {
+        itemsGeneration += 1
         selectedDestinationId = nil
         selectedItems = []
         attachmentsByItemId = [:]
@@ -175,7 +185,7 @@ final class CaptureLanesViewModel {
 
     func createLane() async {
         let name = newLaneName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { return }
+        guard !name.isEmpty, !isCreatingLane else { return }
         isCreatingLane = true
         defer { isCreatingLane = false }
         do {
@@ -210,13 +220,14 @@ final class CaptureLanesViewModel {
     }
 
     private func loadItems() async {
-        guard selectedDestinationId != nil else { return }
-        selectedItems = (try? await capturedRepo.fetch(destinationId: selectedDestinationId)) ?? []
-        var map: [String: [MediaAttachment]] = [:]
-        for item in selectedItems {
-            map[item.uuid] = (try? await mediaRepo.fetch(capturedItemId: item.uuid)) ?? []
-        }
-        attachmentsByItemId = map
+        itemsGeneration += 1
+        let generation = itemsGeneration
+        guard let destinationID = selectedDestinationId else { return }
+        let items = (try? await capturedRepo.fetch(destinationId: destinationID)) ?? []
+        let attachments = (try? await mediaRepo.fetch(capturedItemIds: items.map(\.uuid))) ?? []
+        guard generation == itemsGeneration, selectedDestinationId == destinationID else { return }
+        selectedItems = items
+        attachmentsByItemId = Dictionary(grouping: attachments, by: \.capturedItemId)
         // The focused row left the lane (archived, or a reload landed) —
         // an inspector must never linger over a capture that isn't there.
         if let focusedCaptureId, !selectedItems.contains(where: { $0.uuid == focusedCaptureId }) {

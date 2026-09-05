@@ -210,23 +210,31 @@ struct CommandCenterMasthead: View {
         }
     }
 
+    /// The content calendar lives in Studio › Pipeline now (one room per
+    /// stage of material). Upcoming keeps a door to it, not a second copy.
     private var upcomingScopeControl: some View {
-        // The one view-mode grammar: a sliding-thumb switcher, never
-        // re-filled segments (view modes are not pills). Upcoming's two
-        // faces: the week schedule and the content calendar.
-        CosmoSegmentedSwitcher(
-            options: Array(UpcomingLens.allCases),
-            label: { $0.label },
-            help: { $0.help },
-            selection: Binding(
-                get: { viewModel.upcomingLens },
-                set: { lens in
-                    withAnimation(ProMotionSprings.gentle) {
-                        viewModel.setUpcomingLens(lens)
-                    }
-                }
+        Button {
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.openPipeline,
+                object: nil,
+                userInfo: ["view": PipelineView.calendar.rawValue]
             )
-        )
+        } label: {
+            HStack(spacing: DS.space4) {
+                Text("Content calendar")
+                    .font(DS.callout.weight(.medium))
+                Image(systemName: "arrow.up.right")
+                    .font(DS.caption2.weight(.semibold))
+                    .accessibilityHidden(true)
+            }
+            .foregroundStyle(DS.textSecondary)
+            .padding(.horizontal, DS.space10)
+            .frame(height: 30)
+            .background(DS.glassSectionFill, in: .capsule)
+        }
+        .buttonStyle(.plain)
+        .help("Open the content calendar in the Pipeline")
+        .accessibilityLabel("Open content calendar")
     }
 
     private var upcomingRangeNavigation: some View {
@@ -283,7 +291,7 @@ struct CommandCenterMasthead: View {
 
 // MARK: - Masthead nav controls (hover + tooltip manners)
 
-private struct MastheadNavChevron: View {
+struct MastheadNavChevron: View {
     enum Direction { case left, right }
     let direction: Direction
     let help: String
@@ -310,7 +318,7 @@ private struct MastheadNavChevron: View {
     }
 }
 
-private struct MastheadTodayButton: View {
+struct MastheadTodayButton: View {
     let help: String
     let action: () -> Void
 

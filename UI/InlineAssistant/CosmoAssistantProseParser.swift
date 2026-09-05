@@ -42,6 +42,23 @@ enum CosmoAssistantProseParser {
         return CosmoAssistantProseParseResult(segments: segments, linkedRefUUIDs: linked)
     }
 
+    /// Pass 1 only — explicit markers become pills, unknown markers are
+    /// stripped, titles stay prose. The Markdown renderer runs this before
+    /// parsing structure and auto-links titles afterwards over the finished
+    /// text, so a title never splits a Markdown construct.
+    static func markerSegments(
+        answer: String,
+        sourceRefs: [CosmoAssistantSourceRef]?
+    ) -> CosmoAssistantProseParseResult {
+        let refs = sourceRefs ?? []
+        guard !answer.isEmpty else {
+            return CosmoAssistantProseParseResult(segments: [], linkedRefUUIDs: [])
+        }
+        var linked = Set<String>()
+        let segments = markerPass(answer: answer, refs: refs, linked: &linked)
+        return CosmoAssistantProseParseResult(segments: segments, linkedRefUUIDs: linked)
+    }
+
     // MARK: - Streaming display scrub
 
     /// While an answer streams we render plain text, but the model may emit

@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import SwiftUI
 
 enum BlockDropPosition: String, Codable, Equatable, Hashable, Sendable {
     case above
@@ -9,6 +10,28 @@ enum BlockDropPosition: String, Codable, Equatable, Hashable, Sendable {
 struct BlockDragPayload: Codable, Equatable, Hashable, Sendable {
     var blockID: UUID
     var sourcePath: BlockPath
+}
+
+/// Cross-container drop forwarding. A nested block list (a section or
+/// element body, toggle children) resolves drag payloads by ID in its OWN
+/// sub-document, so a block dragged in from anywhere else is invisible to it.
+/// The root list installs its whole-document mover here; nested lists hand
+/// over any drop they cannot resolve locally.
+@MainActor
+final class BlockDropRouter {
+    var moveAcrossContainers: ((BlockDragPayload, BlockDropPosition, UUID) -> Void)?
+}
+
+private struct BlockDropRouterKey: EnvironmentKey {
+    static let defaultValue: BlockDropRouter? = nil
+}
+
+extension EnvironmentValues {
+    /// Set by the top-level BlockListView; nested lists forward foreign drops.
+    var blockDropRouter: BlockDropRouter? {
+        get { self[BlockDropRouterKey.self] }
+        set { self[BlockDropRouterKey.self] = newValue }
+    }
 }
 
 enum BlockDropController {
@@ -90,6 +113,8 @@ enum BlockInteractionPolicy {
             return HandleMetrics(verticalAnchor: .cardHeader, topPadding: 20, hitSize: CGSize(width: 28, height: 32))
         case .paragraph, .quote, .bulletList, .numberedList, .checklist, .toggle:
             return HandleMetrics(verticalAnchor: .textBaseline, topPadding: 11, hitSize: CGSize(width: 28, height: 30))
+        case .table, .section:
+            return HandleMetrics(verticalAnchor: .cardHeader, topPadding: 8, hitSize: CGSize(width: 28, height: 32))
         }
     }
 

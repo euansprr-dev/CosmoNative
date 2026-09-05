@@ -146,6 +146,7 @@ private struct SwipeBoardCard: View {
     @ViewBuilder
     private var contextMenuItems: some View {
         Button("Open", systemImage: "arrow.up.forward") { onOpen() }
+        SwipeLabLaunchButton(scope: .board(board), title: "Study in Swipe Lab")
         Button("Rename…", systemImage: "pencil") { beginRename() }
         Divider()
         Button("Delete…", systemImage: "trash", role: .destructive) { confirmDelete = true }

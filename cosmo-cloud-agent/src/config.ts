@@ -84,6 +84,16 @@ export const config = {
   // OpenRouter vision model for slide OCR (frame batches + carousel slides).
   // gemini-2.0-flash-001 was sunset on OpenRouter (404s) — keep this current.
   openRouterVisionModel: process.env.OPENROUTER_VISION_MODEL || 'google/gemini-2.5-flash',
+  // Direct Google AI models for the same work. Since Sept 2026 the direct
+  // key is the PRIMARY for vision + cleanup passes and OpenRouter the fallback
+  // (see swipes/llm.ts) — an empty OpenRouter balance took the pipeline down
+  // for six days while this key sat unused.
+  geminiVisionModel: process.env.GEMINI_VISION_MODEL || 'gemini-2.5-flash',
+  geminiTextModel: process.env.GEMINI_TEXT_MODEL || 'gemini-2.5-flash',
+  // Swipe insight pass (mirrors SwipeInsightEngine.analysisTier .sonnet5):
+  // direct Anthropic first, OpenRouter second.
+  anthropicInsightModel: process.env.ANTHROPIC_INSIGHT_MODEL || 'claude-sonnet-5',
+  openRouterInsightModel: process.env.OPENROUTER_INSIGHT_MODEL || 'anthropic/claude-sonnet-5',
   // Stable model tried when the preview model 503s under load.
   geminiVideoFallbackModel: process.env.GEMINI_VIDEO_FALLBACK_MODEL || 'gemini-2.5-flash',
   reelVideoFps: parseFloat(process.env.REEL_VIDEO_FPS || '4'),

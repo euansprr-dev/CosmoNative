@@ -87,43 +87,6 @@ enum SwipeLibraryFiltering {
         return filtered
     }
 
-    static func shelves(from items: [SwipeGalleryItem], limit: Int = 8) -> [SwipeLibraryShelf] {
-        guard !items.isEmpty else { return [] }
-
-        var recent = items
-        sortItems(&recent, by: .recent)
-        let createdAtByID = createdAtLookup(for: items)
-
-        let highPerforming = items
-            .filter { ($0.hookScore ?? 0) >= 7.5 || ($0.viewsCount ?? 0) >= 50_000 || ($0.likesCount ?? 0) >= 1_000 }
-            .sorted { lhs, rhs in
-                let lhsScore = performanceScore(lhs)
-                let rhsScore = performanceScore(rhs)
-                if lhsScore != rhsScore { return lhsScore > rhsScore }
-                return isNewer(lhs, than: rhs, createdAtByID: createdAtByID)
-            }
-
-        var hooksToTry = items
-            .filter { matchesFearPreset($0) || $0.hookType == .curiosityGap || $0.hookType == .contrast || $0.hookType == .transformation }
-            .sorted { lhs, rhs in
-                let lhsScore = lhs.hookScore ?? 0
-                let rhsScore = rhs.hookScore ?? 0
-                if lhsScore != rhsScore { return lhsScore > rhsScore }
-                return isNewer(lhs, than: rhs, createdAtByID: createdAtByID)
-            }
-        if hooksToTry.isEmpty {
-            hooksToTry = highPerforming
-        }
-
-        let candidates: [SwipeLibraryShelf] = [
-            SwipeLibraryShelf(id: .recentlyAdded, items: Array(recent.prefix(limit))),
-            SwipeLibraryShelf(id: .highPerforming, items: Array(highPerforming.prefix(limit))),
-            SwipeLibraryShelf(id: .hooksToTry, items: Array(hooksToTry.prefix(limit))),
-        ]
-
-        return candidates.filter { !$0.items.isEmpty }
-    }
-
     static func availableCreators(from items: [SwipeGalleryItem]) -> [String] {
         Array(Set(items.compactMap(\.creatorName).filter { !$0.isEmpty })).sorted()
     }
@@ -271,33 +234,7 @@ enum SwipeLibraryFiltering {
         items = sorted.map(\.item)
     }
 
-    private static func performanceScore(_ item: SwipeGalleryItem) -> Double {
-        let hookScore = item.hookScore ?? 0
-        let views = Double(item.viewsCount ?? 0) / 100_000
-        let likes = Double(item.likesCount ?? 0) / 10_000
-        let comments = Double(item.commentsCount ?? 0) / 1_000
-        return hookScore + views + likes + comments
-    }
 
-    private static func isNewer(
-        _ lhs: SwipeGalleryItem,
-        than rhs: SwipeGalleryItem,
-        createdAtByID: [String: Date]
-    ) -> Bool {
-        let lhsDate = createdAtByID[lhs.id] ?? .distantPast
-        let rhsDate = createdAtByID[rhs.id] ?? .distantPast
-        if lhsDate != rhsDate { return lhsDate > rhsDate }
-        return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
-    }
-
-    private static func createdAtLookup(for items: [SwipeGalleryItem]) -> [String: Date] {
-        var lookup: [String: Date] = [:]
-        lookup.reserveCapacity(items.count)
-        for item in items where lookup[item.id] == nil {
-            lookup[item.id] = item.createdAtDate ?? .distantPast
-        }
-        return lookup
-    }
 }
 
 private struct SwipeSortRecord {

@@ -727,53 +727,97 @@ final class CosmoInlineSkillResolver {
 struct CosmoInlineAssistantPaneMessages: View {
     @ObservedObject var store: CosmoInlineAssistantStore
     @State private var skillResolver = CosmoInlineSkillResolver()
+    /// Scroll-follow bridge: written from scroll geometry and streaming ticks,
+    /// never read from a body (see CosmoInlineAssistantScrollFollow.swift).
+    @State private var follower = CosmoInlineAssistantScrollFollower()
+    /// Flips only when the reader crosses the near-bottom threshold — the
+    /// size-change anchor and the "Latest" chip hang off it. Per-scroll
+    /// geometry never touches this view's body.
+    @State private var isNearBottom = true
     @Environment(\.isPaneExpanded) private var isPaneExpanded
 
     private static let bottomAnchorID = "pane-bottom-anchor"
 
     var body: some View {
         ScrollViewReader { proxy in
-            ScrollView {
-                content
-                Color.clear
-                    .frame(height: 1)
-                    .id(Self.bottomAnchorID)
-            }
-            // A conversation reads from its end: opening the pane mid-session
-            // must land on the latest exchange, not page one. This also keeps
-            // the lazy transcript from instantiating every row on open the way
-            // a top-anchored scroll + manual scroll-to-bottom would.
-            .defaultScrollAnchor(.bottom)
-            .onChange(of: store.paneMessages.count) {
-                guard isPaneExpanded else { return }
-                withAnimation(ProMotionSprings.gentle) {
-                    proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+            transcript(proxy)
+                .overlay(alignment: .bottomTrailing) {
+                    if !isNearBottom, store.isProcessing {
+                        CosmoInlineAssistantLatestChip { scrollToBottom(proxy, animated: true) }
+                            .padding(DS.space12)
+                            .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                    }
                 }
-            }
-            .onChange(of: store.paneMessages.last?.content) {
-                // Streaming growth: follow without animating every token —
-                // and never for a COLLAPSED pane (a Cosmo run streaming while
-                // the user reads another tab was scrolling an invisible
-                // transcript per token).
-                guard isPaneExpanded else { return }
-                proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
-            }
-            .onChange(of: store.isProcessing) {
-                guard isPaneExpanded else { return }
-                withAnimation(ProMotionSprings.gentle) {
-                    proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+                .onAppear {
+                    follower.isPaneExpanded = isPaneExpanded
+                    follower.scrollToBottom = { animated in scrollToBottom(proxy, animated: animated) }
                 }
-            }
-            .onChange(of: isPaneExpanded) { _, expanded in
-                // Re-expanding catches up on whatever streamed while collapsed.
-                guard expanded else { return }
-                proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
-            }
+                .onChange(of: store.paneMessages.count) {
+                    // The user's own ask always lands in view; replies and
+                    // receipts only follow while the reader is already at the end.
+                    let trigger: CosmoInlineAssistantScrollFollowPolicy.Trigger =
+                        store.paneMessages.last?.role == .user ? .userSubmitted : .transcriptGrew
+                    follower.follow(trigger, animated: true)
+                }
+                .onChange(of: store.isProcessing) {
+                    follower.follow(.runStateChanged, animated: true)
+                }
+                .onChange(of: isPaneExpanded) { _, expanded in
+                    // Never scroll a COLLAPSED pane (a Cosmo run streaming while
+                    // the user reads another tab was scrolling an invisible
+                    // transcript); re-expanding catches up on what streamed.
+                    follower.isPaneExpanded = expanded
+                    if expanded { scrollToBottom(proxy, animated: false) }
+                }
         }
         // Select→mint: highlighting a concept-shaped phrase in the transcript
         // offers "New concept" / "Add link" when the session is bound to a
         // connection (focus mode, pane, or the Study's Concept Desk).
         .conceptMintPillHost()
+    }
+
+    /// The scroll view with its anchoring policy. A conversation reads from its
+    /// end: opening the pane mid-session lands on the latest exchange, not page
+    /// one (which also keeps the lazy transcript from instantiating every row
+    /// on open). Sticky bottom: while the reader sits at the end, growth keeps
+    /// the end in view; once they scroll up, growth happens beneath them and
+    /// the line they are reading stays put. The old transcript called
+    /// scrollTo(bottom) on EVERY streamed delta — fighting the user's own
+    /// scroll gesture per token was what wedged the window mid-stream.
+    private func transcript(_ proxy: ScrollViewProxy) -> some View {
+        ScrollView {
+            content
+            Color.clear
+                .frame(height: 1)
+                .id(Self.bottomAnchorID)
+        }
+        .defaultScrollAnchor(.bottom, for: .initialOffset)
+        .defaultScrollAnchor(
+            CosmoInlineAssistantScrollFollowPolicy.sizeChangeAnchor(isNearBottom: isNearBottom),
+            for: .sizeChanges
+        )
+        .onScrollGeometryChange(for: Bool.self) { geometry in
+            CosmoInlineAssistantScrollFollowPolicy.isNearBottom(
+                visibleMaxY: geometry.visibleRect.maxY,
+                contentHeight: geometry.contentSize.height
+            )
+        } action: { _, nearBottom in
+            follower.isNearBottom = nearBottom
+            guard isNearBottom != nearBottom else { return }
+            withAnimation(ProMotionSprings.gentle) {
+                isNearBottom = nearBottom
+            }
+        }
+    }
+
+    private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool) {
+        if animated {
+            withAnimation(ProMotionSprings.gentle) {
+                proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+            }
+        } else {
+            proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+        }
     }
 
     @ViewBuilder
@@ -900,8 +944,9 @@ struct CosmoInlineAssistantPaneMessages: View {
             case .assistant:
                 CosmoInlineAssistantPaneAnswerRow(
                     message: message,
-                    isStreaming: store.isStreamingMessage(message.id),
-                    streamingRefs: store.isStreamingMessage(message.id) ? store.currentStreamingSourceRefs : []
+                    streamingAnswer: store.isStreamingMessage(message.id) ? store.streamingAnswer : nil,
+                    streamingRefs: store.isStreamingMessage(message.id) ? store.currentStreamingSourceRefs : [],
+                    follower: follower
                 )
             case .system:
                 CosmoInlineAssistantPaneSectionLabel(text: message.content)
@@ -1251,8 +1296,10 @@ struct CosmoInlineAssistantSkillBadge: View {
 /// sources it didn't cite inline as a quiet "Also read" row underneath.
 private struct CosmoInlineAssistantPaneAnswerRow: View {
     let message: CosmoInlineAssistantPaneMessage
-    let isStreaming: Bool
+    /// Non-nil while this message is still receiving streamed deltas.
+    var streamingAnswer: CosmoInlineAssistantStreamingAnswer? = nil
     var streamingRefs: [CosmoAssistantSourceRef] = []
+    var follower: CosmoInlineAssistantScrollFollower? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space8) {
@@ -1271,57 +1318,94 @@ private struct CosmoInlineAssistantPaneAnswerRow: View {
 
     @ViewBuilder
     private var answerBody: some View {
-        if isStreaming {
-            streamingText
+        if let streamingAnswer {
+            CosmoInlineAssistantStreamingAnswerBody(
+                stream: streamingAnswer,
+                refs: streamingRefs,
+                follower: follower
+            )
         } else {
             CosmoInlineAssistantFinalizedAnswerBody(message: message)
-                // The streaming→rich swap must not animate — same font,
-                // spacing, and measure on both sides keeps it invisible.
+                // The streaming→finalized swap must not animate — the same
+                // renderer, font, and measure on both sides keeps it invisible.
                 .transaction { $0.animation = nil }
         }
     }
+}
 
-    private var streamingText: some View {
-        Text(CosmoAssistantProseParser.streamingDisplayText(for: message.content, sourceRefs: streamingRefs))
-            .font(DS.body)
-            .foregroundStyle(DS.text)
-            .lineSpacing(3)
-            .textSelection(.enabled)
-            .frame(maxWidth: CosmoAssistantProseTextView.readingMeasure, alignment: .leading)
+/// The in-flight answer. Reads the store's @Observable stream buffer, so each
+/// coalesced batch of deltas re-renders THIS view alone — not the transcript,
+/// not the cards around it. Markdown renders live, so bold and lists take
+/// shape as the model writes instead of appearing at the end.
+private struct CosmoInlineAssistantStreamingAnswerBody: View {
+    let stream: CosmoInlineAssistantStreamingAnswer
+    let refs: [CosmoAssistantSourceRef]
+    let follower: CosmoInlineAssistantScrollFollower?
+
+    var body: some View {
+        CosmoAssistantProseTextView(
+            rendered: CosmoAssistantMarkdownRenderer.render(
+                markdown: stream.text,
+                sourceRefs: refs,
+                isStreaming: true,
+                messageID: stream.messageID
+            )
+        )
+        .frame(maxWidth: CosmoAssistantProseTextView.readingMeasure, alignment: .leading)
+        .onChange(of: stream.revision) {
+            follower?.follow(.streamingTick, animated: false)
+        }
     }
 }
 
-/// Finalized answers parse once into prose + pills; the TextKit view renders
-/// pills with the composer's own pill cell, so citations read as mentions.
+/// Finalized answers render once (cached per content + refs + palette) into
+/// Markdown-styled prose with the composer's own pill cells for citations.
 private struct CosmoInlineAssistantFinalizedAnswerBody: View {
     let message: CosmoInlineAssistantPaneMessage
 
-    private var parsed: CosmoAssistantProseParseResult {
-        CosmoAssistantProseParser.parse(answer: message.content, sourceRefs: message.sourceRefs)
-    }
-
     var body: some View {
+        let rendered = CosmoAssistantAnswerRenderCache.shared.rendered(for: message)
         VStack(alignment: .leading, spacing: DS.space8) {
-            if CosmoInlineAssistantMarkdownParser.shouldRenderAsMarkdown(message.content) {
-                CosmoInlineAssistantMarkdownAnswerView(content: message.content)
+            CosmoAssistantProseTextView(rendered: rendered)
+                .frame(maxWidth: CosmoAssistantProseTextView.readingMeasure, alignment: .leading)
 
-                if let refs = message.sourceRefs, !refs.isEmpty {
-                    CosmoInlineAssistantSourceChips(refs: refs, label: "Sources")
-                }
-            } else {
-                let result = parsed
-                CosmoAssistantProseTextView(segments: result.segments)
-                    .frame(maxWidth: CosmoAssistantProseTextView.readingMeasure, alignment: .leading)
-
-                let remainder = (message.sourceRefs ?? []).filter { !result.linkedRefUUIDs.contains($0.uuid) }
-                if !remainder.isEmpty {
-                    CosmoInlineAssistantSourceChips(
-                        refs: remainder,
-                        label: result.linkedRefUUIDs.isEmpty ? "Sources" : "Also read"
-                    )
-                }
+            let remainder = (message.sourceRefs ?? []).filter { !rendered.linkedRefUUIDs.contains($0.uuid) }
+            if !remainder.isEmpty {
+                CosmoInlineAssistantSourceChips(
+                    refs: remainder,
+                    label: rendered.linkedRefUUIDs.isEmpty ? "Sources" : "Also read"
+                )
             }
         }
+    }
+}
+
+/// Appears while a reply streams and the reader has scrolled up: one tap
+/// returns to the live end of the conversation.
+private struct CosmoInlineAssistantLatestChip: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: DS.space4) {
+                Image(systemName: "arrow.down")
+                    .font(DS.caption2.weight(.bold))
+                    .accessibilityHidden(true)
+                Text("Latest")
+                    .font(DS.caption.weight(.semibold))
+            }
+            .foregroundStyle(DS.text)
+            .padding(.horizontal, DS.space10)
+            .padding(.vertical, DS.space6)
+            .background(DS.surfaceElevated, in: Capsule())
+            .overlay(Capsule().strokeBorder(DS.glassBorder, lineWidth: 1))
+            .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .cosmoClickCursor()
+        .help("Jump to the latest reply")
+        .accessibilityLabel("Jump to latest reply")
     }
 }
 
@@ -1469,129 +1553,6 @@ enum CosmoInlineAssistantMarkdownParser {
             || line.hasPrefix(">")
             || bulletItem(from: line) != nil
             || orderedItem(from: line) != nil
-    }
-}
-
-private struct CosmoInlineAssistantMarkdownAnswerView: View {
-    let content: String
-
-    private var blocks: [CosmoInlineAssistantMarkdownBlock] {
-        CosmoInlineAssistantMarkdownParser.parse(content)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: DS.space10) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                CosmoInlineAssistantMarkdownBlockView(block: block)
-            }
-        }
-        .frame(maxWidth: CosmoAssistantProseTextView.readingMeasure, alignment: .leading)
-        .textSelection(.enabled)
-    }
-}
-
-private struct CosmoInlineAssistantMarkdownBlockView: View {
-    let block: CosmoInlineAssistantMarkdownBlock
-
-    var body: some View {
-        switch block {
-        case .heading(let level, let text):
-            Text(.init(text))
-                .font(headingFont(level: level))
-                .foregroundStyle(DS.text)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.bottom, level == 3 ? DS.space2 : DS.space4)
-        case .paragraph(let text):
-            Text(.init(text))
-                .font(DS.body)
-                .foregroundStyle(paragraphStyle(for: text))
-                .lineSpacing(4)
-                .fixedSize(horizontal: false, vertical: true)
-        case .bullet(let items):
-            VStack(alignment: .leading, spacing: DS.space6) {
-                ForEach(Array(items.enumerated()), id: \.offset) { _, item in
-                    HStack(alignment: .firstTextBaseline, spacing: DS.space8) {
-                        Circle()
-                            .fill(DS.accent)
-                            .frame(width: 5, height: 5)
-                        Text(.init(item))
-                            .font(DS.body)
-                            .foregroundStyle(DS.text)
-                            .lineSpacing(4)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-            }
-        case .ordered(let items):
-            VStack(alignment: .leading, spacing: DS.space6) {
-                ForEach(Array(items.enumerated()), id: \.offset) { index, item in
-                    HStack(alignment: .top, spacing: DS.space8) {
-                        Text("\(index + 1).")
-                            .font(DS.caption.weight(.semibold))
-                            .monospacedDigit()
-                            .foregroundStyle(DS.accent)
-                            .frame(width: 22, alignment: .trailing)
-                        Text(.init(item))
-                            .font(DS.body)
-                            .foregroundStyle(DS.text)
-                            .lineSpacing(4)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-            }
-        case .quote(let text):
-            HStack(alignment: .top, spacing: DS.space10) {
-                Capsule()
-                    .fill(DS.accent.opacity(0.45))
-                    .frame(width: 3)
-                Text(.init(text))
-                    .font(DS.callout)
-                    .foregroundStyle(DS.text)
-                    .lineSpacing(4)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(.horizontal, DS.space12)
-            .padding(.vertical, DS.space10)
-            .background(DS.glassSectionFill, in: .rect(cornerRadius: 12, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(DS.glassBorder.opacity(0.7), lineWidth: 1)
-            }
-        case .code(let code):
-            ScrollView(.horizontal, showsIndicators: false) {
-                Text(code.isEmpty ? " " : code)
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(DS.text)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(DS.space12)
-            }
-            .background(DS.glassSectionFill, in: .rect(cornerRadius: 12, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(DS.glassBorder.opacity(0.7), lineWidth: 1)
-            }
-        case .receipt(let text):
-            Text(text)
-                .font(DS.caption)
-                .foregroundStyle(DS.textMuted)
-                .monospacedDigit()
-                .padding(.top, DS.space2)
-        }
-    }
-
-    private func headingFont(level: Int) -> Font {
-        switch level {
-        case 1:
-            DS.title2
-        case 2:
-            DS.title3.weight(.semibold)
-        default:
-            DS.headline
-        }
-    }
-
-    private func paragraphStyle(for text: String) -> Color {
-        text.hasPrefix("Current:") ? DS.textSecondary : DS.text
     }
 }
 
@@ -1824,7 +1785,7 @@ private struct CosmoInlineAssistantPaneConceptReceiptCard: View {
             }
             ForEach(orphans) { orphan in
                 HStack(spacing: DS.space8) {
-                    Text(orphan.summary)
+                    Text(cosmoInlineMarkdown: orphan.summary)
                         .font(DS.caption)
                         .foregroundStyle(DS.textSecondary)
                         .lineLimit(1)
@@ -1857,9 +1818,7 @@ private struct CosmoPaneOrphanDismissButton: View {
         }
         .buttonStyle(.plain)
         .cosmoClickCursor()
-        .onHover { hovering in
-            withAnimation(ProMotionSprings.snappy) { isHovered = hovering }
-        }
+        .cosmoHover(ProMotionSprings.snappy) { isHovered = $0 }
         .help("Dismiss this capture")
         .accessibilityLabel("Dismiss capture")
     }
@@ -1982,7 +1941,7 @@ private struct CosmoInlineAssistantPaneProposalCard: View {
 
     private var expandedDiff: some View {
         VStack(alignment: .leading, spacing: DS.space12) {
-            Text(proposal.summary)
+            Text(cosmoInlineMarkdown: proposal.summary)
                 .font(DS.subheadline)
                 .foregroundStyle(DS.textSecondary)
 
@@ -2076,7 +2035,7 @@ private struct CosmoInlineAssistantPaneCanvasPlanCard: View {
                         .foregroundStyle(DS.textMuted)
                         .frame(width: 14)
                         .accessibilityHidden(true)
-                    Text(operation.summary)
+                    Text(cosmoInlineMarkdown: operation.summary)
                         .font(DS.caption)
                         .foregroundStyle(DS.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)

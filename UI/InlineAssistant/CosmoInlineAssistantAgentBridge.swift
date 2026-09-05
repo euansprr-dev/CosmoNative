@@ -159,11 +159,11 @@ struct CosmoInlineAssistantAgentBridge {
         if !preparedRequest.pipelineSteps.isEmpty {
             response = await Self.runPipeline(preparedRequest, route: route, store: store)
         } else {
-            // Chatty answer routes (concept development, brainstorms) run
-            // Sonnet 5 at medium effort — roughly Sonnet 4.6 at high, the
-            // pre-upgrade daily-driver bar — because thinking bills as output.
-            // Action/edit routes and the escalation retry below never set the
-            // scope: exact-match splicing keeps full effort.
+            // Chatty answer routes (concept development, brainstorms) run the
+            // daily driver at medium effort (GPT-5.6's own default; on Sonnet 5
+            // it was roughly Sonnet 4.6 at high) because reasoning bills as
+            // output. Action/edit routes and the escalation retry below never
+            // set the scope: exact-match splicing keeps the provider default.
             let scopedEffort: String? = route == .action ? nil : "medium"
             (response, _) = await LLMEffortScope.$effort.withValue(scopedEffort) {
                 await CosmoAgentService.shared.processMessage(
@@ -204,7 +204,7 @@ struct CosmoInlineAssistantAgentBridge {
            store.proposals.count == proposalCount,
            executor.workspaceEditValidationRejections >= 2 {
             let escalationTier: AgentModelTier = preparedRequest.tierOverride == .sensor
-                ? .sonnet5
+                ? CosmoInlineAssistantRequestShape.defaultModelTier
                 : (preparedRequest.tierOverride ?? CosmoInlineAssistantRequestShape.defaultModelTier)
             print("[AGENT-PERF] inline validation escalation → \(escalationTier) after \(executor.workspaceEditValidationRejections) validation rejections")
             store.receiveToolActivity(.started(

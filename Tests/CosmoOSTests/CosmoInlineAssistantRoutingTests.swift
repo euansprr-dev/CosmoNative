@@ -403,16 +403,19 @@ final class CosmoInlineAssistantRoutingTests: XCTestCase {
         XCTAssertEqual(request.tierOverride, .strategist)
     }
 
-    func testDailyDriverModelResolvesToDirectAnthropicSonnet5() {
-        XCTAssertEqual(CosmoAgentService.defaultModelTier(for: .query), .sonnet5)
-        XCTAssertEqual(AgentModelTier.sonnet5.modelId, "anthropic/claude-sonnet-5")
+    func testDailyDriverModelResolvesToGPT56SolViaOpenRouter() {
+        XCTAssertEqual(CosmoAgentService.defaultModelTier(for: .query), .gpt56Sol)
+        XCTAssertEqual(AgentModelTier.gpt56Sol.modelId, "openai/gpt-5.6-sol")
+        XCTAssertEqual(
+            ModelRoutingLLMProvider.route(model: AgentModelTier.gpt56Sol.modelId, hasAnthropic: true, hasOpenRouter: true),
+            .openRouter
+        )
+        // The strategist alias rides the daily driver — every built-in skill
+        // that pins it follows the default.
+        XCTAssertEqual(AgentModelTier.strategist.modelId, AgentModelTier.gpt56Sol.modelId)
+        // Sonnet 5 stays an explicit pick with its direct-API mapping intact.
         XCTAssertEqual(
             AnthropicProvider.nativeModelID(AgentModelTier.sonnet5.modelId),
-            "claude-sonnet-5"
-        )
-        // The strategist tier rides Sonnet 5 too — its mapping must hold.
-        XCTAssertEqual(
-            AnthropicProvider.nativeModelID(AgentModelTier.strategist.modelId),
             "claude-sonnet-5"
         )
     }

@@ -22,6 +22,9 @@ struct WorkspaceSnapshot: Codable, Equatable {
         case discover
         case swipeFile
         case ideas
+        case pipeline
+        case clients
+        case client(id: String)
         case thinkspace(id: String)
     }
 
@@ -126,6 +129,9 @@ struct WorkspaceSnapshot: Codable, Equatable {
         case .discover: return .discover(section: .discover)
         case .swipeFile: return .swipeFile(section: .home)
         case .ideas: return .ideas
+        case .pipeline: return .pipeline
+        case .clients: return .clients
+        case .client(let id): return .client(id: id)
         case .thinkspace(let id): return .thinkspace(id: id)
         }
     }
@@ -159,6 +165,9 @@ extension WorkspaceSnapshot.Destination {
         case .discover: self = .discover
         case .swipeFile: self = .swipeFile
         case .ideas: self = .ideas
+        case .pipeline: self = .pipeline
+        case .clients: self = .clients
+        case .client(let id): self = .client(id: id)
         case .thinkspace(let id): self = .thinkspace(id: id)
         }
     }
@@ -171,6 +180,8 @@ extension WorkspaceSnapshot.Destination {
         case .discover: return "safari"
         case .swipeFile: return "bookmark"
         case .ideas: return "lightbulb"
+        case .pipeline: return "rectangle.split.3x1"
+        case .clients, .client: return "person.crop.circle"
         case .thinkspace: return "rectangle.3.group"
         }
     }

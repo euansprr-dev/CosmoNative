@@ -12,7 +12,9 @@ struct CanvasSelectionInspector: View {
     var onAIAssist: (() -> Void)?
     var onSave: (() -> Void)?
     var onDuplicate: (() -> Void)?
-    // Two-tier removal: out of this thinkspace, or delete outright.
+    // Three honest removal tiers: off the canvas (stays a member, waits in
+    // the tray), out of this space, or delete outright.
+    var onRemoveFromCanvas: (() -> Void)?
     var onRemoveFromThinkspace: (() -> Void)?
     var onDelete: (() -> Void)?
 
@@ -379,8 +381,21 @@ struct CanvasSelectionInspector: View {
     @ViewBuilder
     private func removalZone() -> some View {
         VStack(spacing: 8) {
+            if currentThinkspaceId != nil, onRemoveFromCanvas != nil {
+                secondaryRemovalButton(
+                    key: "removeFromCanvas",
+                    icon: "rectangle.dashed",
+                    title: "Remove from canvas",
+                    help: "Takes it off the canvas. It stays in this space's library and waits in the tray."
+                ) { onRemoveFromCanvas?() }
+            }
             if currentThinkspaceId != nil, onRemoveFromThinkspace != nil {
-                removeFromThinkspaceButton
+                secondaryRemovalButton(
+                    key: "removeFromThinkspace",
+                    icon: "square.stack.3d.up.slash",
+                    title: "Remove from space",
+                    help: "Remove from this space. Stays in the database and any other spaces."
+                ) { onRemoveFromThinkspace?() }
             }
             if onDelete != nil {
                 deleteButton
@@ -388,17 +403,23 @@ struct CanvasSelectionInspector: View {
         }
     }
 
-    private var removeFromThinkspaceButton: some View {
-        let isHovered = hoveredAction == "removeFromThinkspace"
+    private func secondaryRemovalButton(
+        key: String,
+        icon: String,
+        title: String,
+        help: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        let isHovered = hoveredAction == key
         return Button {
-            onRemoveFromThinkspace?()
+            action()
             onClose()
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: "square.stack.3d.up.slash")
-                    .font(.system(size: 11, weight: .medium))
-                Text("Remove from thinkspace")
-                    .font(.system(size: 12, weight: .medium))
+                Image(systemName: icon)
+                    .font(DS.caption2.weight(.medium))
+                Text(title)
+                    .font(DS.caption.weight(.medium))
                     .lineLimit(1)
             }
             .foregroundStyle(isHovered ? DS.text : DS.text.opacity(0.78))
@@ -415,11 +436,11 @@ struct CanvasSelectionInspector: View {
             .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
         }
         .buttonStyle(.plain)
-        .help("Remove from this thinkspace. Stays in the database and any other thinkspaces.")
-        .accessibilityLabel("Remove from thinkspace")
+        .help(help)
+        .accessibilityLabel(title)
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.12)) {
-                hoveredAction = hovering ? "removeFromThinkspace" : nil
+                hoveredAction = hovering ? key : nil
             }
         }
     }

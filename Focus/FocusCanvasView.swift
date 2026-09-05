@@ -260,8 +260,11 @@ struct FocusCanvasView: View {
             DeepDiveOverviewView(atom: atom, onClose: closeFocusMode)
                 .ignoresSafeArea()
         case .inquirySession:
-            InquiryWorkspaceView(sessionAtom: atom, onClose: closeFocusMode)
-                .ignoresSafeArea()
+            if atom.isSwipeLab {
+                SwipeLabFocusModeView(atom: atom, onClose: closeFocusMode)
+            } else {
+                InquiryWorkspaceView(sessionAtom: atom, onClose: closeFocusMode).ignoresSafeArea()
+            }
         case .file:
             FilePortalPreviewSurface(atom: atom, onClose: closeFocusMode)
                 .ignoresSafeArea()

@@ -15,6 +15,7 @@ struct ContentContextPanel: View {
     let isVisible: Bool
 
     @State private var sourceIdea: Atom?
+    @State private var originatingMaterials: [Atom] = []
     @State private var matchedSwipeAtoms: [Atom] = []
     @State private var inheritedConnectionAtoms: [Atom] = []
     @State private var selectedFramework: String?
@@ -31,7 +32,7 @@ struct ContentContextPanel: View {
     /// Whether any content section has data to display.
     /// When false, the panel collapses to zero width to give more space to the editor.
     private var hasAnyContent: Bool {
-        sourceIdea != nil
+        sourceIdea != nil || !originatingMaterials.isEmpty
         || !matchedSwipeAtoms.isEmpty
         || !inheritedConnectionAtoms.isEmpty
         || (selectedFramework != nil && !selectedFramework!.isEmpty)
@@ -62,6 +63,7 @@ struct ContentContextPanel: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 20) {
                             sourceIdeaSection
+                            originatingMaterialsSection
                             matchedSwipesSection
                             inheritedConnectionsSection
                             frameworkSection
@@ -162,6 +164,30 @@ struct ContentContextPanel: View {
         if let idea = sourceIdea {
             sectionHeader(title: "SOURCE IDEA", icon: "lightbulb.fill")
             sourceIdeaCard(idea)
+        }
+    }
+
+    @ViewBuilder
+    private var originatingMaterialsSection: some View {
+        if !originatingMaterials.isEmpty {
+            sectionHeader(title: "ORIGINATING WORK", icon: "books.vertical")
+            VStack(alignment: .leading, spacing: DS.space8) {
+                ForEach(originatingMaterials, id: \.uuid) { source in
+                    Button {
+                        if source.type == .thinkspace {
+                            NotificationCenter.default.post(name: CosmoNotification.Navigation.navigateToThinkspaceById,
+                                                            object: nil, userInfo: ["thinkspaceId": source.uuid])
+                        } else {
+                            NotificationCenter.default.post(name: CosmoNotification.Navigation.openBlockInFocusMode,
+                                                            object: nil, userInfo: ["atomUUID": source.uuid])
+                        }
+                    } label: {
+                        Label(source.title ?? "Untitled", systemImage: source.type.iconName)
+                            .font(DS.callout).foregroundStyle(DS.textSecondary).lineLimit(2)
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    }.buttonStyle(.borderless).help("Return to \(source.title ?? "source")")
+                }
+            }
         }
     }
 
@@ -765,6 +791,8 @@ struct ContentContextPanel: View {
     private func loadInheritedContext() async {
         guard let metadata = atom.metadataValue(as: ContentAtomMetadata.self) else { return }
 
+        let sourceIDs = atom.linksList.filter { $0.type == "source" }.map(\.uuid)
+        originatingMaterials = (try? await AtomRepository.shared.fetchBatch(uuids: sourceIDs)) ?? []
         // Load source idea
         if let ideaUUID = metadata.sourceIdeaUUID {
             sourceIdea = try? await AtomRepository.shared.fetch(uuid: ideaUUID)

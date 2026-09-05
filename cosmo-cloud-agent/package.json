@@ -11,7 +11,9 @@
     "test:capture-lanes": "tsx tests/captureLane.test.ts",
     "test:swipe-worker": "SUPABASE_SERVICE_ROLE_KEY=test-dummy COSMO_USER_ID=test-user tsx tests/swipeWorker.test.ts",
     "test:niche-matcher": "SUPABASE_SERVICE_ROLE_KEY=test-dummy COSMO_USER_ID=test-user tsx tests/nicheMatcher.test.ts",
-    "test:slide-text": "SUPABASE_SERVICE_ROLE_KEY=test-dummy COSMO_USER_ID=test-user tsx tests/slideText.test.ts"
+    "test:slide-text": "SUPABASE_SERVICE_ROLE_KEY=test-dummy COSMO_USER_ID=test-user tsx tests/slideText.test.ts",
+    "test:llm-providers": "SUPABASE_SERVICE_ROLE_KEY=test-dummy COSMO_USER_ID=test-user OPENROUTER_API_KEY=test-or GEMINI_API_KEY=test-gemini ANTHROPIC_API_KEY=test-anthropic tsx tests/llmProviders.test.ts",
+    "test:media": "SUPABASE_SERVICE_ROLE_KEY=test-dummy COSMO_USER_ID=test-user tsx tests/media.test.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",

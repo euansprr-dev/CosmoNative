@@ -176,7 +176,8 @@ final class NoteStructureApplyService {
             block,
             documentType: "home",
             documentId: 0,
-            thinkspaceId: plan.targetThinkspaceUUID.uuidString
+            thinkspaceId: plan.targetThinkspaceUUID.uuidString,
+            isPlaced: false
         )
         try await database.asyncWrite { db in
             try record.save(db)

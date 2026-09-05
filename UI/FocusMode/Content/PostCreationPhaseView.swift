@@ -39,10 +39,10 @@ struct PostCreationPhaseView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear(perform: loadPersistedSchedulingFields)
-        .onChange(of: scheduledDate) { _, newValue in
-            guard didLoadPersistedFields else { return }
-            persistMetadataValue("scheduledDate", ISO8601.string(from: newValue))
-        }
+        // The picker is a draft until "Schedule" confirms it through
+        // `ContentQueueLoader.setSchedule` (the ONE schedule writer). The old
+        // per-keystroke `scheduledDate` write is retired: that key is now read
+        // only as a legacy fallback, so an unconfirmed pick must never land in it.
         .onChange(of: postURL) { _, newValue in
             guard didLoadPersistedFields else { return }
             let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -54,7 +54,11 @@ struct PostCreationPhaseView: View {
     /// lived only in transient @State and were lost on every view dismissal.
     private func loadPersistedSchedulingFields() {
         if let dict = atom.metadataDict {
-            if let dateStr = dict["scheduledDate"] as? String, let date = ISO8601.date(from: dateStr) {
+            // The confirmed schedule (`scheduledAt`) seeds the picker; the
+            // legacy `scheduledDate` key is honoured for rows scheduled before
+            // the writers converged.
+            let stored = (dict["scheduledAt"] as? String) ?? (dict["scheduledDate"] as? String)
+            if let dateStr = stored, let date = ISO8601.date(from: dateStr) {
                 scheduledDate = date
             }
             if let url = dict["postUrl"] as? String, !url.isEmpty {
@@ -769,86 +773,78 @@ struct PostCreationPhaseView: View {
         )
     }
 
-    /// Persist the scheduled date and remain in the scheduled phase.
+    /// Schedule onto the picked date through the ONE schedule writer: it sets
+    /// `scheduledAt`, moves the phase to `.scheduled` (remembering where the
+    /// piece came from), mirrors `status`, and registers ⌘Z.
     private func scheduleContent() {
         Task {
-            do {
-                let dateString = ISO8601.string(from: scheduledDate)
-                _ = try await AtomRepository.shared.update(uuid: atom.uuid) { fresh in
-                    var dict = fresh.metadataDict ?? [:]
-                    dict["scheduledDate"] = dateString
-                    dict["phase"] = ContentPhase.scheduled.rawValue
-                    if JSONSerialization.isValidJSONObject(dict),
-                       let data = try? JSONSerialization.data(withJSONObject: dict),
-                       let str = String(data: data, encoding: .utf8) {
-                        fresh.metadata = str
-                    }
-                }
-                await MainActor.run { notifyPhaseChanged() }
-            } catch {
-                PersistenceHealth.note(.writeFailure, context: "PostCreationPhaseView.schedule(\(atom.uuid.prefix(8)))", detail: error.localizedDescription)
-            }
+            await ContentQueueLoader.setSchedule(scheduledDate, status: "scheduled", for: atom.uuid)
+            await MainActor.run { notifyPhaseChanged() }
         }
     }
 
+    /// Publish = one `recordPublish`: the `.contentPublish` atom, the phase
+    /// landing on Published, and the publish record the calendar plots.
+    /// Both branches record; the parent callback then only re-syncs its
+    /// display phase (its `setPhase` is a no-op on an already-published piece).
     private func publishNow() {
         let trimmedURL = postURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let advance = onAdvancePhase {
-            // Persist the post URL before the parent advances the phase so the
-            // publish record's source metadata carries it.
-            if !trimmedURL.isEmpty {
-                persistMetadataValue("postUrl", trimmedURL)
-            }
-            advance(.published)
-        } else {
-            Task {
-                do {
-                    let service = ContentPipelineService()
-                    let wasScheduled = atom.metadataDict?["scheduledDate"] != nil
-                    try await service.recordPublish(
-                        contentUUID: atom.uuid,
-                        platform: atom.metadataValue(as: ContentAtomMetadata.self)?.platform ?? .twitter,
-                        postId: UUID().uuidString,
-                        postUrl: trimmedURL.isEmpty ? nil : trimmedURL,
-                        wasScheduled: wasScheduled
-                    )
-                    await MainActor.run { notifyPhaseChanged() }
-                } catch {
-                    print("PostCreationPhaseView: publish failed: \(error)")
-                    PersistenceHealth.note(.writeFailure, context: "PostCreationPhaseView.publish(\(atom.uuid.prefix(8)))", detail: error.localizedDescription)
+        // Persist the post URL before the record is minted so the publish
+        // record's source metadata carries it.
+        if !trimmedURL.isEmpty {
+            persistMetadataValue("postUrl", trimmedURL)
+        }
+        Task {
+            do {
+                let service = ContentPipelineService()
+                let dict = atom.metadataDict ?? [:]
+                let wasScheduled = dict["scheduledAt"] != nil
+                    || dict["scheduledDate"] != nil
+                    || ContentPipelineService.currentPhase(of: atom) == .scheduled
+                try await service.recordPublish(
+                    contentUUID: atom.uuid,
+                    platform: atom.metadataValue(as: ContentAtomMetadata.self)?.platform ?? .twitter,
+                    postId: UUID().uuidString,
+                    postUrl: trimmedURL.isEmpty ? nil : trimmedURL,
+                    wasScheduled: wasScheduled
+                )
+                await MainActor.run {
+                    if let advance = onAdvancePhase {
+                        advance(.published)
+                    } else {
+                        notifyPhaseChanged()
+                    }
                 }
+            } catch {
+                print("PostCreationPhaseView: publish failed: \(error)")
+                PersistenceHealth.note(.writeFailure, context: "PostCreationPhaseView.publish(\(atom.uuid.prefix(8)))", detail: error.localizedDescription)
             }
         }
     }
 
     private func advanceToAnalyzing() {
-        if let advance = onAdvancePhase {
-            advance(.analyzing)
-        } else {
-            Task {
-                do {
-                    let service = ContentPipelineService()
-                    try await service.advancePhase(contentUUID: atom.uuid, notes: "Moved to analyzing")
-                    await MainActor.run { notifyPhaseChanged() }
-                } catch {
-                    print("PostCreationPhaseView: advance failed: \(error)")
-                }
-            }
-        }
+        movePhase(to: .analyzing, notes: "Moved to analyzing")
     }
 
     private func advanceToArchived() {
+        movePhase(to: .archived, notes: "Archived")
+    }
+
+    /// The parent (Content focus) owns the write when it lends a callback —
+    /// its `setPhase` refetches and re-syncs the step UI. Standalone, write
+    /// through `setPhase` directly (either direction, honest record, ⌘Z).
+    private func movePhase(to phase: ContentPhase, notes: String) {
         if let advance = onAdvancePhase {
-            advance(.archived)
-        } else {
-            Task {
-                do {
-                    let service = ContentPipelineService()
-                    try await service.advancePhase(contentUUID: atom.uuid, notes: "Archived")
-                    await MainActor.run { notifyPhaseChanged() }
-                } catch {
-                    print("PostCreationPhaseView: archive failed: \(error)")
-                }
+            advance(phase)
+            return
+        }
+        Task {
+            do {
+                let service = ContentPipelineService()
+                try await service.setPhase(contentUUID: atom.uuid, to: phase, notes: notes)
+                await MainActor.run { notifyPhaseChanged() }
+            } catch {
+                print("PostCreationPhaseView: move to \(phase.displayName) failed: \(error)")
             }
         }
     }

@@ -171,8 +171,10 @@ actor RecallStore {
         limit: Int,
         entityTypes: Set<String>? = nil,
         minSimilarity: Float = 0,
-        roles: Set<String>? = nil
+        roles: Set<String>? = nil,
+        entityUuids: Set<String>? = nil
     ) async -> [RecallVectorHit] {
+        if entityUuids?.isEmpty == true { return [] }
         let vectors = await loadedCache()
         guard !vectors.isEmpty, !query.isEmpty else { return [] }
 
@@ -180,6 +182,7 @@ actor RecallStore {
         scored.reserveCapacity(min(vectors.count, 512))
 
         for (index, item) in vectors.enumerated() {
+            if let entityUuids, !entityUuids.contains(item.entityUuid) { continue }
             if let entityTypes, !entityTypes.contains(item.entityType) { continue }
             if let roles {
                 guard let role = item.role, roles.contains(role) else { continue }

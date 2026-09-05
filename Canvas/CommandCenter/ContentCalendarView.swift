@@ -41,73 +41,86 @@ struct ContentQueueItem: Identifiable, Equatable, Sendable {
     }
 }
 
+extension ContentQueueItem {
+    /// Adapter over the Pipeline loader's row — the rails and the calendar
+    /// read exactly the rows the board does (and inherit its no-row-cap fix).
+    /// `status` keeps the queue's historical rule: the stored lens value,
+    /// else "published" for a shipped phase, else "draft".
+    init(item: PipelineContentItem) {
+        self.init(
+            atom: item.atom,
+            scheduledAt: item.scheduledAt,
+            status: item.isShipped ? "published" : (item.scheduledAt == nil ? "draft" : "scheduled"),
+            clientName: item.clientName,
+            clientUUID: item.clientUUID
+        )
+    }
+}
+
 // MARK: - Loader
 
 enum ContentQueueLoader {
-    /// All live content atoms with their queue-facing fields decoded.
+    /// All live content atoms with their queue-facing fields decoded — a thin
+    /// adapter over `ContentPipelineLoader` (one loader, no 300-row cap).
     static func load() async -> [ContentQueueItem] {
-        let atoms: [Atom] = (try? await CosmoDatabase.shared.asyncRead { db in
-            try Atom
-                .filter(Column("type") == AtomType.content.rawValue)
-                .filter(Column("is_deleted") == false)
-                .order(Column("updated_at").desc)
-                .limit(300)
-                .fetchAll(db)
-        }) ?? []
-
-        var clientNames: [String: String] = [:]
-        var items: [ContentQueueItem] = []
-        for atom in atoms {
-            let lens = atom.metadataValue(as: ContentMetadata.self)
-            let pipeline = atom.metadataValue(as: ContentAtomMetadata.self)
-            let scheduled = lens?.scheduledAt.flatMap { ISO8601.date(from: $0) }
-            let status = lens?.status
-                ?? (pipeline?.phase == .published ? "published" : "draft")
-
-            var clientName: String?
-            if let clientUUID = pipeline?.clientProfileUUID {
-                if let cached = clientNames[clientUUID] {
-                    clientName = cached
-                } else if let client = try? await AtomRepository.shared.fetch(uuid: clientUUID) {
-                    clientName = client.title
-                    clientNames[clientUUID] = client.title ?? ""
-                }
-            }
-
-            items.append(ContentQueueItem(
-                atom: atom,
-                scheduledAt: scheduled,
-                status: status,
-                clientName: clientName?.isEmpty == false ? clientName : nil,
-                clientUUID: pipeline?.clientProfileUUID
-            ))
-        }
-        return items
+        await ContentPipelineLoader.load(scope: .all).map(ContentQueueItem.init(item:))
     }
 
-    /// Key-merge write: only the queue's own keys change; every other
-    /// metadata key (pipeline phase, inherited context, …) survives intact.
-    static func setSchedule(_ date: Date?, status: String?, for atomUuid: String) async {
-        guard let atom = try? await AtomRepository.shared.fetch(uuid: atomUuid) else { return }
-        var dict: [String: Any] = [:]
-        if let metadata = atom.metadata,
-           let data = metadata.data(using: .utf8),
-           let decoded = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            dict = decoded
+    /// A publication plan changes dates, never editorial readiness or work sessions.
+    /// Older scheduled phases are normalized once without inferring that a draft is ready.
+    @discardableResult
+    static func setSchedule(
+        _ date: Date?, status: String?, for atomUuid: String, registerUndo: Bool = true
+    ) async -> Bool {
+        do {
+            let result = try await CosmoDatabase.shared.asyncWrite { db -> (Atom, Atom) in
+                guard let fresh = try Atom.filter(Column("uuid") == atomUuid)
+                    .filter(Column("type") == AtomType.content.rawValue)
+                    .filter(Column("is_deleted") == false).fetchOne(db) else {
+                    throw ContentPipelineError.contentNotFound
+                }
+                guard fresh.metadata == nil || fresh.metadataDict != nil else {
+                    throw ContentPipelineError.invalidMetadata
+                }
+                var dict = fresh.metadataDict ?? [:]
+                let phase = ContentPipelineService.currentPhase(of: fresh) ?? .draft
+                if let date { dict["scheduledAt"] = ISO8601.string(from: date) }
+                else { dict.removeValue(forKey: "scheduledAt") }
+                dict.removeValue(forKey: "scheduledDate")
+                if phase == .scheduled {
+                    let prior = (dict["phaseBeforeSchedule"] as? String).flatMap(ContentPhase.init(rawValue:))
+                    dict["phase"] = (prior == .ideation || prior == .polish ? prior! : .draft).rawValue
+                    dict.removeValue(forKey: "phaseBeforeSchedule")
+                }
+                dict["status"] = phase.isShipped ? "published" : (date == nil ? "draft" : "scheduled")
+                var updated = fresh
+                updated.metadata = String(decoding: try JSONSerialization.data(withJSONObject: dict), as: UTF8.self)
+                updated.updatedAt = ISO8601.string(from: Date())
+                updated.localVersion += 1
+                try updated.update(db)
+                try db.execute(sql: "UPDATE atoms SET _local_pending = 1 WHERE uuid = ?", arguments: [atomUuid])
+                return (fresh, updated)
+            }
+            await ChangeTracker.shared.trackUpdate(table: "atoms", entity: result.1, skipVersionIncrement: true)
+            if registerUndo {
+                let keys: [String] = ["scheduledAt", "scheduledDate", "status"] +
+                    (ContentPipelineService.currentPhase(of: result.0) == .scheduled ? ["phase", "phaseBeforeSchedule"] : [])
+                let before = ContentMetadataSnapshot(atom: result.0, keys: keys)
+                let after = ContentMetadataSnapshot(atom: result.1, keys: keys)
+                await MainActor.run {
+                    CosmoUndoManager.shared.register(InlineUndoAction(
+                        actionDescription: date == nil ? "Remove publication date" : "Plan publication",
+                        undo: { _ = await before.restore() },
+                        redo: { _ = await after.restore() }
+                    ))
+                }
+            }
+            await ContentPipelineService.notifyCalendar()
+            return true
+        } catch {
+            PersistenceHealth.note(.writeFailure, context: "ContentQueueLoader.setSchedule", detail: error.localizedDescription)
+            return false
         }
-        if let date {
-            dict["scheduledAt"] = ISO8601.string(from: date)
-        } else {
-            dict.removeValue(forKey: "scheduledAt")
-        }
-        if let status {
-            dict["status"] = status
-        }
-        guard let merged = try? JSONSerialization.data(withJSONObject: dict),
-              let json = String(data: merged, encoding: .utf8) else { return }
-        var updated = atom
-        updated.metadata = json
-        _ = try? await AtomRepository.shared.update(updated)
     }
 }
 
@@ -166,32 +179,21 @@ private extension String {
 // MARK: - Calendar Actions
 
 enum ContentCalendarActions {
-    /// Dropping an idea on a day promotes it: a content draft is born
-    /// carrying the idea's client, scheduled onto that day, with lineage in
-    /// both directions (sourceIdeaUUID ↔ contentUUIDs). All writes key-merge.
-    /// The idea itself stays on the shelf — seeds are never consumed.
+    /// Dropping an idea on a day promotes it — the full Begin Writing
+    /// promotion (hooks, swipes, concepts, client, session retarget) through
+    /// `IdeaPromotionService`, scheduled onto that day. The idea stays on the
+    /// shelf with its lineage — seeds are never consumed.
     static func promoteIdea(uuid: String, to day: Date) async -> Bool {
-        guard let idea = try? await AtomRepository.shared.fetch(uuid: uuid),
-              idea.type == .idea else { return false }
-        let ideaMeta = idea.metadataValue(as: IdeaMetadata.self)
-
-        guard let content = try? await ContentPipelineService().createContent(
-            title: idea.title?.isEmpty == false ? idea.title! : "Untitled idea",
-            clientUUID: ideaMeta?.clientUUID
-        ) else { return false }
-
-        struct LineageOverlay: Encodable { var sourceIdeaUUID: String }
-        let linked = content.mergingMetadataKeys(LineageOverlay(sourceIdeaUUID: idea.uuid))
-        _ = try? await AtomRepository.shared.update(linked)
-
-        await ContentQueueLoader.setSchedule(day, status: "scheduled", for: content.uuid)
-
-        struct IdeaOverlay: Encodable { var contentUUIDs: [String] }
-        var contentUUIDs = ideaMeta?.contentUUIDs ?? []
-        contentUUIDs.append(content.uuid)
-        let ideaUpdated = idea.mergingMetadataKeys(IdeaOverlay(contentUUIDs: contentUUIDs))
-        _ = try? await AtomRepository.shared.update(ideaUpdated)
-        return true
+        do {
+            _ = try await IdeaPromotionService.promote(
+                ideaUUID: uuid,
+                options: .init(refreshInsightIfStale: false, scheduleOn: day)
+            )
+            return true
+        } catch {
+            print("ContentCalendarActions.promoteIdea failed: \(error)")
+            return false
+        }
     }
 
     static func handleDrop(_ payloads: [String], on day: Date) async -> Bool {
@@ -405,7 +407,12 @@ extension Notification.Name {
 }
 
 struct ContentCalendarView: View {
-    var viewModel: CommandCenterDashboardViewModel
+    /// The month on display — owned by the host (the Pipeline's calendar
+    /// view keeps its own anchor; the dashboard used to lend its own).
+    let anchor: Date
+    /// Everyone, one client, or the unassigned — the Pipeline's scope.
+    var scope: PipelineScope = .all
+    var filters = PipelineFilters()
 
     @State private var items: [ContentQueueItem] = []
     @State private var perfByContent: [String: ContentPerfSnapshot] = [:]
@@ -414,18 +421,24 @@ struct ContentCalendarView: View {
     @State private var selectedDay: Date?
     @State private var perfItem: ContentQueueItem?
     @State private var datePickTarget: ContentQueueItem?
+    @State private var loadError: String?
 
     private let calendar = Calendar.current
     private let columns = Array(repeating: GridItem(.flexible(minimum: 92), spacing: 0), count: 7)
 
     var body: some View {
         VStack(spacing: 0) {
+            if let loadError {
+                HStack { Text(loadError); Spacer(); Button("Retry") { Task { await reload() } } }
+                    .font(DS.callout).foregroundStyle(DS.textSecondary).padding(DS.space12)
+            }
             weekdayHeader
             monthGrid
             Spacer(minLength: 0)
         }
-        .task { await reload() }
-        .onChange(of: viewModel.upcomingAnchorDate) { _, _ in
+        .task(id: scope) { await reload() }
+        .onChange(of: filters) { _, _ in Task { await reload() } }
+        .onChange(of: anchor) { _, _ in
             selectedDay = nil
             Task { await rebuildSnapshot() }
         }
@@ -448,10 +461,21 @@ struct ContentCalendarView: View {
 
     /// Full reload: one DB pass, then one off-main derivation pass.
     private func reload() async {
-        items = await ContentQueueLoader.load()
-        perfByContent = await ContentPerfStore.latestByContent()
-        await rebuildSnapshot()
-        isLoading = false
+        let requestedScope = scope
+        let requestedFilters = filters
+        do {
+            let loaded = try await ContentPipelineLoader.loadChecked(scope: requestedScope, filters: requestedFilters)
+            let perf = await ContentPerfStore.latestByContent()
+            guard requestedScope == scope, requestedFilters == filters, !Task.isCancelled else { return }
+            items = loaded.map(ContentQueueItem.init(item:))
+            perfByContent = perf
+            await rebuildSnapshot()
+            isLoading = false; loadError = nil
+        } catch {
+            guard requestedScope == scope, requestedFilters == filters else { return }
+            loadError = "Couldn't load publication dates. Try again."
+            isLoading = false
+        }
     }
 
     /// Derivation only — month stepping never re-hits the database.
@@ -459,16 +483,18 @@ struct ContentCalendarView: View {
         let inputItems = items
         let inputPerf = perfByContent
         let dates = monthDates
-        snapshot = await Task.detached(priority: .userInitiated) {
+        let built = await Task.detached(priority: .userInitiated) {
             ContentCalendarSnapshot.build(items: inputItems, perf: inputPerf, monthDates: dates)
         }.value
+        guard inputItems == items, dates == monthDates else { return }
+        snapshot = built
     }
 
     // MARK: Grid
 
     private var monthDates: [Date] {
         CommandCenterCalendarLayout.visibleDates(
-            anchor: viewModel.upcomingAnchorDate,
+            anchor: anchor,
             scope: .month,
             calendar: calendar
         )
@@ -511,7 +537,7 @@ struct ContentCalendarView: View {
     private func dayCell(_ day: Date) -> some View {
         ContentCalendarDayCell(
             day: day,
-            isInDisplayedMonth: calendar.isDate(day, equalTo: viewModel.upcomingAnchorDate, toGranularity: .month),
+            isInDisplayedMonth: calendar.isDate(day, equalTo: anchor, toGranularity: .month),
             entries: snapshot.entries(on: day),
             pulses: snapshot.pulses(on: day),
             dayViews: snapshot.views(on: day),
@@ -550,7 +576,7 @@ struct ContentCalendarView: View {
             Text("Nothing planned this month")
                 .font(DS.headline)
                 .foregroundStyle(DS.text)
-            Text("Drag an idea or draft from the shelf onto a day to lock it in.")
+            Text("Drag a draft onto a day to plan publication. Dropping an idea starts a linked draft for that day.")
                 .font(DS.caption)
                 .foregroundStyle(DS.textMuted)
                 .multilineTextAlignment(.center)

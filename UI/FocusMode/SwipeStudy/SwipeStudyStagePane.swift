@@ -359,11 +359,17 @@ struct SwipeStudyStagePane: View {
         if let copy = SwipeStudyModel.processingCopy(for: atom.processingStatus) {
             let retired = SwipeStudyModel.awaitsManualRetry(atom)
             let stale = SwipeStudyModel.isProcessingStale(atom)
+            // With a transcript banked, "couldn't fetch" is a lie — the fetch
+            // and the vision pass both landed; it is the analysis that failed.
+            let hasTranscript = model.transcriptSlides.contains {
+                !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            } || !model.transcriptSpeechSegments.isEmpty
+            let retiredCopy = hasTranscript ? "Transcript's in — the analysis didn't finish" : copy
             HStack(spacing: DS.space8) {
                 if !retired {
                     ProgressView().controlSize(.small)
                 }
-                Text(retired ? copy : (stale ? "Taking longer than usual" : copy))
+                Text(retired ? retiredCopy : (stale ? "Taking longer than usual" : copy))
                     .font(DS.footnote)
                     .foregroundStyle(DS.textMuted)
                 if retired || stale {

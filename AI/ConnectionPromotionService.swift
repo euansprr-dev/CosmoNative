@@ -1028,7 +1028,7 @@ final class ConnectionPromotionService {
                 "visualMaturity": CanvasObjectVisualMaturity.conceptCardOrConnection.rawValue
             ]) { current, _ in current }
         )
-        let record = CanvasBlockRecord.from(block, documentType: "home", documentId: 0, thinkspaceId: thinkspaceUUID)
+        let record = CanvasBlockRecord.from(block, documentType: "home", documentId: 0, thinkspaceId: thinkspaceUUID, isPlaced: false)
         try await database.asyncWrite { db in
             try record.save(db)
         }

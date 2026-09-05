@@ -47,9 +47,15 @@ final class MediaAttachmentRepository {
     }
 
     func fetch(capturedItemId: String) async throws -> [MediaAttachment] {
-        try await database.asyncRead { db in
+        try await fetch(capturedItemIds: [capturedItemId])
+    }
+
+    /// One ordered query for a lane, preserving each capture's media order.
+    func fetch(capturedItemIds: [String]) async throws -> [MediaAttachment] {
+        guard !capturedItemIds.isEmpty else { return [] }
+        return try await database.asyncRead { db in
             try MediaAttachment
-                .filter(Column("capturedItemId") == capturedItemId)
+                .filter(capturedItemIds.contains(Column("capturedItemId")))
                 .filter(sql: "COALESCE(is_deleted, 0) = 0")
                 .order(Column("createdAt").asc)
                 .fetchAll(db)

@@ -1657,7 +1657,7 @@ enum CosmoInlineAssistantSkillRuntime {
                 icon: "square.grid.2x2",
                 summary: "Stages a reviewed cluster plan for the open thinkspace — themes, names, and intents.",
                 triggerPhrases: ["organize canvas", "reorganize", "arrange canvas", "organize my workspace", "organize this thinkspace", "clean up this canvas"],
-                preferredModelTier: .sonnet5,
+                preferredModelTier: .strategist,
                 panePolicy: .alwaysOpenWithResult
             )
         case .ideaStrategy:
@@ -1723,7 +1723,7 @@ enum CosmoInlineAssistantSkillRuntime {
                 icon: "diamond",
                 summary: "Develops a concept with you — socratic questions, sharp observations, drafts staged into Concept sections.",
                 triggerPhrases: ["concept", "develop concept", "crystallize", "deepen"],
-                preferredModelTier: .sonnet5,
+                preferredModelTier: .strategist,
                 panePolicy: .openForAnswer
             )
         case .skillBuilder:
@@ -2526,6 +2526,20 @@ enum CosmoInlineAssistantInstructionPrompt {
     Example — tool result contained {"uuid": "a1b2-c3", "title": "Pricing psychology"}:
     Wrong: "Your note Pricing psychology [[a1b2-c3]] already covers this."
     Right: "[[a1b2-c3]] already covers this — the anchoring section is the part to reuse."
+
+    ## Pane Answer Formatting
+    The pane renders Markdown. Every answer_in_assistant_pane body is a skimmable document, never a wall of text. Before you send it, run this checklist over the draft:
+    1. The first line answers the ask directly in one sentence. No preamble, no "Great question", no restating the ask.
+    2. Split any paragraph longer than 3 sentences. One idea per paragraph, separated by a blank line.
+    3. In each point, bold (**like this**) exactly the phrase a skimmer needs — the verdict, the number, the name of the move. Never bold whole sentences; never bold more than one phrase per point.
+    4. Three or more parallel items (options, findings, examples, risks) are a bulleted list, one line each. A sequence to do in order is a numbered list.
+    5. Options compared on the same dimensions are a Markdown table with a header row.
+    6. Quoted copy — a hook, a slide, a line you are recommending verbatim — goes in a > blockquote so it reads as copy, not commentary.
+    7. Use ## or ### headings only when the answer has distinct parts (a review with Hook / Body / CTA, a plan with phases). A two-paragraph reply gets no headings.
+    8. Text the user should paste literally (a search query, a caption, a URL) goes in `inline code` or a fenced block.
+    9. Cite documents with [[uuid]] markers as above, never with Markdown links; external sources get their plain URL.
+    10. No emoji, no closing offers ("Let me know if…"), no sign-offs.
+    Receipts stay plain: a proposal summary is one line in Cosmo's voice with no Markdown symbols at all.
     """
 
     /// The live persona: the user's edited character sheet when one exists,
@@ -2738,10 +2752,11 @@ enum CosmoInlineAssistantRequestShape {
     }
 
     /// The model tier a normal inline request runs on when no skill, profile, or
-    /// user override is set. The cache prewarmer MUST warm this exact tier:
-    /// Anthropic prompt caches are model-scoped, so a prefix warmed on a different
+    /// user override is set — the app-wide daily driver, so auto mode and the
+    /// inline assistant ride one model. The cache prewarmer MUST warm this exact
+    /// tier: prompt caches are model-scoped, so a prefix warmed on a different
     /// model can never be read back by the real request (the warm is pure waste and
     /// the first request still pays a cold write). Kept here so the request path and
     /// the prewarmer can't drift apart on model, same as pinnedIntent / toolBundles.
-    static let defaultModelTier: AgentModelTier = .sonnet5
+    static let defaultModelTier: AgentModelTier = .autoDefault
 }

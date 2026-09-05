@@ -34,7 +34,7 @@ struct IdeaFocusModeView: View {
     @State private var ownedContextProvider: IdeaContextProvider?
     @State private var isPromoting: Bool = false
     @State private var showProfileEditor: Bool = false
-    @State private var atelierScrollMetrics = CortexScrollMetrics()
+    @State private var atelierScrollMetrics = CortexScrollMetricsStore()
     @State private var bodyReviewProposal: CosmoAssistantProposal?
     /// First-load arrival — the page assembles once, then never again.
     @State private var hasArrived = false
@@ -208,14 +208,12 @@ struct IdeaFocusModeView: View {
                 .frame(maxWidth: .infinity, alignment: .center)
                 .background(
                     CortexScrollViewIntrospector { metrics in
-                        if metrics != atelierScrollMetrics {
-                            atelierScrollMetrics = metrics
-                        }
+                        atelierScrollMetrics.publish(metrics)
                     }
                 )
         }
         .scrollIndicators(.hidden)
-        .cortexThinScrollbar(metrics: atelierScrollMetrics)
+        .cortexThinScrollbar(store: atelierScrollMetrics)
         .scrollEdgeEffectStyle(.soft, for: .all)
         .background {
             ZStack {

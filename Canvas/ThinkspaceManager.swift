@@ -36,10 +36,23 @@ struct ThinkspaceMetadata: Codable, Sendable {
     // Flows — drawn cluster→output behaviors (Living Workflows). Older Thinkspaces decode empty.
     var flows: [CanvasFlow] = []
 
-    enum CodingKeys: String, CodingKey {
+    // Space shape (September 2026). Stored as RAW strings — never typed enums —
+    // so a value from a newer client can't make this whole struct throw on
+    // decode (a nil metadata makes every writer rebuild `ThinkspaceMetadata(name:)`
+    // and wipe clusters/places/flows). `SpaceViewResolver` interprets them.
+    // Older spaces decode nil → the legacy three views, opening on the canvas.
+    var kind: String?
+    var emoji: String?
+    var enabledViews: [String]?
+    var defaultView: String?
+    var lastView: String?
+    var linkedClientUUID: String?
+
+    enum CodingKeys: String, CodingKey, CaseIterable {
         case name, lastOpened, zoomLevel, panOffsetX, panOffsetY, blockIds
         case projectUuid, parentThinkspaceId, isRootThinkspace, accentColorHex, clusters, deepDiveProfileUUID
         case places, flows
+        case kind, emoji, enabledViews, defaultView, lastView, linkedClientUUID
     }
 
     init(from decoder: Decoder) throws {
@@ -58,6 +71,12 @@ struct ThinkspaceMetadata: Codable, Sendable {
         deepDiveProfileUUID = try container.decodeIfPresent(String.self, forKey: .deepDiveProfileUUID)
         places = try container.decodeIfPresent([CanvasPlace].self, forKey: .places) ?? []
         flows = try container.decodeIfPresent([CanvasFlow].self, forKey: .flows) ?? []
+        kind = try container.decodeIfPresent(String.self, forKey: .kind)
+        emoji = try container.decodeIfPresent(String.self, forKey: .emoji)
+        enabledViews = try container.decodeIfPresent([String].self, forKey: .enabledViews)
+        defaultView = try container.decodeIfPresent(String.self, forKey: .defaultView)
+        lastView = try container.decodeIfPresent(String.self, forKey: .lastView)
+        linkedClientUUID = try container.decodeIfPresent(String.self, forKey: .linkedClientUUID)
     }
 
     init(
@@ -74,7 +93,13 @@ struct ThinkspaceMetadata: Codable, Sendable {
         clusters: [CodableCluster] = [],
         deepDiveProfileUUID: String? = nil,
         places: [CanvasPlace] = [],
-        flows: [CanvasFlow] = []
+        flows: [CanvasFlow] = [],
+        kind: String? = nil,
+        emoji: String? = nil,
+        enabledViews: [String]? = nil,
+        defaultView: String? = nil,
+        lastView: String? = nil,
+        linkedClientUUID: String? = nil
     ) {
         self.name = name
         self.lastOpened = lastOpened
@@ -90,7 +115,28 @@ struct ThinkspaceMetadata: Codable, Sendable {
         self.deepDiveProfileUUID = deepDiveProfileUUID
         self.places = places
         self.flows = flows
+        self.kind = kind
+        self.emoji = emoji
+        self.enabledViews = enabledViews
+        self.defaultView = defaultView
+        self.lastView = lastView
+        self.linkedClientUUID = linkedClientUUID
     }
+}
+
+/// The seven metadata keys a Space settings edit owns. Written with
+/// `Atom.mergingMetadataKeys` so every other key in the blob — clusters,
+/// places, flows, and anything the iPhone wrote that the Mac doesn't know —
+/// survives untouched (the key-level merge law).
+struct SpaceShapeMetadataPatch: Encodable, Sendable {
+    var name: String
+    var kind: String
+    var emoji: String?
+    var enabledViews: [String]
+    var defaultView: String
+    var parentThinkspaceId: String?
+    var accentColorHex: String
+    var linkedClientUUID: String?
 }
 
 // MARK: - Thinkspace Model
@@ -110,6 +156,15 @@ struct Thinkspace: Identifiable, Equatable {
     var isRootThinkspace: Bool
     var accentColorHex: String?
     var deepDiveProfileUUID: String?
+
+    // Space shape — resolved from the raw metadata strings (never nil-fragile).
+    var kind: SpaceKind?
+    var emoji: String?
+    /// Never empty: legacy spaces resolve to the three classic views.
+    var enabledViews: [SpaceView]
+    var defaultView: SpaceView?
+    var lastView: SpaceView?
+    var linkedClientUUID: String?
 
     /// Whether this Thinkspace is assigned to a project
     var isAssigned: Bool { projectUuid != nil }
@@ -132,6 +187,13 @@ struct Thinkspace: Identifiable, Equatable {
             self.isRootThinkspace = metadata.isRootThinkspace
             self.accentColorHex = metadata.accentColorHex
             self.deepDiveProfileUUID = metadata.deepDiveProfileUUID
+            let kind = metadata.kind.flatMap(SpaceKind.init(rawValue:))
+            self.kind = kind
+            self.emoji = metadata.emoji
+            self.enabledViews = SpaceViewResolver.enabledViews(raw: metadata.enabledViews, kind: kind)
+            self.defaultView = metadata.defaultView.flatMap(SpaceView.init(rawValue:))
+            self.lastView = metadata.lastView.flatMap(SpaceView.init(rawValue:))
+            self.linkedClientUUID = metadata.linkedClientUUID
         } else {
             self.name = atom.title ?? "Untitled"
             self.lastOpened = ISO8601.date(from: atom.updatedAt) ?? Date()
@@ -143,6 +205,12 @@ struct Thinkspace: Identifiable, Equatable {
             self.isRootThinkspace = false
             self.accentColorHex = nil
             self.deepDiveProfileUUID = nil
+            self.kind = nil
+            self.emoji = nil
+            self.enabledViews = SpaceView.legacyDefault
+            self.defaultView = nil
+            self.lastView = nil
+            self.linkedClientUUID = nil
         }
     }
 
@@ -153,11 +221,43 @@ struct Thinkspace: Identifiable, Equatable {
         lhs.parentThinkspaceId == rhs.parentThinkspaceId &&
         lhs.accentColorHex == rhs.accentColorHex &&
         lhs.blockCount == rhs.blockCount &&
-        lhs.deepDiveProfileUUID == rhs.deepDiveProfileUUID
+        lhs.deepDiveProfileUUID == rhs.deepDiveProfileUUID &&
+        lhs.kind == rhs.kind &&
+        lhs.emoji == rhs.emoji &&
+        lhs.enabledViews == rhs.enabledViews &&
+        lhs.defaultView == rhs.defaultView &&
+        lhs.lastView == rhs.lastView &&
+        lhs.linkedClientUUID == rhs.linkedClientUUID
     }
 
     var accentColor: Color {
         accentColorHex.map(Color.init(hex:)) ?? DS.accent
+    }
+
+    // MARK: Space shape
+
+    /// The views this build can show, in switcher order. Never empty.
+    var renderableViews: [SpaceView] { SpaceViewResolver.renderableViews(enabledViews) }
+
+    /// Where the space opens: last visited → preferred → kind → first.
+    var openingView: SpaceView {
+        SpaceViewResolver.openingView(
+            renderable: renderableViews,
+            lastRaw: lastView?.rawValue,
+            defaultRaw: defaultView?.rawValue,
+            kind: kind
+        )
+    }
+
+    /// The identity mark: an explicit emoji, else the one the name implies
+    /// (a typed leading emoji, or a curated keyword match).
+    var identityEmoji: String? {
+        emoji ?? CollectionEmoji.resolve(name: name).emoji
+    }
+
+    /// The name with any leading identity emoji lifted out.
+    var identityLabel: String {
+        CollectionEmoji.resolve(name: name).label
     }
 }
 
@@ -284,6 +384,17 @@ class ThinkspaceManager {
         return Self.accentColorPalette.first { !usedColors.contains($0) }
             ?? Self.accentColorPalette[thinkspaces.count % Self.accentColorPalette.count]
     }
+
+    /// The colour a new space would receive — the composer shows it preselected.
+    func suggestedAccentColorHex() -> String {
+        nextAccentColorHex()
+    }
+
+    /// One in-flight Deep Dive profile resolution per space. `resolveDeepDiveProfile`
+    /// both CREATES the profile atom on first visit and WRITES the thinkspace atom,
+    /// so two concurrent callers (the switch bookkeeping and the embedded Deep Dive
+    /// view) must share one task or they would mint two profiles.
+    @ObservationIgnored private var profileResolutionTasks: [String: Task<String?, Never>] = [:]
 
     private func migrateLegacyProjectsIfNeeded() async {
         do {
@@ -433,7 +544,7 @@ class ThinkspaceManager {
         }
 
         var updatedAtom = atom
-        updatedAtom.metadata = newMetadataString
+        updatedAtom.metadata = metadata.mergedJSON(into: atom.metadata)
 
         do {
             try await repository.update(updatedAtom)
@@ -469,12 +580,36 @@ class ThinkspaceManager {
         isRoot: Bool = false,
         accentColorHex: String? = nil
     ) async -> Thinkspace? {
-        let metadata = ThinkspaceMetadata(
+        // Title-only callers (⌘K, the agent, the Inbox) get the legacy shape:
+        // today's three views, opening on the canvas.
+        let draft = SpaceDraft.programmaticDefault(
             name: name,
+            parentId: parentThinkspaceId,
+            accentHex: accentColorHex ?? nextAccentColorHex()
+        )
+        return await createThinkspace(draft: draft, projectUuid: projectUuid, isRoot: isRoot)
+    }
+
+    /// Create a space from a composer draft — kind, emoji, views, colour, parent.
+    @discardableResult
+    func createThinkspace(
+        draft rawDraft: SpaceDraft,
+        projectUuid: String? = nil,
+        isRoot: Bool = false
+    ) async -> Thinkspace? {
+        let draft = rawDraft.normalized()
+        guard !draft.name.isEmpty else { return nil }
+        let metadata = ThinkspaceMetadata(
+            name: draft.name,
             projectUuid: projectUuid,
-            parentThinkspaceId: parentThinkspaceId,
+            parentThinkspaceId: draft.parentThinkspaceId,
             isRootThinkspace: isRoot,
-            accentColorHex: accentColorHex ?? nextAccentColorHex()
+            accentColorHex: draft.accentColorHex,
+            kind: draft.kind.rawValue,
+            emoji: draft.emoji,
+            enabledViews: draft.enabledViews.map(\.rawValue),
+            defaultView: draft.defaultView.rawValue,
+            linkedClientUUID: draft.linkedClientUUID
         )
 
         guard let metadataJson = try? JSONEncoder().encode(metadata),
@@ -485,7 +620,7 @@ class ThinkspaceManager {
 
         let atom = Atom.new(
             type: .thinkspace,
-            title: name,
+            title: draft.name,
             metadata: metadataString
         )
 
@@ -496,7 +631,7 @@ class ThinkspaceManager {
             // Find and return the new Thinkspace
             if let newThinkspace = thinkspaces.first(where: { $0.id == savedAtom.uuid }) {
                 let context = isRoot ? " (root)" : projectUuid != nil ? " (assigned)" : ""
-                print("✨ Created Thinkspace: \(name)\(context)")
+                print("✨ Created Space: \(draft.name) [\(draft.kind.rawValue)]\(context)")
                 return newThinkspace
             }
         } catch {
@@ -504,6 +639,84 @@ class ThinkspaceManager {
         }
 
         return nil
+    }
+
+    /// A deliberate settings edit (name, kind, emoji, views, colour, parent):
+    /// full-row update that bumps the version, like `updateColor`. Only the
+    /// keys the composer owns are written — `mergingMetadataKeys` keeps
+    /// clusters, places, flows and any foreign key intact.
+    func updateSpaceSettings(_ thinkspace: Thinkspace, draft rawDraft: SpaceDraft) async {
+        let draft = rawDraft.normalized()
+        guard !draft.name.isEmpty, !draft.enabledViews.isEmpty else { return }
+        if let parent = draft.parentThinkspaceId,
+           parent != thinkspace.parentThinkspaceId,
+           !canNest(thinkspace.id, under: parent) {
+            print("⚠️ Refused to nest \(thinkspace.name) under \(parent): would form a cycle")
+            return
+        }
+        do {
+            guard var atom = try await repository.fetch(uuid: thinkspace.id) else {
+                print("❌ Thinkspace not found for settings update")
+                return
+            }
+            // The default view is the first enabled one; a remembered last
+            // view that is no longer enabled must not keep winning the ladder.
+            let patch = SpaceShapeMetadataPatch(
+                name: draft.name,
+                kind: draft.kind.rawValue,
+                emoji: draft.emoji,
+                enabledViews: draft.enabledViews.map(\.rawValue),
+                defaultView: draft.defaultView.rawValue,
+                parentThinkspaceId: draft.parentThinkspaceId,
+                accentColorHex: draft.accentColorHex,
+                linkedClientUUID: draft.linkedClientUUID
+            )
+            atom = atom.mergingMetadataKeys(patch)
+            var removals: [String] = []
+            if draft.emoji == nil { removals.append("emoji") }
+            if draft.parentThinkspaceId == nil { removals.append("parentThinkspaceId") }
+            if draft.linkedClientUUID == nil { removals.append("linkedClientUUID") }
+            if let last = thinkspace.lastView, !draft.enabledViews.contains(last) {
+                removals.append("lastView")
+            }
+            if !removals.isEmpty { atom = atom.removingMetadataKeys(removals) }
+            atom.title = draft.name
+            atom.updatedAt = ISO8601.string(from: Date())
+            try await repository.update(atom)
+            await loadThinkspaces()
+            if currentThinkspace?.id == thinkspace.id {
+                currentThinkspace = thinkspaces.first { $0.id == thinkspace.id }
+            }
+            if let refreshed = thinkspaces.first(where: { $0.id == thinkspace.id }) {
+                SpaceViewStore.shared.reconcile(refreshed)
+            }
+            invalidateChildDocsCache()
+        } catch {
+            print("❌ Failed to update Space settings: \(error)")
+        }
+    }
+
+    /// Remember the view the user left a space on. Field-level like
+    /// `saveCurrentState` — one metadata column, no title churn, no reload
+    /// (a reload re-queries block counts and drops the child-doc cache on
+    /// every view switch). Patches the in-memory copies instead.
+    func updateLastView(_ view: SpaceView, for thinkspaceId: String) async {
+        if currentThinkspace?.id == thinkspaceId { currentThinkspace?.lastView = view }
+        if let index = thinkspaces.firstIndex(where: { $0.id == thinkspaceId }) {
+            thinkspaces[index].lastView = view
+        }
+        do {
+            guard let atom = try await repository.fetch(uuid: thinkspaceId) else { return }
+            let merged = atom.mergingMetadataKeys(LastViewPatch(lastView: view.rawValue))
+            guard let metadataString = merged.metadata else { return }
+            try await repository.updateFields(uuid: thinkspaceId, columns: ["metadata": metadataString])
+        } catch {
+            print("❌ Failed to save last view: \(error)")
+        }
+    }
+
+    private struct LastViewPatch: Encodable {
+        let lastView: String
     }
 
     func updateColor(_ thinkspace: Thinkspace, to colorHex: String) async {
@@ -515,7 +728,7 @@ class ThinkspaceManager {
 
             var metadata = atom.metadataValue(as: ThinkspaceMetadata.self) ?? ThinkspaceMetadata(name: thinkspace.name)
             metadata.accentColorHex = colorHex
-            atom = atom.withMetadata(metadata)
+            atom.metadata = metadata.mergedJSON(into: atom.metadata)
 
             try await repository.update(atom)
             await loadThinkspaces()
@@ -565,23 +778,54 @@ class ThinkspaceManager {
             // visit; navigation must never wait on storage. The uuid is patched
             // in once resolved (nothing reads it synchronously at switch time).
             if thinkspace.id != Self.commandCenterUUID {
-                do {
-                    let profile = try await InquiryRepository.shared.resolveDeepDiveProfile(
-                        forThinkspace: thinkspace.id,
-                        title: thinkspace.name
-                    )
-                    if currentThinkspace?.id == thinkspace.id,
-                       currentThinkspace?.deepDiveProfileUUID != profile.uuid {
-                        currentThinkspace?.deepDiveProfileUUID = profile.uuid
-                    }
-                } catch {
-                    print("⚠️ Failed to resolve DeepDiveProfile for Thinkspace \(thinkspace.name): \(error)")
-                }
+                _ = await ensureDeepDiveProfileUUID(for: thinkspace.id)
             }
 
             // Persist recency after publishing the visible route so navigation does not wait on storage.
             await updateLastOpened(thinkspace)
         }
+    }
+
+    /// Resolve (or create) the Deep Dive profile attached to a space, sharing
+    /// one in-flight task per space so concurrent callers never race
+    /// `createDeepDive` into two profiles. Patches `currentThinkspace` so the
+    /// embedded Deep Dive view can read the uuid without a reload.
+    @discardableResult
+    func ensureDeepDiveProfileUUID(for thinkspaceId: String) async -> String? {
+        if let known = currentThinkspace?.id == thinkspaceId ? currentThinkspace?.deepDiveProfileUUID : nil {
+            return known
+        }
+        if let inFlight = profileResolutionTasks[thinkspaceId] {
+            return await inFlight.value
+        }
+        let title = thinkspaces.first(where: { $0.id == thinkspaceId })?.name
+            ?? currentThinkspace?.name
+            ?? "Thinkspace"
+        let task = Task<String?, Never> { @MainActor [weak self] in
+            do {
+                let profile = try await InquiryRepository.shared.resolveDeepDiveProfile(
+                    forThinkspace: thinkspaceId,
+                    title: title
+                )
+                guard let self else { return profile.uuid }
+                if currentThinkspace?.id == thinkspaceId,
+                   currentThinkspace?.deepDiveProfileUUID != profile.uuid {
+                    currentThinkspace?.deepDiveProfileUUID = profile.uuid
+                }
+                if let index = thinkspaces.firstIndex(where: { $0.id == thinkspaceId }),
+                   thinkspaces[index].deepDiveProfileUUID != profile.uuid {
+                    thinkspaces[index].deepDiveProfileUUID = profile.uuid
+                }
+                return profile.uuid
+            } catch {
+                print("⚠️ Failed to resolve DeepDiveProfile for Thinkspace \(title): \(error)")
+                return nil
+            }
+        }
+        profileResolutionTasks[thinkspaceId] = task
+        let uuid = await task.value
+        profileResolutionTasks[thinkspaceId] = nil
+        return uuid
     }
 
     /// Switch to default/global canvas (no Thinkspace)
@@ -613,7 +857,7 @@ class ThinkspaceManager {
                 metadata.name = newName
                 if let metadataJson = try? JSONEncoder().encode(metadata),
                    let metadataString = String(data: metadataJson, encoding: .utf8) {
-                    atom.metadata = metadataString
+                    atom.metadata = metadata.mergedJSON(into: atom.metadata)
                 }
             }
 
@@ -738,7 +982,7 @@ class ThinkspaceManager {
             // every viewport change.
             try await repository.updateFields(
                 uuid: thinkspace.id,
-                columns: ["metadata": metadataString]
+                columns: ["metadata": metadata.mergedJSON(into: atom.metadata) ?? metadataString]
             )
 
             print("💾 Saved Thinkspace state")
@@ -792,7 +1036,7 @@ class ThinkspaceManager {
 
             try await repository.updateFields(
                 uuid: thinkspaceId,
-                columns: ["metadata": metadataString]
+                columns: ["metadata": metadata.mergedJSON(into: atom.metadata) ?? metadataString]
             )
         } catch {
             print("❌ Failed to save Flows: \(error)")
@@ -811,7 +1055,7 @@ class ThinkspaceManager {
 
             try await repository.updateFields(
                 uuid: thinkspaceId,
-                columns: ["metadata": metadataString]
+                columns: ["metadata": metadata.mergedJSON(into: atom.metadata) ?? metadataString]
             )
         } catch {
             print("❌ Failed to save Places: \(error)")
@@ -889,7 +1133,7 @@ class ThinkspaceManager {
                 metadata.parentThinkspaceId = nil  // Reset parent when assigning to new project
                 if let metadataJson = try? JSONEncoder().encode(metadata),
                    let metadataString = String(data: metadataJson, encoding: .utf8) {
-                    atom.metadata = metadataString
+                    atom.metadata = metadata.mergedJSON(into: atom.metadata)
                 }
             }
 
@@ -916,7 +1160,7 @@ class ThinkspaceManager {
                 metadata.parentThinkspaceId = nil
                 if let metadataJson = try? JSONEncoder().encode(metadata),
                    let metadataString = String(data: metadataJson, encoding: .utf8) {
-                    atom.metadata = metadataString
+                    atom.metadata = metadata.mergedJSON(into: atom.metadata)
                 }
             }
 
@@ -969,7 +1213,7 @@ class ThinkspaceManager {
 
                 if let metadataJson = try? JSONEncoder().encode(metadata),
                    let metadataString = String(data: metadataJson, encoding: .utf8) {
-                    atom.metadata = metadataString
+                    atom.metadata = metadata.mergedJSON(into: atom.metadata)
                 }
             }
 
@@ -1126,7 +1370,7 @@ class ThinkspaceManager {
                 metadata.lastOpened = Date()
                 if let metadataJson = try? JSONEncoder().encode(metadata),
                    let metadataString = String(data: metadataJson, encoding: .utf8) {
-                    atom.metadata = metadataString
+                    atom.metadata = metadata.mergedJSON(into: atom.metadata)
                 }
             }
 

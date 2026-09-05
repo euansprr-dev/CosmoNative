@@ -20,7 +20,10 @@ enum WritingContextAssembler {
         let layer1 = assembleLayer1()
         let layer2 = await assembleLayer2(contentAtom: contentAtom)
         let layer3 = await assembleLayer3(contentAtom: contentAtom)
-        let layer4 = await assembleLayer4(contentAtom: contentAtom)
+        var layer4 = await assembleLayer4(contentAtom: contentAtom)
+        if let lessons = try? await SwipeLabStore.shared.principlesContext(clientID: SwipeLabCorpus.clientIDForContent(contentAtom)), !lessons.isEmpty {
+            layer4 += "\n\n" + lessons
+        }
 
         return PromptContext(
             systemBlocks: makeCachedBlocks(

@@ -43,25 +43,41 @@ enum ScheduleBlockEngine {
         calendar: Calendar = .current
     ) async -> [ScheduleBlockEntry] {
         guard let atoms = try? await repository.fetchAll(type: .scheduleBlock) else { return [] }
+        return project(atoms: atoms, on: [day], calendar: calendar)[day] ?? []
+    }
 
-        var items: [ScheduleBlockEntry] = []
-        for atom in atoms {
-            guard let meta = atom.metadataValue(as: ScheduleBlockMetadata.self),
-                  let range = occurrenceRange(of: meta, on: day, calendar: calendar) else { continue }
-            let rule = meta.recurrence.flatMap(RecurrenceRule.fromJSON)
-            items.append(ScheduleBlockEntry(
-                id: atom.uuid,
-                title: atom.title ?? "Untitled",
-                start: range.start,
-                end: range.end,
-                isCompleted: meta.isCompleted ?? false,
-                colorHex: meta.color,
-                location: meta.location,
-                isRecurring: rule != nil,
-                recurrenceText: rule?.displayText
-            ))
+    /// One reader pass for a week/month, rather than a full table query per day.
+    static func blocks(on days: [Date], repository: AtomRepository = .shared, calendar: Calendar = .current) async -> [Date: [ScheduleBlockEntry]] {
+        guard !days.isEmpty, let atoms = try? await repository.fetchAll(type: .scheduleBlock) else { return [:] }
+        return project(atoms: atoms, on: days, calendar: calendar)
+    }
+
+    static func project(atoms: [Atom], on days: [Date], calendar: Calendar = .current) -> [Date: [ScheduleBlockEntry]] {
+        let decoded = atoms.compactMap { atom -> (Atom, ScheduleBlockMetadata)? in
+            guard let metadata = atom.metadataValue(as: ScheduleBlockMetadata.self) else { return nil }
+            return (atom, metadata)
         }
-        return items.sorted { $0.start < $1.start }
+        var byDay: [Date: [ScheduleBlockEntry]] = [:]
+        for day in days {
+            var items: [ScheduleBlockEntry] = []
+            for (atom, meta) in decoded {
+                guard let range = occurrenceRange(of: meta, on: day, calendar: calendar) else { continue }
+                let rule = meta.recurrence.flatMap(RecurrenceRule.fromJSON)
+                items.append(ScheduleBlockEntry(
+                    id: atom.uuid,
+                    title: atom.title ?? "Untitled",
+                    start: range.start,
+                    end: range.end,
+                    isCompleted: meta.isCompleted ?? false,
+                    colorHex: meta.color,
+                    location: meta.location,
+                    isRecurring: rule != nil,
+                    recurrenceText: rule?.displayText
+                ))
+            }
+            byDay[day] = items.sorted { $0.start < $1.start }
+        }
+        return byDay
     }
 
     /// A schedule block's slot on `day`, or nil when it doesn't occur there.

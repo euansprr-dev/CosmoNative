@@ -162,9 +162,12 @@ struct MainView: View {
     /// A ⌘K jump can land the Ideas surface on a client's board.
     @State private var ideasBoardRequest: String? = nil
     @State private var commandCenterViewModel = CommandCenterDashboardViewModel()
+    @State private var inboxViewModel = InboxViewModel()
     @State private var swipeLibraryViewModel = SwipeLibraryViewModel()
     @State private var swipeDiscoverModel = SwipeDiscoverModel()
     @State private var ideasPageModel = IdeasPageModel()
+    @State private var pipelinePageModel = PipelinePageModel()
+    @State private var clientsPageModel = ClientsPageModel()
     // Simple sidebar state: closed/open. Open sidebar reserves layout space.
     @AppStorage("sidebarCollapsed") private var isSidebarHidden: Bool = false
     @AppStorage("unifiedSidebarContext") private var activeSidebarContext: SidebarContext = .thinkspaces
@@ -177,9 +180,15 @@ struct MainView: View {
     /// any focus change resets it. Never persisted — every focus entrance
     /// starts full-screen regardless of the sidebar's docked preference.
     @State private var isSidebarFocusRevealed = false
-    /// True while the thinkspace library browser is up — it embeds its own
-    /// trail island, so the floating global copy stands down (no collision).
-    @State private var isThinkspaceLibraryActive = false
+    /// A space wears its own chrome row (sidebar toggle + trail island
+    /// embedded), so the floating global copies stand down on a space.
+    private var isSpaceDestination: Bool {
+        if case .thinkspace = currentDestination { return true }
+        return false
+    }
+    /// The Space composer sheet (create / settings) — presented from the
+    /// sidebar, the space chrome row, and the row context menu.
+    @State private var spaceComposerRequest: SpaceComposerRequest?
     @State private var isHoveringSidebarRevealTrigger = false
     @State private var isHoveringSidebarPanel = false
     @State private var sidebarHoverCloseTask: Task<Void, Never>?
@@ -529,6 +538,51 @@ struct MainView: View {
                 onCancel: { showWorkbenchComposer = false }
             )
         }
+        // MARK: - Space composer (create / settings)
+        .sheet(item: $spaceComposerRequest) { request in
+            SpaceComposerView(
+                model: SpaceComposerModel(mode: composerMode(for: request)),
+                onDone: { created in
+                    let mode = request.mode
+                    spaceComposerRequest = nil
+                    // The composer posts `spaceComposerDidCreate` itself (once);
+                    // the shell only travels to the new space.
+                    guard let created, case .create = mode else { return }
+                    currentDestination = .thinkspace(id: created.id)
+                }
+            )
+        }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.presentSpaceComposer)) { notification in
+            guard let request = SpaceComposerRequest(from: notification) else { return }
+            FocusModeEditorBlur.clearFirstResponder(in: NSApp.keyWindow)
+            spaceComposerRequest = request
+        }
+        // MARK: - Studio › Pipeline / Clients jumps
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.openPipeline)) { notification in
+            let info = notification.userInfo
+            if let raw = info?["view"] as? String, let view = PipelineView(rawValue: raw) {
+                pipelinePageModel.view = view
+            }
+            if let clientUUID = info?["clientUUID"] as? String {
+                pipelinePageModel.scope = .client(uuid: clientUUID)
+            } else if let id = info?["thinkspaceId"] as? String {
+                pipelinePageModel.scope = .space(thinkspaceId: id)
+            } else if info?["unassigned"] as? Bool == true {
+                pipelinePageModel.scope = .unassigned
+            } else if info?["allContent"] as? Bool == true {
+                pipelinePageModel.scope = .all
+            }
+            currentDestination = info?["tab"] as? String == "ideas" ? .ideas : .pipeline
+            showCommandK = false
+        }
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.openClients)) { notification in
+            if let clientUUID = notification.userInfo?["clientUUID"] as? String {
+                currentDestination = .client(id: clientUUID)
+            } else {
+                currentDestination = .clients
+            }
+            showCommandK = false
+        }
         .onChange(of: appState.focusedEntity) { _, newValue in
             if let newValue {
                 recordTrailArrival(forFocus: newValue)
@@ -579,7 +633,7 @@ struct MainView: View {
                 switchToThinkspaceForDestination(id: id)
             case .inbox:
                 break
-            case .discover, .swipeFile, .ideas:
+            case .discover, .swipeFile, .ideas, .pipeline, .clients, .client:
                 break
             }
             syncSidebarContext(with: newDest)
@@ -592,7 +646,7 @@ struct MainView: View {
                 vm.updateContextManually(type: .inbox)
             case .thinkspace:
                 vm.updateContextManually(type: .thinkspaceCanvas)
-            case .discover, .swipeFile, .ideas:
+            case .discover, .swipeFile, .ideas, .pipeline, .clients, .client:
                 vm.updateContextManually(type: .commandCenter)
             }
             recordTrailArrival(for: newDest)
@@ -629,7 +683,6 @@ struct MainView: View {
             showSettings: $showSettings,
             showWorkbenchComposer: $showWorkbenchComposer,
             spokesPillar: $spokesPillar,
-            isThinkspaceLibraryActive: $isThinkspaceLibraryActive,
             showCreatorDatabase: $showCreatorDatabase,
             actions: notificationRouterActions
         )
@@ -736,7 +789,8 @@ struct MainView: View {
                     sidebarHoverRevealTrigger(height: geo.size.height)
                         .zIndex(200)
 
-                    if !isSidebarHoverRevealed {
+                    // A space's chrome row carries its own toggle island.
+                    if !isSidebarHoverRevealed && !isSpaceDestination {
                         sidebarToggleButton
                             .zIndex(202)
                     }
@@ -751,9 +805,9 @@ struct MainView: View {
                 // Every focus mode draws the trail island inside its own
                 // chrome row (NavigationTrailIsland) so it shares the islands'
                 // baseline — the global copy shows only outside focus modes.
-                // The thinkspace library embeds one in its toolbar the same
-                // way, so the floating copy stands down there too.
-                if appState.focusedEntity == nil && !isThinkspaceLibraryActive {
+                // A space's chrome row embeds one the same way, so the
+                // floating copy stands down on every space.
+                if appState.focusedEntity == nil && !isSpaceDestination {
                     NavigationTrailChrome(
                         onBack: { navigateTrailBack() },
                         onForward: { navigateTrailForward() },
@@ -1227,8 +1281,10 @@ struct MainView: View {
             next = .inbox
         case .thinkspace:
             next = .thinkspaces
-        case .discover, .swipeFile, .ideas:
+        case .discover, .swipeFile:
             next = .swipeFile
+        case .ideas, .pipeline, .clients, .client:
+            next = .content
         }
         // @AppStorage — every assignment is a UserDefaults write on the
         // switch path; Studio↔Ideas↔Discover all map to the same context.
@@ -1342,7 +1398,7 @@ struct MainView: View {
         case .inbox: return nil
         case .discover: return nil
         case .swipeFile: return nil
-        case .ideas: return nil
+        case .ideas, .pipeline, .clients, .client: return nil
         }
     }
 
@@ -1383,11 +1439,12 @@ struct MainView: View {
                 }
                 .opacity(isCanvasDestination && appState.focusedEntity == nil ? 1.0 : 0)
                 .allowsHitTesting(isCanvasDestination && appState.focusedEntity == nil)
+                .accessibilityHidden(!isCanvasDestination || appState.focusedEntity != nil)
             }
 
             // Non-canvas destinations rendered on top when active
             if case .inbox = currentDestination {
-                InboxView(route: $inboxRoute)
+                InboxView(viewModel: inboxViewModel, route: $inboxRoute)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(DS.bg)
                     .offset(x: contentPushOffset)
@@ -1437,18 +1494,29 @@ struct MainView: View {
                     .background(DS.bg)
                     .offset(x: contentPushOffset)
                     .transition(.opacity)
-            } else if case .ideas = currentDestination {
-                IdeasHomePage(boardRequest: $ideasBoardRequest, model: ideasPageModel)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(DS.bg)
-                    .offset(x: contentPushOffset)
-                    .transition(.opacity)
+            } else if isContentDestination {
+                ContentWorkspacePage(
+                    destination: $currentDestination, boardRequest: $ideasBoardRequest,
+                    pipelineModel: pipelinePageModel, ideasModel: ideasPageModel,
+                    clientsModel: clientsPageModel
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(DS.bg)
+                .padding(.leading, contentPushOffset)
+                .transition(.opacity)
             }
         }
     }
 
     /// True when the focused entity is a study surface (deep dive / inquiry):
     /// these keep the navigation trail and swap in like destinations, not modals.
+    private var isContentDestination: Bool {
+        switch currentDestination {
+        case .ideas, .pipeline, .clients, .client: return true
+        default: return false
+        }
+    }
+
     private var isStudyFocus: Bool {
         appState.focusedEntity?.type == .deepDive || appState.focusedEntity?.type == .inquirySession
     }
@@ -1574,13 +1642,48 @@ struct MainView: View {
         case .discover: return ("Discover", "safari")
         case .swipeFile: return ("Swipe File", "bookmark")
         case .ideas: return ("Ideas", "lightbulb")
+        case .pipeline: return ("Pipeline", "rectangle.split.3x1")
+        case .clients: return ("Clients", "person.crop.circle")
+        case .client(let id):
+            let name = clientsPageModel.rows.first(where: { $0.uuid == id })?.name
+            return (name ?? "Client", "person.crop.circle")
         case .thinkspace(let id):
             let name = thinkspaceManager.thinkspaces.first(where: { $0.id == id })?.name
             return (name ?? "Thinkspace", "rectangle.3.group")
         }
     }
 
+    /// A composer request names a space by id; the model wants the live
+    /// `Thinkspace`. An edit request for a space that no longer exists
+    /// degrades to creating a new one rather than showing an empty sheet.
+    private func composerMode(for request: SpaceComposerRequest) -> SpaceComposerModel.Mode {
+        switch request.mode {
+        case .create(let parentId):
+            return .create(parentId: parentId)
+        case .edit(let thinkspaceId):
+            if let space = thinkspaceManager.currentThinkspace, space.id == thinkspaceId {
+                return .edit(space)
+            }
+            if let space = thinkspaceManager.thinkspaces.first(where: { $0.id == thinkspaceId }) {
+                return .edit(space)
+            }
+            return .create(parentId: nil)
+        }
+    }
+
     private func recordTrailArrival(for destination: SidebarDestination) {
+        // A space arrival names its view — the store resolves the opening
+        // view synchronously from the manager's cache, before the async switch.
+        if case .thinkspace(let id) = destination {
+            let view = SpaceViewStore.shared.activeView(for: id)
+            let name = thinkspaceManager.thinkspaces.first(where: { $0.id == id })?.identityLabel ?? "Space"
+            NavigationTrail.shared.recordArrival(
+                .spaceView(thinkspaceId: id, view: view),
+                title: view == .canvas ? name : "\(name) · \(view.title)",
+                glyph: view.trailGlyph
+            )
+            return
+        }
         let descriptor = trailDescriptor(for: destination)
         NavigationTrail.shared.recordArrival(
             .sidebar(destination),
@@ -1676,8 +1779,21 @@ struct MainView: View {
                 }
             case .focusMode(let entity):
                 FocusNavigationCoordinator.shared.open(entity: entity, anchorOverride: .center)
+            case .spaceView(let thinkspaceId, let view):
+                FocusNavigationCoordinator.shared.close()
+                SpaceViewStore.shared.select(view, for: thinkspaceId, source: .trail)
+                currentDestination = .thinkspace(id: thinkspaceId)
+                // Landing on a space's library view means its root — any
+                // folder opened after that moment closes with the jump.
+                if view == .library {
+                    NotificationCenter.default.post(
+                        name: CosmoNotification.Navigation.showLibraryFolder,
+                        object: nil
+                    )
+                }
             case .libraryFolder(let thinkspaceId, let folderID):
                 FocusNavigationCoordinator.shared.close()
+                SpaceViewStore.shared.select(.library, for: thinkspaceId, source: .trail)
                 currentDestination = .thinkspace(id: thinkspaceId)
                 NotificationCenter.default.post(
                     name: CosmoNotification.Navigation.showLibraryFolder,
@@ -2094,6 +2210,25 @@ struct MainView: View {
                     navigateTrailForward()
                     return nil
                 }
+            }
+
+            // ⌘1…⌘n — switch the current space's view (the page-level
+            // ⌘digit grammar Ideas uses for Desk/All). Routed here, not as
+            // hidden buttons: the keep-alive canvas is mounted on every
+            // destination and must never answer while Ideas owns ⌘1/⌘2.
+            if event.type == .keyDown,
+               case .thinkspace(let spaceId) = currentDestination,
+               let index = SpaceKeyboardShortcutPolicy.viewIndex(
+                   keyCode: event.keyCode,
+                   modifiers: event.modifierFlags,
+                   enabledCount: SpaceViewStore.shared.renderableViews(for: spaceId).count,
+                   isThinkspaceActive: true,
+                   hasFocusedEntity: appState.focusedEntity != nil,
+                   isCommandKVisible: showCommandK,
+                   isTextInputFocused: isKeyboardInputReserved()
+               ) {
+                SpaceViewStore.shared.select(index: index, for: spaceId)
+                return nil
             }
 
             // Space closes an open Peek (Quick Look parity)

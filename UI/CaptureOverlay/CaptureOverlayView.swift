@@ -107,9 +107,37 @@ struct CaptureOverlayView: View {
         VStack(alignment: .leading, spacing: DS.space8) {
             captureInputRow
             LaneAssistChip(text: $viewModel.captureText, assist: viewModel.laneAssist)
+            swipeLinkRow
         }
         .animation(ProMotionSprings.snappy, value: viewModel.laneAssist.hint?.lane.uuid)
         .animation(ProMotionSprings.snappy, value: viewModel.laneAssist.suggestion?.lane.uuid)
+        .animation(ProMotionSprings.snappy, value: viewModel.swipeLink)
+    }
+
+    /// The link trigger: an Instagram / YouTube / X / TikTok link in the field
+    /// surfaces the SAME Inbox | Swipe control the staged tray wears, the
+    /// moment it lands. Hidden while files are staged — the tray's footer
+    /// owns the choice then, and the text rides along as its note.
+    @ViewBuilder
+    private var swipeLinkRow: some View {
+        if let link = viewModel.swipeLink, viewModel.stagedAttachments.isEmpty {
+            HStack(spacing: DS.space10) {
+                HStack(spacing: DS.space6) {
+                    SwipePlatformGlyph(source: link.platform.glyphKey)
+                        .frame(width: 12, height: 12)
+                    Text("\(link.platform.displayName) link")
+                        .font(DS.caption.weight(.medium))
+                }
+                .foregroundStyle(DS.textSecondary)
+                .accessibilityElement(children: .combine)
+
+                stagedDestinationControl
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, DS.space4)
+            .transition(.opacity.combined(with: .move(edge: .top)))
+        }
     }
 
     private var captureInputRow: some View {
@@ -144,14 +172,33 @@ struct CaptureOverlayView: View {
                 }
                 .buttonStyle(.plain)
                 .transition(.scale.combined(with: .opacity))
-                .help("Capture (⏎) · ⇧⏎ saves it to the Swipe File instead")
-                .accessibilityLabel("Capture thought")
+                .help(sendArrowHelp)
+                .accessibilityLabel(sendArrowAccessibilityLabel)
             }
         }
         .padding(.horizontal, DS.space12)
         .padding(.vertical, DS.space8)
         .dsGlassInput(isFocused: isFieldFocused, cornerRadius: 14)
         .animation(ProMotionSprings.snappy, value: viewModel.captureText.isEmpty)
+    }
+
+    /// A link in the field with Swipe selected sends to the Swipe File on ⏎;
+    /// the tooltip says so, because a control that changes what ⏎ does must
+    /// not leave the button's own hint contradicting it.
+    private var sendArrowHelp: String {
+        guard viewModel.swipeLink != nil, viewModel.stagedAttachments.isEmpty else {
+            return "Capture (⏎) · ⇧⏎ saves it to the Swipe File instead"
+        }
+        return viewModel.stagedDestination == .swipe
+            ? "Save to the Swipe File (⏎) · switch to Inbox to triage it instead"
+            : "Capture to the Inbox (⏎) · ⇧⏎ saves it to the Swipe File instead"
+    }
+
+    private var sendArrowAccessibilityLabel: String {
+        guard viewModel.swipeLink != nil, viewModel.stagedAttachments.isEmpty else {
+            return "Capture thought"
+        }
+        return viewModel.stagedDestination == .swipe ? "Swipe link" : "Capture link"
     }
 
     // MARK: - Drop well (the hero)
@@ -246,6 +293,11 @@ struct CaptureOverlayView: View {
             return preview.totalCount == 1
                 ? "Release to swipe"
                 : "Release to swipe \(preview.totalCount) screenshots"
+        }
+        // A platform link lands in the field with Swipe pre-selected — the
+        // same pre-release honesty as an all-image drop.
+        if preview.stagesOnDrop, preview.isSwipeLink {
+            return "Release to swipe"
         }
         let verb = preview.stagesOnDrop ? "add" : "capture"
         return preview.totalCount == 1
@@ -347,7 +399,7 @@ struct CaptureOverlayView: View {
             }
         } label: {
             HStack(spacing: DS.space4) {
-                Image(systemName: destination.iconName)
+                Image(systemName: destinationIcon(destination))
                     .font(DS.caption2.weight(.semibold))
                 Text(destination.title)
                     .font(DS.caption.weight(.medium))
@@ -365,11 +417,29 @@ struct CaptureOverlayView: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .help(destination == .swipe
-              ? "Save these as one swipe — Cosmo reads them and works out the rest"
-              : "Send these to the Inbox for triage")
+        .help(destinationHelp(destination))
         .accessibilityLabel(destination.title)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    /// The control's subject is the staged tray when one exists, else the
+    /// link in the field — the glyph and the tooltip name that subject.
+    private var destinationSubjectIsLink: Bool {
+        viewModel.stagedAttachments.isEmpty && viewModel.swipeLink != nil
+    }
+
+    private func destinationIcon(_ destination: CaptureOverlayViewModel.StagedDestination) -> String {
+        guard destination == .swipe, destinationSubjectIsLink else { return destination.iconName }
+        return SwipeKind.post.iconName
+    }
+
+    private func destinationHelp(_ destination: CaptureOverlayViewModel.StagedDestination) -> String {
+        switch (destination, destinationSubjectIsLink) {
+        case (.swipe, true): return "Save this link to the Swipe File — Cosmo pulls the post and reads it"
+        case (.swipe, false): return "Save these as one swipe — Cosmo reads them and works out the rest"
+        case (.inbox, true): return "Send this link to the Inbox for triage"
+        case (.inbox, false): return "Send these to the Inbox for triage"
+        }
     }
 
     private var sendButtonLabel: String {

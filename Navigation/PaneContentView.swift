@@ -141,6 +141,13 @@ struct PaneContentView: View {
         case .connection:
             ConnectionFocusModeView(atom: atom, onClose: onClose)
 
+        case .inquirySession:
+            if atom.isSwipeLab {
+                SwipeLabFocusModeView(atom: atom, onClose: onClose)
+            } else {
+                InquiryWorkspaceView(sessionAtom: atom, onClose: onClose)
+            }
+
         case .idea:
             IdeaFocusModeView(atom: atom, onClose: onClose)
 

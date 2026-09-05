@@ -147,18 +147,22 @@ struct IdeasAllView: View {
     let onOpen: (IdeaGalleryItem) -> Void
     let onOpenAsPane: (IdeaGalleryItem) -> Void
     let onQuickLook: (IdeaGalleryItem) -> Void
+    var onBegin: ((IdeaGalleryItem) -> Void)? = nil
+    var resultTitle: String? = nil
 
     /// The reading measure — a ledger is a scan surface, not a wall.
     private static let ledgerMeasure: CGFloat = 760
 
     private var sections: [IdeasLedger.Section] {
-        IdeasLedger.sections(
+        let sections = IdeasLedger.sections(
             model: model,
             scopedClientId: scopedClientId,
             filter: filter,
             sort: sort,
             searchResults: searchResults
         )
+        guard let resultTitle, searchResults != nil else { return sections }
+        return sections.map { IdeasLedger.Section(id: $0.id, title: resultTitle, items: $0.items) }
     }
 
     var body: some View {
@@ -203,8 +207,10 @@ struct IdeasAllView: View {
                         onOpen: { onOpen(idea) },
                         onQuickLook: { onQuickLook(idea) },
                         bulkAssign: { model.bulkAssign(selectedItems(), to: $0) },
-                        bulkArchive: { model.bulkArchive(selectedItems()) }
+                        bulkArchive: { model.bulkArchive(selectedItems()) },
+                        onBegin: onBegin.map { callback in { callback(idea) } }
                     )
+                    .draggable(PipelineDropPayload.idea(idea.atomUUID).dragString)
                     .id(idea.atomUUID)
                 }
             }
@@ -303,14 +309,15 @@ private struct IdeaLedgerRow: View {
     let onQuickLook: () -> Void
     let bulkAssign: (String) -> Void
     let bulkArchive: () -> Void
+    var onBegin: (() -> Void)? = nil
 
     @State private var isHovered = false
+    @State private var choosingSessionDate = false
 
     private var isArchived: Bool { idea.status == .archived }
 
     private var headline: String {
-        if let hook = idea.hooks.first, !hook.isEmpty { return hook }
-        return idea.title
+        idea.title
     }
 
     var body: some View {
@@ -367,6 +374,10 @@ private struct IdeaLedgerRow: View {
         .simultaneousGesture(TapGesture(count: 1).onEnded { onSelect() })
         .simultaneousGesture(TapGesture(count: 2).onEnded { onOpen() })
         .contextMenu { rowMenu }
+        .popover(isPresented: $choosingSessionDate) {
+            ContentSchedulePopover(title: "Writing session · \(idea.title)", currentDay: nil,
+                onPick: { day in choosingSessionDate = false; actions.schedule(day) })
+        }
         .help("\(headline) — click selects, double-click opens, Space previews")
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilitySummary)
@@ -390,18 +401,22 @@ private struct IdeaLedgerRow: View {
     }
 
     private var statusGlyph: some View {
-        Image(systemName: idea.status.iconName)
+        Image(systemName: isArchived ? "archivebox" : (idea.isPinned ? "pin.fill" : "lightbulb"))
             .font(DS.caption.weight(.medium))
             .foregroundStyle(
                 idea.status == .ready ? DS.entityIdea.opacity(0.8) : DS.textMuted
             )
             .frame(width: 18)
-            .help(idea.status.displayName)
+            .help(idea.isPinned ? "Pinned idea" : "Idea")
             .accessibilityHidden(true)
     }
 
     private var trailingMeta: some View {
         HStack(spacing: DS.space6) {
+            if idea.contentCount > 0 {
+                Text("\(idea.contentCount) piece\(idea.contentCount == 1 ? "" : "s")")
+                    .font(DS.caption2).foregroundStyle(DS.textMuted).monospacedDigit()
+            }
             if let format = idea.contentFormat {
                 Text(CollectionEmoji.formatMark(format))
                     .font(.system(size: 11))
@@ -423,18 +438,18 @@ private struct IdeaLedgerRow: View {
             if isArchived {
                 DeskVerbButton(
                     systemName: "arrow.uturn.backward",
-                    help: "Restore to Sparks",
+                    help: "Restore idea",
                     action: { actions.setStatus(.spark) }
                 )
             } else {
                 DeskVerbButton(
                     systemName: idea.isPinned ? "pin.slash" : "pin",
-                    help: idea.isPinned ? "Remove from Up Next" : "Move Up Next (P)",
+                    help: idea.isPinned ? "Unpin idea" : "Pin idea",
                     action: actions.togglePin
                 )
                 DeskVerbButton(
                     systemName: "archivebox",
-                    help: "Pass — archive this idea",
+                    help: "Archive idea",
                     action: actions.pass
                 )
             }
@@ -471,14 +486,30 @@ private struct IdeaLedgerRow: View {
             Button {
                 actions.setStatus(.spark)
             } label: {
-                Label("Restore to Sparks", systemImage: "arrow.uturn.backward")
+                Label("Restore idea", systemImage: "arrow.uturn.backward")
             }
             Divider()
             Button(role: .destructive, action: actions.delete) {
                 Label("Delete Idea", systemImage: "trash")
             }
         } else {
-            IdeaDeskMenu(idea: idea, actions: actions)
+            if let onBegin { Button("Begin writing", systemImage: "square.and.pencil", action: onBegin) }
+            Button("Open idea", systemImage: "arrow.up.left.and.arrow.down.right", action: onOpen)
+            Button("Open beside current work", systemImage: "rectangle.split.2x1", action: actions.openAsPane)
+            Button("Preview", systemImage: "eye", action: onQuickLook)
+            Divider()
+            Button(idea.isPinned ? "Unpin idea" : "Pin idea", systemImage: idea.isPinned ? "pin.slash" : "pin", action: actions.togglePin)
+            Button("Book writing session…", systemImage: "calendar.badge.clock") { choosingSessionDate = true }
+            if !actions.assignableClients.isEmpty {
+                Menu("Assign client") {
+                    Button("Personal") { actions.assignClient(nil) }
+                    ForEach(actions.assignableClients, id: \.uuid) { client in
+                        Button(client.name) { actions.assignClient(client.uuid) }
+                    }
+                }
+            }
+            Divider()
+            Button("Archive idea", systemImage: "archivebox", action: actions.pass)
         }
     }
 
@@ -493,7 +524,7 @@ private struct IdeaLedgerRow: View {
     }
 
     private var accessibilitySummary: String {
-        var parts = [headline, idea.status.displayName]
+        var parts = [headline, isArchived ? "Archived idea" : "Saved idea"]
         if showsClient, let client = idea.clientName { parts.append(client) }
         return parts.joined(separator: ", ")
     }

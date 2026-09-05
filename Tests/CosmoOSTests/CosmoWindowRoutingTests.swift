@@ -121,8 +121,8 @@ final class CosmoWindowRoutingTests: XCTestCase {
 
         // ONE default across all intents — per-intent switching would fragment
         // the prompt cache. The identity of that default is .autoDefault
-        // (currently Sonnet 5: near-Opus agentic quality at Sonnet pricing,
-        // unified with the inline assistant's default).
+        // (GPT-5.6 Sol since September 2026: flagship writing + agentic work at
+        // Sonnet 5's sticker, unified with the inline assistant's default).
         for intent in intents {
             XCTAssertEqual(
                 CosmoAgentService.defaultModelTier(for: intent),
@@ -130,7 +130,7 @@ final class CosmoWindowRoutingTests: XCTestCase {
                 "Auto mode must not switch models for intent \(intent.rawValue)"
             )
         }
-        XCTAssertEqual(AgentModelTier.autoDefault, .sonnet5)
+        XCTAssertEqual(AgentModelTier.autoDefault, .gpt56Sol)
     }
 
     func testGeminiFlashChainDoesNotFailOverToAnotherModelWhenLocked() {
@@ -176,9 +176,10 @@ final class CosmoWindowRoutingTests: XCTestCase {
         let geminiOption = CosmoModelOption.all.first { $0.id == "geminiFlashLatest" }
         let gemini35Option = CosmoModelOption.all.first { $0.id == "gemini35Flash" }
 
-        XCTAssertEqual(autoOption?.detail, "Sonnet 5 by default")
+        XCTAssertEqual(autoOption?.detail, "GPT-5.6 Sol by default")
         XCTAssertEqual(sonnetOption?.title, "Sonnet 5")
-        XCTAssertEqual(sonnetOption?.detail, "Daily driver via Claude API")
+        XCTAssertEqual(sonnetOption?.tier, .sonnet5)
+        XCTAssertEqual(CosmoModelOption.all.first { $0.id == "gpt56Sol" }?.tier, .gpt56Sol)
         XCTAssertEqual(geminiOption?.title, "Gemini 3 Flash")
         XCTAssertEqual(geminiOption?.detail, "Pinned everyday search and brainstorming")
         XCTAssertEqual(gemini35Option?.title, "Gemini 3.5 Flash")

@@ -82,7 +82,6 @@ struct MainNotificationRouter: View {
     @Binding var showSettings: Bool
     @Binding var showWorkbenchComposer: Bool
     @Binding var spokesPillar: Atom?
-    @Binding var isThinkspaceLibraryActive: Bool
     @Binding var showCreatorDatabase: Bool
 
     let actions: Actions
@@ -140,12 +139,6 @@ struct MainNotificationRouter: View {
             .onReceive(NotificationCenter.default.publisher(for: .voiceNavigationRequested)) { notification in
                 guard let destination = notification.userInfo?["destination"] as? String else { return }
                 actions.handleVoiceNavigation(destination)
-            }
-            .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Canvas.thinkspaceModeChanged)) { notification in
-                let isLibrary = notification.userInfo?["isLibrary"] as? Bool ?? false
-                withAnimation(ProMotionSprings.gentle) {
-                    isThinkspaceLibraryActive = isLibrary
-                }
             }
             .onReceive(NotificationCenter.default.publisher(for: .showSettings)) { _ in
                 FocusModeEditorBlur.clearFirstResponder(in: NSApp.keyWindow)

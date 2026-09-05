@@ -258,14 +258,28 @@ class CosmoAgentService: ObservableObject {
         } else {
             apiKey = APIKeys.agentLLM
         }
-        let baseProvider = LLMProviderFactory.create(
-            provider: activeProvider,
-            apiKey: apiKey,
-            baseURL: APIKeys.agentLLMBaseURL
-        )
 
-        // Wrap OpenRouter in failover — it supports multiple models on the same API
-        if activeProvider == .openRouter {
+        // Direct Anthropic + an OpenRouter key = a routing provider: Claude
+        // models keep the direct API (explicit cache breakpoints, 1h TTL) and
+        // every other model id — the GPT-5.6 daily driver included — rides
+        // OpenRouter. Without this, `openai/…` tiers went to api.anthropic.com.
+        let baseProvider: LLMProvider
+        if activeProvider == .anthropic, APIKeys.hasOpenRouter {
+            baseProvider = LLMProviderFactory.createRouting(
+                anthropicAPIKey: apiKey,
+                openRouterAPIKey: APIKeys.openRouter
+            )
+        } else {
+            baseProvider = LLMProviderFactory.create(
+                provider: activeProvider,
+                apiKey: apiKey,
+                baseURL: APIKeys.agentLLMBaseURL
+            )
+        }
+
+        // Wrap multi-model transports in failover — they serve several models
+        // on the same API, so a dead model can fall forward to the next.
+        if activeProvider == .openRouter || baseProvider is ModelRoutingLLMProvider {
             llmProvider = FailoverLLMProvider(
                 wrapping: baseProvider,
                 chain: .defaultChain
@@ -273,6 +287,19 @@ class CosmoAgentService: ObservableObject {
         } else {
             llmProvider = baseProvider
         }
+    }
+
+    /// The tier a request actually runs on. A tier whose transport is not
+    /// configured (GPT-5.6 with no OpenRouter key) degrades to Sonnet 5 with a
+    /// log line instead of a dead request.
+    private func servableTier(_ tier: AgentModelTier) -> AgentModelTier {
+        let base = (llmProvider as? FailoverLLMProvider)?.baseProvider ?? llmProvider
+        guard let router = base as? ModelRoutingLLMProvider else { return tier }
+        let resolved = router.servableTier(tier)
+        if resolved != tier {
+            print("[Agent] \(tier.displayLabel) (\(tier.modelId)) has no configured transport — running on \(resolved.displayLabel)")
+        }
+        return resolved
     }
 
     // MARK: - Connection Test
@@ -574,7 +601,7 @@ class CosmoAgentService: ObservableObject {
         print("[AGENT-PERF] assembleSystemPrompt=\(Int(Date().timeIntervalSince(perfAsmStart) * 1000))ms lightweight=\(lightweightContext) cached=\(systemPrompt.cached.count)c dynamic=\(systemPrompt.dynamic.count)c (~\((systemPrompt.cached.count + systemPrompt.dynamic.count) / 4) tok) tools=\(tools.count) intent=\(intent) tier=\(tierOverride.map { "\($0)" } ?? "default")")
 
         conversation.applyModelSelection(tierOverride)
-        let modelTier = conversation.effectiveModelTier(userOverride: tierOverride)
+        let modelTier = servableTier(conversation.effectiveModelTier(userOverride: tierOverride))
 
         // Build message array for LLM (no system message — passed separately for caching)
         var llmMessages: [AgentMessage] = []
@@ -1096,7 +1123,7 @@ class CosmoAgentService: ObservableObject {
         )
 
         conversation.applyModelSelection(nil)
-        let modelTier = conversation.effectiveModelTier(userOverride: nil)
+        let modelTier = servableTier(conversation.effectiveModelTier(userOverride: nil))
 
         var llmMessages: [AgentMessage] = []
         let rawWindow = Self.buildModelAwareHistoryWindow(

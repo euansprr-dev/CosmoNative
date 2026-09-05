@@ -193,6 +193,7 @@ final class CaptureDropTargetView: NSView {
         // add"); links and text always capture on release.
         var stagesOnDrop = false
         var isAllImages = false
+        var isSwipeLink = false
 
         if let urls = pasteboard.readObjects(
             forClasses: [NSURL.self],
@@ -228,21 +229,40 @@ final class CaptureDropTargetView: NSView {
             forClasses: [NSURL.self],
             options: [.urlReadingFileURLsOnly: false]
         ) as? [URL], let url = urls.first(where: { !$0.isFileURL }) {
-            items = [CaptureDragPreview.Item(id: 0, name: url.host ?? url.absoluteString, systemImage: "link")]
+            // A platform link lands in the field with the Inbox | Swipe
+            // trigger (panel only); every other link captures on release.
+            if let link = CaptureSwipeLink.detect(in: url.absoluteString) {
+                stagesOnDrop = stages
+                isSwipeLink = true
+                items = [CaptureDragPreview.Item(id: 0, name: "\(link.platform.displayName) link", systemImage: "link")]
+            } else {
+                items = [CaptureDragPreview.Item(id: 0, name: url.host ?? url.absoluteString, systemImage: "link")]
+            }
         } else if pasteboard.data(forType: .png) != nil || pasteboard.data(forType: .tiff) != nil {
             stagesOnDrop = stages
             isAllImages = true
             items = [CaptureDragPreview.Item(id: 0, name: "Image", systemImage: "photo")]
         } else if let string = pasteboard.string(forType: .string) {
-            let snippet = string.trimmingCharacters(in: .whitespacesAndNewlines).prefix(48)
-            items = [CaptureDragPreview.Item(id: 0, name: "\u{201C}\(snippet)…\u{201D}", systemImage: "text.quote")]
+            let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Browser drag-outs arrive as plain text (WebKit never surfaces
+            // public.url). Strict: the text must be NOTHING but the link —
+            // the same rule `receive` applies on release.
+            if let link = CaptureSwipeLink.detect(in: trimmed), link.note == nil {
+                stagesOnDrop = stages
+                isSwipeLink = true
+                items = [CaptureDragPreview.Item(id: 0, name: "\(link.platform.displayName) link", systemImage: "link")]
+            } else {
+                let snippet = trimmed.prefix(48)
+                items = [CaptureDragPreview.Item(id: 0, name: "\u{201C}\(snippet)…\u{201D}", systemImage: "text.quote")]
+            }
         }
 
         return CaptureDragPreview(
             items: Array(items.prefix(4)),
             totalCount: items.count,
             stagesOnDrop: stagesOnDrop,
-            isAllImages: isAllImages && !items.isEmpty
+            isAllImages: isAllImages && !items.isEmpty,
+            isSwipeLink: isSwipeLink
         )
     }
 

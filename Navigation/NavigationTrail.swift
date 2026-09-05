@@ -31,6 +31,10 @@ final class NavigationTrail {
             /// place in the trail, so the universal arrows walk in and out
             /// of folders instead of a bespoke breadcrumb.
             case libraryFolder(thinkspaceId: String, folderID: UUID)
+            /// A view of a space (Canvas / Library / Deep Dive …) — the
+            /// space's own arrival moment. `.sidebar(.thinkspace)` is no
+            /// longer recorded; every space arrival names its view.
+            case spaceView(thinkspaceId: String, view: SpaceView)
         }
 
         let id: UUID

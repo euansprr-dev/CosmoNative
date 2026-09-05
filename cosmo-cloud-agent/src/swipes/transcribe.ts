@@ -1,14 +1,15 @@
 // cosmo-cloud-agent/src/swipes/transcribe.ts
-// Cloud transcription: Whisper API for reel speech, Gemini Flash vision
-// (via OpenRouter) for carousel slide text. The slide prompt is ported
-// VERBATIM from the Mac's InstagramAutoTranscriber.callGeminiVisionForSingleImage
-// — prompt detail drives quality; do not compress it.
+// Cloud transcription: Whisper API for reel speech, Gemini Flash vision for
+// carousel slide text (direct Google API first, OpenRouter fallback — see
+// llm.ts). The slide prompt is ported VERBATIM from the Mac's
+// InstagramAutoTranscriber.callGeminiVisionForSingleImage — prompt detail
+// drives quality; do not compress it.
 
 import { randomUUID } from 'crypto';
 import { config } from '../config';
 import { SpeechSegmentJSON, TranscriptSlideJSON } from './types';
-
-const GEMINI_VISION_MODEL = config.openRouterVisionModel;
+import { generateVision, generateVisionFromURL, visionConfigured } from './llm';
+import { sniffImageMime } from './media';
 
 // ── Reel speech via Whisper ─────────────────────────────────────────────────
 
@@ -79,21 +80,28 @@ FORMATTING RULES:
 - List items keep their bullet/number/arrow markers, one item per line. Never merge two list items into one line.
 If no readable text is found, return an empty string.`;
 
+/** A slide to read: its live CDN URL plus the bytes when the worker has them. */
+export interface SlideInput {
+  url: string;
+  data: Buffer | null;
+}
+
 /**
  * Transcribe carousel slides — one vision call per slide, matching the Mac's
  * per-slide pipeline (line breaks preserved per slide, no cross-slide bleed).
  * Calls run 6-concurrent: a 10-slide carousel drops from ~30s to ~4s with
- * identical per-slide accuracy. `slideImageUrls` are the LIVE CDN URLs from
- * Apify (fresh, publicly fetchable by OpenRouter).
+ * identical per-slide accuracy. Slides whose bytes were downloaded go to the
+ * model INLINE (any provider); a slide the worker could not fetch falls back
+ * to handing its URL to OpenRouter, which fetches images itself.
  */
-export async function transcribeSlides(slideImageUrls: string[]): Promise<TranscriptSlideJSON[]> {
-  const texts: (string | null)[] = new Array(slideImageUrls.length).fill(null);
+export async function transcribeSlides(slides: SlideInput[]): Promise<TranscriptSlideJSON[]> {
+  const texts: (string | null)[] = new Array(slides.length).fill(null);
   let cursor = 0;
-  const workers = Array.from({ length: Math.min(6, slideImageUrls.length) }, async () => {
-    while (cursor < slideImageUrls.length) {
+  const workers = Array.from({ length: Math.min(6, slides.length) }, async () => {
+    while (cursor < slides.length) {
       const index = cursor;
       cursor += 1;
-      texts[index] = await transcribeSingleSlide(slideImageUrls[index], index);
+      texts[index] = await transcribeSingleSlide(slides[index], index);
     }
   });
   await Promise.all(workers);
@@ -106,48 +114,31 @@ export async function transcribeSlides(slideImageUrls: string[]): Promise<Transc
   }));
 }
 
-async function transcribeSingleSlide(imageUrl: string, index: number): Promise<string | null> {
-  if (!config.openRouterApiKey) return null;
+async function transcribeSingleSlide(slide: SlideInput, index: number): Promise<string | null> {
+  if (!visionConfigured()) return null;
+  const label = `carousel slide ${index}`;
 
-  const body = {
-    model: GEMINI_VISION_MODEL,
-    messages: [{
-      role: 'user',
-      content: [
-        { type: 'text', text: SLIDE_PROMPT },
-        { type: 'image_url', image_url: { url: imageUrl } },
-      ],
-    }],
-    temperature: 0.1,
-    max_tokens: 1000,
-  };
-
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      const response = await fetch(`${config.openRouterBaseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${config.openRouterApiKey}`,
-          'X-Title': 'CosmoOS',
-        },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(45_000),
-      });
-      if (!response.ok) {
-        if (attempt === 0) continue;
-        return null;
-      }
-      const payload = await response.json() as {
-        choices?: Array<{ message?: { content?: string } }>;
-      };
-      const content = payload.choices?.[0]?.message?.content?.trim();
-      return content && content.length > 0 ? content : null;
-    } catch (error) {
-      if (attempt === 1) {
-        console.warn(`⚠️ slide ${index} vision transcription failed:`, error instanceof Error ? error.message : error);
-      }
-    }
+  let content: string | null = null;
+  const mimeType = slide.data ? sniffImageMime(slide.data) : null;
+  if (slide.data && mimeType) {
+    content = await generateVision({
+      label,
+      prompt: SLIDE_PROMPT,
+      images: [{ data: slide.data, mimeType }],
+      maxTokens: 1000,
+      temperature: 0.1,
+      timeoutMs: 45_000,
+    });
+  } else {
+    content = await generateVisionFromURL({
+      label,
+      prompt: SLIDE_PROMPT,
+      imageUrl: slide.url,
+      maxTokens: 1000,
+      temperature: 0.1,
+      timeoutMs: 45_000,
+    });
   }
-  return null;
+  const trimmed = content?.trim() ?? '';
+  return trimmed.length > 0 ? trimmed : null;
 }

@@ -52,11 +52,19 @@ final class IdeaFocusPersistenceRegressionTests: XCTestCase {
     }
 
     func testIdeaPromotionPersistsIdeaClientIntoContentFocusStateAndMetadata() throws {
-        let source = try ideaFocusViewModelSource()
-
+        // Sept 2026: promotion lives in IdeaPromotionService (one path for the
+        // bench, the calendar and the Pipeline board). The bench saves first,
+        // so the persisted idea client IS the session's linked client.
+        let viewModel = try ideaFocusViewModelSource()
         XCTAssertTrue(
-            source.contains("let inheritedClientUUID = linkedClient?.uuid ?? idea.ideaMetadata?.clientUUID"),
-            "Promotion must fall back to the idea metadata client UUID when the linked client atom is not loaded."
+            viewModel.contains("await save()") && viewModel.contains("IdeaPromotionService.promote("),
+            "The bench must persist its session state, then promote through the shared service."
+        )
+
+        let source = try ideaPromotionServiceSource()
+        XCTAssertTrue(
+            source.contains("let inheritedClientUUID = meta?.clientUUID"),
+            "Promotion must read the client from the idea metadata (the bench's linked client is saved there first)."
         )
         XCTAssertTrue(
             source.contains("focusState.clientProfileUUID = inheritedClientUUID"),
@@ -321,6 +329,13 @@ final class IdeaFocusPersistenceRegressionTests: XCTestCase {
     private func ideaFocusViewSource() throws -> String {
         try String(
             contentsOf: repositoryRoot().appendingPathComponent("UI/FocusMode/Ideas/IdeaFocusModeView.swift"),
+            encoding: .utf8
+        )
+    }
+
+    private func ideaPromotionServiceSource() throws -> String {
+        try String(
+            contentsOf: repositoryRoot().appendingPathComponent("Data/Services/IdeaPromotionService.swift"),
             encoding: .utf8
         )
     }

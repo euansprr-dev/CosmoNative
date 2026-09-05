@@ -7,8 +7,15 @@ import Combine
 final class SwipeLibraryViewModel {
     @ObservationIgnored private var cancellables: Set<AnyCancellable> = []
     @ObservationIgnored private var syncRefreshTask: Task<Void, Never>?
+    @ObservationIgnored private let refresh = CoalescingRefresh()
+    @ObservationIgnored private let projectionRefresh = CoalescingRefresh()
+    @ObservationIgnored private var projectionRevision = 0
+    @ObservationIgnored private var baseCardModels: [String: SwipeCardModel] = [:]
 
-    init() {
+    init() {}
+
+    private func startObservingIfNeeded() {
+        guard cancellables.isEmpty else { return }
         // Swipes captured on iPhone arrive via SYNC PULLS, not through any UI
         // action on this Mac — without this listener the library rendered a
         // launch-time snapshot until the next app restart (user-visible as
@@ -30,7 +37,7 @@ final class SwipeLibraryViewModel {
         // Short debounce: this is a direct user action, so it must feel
         // immediate, unlike a hundred-atom sync burst.
         NotificationCenter.default.publisher(for: CosmoNotification.SwipeFile.libraryDidChange)
-            .debounce(for: .milliseconds(250), scheduler: DispatchQueue.main)
+            .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 Task { @MainActor [weak self] in
                     guard let self, self.hasLoaded else { return }
@@ -54,11 +61,19 @@ final class SwipeLibraryViewModel {
     /// changes nothing re-renders nothing.
     private func scheduleSyncRefresh() {
         guard hasLoaded else { return }
+        guard isSurfaceActive else {
+            missedReloadWhileInactive = true
+            return
+        }
         syncRefreshTask?.cancel()
         syncRefreshTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(1.5))
-            guard !Task.isCancelled else { return }
-            await self?.reload()
+            guard let self, !Task.isCancelled else { return }
+            guard self.isSurfaceActive else {
+                self.missedReloadWhileInactive = true
+                return
+            }
+            await self.reload()
         }
     }
     private(set) var allItems: [SwipeGalleryItem] = []
@@ -75,7 +90,6 @@ final class SwipeLibraryViewModel {
     /// Month-rhythm sections for the catalog — populated only when browsing the
     /// full library newest-first with no query/filters (finding beats rhythm).
     private(set) var dateSections: [SwipeLibraryDateBucket] = []
-    private(set) var shelves: [SwipeLibraryShelf] = []
     private(set) var summary = SwipeLibraryFacetSummary.empty
     private(set) var availableCreators: [String] = []
     private(set) var availableNiches: [String] = []
@@ -141,16 +155,18 @@ final class SwipeLibraryViewModel {
     private(set) var hasLoaded = false
 
     func loadIfNeeded(section: SwipeLibrarySectionSelection) async {
+        startObservingIfNeeded()
         setScope(section)
         guard !hasLoaded else { return }
-        await reload()
+        await refresh.run(invalidate: false) { [weak self] in await self?.loadSnapshot() }
     }
 
     /// Launch-time warm: the first load WITHOUT touching scope — a prewarm
     /// racing a real visit must never re-scope what the user is looking at.
     func prewarmIfNeeded() async {
+        startObservingIfNeeded()
         guard !hasLoaded else { return }
-        await reload()
+        await refresh.run(invalidate: false) { [weak self] in await self?.loadSnapshot() }
     }
 
     func setSection(_ section: SwipeLibrarySectionSelection) {
@@ -179,6 +195,13 @@ final class SwipeLibraryViewModel {
     }
 
     func reload() async {
+        startObservingIfNeeded()
+        await refresh.run { [weak self] in await self?.loadSnapshot() }
+    }
+
+    private func loadSnapshot() async {
+        let interval = AppPerformanceInstrumentation.begin("swipe-library-refresh")
+        defer { AppPerformanceInstrumentation.end("swipe-library-refresh", interval) }
         isLoading = true
         errorMessage = nil
 
@@ -200,7 +223,7 @@ final class SwipeLibraryViewModel {
             }.value
 
             allItems = items
-            hasLoaded = true
+            baseCardModels = Dictionary(items.map { ($0.id, SwipeCardModel(item: $0)) }, uniquingKeysWith: { first, _ in first })
             // Flow mosaics look up member thumbnails among SIBLING rows — a
             // flow's steps are themselves library swipes, so no fetch is ever
             // needed. Depends only on allItems, so it rebuilds here, not per
@@ -215,7 +238,9 @@ final class SwipeLibraryViewModel {
             SwipeSpaceStore.shared.refreshCounts(from: items)
             SwipeBoardStore.shared.refreshCounts(from: items)
             await refreshAvailableFacets()
-            recompute()
+            projectionRevision += 1
+            await projectionRefresh.run { [weak self] in await self?.rebuildProjection() }
+            hasLoaded = true
         } catch {
             errorMessage = "Could not load Swipe File: \(error.localizedDescription)"
         }
@@ -403,13 +428,21 @@ final class SwipeLibraryViewModel {
     }
 
     private func recompute() {
-        let items = SwipeLibraryFiltering.filteredItems(
-            from: allItems,
-            scope: scope,
-            filters: filterState,
-            query: query,
-            sortMode: sortMode
-        )
+        projectionRevision += 1
+        Task { await projectionRefresh.run { [weak self] in await self?.rebuildProjection() } }
+    }
+
+    private func rebuildProjection() async {
+        let revision = projectionRevision
+        let source = allItems
+        let scope = self.scope
+        let filters = filterState
+        let query = self.query
+        let sort = sortMode
+        let items = await Task.detached(priority: .userInitiated) {
+            SwipeLibraryFiltering.filteredItems(from: source, scope: scope, filters: filters, query: query, sortMode: sort)
+        }.value
+        guard revision == projectionRevision else { return }
         let nextIdentity = SwipeLibraryVisibleItemsIdentity(items: items)
         if visibleItemsIdentity != nextIdentity {
             visibleItemsIdentity = nextIdentity
@@ -424,7 +457,7 @@ final class SwipeLibraryViewModel {
             return effective == .home
         }()
         visibleCardModels = items.map { item in
-            var model = SwipeCardModel(item: item)
+            var model = baseCardModels[item.id] ?? SwipeCardModel(item: item)
             if !isSingleGenreRoom, item.genre != .post {
                 model.showsGenreChip = true
             }
@@ -444,7 +477,6 @@ final class SwipeLibraryViewModel {
         dateSections = wantsDateSections
             ? SwipeLibraryDateBucket.monthBuckets(items: items, models: visibleCardModels)
             : []
-        shelves = SwipeLibraryFiltering.shelves(from: items)
         // Same values the old full facet scan produced — the allItems halves
         // are cached at reload time, only the filtered halves compute here.
         let scores = items.compactMap(\.hookScore)
@@ -464,11 +496,7 @@ final class SwipeLibraryViewModel {
             recordAsLaunchManifest: isUnfilteredBrowse
         )
 
-        if let selectedItem, !items.contains(where: { $0.id == selectedItem.id }) {
-            self.selectedItem = items.first
-        } else if selectedItem == nil {
-            selectedItem = items.first
-        }
+        selectedItem = selectedItem.flatMap { selected in items.first { $0.id == selected.id } } ?? items.first
     }
 
     private func refreshAvailableFacets() async {

@@ -27,7 +27,7 @@ enum AgentProvider: String, Codable, CaseIterable, Sendable {
         switch self {
         case .anthropic: return "claude-sonnet-5"
         case .openai: return "gpt-4o"
-        case .openRouter: return "anthropic/claude-sonnet-5"
+        case .openRouter: return "openai/gpt-5.6-sol"
         case .ollama: return "llama3.2"
         case .custom: return "gpt-4o"
         }
@@ -52,6 +52,9 @@ enum AgentProvider: String, Codable, CaseIterable, Sendable {
 
     /// Popular models available on OpenRouter
     static let openRouterModels: [(id: String, label: String)] = [
+        ("openai/gpt-5.6-sol", "GPT-5.6 Sol"),
+        ("openai/gpt-5.6-terra", "GPT-5.6 Terra"),
+        ("openai/gpt-5.6-luna", "GPT-5.6 Luna"),
         ("openai/gpt-5.5", "GPT 5.5 Thinking"),
         ("anthropic/claude-opus-4.7", "Claude Opus 4.7"),
         ("openai/gpt-chat-latest", "GPT Chat Latest"),
@@ -378,42 +381,63 @@ enum AgentConfirmationTier: String, Codable, Sendable {
 enum AgentModelTier: String, Codable, Sendable {
     /// The tier auto mode runs on when nothing picks a model — ONE stable
     /// default for every intent (per-intent switching fragments the prompt
-    /// cache). Sonnet 5: near-Opus quality on agentic/coding work at Sonnet
-    /// pricing ($2/$10 intro through 2026-08-31, then $3/$15 — same sticker
-    /// as Sonnet 4.6), and it unifies auto mode with the inline assistant's
-    /// default so both surfaces ride one model. Note: Sonnet 5 runs adaptive
-    /// thinking by default (thinking + text share max_tokens — keep headroom)
-    /// and its tokenizer produces ~30% more tokens for the same text.
-    static let autoDefault: AgentModelTier = .sonnet5
+    /// cache). GPT-5.6 Sol (September 2026): OpenAI's flagship, the strongest
+    /// writer of the 5.6 family and the most responsive to voice profiles in
+    /// blind prose tests, "particularly strong at multi-step agentic tasks" —
+    /// which is exactly the tool loop this app runs. On OpenRouter it lists at
+    /// $2/$10 with $0.20 cache reads: the same sticker as Sonnet 5, cheaper
+    /// than Terra ($2/$12), and OpenAI's tokenizer spends ~30% fewer tokens on
+    /// the same English than Sonnet 5's. It unifies auto mode with the inline
+    /// assistant's default so both surfaces ride one model.
+    /// Gotcha: GPT-5.6 rejects function tools + reasoning on Chat Completions
+    /// unless effort is `none`; `OpenAIProvider` self-heals on that 400 (see
+    /// `OpenAIReasoningToolCompatibility`).
+    static let autoDefault: AgentModelTier = .gpt56Sol
 
     case sensor      // Haiku 4.5 — cheap bulk analysis, classification, scoring
-    case strategist  // Sonnet 5 — daily driver conversations, outlines, re-ranking, strategy
+    case strategist  // Daily driver alias — rides the same model as .autoDefault
     case writer      // Opus 4.6 — explicit premium route only
-    case sonnet5     // Sonnet 5 — agentic/spatial work (thinkspace organizing)
+    case sonnet5     // Sonnet 5 — explicit Anthropic pick (the pre-September-2026 daily driver)
     case gpt55Thinking
     case opus47
     case gptChatLatest
     case geminiFlashLatest
     case gemini35Flash
+    case gpt56Sol    // GPT-5.6 Sol — flagship; daily driver since September 2026
+    case gpt56Terra  // GPT-5.6 Terra — balanced middle tier
+    case gpt56Luna   // GPT-5.6 Luna — fastest/cheapest, lightweight agentic work
 
-    // .strategist is intentionally absent: it now resolves to the same model as
-    // .sonnet5, and two "Sonnet 5" rows in the skill pickers would be confusing.
-    // The case itself stays so persisted skills keep decoding.
+    // .strategist is intentionally absent: it resolves to the same model as
+    // .gpt56Sol, and two identical rows in the skill pickers would be
+    // confusing. The case itself stays so persisted skills keep decoding.
     static let skillSelectableCases: [AgentModelTier] = [
+        .gpt56Sol,
+        .gpt56Terra,
+        .gpt56Luna,
+        .sonnet5,
         .geminiFlashLatest,
         .gemini35Flash,
         .gptChatLatest,
         .gpt55Thinking,
         .opus47,
-        .sonnet5,
         .sensor,
         .writer
     ]
 
+    /// Tiers whose model runs through OpenRouter's OpenAI passthrough — the
+    /// GPT-5.6 family shares one request grammar (reasoning effort, automatic
+    /// prefix caching, the tools+reasoning constraint).
+    var isGPT56: Bool {
+        switch self {
+        case .gpt56Sol, .gpt56Terra, .gpt56Luna, .strategist: return true
+        default: return false
+        }
+    }
+
     var modelId: String {
         switch self {
         case .sensor: return "anthropic/claude-haiku-4.5"
-        case .strategist: return "anthropic/claude-sonnet-5"
+        case .strategist: return AgentModelTier.gpt56Sol.modelId
         case .writer: return "anthropic/claude-opus-4.6"
         case .sonnet5: return "anthropic/claude-sonnet-5"
         case .gpt55Thinking: return "openai/gpt-5.5"
@@ -421,13 +445,16 @@ enum AgentModelTier: String, Codable, Sendable {
         case .gptChatLatest: return "openai/gpt-chat-latest"
         case .geminiFlashLatest: return "google/gemini-3-flash-preview"
         case .gemini35Flash: return "google/gemini-3.5-flash"
+        case .gpt56Sol: return "openai/gpt-5.6-sol"
+        case .gpt56Terra: return "openai/gpt-5.6-terra"
+        case .gpt56Luna: return "openai/gpt-5.6-luna"
         }
     }
 
     var displayLabel: String {
         switch self {
         case .sensor: return "Haiku"
-        case .strategist: return "Sonnet 5"
+        case .strategist: return AgentModelTier.gpt56Sol.displayLabel
         case .writer: return "Opus"
         case .sonnet5: return "Sonnet 5"
         case .gpt55Thinking: return "GPT 5.5 Thinking"
@@ -435,15 +462,18 @@ enum AgentModelTier: String, Codable, Sendable {
         case .gptChatLatest: return "GPT Chat Latest"
         case .geminiFlashLatest: return "Gemini 3 Flash"
         case .gemini35Flash: return "Gemini 3.5 Flash"
+        case .gpt56Sol: return "GPT-5.6 Sol"
+        case .gpt56Terra: return "GPT-5.6 Terra"
+        case .gpt56Luna: return "GPT-5.6 Luna"
         }
     }
 
     var maxTokens: Int {
         switch self {
         case .sensor: return 4096
-        // Strategist now rides Sonnet 5, which thinks adaptively by default;
-        // thinking + response share max_tokens, so it needs the same headroom
-        // as .sonnet5.
+        // The daily driver reasons before it answers and reasoning tokens
+        // count against max_tokens on OpenAI's Chat Completions — keep the
+        // same headroom the thinking tiers get.
         case .strategist: return 16384
         case .writer: return 16384
         // Sonnet 5 thinks adaptively by default and thinking + response share
@@ -454,13 +484,16 @@ enum AgentModelTier: String, Codable, Sendable {
         case .gptChatLatest: return 8192
         case .geminiFlashLatest: return 8192
         case .gemini35Flash: return 8192
+        case .gpt56Sol: return 16384
+        case .gpt56Terra: return 16384
+        case .gpt56Luna: return 8192
         }
     }
 
     var contextWindow: Int {
         switch self {
         case .sensor: return 200_000
-        case .strategist: return 200_000
+        case .strategist: return AgentModelTier.gpt56Sol.contextWindow
         case .writer: return 1_000_000
         case .sonnet5: return 200_000
         case .gpt55Thinking: return 1_050_000
@@ -468,6 +501,7 @@ enum AgentModelTier: String, Codable, Sendable {
         case .gptChatLatest: return 400_000
         case .geminiFlashLatest: return 1_048_576
         case .gemini35Flash: return 1_048_576
+        case .gpt56Sol, .gpt56Terra, .gpt56Luna: return 1_050_000
         }
     }
 
@@ -884,11 +918,25 @@ struct ModelFailoverChain: Sendable {
         FailoverModel(modelId: "openai/gpt-5.4", maxRetries: 1, label: "GPT 5.4"),
     ])
 
-    /// Default chain: Sonnet 5 → Haiku → pinned Gemini 3 Flash
+    /// Default chain: GPT-5.6 Sol → Sonnet 5 → Haiku. Crossing providers on
+    /// failover is deliberate — an OpenAI outage should land on Anthropic,
+    /// not on a sibling OpenAI tier that is down for the same reason.
     static let defaultChain = ModelFailoverChain(models: [
+        FailoverModel(modelId: "openai/gpt-5.6-sol", maxRetries: 1, label: "GPT-5.6 Sol"),
         FailoverModel(modelId: "anthropic/claude-sonnet-5", maxRetries: 1, label: "Sonnet 5"),
         FailoverModel(modelId: "anthropic/claude-haiku-4.5", maxRetries: 1, label: "Haiku"),
-        FailoverModel(modelId: "google/gemini-3-flash-preview", maxRetries: 1, label: "Gemini 3 Flash"),
+    ])
+
+    static let gpt56SolChain = defaultChain
+
+    static let gpt56TerraChain = ModelFailoverChain(models: [
+        FailoverModel(modelId: "openai/gpt-5.6-terra", maxRetries: 1, label: "GPT-5.6 Terra"),
+        FailoverModel(modelId: "anthropic/claude-sonnet-5", maxRetries: 1, label: "Sonnet 5"),
+    ])
+
+    static let gpt56LunaChain = ModelFailoverChain(models: [
+        FailoverModel(modelId: "openai/gpt-5.6-luna", maxRetries: 1, label: "GPT-5.6 Luna"),
+        FailoverModel(modelId: "anthropic/claude-haiku-4.5", maxRetries: 1, label: "Haiku"),
     ])
 
     /// Sensor chain: Haiku → pinned Gemini 3 Flash
@@ -940,6 +988,9 @@ struct ModelFailoverChain: Sendable {
         case .gptChatLatest: return .gptChatLatestChain
         case .geminiFlashLatest: return .geminiFlashLatestChain
         case .gemini35Flash: return .gemini35FlashChain
+        case .gpt56Sol: return .gpt56SolChain
+        case .gpt56Terra: return .gpt56TerraChain
+        case .gpt56Luna: return .gpt56LunaChain
         }
     }
 

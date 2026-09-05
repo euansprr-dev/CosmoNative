@@ -154,6 +154,21 @@ enum EditorBoundaryCommand: Equatable {
     /// A block-manipulation key equivalent (⌘D, ⌥⌘↑/↓, ⌥⌘1–3, ⇧⌘L) landed in
     /// a block row — the host applies it structurally.
     case blockShortcut(BlockKeyboardShortcut, livePlainText: String)
+    /// Table cell mode: the caret wants to leave the cell (Tab/⇧Tab, Return,
+    /// arrows at the cell's text edges). livePlainText is the cell's current
+    /// truth so the host commits it before moving focus.
+    case tableNavigate(RichTableDirection, caretUTF16OffsetFromEnd: Int, livePlainText: String)
+    /// Table cell mode: Return — move down a row; in the last row, add one
+    /// (the Apple Notes rhythm). Distinct from an arrow so ↓ at the last row
+    /// can leave the table instead of growing it.
+    case tableReturn(caretUTF16OffsetFromEnd: Int, livePlainText: String)
+    /// Table cell mode: ⌘-arrow — jump to the table's edge in that direction.
+    case tableEdge(RichTableDirection)
+    /// Table cell mode: ⌘Return — insert a row below the caret's row.
+    case tableAddRowBelow(livePlainText: String)
+    /// Table cell mode: a tabular paste (HTML table, TSV, pipe table, cosmo
+    /// blocks) fills cells right/down from the caret's cell.
+    case tablePasteGrid(grid: [[[RichInlineNode]]], livePlainText: String)
 }
 
 /// Keyboard block manipulation — the handle menu's actions without the mouse.
@@ -163,6 +178,12 @@ enum BlockKeyboardShortcut: Equatable {
     case moveDown
     case heading(Int)
     case checklistToggle
+    /// Table cell mode only — block rows ignore these.
+    case tableAddRowBelow
+    case tableMoveColumn(Int)
+    case tableMergeCells
+    case tableUnmergeCells
+    case tableOptions
 }
 
 /// Live markdown-alias detection for block rows: a recognized prefix typed
@@ -219,6 +240,10 @@ struct MarkdownBlockAlias {
 struct EditorCaretRequest: Equatable {
     var utf16OffsetFromEnd: Int
     var token: Int
+    /// When set, the caret lands at the character nearest this WINDOW point
+    /// (a click on a static table cell that just mounted its editor) instead
+    /// of at the offset.
+    var windowPoint: CGPoint? = nil
 }
 
 /// Non-invalidating sync bookkeeping for CosmoDocumentEditor. Held in @State
@@ -321,6 +346,12 @@ struct CosmoDocumentEditor: View {
     var onSlashCommandSelected: ((SlashCommand, String) -> Bool)? = nil
     /// Block-row mode: Return splits the block instead of inserting a newline.
     var splitsOnReturn: Bool = false
+    /// Table cell mode: the editor holds ONE rich paragraph inside a table
+    /// cell. Return/Tab/arrows at the edges navigate cells (boundary
+    /// commands), Shift+Return is a soft break, hard newlines are contained.
+    var tableCellMode: Bool = false
+    /// Table cell mode: the cell's context-menu items (right-click).
+    var tableContextMenu: (() -> NSMenu?)? = nil
     /// The block this row renders (block rows only) — drag hit-testing.
     var rowBlockID: UUID? = nil
     /// Block-row mode: document sync runs synchronously per keystroke (the
@@ -403,6 +434,8 @@ struct CosmoDocumentEditor: View {
             onBoundaryCommand: onBoundaryCommand,
             onSlashCommandSelected: onSlashCommandSelected,
             splitsOnReturn: splitsOnReturn,
+            tableCellMode: tableCellMode,
+            tableContextMenu: tableContextMenu,
             rowBlockID: rowBlockID,
             rowBlockKind: splitsOnReturn ? document.blocks.first?.kind : nil,
             rowHeadingIsCollapsible: splitsOnReturn

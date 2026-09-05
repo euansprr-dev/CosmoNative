@@ -8,10 +8,11 @@
 import SwiftUI
 
 struct InboxView: View {
-    @State private var viewModel = InboxViewModel()
+    @State private var viewModel: InboxViewModel
     @Binding private var route: SidebarInboxRoute
 
-    init(route: Binding<SidebarInboxRoute> = .constant(.global)) {
+    init(viewModel: InboxViewModel, route: Binding<SidebarInboxRoute> = .constant(.global)) {
+        _viewModel = State(initialValue: viewModel)
         _route = route
     }
 

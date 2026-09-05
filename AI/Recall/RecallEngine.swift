@@ -21,6 +21,8 @@ struct RecallQuery: Sendable {
     var excludeUuids: Set<String> = []
     /// Hits below this blended score are dropped — silence over noise.
     var minScore: Double = 0.18
+    /// Positive scope, applied before candidate limits. nil = global; [] = none.
+    var includeUuids: Set<String>? = nil
 }
 
 struct RecallHit: Sendable, Identifiable {
@@ -68,12 +70,13 @@ actor RecallEngine {
     func query(_ query: RecallQuery) async -> [RecallHit] {
         let text = query.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return [] }
+        if query.includeUuids?.isEmpty == true { return [] }
 
         let typeFilter = query.types.map { Set($0.map(\.rawValue)) }
 
         // Two candidate pools, fetched concurrently.
-        async let vectorHitsTask = vectorCandidates(text: text, typeFilter: typeFilter, limit: max(24, query.limit * 3))
-        async let keywordHitsTask = keywordCandidates(text: text, typeFilter: typeFilter, limit: 24)
+        async let vectorHitsTask = vectorCandidates(text: text, typeFilter: typeFilter, limit: max(24, query.limit * 3), includeUuids: query.includeUuids)
+        async let keywordHitsTask = keywordCandidates(text: text, typeFilter: typeFilter, limit: 24, includeUuids: query.includeUuids)
         let (vectorHits, keywordHits) = await (vectorHitsTask, keywordHitsTask)
 
         guard !vectorHits.isEmpty || !keywordHits.isEmpty else { return [] }
@@ -124,6 +127,7 @@ actor RecallEngine {
         let now = Date()
         var hits: [RecallHit] = []
         for (uuid, candidate) in candidates {
+            if let allowed = query.includeUuids, !allowed.contains(uuid) { continue }
             guard let atom = atoms[uuid] else { continue }
             if let types = query.types, !types.contains(atom.type) { continue }
 
@@ -165,7 +169,8 @@ actor RecallEngine {
     private func vectorCandidates(
         text: String,
         typeFilter: Set<String>?,
-        limit: Int
+        limit: Int,
+        includeUuids: Set<String>?
     ) async -> [RecallVectorHit] {
         guard client.isConfigured else { return [] }
         guard let embedding = await queryEmbedding(for: text) else { return [] }
@@ -173,7 +178,8 @@ actor RecallEngine {
             embedding: embedding,
             limit: limit,
             entityTypes: typeFilter,
-            minSimilarity: 0.05
+            minSimilarity: 0.05,
+            entityUuids: includeUuids
         )
     }
 
@@ -186,7 +192,8 @@ actor RecallEngine {
     private func keywordCandidates(
         text: String,
         typeFilter: Set<String>?,
-        limit: Int
+        limit: Int,
+        includeUuids: Set<String>?
     ) async -> [KeywordHit] {
         // Build a forgiving OR query from the meaningful terms.
         let terms = text.lowercased()
@@ -209,6 +216,12 @@ actor RecallEngine {
                 let placeholders = Array(repeating: "?", count: typeFilter.count).joined(separator: ",")
                 sql += " AND atoms_fts.type IN (\(placeholders))"
                 arguments.append(contentsOf: Array(typeFilter))
+            }
+            if let includeUuids {
+                // One bound JSON parameter supports large boards without
+                // exceeding SQLite's variable limit. Scope precedes top-k.
+                sql += " AND atoms_fts.uuid IN (SELECT value FROM json_each(?))"
+                arguments.append(String(data: try JSONEncoder().encode(includeUuids.sorted()), encoding: .utf8) ?? "[]")
             }
             sql += " ORDER BY score DESC LIMIT ?"
             arguments.append(limit)

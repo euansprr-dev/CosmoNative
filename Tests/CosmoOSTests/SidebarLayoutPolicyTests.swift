@@ -217,11 +217,11 @@ final class SidebarLayoutPolicyTests: XCTestCase {
         let sectionHeader = try XCTUnwrap(
             thinkspaceSection.slice(
                 from: "private var sectionHeader: some View",
-                to: "// MARK: - New Thinkspace Row"
+                to: "// MARK: - Thinkspace List"
             )
         )
 
-        XCTAssertTrue(sectionHeader.contains("Text(\"Thinkspaces\")"))
+        XCTAssertTrue(sectionHeader.contains("Text(\"Spaces\")"))
         XCTAssertTrue(sectionHeader.contains(".font(.system(size: 10, weight: .semibold))"))
         XCTAssertTrue(sectionHeader.contains(".textCase(.uppercase)"))
         XCTAssertTrue(sectionHeader.contains(".foregroundStyle(DS.textMuted)"))

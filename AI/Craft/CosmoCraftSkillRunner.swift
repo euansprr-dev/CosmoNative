@@ -163,7 +163,10 @@ final class CosmoCraftSkillRunner {
         session.messages.append((role: "user", content: userMessage))
         session.messages = Array(session.messages.suffix(10))
 
-        let systemBlocks = buildSystemBlocks(format: format, clientAtom: clientAtom)
+        var systemBlocks = buildSystemBlocks(format: format, clientAtom: clientAtom)
+        if let lessons = try? await SwipeLabStore.shared.principlesContext(clientID: clientAtom?.uuid), !lessons.isEmpty {
+            systemBlocks.append(CraftSystemBlock(text: lessons, cacheTTL: "1h"))
+        }
         let schema: [String: Any]?
         if skillID == .voiceVariations {
             schema = CosmoCraftEngine.riffSchema

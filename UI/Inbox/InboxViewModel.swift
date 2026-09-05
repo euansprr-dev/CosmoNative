@@ -163,10 +163,12 @@ final class InboxViewModel {
 
     // MARK: - Private
 
-    private let inboxRepo = InboxRepository.shared
-    private let destinationRepo = CaptureDestinationRepository.shared
-    private let executor = InboxActionExecutor.shared
-    private let atomRepo = AtomRepository.shared
+    private var inboxRepo: InboxRepository { .shared }
+    private var destinationRepo: CaptureDestinationRepository { .shared }
+    private var executor: InboxActionExecutor { .shared }
+    private var atomRepo: AtomRepository { .shared }
+    @ObservationIgnored private let historyRefresh = CoalescingRefresh()
+    @ObservationIgnored private var isSubmittingCapture = false
     private var cancellables = Set<AnyCancellable>()
     private var undoToastTask: Task<Void, Never>?
     private var overrideSearchTask: Task<Void, Never>?
@@ -177,6 +179,7 @@ final class InboxViewModel {
     var isInboxVisible: Bool = false {
         didSet {
             guard isInboxVisible, !oldValue else { return }
+            applyItems(inboxRepo.items)
             InboxIngestService.shared.runAtlasSweepIfNeeded()
             loadEmptyStateData()
         }
@@ -206,7 +209,6 @@ final class InboxViewModel {
         guard !hasStarted else { return }
         hasStarted = true
         startObserving()
-        loadEmptyStateData()
         refreshFlowAvailability()
     }
 
@@ -219,15 +221,13 @@ final class InboxViewModel {
     // MARK: - Observation
 
     private func startObserving() {
-        // Debounce sync bursts so a flurry of classification updates collapses
-        // into a single regroup pass.
+        // Repository delivery is already transaction-coalesced. Delaying it
+        // made a successful capture/dismiss appear unchanged for 350 ms.
         inboxRepo.$items
-            .debounce(for: .milliseconds(350), scheduler: DispatchQueue.main)
+            .removeDuplicates()
             .sink { [weak self] newItems in
-                guard let self else { return }
-                self.items = newItems
-                self.regroupItems()
-                self.reconcileFocus()
+                guard let self, self.isInboxVisible else { return }
+                self.applyItems(newItems)
             }
             .store(in: &cancellables)
 
@@ -248,6 +248,14 @@ final class InboxViewModel {
                 self?.refreshFlowAvailability()
             }
             .store(in: &cancellables)
+    }
+
+    func applyItems(_ newItems: [InboxItem]) {
+        guard items != newItems else { return }
+        items = newItems
+        regroupItems()
+        reconcileFocus()
+        selectedItemIds.formIntersection(newItems.map(\.uuid))
     }
 
     /// Keep keyboard focus on a real row after items change underneath it.
@@ -300,7 +308,10 @@ final class InboxViewModel {
 
     func submitCapture() async {
         let text = captureText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        guard !text.isEmpty, !isSubmittingCapture else { return }
+        isSubmittingCapture = true
+        defer { isSubmittingCapture = false }
+        let submittedText = captureText
 
         captureError = nil
 
@@ -319,8 +330,12 @@ final class InboxViewModel {
             }
             captureError = "Couldn't save that capture — your text is still here. Try again."
         case .enqueued, .consumed:
-            captureText = ""
-            isCaptureExpanded = false
+            // A fast typist can already be entering the next thought while
+            // the previous write completes. Only clear the submitted draft.
+            if captureText == submittedText {
+                captureText = ""
+                isCaptureExpanded = false
+            }
             showCaptureConfirmation = true
             Task {
                 try? await Task.sleep(for: .seconds(1.5))
@@ -374,7 +389,7 @@ final class InboxViewModel {
     // MARK: - Core Verbs
 
     func acceptSuggestion(for item: InboxItem) async {
-        processingItemIds.insert(item.uuid)
+        guard processingItemIds.insert(item.uuid).inserted else { return }
         defer { processingItemIds.remove(item.uuid) }
 
         do {
@@ -407,7 +422,7 @@ final class InboxViewModel {
             return
         }
 
-        processingItemIds.insert(item.uuid)
+        guard processingItemIds.insert(item.uuid).inserted else { return }
         defer { processingItemIds.remove(item.uuid) }
 
         do {
@@ -428,7 +443,7 @@ final class InboxViewModel {
     /// rows). Choosing an alternate over the primary is teaching signal —
     /// it lands in the correction ledger.
     func applyAlternate(_ item: InboxItem, recommendation: InboxRecommendation) async {
-        processingItemIds.insert(item.uuid)
+        guard processingItemIds.insert(item.uuid).inserted else { return }
         defer { processingItemIds.remove(item.uuid) }
 
         do {
@@ -472,6 +487,8 @@ final class InboxViewModel {
     }
 
     func dismiss(item: InboxItem) async {
+        guard processingItemIds.insert(item.uuid).inserted else { return }
+        defer { processingItemIds.remove(item.uuid) }
         do {
             try await inboxRepo.dismiss(uuid: item.uuid)
             if item.hasActionableSuggestion {
@@ -488,7 +505,7 @@ final class InboxViewModel {
     }
 
     func placeAndGo(_ item: InboxItem) async {
-        processingItemIds.insert(item.uuid)
+        guard processingItemIds.insert(item.uuid).inserted else { return }
         defer { processingItemIds.remove(item.uuid) }
 
         do {
@@ -532,7 +549,7 @@ final class InboxViewModel {
 
     /// T — the capture is a task: it belongs in the Command Center, not a canvas.
     func makeTask(_ item: InboxItem) async {
-        processingItemIds.insert(item.uuid)
+        guard processingItemIds.insert(item.uuid).inserted else { return }
         defer { processingItemIds.remove(item.uuid) }
 
         do {
@@ -548,7 +565,7 @@ final class InboxViewModel {
 
     /// I — the capture is an idea: type it and let the idea pipeline enrich it.
     func fileAsIdea(_ item: InboxItem) async {
-        processingItemIds.insert(item.uuid)
+        guard processingItemIds.insert(item.uuid).inserted else { return }
         defer { processingItemIds.remove(item.uuid) }
 
         do {
@@ -566,7 +583,7 @@ final class InboxViewModel {
     /// S — the capture is a link: file it into the Swipe File (the command-bar
     /// capture pipeline, run from triage). Surfaced in the UI only on a real link.
     func fileAsSwipe(_ item: InboxItem) async {
-        processingItemIds.insert(item.uuid)
+        guard processingItemIds.insert(item.uuid).inserted else { return }
         defer { processingItemIds.remove(item.uuid) }
 
         do {
@@ -596,7 +613,7 @@ final class InboxViewModel {
             presentErrorToast("No flows yet — start one from a swipe's menu.")
             return
         }
-        processingItemIds.insert(item.uuid)
+        guard processingItemIds.insert(item.uuid).inserted else { return }
         defer { processingItemIds.remove(item.uuid) }
 
         do {
@@ -617,7 +634,7 @@ final class InboxViewModel {
     /// A — the capture is a question: spin it into the most recent Deep Dive's
     /// inquiry queue, closing the capture → inquiry loop.
     func askInDeepDive(_ item: InboxItem) async {
-        processingItemIds.insert(item.uuid)
+        guard processingItemIds.insert(item.uuid).inserted else { return }
         defer { processingItemIds.remove(item.uuid) }
 
         do {
@@ -657,7 +674,7 @@ final class InboxViewModel {
     /// C — the capture bridges existing atoms: create a connection linked to
     /// the related material instead of merging or duplicating.
     func connectCapture(_ item: InboxItem) async {
-        processingItemIds.insert(item.uuid)
+        guard processingItemIds.insert(item.uuid).inserted else { return }
         defer { processingItemIds.remove(item.uuid) }
 
         do {
@@ -675,7 +692,7 @@ final class InboxViewModel {
     /// already carries its concept key) a seedling in the nursery. No atom,
     /// no canvas object, no premature page.
     func growSeedling(_ item: InboxItem) async {
-        processingItemIds.insert(item.uuid)
+        guard processingItemIds.insert(item.uuid).inserted else { return }
         defer { processingItemIds.remove(item.uuid) }
 
         do {
@@ -706,10 +723,10 @@ final class InboxViewModel {
 
     func acceptAllSelected() async {
         let selectedItems = items.filter { selectedItemIds.contains($0.uuid) }
+        selectedItemIds.removeAll()
         for item in selectedItems {
             await acceptSuggestion(for: item)
         }
-        selectedItemIds.removeAll()
     }
 
     /// True when EVERY selected capture could become a swipe. All-or-nothing
@@ -725,8 +742,11 @@ final class InboxViewModel {
     /// `executeSwipe`, so each gets its own kind, its own undo, and its own
     /// decomposition — the batch is a convenience, never a different pipeline.
     func swipeAllSelected() async {
-        let selected = items.filter { selectedItemIds.contains($0.uuid) }
+        let selected = items.filter { selectedItemIds.contains($0.uuid) && !processingItemIds.contains($0.uuid) }
         guard !selected.isEmpty else { return }
+        let processing = Set(selected.map(\.uuid))
+        processingItemIds.formUnion(processing)
+        defer { processingItemIds.subtract(processing) }
         selectedItemIds.removeAll()
 
         var filed = 0
@@ -759,8 +779,12 @@ final class InboxViewModel {
     /// Bulk dismiss registers ONE undo action restoring every item and shows
     /// one toast. (The >5-item confirmation lives in InboxBatchBar.)
     func dismissAllSelected() async {
-        let selectedItems = items.filter { selectedItemIds.contains($0.uuid) }
+        let selectedItems = items.filter { selectedItemIds.contains($0.uuid) && !processingItemIds.contains($0.uuid) }
         guard !selectedItems.isEmpty else { return }
+        let processing = Set(selectedItems.map(\.uuid))
+        processingItemIds.formUnion(processing)
+        selectedItemIds.removeAll()
+        defer { processingItemIds.subtract(processing) }
 
         var dismissed: [InboxItem] = []
         for item in selectedItems {
@@ -868,7 +892,7 @@ final class InboxViewModel {
     }
 
     func overrideMerge(item: InboxItem, targetUuid: String) async {
-        processingItemIds.insert(item.uuid)
+        guard processingItemIds.insert(item.uuid).inserted else { return }
         defer { processingItemIds.remove(item.uuid) }
 
         do {
@@ -886,7 +910,7 @@ final class InboxViewModel {
     }
 
     func overridePlace(item: InboxItem, thinkspaceId: String, atomType: AtomType) async {
-        processingItemIds.insert(item.uuid)
+        guard processingItemIds.insert(item.uuid).inserted else { return }
         defer { processingItemIds.remove(item.uuid) }
 
         do {
@@ -901,7 +925,7 @@ final class InboxViewModel {
     }
 
     func overrideNew(item: InboxItem, atomType: AtomType) async {
-        processingItemIds.insert(item.uuid)
+        guard processingItemIds.insert(item.uuid).inserted else { return }
         defer { processingItemIds.remove(item.uuid) }
 
         do {
@@ -979,21 +1003,30 @@ final class InboxViewModel {
 
     private func loadEmptyStateData() {
         Task {
-            do {
-                let captures = try await inboxRepo.fetchRecentHistory(limit: 6)
-                let deletedLanes = try await destinationRepo.fetchArchived(limit: 6)
-                recentHistory = Array(captures.prefix(3))
-                recentHistoryEntries = InboxHistoryEntry.merged(
-                    captures: captures,
-                    deletedLanes: deletedLanes,
-                    limit: 6
-                )
-                triagedThisWeek = try await inboxRepo.countTriagedThisWeek()
-            } catch {
-                print("⚠️ [InboxVM] Empty state data failed: \(error)")
+            await historyRefresh.run { [weak self] in
+                await self?.refreshHistory()
             }
         }
     }
+
+    private func refreshHistory() async {
+        do {
+            async let captureLoad = inboxRepo.fetchRecentHistory(limit: 6)
+            async let laneLoad = destinationRepo.fetchArchived(limit: 6)
+            async let countLoad = inboxRepo.countTriagedThisWeek()
+            let (captures, deletedLanes, count) = try await (captureLoad, laneLoad, countLoad)
+            recentHistory = Array(captures.prefix(3))
+            recentHistoryEntries = InboxHistoryEntry.merged(
+                captures: captures,
+                deletedLanes: deletedLanes,
+                limit: 6
+            )
+            triagedThisWeek = count
+        } catch {
+            print("⚠️ [InboxVM] Empty state data failed: \(error)")
+        }
+    }
+
 
     // MARK: - Undo
 
@@ -1099,7 +1132,7 @@ final class InboxViewModel {
 
         undoToastTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(6))
-            guard let self else { return }
+            guard let self, !Task.isCancelled else { return }
             withAnimation(.easeOut(duration: 0.2)) {
                 self.showUndoToast = false
             }

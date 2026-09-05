@@ -28,6 +28,10 @@ struct CanvasBlockRecord: Codable, FetchableRecord, PersistableRecord {
     var isPinned: Bool?
     /// UUID of the Thinkspace this block belongs to (nil = global/default canvas)
     var thinkspaceId: String?
+    /// A row is a space MEMBERSHIP; `isPlaced` says whether it also has a spot
+    /// on the canvas (nil = pre-migration row = placed). Unplaced members wait
+    /// in the canvas tray and show in the space's library and board.
+    var isPlaced: Bool?
     var createdAt: String?
     var updatedAt: String?
     var syncedAt: String?
@@ -62,6 +66,7 @@ struct CanvasBlockRecord: Codable, FetchableRecord, PersistableRecord {
         case zIndex = "z_index"
         case isPinned = "is_pinned"
         case thinkspaceId = "thinkspace_id"
+        case isPlaced = "is_placed"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
         case syncedAt = "synced_at"
@@ -102,6 +107,7 @@ struct CanvasBlockRecord: Codable, FetchableRecord, PersistableRecord {
             "z_index": row["z_index"] as Int? ?? 0,
             "is_collapsed": row["is_collapsed"] as Bool? ?? false,
             "is_pinned": row["is_pinned"] as Bool? ?? false,
+            "is_placed": row["is_placed"] as Bool? ?? true,
             "document_type": orNull(row["document_type"] as String?),
             "document_id": orNull(row["document_id"] as Int?),
             "document_uuid": orNull(row["document_uuid"] as String?),
@@ -118,7 +124,13 @@ struct CanvasBlockRecord: Codable, FetchableRecord, PersistableRecord {
     }
 
     // MARK: - Factory Methods
-    static func from(_ block: CanvasBlock, documentType: String, documentId: Int, thinkspaceId: String? = nil) -> CanvasBlockRecord {
+    static func from(
+        _ block: CanvasBlock,
+        documentType: String,
+        documentId: Int,
+        thinkspaceId: String? = nil,
+        isPlaced: Bool = true
+    ) -> CanvasBlockRecord {
         return CanvasBlockRecord(
             id: block.id,
             uuid: block.entityUuid,
@@ -140,6 +152,7 @@ struct CanvasBlockRecord: Codable, FetchableRecord, PersistableRecord {
             zIndex: block.zIndex,
             isPinned: block.isPinned,
             thinkspaceId: thinkspaceId,
+            isPlaced: isPlaced,
             createdAt: ISO8601.string(from: Date()),
             updatedAt: ISO8601.string(from: Date()),
             syncedAt: nil,

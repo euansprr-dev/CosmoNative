@@ -22,10 +22,9 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
-import { config } from '../config';
 import { SpeechSegmentJSON, TranscriptSlideJSON } from './types';
+import { generateText, generateVision, textConfigured, visionConfigured } from './llm';
 
-const GEMINI_VISION_MODEL = config.openRouterVisionModel;
 const GEMINI_FPS = 4.0;          // 4fps to catch short 1-frame text transitions
 const MAX_GEMINI_FRAMES = 240;   // Accuracy-first cap for short reels with fast cuts
 const GEMINI_BATCH_SIZE = 20;    // Frames per API call
@@ -195,7 +194,7 @@ export async function extractFrames(videoData: Buffer, duration: number): Promis
 // ── Gemini vision pipeline (batch prompt VERBATIM from the Mac) ────────────
 
 async function runGeminiVisionPipeline(frames: Frame[]): Promise<Slide[]> {
-  if (!config.openRouterApiKey) return [];
+  if (!visionConfigured()) return [];
 
   const batches: Slide[][] = [];
   for (let start = 0; start < frames.length; start += GEMINI_BATCH_SIZE) {
@@ -252,41 +251,17 @@ FORMATTING:
 - startFrame/endFrame are 0-indexed within this batch
 - Same text across consecutive frames = ONE slide with wider frame range`;
 
-  const content: Array<Record<string, unknown>> = [{ type: 'text', text: prompt }];
-  for (const frame of frames) {
-    content.push({
-      type: 'image_url',
-      image_url: { url: `data:image/jpeg;base64,${frame.jpeg.toString('base64')}` },
-    });
-  }
-
-  try {
-    const response = await fetch(`${config.openRouterBaseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${config.openRouterApiKey}`,
-        'X-Title': 'CosmoOS',
-      },
-      body: JSON.stringify({
-        model: GEMINI_VISION_MODEL,
-        messages: [{ role: 'user', content }],
-        temperature: 0.1,
-        max_tokens: 4000,
-      }),
-      signal: AbortSignal.timeout(90_000),
-    });
-    if (!response.ok) {
-      console.warn(`⚠️ gemini batch ${batchIndex} failed: ${response.status}`);
-      return null;
-    }
-    const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
-    const text = payload.choices?.[0]?.message?.content ?? '';
-    return parseGeminiSlides(text, timestamps);
-  } catch (error) {
-    console.warn(`⚠️ gemini batch ${batchIndex} error:`, error instanceof Error ? error.message : error);
-    return null;
-  }
+  const text = await generateVision({
+    label: `reel batch ${batchIndex}`,
+    prompt,
+    images: frames.map(frame => ({ data: frame.jpeg, mimeType: 'image/jpeg' })),
+    maxTokens: 4000,
+    temperature: 0.1,
+    timeoutMs: 90_000,
+    jsonMode: true,
+  });
+  if (text === null) return null;
+  return parseGeminiSlides(text, timestamps);
 }
 
 export function parseGeminiSlides(response: string, timestamps: number[]): Slide[] {
@@ -736,7 +711,7 @@ export function deduplicateSlides(slides: Slide[]): Slide[] {
 async function cleanupSlides(slides: Slide[], contentType: ReelContentType): Promise<Slide[]> {
   const needsRefinement = contentType !== 'voiceoverOnly' &&
     slides.some(s => (s.source ?? 'manual') !== 'speechAudio');
-  if (!needsRefinement || slides.length === 0 || !config.openRouterApiKey) return slides;
+  if (!needsRefinement || slides.length === 0 || !textConfigured()) return slides;
 
   // PORTED VERBATIM from InstagramAutoTranscriber.cleanupWithClaude (reel variant).
   const prompt = `You are cleaning up auto-transcribed text from Instagram Instagram slides. The OCR captured ALL visible text from each slide image. Your job is to extract ONLY the main text overlays that the creator intended viewers to read, while preserving the original slide structure exactly.
@@ -760,24 +735,16 @@ Raw OCR slides:
 ${slides.map((s, i) => `[${i + 1}] ${s.text}`).join('\n')}`;
 
   try {
-    const response = await fetch(`${config.openRouterBaseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${config.openRouterApiKey}`,
-        'X-Title': 'CosmoOS',
-      },
-      body: JSON.stringify({
-        model: GEMINI_VISION_MODEL,
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.1,
-        max_tokens: 4000,
-      }),
-      signal: AbortSignal.timeout(60_000),
+    const text = await generateText({
+      label: 'reel cleanup',
+      prompt,
+      maxTokens: 4000,
+      temperature: 0.1,
+      timeoutMs: 60_000,
+      jsonMode: true,
     });
-    if (!response.ok) return slides;
-    const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
-    const cleaned = parseCleanedSlides(payload.choices?.[0]?.message?.content ?? '', slides.length);
+    if (text === null) return slides;
+    const cleaned = parseCleanedSlides(text, slides.length);
     if (!cleaned) return slides;
     const refined = slides.map((original, index) => {
       const text = cleaned[index].trim();

@@ -22,6 +22,13 @@ struct IdeasHomeGroup: Identifiable {
 @MainActor
 @Observable
 final class IdeasPageModel {
+    var scope: PipelineScope = .all {
+        didSet { if scope != oldValue, observation != nil { Task { await load() } } }
+    }
+    var errorMessage: String?
+    private var isCreating = false
+    @ObservationIgnored private var loadGeneration = 0
+    @ObservationIgnored private let refresh = CoalescingRefresh()
     /// Every live idea, newest first.
     var ideas: [IdeaGalleryItem] = []
     /// idea uuid → linked swipe thumbnail candidates, best first (the durable
@@ -54,6 +61,9 @@ final class IdeasPageModel {
     /// uuid → desk-engine score, precomputed so the ledger's Ripest sort
     /// never re-parses dates per evaluation.
     private(set) var ripenessScores: [String: Double] = [:]
+    private(set) var collections: [IdeaClientCollection] = []
+    private(set) var revision = 0
+    private(set) var loadedScope: PipelineScope?
     var isLoaded = false
     var toastMessage: String?
     /// A deleted idea waiting out its undo window.
@@ -74,9 +84,22 @@ final class IdeasPageModel {
     private var passDismissTask: Task<Void, Never>?
     private var observation: AnyDatabaseCancellable?
 
+    @ObservationIgnored private var startupTask: Task<Void, Never>?
+    @ObservationIgnored private var lifecycleGeneration = 0
+
     func start() async {
-        await load()
+        if let startupTask { await startupTask.value; return }
+        guard observation == nil else { return }
+        lifecycleGeneration += 1
+        let generation = lifecycleGeneration
         startObserving()
+        let startup = Task<Void, Never> { [weak self] in
+            guard let self else { return }
+            await self.load()
+        }
+        startupTask = startup
+        await startup.value
+        if generation == lifecycleGeneration { startupTask = nil }
     }
 
     /// Launch-time warm: one load so the first visit paints instantly. No
@@ -88,10 +111,11 @@ final class IdeasPageModel {
     }
 
     func stop() {
+        lifecycleGeneration += 1
+        startupTask?.cancel()
+        startupTask = nil
         observation?.cancel()
         observation = nil
-        deleteCommitTask?.cancel()
-        passDismissTask?.cancel()
     }
 
     /// Any idea-table write re-queries — local edits, sync applies, drops.
@@ -100,21 +124,50 @@ final class IdeasPageModel {
         // Tasks ride the same trigger: scheduling an idea writes only a task
         // atom (the link lives ON the task), and the desk's committed lane
         // must follow it live.
+        var isInitialValue = true
         let tracked = ValueObservation
             .tracking { db in
                 try String.fetchOne(
                     db,
-                    sql: "SELECT COUNT(*) || ':' || COALESCE(MAX(updated_at), '') FROM atoms WHERE type IN ('idea', 'task') AND is_deleted = 0"
+                    sql: "SELECT (SELECT COUNT(*) || ':' || COALESCE(SUM(_local_version), 0) || ':' || COALESCE(MAX(updated_at), '') FROM atoms WHERE type IN ('idea', 'task', 'client_profile')) || ':' || (SELECT COUNT(*) || ':' || COALESCE(SUM(_local_version), 0) FROM canvas_blocks)"
                 ) ?? ""
             }
             .removeDuplicates()
         observation = tracked.start(in: db, onError: { _ in }) { [weak self] _ in
+            // start() owns the initial query. Only later database changes reload.
+            if isInitialValue { isInitialValue = false; return }
             Task { @MainActor in await self?.load() }
         }
     }
 
+    #if DEBUG
+    /// Counts actual loads, so tab-lifecycle regressions are measurable in tests.
+    @ObservationIgnored private(set) var loadInvocationCount = 0
+    #endif
+
     func load() async {
-        let atoms = (try? await AtomRepository.shared.fetchAll(type: .idea)) ?? []
+        await refresh.run { [weak self] in await self?.loadSnapshot() }
+    }
+
+    private func loadSnapshot() async {
+        let interval = AppPerformanceInstrumentation.begin("content-ideas-refresh")
+        defer { AppPerformanceInstrumentation.end("content-ideas-refresh", interval) }
+        #if DEBUG
+        loadInvocationCount += 1
+        #endif
+        loadGeneration += 1
+        let generation = loadGeneration
+        let requestedScope = scope
+        let atoms: [Atom]
+        do {
+            async let live = ContentIdeaLoader.load(scope: requestedScope)
+            async let archived = ContentIdeaLoader.load(scope: requestedScope, archived: true)
+            atoms = try await live + archived
+        } catch {
+            guard scope == requestedScope, generation == loadGeneration, !Task.isCancelled else { return }
+            errorMessage = "Couldn't load ideas. Your saved work is safe. Try again."
+            return
+        }
         clientProfiles = (try? await AtomRepository.shared.fetchAll(type: .clientProfile)) ?? clientProfiles
 
         let clientNames = Dictionary(
@@ -124,7 +177,7 @@ final class IdeasPageModel {
         // content pieces now — reachable via the content's sources, not the boards.
         let survivors = atoms.filter { !pendingRemovals.contains($0.uuid) }
         let live = survivors
-            .filter { !($0.ideaMetadata?.ideaStatus?.isActivated ?? false) }
+            .filter { $0.ideaMetadata?.ideaStatus != .archived }
             .sorted { $0.updatedAt > $1.updatedAt }
         // Passed ideas keep a home: archived-by-hand, not promoted-to-content.
         let archived = survivors
@@ -146,33 +199,23 @@ final class IdeasPageModel {
         async let scheduledResolve = Self.resolveScheduledDays()
         async let shippedResolve = Self.resolveShippedRecency()
         let (thumbs, scheduled, shipped) = await (thumbsResolve, scheduledResolve, shippedResolve)
-        let dealt = IdeasDeskEngine.makeDesk(
-            ideas: items,
-            scheduledDays: scheduled,
-            inspiration: Set(thumbs.keys),
-            knownClientIds: Set(clientProfiles.map(\.uuid))
-        )
-
         let corpus = items + archivedItems
-        let inspiration = Set(thumbs.keys)
-        let scoreNow = Date()
-        var scores: [String: Double] = [:]
-        scores.reserveCapacity(corpus.count)
-        for idea in corpus {
-            scores[idea.atomUUID] = IdeasDeskEngine.score(for: idea, inspiration: inspiration, now: scoreNow)
-        }
+        let loadedCollections = try? await IdeaClientCollection.load(clients: Self.sortedAssignableClients(clientProfiles))
 
+        guard scope == requestedScope, generation == loadGeneration, !Task.isCancelled else { return }
+        errorMessage = nil
         withAnimation(ProMotionSprings.gentle) {
             ideas = items
             archivedIdeas = archivedItems
             inspirationThumbs = thumbs
             scheduledDays = scheduled
             shippedRecency = shipped
-            desk = dealt
             clientGroups = Self.groupByClient(items: items, clientProfiles: clientProfiles)
             assignableClients = Self.sortedAssignableClients(clientProfiles)
             searchCorpus = corpus
-            ripenessScores = scores
+            if let loadedCollections { collections = loadedCollections }
+            loadedScope = requestedScope
+            revision += 1
             isLoaded = true
         }
     }
@@ -302,7 +345,7 @@ final class IdeasPageModel {
     /// stays recoverable (toast Undo now, ⌘Z after, the Archived filter
     /// forever). `quiet` skips the toast and registers ⌘Z immediately — the
     /// triage ritual's advance IS the confirmation.
-    func pass(_ idea: IdeaGalleryItem, quiet: Bool = false) {
+    func pass(_ idea: IdeaGalleryItem, quiet: Bool = true) {
         passDismissTask?.cancel()
         if let previous = pendingPass { finalizePass(previous) }
         Task {
@@ -315,6 +358,7 @@ final class IdeasPageModel {
             await applyStatus(atomUUID: idea.atomUUID, status: .archived, changedAt: ISO8601.string(from: Date()))
             if quiet {
                 finalizePass(record)
+                toastMessage = "Idea archived · Undo with ⌘Z"
                 return
             }
             withAnimation(ProMotionSprings.snappy) { pendingPass = record }
@@ -388,13 +432,13 @@ final class IdeasPageModel {
 
     /// Assign a spark (or reassign an idea) to a client's board. `quiet`
     /// drops the toast — the ritual's advance already answers.
-    func assignClient(_ idea: IdeaGalleryItem, to clientUUID: String, quiet: Bool = false) {
+    func assignClient(_ idea: IdeaGalleryItem, to clientUUID: String?, quiet: Bool = false) {
         Task {
             guard let atom = try? await AtomRepository.shared.fetch(uuid: idea.atomUUID) else { return }
             let previousUUID = atom.ideaMetadata?.clientUUID
             let previousName = atom.ideaMetadata?.clientName
             guard previousUUID != clientUUID else { return }
-            let name = clientProfiles.first { $0.uuid == clientUUID }?.title ?? "Client"
+            let name = clientUUID == nil ? "Personal" : (clientProfiles.first { $0.uuid == clientUUID }?.title ?? "Client")
 
             await applyClient(atomUUID: idea.atomUUID, clientUUID: clientUUID, clientName: name)
             registerUndo("Assign Idea") { [weak self] in
@@ -442,10 +486,10 @@ final class IdeasPageModel {
     }
 
     /// Assign many at once — same single-undo, single-toast contract.
-    func bulkAssign(_ items: [IdeaGalleryItem], to clientUUID: String) {
+    func bulkAssign(_ items: [IdeaGalleryItem], to clientUUID: String?) {
         guard !items.isEmpty else { return }
         Task {
-            let name = clientProfiles.first { $0.uuid == clientUUID }?.title ?? "Client"
+            let name = clientUUID == nil ? "Personal" : (clientProfiles.first { $0.uuid == clientUUID }?.title ?? "Client")
             var records: [(uuid: String, clientUUID: String?, clientName: String?)] = []
             for item in items {
                 guard let atom = try? await AtomRepository.shared.fetch(uuid: item.atomUUID),
@@ -529,11 +573,10 @@ final class IdeasPageModel {
     /// sweeps defer the reload to their last write).
     private func mutateIdea(uuid: String, reload: Bool = true, _ transform: (Atom) -> Atom) async {
         guard let atom = try? await AtomRepository.shared.fetch(uuid: uuid) else { return }
-        var updated = transform(atom)
-        updated.updatedAt = ISO8601.string(from: Date())
-        updated.localVersion += 1
-        _ = try? await AtomRepository.shared.update(updated)
-        if reload { await load() }
+        do {
+            _ = try await AtomRepository.shared.update(transform(atom))
+            if reload { await load() }
+        } catch { toastMessage = "Couldn't save the idea. Try again." }
     }
 
     private func registerUndo(
@@ -570,6 +613,7 @@ final class IdeasPageModel {
             clientGroups = Self.groupByClient(items: ideas, clientProfiles: clientProfiles)
             searchCorpus = ideas + archivedIdeas
             pendingDelete = idea
+            revision += 1
         }
         deleteCommitTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(6))
@@ -649,7 +693,11 @@ final class IdeasPageModel {
     // MARK: Creation (⌘N — client prefilled on a board)
 
     func createIdea(clientUUID: String?) {
+        guard !isCreating else { return }
+        isCreating = true
+        let creationScope = scope
         Task {
+            defer { isCreating = false }
             var atom = Atom.new(type: .idea, title: "Untitled Idea", body: nil, metadata: nil)
             if let clientUUID {
                 let clientName = clientProfiles.first { $0.uuid == clientUUID }?.title
@@ -659,13 +707,22 @@ final class IdeasPageModel {
                 }
                 atom = atom.addingLink(.ideaToClient(clientUUID))
             }
-            guard let created = try? await AtomRepository.shared.create(atom), let id = created.id else { return }
-            await load()
-            NotificationCenter.default.post(
-                name: .enterFocusMode,
-                object: nil,
-                userInfo: ["type": EntityType.idea, "id": id]
-            )
+            do {
+                let created: Atom
+                if case .space(let id) = creationScope {
+                    created = try await SpaceMembershipService.create(atom, in: id)
+                } else {
+                    created = try await AtomRepository.shared.create(atom)
+                    CosmoUndoManager.shared.register(InlineUndoAction(
+                        actionDescription: "Capture idea",
+                        undo: { try? await AtomRepository.shared.delete(uuid: created.uuid) },
+                        redo: { try? await AtomRepository.shared.restore(uuid: created.uuid) }
+                    ))
+                }
+                NotificationCenter.default.post(name: CosmoNotification.Navigation.openBlockInFocusMode,
+                                                object: nil, userInfo: ["atomUUID": created.uuid])
+                await load()
+            } catch { toastMessage = "Couldn't capture the idea. Try again." }
         }
     }
 }

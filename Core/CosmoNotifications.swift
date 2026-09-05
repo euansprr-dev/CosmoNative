@@ -33,11 +33,6 @@ enum CosmoNotification {
 
     // MARK: - Canvas Notifications
     enum Canvas {
-        /// Posted when the thinkspace surface flips between canvas and library
-        /// (userInfo: ["isLibrary": Bool]). MainView hides its floating trail
-        /// island while the library's own toolbar embeds one.
-        static let thinkspaceModeChanged = Notification.Name("com.cosmo.canvas.thinkspaceModeChanged")
-
         // Block lifecycle
         static let blockExpanded = Notification.Name("com.cosmo.canvas.blockExpanded")
         static let blockCollapsed = Notification.Name("com.cosmo.canvas.blockCollapsed")
@@ -119,9 +114,6 @@ enum CosmoNotification {
         static let updateInboxBlockPosition = Notification.Name("com.cosmo.canvas.updateInboxBlockPosition")
         static let updateInboxBlockSize = Notification.Name("com.cosmo.canvas.updateInboxBlockSize")
         static let refreshThinkspacePlacements = Notification.Name("com.cosmo.canvas.refreshThinkspacePlacements")
-        /// Switch the mounted canvas between its view modes (canvas/library).
-        /// userInfo: ["mode": ThinkspaceCanvasMode.rawValue]
-        static let setThinkspaceMode = Notification.Name("com.cosmo.canvas.setThinkspaceMode")
     }
 
     // MARK: - Inbox Notifications
@@ -175,6 +167,12 @@ enum CosmoNotification {
         /// Jump to the Ideas destination. userInfo: ["clientUUID": String] optional —
         /// lands on that client's board when present.
         static let openIdeas = Notification.Name("com.cosmo.navigation.openIdeas")
+        /// Jump to Studio › Pipeline. userInfo (all optional): "view"
+        /// (PipelineView rawValue), "clientUUID" (scope to one client),
+        /// "unassigned" (Bool).
+        static let openPipeline = Notification.Name("com.cosmo.navigation.openPipeline")
+        /// Jump to Studio › Clients, or one client's hub when "clientUUID" rides.
+        static let openClients = Notification.Name("com.cosmo.navigation.openClients")
 
         // Dimensions
         static let navigateToDimension = Notification.Name("com.cosmo.navigation.dimension")

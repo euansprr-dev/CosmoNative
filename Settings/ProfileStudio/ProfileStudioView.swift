@@ -48,8 +48,32 @@ struct ProfileStudioView: View {
                     handleField
                     platformPills
                 }
+                HStack(spacing: DS.space12) {
+                    ProfileColorSwatchRow(store: store)
+                    cadenceField
+                }
+                .padding(.top, DS.space4)
             }
             Spacer(minLength: 0)
+        }
+    }
+
+    /// Free-text cadence, parsed live into the quota the Clients page keeps.
+    private var cadenceField: some View {
+        HStack(spacing: DS.space6) {
+            TextField("3x/week", text: $store.postingFrequency)
+                .textFieldStyle(.plain)
+                .font(DS.subheadline)
+                .foregroundStyle(DS.textSecondary)
+                .frame(maxWidth: 120)
+                .help("Posting cadence — daily, weekly, 3x/week…")
+                .accessibilityLabel("Posting cadence")
+            if let cadence = ClientCadence.parse(store.postingFrequency) {
+                Text("\(cadence.perWeek)/wk")
+                    .font(DS.caption2.monospacedDigit())
+                    .foregroundStyle(DS.textMuted)
+                    .contentTransition(.numericText())
+            }
         }
     }
 
@@ -105,6 +129,66 @@ struct ProfileStudioView: View {
         .buttonStyle(.plain)
         .help("Primary platform: \(platform.displayName)")
         .accessibilityLabel("\(platform.displayName)\(isSelected ? ", selected" : "")")
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+    }
+}
+
+// MARK: - Colour swatch row
+
+/// Eight palette swatches plus "Auto" (the deterministic hash). Selecting a
+/// swatch writes `colorHex` on the store; the autosave key-merges it and
+/// `ClientColorResolver` repaints every client tick in the app.
+private struct ProfileColorSwatchRow: View {
+    @Bindable var store: ProfileStudioStore
+
+    var body: some View {
+        HStack(spacing: DS.space4) {
+            ForEach(DS.clientPaletteHex, id: \.self) { hex in
+                swatch(hex: hex, isSelected: store.colorHex == hex, label: "Colour \(hex)") {
+                    store.colorHex = hex
+                }
+            }
+            automaticSwatch
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Client colour")
+    }
+
+    private var automaticSwatch: some View {
+        let isSelected = store.colorHex == nil
+        return Button {
+            withAnimation(ProMotionSprings.snappy) { store.colorHex = nil }
+        } label: {
+            Text("Auto")
+                .font(DS.caption2)
+                .fontWeight(isSelected ? .semibold : .regular)
+                .foregroundStyle(isSelected ? DS.accent : DS.textMuted)
+                .padding(.horizontal, DS.space6)
+                .padding(.vertical, 2)
+                .background(isSelected ? AnyShapeStyle(DS.accentSoft) : AnyShapeStyle(Color.clear), in: Capsule(style: .continuous))
+                .contentShape(Capsule(style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .help("Automatic colour")
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+    }
+
+    private func swatch(hex: String, isSelected: Bool, label: String, action: @escaping () -> Void) -> some View {
+        Button {
+            withAnimation(ProMotionSprings.snappy, action)
+        } label: {
+            Circle()
+                .fill(Color(hex: hex))
+                .frame(width: 14, height: 14)
+                .overlay(
+                    Circle().stroke(isSelected ? DS.text : DS.glassBorder, lineWidth: isSelected ? 2 : 1)
+                )
+                .padding(2)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help(label)
+        .accessibilityLabel(label)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 }

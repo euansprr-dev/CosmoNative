@@ -2330,8 +2330,29 @@ struct CosmoModelOption: Identifiable {
             id: "auto",
             tier: nil,
             title: "Auto",
-            detail: "Sonnet 5 by default",
+            detail: "GPT-5.6 Sol by default",
             icon: "wand.and.stars"
+        ),
+        CosmoModelOption(
+            id: "gpt56Sol",
+            tier: .gpt56Sol,
+            title: "GPT-5.6 Sol",
+            detail: "Daily driver — flagship writing and agentic work",
+            icon: "sun.max"
+        ),
+        CosmoModelOption(
+            id: "gpt56Terra",
+            tier: .gpt56Terra,
+            title: "GPT-5.6 Terra",
+            detail: "Balanced middle tier",
+            icon: "globe.americas"
+        ),
+        CosmoModelOption(
+            id: "gpt56Luna",
+            tier: .gpt56Luna,
+            title: "GPT-5.6 Luna",
+            detail: "Fastest and cheapest for light work",
+            icon: "moon"
         ),
         CosmoModelOption(
             id: "gptChatLatest",
@@ -2377,9 +2398,9 @@ struct CosmoModelOption: Identifiable {
         ),
         CosmoModelOption(
             id: "sonnet",
-            tier: .strategist,
+            tier: .sonnet5,
             title: "Sonnet 5",
-            detail: "Daily driver via Claude API",
+            detail: "Claude via the direct API",
             icon: "point.3.connected.trianglepath.dotted"
         ),
         CosmoModelOption(

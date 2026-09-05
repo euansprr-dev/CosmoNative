@@ -36,11 +36,12 @@ enum BlockOperations {
         }
         block.callout = kind == .callout ? (block.callout ?? .default) : nil
         block.toggleCollapsed = kind == .toggle ? (block.toggleCollapsed ?? false) : nil
-        // Transforming a toggle into anything else must not strand its
-        // children on a block that no longer renders them — hoist them out
-        // as siblings directly below.
+        block.section = kind == .section ? (block.section ?? .default) : nil
+        // Transforming a toggle or section into a kind that renders no
+        // children must not strand them on the block — hoist them out as
+        // siblings directly below. Toggle ↔ section keeps the body intact.
         let hoistedChildren: [RichBlock]
-        if previousKind == .toggle, kind != .toggle, !block.children.isEmpty {
+        if previousKind.hostsChildren, !kind.hostsChildren, !block.children.isEmpty {
             hoistedChildren = block.children
             block.children = []
         } else {
@@ -132,6 +133,19 @@ enum BlockOperations {
                 document: document,
                 focusPath: path.appendingChild(index: 0),
                 caretUTF16Offset: 0
+            )
+        }
+
+        // Return in a section TITLE enters the body: text after the caret
+        // becomes a new first child; with nothing to carry, the caret lands
+        // on the existing first child (an empty paragraph is created when
+        // the body is empty).
+        if original.kind == .section {
+            return try enterSectionBody(
+                before,
+                remainder: String(text[splitIndex...]),
+                in: &document,
+                at: path
             )
         }
 
@@ -368,7 +382,8 @@ enum BlockOperations {
         let previousPath = deepestTrailingTextPath(in: document, from: previousSiblingPath)
         var previous = try block(in: document, at: previousPath)
 
-        guard previous.kind.isTextEditableBlock, current.kind.isTextEditableBlock else {
+        guard previous.kind.isTextEditableBlock, current.kind.isTextEditableBlock,
+              previous.kind != .section else {
             throw BlockOperationError.unsupportedBlockKind(current.kind)
         }
 
@@ -391,15 +406,15 @@ enum BlockOperations {
         )
     }
 
-    /// Follows expanded toggles downward to the last text-editable line the
-    /// user actually sees above a given position.
+    /// Follows expanded toggles and sections downward to the last
+    /// text-editable line the user actually sees above a given position.
     private static func deepestTrailingTextPath(
         in document: RichDocument,
         from path: BlockPath
     ) -> BlockPath {
         guard let candidate = try? block(in: document, at: path),
-              candidate.kind == .toggle,
-              candidate.toggleCollapsed != true,
+              candidate.kind.hostsChildren,
+              !candidate.isCollapsedContainer,
               !candidate.children.isEmpty else {
             return path
         }
@@ -610,6 +625,16 @@ enum BlockOperations {
                 livePlainText: livePlainText,
                 triggerAlreadyRemoved: triggerAlreadyRemoved
             )
+        case .insertTable(let rows, let columns):
+            // "/3x4" — the slash query sized the grid (see SlashTableSizeQuery).
+            return try applyReplaceOrInsert(
+                .table,
+                replacement: .table(RichTable(rowCount: rows, columnCount: columns)),
+                in: document,
+                at: path,
+                livePlainText: livePlainText,
+                triggerAlreadyRemoved: triggerAlreadyRemoved
+            )
         case .insertElement(let definition):
             return try replaceBlock(
                 in: document,
@@ -645,8 +670,11 @@ enum BlockOperations {
         return try transformBlock(in: updated, at: path, to: kind, headingCollapsible: headingCollapsible)
     }
 
+    /// `replacement` overrides the fresh `RichBlock(kind:)` for non-text
+    /// kinds that carry a payload (a sized table).
     private static func applyReplaceOrInsert(
         _ kind: RichBlockKind,
+        replacement: RichBlock? = nil,
         in document: RichDocument,
         at path: BlockPath,
         livePlainText: String,
@@ -668,7 +696,7 @@ enum BlockOperations {
         let cleanedText = triggerAlreadyRemoved
             ? livePlainText
             : cleanedSlashCommandText(from: livePlainText, fallback: block.plainInlineText)
-        let replacement = RichBlock(kind: kind)
+        let replacement = replacement ?? RichBlock(kind: kind)
         let shouldReplaceTrigger = cleanedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
         if shouldReplaceTrigger {
@@ -829,6 +857,162 @@ enum BlockOperations {
     }
 }
 
+// MARK: - Section Operations
+
+extension BlockOperations {
+    /// Return on a section title (or on its empty final line): un-collapse
+    /// and put the caret on the first child, creating an empty paragraph
+    /// when the body is empty. Nothing is carried over from the title.
+    static func enterSectionBody(
+        in document: RichDocument,
+        at path: BlockPath
+    ) throws -> BlockOperationResult {
+        var document = document
+        let section = try block(in: document, at: path)
+        guard section.kind == .section else {
+            throw BlockOperationError.unsupportedBlockKind(section.kind)
+        }
+        return try enterSectionBody(section, remainder: "", in: &document, at: path)
+    }
+
+    /// Shared by the title split and the empty-line Return: `remainder` is
+    /// the title text after the caret (a non-empty remainder becomes a new
+    /// first child so nothing typed is lost).
+    static func enterSectionBody(
+        _ section: RichBlock,
+        remainder: String,
+        in document: inout RichDocument,
+        at path: BlockPath
+    ) throws -> BlockOperationResult {
+        var updated = section
+        if updated.section == nil { updated.section = .default }
+        updated.section?.isCollapsed = false
+        if !remainder.isEmpty || updated.children.isEmpty {
+            updated.children.insert(RichBlock(kind: .paragraph, inlines: [.text(remainder)]), at: 0)
+        }
+        try replaceBlock(updated, in: &document, at: path)
+        return BlockOperationResult(
+            document: document,
+            focusPath: path.appendingChild(index: 0),
+            caretUTF16Offset: 0
+        )
+    }
+
+    /// Drops the box: the section's children take its place as siblings.
+    /// A non-empty title survives as a paragraph above them (never lose
+    /// text silently); an entirely empty section becomes one empty
+    /// paragraph so the surface never goes dead.
+    static func ungroupSection(
+        in document: RichDocument,
+        at path: BlockPath
+    ) throws -> BlockOperationResult {
+        var document = document
+        let section = try block(in: document, at: path)
+        guard section.kind == .section else {
+            throw BlockOperationError.unsupportedBlockKind(section.kind)
+        }
+        let replacement = ungroupedBlocks(for: section)
+        try mutateChildren(in: &document.blocks, indices: path.indices) { siblings, index in
+            siblings.replaceSubrange(index...index, with: replacement)
+        }
+        return BlockOperationResult(document: document, focusPath: path, intent: .end)
+    }
+
+    /// Ungroups every selected root-level section (the handle menu on a
+    /// multi-selection). nil when nothing selected is a section.
+    static func ungroupSections(withIDs ids: Set<UUID>, in document: RichDocument) -> BlockOperationResult? {
+        guard document.blocks.contains(where: { ids.contains($0.id) && $0.kind == .section }) else { return nil }
+        var updated = document
+        updated.blocks = document.blocks.flatMap { block -> [RichBlock] in
+            guard ids.contains(block.id), block.kind == .section else { return [block] }
+            return ungroupedBlocks(for: block)
+        }
+        return BlockOperationResult(document: updated)
+    }
+
+    private static func ungroupedBlocks(for section: RichBlock) -> [RichBlock] {
+        var blocks: [RichBlock] = []
+        let hasTitle = !section.plainInlineText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if hasTitle {
+            var title = section
+            title.kind = .paragraph
+            title.section = nil
+            title.children = []
+            blocks.append(title)
+        }
+        blocks.append(contentsOf: section.children)
+        if blocks.isEmpty {
+            blocks = [RichBlock(id: section.id, kind: .paragraph, inlines: [.text("")])]
+        }
+        return blocks
+    }
+
+    /// "Turn N blocks into → Section": the FIRST selected root block's text
+    /// becomes the title (keeping its identity), the rest become the body —
+    /// the "wrap these in a box" gesture. A non-text first block joins the
+    /// body under an untitled section. Selection is taken in document order
+    /// and the section lands where the first selected block stood.
+    static func wrapInSection(blockIDs ids: Set<UUID>, in document: RichDocument) -> BlockOperationResult? {
+        let selected = document.blocks.enumerated().filter { ids.contains($0.element.id) }
+        guard let first = selected.first else { return nil }
+
+        var section: RichBlock
+        var body: [RichBlock]
+        if first.element.kind.isTextEditableBlock {
+            section = first.element
+            section.kind = .section
+            section.checked = nil
+            section.heading = nil
+            section.callout = nil
+            section.toggleCollapsed = nil
+            section.section = section.section ?? .default
+            // A container's own body rides along ahead of the other blocks.
+            body = section.children + selected.dropFirst().map(\.element)
+            section.children = []
+        } else {
+            section = RichBlock(kind: .section)
+            body = selected.map(\.element)
+        }
+        section.children = body
+
+        var updated = document
+        updated.blocks.removeAll { ids.contains($0.id) }
+        let insertionIndex = min(first.offset, updated.blocks.count)
+        updated.blocks.insert(section, at: insertionIndex)
+        return BlockOperationResult(document: updated, focusPath: .root(index: insertionIndex), intent: .end)
+    }
+
+    /// Cross-container drop: a block dragged into (or out of) a nested list
+    /// is resolved by ID in the FULL document — the nested list's own
+    /// document cannot see it. Removes first, then re-resolves the target by
+    /// ID, so a source above the target's ancestor never leaves a stale path.
+    static func moveBlock(
+        withID blockID: UUID,
+        relativeTo targetBlockID: UUID,
+        position: BlockDropPosition,
+        in document: RichDocument
+    ) throws -> BlockOperationResult {
+        guard let sourcePath = path(of: blockID, in: document),
+              let targetPathBefore = path(of: targetBlockID, in: document) else {
+            throw BlockOperationError.blockNotFound(.root(index: 0))
+        }
+        guard blockID != targetBlockID,
+              !targetPathBefore.indices.starts(with: sourcePath.indices) else {
+            throw BlockOperationError.cannotMoveBlockIntoItself
+        }
+        var document = document
+        let moving = try block(in: document, at: sourcePath)
+        try removeBlock(in: &document, at: sourcePath)
+        guard let targetPath = path(of: targetBlockID, in: document) else {
+            throw BlockOperationError.blockNotFound(targetPathBefore)
+        }
+        let target = BlockDropController.target(for: position, path: targetPath)
+        try insert(moving, in: &document, at: target)
+        let focusPath = target.parent?.appendingChild(index: target.index) ?? .root(index: target.index)
+        return BlockOperationResult(document: document, focusPath: focusPath)
+    }
+}
+
 // MARK: - Multi-Block Operations (block selection)
 
 extension BlockOperations {
@@ -903,6 +1087,15 @@ extension BlockOperations {
                 }
                 transformed.heading = nil
             }
+            transformed.callout = kind == .callout ? (transformed.callout ?? .default) : nil
+            transformed.toggleCollapsed = kind == .toggle ? (transformed.toggleCollapsed ?? false) : nil
+            transformed.section = kind == .section ? (transformed.section ?? .default) : nil
+            // A container losing its body-hosting kind hoists its children
+            // as following siblings (the single-block transform's rule).
+            if block.kind.hostsChildren, !kind.hostsChildren, !transformed.children.isEmpty {
+                restoredBlocks = transformed.children + restoredBlocks
+                transformed.children = []
+            }
             transformedBlocks.append(transformed)
             transformedBlocks.append(contentsOf: restoredBlocks)
             changed = true
@@ -913,24 +1106,29 @@ extension BlockOperations {
     }
 
     /// Plaintext of the given root-level blocks in document order — copy/cut.
+    /// Containers contribute their title and their children; tables their
+    /// pipe rows.
     static func plainText(ofBlocksWithIDs ids: Set<UUID>, in document: RichDocument) -> String {
-        document.blocks
-            .filter { ids.contains($0.id) }
-            .map(\.plainInlineText)
-            .joined(separator: "\n")
+        RichDocument(blocks: document.blocks.filter { ids.contains($0.id) }).plainText
     }
 
     /// Markdown rendering of the given root blocks — what block-selection ⌘C
     /// writes to the plain-text pasteboard, so kinds survive into other apps
     /// (and round-trip through this app's own paste parser).
     static func markdown(ofBlocksWithIDs ids: Set<UUID>, in document: RichDocument) -> String {
+        markdownLines(for: document.blocks.filter { ids.contains($0.id) }).joined(separator: "\n")
+    }
+
+    /// Markdown for a run of sibling blocks — numbered runs count up, and
+    /// containers recurse into their children.
+    static func markdownLines(for blocks: [RichBlock]) -> [String] {
         var lines: [String] = []
         var numberedIndex = 0
-        for block in document.blocks where ids.contains(block.id) {
+        for block in blocks {
             numberedIndex = block.kind == .numberedList ? numberedIndex + 1 : 0
             lines.append(markdownLine(for: block, numberedIndex: max(1, numberedIndex)))
         }
-        return lines.joined(separator: "\n")
+        return lines
     }
 
     private static func markdownLine(for block: RichBlock, numberedIndex: Int) -> String {
@@ -946,6 +1144,10 @@ extension BlockOperations {
         case .callout: return "!! " + text
         case .code: return "```\n" + text.replacingOccurrences(of: "\u{2028}", with: "\n") + "\n```"
         case .divider: return "---"
+        case .table: return (block.table ?? RichTable()).markdownLines().joined(separator: "\n")
+        case .section:
+            // A section copies as a level-2 heading over its body.
+            return (["## " + text] + markdownLines(for: block.children)).joined(separator: "\n")
         default: return text
         }
     }
@@ -958,6 +1160,12 @@ extension BlockOperations {
 }
 
 extension RichBlockKind {
+    /// Kinds whose `children` render as a body (toggle, section). Transforming
+    /// between two of these keeps the body; leaving them hoists it.
+    var hostsChildren: Bool {
+        self == .toggle || self == .section
+    }
+
     /// UTF-16 length of the prefix the serializer renders at the head of the
     /// text view ("• ", "1. ", "☐ ", "│ "). GUARD-TWIN of RichDocument's
     /// blockPrefix — the two prefix tables must change together.
@@ -1005,6 +1213,15 @@ extension RichBlockKind {
 }
 
 extension RichBlock {
+    /// Whether a child-hosting block currently hides its body.
+    var isCollapsedContainer: Bool {
+        switch kind {
+        case .toggle: return toggleCollapsed == true
+        case .section: return section?.isCollapsed == true
+        default: return false
+        }
+    }
+
     /// Deep copy with fresh identities for the block, its inlines, its element
     /// instance, and all children — required when duplicating, since ids drive
     /// focus, selection, and element identity.

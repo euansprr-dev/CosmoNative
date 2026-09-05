@@ -473,6 +473,9 @@ private struct SwipeStudyChromeRow: View {
 
     @ViewBuilder
     private var trailingControls: some View {
+        SwipeLabLaunchButton(scope: (atom.swipeBoardIDs ?? []).compactMap { SwipeBoardStore.shared.board(withID: $0) }.first.map { .board($0) }
+            ?? .selection([atom.uuid], title: atom.title ?? "Swipe study"), title: "Lab")
+            .font(DS.subheadline).buttonStyle(.plain).help("Study this post and add related sources in Swipe Lab")
         overflowMenu
         if let atomChrome {
             AtomWindowChromeDivider()

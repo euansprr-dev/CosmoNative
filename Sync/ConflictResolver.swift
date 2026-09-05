@@ -491,6 +491,7 @@ class ConflictResolver {
             insertData.removeValue(forKey: "synced_at")
         }
 
+        insertData = await filterToLocalColumns(insertData, table: table)
         let columns = insertData.keys.filter { key in
             !key.starts(with: "_") || ["_local_version", "_server_version", "_sync_version", "_local_pending"].contains(key)
         }
@@ -595,6 +596,7 @@ class ConflictResolver {
             updateData.removeValue(forKey: "synced_at")
         }
 
+        updateData = await filterToLocalColumns(updateData, table: table)
         let updateColumns = updateData.keys.filter { $0 != "id" && $0 != "uuid" }
         let setClause = updateColumns.map { "\($0) = ?" }.joined(separator: ", ")
         let values = updateColumns.compactMap { updateData[$0] }
@@ -653,6 +655,31 @@ class ConflictResolver {
         if data["position_y"] == nil || data["position_y"] is NSNull {
             data["position_y"] = 0
         }
+        // Membership without position: a row from a client that predates the
+        // column (or a row pulled before the Postgres column existed) is placed.
+        if data["is_placed"] == nil || data["is_placed"] is NSNull {
+            data["is_placed"] = 1
+        }
+    }
+
+    /// Drop payload keys the local table does not know. A column added in
+    /// Postgres before this build learned it must never break an insert or
+    /// update — the iPhone's pull path had exactly that failure mode. Column
+    /// names are read once per table and cached; the schema does not change
+    /// while the app runs.
+    private static var localColumnCache: [String: Set<String>] = [:]
+
+    private func filterToLocalColumns(_ data: [String: Any], table: String) async -> [String: Any] {
+        if let known = Self.localColumnCache[table] {
+            return data.filter { known.contains($0.key) }
+        }
+        let names: [String] = (try? await database.asyncRead { db in
+            try db.columns(in: table).map(\.name)
+        }) ?? []
+        guard !names.isEmpty else { return data }
+        let known = Set(names)
+        Self.localColumnCache[table] = known
+        return data.filter { known.contains($0.key) }
     }
 
     // MARK: - Helper: Row to Dictionary

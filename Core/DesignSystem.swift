@@ -524,19 +524,33 @@ enum DS {
 
     /// 8-color palette for client profile identity. Assigned deterministically
     /// by stable hash of client UUID, so colors are consistent across views.
-    static let clientPalette: [Color] = [
-        Color(hex: "2E86AB"),  // Cerulean
-        Color(hex: "A23B72"),  // Berry
-        Color(hex: "C18C5D"),  // Warm tan
-        Color(hex: "5E8C61"),  // Sage green
-        Color(hex: "7B68AE"),  // Soft violet
-        Color(hex: "D17B4F"),  // Burnt sienna
-        Color(hex: "4A8B9B"),  // Teal
-        Color(hex: "B5555A"),  // Dusty rose
+    /// The palette as hex, so the dossier swatch row and the resolver share
+    /// one vocabulary — `clientPalette` derives from this, never the reverse.
+    static let clientPaletteHex: [String] = [
+        "2E86AB",  // Cerulean
+        "A23B72",  // Berry
+        "C18C5D",  // Warm tan
+        "5E8C61",  // Sage green
+        "7B68AE",  // Soft violet
+        "D17B4F",  // Burnt sienna
+        "4A8B9B",  // Teal
+        "B5555A",  // Dusty rose
     ]
 
-    /// Deterministic color for a client profile UUID.
+    static let clientPalette: [Color] = clientPaletteHex.map { Color(hex: $0) }
+
+    /// Color for a client profile UUID: a swatch pinned on the dossier wins
+    /// (`ClientColorResolver`), otherwise the deterministic hash. Stays
+    /// nonisolated — read in view bodies and nonisolated computed properties.
     static func clientColor(for uuid: String) -> Color {
+        if let hex = ClientColorResolver.shared.hex(for: uuid) {
+            return Color(hex: hex)
+        }
+        return hashedClientColor(for: uuid)
+    }
+
+    /// The hash fallback on its own — what a client wears with no pin.
+    static func hashedClientColor(for uuid: String) -> Color {
         let hash = uuid.utf8.reduce(0) { ($0 &+ UInt32($1)) &* 31 }
         let index = Int(hash % UInt32(clientPalette.count))
         return clientPalette[index]

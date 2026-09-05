@@ -41,16 +41,33 @@ enum BlockRowSyncPolicy {
     }
 
     /// Fields the row's text serializer can't see — callout chrome, toggle
-    /// state, and toggle children live only on the document block, so every
-    /// re-emission from the text view must carry them forward or a keystroke
-    /// silently deletes them.
+    /// state, section style, table grids, forward-compat passthrough, and
+    /// children live only on the document block, so every re-emission from
+    /// the text view must carry them forward or a keystroke silently deletes
+    /// them. LAW: a new row-only field is added HERE the day it is added to
+    /// RichBlock.
     static func restoreRowOnlyFields(_ block: inout RichBlock, from existingBlock: RichBlock) {
         block.callout = existingBlock.callout
         block.toggleCollapsed = existingBlock.toggleCollapsed
+        block.section = existingBlock.section
+        block.table = existingBlock.table
+        block.passthrough = existingBlock.passthrough
         block.rawKind = existingBlock.rawKind
         if !existingBlock.children.isEmpty, block.children.isEmpty {
             block.children = existingBlock.children
         }
+    }
+
+    /// The single-block document a row hands its text view. A SECTION row
+    /// edits the section's TITLE, but the serializer renders `.section`
+    /// itself as an opaque "Section · Title" chip (the continuous editors'
+    /// contract), so the row substitutes a paragraph proxy carrying the title
+    /// inlines under the block's own id. On the way back `reconciled` treats
+    /// the parsed paragraph as a stale kind and re-imposes `.section` with
+    /// every row-only field restored — the document keeps kind authority.
+    static func editorRowBlock(for block: RichBlock) -> RichBlock {
+        guard block.kind == .section else { return block }
+        return RichBlock(id: block.id, kind: .paragraph, inlines: block.inlines)
     }
 }
 
@@ -74,6 +91,8 @@ struct BlockTextEditorRow: View, Equatable {
     /// Position of this row's block within a numbered run (count of numbered
     /// blocks immediately above) — the serializer seed that lets "2." exist.
     var numberedListSeed: Int = 0
+    /// Section titles read semibold at the body size; everything else regular.
+    var baseFontWeight: NSFont.Weight = .regular
     var placeholder: String
     var darkMode: Bool
     var overrideTextColor: NSColor?
@@ -126,6 +145,7 @@ struct BlockTextEditorRow: View, Equatable {
             && lhs.fontDesign == rhs.fontDesign
             && lhs.lineSpacingAdjustment == rhs.lineSpacingAdjustment
             && lhs.numberedListSeed == rhs.numberedListSeed
+            && lhs.baseFontWeight == rhs.baseFontWeight
             && lhs.placeholder == rhs.placeholder
             && lhs.darkMode == rhs.darkMode
             && lhs.overrideTextColor == rhs.overrideTextColor
@@ -160,6 +180,7 @@ struct BlockTextEditorRow: View, Equatable {
             allowSelectionMenu: allowSelectionMenu,
             allowImages: allowImages,
             rendersElementChrome: false,
+            baseFontWeight: baseFontWeight,
             typewriterMode: typewriterMode,
             scrollsInternally: scrollsInternally,
             onSelectionChanged: onSelectionChanged,
@@ -212,7 +233,7 @@ struct BlockTextEditorRow: View, Equatable {
     private var blockDocumentBinding: Binding<RichDocument> {
         Binding(
             get: {
-                RichDocument(blocks: currentBlock.map { [$0] } ?? [])
+                RichDocument(blocks: currentBlock.map { [BlockRowSyncPolicy.editorRowBlock(for: $0)] } ?? [])
             },
             set: { nextDocument in
                 applyReplacementBlocks(nextDocument.blocks)
@@ -329,6 +350,9 @@ struct BlockTextEditorRow: View, Equatable {
                 caretOffsetFromEnd: caretUTF16OffsetFromEnd,
                 livePlainText: livePlainText
             )
+        case .tableNavigate, .tableReturn, .tableEdge, .tableAddRowBelow, .tablePasteGrid:
+            // Table-cell commands never reach a block row.
+            return false
         case .blockShortcut(let shortcut, let livePlainText):
             return applyBlockShortcut(shortcut, livePlainText: livePlainText)
         }
@@ -371,6 +395,8 @@ struct BlockTextEditorRow: View, Equatable {
             return toggleTransform(to: target, in: workingDocument, at: currentPath, current: block.kind)
         case .checklistToggle:
             return toggleTransform(to: .checklist, in: workingDocument, at: currentPath, current: block.kind)
+        case .tableAddRowBelow, .tableMoveColumn, .tableMergeCells, .tableUnmergeCells, .tableOptions:
+            return false
         }
     }
 
@@ -644,6 +670,13 @@ struct BlockTextEditorRow: View, Equatable {
             workingDocument = reconciled.document
         }
 
+        // A section keeps its box while it has a body — shedding the style
+        // would hoist the children and strand the user's grouping. With no
+        // children the title sheds like any other styled block.
+        if block.kind == .section, !block.children.isEmpty {
+            return false
+        }
+
         // Styled → paragraph first, caret staying at the start. Toggles hoist
         // their children through the same transform. Content/Research blocks
         // keep their identity — they are documents, not text styles.
@@ -685,6 +718,12 @@ struct BlockTextEditorRow: View, Equatable {
             apply(result, undoActionName: "Exit Code Block")
             return true
         }
+        // Return on an empty section title enters the body, never exits.
+        if block.kind == .section,
+           let result = try? BlockOperations.enterSectionBody(in: document, at: currentPath) {
+            apply(result, undoActionName: "Enter Section")
+            return true
+        }
         if [.bulletList, .numberedList, .checklist, .callout, .toggle].contains(block.kind),
            let result = try? BlockOperations.exitEmptyListBlock(in: document, at: currentPath) {
             apply(result, undoActionName: "Exit Block")
@@ -722,7 +761,7 @@ struct BlockTextEditorRow: View, Equatable {
         let liveContent = block.kind.strippedRenderPrefix(from: livePlainText)
 
         switch action {
-        case .transform, .transformHeading, .replaceOrInsert, .insertElement:
+        case .transform, .transformHeading, .replaceOrInsert, .insertElement, .insertTable:
             do {
                 let result = try BlockOperations.apply(
                     action,

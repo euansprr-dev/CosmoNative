@@ -10,10 +10,16 @@ struct SwipeLibraryHeader: View {
     @Binding var showFilters: Bool
 
     var body: some View {
-        HStack(alignment: .top, spacing: DS.space12) {
-            SwipeMasthead(title: title, detail: subtitle)
-            Spacer(minLength: DS.space16)
-            controls
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: DS.space12) {
+                SwipeMasthead(title: title, detail: subtitle).fixedSize(horizontal: true, vertical: false)
+                Spacer(minLength: DS.space16)
+                controls
+            }
+            VStack(alignment: .leading, spacing: DS.space16) {
+                SwipeMasthead(title: title, detail: subtitle)
+                controls
+            }
         }
     }
 
@@ -29,9 +35,15 @@ struct SwipeLibraryHeader: View {
     }
 
     private var controls: some View {
-        HStack(spacing: 8) {
-            SwipeLibrarySearchField(text: $viewModel.query, isFocused: searchFocused)
-            SwipeLibraryControlBar(viewModel: viewModel, showFilters: $showFilters)
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                SwipeLibrarySearchField(text: $viewModel.query, isFocused: searchFocused)
+                SwipeLibraryControlBar(viewModel: viewModel, showFilters: $showFilters)
+            }
+            VStack(alignment: .leading, spacing: DS.space12) {
+                SwipeLibrarySearchField(text: $viewModel.query, isFocused: searchFocused)
+                SwipeLibraryControlBar(viewModel: viewModel, showFilters: $showFilters)
+            }
         }
     }
 }
@@ -45,16 +57,32 @@ struct SwipeLibraryControlBar: View {
     @Binding var showFilters: Bool
 
     var body: some View {
-        HStack(spacing: 8) {
+        ViewThatFits(in: .horizontal) {
+          HStack(spacing: 8) {
             // The capture verb, finally visible — every page that browses
             // swipes can also make one. Leading: capture outranks arranging.
             SwipeCaptureMenuButton()
+            SwipeLabLibraryMenu(viewModel: viewModel)
             sortMenu
             displayModeToggle
             SwipeLibraryFiltersButton(
                 activeCount: viewModel.filterState.activeTokens.count,
                 isOpen: $showFilters
             )
+          }
+          VStack(alignment: .leading, spacing: DS.space8) {
+              HStack(spacing: DS.space8) {
+                  SwipeCaptureMenuButton()
+                  SwipeLabLibraryMenu(viewModel: viewModel)
+                  Spacer(minLength: DS.space8)
+                  sortMenu
+              }
+              HStack(spacing: DS.space8) {
+                  displayModeToggle
+                  Spacer(minLength: DS.space8)
+                  SwipeLibraryFiltersButton(activeCount: viewModel.filterState.activeTokens.count, isOpen: $showFilters)
+              }
+          }
         }
     }
 

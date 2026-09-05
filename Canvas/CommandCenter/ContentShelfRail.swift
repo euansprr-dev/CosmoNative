@@ -51,15 +51,8 @@ enum ContentShelfLoader {
         }
     }
 
-    static func loadIdeas() async -> [ShelfIdea] {
-        let atoms: [Atom] = (try? await CosmoDatabase.shared.asyncRead { db in
-            try Atom
-                .filter(Column("type") == AtomType.idea.rawValue)
-                .filter(Column("is_deleted") == false)
-                .order(Column("updated_at").desc)
-                .limit(400)
-                .fetchAll(db)
-        }) ?? []
+    static func loadIdeas(scope: PipelineScope = .all) async -> [ShelfIdea] {
+        let atoms = (try? await ContentIdeaLoader.load(scope: scope)) ?? []
         return atoms.map { atom in
             let meta = atom.metadataValue(as: IdeaMetadata.self)
             return ShelfIdea(
@@ -76,7 +69,9 @@ enum ContentShelfLoader {
 // MARK: - The Rail
 
 struct ContentShelfRail: View {
-    var viewModel: CommandCenterDashboardViewModel
+    var scope: PipelineScope = .all
+    var filters = PipelineFilters()
+    var showsClientFilter = true
 
     @State private var searchText = ""
     @State private var selectedClientUUID: String?
@@ -93,10 +88,11 @@ struct ContentShelfRail: View {
         VStack(alignment: .leading, spacing: DS.space12) {
             railHeader
             searchField
-            clientPills
+            if scope == .all && showsClientFilter { clientPills }
             shelfList
         }
-        .task { await reload() }
+        .task(id: scope) { await reload() }
+        .onChange(of: filters) { _, _ in Task { await reload() } }
         .onReceive(NotificationCenter.default.publisher(for: .contentShelfFocusSearch)) { _ in
             searchFocused = true
         }
@@ -106,10 +102,27 @@ struct ContentShelfRail: View {
     }
 
     private func reload() async {
-        clients = await ContentShelfLoader.loadClients()
-        ideas = await ContentShelfLoader.loadIdeas()
-        let allContent = await ContentQueueLoader.load()
-        drafts = allContent.filter { $0.scheduledAt == nil && !$0.isPublished }
+        let requestedScope = scope
+        let loadedClients = await ContentShelfLoader.loadClients()
+        let loadedIdeas = await ContentShelfLoader.loadIdeas(scope: requestedScope)
+        let allContent = await ContentPipelineLoader.load(scope: requestedScope, filters: filters).map(ContentQueueItem.init(item:))
+        guard requestedScope == scope, !Task.isCancelled else { return }
+        clients = loadedClients
+        ideas = loadedIdeas.filter { idea in
+            filters.matches(title: idea.title, clientName: idea.clientName,
+                platform: idea.atom.ideaMetadata?.platform.flatMap { SocialPlatform(rawValue: $0.rawValue) },
+                format: idea.format.flatMap(ContentFormat.init(rawValue:)))
+        }
+        // DRAFTS = still being made: ideation / draft / polish, off the
+        // calendar. Archived pieces (and a scheduled phase with no date —
+        // defensive) no longer sit on the shelf. Phase is the truth; a row
+        // that never got a phase key reads as a draft.
+        let liveStages: Set<ContentPhase> = [.ideation, .draft, .polish, .scheduled]
+        drafts = allContent.filter { item in
+            guard item.scheduledAt == nil, !item.isPublished else { return false }
+            let phase = ContentPipelineService.currentPhase(of: item.atom) ?? .draft
+            return liveStages.contains(phase)
+        }
         plannedContentUUIDs = Set(
             allContent.filter { $0.scheduledAt != nil || $0.isPublished }.map(\.id)
         )

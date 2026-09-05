@@ -134,6 +134,22 @@ enum IdeaTaskLinkService {
         return days
     }
 
+    /// The content twin of `openSessionDaysByIdea`: after Begin Writing,
+    /// `retargetToPromotedContent` repoints a session's live link at the
+    /// content atom, so the Pipeline's cards need the answer by CONTENT uuid.
+    /// content uuid → earliest open session day.
+    nonisolated static func openSessionDaysByContent(in tasks: [Atom]) -> [String: Date] {
+        var days: [String: Date] = [:]
+        for task in tasks {
+            guard isOpenSession(task), let day = plannedDay(task) else { continue }
+            for link in linkedAtoms(of: task) where link.atomType == AtomType.content.rawValue {
+                if let existing = days[link.atomUUID], existing <= day { continue }
+                days[link.atomUUID] = day
+            }
+        }
+        return days
+    }
+
     /// Decoded `TaskMetadata.linkedAtoms` for a task atom; empty on any decode miss.
     /// `nonisolated` — a pure read of a Sendable value, callable from loaders
     /// that build their rows off the main actor.

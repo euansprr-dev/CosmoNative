@@ -684,6 +684,9 @@ class CanvasClusterEngine {
                     // Update content status in metadata dict
                     var metaDict = atom.metadataDict ?? [:]
                     let canonical = Self.normalizedBoardColumnValue(for: .content, rawValue: newValue)
+                    // `phase` is the stage's truth (the Pipeline reads it);
+                    // `status` and `currentStep` stay as mirrors for older readers.
+                    metaDict["phase"] = canonical
                     metaDict["status"] = canonical
                     metaDict["currentStep"] = Self.contentStepForPhase(canonical)
                     if let data = try? JSONSerialization.data(withJSONObject: metaDict),
@@ -1260,6 +1263,7 @@ class CanvasClusterEngine {
                 case .content:
                     var metaDict = atom.metadataDict ?? [:]
                     let canonical = Self.canonicalContentPhase(canonicalValue)
+                    metaDict["phase"] = canonical
                     metaDict["status"] = canonical
                     metaDict["currentStep"] = Self.contentStepForPhase(canonical)
                     if let data = try? JSONSerialization.data(withJSONObject: metaDict),

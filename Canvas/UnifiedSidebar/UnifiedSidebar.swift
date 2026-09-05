@@ -13,6 +13,12 @@ enum SidebarDestination: Equatable, Hashable {
     case discover(section: SwipeDiscoverySectionSelection)
     case swipeFile(section: SwipeLibrarySectionSelection)
     case ideas
+    /// Studio › Pipeline — content by client, stage and date (never filed).
+    case pipeline
+    /// Studio › Clients — the index of client hubs.
+    case clients
+    /// One client's hub: their pipeline, calendar, ideas, swipes, dossier.
+    case client(id: String)
     case thinkspace(id: String)
 }
 
@@ -70,28 +76,31 @@ enum SidebarContext: String, CaseIterable, Equatable, Hashable {
     case commandCenter
     case inbox
     case swipeFile
+    case content
     case search
 
     static var allCases: [SidebarContext] {
-        [.thinkspaces, .commandCenter, .inbox, .swipeFile]
+        [.thinkspaces, .commandCenter, .content, .swipeFile, .inbox]
     }
 
     var title: String {
         switch self {
-        case .thinkspaces: return "Home"
+        case .thinkspaces: return "Spaces"
         case .commandCenter: return "Command"
         case .inbox: return "Inbox"
-        case .swipeFile: return "Studio"
+        case .swipeFile: return "Swipe File"
+        case .content: return "Content"
         case .search: return "Search"
         }
     }
 
     var shortTitle: String {
         switch self {
-        case .thinkspaces: return "Home"
+        case .thinkspaces: return "Spaces"
         case .commandCenter: return "Command"
         case .inbox: return "Inbox"
-        case .swipeFile: return "Studio"
+        case .swipeFile: return "Swipe File"
+        case .content: return "Content"
         case .search: return "Search"
         }
     }
@@ -102,6 +111,7 @@ enum SidebarContext: String, CaseIterable, Equatable, Hashable {
         case .commandCenter: return "target"
         case .inbox: return "tray"
         case .swipeFile: return "rectangle.stack"
+        case .content: return "doc.richtext"
         case .search: return "magnifyingglass"
         }
     }
@@ -112,6 +122,7 @@ enum SidebarContext: String, CaseIterable, Equatable, Hashable {
         case .commandCenter: return "target"
         case .inbox: return "tray.fill"
         case .swipeFile: return "rectangle.stack.fill"
+        case .content: return "doc.richtext"
         case .search: return "magnifyingglass"
         }
     }
@@ -358,6 +369,8 @@ struct UnifiedSidebar: View {
 
                 ScrollView(.vertical) {
                     VStack(spacing: 0) {
+                        contextTabRow
+                        Divider().padding(.vertical, DS.space12)
                         WorkbenchStripView()
                         Group {
                             sidebarBody
@@ -444,10 +457,9 @@ struct UnifiedSidebar: View {
                 .accessibilityLabel(sidebarButtonTitle)
             }
 
-            contextTabRow
         }
         .padding(.horizontal, outerPadding)
-        .frame(height: UnifiedSidebarMetrics.headerHeight)
+        .frame(height: 64)
     }
 
     @ViewBuilder
@@ -456,9 +468,9 @@ struct UnifiedSidebar: View {
             switch activeContext {
             case .thinkspaces:
                 Button {
-                    NotificationCenter.default.post(name: .sidebarCreateThinkspace, object: nil)
+                    SpaceComposerRequest.post(.create(parentId: nil))
                 } label: {
-                    Label("New Thinkspace", systemImage: "folder.badge.plus")
+                    Label("New Space", systemImage: "rectangle.badge.plus")
                 }
             case .commandCenter:
                 Button {
@@ -495,13 +507,16 @@ struct UnifiedSidebar: View {
                     currentDestination = .swipeFile(section: .home)
                     onNavigate()
                 } label: {
-                    Label("Open Studio", systemImage: "rectangle.stack")
+                    Label("Open Swipe File", systemImage: "rectangle.stack")
                 }
-                Button {
+            case .content:
+                Button("Capture an idea", systemImage: "lightbulb") {
                     currentDestination = .ideas
                     onNavigate()
-                } label: {
-                    Label("Open Ideas", systemImage: "lightbulb")
+                }
+                Button("Manage clients…", systemImage: "person.2") {
+                    currentDestination = .clients
+                    onNavigate()
                 }
             case .search:
                 Button {
@@ -527,7 +542,7 @@ struct UnifiedSidebar: View {
     }
 
     private var contextTabRow: some View {
-        HStack(spacing: 4) {
+        VStack(spacing: DS.space4) {
             ForEach(SidebarContext.allCases, id: \.rawValue) { context in
                 contextTab(context)
             }
@@ -542,13 +557,28 @@ struct UnifiedSidebar: View {
         return Button {
             withAnimation(motionAnimation) {
                 activeContext = context
+                switch context {
+                case .content: currentDestination = .ideas
+                case .swipeFile: currentDestination = .swipeFile(section: .home)
+                case .commandCenter: currentDestination = .commandCenter
+                case .inbox: currentDestination = .inbox
+                case .thinkspaces:
+                    if let id = thinkspaceManager.currentThinkspace?.id { currentDestination = .thinkspace(id: id) }
+                case .search: break
+                }
             }
         } label: {
-            Image(systemName: isActive ? context.activeIcon : context.icon)
-                .font(.system(size: 14, weight: isActive ? .semibold : .medium))
+            HStack(spacing: DS.space12) {
+                Image(systemName: isActive ? context.activeIcon : context.icon)
+                    .frame(width: 20)
+                Text(context.title)
+                Spacer(minLength: 0)
+            }
+                .font(DS.callout.weight(isActive ? .semibold : .medium))
                 .foregroundStyle(isActive ? DS.accent : DS.textSecondary)
+                .padding(.horizontal, DS.space12)
                 .frame(maxWidth: .infinity)
-                .frame(height: 34)
+                .frame(height: 44)
                 .background(
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .fill(isActive ? DS.accentSoft : (isHovered ? DS.surfaceHover : Color.clear))
@@ -598,6 +628,16 @@ struct UnifiedSidebar: View {
                     currentDestination: $currentDestination,
                     onNavigate: onNavigate
                 )
+            }
+        case .content:
+            VStack(alignment: .leading, spacing: DS.space8) {
+                SidebarContextLabel(title: "Editorial work")
+                SidebarContextRow(title: "Manage clients", icon: "person.2", isActive: false, tint: DS.accent) {
+                    NotificationCenter.default.post(name: CosmoNotification.Navigation.openClients, object: nil)
+                    onNavigate()
+                }
+                Text("Choose a client inside Content. Your scope follows you across ideas, production and publication dates.")
+                    .font(DS.caption).foregroundStyle(DS.textMuted).padding(.horizontal, DS.space12)
             }
         case .search:
             UnifiedSidebarSection(isCollapsed: false) {
@@ -1253,8 +1293,6 @@ private struct SidebarSwipeFileContext: View {
                     spaceRow(genre)
                 }
             }
-            ideasRow
-
             VStack(alignment: .leading, spacing: 4) {
                 SidebarContextLabel(title: "Discover")
                 discoveryRow(.discover, icon: "safari", tint: DS.accent)
@@ -1358,12 +1396,48 @@ private struct SidebarSwipeFileContext: View {
         SidebarContextRow(
             title: "Ideas",
             icon: "lightbulb",
-            subtitle: "Boards by client",
+            subtitle: "Choose what to make",
             isActive: currentDestination == .ideas,
             tint: DS.textSecondary
         ) {
             withAnimation(ProMotionSprings.snappy) {
                 currentDestination = .ideas
+            }
+            onNavigate()
+        }
+    }
+
+    private var pipelineRow: some View {
+        SidebarContextRow(
+            title: "Pipeline",
+            icon: "rectangle.split.3x1",
+            subtitle: "Content by stage and date",
+            isActive: currentDestination == .pipeline,
+            tint: DS.textSecondary
+        ) {
+            withAnimation(ProMotionSprings.snappy) {
+                currentDestination = .pipeline
+            }
+            onNavigate()
+        }
+    }
+
+    private var clientsRow: some View {
+        let isActive: Bool = {
+            switch currentDestination {
+            case .clients, .client: return true
+            default: return false
+            }
+        }()
+        return SidebarContextRow(
+            title: "Clients",
+            icon: "person.crop.circle",
+            subtitle: "Hubs, dossiers, cadence",
+            isActive: isActive,
+            tint: DS.textSecondary
+        ) {
+            withAnimation(ProMotionSprings.snappy) {
+                currentDestination = .clients
             }
             onNavigate()
         }

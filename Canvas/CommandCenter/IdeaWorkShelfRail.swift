@@ -59,7 +59,7 @@ enum IdeaWorkShelfLoader {
 
         // Activated ideas are content pieces now (the Ideas boards drop them for
         // the same reason) — their work belongs to the draft, not the seed.
-        let live = shelfIdeas.filter { $0.atom.ideaMetadata?.ideaStatus?.isActivated != true }
+        let live = shelfIdeas.filter { $0.atom.ideaMetadata?.ideaStatus != .archived }
 
         // "Came from a saved swipe", from metadata alone. The Desk derives this
         // while resolving thumbnails (one fetch per swipe); for SCORING only the

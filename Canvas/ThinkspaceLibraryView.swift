@@ -16,72 +16,55 @@ struct ThinkspaceLibraryModeView: View {
     /// and out of folders (the breadcrumb is the in-page echo of it).
     @Binding var selectedFolderID: UUID?
     let actions: ThinkspaceLibraryActions
-    /// Extra leading room for the chrome row only: clears the pinned sidebar
-    /// when it's open and the sidebar toggle button when it's hidden. The
-    /// content itself stays full-bleed — the glass sidebar floats over it.
-    var chromeLeadingInset: CGFloat = 0
+    /// The library's chrome state (lenses, sort, search) — owned by the
+    /// canvas so the SPACE chrome row renders the controls on the app's one
+    /// island baseline; this view renders only the lens content beneath it.
+    let chrome: ThinkspaceLibraryChromeModel
 
     @State private var selection = ThinkspaceLibrarySelectionModel()
-    @State private var prefs = ThinkspaceLibraryPrefs()
-    @State private var prefsLoadedFor: String?
-    @State private var searchText = ""
-    /// Inside a folder, search can look through just the folder or everything.
-    @State private var searchEntireThinkspace = false
-    @State private var kindFilter: String?
     @State private var previewStore = ThinkspaceLibraryPreviewStore()
     /// The staggered tile cascade is an arrival flourish — first mount only.
     @State private var hasCompletedEntranceCascade = false
-    @State private var scrollMetrics = CortexScrollMetrics()
+    @State private var scrollMetrics = CortexScrollMetricsStore()
     /// Set after keyboard moves so the scroll can chase the focused cell.
     @State private var keyboardScrollTarget: String?
-    /// Live page width — the chrome row centers its switcher absolutely only
-    /// when there's regular room (beside the open pane deck the library can
-    /// be squeezed to pane widths, where flow layout prevents overlap).
-    @State private var chromeWidth: CGFloat = 0
-    @FocusState private var searchFocused: Bool
     @FocusState private var browserFocused: Bool
 
     var body: some View {
         ZStack(alignment: .top) {
             background
             VStack(alignment: .leading, spacing: DS.space12) {
-                toolbar
-                    .padding(.leading, chromeLeadingInset)
-                    .animation(ProMotionSprings.gentle, value: chromeLeadingInset)
                 if isSearching { searchChipsRow }
                 lensContent
             }
+            // Beneath the space chrome row, on its baseline.
+            .padding(.top, SpaceChromeMetrics.contentTopInset)
             .animation(ProMotionSprings.gentle, value: isSearching)
-        }
-        .onGeometryChange(for: CGFloat.self) { proxy in
-            proxy.size.width
-        } action: { width in
-            chromeWidth = width
         }
         .background(keyboardShortcutButtons)
         .onAppear(perform: prepare)
         .onChange(of: thinkspaceId) { _, _ in prepare() }
         .onChange(of: snapshot) { _, newValue in previewStore.ensureLoaded(newValue) }
-        .onChange(of: prefs) { _, newValue in newValue.save(thinkspaceId: thinkspaceId) }
         .onChange(of: visibleIDs) { _, _ in syncSelection() }
-        .onChange(of: searchFocused) { _, focused in
+        .onChange(of: chrome.isSearchFocused) { _, focused in
             if !focused { browserFocused = true }
+        }
+        .onChange(of: chrome.browserFocusRequest) { _, _ in
+            browserFocused = true
         }
         // Clearing the query (✕, Esc, or deleting text) retires its filters —
         // a kind chip must never keep filtering an unsearched page invisibly.
         .onChange(of: isSearching) { _, searching in
             if !searching {
-                kindFilter = nil
-                searchEntireThinkspace = false
+                chrome.kindFilter = nil
+                chrome.searchEntireThinkspace = false
             }
         }
     }
 
     private func prepare() {
-        if prefsLoadedFor != thinkspaceId {
-            prefs = ThinkspaceLibraryPrefs.load(thinkspaceId: thinkspaceId)
-            prefsLoadedFor = thinkspaceId
-        }
+        chrome.activate(thinkspaceId: thinkspaceId)
+        chrome.escapeHandler = { handleEscapeLadder() }
         previewStore.ensureLoaded(snapshot)
         syncSelection()
         browserFocused = true
@@ -101,55 +84,8 @@ struct ThinkspaceLibraryModeView: View {
             }
     }
 
-    private var toolbar: some View {
-        ThinkspaceLibraryToolbar(
-            centersAbsolutely: chromeWidth - chromeLeadingInset >= 1000,
-            thinkspaceName: thinkspaceName,
-            folder: selectedFolder,
-            viewMode: viewModeBinding,
-            searchText: $searchText,
-            searchFocused: $searchFocused,
-            sortField: prefs.sortField,
-            sortAscending: prefs.sortAscending,
-            grouping: prefs.grouping,
-            iconScale: prefs.iconScale,
-            onSelectSort: selectSort,
-            onSelectGrouping: { grouping in
-                withAnimation(ProMotionSprings.snappy) { prefs.grouping = grouping }
-            },
-            onSelectIconScale: { scale in
-                withAnimation(ProMotionSprings.gentle) { prefs.iconScale = scale }
-            },
-            onExitFolder: exitFolder,
-            onRenameFolder: actions.renameFolder,
-            onDropToRoot: { uuid in
-                guard let folder = selectedFolder else { return false }
-                actions.removeFromFolder(uuid, folder.id)
-                return true
-            }
-        )
-    }
-
-    private var viewModeBinding: Binding<ThinkspaceLibraryViewMode> {
-        Binding(
-            get: { prefs.viewMode },
-            set: { mode in
-                withAnimation(ProMotionSprings.focusTransition) { prefs.viewMode = mode }
-            }
-        )
-    }
-
-    /// Re-picking the active field flips direction (Finder); a new field
-    /// arrives in its natural direction (names A→Z, dates newest-first).
     private func selectSort(_ field: ThinkspaceLibrarySortField) {
-        withAnimation(ProMotionSprings.snappy) {
-            if prefs.sortField == field {
-                prefs.sortAscending.toggle()
-            } else {
-                prefs.sortField = field
-                prefs.sortAscending = field.defaultAscending
-            }
-        }
+        chrome.selectSort(field)
     }
 
     // MARK: Search chips (scope + kind — only while searching)
@@ -159,14 +95,14 @@ struct ThinkspaceLibraryModeView: View {
             if selectedFolder != nil {
                 LibraryFilterChip(
                     title: "This Folder",
-                    isSelected: !searchEntireThinkspace,
+                    isSelected: !chrome.searchEntireThinkspace,
                     tint: DS.accent
-                ) { searchEntireThinkspace = false }
+                ) { chrome.searchEntireThinkspace = false }
                 LibraryFilterChip(
                     title: "All of \(thinkspaceName)",
-                    isSelected: searchEntireThinkspace,
+                    isSelected: chrome.searchEntireThinkspace,
                     tint: DS.accent
-                ) { searchEntireThinkspace = true }
+                ) { chrome.searchEntireThinkspace = true }
                 if !availableKinds.isEmpty {
                     Rectangle()
                         .fill(DS.glassBorder)
@@ -176,10 +112,10 @@ struct ThinkspaceLibraryModeView: View {
             ForEach(availableKinds, id: \.self) { kind in
                 LibraryFilterChip(
                     title: kind,
-                    isSelected: kindFilter == kind,
+                    isSelected: chrome.kindFilter == kind,
                     tint: DS.accent
                 ) {
-                    kindFilter = kindFilter == kind ? nil : kind
+                    chrome.kindFilter = chrome.kindFilter == kind ? nil : kind
                 }
             }
             Spacer()
@@ -193,7 +129,7 @@ struct ThinkspaceLibraryModeView: View {
 
     @ViewBuilder
     private var lensContent: some View {
-        if prefs.viewMode == .gallery {
+        if chrome.prefs.viewMode == .gallery {
             galleryLens
         } else {
             browserScroll
@@ -246,11 +182,11 @@ struct ThinkspaceLibraryModeView: View {
                 .animation(ProMotionSprings.snappy, value: sortSignature)
                 // Folder enter/exit plays the same dialect as document opens.
                 .animation(ProMotionSprings.focusTransition, value: selectedFolderID)
-                .background(CortexScrollViewIntrospector { scrollMetrics = $0 })
+                .background(CortexScrollViewIntrospector { scrollMetrics.publish($0) })
             }
             .scrollIndicators(.hidden)
             .scrollEdgeEffectStyle(.soft, for: .all)
-            .cortexThinScrollbar(metrics: scrollMetrics)
+            .cortexThinScrollbar(store: scrollMetrics)
             // Finder's deselect: a click on any empty area of the browser —
             // beside the grid, below the last row — clears the selection.
             // Cell gestures are descendants, so they always win over this.
@@ -279,12 +215,12 @@ struct ThinkspaceLibraryModeView: View {
 
     @ViewBuilder
     private var lensSections: some View {
-        switch prefs.viewMode {
+        switch chrome.prefs.viewMode {
         case .icons:
             ThinkspaceLibraryIconsView(
                 folders: visibleFolders,
                 sections: itemSections,
-                scale: prefs.iconScale,
+                scale: chrome.prefs.iconScale,
                 cascadeOnAppear: !hasCompletedEntranceCascade,
                 context: lensContext
             )
@@ -292,8 +228,8 @@ struct ThinkspaceLibraryModeView: View {
             ThinkspaceLibraryListView(
                 folders: visibleFolders,
                 sections: itemSections,
-                sortField: prefs.sortField,
-                sortAscending: prefs.sortAscending,
+                sortField: chrome.prefs.sortField,
+                sortAscending: chrome.prefs.sortAscending,
                 provenance: provenanceLabel,
                 dateLabel: { item in
                     cardModel(for: item).updatedAt.map(ThinkspaceLibraryDateLabel.label(for:)) ?? "—"
@@ -362,7 +298,7 @@ struct ThinkspaceLibraryModeView: View {
             openFolder: openFolder,
             selectedItems: { selectedItems },
             fileSelectionIntoFolder: { folderID in
-                for item in selectedItems where item.isOnCanvas {
+                for item in selectedItems {
                     actions.fileIntoFolder(item.entityUuid, folderID)
                 }
             },
@@ -381,7 +317,7 @@ struct ThinkspaceLibraryModeView: View {
     }
 
     private var trimmedSearch: String {
-        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        chrome.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private var isSearching: Bool { !trimmedSearch.isEmpty }
@@ -408,7 +344,7 @@ struct ThinkspaceLibraryModeView: View {
 
     private var searchPool: [ThinkspaceLibraryItem] {
         if let folder = selectedFolder {
-            return searchEntireThinkspace ? snapshot.allItems : folder.items
+            return chrome.searchEntireThinkspace ? snapshot.allItems : folder.items
         }
         return isSearching ? snapshot.allItems : snapshot.looseItems
     }
@@ -431,16 +367,16 @@ struct ThinkspaceLibraryModeView: View {
 
     private var currentVisibleItems: [ThinkspaceLibraryItem] {
         var items = searchResults
-        if let kindFilter {
+        if let kindFilter = chrome.kindFilter {
             items = items.filter { cardModel(for: $0).kindLabel == kindFilter }
         }
         return ThinkspaceLibrarySorter.sort(
             items,
-            field: prefs.sortField,
-            ascending: prefs.sortAscending,
+            field: chrome.prefs.sortField,
+            ascending: chrome.prefs.sortAscending,
             kindLabel: { cardModel(for: $0).kindLabel },
             date: { item in
-                prefs.sortField == .dateAdded
+                chrome.prefs.sortField == .dateAdded
                     ? previewStore.addedDate(for: item.entityUuid)
                     : previewStore.modifiedDate(for: item.entityUuid)
             }
@@ -452,7 +388,7 @@ struct ThinkspaceLibraryModeView: View {
         let items = currentVisibleItems
         guard !items.isEmpty else { return [] }
         let fallbackTitle = isSearching ? "Results" : "Documents"
-        guard prefs.grouping == .kind else { return [(fallbackTitle, items)] }
+        guard chrome.prefs.grouping == .kind else { return [(fallbackTitle, items)] }
         var buckets: [String: [ThinkspaceLibraryItem]] = [:]
         for item in items {
             buckets[cardModel(for: item).kindLabel, default: []].append(item)
@@ -461,7 +397,7 @@ struct ThinkspaceLibraryModeView: View {
     }
 
     private func provenanceLabel(_ item: ThinkspaceLibraryItem) -> String {
-        if isSearching, searchEntireThinkspace || selectedFolder == nil,
+        if isSearching, chrome.searchEntireThinkspace || selectedFolder == nil,
            let folderTitle = snapshot.folderTitle(for: item.id) {
             return folderTitle
         }
@@ -476,7 +412,7 @@ struct ThinkspaceLibraryModeView: View {
     }
 
     private var sortSignature: String {
-        "\(prefs.sortField.rawValue)-\(prefs.sortAscending)-\(prefs.grouping.rawValue)-\(kindFilter ?? "")"
+        "\(chrome.prefs.sortField.rawValue)-\(chrome.prefs.sortAscending)-\(chrome.prefs.grouping.rawValue)-\(chrome.kindFilter ?? "")"
     }
 
     /// Everything selectable in visual order — folders first, then sections.
@@ -534,7 +470,7 @@ struct ThinkspaceLibraryModeView: View {
             if let folder = snapshot.folders.first(where: { $0.id.uuidString == id }) {
                 deleteFolder(folder)
             } else if let item = snapshot.allItems.first(where: { $0.id == id }) {
-                actions.deleteItem(item)
+                actions.removeFromSpace(item)
             }
         }
     }
@@ -546,7 +482,7 @@ struct ThinkspaceLibraryModeView: View {
             selectedFolderID = folder.id
             selection.clear()
         }
-        searchEntireThinkspace = false
+        chrome.searchEntireThinkspace = false
         NavigationTrail.shared.recordArrival(
             .libraryFolder(thinkspaceId: thinkspaceId, folderID: folder.id),
             title: folder.title,
@@ -561,9 +497,9 @@ struct ThinkspaceLibraryModeView: View {
             selection.clear()
         }
         NavigationTrail.shared.recordArrival(
-            .sidebar(.thinkspace(id: thinkspaceId)),
-            title: thinkspaceName,
-            glyph: "rectangle.3.group"
+            .spaceView(thinkspaceId: thinkspaceId, view: .library),
+            title: "\(thinkspaceName) · Library",
+            glyph: SpaceView.library.trailGlyph
         )
     }
 
@@ -594,7 +530,7 @@ struct ThinkspaceLibraryModeView: View {
                 .keyboardShortcut(.downArrow, modifiers: .command)
             Button(action: exitFolder) {}
                 .keyboardShortcut(.upArrow, modifiers: .command)
-            Button(action: { searchFocused = true }) {}
+            Button(action: { chrome.requestSearchFocus() }) {}
                 .keyboardShortcut("f", modifiers: .command)
             Button(action: { withAnimation(ProMotionSprings.snappy) { selection.selectAll() } }) {}
                 .keyboardShortcut("a", modifiers: .command)
@@ -608,45 +544,46 @@ struct ThinkspaceLibraryModeView: View {
         .accessibilityHidden(true)
     }
 
+    /// ⇧⌘1/2/3 — the plain ⌘digits now switch the SPACE's views.
     private var viewModeShortcuts: some View {
         ForEach(Array(ThinkspaceLibraryViewMode.allCases.enumerated()), id: \.element) { index, mode in
             Button {
-                withAnimation(ProMotionSprings.focusTransition) { prefs.viewMode = mode }
+                chrome.setViewMode(mode)
             } label: {}
-                .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
+                .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: [.command, .shift])
         }
     }
 
     private var scaleShortcuts: some View {
         Group {
-            Button {
-                if let up = prefs.iconScale.stepUp {
-                    withAnimation(ProMotionSprings.gentle) { prefs.iconScale = up }
-                }
-            } label: {}
+            Button { chrome.stepIconScale(up: true) } label: {}
                 .keyboardShortcut("=", modifiers: .command)
-            Button {
-                if let down = prefs.iconScale.stepDown {
-                    withAnimation(ProMotionSprings.gentle) { prefs.iconScale = down }
-                }
-            } label: {}
+            Button { chrome.stepIconScale(up: false) } label: {}
                 .keyboardShortcut("-", modifiers: .command)
         }
     }
 
+    /// Esc from the lens: the chrome model clears a search first, then this
+    /// view's own ladder runs (the same order the shell's Esc uses).
     private func handleEscape() {
-        if searchFocused || !searchText.isEmpty {
-            searchText = ""
-            kindFilter = nil
-            searchFocused = false
-            browserFocused = true
-        } else if selection.renamingID != nil {
+        _ = chrome.handleEscape()
+    }
+
+    /// Rename → selection → folder. Returns whether anything was dismissed.
+    private func handleEscapeLadder() -> Bool {
+        if selection.renamingID != nil {
             selection.renamingID = nil
-        } else if !selection.isEmpty {
-            clearSelection()
-        } else if selectedFolderID != nil {
-            exitFolder()
+            return true
         }
+        if !selection.isEmpty {
+            clearSelection()
+            return true
+        }
+        if selectedFolderID != nil {
+            exitFolder()
+            return true
+        }
+        return false
     }
 
     // MARK: Empty state
@@ -668,7 +605,7 @@ struct ThinkspaceLibraryModeView: View {
 
     private var emptyMessage: String {
         if isSearching {
-            if selectedFolder != nil && !searchEntireThinkspace {
+            if selectedFolder != nil && !chrome.searchEntireThinkspace {
                 return "Words match in any order. Try fewer words, or search all of \(thinkspaceName)."
             }
             return "Words match in any order — try fewer or different words."

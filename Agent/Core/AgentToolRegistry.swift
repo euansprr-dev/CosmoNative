@@ -1369,12 +1369,12 @@ class AgentToolRegistry {
             ),
             LLMToolDefinition(
                 name: "answer_in_assistant_pane",
-                description: "Send a conversational answer to the assistant pane. Use this for questions, explanations, analysis, or any request that does not need reviewed edits.",
+                description: "Send a conversational answer to the assistant pane. Use this for questions, explanations, analysis, or any request that does not need reviewed edits. The pane renders Markdown, so write the answer as a skimmable document, never as one block of text: the first line answers the ask directly in one sentence; paragraphs are 1–3 sentences; bold (**…**) the one phrase per point a skimmer needs; three or more parallel items become a bulleted list; steps in order become a numbered list; options compared on the same dimensions become a table; quoted copy, hook lines, or slide text go in a > blockquote; use ## or ### headings only when the answer has distinct parts. No emoji, no closing offers.",
                 parametersSchema: [
                     "type": "object",
                     "properties": [
                         "title": ["type": "string", "description": "Short answer title"] as [String: Any],
-                        "answer": ["type": "string", "description": "Assistant response body"] as [String: Any]
+                        "answer": ["type": "string", "description": "Assistant response body in Markdown: short paragraphs, bold key phrases, lists for parallel items or steps, blockquotes for quoted copy, tables for comparisons, headings only for multi-part answers."] as [String: Any]
                     ] as [String: Any],
                     "required": ["answer"]
                 ]

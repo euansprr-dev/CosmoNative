@@ -226,7 +226,12 @@ class KnowledgeContextAssembler {
     /// Load all connection atoms scoped to a profile, or universal connections.
     private func loadProfileConnections(profileId: String?) async -> [Atom] {
         do {
-            let allConnections = try await AtomRepository.shared.fetchAll(type: .connection)
+            // Lab principles have explicit acceptance and client scope. They
+            // are injected by their scoped store, never by generic connection
+            // discovery (which can also return archived or client-only rows).
+            let allConnections = try await AtomRepository.shared.fetchAll(type: .connection).filter {
+                $0.metadataValue(as: SwipeLabPrincipleEnvelope.self) == nil
+            }
 
             if let profileId = profileId, !profileId.isEmpty {
                 // Return connections linked to this profile + universal (no profile links)

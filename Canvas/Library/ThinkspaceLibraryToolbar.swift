@@ -1,144 +1,83 @@
 // CosmoOS/Canvas/Library/ThinkspaceLibraryToolbar.swift
-// The library's one chrome row, on the app's shared island baseline
-// (CosmoChromeRow): trail island + breadcrumb leading, the view-mode
-// switcher dead center, sort and search trailing. The breadcrumb IS the
-// page title (the pane-spine law) — no second title below to collide with.
+// The library's controls as chrome-row islands. The SPACE chrome row (owned
+// by CanvasView) mounts these beside the space's view switcher, so the
+// library never draws a second row of its own: lenses dead center, sort and
+// search trailing. State lives in ThinkspaceLibraryChromeModel; the search
+// field's focus is mirrored into it so the lens can refocus its browser.
 
 import SwiftUI
 import AppKit
 
-struct ThinkspaceLibraryToolbar: View {
-    /// True only at regular page widths — beside the open pane deck the
-    /// library squeezes to pane widths, where the switcher flows between
-    /// the side clusters so overlap is structurally impossible.
-    let centersAbsolutely: Bool
-    let thinkspaceName: String
-    let folder: ThinkspaceLibraryFolder?
-    @Binding var viewMode: ThinkspaceLibraryViewMode
-    @Binding var searchText: String
-    var searchFocused: FocusState<Bool>.Binding
-    let sortField: ThinkspaceLibrarySortField
-    let sortAscending: Bool
-    let grouping: ThinkspaceLibraryGrouping
-    let iconScale: ThinkspaceLibraryIconScale
-    let onSelectSort: (ThinkspaceLibrarySortField) -> Void
-    let onSelectGrouping: (ThinkspaceLibraryGrouping) -> Void
-    let onSelectIconScale: (ThinkspaceLibraryIconScale) -> Void
-    let onExitFolder: () -> Void
-    let onRenameFolder: (UUID, String) -> Void
-    /// A document dropped on the root breadcrumb segment un-files it.
-    let onDropToRoot: (String) -> Bool
+// MARK: - Lenses island (center)
+
+struct ThinkspaceLibraryLensIsland: View {
+    let chrome: ThinkspaceLibraryChromeModel
 
     var body: some View {
-        CosmoChromeRow(insetsEnabled: true, centersAbsolutely: centersAbsolutely) {
-            // The app shell's floating sidebar toggle already serves library
-            // mode, so the island variant stands down here.
-            NavigationTrailIsland(showsSidebarToggle: false)
-            LibraryBreadcrumbIsland(
-                thinkspaceName: thinkspaceName,
-                folder: folder,
-                onExitFolder: onExitFolder,
-                onRenameFolder: onRenameFolder,
-                onDropToRoot: onDropToRoot
+        CosmoChromeIsland {
+            CosmoSegmentedSwitcher(
+                options: ThinkspaceLibraryViewMode.allCases,
+                label: { $0.title },
+                icon: { $0.icon },
+                help: { mode in
+                    "\(mode.title) view (⇧⌘\((ThinkspaceLibraryViewMode.allCases.firstIndex(of: mode) ?? 0) + 1))"
+                },
+                chrome: .bare,
+                selection: Binding(get: { chrome.prefs.viewMode }, set: { chrome.setViewMode($0) })
             )
-        } center: {
-            CosmoChromeIsland {
-                CosmoSegmentedSwitcher(
-                    options: ThinkspaceLibraryViewMode.allCases,
-                    label: { $0.title },
-                    icon: { $0.icon },
-                    help: { mode in
-                        "\(mode.title) view (⌘\((ThinkspaceLibraryViewMode.allCases.firstIndex(of: mode) ?? 0) + 1))"
-                    },
-                    chrome: .bare,
-                    selection: $viewMode
-                )
-            }
-        } trailing: {
-            CosmoChromeIsland {
-                LibrarySortMenu(
-                    sortField: sortField,
-                    sortAscending: sortAscending,
-                    grouping: grouping,
-                    iconScale: iconScale,
-                    showsIconScale: viewMode == .icons,
-                    onSelectSort: onSelectSort,
-                    onSelectGrouping: onSelectGrouping,
-                    onSelectIconScale: onSelectIconScale
-                )
-                LibrarySearchField(searchText: $searchText, focused: searchFocused)
-            }
         }
     }
 }
 
-// MARK: - Breadcrumb (the title that navigates)
+// MARK: - Sort + search island (trailing)
 
-private struct LibraryBreadcrumbIsland: View {
-    let thinkspaceName: String
-    let folder: ThinkspaceLibraryFolder?
-    let onExitFolder: () -> Void
-    let onRenameFolder: (UUID, String) -> Void
-    let onDropToRoot: (String) -> Bool
+struct ThinkspaceLibraryToolsIsland: View {
+    let chrome: ThinkspaceLibraryChromeModel
+    var compact = false
 
-    @State private var isRootDropTarget = false
+    @FocusState private var searchFocused: Bool
+    @State private var showingSearch = false
 
     var body: some View {
         CosmoChromeIsland {
-            HStack(spacing: DS.space6) {
-                rootSegment
-                if let folder {
-                    Image(systemName: "chevron.right")
-                        .font(DS.caption.weight(.semibold))
-                        .foregroundStyle(DS.textMuted)
-                        .accessibilityHidden(true)
-                    LibraryRenamableTitle(
-                        title: folder.title,
-                        prominent: true,
-                        help: "Rename folder"
-                    ) { newName in
-                        onRenameFolder(folder.id, newName)
-                    }
+            LibrarySortMenu(
+                sortField: chrome.prefs.sortField,
+                sortAscending: chrome.prefs.sortAscending,
+                grouping: chrome.prefs.grouping,
+                iconScale: chrome.prefs.iconScale,
+                showsIconScale: chrome.prefs.viewMode == .icons,
+                onSelectSort: { chrome.selectSort($0) },
+                onSelectGrouping: { chrome.setGrouping($0) },
+                onSelectIconScale: { chrome.setIconScale($0) },
+                showsTitle: !compact
+            )
+            if compact {
+                Button { showingSearch = true } label: {
+                    Image(systemName: "magnifyingglass").frame(width: 30, height: 30)
                 }
-            }
-            .padding(.horizontal, DS.space4)
+                .buttonStyle(.plain).help("Search materials (⌘F)").accessibilityLabel("Search materials")
+                .popover(isPresented: $showingSearch) {
+                    searchField.padding(DS.space16).frame(width: 280)
+                        .onAppear { searchFocused = true }
+                }
+            } else { searchField }
+        }
+        .onChange(of: searchFocused) { _, focused in
+            if chrome.isSearchFocused != focused { chrome.isSearchFocused = focused }
+        }
+        .onChange(of: chrome.isSearchFocused) { _, focused in
+            if !focused && searchFocused { searchFocused = false; showingSearch = false }
+        }
+        .onChange(of: chrome.searchFocusRequest) { _, _ in
+            if compact { showingSearch = true } else { searchFocused = true }
         }
     }
 
-    /// At root the thinkspace name is the page title; inside a folder it
-    /// demotes to a clickable waypoint and accepts drops that un-file items.
-    @ViewBuilder
-    private var rootSegment: some View {
-        if folder == nil {
-            Text(thinkspaceName)
-                .font(DS.headline.weight(.semibold))
-                .foregroundStyle(DS.text)
-                .lineLimit(1)
-        } else {
-            Button(action: onExitFolder) {
-                Text(thinkspaceName)
-                    .font(DS.headline.weight(.medium))
-                    .foregroundStyle(isRootDropTarget ? DS.accent : DS.textMuted)
-                    .lineLimit(1)
-                    .padding(.horizontal, DS.space4)
-                    .padding(.vertical, 2)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(isRootDropTarget ? DS.accentSoft : .clear)
-                    )
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .dropDestination(for: String.self) { items, _ in
-                var handled = false
-                for uuid in items where onDropToRoot(uuid) { handled = true }
-                return handled
-            } isTargeted: { targeting in
-                withAnimation(ProMotionSprings.snappy) { isRootDropTarget = targeting }
-            }
-            .help("Back to \(thinkspaceName) — drop a document here to take it out of the folder")
-            .accessibilityLabel("Back to \(thinkspaceName)")
-        }
+    private var searchField: some View {
+        LibrarySearchField(
+                searchText: Binding(get: { chrome.searchText }, set: { chrome.searchText = $0 }),
+                focused: $searchFocused
+            )
     }
 }
 
@@ -216,7 +155,7 @@ struct LibraryRenamableTitle: View {
 
 // MARK: - Sort / Group / Scale menu
 
-private struct LibrarySortMenu: View {
+struct LibrarySortMenu: View {
     let sortField: ThinkspaceLibrarySortField
     let sortAscending: Bool
     let grouping: ThinkspaceLibraryGrouping
@@ -225,6 +164,7 @@ private struct LibrarySortMenu: View {
     let onSelectSort: (ThinkspaceLibrarySortField) -> Void
     let onSelectGrouping: (ThinkspaceLibraryGrouping) -> Void
     let onSelectIconScale: (ThinkspaceLibraryIconScale) -> Void
+    var showsTitle = true
 
     @State private var isHovered = false
 
@@ -236,8 +176,10 @@ private struct LibrarySortMenu: View {
                 Image(systemName: "arrow.up.arrow.down")
                     .font(DS.caption.weight(.semibold))
                     .accessibilityHidden(true)
-                Text(sortField.title)
-                    .font(DS.footnote.weight(.medium))
+                if showsTitle {
+                    Text(sortField.title)
+                        .font(DS.footnote.weight(.medium)).lineLimit(1)
+                }
             }
             .foregroundStyle(isHovered ? DS.text : DS.textSecondary)
             .padding(.horizontal, DS.space10)
@@ -296,7 +238,7 @@ struct LibrarySearchField: View {
                 .font(DS.caption.weight(.medium))
                 .foregroundStyle(focused.wrappedValue ? DS.accent : DS.textMuted)
                 .accessibilityHidden(true)
-            TextField("Find in library", text: $searchText)
+            TextField("Find in materials", text: $searchText)
                 .textFieldStyle(.plain)
                 .font(DS.callout)
                 .foregroundStyle(DS.text)
@@ -328,6 +270,6 @@ struct LibrarySearchField: View {
             )
         )
         .animation(ProMotionSprings.hover, value: focused.wrappedValue)
-        .help("Find in library (⌘F)")
+        .help("Find in materials (⌘F)")
     }
 }

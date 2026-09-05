@@ -13,12 +13,16 @@
 
 import { config } from '../config';
 import { fetchAllByType, createAtom, updateAtom, Atom } from '../db/queries';
+import { generateText, Provider, textConfigured } from './llm';
 import { appleSeconds, EngagementSnapshot, SpeechSegmentJSON, TranscriptSlideJSON } from './types';
 import { nichePromptInstruction } from './niche';
 
 // Mirrors SwipeInsightEngine.analysisTier (.sonnet5) — every swipe is curated;
-// one premium call per capture is the budget.
-const INSIGHT_MODEL = 'anthropic/claude-sonnet-5';
+// one premium call per capture is the budget. Provider chain: the same
+// Sonnet 5 straight from Anthropic (no middleman), OpenRouter second, Gemini
+// last — a swipe must never strand at 'partial' because one billing account
+// ran dry (Aug 29 – Sept 4 2026, every insight call 402'd on OpenRouter).
+export const INSIGHT_PROVIDER_CHAIN: Provider[] = ['anthropic', 'openrouter', 'gemini'];
 // Mirrors SwipeInsightEngine.insightVersion.
 export const INSIGHT_VERSION = 4;
 
@@ -290,46 +294,36 @@ export interface InsightResponse {
 }
 
 export async function classify(ctx: AnalyzeContext): Promise<InsightResponse | null> {
-  if (!config.openRouterApiKey || !ctx.text.trim()) return null;
+  if (!textConfigured(INSIGHT_PROVIDER_CHAIN) || !ctx.text.trim()) return null;
 
-  const response = await fetch(`${config.openRouterBaseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${config.openRouterApiKey}`,
-      'X-Title': 'CosmoOS',
+  // Claude Sonnet 5 runs adaptive thinking BY DEFAULT, and max_tokens caps
+  // thinking + text COMBINED (with the thinking text omitted from the
+  // response). On long transcripts the model burned the entire budget
+  // thinking and returned EMPTY content with finish_reason "length" — every
+  // 8+-slide swipe classified as 'partial' forever. This is a
+  // structured-extraction prompt tuned for no-thinking models; keep
+  // reasoning off on every provider (noThinking).
+  const content = await generateText({
+    label: 'insight pass',
+    prompt: buildInsightPrompt(ctx),
+    maxTokens: 8000,
+    timeoutMs: 180_000,
+    noThinking: true,
+    jsonMode: true,
+    chain: INSIGHT_PROVIDER_CHAIN,
+    models: {
+      anthropic: config.anthropicInsightModel,
+      openrouter: config.openRouterInsightModel,
+      gemini: config.geminiTextModel,
     },
-    body: JSON.stringify({
-      model: INSIGHT_MODEL,
-      messages: [{ role: 'user', content: buildInsightPrompt(ctx) }],
-      // Claude Sonnet 5 runs adaptive thinking BY DEFAULT when no reasoning
-      // config is sent, and max_tokens caps thinking + text COMBINED (with the
-      // thinking text omitted from the response). On long transcripts the
-      // model burned the entire budget thinking and returned EMPTY content
-      // with finish_reason "length" — every 8+-slide swipe classified as
-      // 'partial' forever. This is a structured-extraction prompt tuned for
-      // no-thinking models; keep reasoning off.
-      reasoning: { enabled: false },
-      max_tokens: 8000,
-    }),
-    signal: AbortSignal.timeout(180_000),
   });
-  if (!response.ok) {
-    console.warn(`⚠️ insight call failed: ${response.status}`);
-    return null;
-  }
-  const payload = await response.json() as {
-    choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
-  };
-  const choice = payload.choices?.[0];
-  const content = choice?.message?.content ?? '';
+  if (content === null) return null;
   const parsed = parseResponse(content);
   if (!parsed) {
-    // Surface WHY — an empty-content "length" finish is invisible without this
-    // (the July 22 partial-swipe pileup hid behind a generic failure log).
+    // Surface WHY — an empty-content finish is invisible without this (the
+    // July 22 partial-swipe pileup hid behind a generic failure log).
     console.warn(
-      `⚠️ insight response unparseable: finish=${choice?.finish_reason ?? '?'} ` +
-      `contentChars=${content.length} head=${JSON.stringify(content.slice(0, 120))}`
+      `⚠️ insight response unparseable: contentChars=${content.length} head=${JSON.stringify(content.slice(0, 120))}`
     );
   }
   return parsed;

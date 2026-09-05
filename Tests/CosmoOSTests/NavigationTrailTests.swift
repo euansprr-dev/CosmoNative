@@ -119,4 +119,49 @@ final class NavigationTrailTests: XCTestCase {
         XCTAssertEqual(trail.current?.destination, b)
         XCTAssertEqual(backDestinations(trail), [a])
     }
+
+    // MARK: - Space views
+
+    private func spaceView(_ id: String, _ view: SpaceView) -> NavigationTrail.Moment.Destination {
+        .spaceView(thinkspaceId: id, view: view)
+    }
+
+    /// Canvas ↔ Library ping-pong inside one space never stacks: each view
+    /// is one place, hoisted on re-arrival.
+    func testViewSwitchesWithinASpaceStayRecencyUnique() {
+        let trail = NavigationTrail()
+        let canvas = spaceView("ts", .canvas)
+        let library = spaceView("ts", .library)
+        arrive(trail, canvas)
+        arrive(trail, library)
+        arrive(trail, canvas)
+        arrive(trail, library)
+
+        XCTAssertEqual(backDestinations(trail), [canvas])
+        XCTAssertEqual(trail.current?.destination, library)
+    }
+
+    /// A folder is a place UNDER the library view — Back from the folder
+    /// lands on the library, then on the canvas, then leaves the space.
+    func testFolderMomentSitsUnderLibraryView() {
+        let trail = NavigationTrail()
+        let home = sidebar("home")
+        let canvas = spaceView("ts", .canvas)
+        let library = spaceView("ts", .library)
+        let folder = NavigationTrail.Moment.Destination.libraryFolder(thinkspaceId: "ts", folderID: UUID())
+        arrive(trail, home)
+        arrive(trail, canvas)
+        arrive(trail, library)
+        arrive(trail, folder)
+
+        XCTAssertEqual(backDestinations(trail), [library, canvas, home])
+    }
+
+    /// Two spaces' views are distinct places even when the view is the same.
+    func testSameViewInDifferentSpacesAreDifferentPlaces() {
+        let trail = NavigationTrail()
+        arrive(trail, spaceView("a", .canvas))
+        arrive(trail, spaceView("b", .canvas))
+        XCTAssertEqual(backDestinations(trail), [spaceView("a", .canvas)])
+    }
 }

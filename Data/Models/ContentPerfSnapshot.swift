@@ -159,6 +159,15 @@ enum ContentPublishStore {
         ))
         let updated = atom.mergingMetadataKeys(Overlay(publishRecords: records, status: "published"))
         _ = try? await AtomRepository.shared.update(updated)
+        // Shipping IS a stage change: land on Published unless the piece has
+        // already shipped or been archived (never un-archive, never re-ship —
+        // a repost keeps its history). `applyPhase` strips `phaseBeforeSchedule`.
+        let phase = ContentPipelineService.currentPhase(of: atom) ?? .ideation
+        if !(phase.isShipped || phase == .archived) {
+            _ = try? await ContentPipelineService.applyPhase(
+                contentUUID: atomUuid, to: .published, notes: "Published to \(platform)"
+            )
+        }
         await ClientPerfAggregator.recomputeForContent(atom)
     }
 

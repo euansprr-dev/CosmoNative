@@ -235,16 +235,10 @@ struct DeepDivePortalBlockView: View {
 
     private func openOverview() {
         guard let atom else { return }
-        let id = atom.id ?? -1
-        NotificationCenter.default.post(
-            name: .enterFocusMode,
-            object: nil,
-            userInfo: [
-                "type": EntityType.deepDive,
-                "id": id,
-                "uuid": atom.uuid
-            ]
-        )
+        // ONE open path. `openDeepDive` reaches FocusNavigationCoordinator,
+        // where the space routing policy decides between the dossier inside
+        // its space and a focus overlay; a second `.enterFocusMode` post used
+        // to bypass that decision.
         NotificationCenter.default.post(
             name: CosmoNotification.Inquiry.openDeepDive,
             object: nil,

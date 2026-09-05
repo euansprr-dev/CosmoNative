@@ -123,6 +123,22 @@ final class FocusNavigationCoordinator {
 
     private func present(_ entity: EntitySelection, anchor: UnitPoint) {
         guard let appState else { return }
+        // A space's own Deep Dive has ONE home: the space's Deep Dive view.
+        // Every open path (⌘K, portal blocks, trail replay, inquiry exit)
+        // funnels through here, so the decision is made once.
+        if entity.type == .deepDive,
+           let atom = preloadedAtoms[entity],
+           let redirect = SpaceDeepDiveRoutingPolicy.spaceRedirect(for: atom, thinkspaces: spaceCatalog()) {
+            preloadedAtoms.removeValue(forKey: entity)
+            close()
+            SpaceViewStore.shared.select(.deepDive, for: redirect.thinkspaceId, source: .deepDiveRedirect)
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.navigateToThinkspaceById,
+                object: nil,
+                userInfo: ["thinkspaceId": redirect.thinkspaceId]
+            )
+            return
+        }
         AppPerformanceInstrumentation.trace("FOCUS present \(entity.type.rawValue)#\(entity.id)")
         AppPerformanceInstrumentation.event("focus-open")
         entranceAnchor = anchor
@@ -141,6 +157,22 @@ final class FocusNavigationCoordinator {
         NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
             ? .easeOut(duration: 0.16)
             : ProMotionSprings.focusTransition
+    }
+
+    /// The spaces as the routing policy should see them: the array entry's
+    /// profile uuid is stale until the next reload, while `currentThinkspace`
+    /// is patched the moment a profile resolves — so it wins for its own id.
+    private func spaceCatalog() -> [Thinkspace] {
+        let manager = ThinkspaceManager.shared
+        var spaces = manager.thinkspaces
+        if let current = manager.currentThinkspace {
+            if let index = spaces.firstIndex(where: { $0.id == current.id }) {
+                spaces[index] = current
+            } else {
+                spaces.append(current)
+            }
+        }
+        return spaces
     }
 
     // MARK: - Anchor resolution

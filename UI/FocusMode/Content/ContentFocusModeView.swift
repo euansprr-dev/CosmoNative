@@ -3620,58 +3620,29 @@ class ContentFocusModeViewModel: ObservableObject {
         }
     }
 
+    /// One stage write in either direction — the same `setPhase` the Pipeline
+    /// board uses, so a backward move is persisted (it used to change only
+    /// the display) and a forward move never walks index arithmetic that
+    /// drifts from the real phase.
     func goToPhase(_ phase: ContentPhase) {
-        let currentIdx = ContentPhase.allCases.firstIndex(of: displayPhase) ?? 0
-        let targetIdx = ContentPhase.allCases.firstIndex(of: phase) ?? 0
-
-        if targetIdx > currentIdx {
-            // Moving forward — call advancePhase() to award XP
-            advanceToPhase(phase)
-        } else {
-            // Moving backward — update display phase and step if applicable
-            withAnimation(ProMotionSprings.focusTransition) {
-                displayPhase = phase
-            }
-            if let step = ContentFocusModeState.stepForPhase(phase) {
-                goToStep(step)
-            }
-        }
-    }
-
-    /// Advance forward through phases, calling ContentPipelineService for each step.
-    private func advanceToPhase(_ targetPhase: ContentPhase) {
-        // Flush current focus state to DB before pipeline advances
+        // Flush current focus state to DB before the stage write
         // (ensures hooks/description survive the phase transition write)
         writeToAtom()
 
         Task {
-            let pipelineService = ContentPipelineService()
-            var currentIdx = ContentPhase.allCases.firstIndex(of: displayPhase) ?? 0
-            let targetIdx = ContentPhase.allCases.firstIndex(of: targetPhase) ?? 0
-
-            while currentIdx < targetIdx {
-                do {
-                    _ = try await pipelineService.advancePhase(contentUUID: atom.uuid)
-                    currentIdx += 1
-                    print("Content focus: advanced to \(ContentPhase.allCases[currentIdx].displayName)")
-
-                    // Refresh atom from DB to get updated metadata
-                    if let freshAtom = try? await AtomRepository.shared.fetch(uuid: atom.uuid) {
-                        atom = freshAtom
-                    }
-                } catch {
-                    print("Content focus: advancePhase failed: \(error)")
-                    break
+            do {
+                _ = try await ContentPipelineService().setPhase(contentUUID: atom.uuid, to: phase)
+                if let freshAtom = try? await AtomRepository.shared.fetch(uuid: atom.uuid) {
+                    atom = freshAtom
                 }
+            } catch {
+                print("Content focus: setPhase failed: \(error)")
             }
 
-            // Update displayPhase to the target
             withAnimation(ProMotionSprings.focusTransition) {
-                displayPhase = targetPhase
+                displayPhase = phase
             }
-
-            // Update the step UI to match
-            if let step = ContentFocusModeState.stepForPhase(targetPhase) {
+            if let step = ContentFocusModeState.stepForPhase(phase) {
                 goToStep(step)
             } else {
                 // Post-creation phase — just notify the UI to refresh

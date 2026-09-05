@@ -18,6 +18,14 @@ struct CanvasBlock: Identifiable, Codable, Equatable {
     var scale: Double
     var rotation: Double
     var isPinned: Bool
+    /// Membership without position: a block row is a space membership; this
+    /// says whether it also has a spot on the canvas. Optional-backed so
+    /// JSON encoded before the column existed still decodes (nil = placed).
+    var isPlacedStored: Bool?
+    var isPlaced: Bool {
+        get { isPlacedStored ?? true }
+        set { isPlacedStored = newValue }
+    }
     var zIndex: Int
 
     // Entity reference

@@ -440,244 +440,30 @@ final class IdeaFocusModeViewModel {
 
     // MARK: - Promote to Content
 
-    /// Create a new content atom from this idea, link them bidirectionally,
-    /// and update the idea status to `.inProduction`.
+    /// Begin Writing. The promotion itself lives in `IdeaPromotionService`
+    /// (shared with the Pipeline board and the calendar so the three paths
+    /// can never drift); the bench flushes its session first, hands over the
+    /// session-only choices, then follows the piece into the writing surface.
     func promoteToContent() async {
+        await save()
         do {
-            // Ensure insight is fresh — run full analysis if nil or stale (>1hr)
-            if insight == nil || isInsightStale() {
-                await save()
-                if let freshAtom = try? await AtomRepository.shared.fetch(uuid: idea.uuid) {
-                    idea = freshAtom
-                }
-                let result = await IdeaInsightEngine.shared.fullAnalysis(atom: idea)
-                insight = result
-                var analysisAtom = idea.withIdeaInsight(result)
-                analysisAtom = analysisAtom.withUpdatedIdeaMetadata { meta in
-                    meta.lastAnalyzedAt = ISO8601.string(from: Date())
-                }
-                analysisAtom.updatedAt = ISO8601.string(from: Date())
-                analysisAtom.localVersion += 1
-                idea = try await AtomRepository.shared.update(analysisAtom)
-            }
-
-            // Create content atom. The idea text goes into contentDescription; draftContent
-            // starts as a slide workspace only when the user composed a multi-slide outline.
-            let contentAtom = try await AtomRepository.shared.createContent(
-                title: editableTitle,
-                body: nil,
-                contentType: selectedFormat?.rawValue ?? "post"
+            let options = IdeaPromotionService.PromotionOptions(
+                refreshInsightIfStale: true,
+                scheduleOn: nil,
+                initialPhase: .ideation,
+                carryAssistantSession: true,
+                openFocusMode: true,
+                selectedFramework: sessionState.selectedFramework,
+                selectedHookIndex: selectedHookIndex,
+                titleOverride: editableTitle,
+                bodyOverride: editableBody,
+                mentionedAtoms: mentionedAtoms
             )
-
-            // Determine inherited metadata — blueprint FIRST (becomes isPrimary in cloud engine),
-            // then supporting swipes, then insight matches
-            var allSwipeUUIDs: [String] = []
-            if let bpUUID = selectedBlueprintUUID {
-                allSwipeUUIDs.append(bpUUID)  // Blueprint must be FIRST for cloud engine isPrimary
-            }
-            let linkedSwipeUUIDs = idea.ideaMetadata?.linkedSwipeIds ?? []
-            let insightSwipeUUIDs = insight?.matchingSwipes?.map(\.swipeAtomUUID) ?? []
-            for uuid in linkedSwipeUUIDs + insightSwipeUUIDs {
-                if !allSwipeUUIDs.contains(uuid) { allSwipeUUIDs.append(uuid) }
-            }
-            let inheritedSwipeUUIDs = allSwipeUUIDs
-
-            let linkedConnectionUUIDs = idea.ideaMetadata?.linkedConnectionIds ?? []
-
-            let inheritedFramework: String? = {
-                if let selected = sessionState.selectedFramework {
-                    return selected
-                }
-                return insight?.frameworkRecommendations?.first?.framework.rawValue
-            }()
-            // The user's hooks only — AI-suggested hooks were removed (July
-            // 2026). The working hook (starred in the lab) leads the list
-            // into writing.
-            let inheritedHooks: [String] = {
-                guard !editableHooks.isEmpty else { return [] }
-                if let chosen = selectedHookIndex, editableHooks.indices.contains(chosen) {
-                    var hooks = editableHooks
-                    hooks.insert(hooks.remove(at: chosen), at: 0)
-                    return hooks
-                }
-                return editableHooks
-            }()
-            let nowISO = ISO8601.string(from: Date())
-
-            let inheritedClientUUID = linkedClient?.uuid ?? idea.ideaMetadata?.clientUUID
-
-            // Build ContentFocusModeState with description = the original idea text
-            var focusState = ContentFocusModeState(atomUUID: contentAtom.uuid)
-            // Expand mentioned atoms into the core idea text for writing context
-            let mentionedUUIDs = idea.ideaMetadata?.mentionedAtomUUIDs ?? []
-            var enrichedBody = editableBody
-            if !mentionedAtoms.isEmpty {
-                enrichedBody = MentionContextHelper.expandMentionsForWritingEngine(
-                    text: editableBody, atoms: mentionedAtoms
-                )
-            }
-            focusState.contentDescription = enrichedBody
-            focusState.coreIdea = enrichedBody
-            focusState.hooks = inheritedHooks
-            focusState.clientProfileUUID = inheritedClientUUID
-
-            if let codexOutline,
-               let draftTemplate = CodexOutlineDraftTemplate.make(from: codexOutline) {
-                focusState.draftContent = draftTemplate
-                focusState.richDraftDocument = RichDocument.migrateLegacy(draftTemplate)
-            }
-
-            // Convert user's codex outline notes to focusState.outline for display
-            // Cloud engine handles full physics plan during writing — no local AI generation
-            if let codexOutline = codexOutline, !codexOutline.slides.isEmpty {
-                focusState.outline = codexOutline.slides.compactMap { slide in
-                    guard let note = slide.note, !note.isEmpty else { return nil }
-                    return OutlineItem(
-                        title: note,
-                        reasoning: "",
-                        sortOrder: slide.position - 1
-                    )
-                }
-                if focusState.outline.isEmpty {
-                    // All slides had empty notes — create generic placeholders
-                    focusState.outline = codexOutline.slides.map { slide in
-                        OutlineItem(title: "Slide \(slide.position)", reasoning: "", sortOrder: slide.position - 1)
-                    }
-                }
-                focusState.isAISuggestedOutline = false
-            }
-
-            // Set ContentAtomMetadata on the content atom
-            var contentMeta = contentAtom.metadataValue(as: ContentAtomMetadata.self)
-                ?? ContentAtomMetadata(phase: .ideation, wordCount: 0)
-            contentMeta.sourceIdeaUUID = idea.uuid
-            contentMeta.inheritedSwipeUUIDs = inheritedSwipeUUIDs.isEmpty ? nil : inheritedSwipeUUIDs
-            contentMeta.inheritedConnectionIds = linkedConnectionUUIDs.isEmpty ? nil : linkedConnectionUUIDs
-            contentMeta.inheritedMentionedAtomUUIDs = mentionedUUIDs.isEmpty ? nil : mentionedUUIDs
-            contentMeta.inheritedFramework = inheritedFramework
-            contentMeta.inheritedHooks = inheritedHooks.isEmpty ? nil : inheritedHooks
-            contentMeta.clientProfileUUID = inheritedClientUUID
-            contentMeta.blueprintSwipeUUID = selectedBlueprintUUID
-            contentMeta.activatedAt = nowISO
-            contentMeta.phaseEnteredAt = nowISO
-
-            // Codex-era field transfers
-            contentMeta.inheritedArcType = selectedArcType
-            if let outline = codexOutline, let data = try? JSONEncoder().encode(outline) {
-                contentMeta.inheritedCodexOutline = String(data: data, encoding: .utf8)
-            }
-            contentMeta.inheritedCreativeDirection = editableCreativeDirection.isEmpty ? nil : editableCreativeDirection
-            contentMeta.inheritedContext = editableContext.isEmpty ? nil : editableContext
-            let includedResearch = researchResults.filter { $0.isIncluded }
-            if !includedResearch.isEmpty, let data = try? JSONEncoder().encode(includedResearch) {
-                contentMeta.inheritedResearchResults = String(data: data, encoding: .utf8)
-            }
-            focusState.inheritedResearchResults = includedResearch.isEmpty ? nil : includedResearch
-            if let history = chatHistory.isEmpty ? nil : chatHistory,
-               let data = try? JSONEncoder().encode(history) {
-                contentMeta.inheritedChatHistory = String(data: data, encoding: .utf8)
-            }
-            // Collect all canonical names for the writing engine
-            var allNames: Set<String> = []
-            if let outline = codexOutline {
-                for slide in outline.slides {
-                    if let sa = slide.speechAct { allNames.insert(sa) }
-                    allNames.formUnion(slide.readerDeltas)
-                    if let f = slide.frame { allNames.insert(f) }
-                    if let d = slide.distance { allNames.insert(d) }
-                    allNames.formUnion(slide.techniques)
-                    if let t = slide.transition { allNames.insert(t) }
-                }
-            }
-            contentMeta.codexElementNames = allNames.isEmpty ? nil : Array(allNames)
-
-            // Merge focus state fields into the content atom's metadata
-            let focusFields = focusState.toAtomFields(existingMetadata: contentMeta.toJSON())
-
-            var updatedContent = contentAtom.addingLink(.contentToIdea(idea.uuid))
-            if let inheritedClientUUID {
-                updatedContent = updatedContent.addingLink(.contentToClient(inheritedClientUUID))
-            }
-            updatedContent.metadata = focusFields.metadata
-            updatedContent.body = focusFields.body
-            updatedContent.updatedAt = nowISO
-            updatedContent.localVersion += 1
-            _ = try await AtomRepository.shared.update(updatedContent)
-
-            // Add bidirectional links and update idea metadata
-            var updatedIdea = idea
-                .addingLink(.ideaToContent(contentAtom.uuid))
-            updatedIdea = updatedIdea.withUpdatedIdeaMetadata { meta in
-                meta.ideaStatus = .inProduction
-                meta.statusChangedAt = nowISO
-                var uuids = meta.contentUUIDs ?? []
-                uuids.append(contentAtom.uuid)
-                meta.contentUUIDs = uuids
-            }
-            updatedIdea.updatedAt = nowISO
-            updatedIdea.localVersion += 1
-            idea = try await AtomRepository.shared.update(updatedIdea)
+            let result = try await IdeaPromotionService.promote(ideaUUID: idea.uuid, options: options)
+            idea = result.idea
+            insight = result.idea.ideaInsight ?? insight
             selectedStatus = .inProduction
-
-            // The step moves with the idea: any unfinished scheduled session now
-            // opens the content piece instead of ideation, on the hyperlink and on
-            // play. The idea keeps the session via originIdeaUUID, so reopening it
-            // from the content's sources still shows "Scheduled · Tue 21".
-            // Never fatal — a failed retarget must not block Begin Writing.
-            _ = try? await IdeaTaskLinkService.retargetToPromotedContent(
-                ideaUUID: idea.uuid,
-                content: contentAtom
-            )
             await loadScheduledTasks()
-
-            // Notify the Ideas Library to remove this idea (it's now a content piece)
-            NotificationCenter.default.post(
-                name: Notification.Name("ideaActivated"),
-                object: nil,
-                userInfo: ["uuid": idea.uuid]
-            )
-
-            // The inline assistant's ideation memory follows the idea into
-            // writing: the pane transcript + ledger move onto the content
-            // surface, and the model-side conversation is cloned with a phase
-            // note — awaited BEFORE navigation so the writing bench opens with
-            // the brainstorm already in place.
-            let ideaSurfaceID = "idea:\(idea.uuid)"
-            let contentSurfaceID = "content:\(contentAtom.uuid)"
-            let carriedAssistantSession = CosmoInlineAssistantStore.shared.carrySessionIntoPromotedContent(
-                fromSurfaceID: ideaSurfaceID,
-                toSurfaceID: contentSurfaceID,
-                paneNote: "Begin Writing — continued from the idea “\(editableTitle)”"
-            )
-            if carriedAssistantSession {
-                await CosmoInlineAssistantStore.shared.carryConversationMemoryIntoPromotedContent(
-                    fromSurfaceID: ideaSurfaceID,
-                    toSurfaceID: contentSurfaceID,
-                    transitionNote: """
-                    [Phase transition] The user pressed Begin Writing: the idea "\(editableTitle)" \
-                    was promoted into a new content piece (content atom \(contentAtom.uuid)), and the \
-                    two atoms are linked. Ideation is finished — this conversation now continues on \
-                    the content atom, where the user is drafting the actual piece. Treat the earlier \
-                    messages as the brainstorm and research that led here.
-                    """
-                )
-            }
-
-            // Leave a breadcrumb so Content Focus Mode recognizes this mount as a
-            // continuation of the Atelier and uses a cross-fade instead of a stagger.
-            FocusTransitionCoordinator.shared.markPromotion(contentAtomUUID: contentAtom.uuid)
-
-            // Post notification to open the new content in focus mode with auto-draft trigger
-            NotificationCenter.default.post(
-                name: CosmoNotification.Navigation.openBlockInFocusMode,
-                object: nil,
-                userInfo: [
-                    "atomUUID": contentAtom.uuid,
-                    "autoGenerate": true,
-                    "restoreCommandKOnFocusClose": false
-                ]
-            )
-
         } catch {
             print("IdeaFocusMode: promoteToContent failed: \(error)")
         }

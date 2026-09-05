@@ -107,6 +107,10 @@ struct CosmoDocumentRenderer: View {
             AnyView(codeBlockView(block))
         case .sketch:
             AnyView(sketchBlockView(block))
+        case .table:
+            AnyView(tableBlockView(block))
+        case .section:
+            AnyView(sectionBlockView(block, depth: depth))
         case .image:
             if let image = block.inlines.compactMap(\.image).first,
                let nsImage = ImageStore.load(path: image.path) {
@@ -178,6 +182,189 @@ struct CosmoDocumentRenderer: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .strokeBorder(tone.hairline(darkMode: darkMode).opacity(0.65), lineWidth: 1)
         )
+    }
+
+    /// Read-only section: the Element container voice (one grammar) with the
+    /// section's own tone, appearance and title.
+    private func sectionBlockView(_ block: RichBlock, depth: Int) -> some View {
+        let style = block.section ?? .default
+        let tone = NoteInkPalette.tone(style.toneID)
+        let tinted = style.isTinted
+        let title = block.inlines.map(\.plainText).joined()
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: style.isCollapsed ? "chevron.right" : "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(elementChevronColor)
+                    .frame(width: 14, height: 14)
+                if let icon = style.icon, !icon.isEmpty {
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(tinted ? tone.wash(darkMode: darkMode) : elementBorderColor)
+                        .frame(width: 18, height: 18)
+                        .overlay(sectionIcon(icon, tone: tone, tinted: tinted))
+                }
+                Text(title.isEmpty ? "Section" : title)
+                    .font(.system(size: max(13, fontSize - 1), weight: .semibold))
+                    .foregroundStyle(title.isEmpty ? secondaryTextColor : elementTitleColor)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .frame(minHeight: 30, alignment: .center)
+            .padding(.horizontal, 10)
+
+            if !style.isCollapsed, !block.children.isEmpty {
+                blockStack(block.children, depth: depth + 1)
+                    .padding(.top, 2)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 8)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(sectionBackground(style: style, tone: tone))
+        .overlay(sectionBorder(style: style, tone: tone))
+    }
+
+    @ViewBuilder
+    private func sectionIcon(_ icon: String, tone: NoteInkTone, tinted: Bool) -> some View {
+        if icon.unicodeScalars.first?.properties.isEmoji == true, icon.count <= 2 {
+            Text(icon).font(.system(size: 11))
+        } else {
+            Image(systemName: DocumentElementSymbol.validName(icon))
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(tinted ? tone.ink(darkMode: darkMode) : secondaryTextColor)
+        }
+    }
+
+    @ViewBuilder
+    private func sectionBackground(style: RichSectionStyle, tone: NoteInkTone) -> some View {
+        switch style.appearance {
+        case .wash:
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(style.isTinted ? tone.wash(darkMode: darkMode).opacity(0.55) : DS.glassCardFill)
+        case .outline, .bar:
+            Color.clear
+        }
+    }
+
+    @ViewBuilder
+    private func sectionBorder(style: RichSectionStyle, tone: NoteInkTone) -> some View {
+        let hairline = style.isTinted ? tone.hairline(darkMode: darkMode).opacity(0.65) : elementBorderColor
+        switch style.appearance {
+        case .wash, .outline:
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(hairline, lineWidth: 1)
+        case .bar:
+            HStack(spacing: 0) {
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(style.isTinted ? tone.ink(darkMode: darkMode) : secondaryTextColor)
+                    .frame(width: 4)
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    /// Read-only table: the same grid geometry as the editor, static text.
+    private func tableBlockView(_ block: RichBlock) -> some View {
+        let table = block.table ?? RichTable()
+        return GeometryReader { proxy in
+            let widths = table.resolvedColumnWidths(
+                available: Double(max(120, proxy.size.width)),
+                minimum: Double(max(48, fontSize * 3.6))
+            ).map { CGFloat($0) }
+            TableLayout(columnWidths: widths, rowCount: table.rowCount, minimumRowHeight: fontSize + 14) {
+                ForEach(rendererTableEntries(table)) { entry in
+                    rendererTableCell(entry, table: table)
+                        .tableCellPlacement(TableCellPlacement(
+                            rows: table.spanRect(ofAnchorAt: entry.address).rows,
+                            columns: table.spanRect(ofAnchorAt: entry.address).columns
+                        ))
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: table.style == .clean ? 0 : 8, style: .continuous))
+            .overlay {
+                if table.style == .grid {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(rendererRuleColor, lineWidth: 0.5)
+                }
+            }
+        }
+        .frame(height: rendererTableHeight(table))
+    }
+
+    private struct RendererTableEntry: Identifiable {
+        let id: UUID
+        let address: RichTableCellAddress
+        let cell: RichTableCell
+    }
+
+    private func rendererTableEntries(_ table: RichTable) -> [RendererTableEntry] {
+        var entries: [RendererTableEntry] = []
+        for (rowIndex, row) in table.rows.enumerated() {
+            for (columnIndex, cell) in row.cells.enumerated() where !cell.isCovered {
+                entries.append(RendererTableEntry(id: cell.id, address: RichTableCellAddress(row: rowIndex, column: columnIndex), cell: cell))
+            }
+        }
+        return entries
+    }
+
+    /// The card renderer has no cell measuring pass of its own; estimate
+    /// one line per cell line (soft breaks) so the block reserves height.
+    private func rendererTableHeight(_ table: RichTable) -> CGFloat {
+        let lineHeight = fontSize + 14
+        var total: CGFloat = 0
+        for row in table.rows {
+            let lines = row.cells.map { cell -> Int in
+                cell.isCovered ? 1 : max(1, cell.plainText.components(separatedBy: "\u{2028}").count)
+            }.max() ?? 1
+            total += lineHeight + CGFloat(max(0, lines - 1)) * (fontSize + 4)
+        }
+        return total
+    }
+
+    private var rendererRuleColor: Color {
+        darkMode ? Color.white.opacity(0.14) : DS.documentBorderSubtle
+    }
+
+    private func rendererTableCell(_ entry: RendererTableEntry, table: RichTable) -> some View {
+        let isHeader = (table.hasHeaderRow && entry.address.row == 0) || (table.hasHeaderColumn && entry.address.column == 0)
+        let alignment = entry.cell.alignment ?? table.columns[entry.address.column].alignment
+        let span = table.spanRect(ofAnchorAt: entry.address)
+        let drawsRight = table.style == .grid && span.columns.upperBound < table.columnCount - 1
+        let drawsBottom = table.style != .clean && span.rows.upperBound < table.rowCount - 1
+        let headerRule = table.style == .clean && table.hasHeaderRow && span.rows.upperBound == 0 && table.rowCount > 1
+        var background: Color? = nil
+        if let toneID = entry.cell.toneID, RichInlineColor.isKnownTone(toneID) {
+            background = NoteInkPalette.tone(toneID).ink(darkMode: darkMode).opacity(darkMode ? 0.24 : 0.16)
+        } else if isHeader {
+            background = NoteInkPalette.tone("gilt").ink(darkMode: darkMode).opacity(darkMode ? 0.14 : 0.08)
+        }
+        return renderedCellText(entry.cell, block: RichBlock(kind: .paragraph, inlines: entry.cell.inlines))
+            .font(.system(size: fontSize, weight: isHeader ? .semibold : .regular))
+            .foregroundColor(textColor)
+            .multilineTextAlignment(alignment.textAlignment)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment.swiftUIAlignment == .center ? .top : (alignment.swiftUIAlignment == .trailing ? .topTrailing : .topLeading))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(background ?? .clear)
+            .overlay(alignment: .trailing) {
+                if drawsRight { Rectangle().fill(rendererRuleColor).frame(width: 0.5) }
+            }
+            .overlay(alignment: .bottom) {
+                if drawsBottom || headerRule {
+                    Rectangle()
+                        .fill(headerRule ? NoteInkPalette.tone("gilt").hairline(darkMode: darkMode) : rendererRuleColor)
+                        .frame(height: headerRule ? 1 : 0.5)
+                }
+            }
+    }
+
+    private func renderedCellText(_ cell: RichTableCell, block: RichBlock) -> Text {
+        var result = Text("")
+        for node in cell.inlines {
+            result = result + renderedNode(node, block: block)
+        }
+        if cell.inlines.isEmpty { result = Text(" ") }
+        return result
     }
 
     private func calloutBlockView(_ block: RichBlock, at index: Int, in siblings: [RichBlock]) -> some View {

@@ -80,7 +80,7 @@ public final class ContentPipelineService: ObservableObject {
             links.append(.project(projectUUID))
         }
         if let clientUUID = clientUUID {
-            links.append(AtomLink(type: "client", uuid: clientUUID, entityType: "clientProfile"))
+            links.append(.contentToClient(clientUUID))
         }
 
         // Capture immutable copies for Sendable closure
@@ -109,93 +109,260 @@ public final class ContentPipelineService: ObservableObject {
 
     // MARK: - Phase Transitions
 
-    /// Advance content to the next phase
-    /// Creates a `.contentPhase` Atom to record the transition
+    /// Advance content to the next phase (the legacy forward-only API).
+    /// Delegates to `setPhase`; returns the minted `.contentPhase` atom.
     @discardableResult
     public func advancePhase(
         contentUUID: String,
         notes: String? = nil
     ) async throws -> Atom {
-
-        // Fetch current content atom
         guard let contentAtom = try await fetchContentAtom(uuid: contentUUID) else {
             throw ContentPipelineError.contentNotFound
         }
-
-        guard var metadata = contentAtom.metadataValue(as: ContentAtomMetadata.self) else {
+        guard let currentPhase = Self.currentPhase(of: contentAtom) else {
             throw ContentPipelineError.invalidMetadata
         }
-
-        let currentPhase = metadata.phase
         guard let nextPhase = currentPhase.nextPhase else {
             throw ContentPipelineError.alreadyAtFinalPhase
         }
+        guard let transition = try await setPhase(contentUUID: contentUUID, to: nextPhase, notes: notes) else {
+            throw ContentPipelineError.alreadyAtFinalPhase
+        }
+        let phaseAtomUUID = transition.phaseAtomUUID
+        guard let phaseAtom = try await database.read({ db in
+            try Atom.filter(Column("uuid") == phaseAtomUUID).fetchOne(db)
+        }) else {
+            throw ContentPipelineError.invalidMetadata
+        }
+        return phaseAtom
+    }
 
-        let timeInPreviousPhase = metadata.createdPhaseAt.map { Date().timeIntervalSince($0) } ?? 0
+    // MARK: - Stage machine (Pipeline, Sept 2026)
 
-        // Create phase transition atom
-        let phaseMetadata = ContentPhaseMetadata(
-            contentAtomUUID: contentUUID,
-            fromPhase: currentPhase,
-            toPhase: nextPhase,
-            timestamp: Date(),
-            wordCountAtTransition: metadata.wordCount,
-            timeSpentInPreviousPhase: timeInPreviousPhase,
-            xpEarned: nextPhase.completionXP,
-            transitionNotes: notes
-        )
+    /// Move a piece to `target` in EITHER direction. Same phase = nil no-op.
+    /// Every real move mints an honest `.contentPhase` record (a backward move
+    /// earns 0 XP; a phase re-entered later earns nothing twice) and key-merges
+    /// the stage keys onto the content atom. ⌘Z moves it back through the same
+    /// door — an honest record, never a deleted one.
+    @discardableResult
+    func setPhase(
+        contentUUID: String,
+        to target: ContentPhase,
+        notes: String? = nil,
+        registerUndo: Bool = true
+    ) async throws -> ContentPhaseTransition? {
+        guard let transition = try await Self.applyPhase(
+            contentUUID: contentUUID, to: target, notes: notes, database: database
+        ) else { return nil }
 
-        let phaseAtom = try await database.write { db -> Atom in
-            var atom = Atom.new(
-                type: .contentPhase,
-                title: "\(currentPhase.displayName) → \(nextPhase.displayName)",
-                body: notes
-            )
-            atom.metadata = phaseMetadata.toJSON()
-            if let linksData = try? JSONEncoder().encode([
-                AtomLink(type: "content", uuid: contentUUID, entityType: "content")
-            ]) {
-                atom.links = String(data: linksData, encoding: .utf8)
-            }
-            try atom.insert(db)
-            return atom
+        if registerUndo {
+            // Static writes in the closures: the service instance that
+            // registered the action is usually transient (`ContentPipelineService()`
+            // in a Task) and must not be what keeps ⌘Z alive.
+            let database = self.database
+            let from = transition.from
+            CosmoUndoManager.shared.register(InlineUndoAction(
+                actionDescription: "Move to \(target.displayName)",
+                undo: {
+                    _ = try? await ContentPipelineService.applyPhase(
+                        contentUUID: contentUUID, to: from, notes: "Undo", database: database
+                    )
+                },
+                redo: {
+                    _ = try? await ContentPipelineService.applyPhase(
+                        contentUUID: contentUUID, to: target, notes: notes, database: database
+                    )
+                }
+            ))
         }
 
-        // Update content atom with new phase — re-fetch INSIDE the write and update
-        // ONLY the metadata column (merged key-by-key). The previous version wrote
-        // every column from the atom fetched before the awaits above, clobbering any
-        // draft/body saved while the phase atom was being created.
-        metadata.phase = nextPhase
-        metadata.lastPhaseTransition = Date()
-        metadata.createdPhaseAt = Date()
-        let typedMetadata = metadata
+        await loadActiveContent()
+        return transition
+    }
 
-        try await database.write { db in
+    /// The stage write itself — usable from stores and loaders WITHOUT paying
+    /// for a service instance (`init` spawns the active-content + metrics
+    /// loads). One transaction: mint the `.contentPhase` record, then key-merge
+    /// `phase` / `lastPhaseTransition` / `createdPhaseAt` / `phaseEnteredAt`
+    /// (+ the `phaseBeforeSchedule` rules) onto the FRESH content row. Sibling
+    /// keys (focus state, rich documents, hooks, schedule) are never touched.
+    ///
+    /// `phaseBeforeSchedule`: entering `.scheduled` from ideation/draft/polish
+    /// remembers where the piece came from; leaving `.scheduled`, or entering
+    /// published/analyzing/archived, drops the key.
+    @discardableResult
+    nonisolated static func applyPhase(
+        contentUUID: String,
+        to target: ContentPhase,
+        notes: String? = nil,
+        database: (any DatabaseWriter)? = nil
+    ) async throws -> ContentPhaseTransition? {
+        let writer: any DatabaseWriter
+        if let database {
+            writer = database
+        } else {
+            writer = await MainActor.run { CosmoDatabase.shared.dbPool! as any DatabaseWriter }
+        }
+        let now = Date()
+
+        let transition: ContentPhaseTransition? = try await writer.write { db in
             guard let fresh = try Atom
                 .filter(Column("uuid") == contentUUID)
                 .filter(Column("type") == AtomType.content.rawValue)
                 .filter(Column("is_deleted") == false)
-                .fetchOne(db) else { return }
-            let mergedMetadata = Self.mergedMetadataJSON(typedMetadata, existing: fresh.metadata)
+                .fetchOne(db) else {
+                throw ContentPipelineError.contentNotFound
+            }
+
+            // A content atom minted outside the pipeline (⌘K "new content")
+            // carries no `phase` key yet — it has been in ideation all along.
+            let from = Self.currentPhase(of: fresh) ?? .ideation
+            guard from != target else { return nil }
+
+            let typed = fresh.metadataValue(as: ContentAtomMetadata.self)
+            let previouslyEntered = try Self.previouslyEnteredPhases(contentUUID: contentUUID, db: db)
+            let xp = Self.xpForTransition(from: from, to: target, previouslyEntered: previouslyEntered)
+            let timeInPreviousPhase = typed?.createdPhaseAt.map { now.timeIntervalSince($0) } ?? 0
+
+            // 1. The honest record.
+            let phaseMetadata = ContentPhaseMetadata(
+                contentAtomUUID: contentUUID,
+                fromPhase: from,
+                toPhase: target,
+                timestamp: now,
+                wordCountAtTransition: typed?.wordCount ?? 0,
+                timeSpentInPreviousPhase: timeInPreviousPhase,
+                xpEarned: xp,
+                transitionNotes: notes
+            )
+            var phaseAtom = Atom.new(
+                type: .contentPhase,
+                title: "\(from.displayName) → \(target.displayName)",
+                body: notes
+            )
+            phaseAtom.metadata = phaseMetadata.toJSON()
+            if let linksData = try? JSONEncoder().encode([
+                AtomLink(type: "content", uuid: contentUUID, entityType: "content")
+            ]) {
+                phaseAtom.links = String(data: linksData, encoding: .utf8)
+            }
+            try phaseAtom.insert(db)
+
+            // 2. The stage keys, merged over the fresh row.
+            let storesPriorPhase = target == .scheduled && from.isSchedulable && from != .scheduled
+            let dropsPriorPhase = from == .scheduled || target.isShipped || target == .archived
+            let overlay = PhaseOverlay(
+                phase: target,
+                lastPhaseTransition: now,
+                createdPhaseAt: now,
+                phaseEnteredAt: ISO8601.string(from: now),
+                phaseBeforeSchedule: storesPriorPhase ? from : nil
+            )
+            var merged = fresh.mergingMetadataKeys(overlay)
+            if target == .archived {
+                struct ArchiveContext: Encodable { let phaseBeforeArchive: String; let productionStage: String }
+                merged = merged.mergingMetadataKeys(ArchiveContext(phaseBeforeArchive: from.rawValue, productionStage: ContentProductionStage.of(fresh).rawValue))
+            } else if from == .archived {
+                merged = merged.removingMetadataKeys(["phaseBeforeArchive"])
+            }
+            if dropsPriorPhase {
+                merged = merged.removingMetadataKeys(["phaseBeforeSchedule"])
+            }
+            // The merge refuses an unparseable column rather than clobber it;
+            // a refused merge must roll the record back with it.
+            guard let metadata = merged.metadata, metadata != fresh.metadata else {
+                throw ContentPipelineError.invalidMetadata
+            }
             try db.execute(
                 sql: """
                 UPDATE atoms
-                SET metadata = COALESCE(?, metadata),
+                SET metadata = ?,
                     updated_at = ?,
                     _local_version = _local_version + 1,
                     _local_pending = 1
                 WHERE uuid = ?
                 """,
-                arguments: [mergedMetadata, ISO8601.string(from: Date()), contentUUID]
+                arguments: [metadata, ISO8601.string(from: now), contentUUID]
+            )
+
+            return ContentPhaseTransition(
+                contentUUID: contentUUID,
+                from: from,
+                to: target,
+                phaseAtomUUID: phaseAtom.uuid,
+                xpEarned: xp
             )
         }
-        // Queue for sync — the SQL above already bumped _local_version.
-        if let updatedAtom = try? await fetchContentAtom(uuid: contentUUID) {
-            await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom, skipVersionIncrement: true)
-        }
 
-        await loadActiveContent()
-        return phaseAtom
+        guard let transition else { return nil }
+
+        // Queue for sync — the SQL above already bumped _local_version.
+        if let updated = try? await writer.read({ db in
+            try Atom.filter(Column("uuid") == contentUUID).fetchOne(db)
+        }) {
+            await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updated, skipVersionIncrement: true)
+        }
+        await Self.notifyCalendar()
+        return transition
+    }
+
+    /// XP is earned once per phase, and only moving forward. `previouslyEntered`
+    /// is the set of phases this piece has ever reached (the `toPhase` of its
+    /// `.contentPhase` records) — so ⌘Z + redo, or a round trip through the
+    /// calendar, never awards the same phase twice.
+    nonisolated static func xpForTransition(
+        from: ContentPhase,
+        to: ContentPhase,
+        previouslyEntered: Set<ContentPhase>
+    ) -> Int {
+        guard to.ordinal > from.ordinal, !previouslyEntered.contains(to) else { return 0 }
+        return to.completionXP
+    }
+
+    /// The piece's current phase. Typed decode first; a metadata column the
+    /// typed struct can't read (a foreign platform value, say) still answers
+    /// from its raw `phase` key. nil = the key was never written.
+    nonisolated static func currentPhase(of atom: Atom) -> ContentPhase? {
+        if let typed = atom.metadataValue(as: ContentAtomMetadata.self) {
+            return typed.phase
+        }
+        guard let raw = atom.metadataDict?["phase"] as? String else { return nil }
+        return ContentPhase(rawValue: raw)
+    }
+
+    /// Stage keys the machine owns. Encoded as an overlay so the merge writes
+    /// exactly these keys (`phaseBeforeSchedule` nil = key left alone; removal
+    /// is explicit via `removingMetadataKeys`).
+    private struct PhaseOverlay: Encodable {
+        var phase: ContentPhase
+        var lastPhaseTransition: Date
+        var createdPhaseAt: Date
+        var phaseEnteredAt: String
+        var phaseBeforeSchedule: ContentPhase?
+    }
+
+    /// Phases this piece has already reached — `links LIKE` prefilter (the
+    /// `fetchPerformanceHistory` idiom), then a decode filter for the truth.
+    nonisolated private static func previouslyEnteredPhases(contentUUID: String, db: Database) throws -> Set<ContentPhase> {
+        let records = try Atom
+            .filter(Column("type") == AtomType.contentPhase.rawValue)
+            .filter(sql: "links LIKE ?", arguments: ["%\(contentUUID)%"])
+            .fetchAll(db)
+        return Set(
+            records
+                .compactMap { $0.metadataValue(as: ContentPhaseMetadata.self) }
+                .filter { $0.contentAtomUUID == contentUUID }
+                .map(\.toPhase)
+        )
+    }
+
+    /// The calendar and shelf rails listen only to this (there is no
+    /// `.atomsDidChange` observer in Canvas/CommandCenter). Posted on main —
+    /// the rails' `.onReceive` closures mutate view state.
+    nonisolated static func notifyCalendar() async {
+        await MainActor.run {
+            NotificationCenter.default.post(name: .contentCalendarNeedsReload, object: nil)
+        }
     }
 
     // MARK: - Content Publishing
@@ -245,11 +412,19 @@ public final class ContentPipelineService: ObservableObject {
             return atom
         }
 
-        // Advance to published phase if not already
-        if let currentMetadata = metadata, currentMetadata.phase != .published {
-            try await advancePhase(contentUUID: contentUUID, notes: "Auto-advanced on publish")
+        // Land on Published. `advancePhase` used to walk polish → archived here
+        // (nextPhase skips the hidden phases) — `setPhase` goes straight there.
+        // A piece already shipped or archived keeps its phase (never un-archive).
+        let currentPhase = Self.currentPhase(of: contentAtom) ?? .ideation
+        if !(currentPhase.isShipped || currentPhase == .archived) {
+            try await setPhase(contentUUID: contentUUID, to: .published, notes: "Auto-advanced on publish")
         }
-
+        // The calendar plots shipped pieces from publish records — mint one.
+        await ContentPublishStore.markPublished(
+            atomUuid: contentUUID,
+            platform: platform.rawValue,
+            url: postUrl
+        )
 
         return publishAtom
     }
@@ -761,6 +936,9 @@ struct ContentAtomMetadata: Codable, Sendable {
     var inheritedHooks: [String]?
     var activatedAt: String?
     var phaseEnteredAt: String?
+    /// Where the piece sat before a calendar drop moved it to `.scheduled`;
+    /// unscheduling restores it. Written/removed ONLY by `applyPhase`.
+    var phaseBeforeSchedule: ContentPhase?
     var draftingNote: String?
     var draftReady: Bool?
 
@@ -779,6 +957,61 @@ struct ContentAtomMetadata: Codable, Sendable {
         guard let data = try? JSONEncoder().encode(self) else { return nil }
         return String(data: data, encoding: .utf8)
     }
+}
+
+/// Lenient decode (in an extension so the memberwise init survives): a content
+/// atom minted outside the pipeline — ⌘K "new content", an older device, a
+/// hand-written column — has no `wordCount` and sometimes no `phase`. The
+/// synthesized decoder threw on the missing keys, so EVERY typed read of the
+/// column failed and the stage machine fell back to raw-key guesses (the
+/// `phaseBeforeSchedule` memory was unreadable, unscheduling always landed in
+/// Polish). Missing = default; a genuinely unparseable column still throws.
+extension ContentAtomMetadata {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        phase = try c.decodeIfPresent(ContentPhase.self, forKey: .phase) ?? .ideation
+        platform = try c.decodeIfPresent(SocialPlatform.self, forKey: .platform)
+        contentFormat = try c.decodeIfPresent(String.self, forKey: .contentFormat)
+        clientProfileUUID = try c.decodeIfPresent(String.self, forKey: .clientProfileUUID)
+        wordCount = try c.decodeIfPresent(Int.self, forKey: .wordCount) ?? 0
+        createdPhaseAt = try c.decodeIfPresent(Date.self, forKey: .createdPhaseAt)
+        lastPhaseTransition = try c.decodeIfPresent(Date.self, forKey: .lastPhaseTransition)
+        predictedReach = try c.decodeIfPresent(Int.self, forKey: .predictedReach)
+        predictedEngagement = try c.decodeIfPresent(Double.self, forKey: .predictedEngagement)
+        sourceIdeaUUID = try c.decodeIfPresent(String.self, forKey: .sourceIdeaUUID)
+        blueprintSwipeUUID = try c.decodeIfPresent(String.self, forKey: .blueprintSwipeUUID)
+        inheritedSwipeUUIDs = try c.decodeIfPresent([String].self, forKey: .inheritedSwipeUUIDs)
+        inheritedConnectionIds = try c.decodeIfPresent([String].self, forKey: .inheritedConnectionIds)
+        inheritedFramework = try c.decodeIfPresent(String.self, forKey: .inheritedFramework)
+        inheritedHooks = try c.decodeIfPresent([String].self, forKey: .inheritedHooks)
+        activatedAt = try c.decodeIfPresent(String.self, forKey: .activatedAt)
+        phaseEnteredAt = try c.decodeIfPresent(String.self, forKey: .phaseEnteredAt)
+        phaseBeforeSchedule = try c.decodeIfPresent(ContentPhase.self, forKey: .phaseBeforeSchedule)
+        draftingNote = try c.decodeIfPresent(String.self, forKey: .draftingNote)
+        draftReady = try c.decodeIfPresent(Bool.self, forKey: .draftReady)
+        inheritedMentionedAtomUUIDs = try c.decodeIfPresent([String].self, forKey: .inheritedMentionedAtomUUIDs)
+        inheritedArcType = try c.decodeIfPresent(String.self, forKey: .inheritedArcType)
+        inheritedCodexOutline = try c.decodeIfPresent(String.self, forKey: .inheritedCodexOutline)
+        inheritedCreativeDirection = try c.decodeIfPresent(String.self, forKey: .inheritedCreativeDirection)
+        inheritedResearchResults = try c.decodeIfPresent(String.self, forKey: .inheritedResearchResults)
+        inheritedChatHistory = try c.decodeIfPresent(String.self, forKey: .inheritedChatHistory)
+        inheritedContext = try c.decodeIfPresent(String.self, forKey: .inheritedContext)
+        codexElementNames = try c.decodeIfPresent([String].self, forKey: .codexElementNames)
+    }
+}
+
+// MARK: - Content Phase Transition
+
+/// What one `setPhase` / `applyPhase` call did. `ContentPhaseTransition` (not
+/// `PhaseTransition`) — that name is already taken by the physics profile's
+/// slide-transition model in ContentPhysicsProfile.swift.
+struct ContentPhaseTransition: Sendable, Equatable {
+    let contentUUID: String
+    let from: ContentPhase
+    let to: ContentPhase
+    /// The minted `.contentPhase` record.
+    let phaseAtomUUID: String
+    let xpEarned: Int
 }
 
 // MARK: - Content Performance Summary

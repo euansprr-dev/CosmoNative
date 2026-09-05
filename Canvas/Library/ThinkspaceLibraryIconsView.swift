@@ -285,7 +285,7 @@ struct LibraryFolderCell: View {
         if let first = uuids.first,
            selectedItems.count > 1,
            selectedItems.contains(where: { $0.entityUuid == first }) {
-            return selectedItems.filter(\.isOnCanvas).map(\.entityUuid)
+            return selectedItems.map(\.entityUuid)
         }
         return uuids
     }
@@ -607,13 +607,15 @@ struct LibraryItemMenuItems: View {
             }
             if item.isOnCanvas {
                 Button("Reveal on Canvas", systemImage: "scope") { context.actions.revealOnCanvas(item) }
+            } else {
+                Button("Place on Canvas", systemImage: "rectangle.dashed.badge.plus") { context.actions.placeOnCanvas(item) }
             }
         }
     }
 
     @ViewBuilder
     private var moveItems: some View {
-        let movable = batch.filter(\.isOnCanvas)
+        let movable = batch
         if !movable.isEmpty {
             let targets = context.folders.filter { $0.id != context.currentFolder?.id }
             if !targets.isEmpty || context.currentFolder != nil { Divider() }
@@ -657,8 +659,11 @@ struct LibraryItemMenuItems: View {
     private var deleteItems: some View {
         Group {
             Divider()
+            Button(batch.count > 1 ? "Remove \(batch.count) items from Space" : "Remove from Space", systemImage: "minus.circle") {
+                for target in batch { context.actions.removeFromSpace(target) }
+            }
             Button(
-                batch.count > 1 ? "Delete \(batch.count) Items" : "Delete",
+                batch.count > 1 ? "Delete \(batch.count) items everywhere" : "Delete everywhere",
                 systemImage: "trash",
                 role: .destructive
             ) {

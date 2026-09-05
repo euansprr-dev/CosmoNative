@@ -319,7 +319,11 @@ final class ContentMarginModel {
         var ownCandidates: [SwipeCandidate] = []
         for hit in ownPostHits.prefix(4) {
             guard let atom = try? await AtomRepository.shared.fetch(uuid: hit.atomUuid) else { continue }
-            let published = !ContentPublishStore.records(for: atom).isEmpty
+            // Shipped = the phase says so, or a publish record exists. The
+            // legacy `status` lens stays as a last fallback for rows shipped
+            // before the phase machine wrote `published`.
+            let published = ContentPipelineService.currentPhase(of: atom)?.isShipped == true
+                || !ContentPublishStore.records(for: atom).isEmpty
                 || atom.metadataValue(as: ContentMetadata.self)?.status == "published"
             guard published else { continue }
             let snapshots = await ContentPerfStore.snapshots(forContent: atom.uuid)

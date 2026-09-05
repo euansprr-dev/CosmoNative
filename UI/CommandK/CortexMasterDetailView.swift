@@ -16,7 +16,9 @@ struct CortexMasterDetailView: View {
     @State private var cachedDetailSubject: CortexDetailSubject = .empty
     /// Domain rail rows, cached — the filter used to re-run for EVERY body
     /// evaluation (selection moves included); now it recomputes only when
-    /// `domainItemsKey` changes.
+    /// `domainItemsKey` changes. Every input that key folds in MUST be
+    /// observation-tracked, or a change to it never reaches `onChange` and
+    /// the rail silently serves stale rows (see `domainFilterQuery`).
     @State private var cachedDomainItems: [CommandKDomainRailItem] = []
 
     var body: some View {
@@ -184,7 +186,7 @@ struct CortexMasterDetailView: View {
         guard case .expandedDomain(let tab) = viewModel.cortexMode, isDomainHydrated else { return [] }
         return CommandKDomainRailDataSource.items(
             for: tab,
-            query: viewModel.query,
+            query: viewModel.domainFilterQuery,
             databaseItems: visibleDatabaseItems,
             swipeItems: viewModel.swipeGalleryItems,
             ideaItems: viewModel.ideaGalleryItems,
@@ -216,11 +218,17 @@ struct CortexMasterDetailView: View {
     /// counts (loads/refreshes only ever swap whole arrays). Raw library
     /// counts + flags stand in for `visibleDatabaseItems` — evaluating the
     /// key must stay cheaper than the compute it gates.
+    ///
+    /// The query arrives as `domainFilterQuery` (tracked), NOT `query`
+    /// (`@ObservationIgnored`): this view is built from just the view model
+    /// and a Bool, so a keystroke leaves its view value identical and SwiftUI
+    /// skips the body — the key is never re-evaluated and the `onChange`
+    /// never fires. Only an observed read gets typing back into this key.
     private var domainItemsKey: String {
         guard case .expandedDomain = viewModel.cortexMode else { return "none" }
         return [
             domainLoadKey,
-            viewModel.query,
+            viewModel.domainFilterQuery,
             "\(libraryVM.allItems.count)-\(libraryVM.displayItems.count)-\(libraryVM.recentlyDeletedItems.count)",
             "\(libraryVM.isAtHome)-\(libraryVM.showingRecentlyDeleted)",
             "\(viewModel.swipeGalleryItems.count)",

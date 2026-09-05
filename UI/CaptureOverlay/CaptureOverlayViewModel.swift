@@ -77,8 +77,10 @@ final class CaptureOverlayViewModel {
 
     /// Files and images dropped into the panel wait here — visible as tiles
     /// in the well — until the user sends them, so a typed thought and its
-    /// files can land as ONE linked capture. Text and link drops still
-    /// capture instantly; menu-bar drops never stage.
+    /// files can land as ONE linked capture. Text and ordinary link drops
+    /// still capture instantly; a platform link (`CaptureSwipeLink`) lands in
+    /// the field instead, where the Inbox | Swipe trigger waits for ⏎.
+    /// Menu-bar drops never stage.
     var stagedAttachments: [StagedAttachment] = []
 
     struct StagedAttachment: Identifiable {
@@ -95,13 +97,15 @@ final class CaptureOverlayViewModel {
 
     // MARK: - Staged destination
 
-    /// Where the staged tray is headed.
+    /// Where the staged tray — or the platform link sitting in the field — is
+    /// headed.
     ///
     /// This is the ONE place in the whole system that asks the user anything
-    /// kind-adjacent, and it earns the exception because staged files are
+    /// kind-adjacent, and it earns the exception because both subjects are
     /// genuinely ambiguous: three ad screenshots and a PDF invoice arrive
-    /// through the identical gesture. Note it is a DESTINATION, not a kind —
-    /// picking Swipe still leaves the kind to `SwipeIntakeRouter`.
+    /// through the identical gesture, and an Instagram link is as often
+    /// "swipe this" as "remind me about this". Note it is a DESTINATION, not
+    /// a kind — picking Swipe still leaves the kind to `SwipeIntakeRouter`.
     enum StagedDestination: String, CaseIterable, Identifiable {
         case inbox
         case swipe
@@ -130,11 +134,37 @@ final class CaptureOverlayViewModel {
     /// is worse than no picker.
     private var stagedDestinationChosen = false
 
+    /// The platform link in the field, if any — the one text shape that earns
+    /// the same Inbox | Swipe trigger staged screenshots get. Computed, never
+    /// mirrored, so it can never lag the text. Nil while a resolved lane
+    /// command owns the text: `Groceries: https://…` is a lane capture, and
+    /// two destination controls under one field would contradict each other.
+    var swipeLink: CaptureSwipeLink? {
+        guard laneAssist.hint == nil else { return nil }
+        return CaptureSwipeLink.detect(in: captureText)
+    }
+    /// Whether the previous text edit showed a link — a link LEAVING the
+    /// field ends its "tray", so the next one is inferred afresh.
+    private var swipeLinkWasPresent = false
+
     /// All-images ⇒ Swipe. A single document, or any mix, ⇒ Inbox.
     /// Screenshots are what people drop on this panel to swipe; a PDF is not.
     static func inferredStagedDestination(for staged: [StagedAttachment]) -> StagedDestination {
         guard !staged.isEmpty, staged.allSatisfy(\.isImage) else { return .inbox }
         return .swipe
+    }
+
+    /// The one inference. A staged tray is the subject whenever it exists —
+    /// the field's text rides along as its note, link or not. With nothing
+    /// staged, a platform link in the field ⇒ Swipe: an Instagram, YouTube,
+    /// X or TikTok link is what people put in this panel to swipe, exactly as
+    /// screenshots are what they drop. Anything else ⇒ Inbox.
+    static func inferredDestination(
+        staged: [StagedAttachment],
+        link: CaptureSwipeLink?
+    ) -> StagedDestination {
+        if !staged.isEmpty { return inferredStagedDestination(for: staged) }
+        return link == nil ? .inbox : .swipe
     }
 
     func chooseStagedDestination(_ destination: StagedDestination) {
@@ -143,10 +173,10 @@ final class CaptureOverlayViewModel {
     }
 
     /// Re-infer while the user hasn't overridden. Called after every staging
-    /// mutation.
-    private func refreshStagedDestination() {
+    /// mutation and every text edit.
+    private func refreshDestination() {
         guard !stagedDestinationChosen else { return }
-        stagedDestination = Self.inferredStagedDestination(for: stagedAttachments)
+        stagedDestination = Self.inferredDestination(staged: stagedAttachments, link: swipeLink)
     }
 
     // MARK: - Sources
@@ -182,6 +212,7 @@ final class CaptureOverlayViewModel {
         stagedAttachments = []
         stagedDestination = .inbox
         stagedDestinationChosen = false
+        swipeLinkWasPresent = false
         errorLine = nil
         isDropTargeted = false
         dragPreview = nil
@@ -199,6 +230,27 @@ final class CaptureOverlayViewModel {
         if let completed = laneAssist.textChanged(captureText) {
             captureText = completed
         }
+        let link = swipeLink
+        // The link is the field's "tray": while one is present the default is
+        // inferred once and the user's toggle sticks; when it leaves, the
+        // choice is released so the next link starts from the default again.
+        if link == nil, swipeLinkWasPresent, stagedAttachments.isEmpty {
+            stagedDestinationChosen = false
+        }
+        swipeLinkWasPresent = link != nil
+        refreshDestination()
+    }
+
+    /// A platform link arriving from outside the field — a drop, or ⌘V while
+    /// no field owns focus — lands IN the field rather than capturing on the
+    /// spot, so the Inbox | Swipe trigger appears exactly as it does for a
+    /// pasted link. Appends to a thought already there (the thought becomes
+    /// the swipe's note) and hands the field focus so ⏎ sends.
+    private func landInField(_ text: String) {
+        let existing = captureText.trimmingCharacters(in: .whitespacesAndNewlines)
+        captureText = existing.isEmpty ? text : existing + " " + text
+        captureTextChanged()
+        captureFieldFocusTick += 1
     }
 
     /// `swipe:` — the swipe alias, alongside the lane aliases. Checked before
@@ -241,6 +293,11 @@ final class CaptureOverlayViewModel {
             return
         }
 
+        // Read the trigger BEFORE the field clears — clearing re-infers the
+        // destination back to Inbox, and the verdict that matters is the one
+        // the user was looking at when they pressed ⏎.
+        let link = swipeLink
+        let destination = stagedDestination
         captureText = ""
         laneAssist.reset()
 
@@ -250,13 +307,31 @@ final class CaptureOverlayViewModel {
             await routeToLane(text: text, match: match)
             return
         }
+        // The platform-link trigger, honoured as chosen. Inbox is the plain
+        // text path below — the link rides in the item like any other.
+        if link != nil, destination == .swipe {
+            await captureAsSwipe(text)
+            return
+        }
         await ingest([.text(text)])
     }
 
     /// ONE FRONT DOOR: the overlay decides WHERE, never WHAT. The router reads
-    /// the text and lands a page / post / note as appropriate.
+    /// what it is handed and lands a page / post / note as appropriate. A
+    /// platform link is handed AS a link, with the rest of the text as the
+    /// note — "https://instagram.com/p/… love this hook" is a post swipe
+    /// carrying a note, not a note swipe that happens to contain a URL.
     private func captureAsSwipe(_ text: String) async {
-        let atom = await SwipeIntakeRouter.run(.text(text), captureMode: "capture_overlay")
+        let source: SwipeIntakeRouter.Source
+        let note: String?
+        if let link = CaptureSwipeLink.detect(in: text) {
+            source = .url(link.url)
+            note = link.note
+        } else {
+            source = .text(text)
+            note = nil
+        }
+        let atom = await SwipeIntakeRouter.run(source, note: note, captureMode: "capture_overlay")
         let display = text.count > 40 ? "\u{201C}\(text.prefix(40))…\u{201D}" : "\u{201C}\(text)\u{201D}"
         guard let atom else {
             // Never drop the words: a failed swipe returns them to the field.
@@ -327,8 +402,24 @@ final class CaptureOverlayViewModel {
         var instant: [DropPayload] = []
         for payload in payloads {
             switch payload {
-            case .text, .url:
-                instant.append(payload)
+            case .url(let url):
+                // A platform link waits for the user like a screenshot does;
+                // any other link captures on release, as the well promised.
+                if CaptureSwipeLink.detect(in: url.absoluteString) != nil {
+                    landInField(url.absoluteString)
+                } else {
+                    instant.append(payload)
+                }
+            case .text(let string):
+                // Strict for drops: the dragged text must be NOTHING but the
+                // link. A paragraph with a link buried in it is a text
+                // capture, and hijacking it into the field would surprise.
+                let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let link = CaptureSwipeLink.detect(in: trimmed), link.note == nil {
+                    landInField(trimmed)
+                } else {
+                    instant.append(payload)
+                }
             case .file(let url, _):
                 // Folders and .webloc links keep the instant path — folders
                 // expand to many items, weblocs are really links.
@@ -368,7 +459,7 @@ final class CaptureOverlayViewModel {
                 fingerprint: fingerprint
             )
             stagedAttachments.append(staged)
-            refreshStagedDestination()
+            refreshDestination()
             if staged.isImage { loadThumbnail(for: staged.id, source: .url(url)) }
 
         case .data(let data, let type, let suggestedName):
@@ -385,7 +476,7 @@ final class CaptureOverlayViewModel {
                 fingerprint: nil
             )
             stagedAttachments.append(staged)
-            refreshStagedDestination()
+            refreshDestination()
             if staged.isImage { loadThumbnail(for: staged.id, source: .data(data)) }
 
         case .text, .url:
@@ -395,13 +486,13 @@ final class CaptureOverlayViewModel {
 
     func removeStaged(_ id: UUID) {
         stagedAttachments.removeAll { $0.id == id }
-        refreshStagedDestination()
+        refreshDestination()
     }
 
     func clearStaged() {
         stagedAttachments = []
         stagedDestinationChosen = false
-        refreshStagedDestination()
+        refreshDestination()
     }
 
     /// The send button: staged files plus whatever's in the thought field.
@@ -647,6 +738,14 @@ final class CaptureOverlayViewModel {
         if let string = pasteboard.string(forType: .string) {
             let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { return }
+            // A platform link is the one paste that waits for the user: it
+            // lands in the field with the Inbox | Swipe trigger, exactly as a
+            // pasted screenshot stages. Lenient here — paste is how text
+            // enters the field anyway, and the user sees what landed.
+            if CaptureSwipeLink.detect(in: trimmed) != nil {
+                landInField(trimmed)
+                return
+            }
             if let url = URL(string: trimmed), let scheme = url.scheme,
                ["http", "https"].contains(scheme.lowercased()) {
                 await ingest([.url(url)])
@@ -742,6 +841,10 @@ struct CaptureDragPreview: Equatable {
     /// release line says so BEFORE the user lets go — a destination learned
     /// from the receipt is a destination learned too late.
     var isAllImages: Bool = false
+    /// The drag is a bare platform link (Instagram, YouTube, X, TikTok…). It
+    /// lands in the field with the Swipe destination pre-selected, so the
+    /// release line says "swipe" for the same reason an all-image drop does.
+    var isSwipeLink: Bool = false
 
     var summary: String {
         switch totalCount {
@@ -749,4 +852,99 @@ struct CaptureDragPreview: Equatable {
         default: return "\(totalCount) items"
         }
     }
+}
+
+// MARK: - Platform links
+
+/// A social-platform link in capture text — the trigger for the ⌥C panel's
+/// Inbox | Swipe choice. Pure string work, no actor, so the drop preview, the
+/// paste path and the tests all read the same verdict.
+///
+/// Membership is by HOST, not by permalink shape: the router (`SwipeIntakeRouter`)
+/// still decides what a given link becomes — a post for the platforms it has
+/// a pipeline for, a page for the rest — and a profile or a short link should
+/// still offer the choice. The platform set mirrors ⌘K's swipe sources
+/// (`CommandKCaptureRouter.isSwipeSource`); TikTok is host-only because the
+/// URL classifier has no permalink pattern for it.
+struct CaptureSwipeLink: Equatable, Sendable {
+
+    enum Platform: String, CaseIterable, Sendable {
+        case instagram, youtube, x, tiktok, threads, loom
+
+        var displayName: String {
+            switch self {
+            case .instagram: return "Instagram"
+            case .youtube: return "YouTube"
+            case .x: return "X"
+            case .tiktok: return "TikTok"
+            case .threads: return "Threads"
+            case .loom: return "Loom"
+            }
+        }
+
+        /// Key understood by `SwipePlatformGlyph`.
+        var glyphKey: String { rawValue }
+
+        /// Registrable domains. Subdomains (`www.`, `m.`, `vm.`, `mobile.`)
+        /// match by suffix; unrelated hosts that merely END in these letters
+        /// (`notx.com`) do not, because the match requires the dot.
+        var domains: [String] {
+            switch self {
+            case .instagram: return ["instagram.com"]
+            case .youtube: return ["youtube.com", "youtu.be"]
+            case .x: return ["x.com", "twitter.com"]
+            case .tiktok: return ["tiktok.com"]
+            case .threads: return ["threads.net", "threads.com"]
+            case .loom: return ["loom.com"]
+            }
+        }
+    }
+
+    /// The link exactly as the user wrote it — never the detector's
+    /// normalized form, which lowercases the host and can append a slash.
+    let url: String
+    let platform: Platform
+    /// Everything in the text that is NOT the link, trimmed — the swipe's
+    /// note. Nil when the text is nothing but the link.
+    let note: String?
+
+    /// The first platform link in `text`. Strict on scheme: only a substring
+    /// carrying an explicit `http(s)://` qualifies, so a bare `instagram.com/…`
+    /// mentioned in prose never triggers (the router would reject it too).
+    static func detect(in text: String) -> CaptureSwipeLink? {
+        guard !text.isEmpty, let detector else { return nil }
+        let range = NSRange(text.startIndex..., in: text)
+        var found: CaptureSwipeLink?
+        detector.enumerateMatches(in: text, range: range) { match, _, stop in
+            guard let match, match.resultType == .link,
+                  let matchRange = Range(match.range, in: text) else { return }
+            let raw = String(text[matchRange])
+            let lowered = raw.lowercased()
+            guard lowered.hasPrefix("http://") || lowered.hasPrefix("https://"),
+                  let host = match.url?.host,
+                  let platform = platform(forHost: host) else { return }
+            var remainder = text
+            remainder.removeSubrange(matchRange)
+            let note = remainder.trimmingCharacters(in: .whitespacesAndNewlines)
+            found = CaptureSwipeLink(url: raw, platform: platform, note: note.isEmpty ? nil : note)
+            stop.pointee = true
+        }
+        return found
+    }
+
+    static func platform(forHost host: String) -> Platform? {
+        let lowered = host.lowercased()
+        for platform in Platform.allCases {
+            for domain in platform.domains where lowered == domain || lowered.hasSuffix("." + domain) {
+                return platform
+            }
+        }
+        return nil
+    }
+
+    /// One detector for the process — building one per keystroke is the
+    /// avoidable cost here. NSDataDetector is immutable once built.
+    nonisolated(unsafe) private static let detector = try? NSDataDetector(
+        types: NSTextCheckingResult.CheckingType.link.rawValue
+    )
 }

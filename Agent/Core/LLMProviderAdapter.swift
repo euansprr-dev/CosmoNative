@@ -327,6 +327,19 @@ enum LLMProviderFactory {
             return OpenAIProvider(apiKey: apiKey ?? "", baseURL: baseURL ?? "")
         }
     }
+
+    /// Direct Anthropic for Claude models plus OpenRouter for everything else.
+    static func createRouting(anthropicAPIKey: String?, openRouterAPIKey: String?) -> LLMProvider {
+        var anthropic: AnthropicProvider?
+        if let anthropicAPIKey, !anthropicAPIKey.isEmpty {
+            anthropic = AnthropicProvider(apiKey: anthropicAPIKey)
+        }
+        var openRouter: OpenAIProvider?
+        if let openRouterAPIKey, !openRouterAPIKey.isEmpty {
+            openRouter = OpenAIProvider(apiKey: openRouterAPIKey, baseURL: AgentProvider.openRouter.defaultBaseURL)
+        }
+        return ModelRoutingLLMProvider(anthropic: anthropic, openRouter: openRouter)
+    }
 }
 
 // MARK: - Anthropic Provider
@@ -695,19 +708,111 @@ final class AnthropicProvider: LLMProvider, @unchecked Sendable {
 
 // MARK: - OpenAI Provider
 
-/// Implements the OpenAI Chat Completions API. Also used for OpenAI-compatible endpoints.
+/// Process-wide memory of one GPT-5.6 Chat Completions rule: OpenAI rejects
+/// function tools combined with a reasoning effort other than `none` on
+/// /v1/chat/completions ("Function tools with reasoning_effort are not
+/// supported … use /v1/responses or set reasoning_effort to 'none'"). Whether
+/// the OpenRouter passthrough shields us from that is only knowable at request
+/// time, so the first such 400 flips the flag and every later request that
+/// carries tools sends `none` up front instead of paying a failed round trip.
+/// Reasoning-free GPT-5.6 is still the flagship — only the deliberation is
+/// gone, and the answer arrives faster.
+final class OpenAIReasoningToolCompatibility: @unchecked Sendable {
+    static let shared = OpenAIReasoningToolCompatibility()
+
+    private let lock = NSLock()
+    private var toolsRequireNoReasoning = false
+
+    var requiresNoReasoningWithTools: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return toolsRequireNoReasoning
+    }
+
+    func markToolsRequireNoReasoning() {
+        lock.lock()
+        let wasKnown = toolsRequireNoReasoning
+        toolsRequireNoReasoning = true
+        lock.unlock()
+        if !wasKnown {
+            print("[LLM] GPT-5.6 rejected tools + reasoning on chat completions — sending reasoning.effort=none whenever tools are attached")
+        }
+    }
+
+    /// Tests only — the flag is otherwise sticky for the process lifetime.
+    func reset() {
+        lock.lock()
+        toolsRequireNoReasoning = false
+        lock.unlock()
+    }
+
+    /// The rejection's signature, matched on meaning rather than exact bytes:
+    /// OpenRouter rewraps provider errors and OpenAI names the model inline.
+    static func isToolsWithReasoningRejection(statusCode: Int, body: String) -> Bool {
+        guard statusCode == 400 else { return false }
+        let lower = body.lowercased()
+        return lower.contains("reasoning")
+            && lower.contains("tool")
+            && (lower.contains("not supported") || lower.contains("unsupported"))
+    }
+}
+
+/// How a GPT-5.6 request carries its reasoning parameter. The ladder runs
+/// `standard` → `disabled` → `omitted`; each rung is one retry of the same
+/// request and the ladder never loops.
+enum OpenAIReasoningPlan: Equatable {
+    case standard
+    case disabled
+    case omitted
+
+    var next: OpenAIReasoningPlan? {
+        switch self {
+        case .standard: return .disabled
+        case .disabled: return .omitted
+        case .omitted: return nil
+        }
+    }
+}
+
+/// Implements the OpenAI Chat Completions API. Also used for OpenAI-compatible endpoints (OpenRouter).
 final class OpenAIProvider: LLMProvider, @unchecked Sendable {
     let providerType: AgentProvider = .openai
     private let apiKey: String
     private let baseURL: String
+
+    /// OpenAI's prompt cache is prefix-keyed and shard-local; `prompt_cache_key`
+    /// steers every request that shares a prefix to the same shard. One key for
+    /// the whole app: every inline and Command-A request starts from the same
+    /// static prefix (identity + tools), so one shard holds it for all of them.
+    /// OpenRouter reads the same field as its sticky-routing key, which also
+    /// keeps Anthropic-on-OpenRouter requests on the endpoint that already
+    /// holds their cache.
+    static let promptCacheKey = "cosmoos-agent"
 
     init(apiKey: String, baseURL: String) {
         self.apiKey = apiKey
         self.baseURL = baseURL
     }
 
-    private func maxTokens(for model: String) -> Int {
+    /// Only OpenRouter and OpenAI understand `prompt_cache_key`; a strict
+    /// OpenAI-compatible server (custom endpoint) may reject unknown fields.
+    private var supportsPromptCacheKey: Bool {
+        baseURL.contains("openrouter.ai") || baseURL.contains("api.openai.com")
+    }
+
+    static func isGPT56(_ model: String) -> Bool {
+        model.lowercased().contains("gpt-5.6")
+    }
+
+    static func isAnthropicModel(_ model: String) -> Bool {
+        model.hasPrefix("anthropic/")
+    }
+
+    static func maxTokens(for model: String) -> Int {
         let lower = model.lowercased()
+        // GPT-5.6 reasons before it answers and reasoning tokens count against
+        // max_tokens on Chat Completions — same headroom as the thinking tiers.
+        if lower.contains("gpt-5.6") { return lower.contains("luna") ? 8192 : 16384 }
         if lower.contains("gpt-5.5") { return 16384 }
         if lower.contains("gpt-chat-latest") { return 8192 }
         if lower.contains("opus") { return 16384 }
@@ -717,47 +822,95 @@ final class OpenAIProvider: LLMProvider, @unchecked Sendable {
         return 4096
     }
 
+    /// The reasoning effort a model runs at when no `LLMEffortScope` is set.
+    /// GPT-5.6's own default is `medium`; sending it explicitly keeps the
+    /// request byte-stable instead of riding a server-side default that can move.
     static func reasoningEffort(for model: String) -> String? {
-        switch model.lowercased() {
-        case "openai/gpt-5.5":
-            return "high"
-        default:
-            return nil
-        }
+        let lower = model.lowercased()
+        if lower == "openai/gpt-5.5" { return "high" }
+        if isGPT56(lower) { return "medium" }
+        return nil
     }
 
-    private func reasoningPayload(for model: String) -> [String: Any]? {
-        if let effort = Self.reasoningEffort(for: model) {
-            return [
-                "effort": effort,
-                "exclude": true
-            ]
+    /// The `reasoning` object OpenRouter maps onto the provider's native
+    /// parameter, or nil when the model takes none.
+    static func reasoningPayload(
+        for model: String,
+        hasTools: Bool,
+        plan: OpenAIReasoningPlan = .standard,
+        compatibility: OpenAIReasoningToolCompatibility = .shared
+    ) -> [String: Any]? {
+        let lower = model.lowercased()
+        if isGPT56(lower) {
+            switch plan {
+            case .omitted:
+                return nil
+            case .disabled:
+                return ["effort": "none"]
+            case .standard:
+                if hasTools, compatibility.requiresNoReasoningWithTools {
+                    return ["effort": "none"]
+                }
+                let effort = LLMEffortScope.effort ?? reasoningEffort(for: lower) ?? "medium"
+                return ["effort": effort, "exclude": true]
+            }
+        }
+        if let effort = reasoningEffort(for: lower) {
+            return ["effort": effort, "exclude": true]
         }
         // Scoped Sonnet 5 effort (OpenRouter maps reasoning.effort onto
         // Anthropic's effort parameter). Sonnet-5 only — see LLMEffortScope.
-        if let effort = LLMEffortScope.effort, model.lowercased().contains("sonnet-5") {
+        if let effort = LLMEffortScope.effort, lower.contains("sonnet-5") {
             return ["effort": effort]
         }
         return nil
     }
 
-    func complete(
-        messages: [AgentMessage],
-        tools: [LLMToolDefinition]?,
-        model: String?
-    ) async throws -> LLMResponse {
-        guard !apiKey.isEmpty else { throw LLMProviderError.noAPIKey }
+    // MARK: Request building
 
-        let resolvedModel = model ?? AgentProvider.openai.defaultModel
-        let url = URL(string: "\(baseURL)/chat/completions")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-
+    /// The chat-completions message array. Anthropic models on OpenRouter get
+    /// the system prompt as content blocks with `cache_control`; every other
+    /// model gets one plain system string (OpenAI caches prefixes on its own).
+    static func chatMessages(
+        from messages: [AgentMessage],
+        systemPrompt: SystemPrompt?,
+        model: String,
+        dropsSystemMessages: Bool,
+        marksLastUserMessageForAnthropicCache: Bool
+    ) -> [[String: Any]] {
         var openAIMessages: [[String: Any]] = []
 
+        if let systemPrompt {
+            if isAnthropicModel(model) {
+                // Structured content blocks with cache_control for OpenRouter's Anthropic passthrough
+                var contentBlocks: [[String: Any]] = [
+                    [
+                        "type": "text",
+                        "text": systemPrompt.cached,
+                        "cache_control": ["type": "ephemeral"]
+                    ]
+                ]
+                if !systemPrompt.dynamic.isEmpty {
+                    contentBlocks.append([
+                        "type": "text",
+                        "text": systemPrompt.dynamic
+                    ])
+                }
+                openAIMessages.append([
+                    "role": "system",
+                    "content": contentBlocks
+                ])
+            } else {
+                openAIMessages.append([
+                    "role": "system",
+                    "content": systemPrompt.combined
+                ])
+            }
+        }
+
         for msg in messages {
+            if msg.role == .system, dropsSystemMessages { continue }
+
             var msgDict: [String: Any] = ["role": openAIRole(msg.role)]
 
             if msg.role == .assistant, let calls = msg.toolCalls, !calls.isEmpty {
@@ -784,35 +937,241 @@ final class OpenAIProvider: LLMProvider, @unchecked Sendable {
             openAIMessages.append(msgDict)
         }
 
-        let baseMaxTokens = maxTokens(for: resolvedModel)
+        if marksLastUserMessageForAnthropicCache, isAnthropicModel(model) {
+            markLastUserMessageForAnthropicCache(&openAIMessages)
+        }
 
+        return openAIMessages
+    }
+
+    /// Tool definitions for the request. Anthropic models on OpenRouter carry a
+    /// cache breakpoint on the last tool (definitions are static across
+    /// requests); OpenAI models need nothing — their prefix cache covers tools.
+    static func toolDictionaries(
+        _ tools: [LLMToolDefinition]?,
+        model: String,
+        cachesDefinitions: Bool
+    ) -> [[String: Any]]? {
+        guard let tools, !tools.isEmpty else { return nil }
+        var toolDicts = tools.map { $0.toOpenAIDict() }
+        if cachesDefinitions, isAnthropicModel(model), var lastTool = toolDicts.last {
+            lastTool["cache_control"] = ["type": "ephemeral"]
+            toolDicts[toolDicts.count - 1] = lastTool
+        }
+        return toolDicts
+    }
+
+    /// One request body for every entry point — non-streaming, SSE, prewarm.
+    static func requestBody(
+        model: String,
+        chatMessages: [[String: Any]],
+        tools: [LLMToolDefinition]?,
+        cachesToolDefinitions: Bool,
+        maxTokens: Int,
+        stream: Bool,
+        includesUsage: Bool,
+        toolChoice: String?,
+        reasoning: [String: Any]?,
+        promptCacheKey: String?
+    ) -> [String: Any] {
         var body: [String: Any] = [
-            "model": resolvedModel,
-            "messages": openAIMessages,
-            "max_tokens": baseMaxTokens
+            "model": model,
+            "messages": chatMessages,
+            "max_tokens": maxTokens
         ]
-
-        if let reasoning = reasoningPayload(for: resolvedModel) {
+        if stream {
+            body["stream"] = true
+        }
+        if includesUsage {
+            // Ask OpenRouter to attach usage (incl. cache metrics) to the final chunk
+            body["usage"] = ["include": true]
+        }
+        if let reasoning {
             body["reasoning"] = reasoning
         }
-
-        if let tools = tools, !tools.isEmpty {
-            body["tools"] = tools.map { $0.toOpenAIDict() }
+        if let toolDicts = toolDictionaries(tools, model: model, cachesDefinitions: cachesToolDefinitions) {
+            body["tools"] = toolDicts
+            if let toolChoice {
+                body["tool_choice"] = toolChoice
+            }
         }
+        if let promptCacheKey {
+            body["prompt_cache_key"] = promptCacheKey
+        }
+        return body
+    }
 
+    private func makeRequest(body: [String: Any]) throws -> URLRequest {
+        let url = URL(string: "\(baseURL)/chat/completions")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        return request
+    }
 
-        let (data, response) = try await performRequest(request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw LLMProviderError.invalidResponse
+    /// The next rung of the reasoning ladder after a rejected request, or nil
+    /// when the failure is not the GPT-5.6 tools+reasoning constraint.
+    static func reasoningPlanAfterRejection(
+        statusCode: Int,
+        errorBody: String,
+        model: String,
+        hasTools: Bool,
+        currentPlan: OpenAIReasoningPlan,
+        compatibility: OpenAIReasoningToolCompatibility = .shared
+    ) -> OpenAIReasoningPlan? {
+        guard isGPT56(model), hasTools,
+              OpenAIReasoningToolCompatibility.isToolsWithReasoningRejection(statusCode: statusCode, body: errorBody),
+              let next = currentPlan.next else {
+            return nil
         }
+        compatibility.markToolsRequireNoReasoning()
+        return next
+    }
 
-        if httpResponse.statusCode != 200 {
+    /// Non-streaming send with the GPT-5.6 reasoning ladder.
+    private func sendChat(
+        model: String,
+        hasTools: Bool,
+        makeBody: (OpenAIReasoningPlan) -> [String: Any]
+    ) async throws -> Data {
+        var plan: OpenAIReasoningPlan = .standard
+        while true {
+            let request = try makeRequest(body: makeBody(plan))
+            let (data, response) = try await performRequest(request)
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw LLMProviderError.invalidResponse
+            }
+            if httpResponse.statusCode == 200 {
+                return data
+            }
+
             let errorText = String(data: data, encoding: .utf8) ?? "Unknown error"
+            if let next = Self.reasoningPlanAfterRejection(
+                statusCode: httpResponse.statusCode,
+                errorBody: errorText,
+                model: model,
+                hasTools: hasTools,
+                currentPlan: plan
+            ) {
+                plan = next
+                continue
+            }
             throw LLMProviderError.apiError("OpenAI \(httpResponse.statusCode): \(errorText)")
         }
+    }
 
+    /// Opens an SSE stream with the same reasoning ladder — the status is known
+    /// before any bytes are consumed, so a rejected request retries cleanly.
+    private func openStream(
+        model: String,
+        hasTools: Bool,
+        makeBody: (OpenAIReasoningPlan) -> [String: Any]
+    ) async throws -> URLSession.AsyncBytes {
+        var plan: OpenAIReasoningPlan = .standard
+        while true {
+            let request = try makeRequest(body: makeBody(plan))
+            let (bytes, response) = try await URLSession.shared.bytes(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw LLMProviderError.invalidResponse
+            }
+            if httpResponse.statusCode == 200 {
+                return bytes
+            }
+
+            var errorData = Data()
+            for try await byte in bytes {
+                errorData.append(byte)
+                if errorData.count > 4096 { break }
+            }
+            let errorText = String(data: errorData, encoding: .utf8) ?? "Unknown error"
+            if let next = Self.reasoningPlanAfterRejection(
+                statusCode: httpResponse.statusCode,
+                errorBody: errorText,
+                model: model,
+                hasTools: hasTools,
+                currentPlan: plan
+            ) {
+                plan = next
+                continue
+            }
+            throw LLMProviderError.apiError("OpenAI \(httpResponse.statusCode): \(errorText)")
+        }
+    }
+
+    // MARK: LLMProvider
+
+    func complete(
+        messages: [AgentMessage],
+        tools: [LLMToolDefinition]?,
+        model: String?
+    ) async throws -> LLMResponse {
+        guard !apiKey.isEmpty else { throw LLMProviderError.noAPIKey }
+
+        let resolvedModel = model ?? AgentProvider.openai.defaultModel
+        let hasTools = !(tools?.isEmpty ?? true)
+        let chatMessages = Self.chatMessages(
+            from: messages,
+            systemPrompt: nil,
+            model: resolvedModel,
+            dropsSystemMessages: false,
+            marksLastUserMessageForAnthropicCache: false
+        )
+        let data = try await sendChat(model: resolvedModel, hasTools: hasTools) { plan in
+            Self.requestBody(
+                model: resolvedModel,
+                chatMessages: chatMessages,
+                tools: tools,
+                cachesToolDefinitions: false,
+                maxTokens: Self.maxTokens(for: resolvedModel),
+                stream: false,
+                includesUsage: false,
+                toolChoice: nil,
+                reasoning: Self.reasoningPayload(for: resolvedModel, hasTools: hasTools, plan: plan),
+                promptCacheKey: supportsPromptCacheKey ? Self.promptCacheKey : nil
+            )
+        }
+        return try parseOpenAIResponse(data)
+    }
+
+    /// Prompt-caching path. Anthropic models on OpenRouter get structured
+    /// system blocks with `cache_control` (90% cost reduction on the static
+    /// identity portion); OpenAI models rely on automatic prefix caching plus
+    /// the shared `prompt_cache_key`.
+    func complete(
+        messages: [AgentMessage],
+        tools: [LLMToolDefinition]?,
+        model: String?,
+        systemPrompt: SystemPrompt
+    ) async throws -> LLMResponse {
+        guard !apiKey.isEmpty else { throw LLMProviderError.noAPIKey }
+
+        let resolvedModel = model ?? AgentProvider.openai.defaultModel
+        let hasTools = !(tools?.isEmpty ?? true)
+        let chatMessages = Self.chatMessages(
+            from: messages,
+            systemPrompt: systemPrompt,
+            model: resolvedModel,
+            dropsSystemMessages: true,
+            marksLastUserMessageForAnthropicCache: true
+        )
+        let data = try await sendChat(model: resolvedModel, hasTools: hasTools) { plan in
+            Self.requestBody(
+                model: resolvedModel,
+                chatMessages: chatMessages,
+                tools: tools,
+                cachesToolDefinitions: true,
+                maxTokens: Self.maxTokens(for: resolvedModel),
+                stream: false,
+                includesUsage: false,
+                toolChoice: nil,
+                reasoning: Self.reasoningPayload(for: resolvedModel, hasTools: hasTools, plan: plan),
+                promptCacheKey: supportsPromptCacheKey ? Self.promptCacheKey : nil
+            )
+        }
         return try parseOpenAIResponse(data)
     }
 
@@ -869,7 +1228,8 @@ final class OpenAIProvider: LLMProvider, @unchecked Sendable {
 
     /// Extract cache metrics from an OpenAI/OpenRouter usage payload.
     /// OpenRouter normalizes Anthropic cache reads into `prompt_tokens_details.cached_tokens`
-    /// and (for Anthropic models) may also surface `cache_creation_input_tokens`.
+    /// (the same field OpenAI reports its own prefix-cache hits in) and cache
+    /// writes into `cache_creation_input_tokens`.
     static func cacheTokens(fromUsage usage: [String: Any]?) -> (read: Int, write: Int) {
         guard let usage else { return (0, 0) }
         var read = 0
@@ -879,17 +1239,428 @@ final class OpenAIProvider: LLMProvider, @unchecked Sendable {
         if read == 0 {
             read = usage["cache_read_input_tokens"] as? Int ?? 0
         }
-        let write = usage["cache_creation_input_tokens"] as? Int ?? 0
+        var write = usage["cache_creation_input_tokens"] as? Int ?? 0
+        if write == 0, let promptDetails = usage["prompt_tokens_details"] as? [String: Any] {
+            write = promptDetails["cache_write_tokens"] as? Int ?? 0
+        }
         return (read, write)
     }
 
-    private func openAIRole(_ role: AgentMessage.MessageRole) -> String {
+    private static func openAIRole(_ role: AgentMessage.MessageRole) -> String {
         switch role {
         case .system: return "system"
         case .user: return "user"
         case .assistant: return "assistant"
         case .tool: return "tool"
         }
+    }
+
+    /// Incremental message caching for OpenRouter's Anthropic passthrough:
+    /// converts the final user message to content-parts form and stamps
+    /// `cache_control`, so the next request in the conversation extends the
+    /// cache instead of re-reading the whole history. Only user messages —
+    /// OpenRouter's parts mapping for tool-role content is undocumented.
+    static func markLastUserMessageForAnthropicCache(_ messages: inout [[String: Any]]) {
+        guard var last = messages.last,
+              last["role"] as? String == "user",
+              let text = last["content"] as? String,
+              !text.isEmpty else {
+            return
+        }
+        last["content"] = [[
+            "type": "text",
+            "text": text,
+            "cache_control": ["type": "ephemeral"]
+        ] as [String: Any]]
+        messages[messages.count - 1] = last
+    }
+}
+
+// MARK: - OpenAI Provider: Streaming (real SSE)
+
+extension OpenAIProvider: StreamingLLMProvider {
+    func completeStreaming(
+        messages: [AgentMessage],
+        tools: [LLMToolDefinition]?,
+        model: String?,
+        onChunk: StreamingCallback
+    ) async throws -> LLMResponse {
+        try await completeStreamingEvents(
+            messages: messages,
+            tools: tools,
+            model: model,
+            tier: nil,
+            systemPrompt: nil
+        ) { event in
+            if case .text(let delta) = event {
+                onChunk(delta)
+            }
+        }
+    }
+
+    func completeStreaming(
+        messages: [AgentMessage],
+        tools: [LLMToolDefinition]?,
+        model: String?,
+        tier: AgentModelTier?,
+        systemPrompt: SystemPrompt,
+        onChunk: StreamingCallback
+    ) async throws -> LLMResponse {
+        try await completeStreamingEvents(
+            messages: messages,
+            tools: tools,
+            model: model,
+            tier: tier,
+            systemPrompt: systemPrompt
+        ) { event in
+            if case .text(let delta) = event {
+                onChunk(delta)
+            }
+        }
+    }
+
+    /// Event-level SSE streaming. Keeps the structured `cache_control` system
+    /// blocks for Anthropic models on OpenRouter, so streaming never trades
+    /// away the prompt cache; OpenAI models stream with automatic prefix caching.
+    func completeStreamingEvents(
+        messages: [AgentMessage],
+        tools: [LLMToolDefinition]?,
+        model: String?,
+        tier: AgentModelTier?,
+        systemPrompt: SystemPrompt?,
+        onEvent: LLMStreamEventCallback
+    ) async throws -> LLMResponse {
+        guard !apiKey.isEmpty else { throw LLMProviderError.noAPIKey }
+
+        let resolvedModel = tier?.modelId ?? model ?? AgentProvider.openai.defaultModel
+        let hasTools = !(tools?.isEmpty ?? true)
+        let chatMessages = Self.chatMessages(
+            from: messages,
+            systemPrompt: systemPrompt,
+            model: resolvedModel,
+            dropsSystemMessages: systemPrompt != nil,
+            marksLastUserMessageForAnthropicCache: true
+        )
+        let bytes = try await openStream(model: resolvedModel, hasTools: hasTools) { plan in
+            Self.requestBody(
+                model: resolvedModel,
+                chatMessages: chatMessages,
+                tools: tools,
+                cachesToolDefinitions: true,
+                maxTokens: Self.maxTokens(for: resolvedModel),
+                stream: true,
+                includesUsage: true,
+                toolChoice: nil,
+                reasoning: Self.reasoningPayload(for: resolvedModel, hasTools: hasTools, plan: plan),
+                promptCacheKey: supportsPromptCacheKey ? Self.promptCacheKey : nil
+            )
+        }
+
+        var fullContent = ""
+        var inputTokens = 0
+        var outputTokens = 0
+        var cacheRead = 0
+        var cacheWrite = 0
+        var partialToolCalls: [Int: (id: String, name: String, args: String)] = [:]
+
+        for try await line in bytes.lines {
+            guard line.hasPrefix("data: ") else { continue }
+            let payload = String(line.dropFirst(6))
+            if payload == "[DONE]" { break }
+
+            guard let data = payload.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                continue
+            }
+
+            if let choices = json["choices"] as? [[String: Any]],
+               let delta = choices.first?["delta"] as? [String: Any] {
+                if let content = delta["content"] as? String, !content.isEmpty {
+                    fullContent += content
+                    onEvent(.text(content))
+                }
+
+                if let tcDeltas = delta["tool_calls"] as? [[String: Any]] {
+                    for tcDelta in tcDeltas {
+                        let index = tcDelta["index"] as? Int ?? 0
+                        if let id = tcDelta["id"] as? String {
+                            let funcDict = tcDelta["function"] as? [String: Any]
+                            let name = funcDict?["name"] as? String ?? ""
+                            partialToolCalls[index] = (id: id, name: name, args: "")
+                            onEvent(.toolCallBegan(index: index, id: id, name: name))
+                        }
+                        if let funcDict = tcDelta["function"] as? [String: Any],
+                           let argChunk = funcDict["arguments"] as? String, !argChunk.isEmpty {
+                            var partial = partialToolCalls[index] ?? (id: "", name: "", args: "")
+                            if partial.name.isEmpty,
+                               let name = funcDict["name"] as? String {
+                                partial.name = name
+                            }
+                            partial.args += argChunk
+                            partialToolCalls[index] = partial
+                            onEvent(.toolCallArgumentsDelta(
+                                index: index,
+                                name: partial.name,
+                                accumulatedJSON: partial.args
+                            ))
+                        }
+                    }
+                }
+            }
+
+            if let usage = json["usage"] as? [String: Any] {
+                inputTokens = usage["prompt_tokens"] as? Int ?? inputTokens
+                outputTokens = usage["completion_tokens"] as? Int ?? outputTokens
+                let cache = Self.cacheTokens(fromUsage: usage)
+                cacheRead = max(cacheRead, cache.read)
+                cacheWrite = max(cacheWrite, cache.write)
+            }
+        }
+
+        var toolCalls: [AgentToolCall] = []
+        for index in partialToolCalls.keys.sorted() {
+            if let tc = partialToolCalls[index] {
+                toolCalls.append(AgentToolCall(id: tc.id, name: tc.name, argumentsJSON: tc.args.isEmpty ? "{}" : tc.args))
+            }
+        }
+
+        let result = LLMResponse(
+            content: fullContent.isEmpty ? nil : fullContent,
+            toolCalls: toolCalls,
+            inputTokens: inputTokens,
+            outputTokens: outputTokens,
+            cacheReadInputTokens: cacheRead,
+            cacheCreationInputTokens: cacheWrite
+        )
+        LLMCacheTelemetry.shared.record(response: result, label: "openrouter/stream")
+        return result
+    }
+}
+
+// MARK: - OpenAI Provider: Prewarming
+
+extension OpenAIProvider: PrewarmingLLMProvider {
+    /// OpenRouter has no `max_tokens: 0` prefill mode, so warm with a 1-token
+    /// completion and `tool_choice: "none"` (tool_choice changes don't invalidate
+    /// the tools/system cache tiers — only the message tier). GPT-5.6 warms with
+    /// reasoning disabled: the prefix cache is keyed on the prompt, not on the
+    /// effort, and a 1-token warm-up must not pay for a think first.
+    func prewarm(
+        tools: [LLMToolDefinition]?,
+        model: String?,
+        systemPrompt: SystemPrompt
+    ) async throws {
+        guard !apiKey.isEmpty else { throw LLMProviderError.noAPIKey }
+
+        let resolvedModel = model ?? AgentProvider.openai.defaultModel
+        let chatMessages = Self.chatMessages(
+            from: [.user("warmup")],
+            systemPrompt: systemPrompt,
+            model: resolvedModel,
+            dropsSystemMessages: true,
+            marksLastUserMessageForAnthropicCache: false
+        )
+        let body = Self.requestBody(
+            model: resolvedModel,
+            chatMessages: chatMessages,
+            tools: tools,
+            cachesToolDefinitions: true,
+            maxTokens: 1,
+            stream: false,
+            includesUsage: false,
+            toolChoice: "none",
+            reasoning: Self.isGPT56(resolvedModel) ? ["effort": "none"] : nil,
+            promptCacheKey: supportsPromptCacheKey ? Self.promptCacheKey : nil
+        )
+
+        let request = try makeRequest(body: body)
+        let (data, response) = try await performRequest(request)
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            let errorText = String(data: data, encoding: .utf8) ?? "Unknown error"
+            throw LLMProviderError.apiError("Prewarm failed: \(errorText)")
+        }
+    }
+}
+
+// MARK: - Model Routing Provider
+
+/// One provider that serves every model id by handing each request to the
+/// transport that speaks it: `anthropic/…` and bare `claude-…` ids go to the
+/// direct Anthropic API when a key exists (explicit cache breakpoints, 1h TTL);
+/// everything else — and Anthropic when there is no direct key — goes through
+/// OpenRouter. Before this existed, a direct-Anthropic setup sent `openai/…`
+/// tiers to api.anthropic.com and they failed with a model-not-found.
+final class ModelRoutingLLMProvider: LLMProvider, @unchecked Sendable {
+    enum Route: Equatable {
+        case anthropicDirect
+        case openRouter
+        case unservable
+    }
+
+    let providerType: AgentProvider
+    private let anthropic: AnthropicProvider?
+    private let openRouter: OpenAIProvider?
+
+    init(anthropic: AnthropicProvider?, openRouter: OpenAIProvider?) {
+        self.anthropic = anthropic
+        self.openRouter = openRouter
+        self.providerType = anthropic != nil ? .anthropic : .openRouter
+    }
+
+    static func isAnthropicModel(_ model: String?) -> Bool {
+        guard let model else { return true }
+        return model.hasPrefix("anthropic/") || model.hasPrefix("claude-")
+    }
+
+    /// Pure routing decision — pinned by tests.
+    static func route(model: String?, hasAnthropic: Bool, hasOpenRouter: Bool) -> Route {
+        if isAnthropicModel(model) {
+            if hasAnthropic { return .anthropicDirect }
+            return hasOpenRouter ? .openRouter : .unservable
+        }
+        return hasOpenRouter ? .openRouter : .unservable
+    }
+
+    func route(for model: String?) -> Route {
+        Self.route(model: model, hasAnthropic: anthropic != nil, hasOpenRouter: openRouter != nil)
+    }
+
+    func canServe(model: String) -> Bool {
+        route(for: model) != .unservable
+    }
+
+    /// The tier a request should actually run on: the requested one when its
+    /// transport is configured, otherwise the closest servable stand-in so a
+    /// missing OpenRouter key degrades to Sonnet 5 instead of a dead request.
+    func servableTier(_ tier: AgentModelTier) -> AgentModelTier {
+        if canServe(model: tier.modelId) { return tier }
+        if canServe(model: AgentModelTier.sonnet5.modelId) { return .sonnet5 }
+        return tier
+    }
+
+    private func provider(for model: String?) throws -> LLMProvider {
+        switch route(for: model) {
+        case .anthropicDirect:
+            return anthropic!
+        case .openRouter:
+            return openRouter!
+        case .unservable:
+            throw LLMProviderError.unsupportedFeature(
+                "No transport configured for model \(model ?? "(default)") — add an OpenRouter API key in Settings."
+            )
+        }
+    }
+
+    private func streamingProvider(for model: String?) throws -> StreamingLLMProvider {
+        switch route(for: model) {
+        case .anthropicDirect:
+            return anthropic!
+        case .openRouter:
+            return openRouter!
+        case .unservable:
+            throw LLMProviderError.unsupportedFeature(
+                "No transport configured for model \(model ?? "(default)") — add an OpenRouter API key in Settings."
+            )
+        }
+    }
+
+    func complete(
+        messages: [AgentMessage],
+        tools: [LLMToolDefinition]?,
+        model: String?
+    ) async throws -> LLMResponse {
+        try await provider(for: model).complete(messages: messages, tools: tools, model: model)
+    }
+
+    func complete(
+        messages: [AgentMessage],
+        tools: [LLMToolDefinition]?,
+        model: String?,
+        systemPrompt: SystemPrompt
+    ) async throws -> LLMResponse {
+        try await provider(for: model).complete(messages: messages, tools: tools, model: model, systemPrompt: systemPrompt)
+    }
+}
+
+extension ModelRoutingLLMProvider: StreamingLLMProvider {
+    func completeStreaming(
+        messages: [AgentMessage],
+        tools: [LLMToolDefinition]?,
+        model: String?,
+        onChunk: StreamingCallback
+    ) async throws -> LLMResponse {
+        try await streamingProvider(for: model).completeStreaming(
+            messages: messages,
+            tools: tools,
+            model: model,
+            onChunk: onChunk
+        )
+    }
+
+    func completeStreaming(
+        messages: [AgentMessage],
+        tools: [LLMToolDefinition]?,
+        model: String?,
+        tier: AgentModelTier?,
+        onChunk: StreamingCallback
+    ) async throws -> LLMResponse {
+        let resolvedModel = tier?.modelId ?? model
+        return try await streamingProvider(for: resolvedModel).completeStreaming(
+            messages: messages,
+            tools: tools,
+            model: resolvedModel,
+            tier: nil,
+            onChunk: onChunk
+        )
+    }
+
+    func completeStreaming(
+        messages: [AgentMessage],
+        tools: [LLMToolDefinition]?,
+        model: String?,
+        tier: AgentModelTier?,
+        systemPrompt: SystemPrompt,
+        onChunk: StreamingCallback
+    ) async throws -> LLMResponse {
+        let resolvedModel = tier?.modelId ?? model
+        return try await streamingProvider(for: resolvedModel).completeStreaming(
+            messages: messages,
+            tools: tools,
+            model: resolvedModel,
+            tier: nil,
+            systemPrompt: systemPrompt,
+            onChunk: onChunk
+        )
+    }
+
+    func completeStreamingEvents(
+        messages: [AgentMessage],
+        tools: [LLMToolDefinition]?,
+        model: String?,
+        tier: AgentModelTier?,
+        systemPrompt: SystemPrompt?,
+        onEvent: LLMStreamEventCallback
+    ) async throws -> LLMResponse {
+        let resolvedModel = tier?.modelId ?? model
+        return try await streamingProvider(for: resolvedModel).completeStreamingEvents(
+            messages: messages,
+            tools: tools,
+            model: resolvedModel,
+            tier: nil,
+            systemPrompt: systemPrompt,
+            onEvent: onEvent
+        )
+    }
+}
+
+extension ModelRoutingLLMProvider: PrewarmingLLMProvider {
+    func prewarm(
+        tools: [LLMToolDefinition]?,
+        model: String?,
+        systemPrompt: SystemPrompt
+    ) async throws {
+        guard let prewarming = try provider(for: model) as? PrewarmingLLMProvider else { return }
+        try await prewarming.prewarm(tools: tools, model: model, systemPrompt: systemPrompt)
     }
 }
 
@@ -1094,6 +1865,23 @@ final class FailoverLLMProvider: LLMProvider, @unchecked Sendable {
 
     // MARK: - Core Failover Logic
 
+    /// The models a request walks and where it starts. A requested model that
+    /// the chain knows starts there and falls forward through the rest; a
+    /// model the chain doesn't know becomes a one-entry plan of itself, so an
+    /// explicit pick is never quietly replaced by the chain's head.
+    static func failoverPlan(
+        chain: ModelFailoverChain,
+        requestedModel: String?
+    ) -> (models: [FailoverModel], startIndex: Int) {
+        if let requestedModel {
+            if let index = chain.models.firstIndex(where: { $0.modelId == requestedModel }) {
+                return (chain.models, index)
+            }
+            return ([FailoverModel(modelId: requestedModel, maxRetries: 1, label: requestedModel)], 0)
+        }
+        return (chain.models, 0)
+    }
+
     private typealias CompletionBlock = (LLMProvider, [AgentMessage], [LLMToolDefinition]?, String?) async throws -> LLMResponse
 
     private func completeWithFailover(
@@ -1105,13 +1893,16 @@ final class FailoverLLMProvider: LLMProvider, @unchecked Sendable {
         failoverOccurred = false
         lastUsedModel = model
 
-        // Find the starting index in the chain that matches the requested model
-        let startIndex = chain.models.firstIndex { $0.modelId == model } ?? 0
+        // Find the starting index in the chain that matches the requested model.
+        // A model the chain doesn't know runs on its own — never silently
+        // swapped for the chain's first entry.
+        let plan = Self.failoverPlan(chain: chain, requestedModel: model)
+        let startIndex = plan.startIndex
 
         var lastError: Error?
 
-        for chainIndex in startIndex..<chain.models.count {
-            let failoverModel = chain.models[chainIndex]
+        for chainIndex in startIndex..<plan.models.count {
+            let failoverModel = plan.models[chainIndex]
             let isFailover = chainIndex > startIndex
 
             if isFailover {
@@ -1441,527 +2232,6 @@ extension AnthropicProvider: StreamingLLMProvider {
     }
 }
 
-// MARK: - OpenAI Provider: Prompt Caching for OpenRouter/Anthropic
-
-extension OpenAIProvider {
-    /// Override with prompt caching support for OpenRouter's Anthropic models.
-    /// Sends the system prompt as structured content blocks with `cache_control`,
-    /// so the static identity portion is cached across requests (90% cost reduction).
-    func complete(
-        messages: [AgentMessage],
-        tools: [LLMToolDefinition]?,
-        model: String?,
-        systemPrompt: SystemPrompt
-    ) async throws -> LLMResponse {
-        guard !apiKey.isEmpty else { throw LLMProviderError.noAPIKey }
-
-        let resolvedModel = model ?? AgentProvider.openai.defaultModel
-        let url = URL(string: "\(baseURL)/chat/completions")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-
-        var openAIMessages: [[String: Any]] = []
-
-        // Build system message with cache_control content blocks for Anthropic models on OpenRouter
-        let isAnthropicModel = resolvedModel.hasPrefix("anthropic/")
-        if isAnthropicModel {
-            // Structured content blocks with cache_control for OpenRouter's Anthropic passthrough
-            var contentBlocks: [[String: Any]] = [
-                [
-                    "type": "text",
-                    "text": systemPrompt.cached,
-                    "cache_control": ["type": "ephemeral"]
-                ]
-            ]
-            if !systemPrompt.dynamic.isEmpty {
-                contentBlocks.append([
-                    "type": "text",
-                    "text": systemPrompt.dynamic
-                ])
-            }
-            openAIMessages.append([
-                "role": "system",
-                "content": contentBlocks
-            ])
-        } else {
-            // Non-Anthropic models: plain text system message
-            openAIMessages.append([
-                "role": "system",
-                "content": systemPrompt.combined
-            ])
-        }
-
-        // Build conversation messages (skip any system messages in the array)
-        for msg in messages {
-            if msg.role == .system { continue }
-
-            var msgDict: [String: Any] = ["role": openAIRole(msg.role)]
-
-            if msg.role == .assistant, let calls = msg.toolCalls, !calls.isEmpty {
-                msgDict["content"] = msg.content.isEmpty ? NSNull() : msg.content
-                var toolCallDicts: [[String: Any]] = []
-                for call in calls {
-                    toolCallDicts.append([
-                        "id": call.id,
-                        "type": "function",
-                        "function": [
-                            "name": call.name,
-                            "arguments": call.argumentsJSON
-                        ] as [String: Any]
-                    ])
-                }
-                msgDict["tool_calls"] = toolCallDicts
-            } else if msg.role == .tool {
-                msgDict["tool_call_id"] = msg.toolCallId ?? ""
-                msgDict["content"] = msg.content
-            } else {
-                msgDict["content"] = msg.content
-            }
-
-            openAIMessages.append(msgDict)
-        }
-
-        if resolvedModel.hasPrefix("anthropic/") {
-            Self.markLastUserMessageForAnthropicCache(&openAIMessages)
-        }
-
-        let resolvedMaxTokens = maxTokens(for: resolvedModel)
-
-        var body: [String: Any] = [
-            "model": resolvedModel,
-            "messages": openAIMessages,
-            "max_tokens": resolvedMaxTokens
-        ]
-
-        if let reasoning = reasoningPayload(for: resolvedModel) {
-            body["reasoning"] = reasoning
-        }
-
-        if let tools = tools, !tools.isEmpty {
-            var toolDicts = tools.map { $0.toOpenAIDict() }
-            // Cache tool definitions — they're static across requests
-            if var lastTool = toolDicts.last {
-                lastTool["cache_control"] = ["type": "ephemeral"]
-                toolDicts[toolDicts.count - 1] = lastTool
-            }
-            body["tools"] = toolDicts
-        }
-
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (data, response) = try await performRequest(request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw LLMProviderError.invalidResponse
-        }
-
-        if httpResponse.statusCode != 200 {
-            let errorText = String(data: data, encoding: .utf8) ?? "Unknown error"
-            throw LLMProviderError.apiError("OpenAI \(httpResponse.statusCode): \(errorText)")
-        }
-
-        return try parseOpenAIResponse(data)
-    }
-}
-
-extension OpenAIProvider {
-    /// Incremental message caching for OpenRouter's Anthropic passthrough:
-    /// converts the final user message to content-parts form and stamps
-    /// `cache_control`, so the next request in the conversation extends the
-    /// cache instead of re-reading the whole history. Only user messages —
-    /// OpenRouter's parts mapping for tool-role content is undocumented.
-    static func markLastUserMessageForAnthropicCache(_ messages: inout [[String: Any]]) {
-        guard var last = messages.last,
-              last["role"] as? String == "user",
-              let text = last["content"] as? String,
-              !text.isEmpty else {
-            return
-        }
-        last["content"] = [[
-            "type": "text",
-            "text": text,
-            "cache_control": ["type": "ephemeral"]
-        ] as [String: Any]]
-        messages[messages.count - 1] = last
-    }
-}
-
-/// Streaming implementation for OpenAI-compatible providers (real SSE)
-extension OpenAIProvider: StreamingLLMProvider {
-    func completeStreaming(
-        messages: [AgentMessage],
-        tools: [LLMToolDefinition]?,
-        model: String?,
-        onChunk: StreamingCallback
-    ) async throws -> LLMResponse {
-        guard !apiKey.isEmpty else { throw LLMProviderError.noAPIKey }
-
-        let resolvedModel = model ?? AgentProvider.openai.defaultModel
-        let url = URL(string: "\(baseURL)/chat/completions")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-
-        var openAIMessages: [[String: Any]] = []
-        for msg in messages {
-            var msgDict: [String: Any] = ["role": openAIRole(msg.role)]
-            if msg.role == .assistant, let calls = msg.toolCalls, !calls.isEmpty {
-                msgDict["content"] = msg.content.isEmpty ? NSNull() : msg.content
-                var toolCallDicts: [[String: Any]] = []
-                for call in calls {
-                    toolCallDicts.append([
-                        "id": call.id,
-                        "type": "function",
-                        "function": [
-                            "name": call.name,
-                            "arguments": call.argumentsJSON
-                        ] as [String: Any]
-                    ])
-                }
-                msgDict["tool_calls"] = toolCallDicts
-            } else if msg.role == .tool {
-                msgDict["tool_call_id"] = msg.toolCallId ?? ""
-                msgDict["content"] = msg.content
-            } else {
-                msgDict["content"] = msg.content
-            }
-            openAIMessages.append(msgDict)
-        }
-
-        let resolvedMaxTokens = maxTokens(for: resolvedModel)
-
-        var body: [String: Any] = [
-            "model": resolvedModel,
-            "messages": openAIMessages,
-            "max_tokens": resolvedMaxTokens,
-            "stream": true
-        ]
-
-        if let reasoning = reasoningPayload(for: resolvedModel) {
-            body["reasoning"] = reasoning
-        }
-
-        // Include tools in streaming — the SSE parser accumulates tool call deltas
-        if let tools = tools, !tools.isEmpty {
-            var toolDicts = tools.map { $0.toOpenAIDict() }
-            // Cache tool definitions — they're static across requests
-            if var lastTool = toolDicts.last {
-                lastTool["cache_control"] = ["type": "ephemeral"]
-                toolDicts[toolDicts.count - 1] = lastTool
-            }
-            body["tools"] = toolDicts
-        }
-
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        // Use URLSession bytes API for SSE streaming
-        let (bytes, response) = try await URLSession.shared.bytes(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw LLMProviderError.invalidResponse
-        }
-
-        if httpResponse.statusCode != 200 {
-            // Collect error body
-            var errorData = Data()
-            for try await byte in bytes {
-                errorData.append(byte)
-                if errorData.count > 4096 { break }
-            }
-            let errorText = String(data: errorData, encoding: .utf8) ?? "Unknown error"
-            throw LLMProviderError.apiError("OpenAI \(httpResponse.statusCode): \(errorText)")
-        }
-
-        var fullContent = ""
-        var toolCalls: [AgentToolCall] = []
-        var inputTokens = 0
-        var outputTokens = 0
-
-        // Accumulate partial tool calls by index
-        var partialToolCalls: [Int: (id: String, name: String, args: String)] = [:]
-
-        for try await line in bytes.lines {
-            guard line.hasPrefix("data: ") else { continue }
-            let payload = String(line.dropFirst(6))
-            if payload == "[DONE]" { break }
-
-            guard let data = payload.data(using: .utf8),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let choices = json["choices"] as? [[String: Any]],
-                  let delta = choices.first?["delta"] as? [String: Any] else {
-                continue
-            }
-
-            // Text content delta
-            if let content = delta["content"] as? String, !content.isEmpty {
-                fullContent += content
-                onChunk(content)
-            }
-
-            // Tool call deltas (accumulated across multiple SSE events)
-            if let tcDeltas = delta["tool_calls"] as? [[String: Any]] {
-                for tcDelta in tcDeltas {
-                    let index = tcDelta["index"] as? Int ?? 0
-                    if let id = tcDelta["id"] as? String {
-                        let funcDict = tcDelta["function"] as? [String: Any]
-                        let name = funcDict?["name"] as? String ?? ""
-                        partialToolCalls[index] = (id: id, name: name, args: "")
-                    }
-                    if let funcDict = tcDelta["function"] as? [String: Any],
-                       let argChunk = funcDict["arguments"] as? String {
-                        var partial = partialToolCalls[index] ?? (id: "", name: "", args: "")
-                        partial.args += argChunk
-                        partialToolCalls[index] = partial
-                    }
-                }
-            }
-
-            // Usage (some providers include it in the last chunk)
-            if let usage = json["usage"] as? [String: Any] {
-                inputTokens = usage["prompt_tokens"] as? Int ?? inputTokens
-                outputTokens = usage["completion_tokens"] as? Int ?? outputTokens
-
-                // Log cache metrics for monitoring
-                if let promptDetails = usage["prompt_tokens_details"] as? [String: Any] {
-                    let cached = promptDetails["cached_tokens"] as? Int ?? 0
-                    if cached > 0 {
-                        print("📦 [LLM Cache] Stream hit: \(cached) cached tokens out of \(inputTokens) total (\(inputTokens > 0 ? Int(Double(cached) / Double(inputTokens) * 100) : 0)%)")
-                    }
-                }
-            }
-        }
-
-        // Assemble accumulated tool calls
-        for index in partialToolCalls.keys.sorted() {
-            if let tc = partialToolCalls[index] {
-                toolCalls.append(AgentToolCall(id: tc.id, name: tc.name, argumentsJSON: tc.args.isEmpty ? "{}" : tc.args))
-            }
-        }
-
-        return LLMResponse(
-            content: fullContent.isEmpty ? nil : fullContent,
-            toolCalls: toolCalls,
-            inputTokens: inputTokens,
-            outputTokens: outputTokens
-        )
-    }
-}
-
-/// Streaming with system prompt for OpenAI-compatible providers
-extension OpenAIProvider {
-    func completeStreaming(
-        messages: [AgentMessage],
-        tools: [LLMToolDefinition]?,
-        model: String?,
-        tier: AgentModelTier?,
-        systemPrompt: SystemPrompt,
-        onChunk: StreamingCallback
-    ) async throws -> LLMResponse {
-        try await completeStreamingEvents(
-            messages: messages,
-            tools: tools,
-            model: model,
-            tier: tier,
-            systemPrompt: systemPrompt
-        ) { event in
-            if case .text(let delta) = event {
-                onChunk(delta)
-            }
-        }
-    }
-
-    /// Event-level SSE streaming. Unlike the legacy streaming path, this keeps the
-    /// structured `cache_control` system blocks for Anthropic models on OpenRouter,
-    /// so streaming no longer trades away the prompt cache.
-    func completeStreamingEvents(
-        messages: [AgentMessage],
-        tools: [LLMToolDefinition]?,
-        model: String?,
-        tier: AgentModelTier?,
-        systemPrompt: SystemPrompt?,
-        onEvent: LLMStreamEventCallback
-    ) async throws -> LLMResponse {
-        guard !apiKey.isEmpty else { throw LLMProviderError.noAPIKey }
-
-        let resolvedModel = tier?.modelId ?? model ?? AgentProvider.openai.defaultModel
-        let url = URL(string: "\(baseURL)/chat/completions")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-
-        var openAIMessages: [[String: Any]] = []
-
-        if let systemPrompt {
-            if resolvedModel.hasPrefix("anthropic/") {
-                var contentBlocks: [[String: Any]] = [
-                    [
-                        "type": "text",
-                        "text": systemPrompt.cached,
-                        "cache_control": ["type": "ephemeral"]
-                    ]
-                ]
-                if !systemPrompt.dynamic.isEmpty {
-                    contentBlocks.append(["type": "text", "text": systemPrompt.dynamic])
-                }
-                openAIMessages.append(["role": "system", "content": contentBlocks])
-            } else {
-                openAIMessages.append(["role": "system", "content": systemPrompt.combined])
-            }
-        }
-
-        for msg in messages {
-            if msg.role == .system, systemPrompt != nil { continue }
-            var msgDict: [String: Any] = ["role": openAIRole(msg.role)]
-            if msg.role == .assistant, let calls = msg.toolCalls, !calls.isEmpty {
-                msgDict["content"] = msg.content.isEmpty ? NSNull() : msg.content
-                var toolCallDicts: [[String: Any]] = []
-                for call in calls {
-                    toolCallDicts.append([
-                        "id": call.id,
-                        "type": "function",
-                        "function": [
-                            "name": call.name,
-                            "arguments": call.argumentsJSON
-                        ] as [String: Any]
-                    ])
-                }
-                msgDict["tool_calls"] = toolCallDicts
-            } else if msg.role == .tool {
-                msgDict["tool_call_id"] = msg.toolCallId ?? ""
-                msgDict["content"] = msg.content
-            } else {
-                msgDict["content"] = msg.content
-            }
-            openAIMessages.append(msgDict)
-        }
-
-        if resolvedModel.hasPrefix("anthropic/") {
-            Self.markLastUserMessageForAnthropicCache(&openAIMessages)
-        }
-
-        var body: [String: Any] = [
-            "model": resolvedModel,
-            "messages": openAIMessages,
-            "max_tokens": maxTokens(for: resolvedModel),
-            "stream": true,
-            // Ask OpenRouter to attach usage (incl. cache metrics) to the final chunk
-            "usage": ["include": true]
-        ]
-
-        if let reasoning = reasoningPayload(for: resolvedModel) {
-            body["reasoning"] = reasoning
-        }
-
-        if let tools, !tools.isEmpty {
-            var toolDicts = tools.map { $0.toOpenAIDict() }
-            if var lastTool = toolDicts.last {
-                lastTool["cache_control"] = ["type": "ephemeral"]
-                toolDicts[toolDicts.count - 1] = lastTool
-            }
-            body["tools"] = toolDicts
-        }
-
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (bytes, response) = try await URLSession.shared.bytes(for: request)
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw LLMProviderError.invalidResponse
-        }
-        if httpResponse.statusCode != 200 {
-            var errorData = Data()
-            for try await byte in bytes {
-                errorData.append(byte)
-                if errorData.count > 4096 { break }
-            }
-            let errorText = String(data: errorData, encoding: .utf8) ?? "Unknown error"
-            throw LLMProviderError.apiError("OpenAI \(httpResponse.statusCode): \(errorText)")
-        }
-
-        var fullContent = ""
-        var inputTokens = 0
-        var outputTokens = 0
-        var cacheRead = 0
-        var cacheWrite = 0
-        var partialToolCalls: [Int: (id: String, name: String, args: String)] = [:]
-
-        for try await line in bytes.lines {
-            guard line.hasPrefix("data: ") else { continue }
-            let payload = String(line.dropFirst(6))
-            if payload == "[DONE]" { break }
-
-            guard let data = payload.data(using: .utf8),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                continue
-            }
-
-            if let choices = json["choices"] as? [[String: Any]],
-               let delta = choices.first?["delta"] as? [String: Any] {
-                if let content = delta["content"] as? String, !content.isEmpty {
-                    fullContent += content
-                    onEvent(.text(content))
-                }
-
-                if let tcDeltas = delta["tool_calls"] as? [[String: Any]] {
-                    for tcDelta in tcDeltas {
-                        let index = tcDelta["index"] as? Int ?? 0
-                        if let id = tcDelta["id"] as? String {
-                            let funcDict = tcDelta["function"] as? [String: Any]
-                            let name = funcDict?["name"] as? String ?? ""
-                            partialToolCalls[index] = (id: id, name: name, args: "")
-                            onEvent(.toolCallBegan(index: index, id: id, name: name))
-                        }
-                        if let funcDict = tcDelta["function"] as? [String: Any],
-                           let argChunk = funcDict["arguments"] as? String, !argChunk.isEmpty {
-                            var partial = partialToolCalls[index] ?? (id: "", name: "", args: "")
-                            if partial.name.isEmpty,
-                               let name = funcDict["name"] as? String {
-                                partial.name = name
-                            }
-                            partial.args += argChunk
-                            partialToolCalls[index] = partial
-                            onEvent(.toolCallArgumentsDelta(
-                                index: index,
-                                name: partial.name,
-                                accumulatedJSON: partial.args
-                            ))
-                        }
-                    }
-                }
-            }
-
-            if let usage = json["usage"] as? [String: Any] {
-                inputTokens = usage["prompt_tokens"] as? Int ?? inputTokens
-                outputTokens = usage["completion_tokens"] as? Int ?? outputTokens
-                let cache = Self.cacheTokens(fromUsage: usage)
-                cacheRead = max(cacheRead, cache.read)
-                cacheWrite = max(cacheWrite, cache.write)
-            }
-        }
-
-        var toolCalls: [AgentToolCall] = []
-        for index in partialToolCalls.keys.sorted() {
-            if let tc = partialToolCalls[index] {
-                toolCalls.append(AgentToolCall(id: tc.id, name: tc.name, argumentsJSON: tc.args.isEmpty ? "{}" : tc.args))
-            }
-        }
-
-        let result = LLMResponse(
-            content: fullContent.isEmpty ? nil : fullContent,
-            toolCalls: toolCalls,
-            inputTokens: inputTokens,
-            outputTokens: outputTokens,
-            cacheReadInputTokens: cacheRead,
-            cacheCreationInputTokens: cacheWrite
-        )
-        LLMCacheTelemetry.shared.record(response: result, label: "openrouter/stream")
-        return result
-    }
-}
-
 /// Streaming support for FailoverLLMProvider — delegates to inner if it supports streaming
 extension FailoverLLMProvider: StreamingLLMProvider {
     func completeStreaming(
@@ -1982,11 +2252,12 @@ extension FailoverLLMProvider: StreamingLLMProvider {
         failoverOccurred = false
         lastUsedModel = model
 
-        let startIndex = chain.models.firstIndex { $0.modelId == model } ?? 0
+        let plan = Self.failoverPlan(chain: chain, requestedModel: model)
+        let startIndex = plan.startIndex
         var lastError: Error?
 
-        for chainIndex in startIndex..<chain.models.count {
-            let failoverModel = chain.models[chainIndex]
+        for chainIndex in startIndex..<plan.models.count {
+            let failoverModel = plan.models[chainIndex]
             if chainIndex > startIndex {
                 failoverOccurred = true
                 print("[Failover/Stream] Falling over to \(failoverModel.label)")
@@ -2042,11 +2313,12 @@ extension FailoverLLMProvider: StreamingLLMProvider {
         let resolvedModel = tier?.modelId ?? model
         lastUsedModel = resolvedModel
 
-        let startIndex = chain.models.firstIndex { $0.modelId == resolvedModel } ?? 0
+        let plan = Self.failoverPlan(chain: chain, requestedModel: resolvedModel)
+        let startIndex = plan.startIndex
         var lastError: Error?
 
-        for chainIndex in startIndex..<chain.models.count {
-            let failoverModel = chain.models[chainIndex]
+        for chainIndex in startIndex..<plan.models.count {
+            let failoverModel = plan.models[chainIndex]
             if chainIndex > startIndex {
                 failoverOccurred = true
                 print("[Failover/Stream] Falling over to \(failoverModel.label)")
@@ -2108,11 +2380,12 @@ extension FailoverLLMProvider: StreamingLLMProvider {
         let resolvedModel = tier?.modelId ?? model
         lastUsedModel = resolvedModel
 
-        let startIndex = chain.models.firstIndex { $0.modelId == resolvedModel } ?? 0
+        let plan = Self.failoverPlan(chain: chain, requestedModel: resolvedModel)
+        let startIndex = plan.startIndex
         var lastError: Error?
 
-        for chainIndex in startIndex..<chain.models.count {
-            let failoverModel = chain.models[chainIndex]
+        for chainIndex in startIndex..<plan.models.count {
+            let failoverModel = plan.models[chainIndex]
             if chainIndex > startIndex {
                 failoverOccurred = true
                 print("[Failover/StreamEvents] Falling over to \(failoverModel.label)")
@@ -2236,67 +2509,6 @@ protocol PrewarmingLLMProvider {
 }
 
 extension AnthropicProvider: PrewarmingLLMProvider {}
-
-extension OpenAIProvider: PrewarmingLLMProvider {
-    /// OpenRouter has no `max_tokens: 0` prefill mode, so warm with a 1-token
-    /// completion and `tool_choice: "none"` (tool_choice changes don't invalidate
-    /// the tools/system cache tiers — only the message tier).
-    func prewarm(
-        tools: [LLMToolDefinition]?,
-        model: String?,
-        systemPrompt: SystemPrompt
-    ) async throws {
-        guard !apiKey.isEmpty else { throw LLMProviderError.noAPIKey }
-
-        let resolvedModel = model ?? AgentProvider.openai.defaultModel
-        let url = URL(string: "\(baseURL)/chat/completions")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-
-        var openAIMessages: [[String: Any]] = []
-        if resolvedModel.hasPrefix("anthropic/") {
-            var contentBlocks: [[String: Any]] = [
-                [
-                    "type": "text",
-                    "text": systemPrompt.cached,
-                    "cache_control": ["type": "ephemeral"]
-                ]
-            ]
-            if !systemPrompt.dynamic.isEmpty {
-                contentBlocks.append(["type": "text", "text": systemPrompt.dynamic])
-            }
-            openAIMessages.append(["role": "system", "content": contentBlocks])
-        } else {
-            openAIMessages.append(["role": "system", "content": systemPrompt.combined])
-        }
-        openAIMessages.append(["role": "user", "content": "warmup"])
-
-        var body: [String: Any] = [
-            "model": resolvedModel,
-            "messages": openAIMessages,
-            "max_tokens": 1
-        ]
-
-        if let tools, !tools.isEmpty {
-            var toolDicts = tools.map { $0.toOpenAIDict() }
-            if var lastTool = toolDicts.last {
-                lastTool["cache_control"] = ["type": "ephemeral"]
-                toolDicts[toolDicts.count - 1] = lastTool
-            }
-            body["tools"] = toolDicts
-            body["tool_choice"] = "none"
-        }
-
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        let (data, response) = try await performRequest(request)
-        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-            let errorText = String(data: data, encoding: .utf8) ?? "Unknown error"
-            throw LLMProviderError.apiError("Prewarm failed: \(errorText)")
-        }
-    }
-}
 
 extension FailoverLLMProvider: PrewarmingLLMProvider {
     func prewarm(

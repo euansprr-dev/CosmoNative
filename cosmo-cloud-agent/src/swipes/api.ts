@@ -13,6 +13,8 @@ import { pendingHealth, processSwipe, refreshEngagement, swipeWorkerStats } from
 import { apifyRunsThisMonth } from './instagram';
 import { getProgress } from './progress';
 import { createAtom } from '../db/queries';
+import { providerCooldowns, textProviderChain, visionProviderChain } from './llm';
+import { INSIGHT_PROVIDER_CHAIN } from './analyze';
 
 export const swipesRouter = Router();
 
@@ -181,5 +183,8 @@ swipesRouter.get('/health', async (_req: Request, res: Response) => {
     workerEnabled: config.swipeWorkerEnabled,
     whisperConfigured: config.openaiApiKey.length > 0,
     videoUnderstandingTier: config.geminiApiKey ? 'gemini-direct' : 'openrouter',
+    visionProviders: visionProviderChain(),
+    insightProviders: textProviderChain(INSIGHT_PROVIDER_CHAIN),
+    providerCooldowns: providerCooldowns(),
   });
 });

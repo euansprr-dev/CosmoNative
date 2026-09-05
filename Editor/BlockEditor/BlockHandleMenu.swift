@@ -22,6 +22,7 @@ struct BlockTransformOption: Identifiable, Equatable {
         BlockTransformOption(kind: .quote, label: "Quote", icon: "text.quote"),
         BlockTransformOption(kind: .callout, label: "Callout", icon: "exclamationmark.bubble"),
         BlockTransformOption(kind: .toggle, label: "Toggle", icon: "chevron.forward.square"),
+        BlockTransformOption(kind: .section, label: "Section", icon: "square.text.square"),
         BlockTransformOption(kind: .code, label: "Code", icon: "curlybraces")
     ]
 }
@@ -37,6 +38,8 @@ struct BlockHandleMenuView: View {
     var onTransform: (RichBlockKind) -> Void
     var onDuplicate: () -> Void
     var onDelete: () -> Void
+    /// Sections only: hoist the children, drop the box. nil hides the row.
+    var onUngroup: (() -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -80,13 +83,19 @@ struct BlockHandleMenuView: View {
     private var actionRows: some View {
         let base = BlockTransformOption.all.count
         return VStack(alignment: .leading, spacing: 0) {
+            if let onUngroup, currentKind == .section {
+                menuRow(
+                    id: "ungroup", icon: "square.dashed", label: "Ungroup",
+                    trailing: .none, isDestructive: false, index: base
+                ) { onUngroup() }
+            }
             menuRow(
                 id: "duplicate", icon: "plus.square.on.square", label: "Duplicate",
-                trailing: .shortcut("⌘D"), isDestructive: false, index: base
+                trailing: .shortcut("⌘D"), isDestructive: false, index: base + 1
             ) { onDuplicate() }
             menuRow(
                 id: "delete", icon: "trash", label: "Delete",
-                trailing: .shortcut("⌫"), isDestructive: true, index: base + 1
+                trailing: .shortcut("⌫"), isDestructive: true, index: base + 2
             ) { onDelete() }
         }
     }

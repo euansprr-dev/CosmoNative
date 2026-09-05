@@ -537,7 +537,7 @@ enum DocumentElementContextFormatter {
             return (block.checked ?? false) ? "[x] " : "[ ] "
         case .callout:
             return "!! "
-        case .divider, .image, .element, .content, .research, .toggle, .code, .sketch:
+        case .divider, .image, .element, .content, .research, .toggle, .code, .sketch, .table, .section:
             return ""
         }
     }

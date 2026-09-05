@@ -1,0 +1,3 @@
+Hook	Why	Score
+Specificity	Names a tension	9
+One idea	Keeps it clean	8

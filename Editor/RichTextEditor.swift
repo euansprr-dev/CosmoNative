@@ -323,6 +323,8 @@ struct RichTextEditor: View {
     var onBoundaryCommand: ((EditorBoundaryCommand) -> Bool)? = nil
     var onSlashCommandSelected: ((SlashCommand, String) -> Bool)? = nil
     var splitsOnReturn: Bool = false
+    var tableCellMode: Bool = false
+    var tableContextMenu: (() -> NSMenu?)? = nil
     var rowBlockID: UUID? = nil
     var rowBlockKind: RichBlockKind? = nil
     var rowHeadingIsCollapsible: Bool = false
@@ -414,6 +416,8 @@ struct RichTextEditor: View {
         onBoundaryCommand: ((EditorBoundaryCommand) -> Bool)? = nil,
         onSlashCommandSelected: ((SlashCommand, String) -> Bool)? = nil,
         splitsOnReturn: Bool = false,
+        tableCellMode: Bool = false,
+        tableContextMenu: (() -> NSMenu?)? = nil,
         rowBlockID: UUID? = nil,
         rowBlockKind: RichBlockKind? = nil,
         rowHeadingIsCollapsible: Bool = false,
@@ -465,6 +469,8 @@ struct RichTextEditor: View {
         self.onBoundaryCommand = onBoundaryCommand
         self.onSlashCommandSelected = onSlashCommandSelected
         self.splitsOnReturn = splitsOnReturn
+        self.tableCellMode = tableCellMode
+        self.tableContextMenu = tableContextMenu
         self.rowBlockID = rowBlockID
         self.rowBlockKind = rowBlockKind
         self.rowHeadingIsCollapsible = rowHeadingIsCollapsible
@@ -573,6 +579,8 @@ struct RichTextEditor: View {
                 onStructuredDocumentChange: onStructuredDocumentChange,
                 onContentCommitted: onContentCommitted,
                 splitsOnReturn: splitsOnReturn,
+                tableCellMode: tableCellMode,
+                tableContextMenu: tableContextMenu,
                 caretRequest: caretRequest,
                 externalContentToken: externalContentToken,
                 dragSelectionController: dragSelectionController,
@@ -947,6 +955,9 @@ struct RichTextEditor: View {
                 try? elementStore.adopt(definition)
             }
         }
+        // The committed query rides with the command — dismiss clears it.
+        var command = command
+        command.invocationQuery = slashQuery
         dismissAllOverlays()
         postSlashCommand(command)
     }
@@ -1184,6 +1195,10 @@ struct SlashCommand: Identifiable {
     /// A ready-made element offered before the user has any of their own —
     /// selecting it creates the definition, then inserts it.
     var isStarterElement: Bool
+    /// The type-through query the user committed with, stamped at selection
+    /// time (RichTextEditor.handleSlashMenuSelection) so the block pipeline
+    /// can read it — "/3x4" sizes the table it inserts. Empty for browsing.
+    var invocationQuery: String = ""
 
     init(
         type: SlashCommandType,
@@ -1226,6 +1241,7 @@ enum SlashCommandType: Equatable {
     case bulletList, numberedList, checkbox
     case quote, divider
     case callout, toggle, codeBlock, sketch
+    case table, section
 
     var requiresTextKitMutationBeforeSemanticHandling: Bool {
         switch self {
@@ -1241,7 +1257,7 @@ enum SlashCommandType: Equatable {
     /// slash menu must not offer them.
     var requiresBlockEditor: Bool {
         switch self {
-        case .callout, .toggle, .codeBlock, .sketch:
+        case .callout, .toggle, .codeBlock, .sketch, .table, .section:
             return true
         default:
             return false
@@ -1272,6 +1288,8 @@ enum SlashCommandType: Equatable {
         case .toggle: return "toggle"
         case .codeBlock: return "code-block"
         case .sketch: return "sketch"
+        case .table: return "table"
+        case .section: return "section"
         }
     }
 }
@@ -1293,6 +1311,8 @@ enum SlashCommandCatalog {
         SlashCommand(type: .callout, title: "Callout", subtitle: "Highlight with an icon and tint", icon: "exclamationmark.bubble", shortcut: "!!", searchAliases: ["callout", "info", "note", "highlight", "aside"], section: .structure),
         SlashCommand(type: .codeBlock, title: "Code", subtitle: "Monospaced code block", icon: "curlybraces", shortcut: "```", searchAliases: ["code", "snippet", "mono", "codeblock"], section: .structure),
         SlashCommand(type: .divider, title: "Divider", subtitle: "Visual separation between sections", icon: "minus", shortcut: "---", section: .structure),
+        SlashCommand(type: .table, title: "Table", subtitle: "Rows and columns", icon: "tablecells", shortcut: nil, searchAliases: ["table", "grid", "matrix", "compare", "3x3", "2x2", "rows", "columns"], section: .structure),
+        SlashCommand(type: .section, title: "Section", subtitle: "Titled box for a group of blocks", icon: "square.text.square", shortcut: nil, searchAliases: ["section", "box", "group", "container", "part", "chapter"], section: .structure),
         SlashCommand(type: .content, title: "Content Block", subtitle: "Draft with the content workflow", icon: "doc.text", shortcut: nil, searchAliases: ["content", "draft", "post"], section: .structure),
         SlashCommand(type: .research, title: "Research Block", subtitle: "Collect sources and notes", icon: "magnifyingglass.circle", shortcut: nil, searchAliases: ["research", "source", "citation"], section: .structure),
         SlashCommand(type: .image, title: "Image", subtitle: "Insert an inline image", icon: "photo", shortcut: nil, section: .media),
@@ -1426,6 +1446,10 @@ enum SlashCommandCatalog {
 
     /// nil ⇒ no match (filtered out). Also serves as the sort rank.
     private static func matchRank(for command: SlashCommand, query: String) -> Int? {
+        // "/3x4" is a sized table request — the Table command wins outright.
+        if command.type == .table, SlashTableSizeQuery.parse(query) != nil {
+            return 0
+        }
         if command.title.compare(query, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame {
             return 0
         }

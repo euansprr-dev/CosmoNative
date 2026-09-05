@@ -21,11 +21,13 @@ enum BlockRhythmPolicy {
         case .heading2: return baseGap + (previousIsHeading ? 6 : 15)
         case .heading3: return baseGap + (previousIsHeading ? 4 : 10)
         case .divider: return baseGap + 6
+        // Boxed structure gets a divider's air on both sides.
+        case .table, .section: return baseGap + 6
         case .callout, .code: return baseGap + 4
         case .bulletList, .numberedList, .checklist:
             return previousKind == kind ? max(4, baseGap - 2) : baseGap
         default:
-            if previousKind == .divider { return baseGap + 6 }
+            if previousKind == .divider || previousKind == .table || previousKind == .section { return baseGap + 6 }
             // Air below a tinted card before plain text resumes.
             if previousKind == .callout || previousKind == .code { return baseGap + 4 }
             return baseGap
@@ -118,6 +120,10 @@ struct BlockListView: View {
     /// Cross-block drag selection: rows' text views route their selection
     /// drags here; frames come from the layout index (registered per row).
     @State private var ownedDragController = BlockDragSelectionController()
+    /// Cross-container drops: nested lists forward payloads they can't
+    /// resolve in their own sub-document to the root's whole-document mover.
+    @State private var ownedDropRouter = BlockDropRouter()
+    @Environment(\.blockDropRouter) private var inheritedDropRouter
     @State private var selectionKeyMonitor = BlockSelectionKeyMonitor()
     /// The list's frame in the hosting view's space, updated off the render
     /// path (see onGeometryChange) — read only by the outside-click monitor.
@@ -157,6 +163,11 @@ struct BlockListView: View {
                 controller = ownedDragController
             }
         }
+        .transformEnvironment(\.blockDropRouter) { router in
+            if providesNavigationOrder {
+                router = ownedDropRouter
+            }
+        }
         .overlay(alignment: .topLeading) {
             // Invalidation firewall: the child view reads the presenter's
             // sessions in ITS body, so a session write (every slash query
@@ -194,6 +205,7 @@ struct BlockListView: View {
             scheduleEnsureEditableDocument()
             syncNavigationOrderIfNeeded()
             configureDragSelection()
+            configureDropRouter()
         }
         .onChange(of: document.blocks.isEmpty) { _, isEmpty in
             if isEmpty {
@@ -419,9 +431,122 @@ struct BlockListView: View {
                 darkMode: darkMode,
                 onSketchChange: emitDocumentChange
             )
+        case .section:
+            sectionRow(for: block, at: path)
+        case .table:
+            tableBlockRow(for: block, at: path)
         default:
             textBlockRow(for: block, at: path, listOrdinal: listOrdinal)
         }
+    }
+
+    /// The Section box. Its TITLE is the block's own text row (semibold,
+    /// slash menu off, mentions on); its body is a nested list over the
+    /// children, sharing this list's focus coordinator.
+    private func sectionRow(for block: RichBlock, at path: BlockPath) -> some View {
+        SectionBlockView(
+            block: sectionBlockBinding(for: block.id, hint: path, fallback: block),
+            focusCoordinator: resolvedFocusCoordinator,
+            fontSize: fontSize,
+            fontDesign: fontDesign,
+            lineSpacingAdjustment: lineSpacingAdjustment,
+            blockGap: blockGap,
+            darkMode: darkMode,
+            overrideTextColor: overrideTextColor,
+            allowSlashCommands: allowSlashCommands,
+            allowMentions: allowMentions,
+            allowSelectionMenu: allowSelectionMenu,
+            allowImages: allowImages,
+            typewriterMode: typewriterMode,
+            editorTargetID: editorTargetID,
+            navigationTargetID: navigationTargetID,
+            onSelectionChanged: onSelectionChanged,
+            onStyleChange: { style in updateSectionStyle(style, blockID: block.id, hint: path) },
+            onExitBody: { insertParagraph(after: block.id, hint: path) },
+            onSectionChange: emitDocumentChange
+        ) {
+            textBlockRow(
+                for: block,
+                at: path,
+                placeholderOverride: "Section title",
+                slashCommandsEnabled: false,
+                fontWeight: .semibold
+            )
+        }
+    }
+
+    /// Binding for a section's body/style writes. Replaces WITHOUT moving
+    /// focus (the toggle-children contract): every keystroke in a child row
+    /// writes the section back through here, and a focusing `commit` would
+    /// yank the caret to the title row per keystroke. Body typing undo rides
+    /// the nested rows' own checkpoints; style changes register through
+    /// `updateSectionStyle`. ID-resolving — the captured path is a hint.
+    private func sectionBlockBinding(for blockID: UUID, hint: BlockPath, fallback: RichBlock) -> Binding<RichBlock> {
+        Binding(
+            get: {
+                guard let path = livePath(of: blockID, hint: hint) else { return fallback }
+                return (try? BlockOperations.currentBlock(in: document, at: path)) ?? fallback
+            },
+            set: { nextBlock in
+                guard let path = livePath(of: blockID, hint: hint),
+                      let result = try? BlockOperations.replaceBlock(in: document, at: path, with: nextBlock),
+                      result.document != document else { return }
+                document = result.document
+                emitDocumentChange()
+            }
+        )
+    }
+
+    /// Tone / appearance / icon / collapse — one undoable step, no focus move.
+    private func updateSectionStyle(_ style: RichSectionStyle, blockID: UUID, hint: BlockPath?) {
+        guard let path = livePath(of: blockID, hint: hint),
+              var block = try? BlockOperations.currentBlock(in: document, at: path),
+              block.kind == .section, block.section != style else { return }
+        block.section = style
+        guard let result = try? BlockOperations.replaceBlock(in: document, at: path, with: block) else { return }
+        commit(result, undoActionName: "Change Section Style", focusAfterCommit: false)
+    }
+
+    /// The table block. ONE live cell editor, static cells elsewhere; the
+    /// block-level contracts (selection, ↑/↓ exits, delete, convert) route
+    /// back through this list so a table behaves like any other block.
+    private func tableBlockRow(for block: RichBlock, at path: BlockPath) -> some View {
+        TableBlockView(
+            block: blockBinding(for: block.id, hint: path, fallback: block),
+            focusCoordinator: resolvedFocusCoordinator,
+            typography: TableCellTypography(
+                fontSize: fontSize,
+                fontDesign: fontDesign,
+                lineSpacingAdjustment: lineSpacingAdjustment,
+                darkMode: darkMode,
+                overrideTextColor: overrideTextColor
+            ),
+            allowMentions: allowMentions,
+            editorTargetID: editorTargetID,
+            onSelectBlock: { _ = handleEditorSelectionCommand(block.id, .selectCurrentBlock) },
+            onSelectAllBlocks: { handleEditorSelectionCommand(block.id, .selectAllBlocks) },
+            onExitUp: { _ = resolvedFocusCoordinator.focusPrevious() },
+            onExitDown: {
+                if !resolvedFocusCoordinator.focusNext() {
+                    insertParagraph(after: block.id, hint: path)
+                }
+            },
+            onDeleteTable: { deleteTableBlock(block.id) },
+            onReplaceWithBlocks: { replacement in replaceTableBlock(block.id, hint: path, with: replacement) },
+            onEdit: { updated, name in replaceBlock(of: block.id, hint: path, with: updated, undoActionName: name) }
+        )
+    }
+
+    private func deleteTableBlock(_ blockID: UUID) {
+        guard let result = BlockOperations.deleteBlocks(withIDs: [blockID], in: document) else { return }
+        commit(result, undoActionName: "Delete Table")
+    }
+
+    /// "Convert to text": the table becomes paragraphs in its place.
+    private func replaceTableBlock(_ blockID: UUID, hint: BlockPath?, with replacement: [RichBlock]) {
+        guard let path = livePath(of: blockID, hint: hint),
+              let result = try? BlockOperations.replaceBlocks(in: document, at: path, with: replacement) else { return }
+        commit(result, undoActionName: "Convert Table to Text")
     }
 
     private func toggleRow(for block: RichBlock, at path: BlockPath) -> some View {
@@ -521,7 +646,18 @@ struct BlockListView: View {
         return true
     }
 
-    private func textBlockRow(for block: RichBlock, at path: BlockPath, listOrdinal: Int = 0) -> some View {
+    /// The ONE construction site for text rows. `placeholderOverride`,
+    /// `slashCommandsEnabled`, and `fontWeight` exist for container title
+    /// rows (a section's title is semibold, always placeholdered, and never
+    /// opens the slash menu).
+    private func textBlockRow(
+        for block: RichBlock,
+        at path: BlockPath,
+        listOrdinal: Int = 0,
+        placeholderOverride: String? = nil,
+        slashCommandsEnabled: Bool? = nil,
+        fontWeight: NSFont.Weight = .regular
+    ) -> some View {
         BlockTextEditorRow(
             document: $document,
             path: path,
@@ -532,14 +668,15 @@ struct BlockListView: View {
             fontDesign: fontDesign,
             lineSpacingAdjustment: lineSpacingAdjustment,
             numberedListSeed: listOrdinal,
-            placeholder: BlockPlaceholderPolicy.shouldShowBodyPlaceholder(
+            baseFontWeight: fontWeight,
+            placeholder: placeholderOverride ?? (BlockPlaceholderPolicy.shouldShowBodyPlaceholder(
                 for: block,
                 at: path,
                 in: document
-            ) ? placeholder : "",
+            ) ? placeholder : ""),
             darkMode: darkMode,
             overrideTextColor: overrideTextColor,
-            allowSlashCommands: allowSlashCommands,
+            allowSlashCommands: slashCommandsEnabled ?? allowSlashCommands,
             allowMentions: allowMentions,
             allowSelectionMenu: allowSelectionMenu,
             allowImages: allowImages,
@@ -1011,13 +1148,23 @@ struct BlockListView: View {
 
     private func handleMenu(for block: RichBlock) -> BlockHandleMenuView {
         let targets = menuTargetIDs(for: block)
+        let kind = sharedKind(of: targets)
         return BlockHandleMenuView(
-            currentKind: sharedKind(of: targets),
+            currentKind: kind,
             selectionCount: targets.count,
             onTransform: { kind in transformBlocks(targets, to: kind) },
             onDuplicate: { duplicateSelectedBlocks(targets) },
-            onDelete: { deleteSelectedBlocks(targets) }
+            onDelete: { deleteSelectedBlocks(targets) },
+            onUngroup: kind == .section ? { ungroupSections(targets) } : nil
         )
+    }
+
+    /// Hoist the children, drop the box — the selection's sections in place.
+    private func ungroupSections(_ ids: Set<UUID>) {
+        guard let result = BlockOperations.ungroupSections(withIDs: ids, in: document) else { return }
+        resolvedSelectionCoordinator.clear()
+        deactivateSelectionKeyboard()
+        commit(result, undoActionName: "Ungroup Section", focusAfterCommit: false)
     }
 
     private func menuTargetIDs(for block: RichBlock) -> Set<UUID> {
@@ -1034,6 +1181,15 @@ struct BlockListView: View {
     }
 
     private func transformBlocks(_ ids: Set<UUID>, to kind: RichBlockKind) {
+        // "Turn N blocks into → Section" wraps them: first block = title,
+        // the rest = body. A single block simply becomes a titled section.
+        if kind == .section, ids.count > 1 {
+            guard let result = BlockOperations.wrapInSection(blockIDs: ids, in: document) else { return }
+            resolvedSelectionCoordinator.clear()
+            deactivateSelectionKeyboard()
+            commit(result, undoActionName: "Turn Into Section", focusAfterCommit: false)
+            return
+        }
         guard let result = BlockOperations.transformBlocks(withIDs: ids, in: document, to: kind) else { return }
         commit(result, undoActionName: "Turn Into", focusAfterCommit: false)
     }
@@ -1095,6 +1251,15 @@ struct BlockListView: View {
         replaceBlock(at: path, with: nextBlock)
     }
 
+    /// Same, with the action's own undo name (table edits: "Merge Cells",
+    /// "Sort Rows" …) and no focus move — the table owns its focus.
+    private func replaceBlock(of blockID: UUID, hint: BlockPath?, with nextBlock: RichBlock, undoActionName: String) {
+        guard let path = livePath(of: blockID, hint: hint),
+              let result = try? BlockOperations.replaceBlock(in: document, at: path, with: nextBlock),
+              result.document != document else { return }
+        commit(result, undoActionName: undoActionName, focusAfterCommit: false)
+    }
+
     private func emitDocumentChange() {
         onDocumentChange?(document, document.plainText)
     }
@@ -1114,14 +1279,35 @@ struct BlockListView: View {
     /// commit time — the drag payload's `sourcePath` and the drop row's
     /// captured path can both be stale by the time the drop lands.
     private func moveBlock(_ payload: BlockDragPayload, position: BlockDropPosition, targetBlockID: UUID) {
-        guard let sourcePath = livePath(of: payload.blockID, hint: payload.sourcePath),
-              let targetPath = livePath(of: targetBlockID, hint: nil) else { return }
+        guard let sourcePath = livePath(of: payload.blockID, hint: payload.sourcePath) else {
+            // The dragged block lives outside this list's sub-document (a
+            // drop INTO a section/element body from the page, or between
+            // two containers) — only the root can see both ends.
+            inheritedDropRouter?.moveAcrossContainers?(payload, position, targetBlockID)
+            return
+        }
+        guard let targetPath = livePath(of: targetBlockID, hint: nil) else { return }
         let target = BlockDropController.target(for: position, path: targetPath)
         guard BlockDropController.canMove(from: sourcePath, to: target),
               let result = try? BlockOperations.moveBlock(in: document, from: sourcePath, to: target) else {
             return
         }
         commit(result, undoActionName: "Move Block")
+    }
+
+    /// The root list owns the whole document, so it is the one mover that
+    /// can resolve BOTH ends of a cross-container drop by ID.
+    private func configureDropRouter() {
+        guard providesNavigationOrder else { return }
+        ownedDropRouter.moveAcrossContainers = { payload, position, targetBlockID in
+            guard let result = try? BlockOperations.moveBlock(
+                withID: payload.blockID,
+                relativeTo: targetBlockID,
+                position: position,
+                in: document
+            ) else { return }
+            commit(result, undoActionName: "Move Block")
+        }
     }
 
     private func commit(_ result: BlockOperationResult, undoActionName: String, focusAfterCommit: Bool = true) {
@@ -1305,6 +1491,16 @@ struct BlockStaticRowPlaceholder: View {
                     .fill(darkMode ? DS.focusImmersiveBorder : DS.documentBorder)
                     .frame(height: 0.5)
                     .padding(.vertical, 10)
+            } else if block.kind == .table || block.kind == .section {
+                // Structured blocks hydrate from the read-only renderer —
+                // the same grid/box the live views draw, minus chrome.
+                CosmoDocumentRenderer(
+                    document: RichDocument(blocks: [block]),
+                    fontSize: fontSize,
+                    darkMode: darkMode
+                )
+                .padding(.horizontal, block.kind == .table ? TableChromeLayer.apron : 0)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             } else if block.kind == .quote {
                 // GUARD-TWIN of the serializer's quote prefix (semibold on
                 // border tokens) — the bar must not change voice at hydration.
@@ -1370,8 +1566,10 @@ struct BlockStaticRowPlaceholder: View {
         case .checklist: return ((block.checked ?? false) ? "☑ " : "☐ ") + text
         case .quote: return "│ " + text
         case .toggle: return "▸ " + text
+        case .section: return "▣ " + text
         case .image: return "[Image]"
         case .sketch: return "[Sketch]"
+        case .table: return "[Table]"
         default: return text
         }
     }

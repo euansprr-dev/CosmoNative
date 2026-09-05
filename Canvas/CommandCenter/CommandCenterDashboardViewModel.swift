@@ -22,51 +22,31 @@ enum SeriesDeleteCopy {
     }
 }
 
-// MARK: - Stub Types (Plannerum directory deleted)
+// MARK: - Task writes
 
-/// Minimal stub for PlannerumViewModel (Plannerum deleted)
-/// Provides today-task loading, completion, and quick-add that the dashboard depends on.
+/// Persistence only. The dashboard's database observation owns freshness;
+/// keeping a second Today mirror here added a full-table read and another
+/// delayed refresh after each creation and completion.
 @MainActor
-class PlannerumViewModel: ObservableObject {
-    static let shared = PlannerumViewModel()
-
-    @Published var todayTasks: [TaskViewModel] = []
-
-    func loadTodayTasks() async {
-        do {
-            let atoms = try await AtomRepository.shared.fetchAll(type: .task)
-            let calendar = Calendar.current
-            todayTasks = atoms.compactMap { atom -> TaskViewModel? in
-                guard let vm = TaskViewModel.from(atom: atom) else { return nil }
-                if vm.isCompleted { return nil }
-                if vm.isRecurring && vm.recurrenceParentUUID == nil { return nil }
-                if vm.calendarStart.map({ calendar.isDateInToday($0) }) == true { return vm }
-                return nil
-            }
-        } catch {
-            print("[PlannerumViewModel stub] Failed to load today tasks: \(error)")
-        }
-    }
-
+private enum DashboardTaskPersistence {
     /// Returns false when the completion did NOT persist (missing atom, corrupt metadata,
     /// or write failure) so callers can reverse optimistic UI and withhold habit/XP credit.
     @discardableResult
-    func completeTask(taskId: String, completedAt: Date = Date()) async -> Bool {
+    static func completeTask(taskId: String, completedAt: Date = Date()) async -> Bool {
         do {
             var applied = false
             let result = try await AtomRepository.shared.update(uuid: taskId) { atom in
-                guard var metadata = taskMetadataForWrite(atom, context: "PlannerumViewModel.completeTask(\(taskId.prefix(8)))") else { return }
+                guard var metadata = taskMetadataForWrite(atom, context: "DashboardTaskPersistence.completeTask(\(taskId.prefix(8)))") else { return }
                 metadata.isCompleted = true
                 metadata.completedAt = ISO8601.string(from: completedAt)
-                guard let merged = atom.mergingTaskMetadata(metadata, context: "PlannerumViewModel.completeTask(\(taskId.prefix(8)))") else { return }
+                guard let merged = atom.mergingTaskMetadata(metadata, context: "DashboardTaskPersistence.completeTask(\(taskId.prefix(8)))") else { return }
                 atom = merged
                 applied = true
             }
             guard applied, result != nil else { return false }
-            await loadTodayTasks()
             return true
         } catch {
-            PersistenceHealth.note(.writeFailure, context: "PlannerumViewModel.completeTask(\(taskId.prefix(8)))", detail: error.localizedDescription)
+            PersistenceHealth.note(.writeFailure, context: "DashboardTaskPersistence.completeTask(\(taskId.prefix(8)))", detail: error.localizedDescription)
             return false
         }
     }
@@ -74,14 +54,13 @@ class PlannerumViewModel: ObservableObject {
     /// Returns the created atom, or nil when creation failed — callers must surface the
     /// failure instead of pretending the task exists.
     @discardableResult
-    func quickAddTask(title: String) async -> Atom? {
+    static func quickAddTask(title: String) async -> Atom? {
         do {
             let atom = Atom.new(type: .task, title: title)
             let created = try await AtomRepository.shared.create(atom)
-            await loadTodayTasks()
             return created
         } catch {
-            PersistenceHealth.note(.writeFailure, context: "PlannerumViewModel.quickAddTask", detail: error.localizedDescription)
+            PersistenceHealth.note(.writeFailure, context: "DashboardTaskPersistence.quickAddTask", detail: error.localizedDescription)
             return nil
         }
     }
@@ -588,9 +567,13 @@ final class CommandCenterDashboardViewModel {
 
     /// Which face Upcoming wears: the week schedule or the content calendar.
     /// Persisted so the planning surface reopens where you left it.
-    var upcomingLens: UpcomingLens = UpcomingLens(
-        rawValue: UserDefaults.standard.string(forKey: CommandCenterDashboardViewModel.upcomingLensDefaultsKey) ?? ""
-    ) ?? .schedule {
+    var upcomingLens: UpcomingLens = {
+        // A persisted `.content` (the retired lens) reopens as the schedule.
+        let stored = UpcomingLens(
+            rawValue: UserDefaults.standard.string(forKey: CommandCenterDashboardViewModel.upcomingLensDefaultsKey) ?? ""
+        ) ?? .schedule
+        return stored == .content ? .schedule : stored
+    }() {
         didSet {
             guard oldValue != upcomingLens else { return }
             UserDefaults.standard.set(upcomingLens.rawValue, forKey: Self.upcomingLensDefaultsKey)
@@ -716,7 +699,6 @@ final class CommandCenterDashboardViewModel {
 
     // MARK: - Dependencies
 
-    private let plannerum = PlannerumViewModel.shared
     let sessionEngine = DeepWorkSessionEngine.shared
     private let calendarService = CalendarSyncService.shared
     private let habitEngine = CommandCenterHabitEngine.shared
@@ -873,10 +855,14 @@ final class CommandCenterDashboardViewModel {
                 await self?.loadWeeklyReport()
                 await self?.loadHabitReport()
             case .queue:
-                // Retired page — old jump targets land on Upcoming's
-                // Content lens (the queue's successor).
-                self?.upcomingLens = .content
+                // Retired page — old jump targets land on the Pipeline's
+                // calendar (the queue's successor, twice removed).
                 self?.viewMode = .upcoming
+                NotificationCenter.default.post(
+                    name: CosmoNotification.Navigation.openPipeline,
+                    object: nil,
+                    userInfo: ["view": PipelineView.calendar.rawValue]
+                )
             case .project:
                 if let uuid = self?.selectedProjectUUID {
                     await self?.loadProjectTasks(projectUUID: uuid)
@@ -907,15 +893,6 @@ final class CommandCenterDashboardViewModel {
             .autoconnect()
             .sink { [weak self] now in
                 self?.handleCurrentDayChange(now: now)
-            }
-            .store(in: &cancellables)
-
-        // React to plannerum task changes (debounced to prevent cascading fetches)
-        plannerum.$todayTasks
-            .removeDuplicates()
-            .debounce(for: .milliseconds(500), scheduler: DispatchQueue.main)
-            .sink { [weak self] _ in
-                self?.scheduleRefresh(.tasks, delayNanoseconds: 150_000_000)
             }
             .store(in: &cancellables)
 
@@ -994,13 +971,22 @@ final class CommandCenterDashboardViewModel {
         // instead of the nine sequential awaits this used to be (the first
         // dashboard paint waited on the full chain).
         refreshCalendarEvents()
-        async let tasks: Void = refreshTasks()
+        async let tasks: Void = refreshInitialTaskCollections()
         async let schedule: Void = refreshScheduleBlocks()
         async let habitStates: Void = loadHabits()
         async let timeData: Void = loadTodayTimeData()
         async let sessions: Void = loadTodaySessions()
         async let weekly: Void = loadWeeklyReport()
         _ = await (tasks, schedule, habitStates, timeData, sessions, weekly)
+    }
+
+    private func refreshInitialTaskCollections() async {
+        guard let atoms = try? await loadTaskAtoms(nil) else { return }
+        await refreshTasks(from: atoms)
+        await loadAnytimeTasks(from: atoms)
+        await loadSomedayTasks(from: atoms)
+        hasLoadedAnytime = true
+        hasLoadedSomeday = true
     }
 
     private func scheduleRefresh(_ domain: DashboardRefreshDomain, delayNanoseconds: UInt64 = 0) {
@@ -1022,7 +1008,8 @@ final class CommandCenterDashboardViewModel {
     private func performRefresh(_ domain: DashboardRefreshDomain) async {
         switch domain {
         case .tasks:
-            await refreshTasks()
+            guard let atoms = try? await loadTaskAtoms(nil) else { return }
+            await refreshTasks(from: atoms)
             // The signature fires for EVERY task-table write, including sync
             // pulls from the iPhone. Today always repaints above; the list the
             // user is actually looking at must repaint too, or a phone-side
@@ -1030,14 +1017,13 @@ final class CommandCenterDashboardViewModel {
             // the next interaction.
             switch viewMode {
             case .upcoming:
-                await loadUpcomingTasks()
-                await loadCompletedTasks()
+                await loadUpcomingTasks(from: atoms)
             case .logbook:
-                await loadCompletedTasks()
+                break
             case .anytime:
-                await loadAnytimeTasks()
+                await loadAnytimeTasks(from: atoms)
             case .someday:
-                await loadSomedayTasks()
+                await loadSomedayTasks(from: atoms)
             case .project:
                 if let uuid = selectedProjectUUID {
                     await loadProjectTasks(projectUUID: uuid)
@@ -1121,18 +1107,34 @@ final class CommandCenterDashboardViewModel {
         }
     }
 
+    /// Explicit refresh-wave input, never a time-based cache: a committed
+    /// mutation always fetches a fresh snapshot, then shares it with its lists.
+    private func loadTaskAtoms(_ snapshot: [Atom]?) async throws -> [Atom] {
+        if let snapshot { return snapshot }
+        return try await AtomRepository.shared.fetchAll(type: .task)
+    }
+
     // MARK: - Task Loading (Today view — sectioned)
 
-    func refreshTasks() async {
+    @ObservationIgnored private var todayRefreshGeneration = 0
+    @ObservationIgnored private var upcomingRefreshGeneration = 0
+    @ObservationIgnored private var completedRefreshGeneration = 0
+
+    func refreshTasks(from taskSnapshot: [Atom]? = nil) async {
+        todayRefreshGeneration += 1
+        let generation = todayRefreshGeneration
+        let requestedDate = selectedDate
         var activeTasks: [TaskViewModel] = []
+        var loadedAtoms: [Atom]?
 
         do {
-            let atoms = try await AtomRepository.shared.fetchAll(type: .task)
+            let atoms = try await loadTaskAtoms(taskSnapshot)
+            loadedAtoms = atoms
             let calendar = Calendar.current
             let today = Date()
-            let selectedDay = calendar.startOfDay(for: selectedDate)
+            let selectedDay = calendar.startOfDay(for: requestedDate)
             let dayEnd = calendar.date(byAdding: .day, value: 1, to: selectedDay) ?? selectedDay
-            let isToday = calendar.isDateInToday(selectedDate)
+            let isToday = calendar.isDateInToday(requestedDate)
 
             // 1) Plain (non-recurring) incomplete tasks. Recurring templates AND any stale
             //    materialized instances are excluded here — recurrence is projected below.
@@ -1175,7 +1177,8 @@ final class CommandCenterDashboardViewModel {
 
         // Resolve schedule-block links for display against the shown day —
         // block title/color for the badge, occurrence range for "live now".
-        activeTasks = await ScheduleBlockEngine.resolveLinks(in: activeTasks, on: selectedDate)
+        activeTasks = await ScheduleBlockEngine.resolveLinks(in: activeTasks, on: requestedDate)
+        guard generation == todayRefreshGeneration, requestedDate == selectedDate else { return }
 
         let sections = CommandCenterTodayTaskSectioning.sectionTasks(
             activeTasks,
@@ -1189,7 +1192,7 @@ final class CommandCenterDashboardViewModel {
         assignIfChanged(\.unscheduledTasks, to: sections.unscheduled)
 
         // Load completed tasks independently (todayTasks excludes completed)
-        await loadCompletedTasks()
+        await loadCompletedTasks(from: loadedAtoms)
     }
 
     // MARK: - Upcoming Tasks
@@ -1306,13 +1309,15 @@ final class CommandCenterDashboardViewModel {
         NotificationCenter.default.post(name: .contentCalendarNeedsReload, object: nil)
     }
 
-    func loadUpcomingTasks() async {
+    func loadUpcomingTasks(from taskSnapshot: [Atom]? = nil) async {
+        upcomingRefreshGeneration += 1
+        let generation = upcomingRefreshGeneration
+        let visibleDates = upcomingVisibleDates
+        let interval = upcomingVisibleInterval
         do {
-            let atoms = try await AtomRepository.shared.fetchAll(type: .task)
+            let atoms = try await loadTaskAtoms(taskSnapshot)
             let calendar = Calendar.current
             let today = Date()
-            let visibleDates = upcomingVisibleDates
-            let interval = upcomingVisibleInterval
 
             // Recurring series → virtual occurrences across the whole visible window, every
             // status. Completed renders done, missed renders dim — Upcoming doubles as history.
@@ -1360,15 +1365,14 @@ final class CommandCenterDashboardViewModel {
                 dayGroups.append(UpcomingDayViewModel(date: dayStart, tasks: dayTasks))
             }
 
+            guard generation == upcomingRefreshGeneration, interval == upcomingVisibleInterval else { return }
             assignIfChanged(\.overdueTasks, to: [])
             assignIfChanged(\.upcomingDayGroups, to: dayGroups)
 
             // The week's blocks, day by day (recurring templates project) —
             // without them the board shows a plan with its scaffolding missing.
-            var blocksByDay: [Date: [ScheduleBlockEntry]] = [:]
-            for dayStart in visibleDates {
-                blocksByDay[dayStart] = await ScheduleBlockEngine.blocks(on: dayStart)
-            }
+            let blocksByDay = await ScheduleBlockEngine.blocks(on: visibleDates)
+            guard generation == upcomingRefreshGeneration, interval == upcomingVisibleInterval else { return }
             assignIfChanged(\.upcomingScheduleBlocksByDay, to: blocksByDay)
 
             await loadUpcomingCalendarEvents()
@@ -1667,6 +1671,16 @@ final class CommandCenterDashboardViewModel {
     }
 
     func setUpcomingLens(_ lens: UpcomingLens) {
+        // `.content` is retired (the calendar lives in the Pipeline); the
+        // case survives for persisted rawValues and old jump targets.
+        if lens == .content {
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.openPipeline,
+                object: nil,
+                userInfo: ["view": PipelineView.calendar.rawValue]
+            )
+            return
+        }
         guard upcomingLens != lens else { return }
         upcomingLens = lens
         // Re-anchor to today when switching faces — arriving on a stale
@@ -1749,9 +1763,12 @@ final class CommandCenterDashboardViewModel {
 
     // MARK: - Completed Tasks
 
-    func loadCompletedTasks() async {
+    func loadCompletedTasks(from taskSnapshot: [Atom]? = nil) async {
+        completedRefreshGeneration += 1
+        let generation = completedRefreshGeneration
         do {
-            let atoms = try await AtomRepository.shared.fetchAll(type: .task)
+            let atoms = try await loadTaskAtoms(taskSnapshot)
+            guard generation == completedRefreshGeneration else { return }
             let calendar = Calendar.current
             let todayStart = calendar.startOfDay(for: Date())
 
@@ -1815,9 +1832,9 @@ final class CommandCenterDashboardViewModel {
 
     // MARK: - Anytime Tasks
 
-    func loadAnytimeTasks() async {
+    func loadAnytimeTasks(from taskSnapshot: [Atom]? = nil) async {
         do {
-            let atoms = try await AtomRepository.shared.fetchAll(type: .task)
+            let atoms = try await loadTaskAtoms(taskSnapshot)
             let anytimeCandidates = atoms.compactMap { atom -> TaskViewModel? in
                 guard let vm = TaskViewModel.from(atom: atom) else { return nil }
                 guard !vm.isCompleted else { return nil }
@@ -1845,9 +1862,9 @@ final class CommandCenterDashboardViewModel {
 
     // MARK: - Someday Tasks
 
-    func loadSomedayTasks() async {
+    func loadSomedayTasks(from taskSnapshot: [Atom]? = nil) async {
         do {
-            let atoms = try await AtomRepository.shared.fetchAll(type: .task)
+            let atoms = try await loadTaskAtoms(taskSnapshot)
             let nextSomedayTasks = atoms.compactMap { atom -> TaskViewModel? in
                 guard let vm = TaskViewModel.from(atom: atom) else { return nil }
                 guard !vm.isCompleted else { return nil }
@@ -2573,7 +2590,7 @@ final class CommandCenterDashboardViewModel {
         // Legacy materialized instances (recurrenceParentUUID set) just complete as plain
         // atoms now — occurrences are projected by RecurringSeriesEngine, so spawning a
         // "next instance" atom would re-introduce the mixed-model duplicate mess.
-        let persisted = await plannerum.completeTask(taskId: uuid, completedAt: completionDate)
+        let persisted = await DashboardTaskPersistence.completeTask(taskId: uuid, completedAt: completionDate)
         guard persisted else { return false }
 
         // Habit credit only after the completion actually persisted.
@@ -2624,7 +2641,7 @@ final class CommandCenterDashboardViewModel {
     @discardableResult
     func smartAddTask(_ parsed: ParsedTaskInput) async -> Bool {
         let title = parsed.title.isEmpty ? "Untitled Task" : parsed.title
-        guard let createdAtom = await plannerum.quickAddTask(title: title) else {
+        guard let createdAtom = await DashboardTaskPersistence.quickAddTask(title: title) else {
             if newTaskTitle.isEmpty, !parsed.title.isEmpty {
                 newTaskTitle = parsed.title
             }
@@ -4013,18 +4030,19 @@ final class CommandCenterDashboardViewModel {
     }
 
     private func refreshTaskCollectionsAfterMutation() async {
+        guard let atoms = try? await loadTaskAtoms(nil) else { return }
         switch viewMode {
         case .today:
-            await refreshTasks()
+            await refreshTasks(from: atoms)
         case .upcoming:
-            await loadUpcomingTasks()
-            await loadCompletedTasks()
+            await loadUpcomingTasks(from: atoms)
+            await loadCompletedTasks(from: atoms)
         case .logbook:
-            await loadCompletedTasks()
+            await loadCompletedTasks(from: atoms)
         case .anytime:
-            await loadAnytimeTasks()
+            await loadAnytimeTasks(from: atoms)
         case .someday:
-            await loadSomedayTasks()
+            await loadSomedayTasks(from: atoms)
         case .habits, .reports, .queue:
             break
         case .project:

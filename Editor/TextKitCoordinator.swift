@@ -79,6 +79,14 @@ let suppressedLayerActions: [String: any CAAction] = [
 final class CosmoScrollView: NSScrollView {
     var forwardsScrollEvents: Bool = false
     var intrinsicHeight: CGFloat?
+    /// Fired after the view lands in (or leaves) a superview — the
+    /// coordinator observes the SwiftUI host's frame through this.
+    var onDidMoveToSuperview: (() -> Void)?
+
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        onDidMoveToSuperview?()
+    }
 
     override var intrinsicContentSize: NSSize {
         NSSize(
@@ -400,6 +408,27 @@ final class CosmoTextView: NSTextView {
     /// Block-row mode: this view holds exactly ONE block — hard newlines must
     /// never enter its storage. Multi-line pastes route through onBlockPaste.
     var blockRowMode: Bool = false
+    /// Table cell mode (see TextKitEditorRepresentable.tableCellMode).
+    var tableCellMode: Bool = false
+    /// Table cell mode: the coordinator routes tabular pastes to the table.
+    var onTableCellPaste: ((ClipboardImport) -> Bool)?
+    /// Table cell mode: the table's own actions ride the text view's
+    /// context menu (right-click on the live cell).
+    var tableContextMenu: (() -> NSMenu?)?
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard tableCellMode, let tableMenu = tableContextMenu?() else {
+            return standardMenu(for: event)
+        }
+        if let base = standardMenu(for: event) {
+            tableMenu.addItem(.separator())
+            for item in base.items {
+                base.removeItem(item)
+                tableMenu.addItem(item)
+            }
+        }
+        return tableMenu
+    }
     /// Multi-line paste in block-row mode — returns true when the host
     /// spliced the text into blocks structurally.
     var onBlockPaste: ((String) -> Bool)?
@@ -578,6 +607,23 @@ final class CosmoTextView: NSTextView {
            let blockData = NSPasteboard.general.data(forType: .cosmoBlocks),
            onStructuredBlockPaste?(blockData) == true {
             return
+        }
+
+        // Table cells: a tabular payload (cosmo blocks, an HTML table, TSV,
+        // a pipe table, several lines) fills cells right/down from this
+        // cell; anything else is inline text and falls through.
+        if tableCellMode {
+            var imported: ClipboardImport = .none
+            if let blockData = NSPasteboard.general.data(forType: .cosmoBlocks),
+               let blocks = try? JSONDecoder().decode([RichBlock].self, from: blockData),
+               !blocks.isEmpty {
+                imported = .blocks(blocks)
+            } else {
+                imported = ClipboardBlockImporter.read(NSPasteboard.general)
+            }
+            if onTableCellPaste?(imported) == true {
+                return
+            }
         }
 
         if selectedRange.length > 0,
@@ -908,7 +954,9 @@ final class CosmoTextView: NSTextView {
         return NSRange(location: charIndex, length: 1)
     }
 
-    override func menu(for event: NSEvent) -> NSMenu? {
+    /// The text view's own menu (image presets, AppKit defaults) — the table
+    /// cell override prepends its actions to this.
+    private func standardMenu(for event: NSEvent) -> NSMenu? {
         let localPoint = convert(event.locationInWindow, from: nil)
         if isEditable, onImageResizePreset != nil, let range = imageAttachmentHit(at: localPoint) {
             return imageResizeMenu(charIndex: range.location)
@@ -1062,6 +1110,34 @@ final class CosmoTextView: NSTextView {
            event.charactersIgnoringModifiers?.lowercased() == "l",
            shortcutDelegate?.textViewDidRequestBlockShortcut(.checklistToggle) == true {
             return true
+        }
+
+        // ⇧⌘H — highlight with the last-used tone (any editor).
+        if flags == [.command, .shift],
+           event.charactersIgnoringModifiers?.lowercased() == "h",
+           window?.firstResponder === self {
+            EditorCommandBus.shared.toggleLastHighlight()
+            return true
+        }
+
+        // Table cells: ⌘Return adds a row, ⌥⌘←/→ move the column,
+        // ⇧⌘M / ⇧⌘U merge / unmerge, ⌥⌘T opens the table options.
+        if tableCellMode {
+            if flags == .command, event.keyCode == 36,
+               shortcutDelegate?.textViewDidRequestBlockShortcut(.tableAddRowBelow) == true {
+                return true
+            }
+            if flags == [.command, .option] {
+                if event.keyCode == 123, shortcutDelegate?.textViewDidRequestBlockShortcut(.tableMoveColumn(-1)) == true { return true }
+                if event.keyCode == 124, shortcutDelegate?.textViewDidRequestBlockShortcut(.tableMoveColumn(1)) == true { return true }
+                if event.charactersIgnoringModifiers?.lowercased() == "t",
+                   shortcutDelegate?.textViewDidRequestBlockShortcut(.tableOptions) == true { return true }
+            }
+            if flags == [.command, .shift] {
+                let key = event.charactersIgnoringModifiers?.lowercased()
+                if key == "m", shortcutDelegate?.textViewDidRequestBlockShortcut(.tableMergeCells) == true { return true }
+                if key == "u", shortcutDelegate?.textViewDidRequestBlockShortcut(.tableUnmergeCells) == true { return true }
+            }
         }
 
         guard flags == .command,
@@ -1827,6 +1903,11 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     /// Block-row mode: Return splits the block (boundary command) instead of
     /// inserting a newline into this text view.
     var splitsOnReturn: Bool = false
+    /// Table cell mode: one rich paragraph in a table cell — Tab/Return/
+    /// arrows at the edges navigate cells through boundary commands.
+    var tableCellMode: Bool = false
+    /// Table cell mode: builds the cell's context-menu items on demand.
+    var tableContextMenu: (() -> NSMenu?)? = nil
     /// One-shot caret placement after an external structural edit (split/merge).
     var caretRequest: EditorCaretRequest? = nil
     /// Bumped by the host when editor content was rebuilt from the document by
@@ -1882,6 +1963,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         var isEditable: Bool
         var scrollsInternally: Bool
         var splitsOnReturn: Bool
+        var tableCellMode: Bool
         var rowBlockID: UUID?
         var rowBlockKind: RichBlockKind?
         var rowHeadingIsCollapsible: Bool
@@ -1917,6 +1999,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             isEditable: isEditable,
             scrollsInternally: scrollsInternally,
             splitsOnReturn: splitsOnReturn,
+            tableCellMode: tableCellMode,
             rowBlockID: rowBlockID,
             rowBlockKind: rowBlockKind,
             rowHeadingIsCollapsible: rowHeadingIsCollapsible,
@@ -2109,6 +2192,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 seedTypingAttributesForEmptyRow(in: textView)
             }
             context.coordinator.notifyContentHeightChange(for: textView)
+            // The invalidation above is deferred out of this update pass;
+            // the watchdog confirms the hosting frame actually followed it.
+            context.coordinator.scheduleIntrinsicHeightReconcile()
         }
         context.coordinator.applyCaretRequestIfNeeded(to: textView)
         context.coordinator.navigateIfNeeded(to: navigationTargetID, in: textView)
@@ -2136,8 +2222,13 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         }
         textView.onBecomeFirstResponder = { [weak coordinator = context.coordinator] in
             coordinator?.parent.onActivate?()
+            // Entering a row (a click into a suspicious gap) verifies it.
+            coordinator?.scheduleIntrinsicHeightReconcile()
         }
         textView.onResignFirstResponder = { [weak coordinator = context.coordinator] in
+            // Leaving a row is the moment a stale height would be left
+            // behind (Return/arrow/click away) — verify it on the way out.
+            coordinator?.scheduleIntrinsicHeightReconcile()
             // Flush the deferred attributedText sync BEFORE firing onDeactivate.
             // syncBindings() debounces attributedText writes by 50ms — if the user
             // blurs before the deferred sync fires, flushPendingSync reads a stale
@@ -2166,6 +2257,12 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         }
         textView.scrollsInternally = scrollsInternally
         textView.blockRowMode = splitsOnReturn
+        textView.tableCellMode = tableCellMode
+        textView.tableContextMenu = tableContextMenu
+        textView.onTableCellPaste = { [weak coordinator = context.coordinator] imported in
+            guard let coordinator, let textView = coordinator.textViewReference else { return false }
+            return coordinator.performTableCellPaste(imported, in: textView)
+        }
         textView.blockDragSelectionController = splitsOnReturn ? dragSelectionController : nil
         textView.rowBlockID = rowBlockID
         // Hit-test gates: these are in EditorConfigSignature, so a kind or
@@ -2475,6 +2572,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         private weak var lastConfiguredWindow: NSWindow?
         private var lastReportedHeight: CGFloat = 0
         private var lastObservedFrameWidth: CGFloat = 0
+        /// One pending row-height reconcile at a time (see
+        /// `scheduleIntrinsicHeightReconcile`).
+        private var rowHeightReconcileScheduled = false
         private var lastNavigationTargetID: UUID?
         private var selectionChangeWorkItem: DispatchWorkItem?
         /// Grace period after opening a menu — ignores auto-scroll dismiss
@@ -2537,6 +2637,12 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 name: .toggleEditorFormatting,
                 object: nil
             )
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleApplyInlineStyle(_:)),
+                name: .applyEditorInlineStyle,
+                object: nil
+            )
         }
 
         deinit {
@@ -2563,6 +2669,48 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 name: NSView.frameDidChangeNotification,
                 object: scrollView
             )
+            // SwiftUI re-seats a row by moving its platform-view HOST, not
+            // the scroll view (whose frame stays at the host's origin) — so
+            // the scroll view never hears about a re-seat. Observe the host
+            // once it exists; the watchdog uses re-seats as free
+            // verification points for rows below an edit.
+            if let cosmoScrollView = scrollView as? CosmoScrollView {
+                cosmoScrollView.onDidMoveToSuperview = { [weak self, weak cosmoScrollView] in
+                    guard let self, let cosmoScrollView else { return }
+                    self.observeHostFrame(of: cosmoScrollView)
+                }
+                observeHostFrame(of: cosmoScrollView)
+            }
+        }
+
+        private weak var observedHostView: NSView?
+
+        private func observeHostFrame(of scrollView: CosmoScrollView) {
+            guard let host = scrollView.superview, host !== observedHostView else { return }
+            if let previous = observedHostView {
+                NotificationCenter.default.removeObserver(
+                    self, name: NSView.frameDidChangeNotification, object: previous
+                )
+            }
+            observedHostView = host
+            host.postsFrameChangedNotifications = true
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleHostFrameChange(_:)),
+                name: NSView.frameDidChangeNotification,
+                object: host
+            )
+        }
+
+        /// The row was re-seated by SwiftUI (a row above changed height).
+        /// Two float compares: if the frame SwiftUI is showing disagrees
+        /// with the height we asked for, an invalidation was dropped — heal
+        /// it outside the layout pass.
+        @objc private func handleHostFrameChange(_ notification: Notification) {
+            guard let scrollView = observedScrollView as? CosmoScrollView,
+                  let intrinsicHeight = scrollView.intrinsicHeight,
+                  abs(scrollView.frame.height - intrinsicHeight) > 1.0 else { return }
+            scheduleIntrinsicHeightReconcile()
         }
 
         @objc private func handleFrameChange(_ notification: Notification) {
@@ -2570,6 +2718,16 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                   let scrollView = notification.object as? NSScrollView else { return }
             let newWidth = scrollView.frame.width
             guard abs(newWidth - lastObservedFrameWidth) > 0.5 else {
+                // Origin/height-only change (a row above grew, SwiftUI
+                // re-seated this one). Cheap watchdog: if the frame SwiftUI
+                // just gave us disagrees with the height we asked for, an
+                // invalidation was dropped somewhere — heal it outside the
+                // pass. Two float compares; no layout work on the hot path.
+                if let cosmoScrollView = scrollView as? CosmoScrollView,
+                   let intrinsicHeight = cosmoScrollView.intrinsicHeight,
+                   abs(cosmoScrollView.frame.height - intrinsicHeight) > 1.0 {
+                    scheduleIntrinsicHeightReconcile()
+                }
                 return
             }
             lastObservedFrameWidth = newWidth
@@ -2578,28 +2736,54 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             scheduleIntrinsicHeightReconcile()
         }
 
-        /// Frame-change notifications fire synchronously while SwiftUI is
-        /// mid-layout (SwiftUI positions the scroll view, AppKit posts the
-        /// notification), so the `invalidateIntrinsicContentSize` inside
-        /// `notifyContentHeightChange` above can land inside the very layout
-        /// pass that is consuming the OLD intrinsic height — and SwiftUI
-        /// sometimes drops that invalidation. When it does, the row keeps the
-        /// stale height: a freshly split row is measured at ~1pt width before
-        /// its first layout, so its seeded intrinsic is paragraph-tall and a
-        /// dropped invalidation leaves a huge gap under the block (the
-        /// intermittent "Return creates a big gap" bug). Re-measure after the
-        /// pass settles, and if the hosting frame never caught up to the
-        /// intrinsic height, re-issue the invalidation outside the pass.
-        private func scheduleIntrinsicHeightReconcile() {
+        /// The row-height watchdog. A block row's SwiftUI height is the
+        /// `CosmoScrollView.intrinsicHeight` cache, and several paths can
+        /// leave it stale or leave SwiftUI holding a frame that never caught
+        /// up to it — the user-facing "massive gap" under a block:
+        ///
+        /// - Frame-change notifications fire synchronously while SwiftUI is
+        ///   mid-layout, so the `invalidateIntrinsicContentSize` inside
+        ///   `notifyContentHeightChange` can land inside the very pass that
+        ///   is consuming the OLD height, and SwiftUI sometimes drops it (a
+        ///   freshly split row seeded paragraph-tall at ~1pt width, then
+        ///   never re-laid out).
+        /// - The per-keystroke immediate resize deliberately refuses shrinks
+        ///   (jitter guard) and hands genuine shrinks to the deferred settle —
+        ///   which bails without measuring while `awaitingExternalContent`
+        ///   is armed. A Return at the END of a row leaves that row's block
+        ///   value-identical, so no external content ever re-measures it.
+        /// - The markdown-alias and hard-newline branches of `textDidChange`
+        ///   return before the usual sync.
+        ///
+        /// Rather than patching each path, every content or geometry change
+        /// schedules ONE coalesced async re-measure at the row's real width;
+        /// it re-applies the intrinsic height and, if the hosting frame still
+        /// disagrees, re-issues the invalidation outside any layout pass.
+        /// Idempotent and tolerance-guarded, so a correct row costs one
+        /// `usedRect` read. Never remove; any future "row keeps a stale
+        /// height" report should first check that its path reaches this.
+        func scheduleIntrinsicHeightReconcile() {
             guard !parent.scrollsInternally else { return }
+            guard !rowHeightReconcileScheduled else { return }
+            rowHeightReconcileScheduled = true
             DispatchQueue.main.async { [weak self] in
-                guard let self, let textView = self.textViewReference else { return }
-                self.notifyContentHeightChange(for: textView)
-                guard let scrollView = textView.enclosingScrollView as? CosmoScrollView,
-                      let intrinsicHeight = scrollView.intrinsicHeight,
-                      abs(scrollView.frame.height - intrinsicHeight) > 1.0 else { return }
-                scrollView.invalidateIntrinsicContentSize()
+                guard let self else { return }
+                self.rowHeightReconcileScheduled = false
+                self.reconcileRowHeightNow()
             }
+        }
+
+        private func reconcileRowHeightNow() {
+            guard let textView = textViewReference,
+                  let scrollView = textView.enclosingScrollView as? CosmoScrollView else { return }
+            // Unmeasured mount (zero-width scroll view): the provisional
+            // one-line seed stands until the real width arrives and
+            // `handleFrameChange` reconciles at that width.
+            guard scrollView.contentSize.width > 2 else { return }
+            notifyContentHeightChange(for: textView)
+            guard let intrinsicHeight = scrollView.intrinsicHeight,
+                  abs(scrollView.frame.height - intrinsicHeight) > 1.0 else { return }
+            scrollView.invalidateIntrinsicContentSize()
         }
 
         // MARK: - Image resize overlay (content editor)
@@ -2905,12 +3089,27 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             if parent.splitsOnReturn, textView.string.containsHardNewline {
                 if awaitingExternalContent { return }
                 containHardNewlines(in: textView)
+                scheduleIntrinsicHeightReconcile()
                 return
+            }
+
+            // Table cells hold one paragraph: a hard newline that slipped in
+            // (dictation, IME) becomes a soft break in place.
+            if parent.tableCellMode, textView.string.containsHardNewline, let storage = textView.textStorage {
+                let selection = textView.selectedRange()
+                storage.beginEditing()
+                storage.mutableString.replaceOccurrences(of: "\r\n", with: "\u{2028}", range: NSRange(location: 0, length: storage.length))
+                storage.mutableString.replaceOccurrences(of: "\n", with: "\u{2028}", range: NSRange(location: 0, length: storage.length))
+                storage.mutableString.replaceOccurrences(of: "\r", with: "\u{2028}", range: NSRange(location: 0, length: storage.length))
+                storage.endEditing()
+                let safeLocation = min(selection.location, storage.length)
+                textView.setSelectedRange(NSRange(location: safeLocation, length: 0))
             }
 
             // Live markdown aliases: "# ", "- ", "> ", "[] ", "1. ", "---"
             // completed at the start of a paragraph row convert the block.
             if parent.splitsOnReturn, applyMarkdownAliasIfNeeded(in: textView) {
+                scheduleIntrinsicHeightReconcile()
                 return
             }
 
@@ -3403,6 +3602,10 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 }
                 dismissMenus()
                 return true
+            }
+
+            if parent.tableCellMode, let handled = handleTableCellCommand(commandSelector, in: textView) {
+                return handled
             }
 
             if commandSelector == #selector(NSResponder.moveUp(_:)),
@@ -4025,7 +4228,11 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         func applyCaretRequestIfNeeded(to textView: CosmoTextView) {
             guard let request = parent.caretRequest, request.token != lastAppliedCaretToken else { return }
             lastAppliedCaretToken = request.token
-            placeCaretWhenReady(in: textView, utf16OffsetFromEnd: request.utf16OffsetFromEnd)
+            placeCaretWhenReady(
+                in: textView,
+                utf16OffsetFromEnd: request.utf16OffsetFromEnd,
+                windowPoint: request.windowPoint
+            )
         }
 
         /// Focuses `textView` and places the caret after a structural edit
@@ -4037,6 +4244,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         private func placeCaretWhenReady(
             in textView: CosmoTextView,
             utf16OffsetFromEnd: Int,
+            windowPoint: CGPoint? = nil,
             attemptsRemaining: Int = 8
         ) {
             DispatchQueue.main.async { [weak textView] in
@@ -4046,13 +4254,19 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                         self.placeCaretWhenReady(
                             in: textView,
                             utf16OffsetFromEnd: utf16OffsetFromEnd,
+                            windowPoint: windowPoint,
                             attemptsRemaining: attemptsRemaining - 1
                         )
                     }
                     return
                 }
                 let length = (textView.string as NSString).length
-                let location = max(0, min(length, length - utf16OffsetFromEnd))
+                var location = max(0, min(length, length - utf16OffsetFromEnd))
+                if let windowPoint {
+                    // A click on a static cell: land where the click was.
+                    let local = textView.convert(windowPoint, from: nil)
+                    location = max(0, min(length, textView.characterIndexForInsertion(at: local)))
+                }
                 window.makeFirstResponder(textView)
                 textView.setSelectedRange(NSRange(location: location, length: 0))
                 textView.scrollRangeToVisible(NSRange(location: location, length: 0))
@@ -4354,7 +4568,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 toggleNumberedList(in: textView)
             case .checkbox:
                 toggleChecklist(in: textView)
-            case .callout, .toggle, .codeBlock, .sketch:
+            case .callout, .toggle, .codeBlock, .sketch, .table, .section:
                 // Block-editor-only kinds; the legacy continuous editor has no
                 // TextKit rendering for them, so the trigger is just consumed.
                 break
@@ -4418,6 +4632,246 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             }
 
             applyFormatting(type, to: textView)
+        }
+
+        // MARK: - Inline colour (ink / highlight / link)
+
+        @objc private func handleApplyInlineStyle(_ notification: Notification) {
+            guard let textView = activeTextView,
+                  textView.window?.firstResponder === textView else { return }
+            if let target = notification.userInfo?["targetEditorID"] as? String,
+               !target.isEmpty, target != parent.editorTargetID {
+                return
+            }
+            if let ink = notification.userInfo?["ink"] as? String {
+                applyInlineInk(ink.isEmpty ? nil : ink, to: textView)
+            } else if let highlight = notification.userInfo?["highlight"] as? String {
+                applyInlineHighlight(highlight.isEmpty ? nil : highlight, to: textView)
+            } else if let link = notification.userInfo?["link"] as? String {
+                applyInlineLink(link.isEmpty ? nil : link, to: textView)
+            }
+        }
+
+        private var defaultInkColor: NSColor {
+            parent.overrideTextColor ?? (parent.darkMode ? NSColor.white : NSColor(DS.documentText))
+        }
+
+        /// Ink: stamps the tone colour + `CosmoInkID` over the selection, or
+        /// into the typing attributes when the caret is collapsed. nil
+        /// restores the default ink.
+        private func applyInlineInk(_ toneID: String?, to textView: CosmoTextView) {
+            let range = textView.selectedRange()
+            let color: NSColor
+            if let toneID, RichInlineColor.isKnownTone(toneID) {
+                color = NSColor(NoteInkPalette.tone(toneID).ink(darkMode: parent.darkMode))
+            } else {
+                color = defaultInkColor
+            }
+            if range.length > 0, let storage = textView.textStorage {
+                storage.beginEditing()
+                storage.enumerateAttribute(RichDocumentAttributeKeys.entityType, in: range, options: []) { value, subrange, _ in
+                    guard value == nil else { return } // mentions keep their own colour
+                    storage.addAttribute(.foregroundColor, value: color, range: subrange)
+                    if let toneID {
+                        storage.addAttribute(RichDocumentAttributeKeys.inkID, value: toneID, range: subrange)
+                    } else {
+                        storage.removeAttribute(RichDocumentAttributeKeys.inkID, range: subrange)
+                    }
+                }
+                storage.endEditing()
+                TextKitEditorRepresentable.reclearChecklistGlyphs(in: storage, range: range)
+                textView.didChangeText()
+            } else {
+                var attributes = textView.typingAttributes
+                attributes[.foregroundColor] = color
+                if let toneID { attributes[RichDocumentAttributeKeys.inkID] = toneID } else { attributes[RichDocumentAttributeKeys.inkID] = nil }
+                textView.typingAttributes = attributes
+            }
+            syncBindings(from: textView)
+        }
+
+        /// Highlight: toggles — applying the tone the whole selection already
+        /// carries clears it (the ⇧⌘H rhythm).
+        private func applyInlineHighlight(_ toneID: String?, to textView: CosmoTextView) {
+            let range = textView.selectedRange()
+            var resolvedTone = toneID
+            if let toneID, range.length > 0, let storage = textView.textStorage {
+                var allCarryTone = true
+                storage.enumerateAttribute(RichDocumentAttributeKeys.highlightID, in: range, options: []) { value, _, stop in
+                    if (value as? String) != toneID { allCarryTone = false; stop.pointee = true }
+                }
+                if allCarryTone { resolvedTone = nil }
+            }
+            let wash: NSColor? = resolvedTone.flatMap { id in
+                guard RichInlineColor.isKnownTone(id) else { return nil }
+                return NSColor(NoteInkPalette.tone(id).ink(darkMode: parent.darkMode)).withAlphaComponent(parent.darkMode ? 0.28 : 0.18)
+            }
+            if range.length > 0, let storage = textView.textStorage {
+                storage.beginEditing()
+                if let wash, let resolvedTone {
+                    storage.addAttribute(.backgroundColor, value: wash, range: range)
+                    storage.addAttribute(RichDocumentAttributeKeys.highlightID, value: resolvedTone, range: range)
+                } else {
+                    storage.removeAttribute(.backgroundColor, range: range)
+                    storage.removeAttribute(RichDocumentAttributeKeys.highlightID, range: range)
+                }
+                storage.endEditing()
+                textView.didChangeText()
+            } else {
+                var attributes = textView.typingAttributes
+                if let wash, let resolvedTone {
+                    attributes[.backgroundColor] = wash
+                    attributes[RichDocumentAttributeKeys.highlightID] = resolvedTone
+                } else {
+                    attributes[.backgroundColor] = nil
+                    attributes[RichDocumentAttributeKeys.highlightID] = nil
+                }
+                textView.typingAttributes = attributes
+            }
+            syncBindings(from: textView)
+        }
+
+        private func applyInlineLink(_ href: String?, to textView: CosmoTextView) {
+            let range = textView.selectedRange()
+            guard range.length > 0, let storage = textView.textStorage else { return }
+            storage.beginEditing()
+            if let href, let url = URL(string: href) {
+                storage.addAttribute(.link, value: url, range: range)
+            } else {
+                storage.removeAttribute(.link, range: range)
+            }
+            storage.endEditing()
+            textView.didChangeText()
+            syncBindings(from: textView)
+        }
+
+        // MARK: - Table cell mode
+
+        /// Cell-mode command routing. Returns nil when the selector is not a
+        /// cell command so normal routing continues.
+        private func handleTableCellCommand(_ selector: Selector, in textView: NSTextView) -> Bool? {
+            func navigate(_ direction: RichTableDirection) -> Bool {
+                let textLength = (textView.string as NSString).length
+                let offsetFromEnd = max(0, textLength - textView.selectedRange().location)
+                return parent.onBoundaryCommand?(.tableNavigate(
+                    direction,
+                    caretUTF16OffsetFromEnd: offsetFromEnd,
+                    livePlainText: textView.string
+                )) == true
+            }
+            let selection = textView.selectedRange()
+            let textLength = (textView.string as NSString).length
+            let atStart = selection.length == 0 && selection.location == 0
+            let atEnd = selection.length == 0 && selection.location >= textLength
+
+            switch selector {
+            case #selector(NSResponder.insertTab(_:)):
+                _ = navigate(.nextCell)
+                return true
+            case #selector(NSResponder.insertBacktab(_:)):
+                _ = navigate(.previousCell)
+                return true
+            case #selector(NSResponder.insertNewline(_:)):
+                if parent.menusVisible?() == true { dismissMenus() }
+                let offsetFromEnd = max(0, textLength - selection.location)
+                _ = parent.onBoundaryCommand?(.tableReturn(
+                    caretUTF16OffsetFromEnd: offsetFromEnd,
+                    livePlainText: textView.string
+                ))
+                return true
+            case #selector(NSResponder.insertLineBreak(_:)):
+                textView.insertText("\u{2028}", replacementRange: textView.selectedRange())
+                syncBindings(from: textView)
+                return true
+            case #selector(NSResponder.moveUp(_:)):
+                return selectionIsOnFirstLine(in: textView) && navigate(.up) ? true : nil
+            case #selector(NSResponder.moveDown(_:)):
+                return selectionIsOnLastLine(in: textView) && navigate(.down) ? true : nil
+            case #selector(NSResponder.moveLeft(_:)), #selector(NSResponder.moveBackward(_:)):
+                return atStart && navigate(.left) ? true : nil
+            case #selector(NSResponder.moveRight(_:)), #selector(NSResponder.moveForward(_:)):
+                return atEnd && navigate(.right) ? true : nil
+            case #selector(NSResponder.moveToBeginningOfDocument(_:)):
+                return parent.onBoundaryCommand?(.tableEdge(.up)) == true ? true : nil
+            case #selector(NSResponder.moveToEndOfDocument(_:)):
+                return parent.onBoundaryCommand?(.tableEdge(.down)) == true ? true : nil
+            case #selector(NSResponder.moveToBeginningOfLine(_:)), #selector(NSResponder.moveToLeftEndOfLine(_:)):
+                return atStart && parent.onBoundaryCommand?(.tableEdge(.left)) == true ? true : nil
+            case #selector(NSResponder.moveToEndOfLine(_:)), #selector(NSResponder.moveToRightEndOfLine(_:)):
+                return atEnd && parent.onBoundaryCommand?(.tableEdge(.right)) == true ? true : nil
+            default:
+                return nil
+            }
+        }
+
+        /// A tabular paste in a cell → the table fills cells from here;
+        /// inline text → normal insertion. Returns true when consumed.
+        func performTableCellPaste(_ imported: ClipboardImport, in textView: CosmoTextView) -> Bool {
+            func grid(fromBlocks blocks: [RichBlock]) -> [[[RichInlineNode]]] {
+                if blocks.count == 1, blocks[0].kind == .table, let table = blocks[0].table {
+                    return grid(fromTable: table)
+                }
+                return blocks.map { block in
+                    if block.kind == .table, let table = block.table {
+                        return [[RichInlineNode.text(table.markdown)]]
+                    }
+                    return [block.inlines]
+                }
+            }
+            func grid(fromTable table: RichTable) -> [[[RichInlineNode]]] {
+                table.rows.map { row in row.cells.map { $0.isCovered ? [] : $0.inlines } }
+            }
+            func emit(_ grid: [[[RichInlineNode]]]) -> Bool {
+                guard !grid.isEmpty else { return false }
+                return parent.onBoundaryCommand?(.tablePasteGrid(grid: grid, livePlainText: textView.string)) == true
+            }
+            switch imported {
+            case .table(let table):
+                return emit(grid(fromTable: table))
+            case .blocks(let blocks):
+                if blocks.count == 1, blocks[0].kind != .table {
+                    // One block: inline paste of its text.
+                    return insertInlineNodes(blocks[0].inlines, in: textView)
+                }
+                return emit(grid(fromBlocks: blocks))
+            case .inline(let nodes):
+                return insertInlineNodes(nodes, in: textView)
+            case .text(let text):
+                if text.containsHardNewline {
+                    let rows = text.replacingOccurrences(of: "\r\n", with: "\n")
+                        .split(separator: "\n", omittingEmptySubsequences: false)
+                        .map { [[RichInlineNode.text(String($0))]] }
+                    return emit(rows)
+                }
+                return false
+            case .none:
+                return false
+            }
+        }
+
+        /// Inserts rich inline runs at the caret with the editor's own fonts
+        /// (marks and inks survive; hard newlines become soft breaks).
+        private func insertInlineNodes(_ nodes: [RichInlineNode], in textView: CosmoTextView) -> Bool {
+            guard !nodes.isEmpty else { return false }
+            var block = RichBlock(kind: .paragraph)
+            block.inlines = nodes.map { node in
+                var copy = node
+                copy.text = node.text?.replacingHardNewlinesWithLineSeparators()
+                return copy
+            }
+            let attributed = RichDocumentSerializer.attributedString(
+                from: RichDocument(blocks: [block]),
+                fontSize: parent.fontSize,
+                darkMode: parent.darkMode,
+                baseFontWeight: parent.baseFontWeight
+            )
+            let designed = EditorFontPolicy.applyingDesign(parent.fontDesign, to: attributed)
+            let range = textView.selectedRange()
+            guard textView.shouldChangeText(in: range, replacementString: designed.string) else { return false }
+            textView.textStorage?.replaceCharacters(in: range, with: designed)
+            textView.didChangeText()
+            textView.setSelectedRange(NSRange(location: range.location + designed.length, length: 0))
+            return true
         }
 
         // MARK: - Formatting
@@ -5355,6 +5809,10 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             awaitingExternalContent = true
             deferredSyncWorkItem?.cancel()
             isUpdatingFromTextView = false
+            // The cancelled settle owned any pending shrink — a value-
+            // identical rebuild (Return at the end of a row) never lands
+            // external content here, so reconcile the height regardless.
+            scheduleIntrinsicHeightReconcile()
         }
 
         func cancelAwaitingExternalContent() {
@@ -5385,6 +5843,12 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             let workItem = DispatchWorkItem { [weak self] in
                 guard let self else { return }
                 guard !self.awaitingExternalContent else {
+                    // The view is the stale side of a structural rebuild —
+                    // never write its content back, but its HEIGHT is still
+                    // ours to keep true (the immediate path refused any
+                    // shrink and this settle was the only thing left to
+                    // apply it).
+                    self.scheduleIntrinsicHeightReconcile()
                     DispatchQueue.main.async { self.isUpdatingFromTextView = false }
                     return
                 }
@@ -5850,6 +6314,10 @@ enum EditorStorageOverridePass {
                 storage.enumerateAttribute(.foregroundColor, in: entityRange, options: []) { current, runRange, _ in
                     let currentColor = current as? NSColor
                     guard currentColor != color else { return }
+                    // Deliberate inline ink keeps its tone under any theme.
+                    if storage.attribute(RichDocumentAttributeKeys.inkID, at: runRange.location, effectiveRange: nil) != nil {
+                        return
+                    }
                     // A line-leading checklist glyph is deliberately clear
                     // (the circle checkbox is painted over its rect) — leave
                     // it alone instead of re-inking + re-clearing each pass.

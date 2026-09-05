@@ -408,7 +408,9 @@ enum InstagramCarouselImageCache {
     }
 
     static func request(for url: URL) -> URLRequest {
-        var request = URLRequest(url: url)
+        // Steer off ISP cache nodes; cache keys stay on the URL the caller
+        // handed us (stableKey / imageSourceURL never see this rewrite).
+        var request = URLRequest(url: InstagramCDN.canonicalized(url))
         request.timeoutInterval = 45
         request.setValue(
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",

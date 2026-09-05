@@ -1,7 +1,8 @@
 // CosmoOS/Canvas/UnifiedSidebar/SidebarThinkspaceSection.swift
-// Thinkspace list with keyboard nav, creation flow, and per-thinkspace color
-// Migrated from ThinkspaceSidebar.swift patterns
-// March 2026 — Command Center navigation
+// Spaces list with keyboard nav, inline rename, and per-space identity marks.
+// Creation and settings live in the Space composer sheet (one grammar) —
+// this section only asks for it via `presentSpaceComposer`.
+// March 2026 — Command Center navigation · Sept 2026 — Spaces
 
 import SwiftUI
 import AppKit
@@ -36,14 +37,10 @@ struct SidebarThinkspaceSection: View {
     @EnvironmentObject var crossDragManager: CrossThinkspaceDragManager
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    // Creation
-    @State private var isCreatingThinkspace = false
-    @State private var creatingChildOfThinkspace: Thinkspace?
-    @State private var newName = ""
-    @FocusState private var isNameFieldFocused: Bool
-
     // Hover
     @State private var hoveredThinkspaceId: String?
+    @State private var isNewSpaceRowHovered = false
+    @State private var isEmptyStateHovered = false
     @State private var hoveredChildDocId: String?
     @State private var hoverPrewarmTask: Task<Void, Never>?
 
@@ -132,10 +129,6 @@ struct SidebarThinkspaceSection: View {
             if isCollapsed {
                 collapsedThinkspaceStack
             } else {
-                if isCreatingThinkspace && creatingChildOfThinkspace == nil {
-                    newThinkspaceRow
-                }
-
                 thinkspaceList
             }
         }
@@ -146,21 +139,21 @@ struct SidebarThinkspaceSection: View {
         .onKeyPress(.downArrow) { guard !isCollapsed else { return .ignored }; handleKeyDown(); return .handled }
         .onKeyPress(.upArrow) { guard !isCollapsed else { return .ignored }; handleKeyUp(); return .handled }
         .onKeyPress(.return) {
-            guard !isCollapsed, !isCreatingThinkspace else { return .ignored }
+            guard !isCollapsed else { return .ignored }
             handleKeyReturn(); return .handled
         }
         .onKeyPress(.escape) { guard !isCollapsed else { return .ignored }; handleKeyEscape(); return .handled }
         .onKeyPress(.rightArrow) { guard !isCollapsed else { return .ignored }; handleKeyRight(); return .handled }
         .onKeyPress(.leftArrow) { guard !isCollapsed else { return .ignored }; handleKeyLeft(); return .handled }
+        // Legacy creation request → the one composer grammar.
         .onReceive(NotificationCenter.default.publisher(for: .sidebarCreateThinkspace)) { _ in
-            withAnimation(actionAnimation) {
-                isCreatingThinkspace = true
-                creatingChildOfThinkspace = nil
-                newName = ""
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                isNameFieldFocused = true
-            }
+            SpaceComposerRequest.post(.create(parentId: nil))
+        }
+        // A space made inside another: open the parent so the new row shows.
+        .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.spaceComposerDidCreate)) { notification in
+            guard let created = SpaceComposerCreated(from: notification),
+                  let parentId = created.parentId else { return }
+            withAnimation(actionAnimation) { _ = expandedThinkspaces.insert(parentId) }
         }
         .onPreferenceChange(ThinkspaceRowFrameKey.self) { frames in
             crossDragManager.thinkspaceRowFrames = frames
@@ -178,11 +171,18 @@ struct SidebarThinkspaceSection: View {
                     .frame(width: UnifiedSidebarMetrics.railHitTarget, height: UnifiedSidebarMetrics.railHitTarget)
                     .frame(maxWidth: .infinity)
             } else {
-                Text("Thinkspaces")
+                Text("Spaces")
                     .font(.system(size: 10, weight: .semibold))
                     .textCase(.uppercase)
                     .foregroundStyle(DS.textMuted)
                     .padding(.horizontal, 8)
+                    .padding(.top, 4)
+
+                Text("\(filteredThinkspaces.count)")
+                    .font(DS.caption.monospacedDigit())
+                    .foregroundStyle(DS.textMuted)
+                    .contentTransition(.numericText())
+                    .animation(actionAnimation, value: filteredThinkspaces.count)
                     .padding(.top, 4)
 
                 Spacer()
@@ -191,52 +191,6 @@ struct SidebarThinkspaceSection: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    // MARK: - New Thinkspace Row
-
-    private var newThinkspaceRow: some View {
-        HStack(spacing: 8) {
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(DS.accent.opacity(0.14))
-                .frame(width: 28, height: 28)
-                .overlay(
-                    Image(systemName: "rectangle.3.group")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(DS.accent)
-                )
-
-            TextField("Name", text: $newName, prompt: Text("Name").foregroundStyle(DS.textMuted))
-                .textFieldStyle(.plain)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(DS.text)
-                .focused($isNameFieldFocused)
-                .onSubmit { createThinkspace() }
-
-            Button("Cancel", systemImage: "xmark") {
-                cancelCreateThinkspace()
-            }
-            .labelStyle(.iconOnly)
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(DS.textMuted)
-            .frame(width: 24, height: 24)
-            .background(DS.bg, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 10)
-        .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.rowRadius, style: .continuous)
-                .fill(DS.bg)
-                .overlay(
-                    RoundedRectangle(cornerRadius: UnifiedSidebarMetrics.rowRadius, style: .continuous)
-                        .stroke(DS.accent.opacity(0.22), lineWidth: 1)
-                )
-        )
-        .transition(.asymmetric(
-            insertion: .scale(scale: 0.95).combined(with: .opacity),
-            removal: .opacity
-        ))
     }
 
     // MARK: - Thinkspace List
@@ -251,6 +205,7 @@ struct SidebarThinkspaceSection: View {
                 ForEach(items) { thinkspace in
                     thinkspaceRow(thinkspace, level: 0)
                 }
+                newSpaceGhostRow
             }
         }
     }
@@ -399,16 +354,15 @@ struct SidebarThinkspaceSection: View {
                     .fill(isActive ? color.opacity(DS.palette.isDark ? 0.18 : 0.14) : Color.clear)
                     .frame(width: UnifiedSidebarMetrics.railHitTarget, height: UnifiedSidebarMetrics.railHitTarget)
                     .overlay(
-                        Image(systemName: isActive ? "folder.fill" : "folder")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(color.opacity(isActive ? 1.0 : 0.82))
+                        SpaceIdentityMark(thinkspace: thinkspace, size: 16)
+                            .opacity(isActive ? 1.0 : 0.82)
                     )
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .frame(maxWidth: .infinity)
-            .help(thinkspace.name)
-            .accessibilityLabel(thinkspace.name)
+            .help("\(thinkspace.identityLabel) · \((thinkspace.kind ?? .custom).title)")
+            .accessibilityLabel(thinkspace.identityLabel)
             .accessibilityAddTraits(isActive ? .isSelected : [])
         } else {
             HStack(spacing: 8) {
@@ -433,7 +387,7 @@ struct SidebarThinkspaceSection: View {
                 // target. `.onTapGesture` keeps selection working while letting
                 // drops through — same pattern as the dashboard task rows.
                 HStack(spacing: 8) {
-                    Text(thinkspace.name)
+                    Text(thinkspace.identityLabel)
                         .font(.system(size: textSize, weight: isActive ? .semibold : .medium))
                         .foregroundStyle(isActive ? DS.text : DS.textSecondary)
                         .lineLimit(1)
@@ -457,6 +411,7 @@ struct SidebarThinkspaceSection: View {
                 .frame(maxWidth: .infinity, minHeight: rowHeight, alignment: .leading)
                 .contentShape(Rectangle())
                 .onTapGesture { selectThinkspace(thinkspace) }
+                .help("\(thinkspace.identityLabel) · \((thinkspace.kind ?? .custom).title)")
             }
             .padding(.leading, rowLeadingPadding)
             .padding(.trailing, 8)
@@ -483,13 +438,10 @@ struct SidebarThinkspaceSection: View {
             .frame(width: avatarSize, height: avatarSize)
             .overlay {
                 ZStack {
-                    // Only read as "open" when it can actually hold children — a
-                    // space left in the expanded set after losing its last child
-                    // should still show a plain folder.
-                    Image(systemName: (isExpanded && isExpandable) ? "folder.fill" : "folder")
-                        .font(.system(size: level > 0 ? 12 : 13, weight: .semibold))
-                        .foregroundStyle(avatarForeground)
-                        .opacity(showsDisclosure ? 0 : 1)
+                    // The identity mark rests here; hover swaps in the disclosure
+                    // chevron when the row can actually hold children.
+                    SpaceIdentityMark(thinkspace: thinkspace, size: level > 0 ? 14 : 16)
+                        .opacity(showsDisclosure ? 0 : (isActive ? 1.0 : 0.86))
                         .scaleEffect(showsDisclosure ? 0.84 : 1)
 
                     Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
@@ -508,25 +460,21 @@ struct SidebarThinkspaceSection: View {
             }
             .accessibilityLabel(
                 isExpandable
-                    ? "\(isExpanded ? "Collapse" : "Expand") \(thinkspace.name)"
-                    : thinkspace.name
+                    ? "\(isExpanded ? "Collapse" : "Expand") \(thinkspace.identityLabel)"
+                    : thinkspace.identityLabel
             )
             .help(
                 isExpandable
                     ? (isExpanded ? "Collapse contents" : "Expand contents")
-                    : thinkspace.name
+                    : thinkspace.identityLabel
             )
     }
 
     // MARK: - Rename Row
 
     private func thinkspaceRenameRow(_ thinkspace: Thinkspace) -> some View {
-        let color = thinkspace.accentColor
-
-        return HStack(spacing: 8) {
-            Image(systemName: "folder")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(color)
+        HStack(spacing: 8) {
+            SpaceIdentityMark(thinkspace: thinkspace, size: 16)
                 .frame(width: 24, height: 24)
 
             TextField("Name", text: $renameText)
@@ -554,8 +502,7 @@ struct SidebarThinkspaceSection: View {
     @ViewBuilder
     private func childDocsSection(for thinkspace: Thinkspace, level: Int) -> some View {
         let childThinkspaces = manager.childThinkspaces(of: thinkspace.id)
-        let isCreatingChild = creatingChildOfThinkspace?.id == thinkspace.id
-        let hasChildBranch = isCreatingChild || !childThinkspaces.isEmpty
+        let hasChildBranch = !childThinkspaces.isEmpty
 
         // Only draw the branch (connector line + padding) when there's actually
         // a child to show. Otherwise an expanded-but-empty Thinkspace — e.g.
@@ -583,10 +530,6 @@ struct SidebarThinkspaceSection: View {
 
     @ViewBuilder
     private func childThinkspaceRows(_ childThinkspaces: [Thinkspace], parent: Thinkspace, level: Int) -> some View {
-        if creatingChildOfThinkspace?.id == parent.id {
-            childThinkspaceCreationRow(parent: parent, level: level + 1)
-        }
-
         ForEach(childThinkspaces) { childThinkspace in
             AnyView(thinkspaceRow(childThinkspace, level: level + 1))
         }
@@ -658,7 +601,7 @@ struct SidebarThinkspaceSection: View {
                     .foregroundStyle(DS.textMuted)
                     .frame(width: 14)
 
-                Text("\(thinkspace.name) Items")
+                Text("\(thinkspace.identityLabel) Items")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(DS.textSecondary)
                     .lineLimit(1)
@@ -675,54 +618,7 @@ struct SidebarThinkspaceSection: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(isExpanded ? "Collapse" : "Expand") canvas items in \(thinkspace.name)")
-    }
-
-    private func childThinkspaceCreationRow(parent: Thinkspace, level: Int) -> some View {
-        HStack(spacing: 8) {
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(DS.accent.opacity(0.14))
-                .frame(width: 22, height: 22)
-                .overlay(
-                    Image(systemName: "rectangle.stack.badge.plus")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(DS.accent)
-                )
-
-            TextField("Child thinkspace name", text: $newName, prompt: Text("Name").foregroundStyle(DS.textMuted))
-                .textFieldStyle(.plain)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(DS.text)
-                .focused($isNameFieldFocused)
-                .onSubmit { createThinkspace() }
-                .onExitCommand { cancelCreateThinkspace() }
-
-            Button("Cancel", systemImage: "xmark") {
-                cancelCreateThinkspace()
-            }
-            .labelStyle(.iconOnly)
-            .font(.system(size: 10, weight: .medium))
-            .foregroundStyle(DS.textMuted)
-            .frame(width: 22, height: 22)
-            .background(DS.bg, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-            .buttonStyle(.plain)
-        }
-        .padding(.leading, 8 + CGFloat(max(level - 1, 0)) * 18)
-        .padding(.trailing, 8)
-        .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(DS.bg)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .stroke(DS.accent.opacity(0.22), lineWidth: 1)
-                )
-        )
-        .transition(.asymmetric(
-            insertion: .scale(scale: 0.96).combined(with: .opacity),
-            removal: .opacity
-        ))
-        .accessibilityLabel("Create child Thinkspace under \(parent.name)")
+        .accessibilityLabel("\(isExpanded ? "Collapse" : "Expand") canvas items in \(thinkspace.identityLabel)")
     }
 
     private func inquiryBadge(_ summary: ThinkspaceInquirySidebarSummary) -> some View {
@@ -904,9 +800,15 @@ struct SidebarThinkspaceSection: View {
         }
 
         Button {
-            startCreatingChildThinkspace(parent: thinkspace)
+            SpaceComposerRequest.post(.edit(thinkspaceId: thinkspace.id))
         } label: {
-            Label("New Child Thinkspace", systemImage: "rectangle.stack.badge.plus")
+            Label("Space settings…", systemImage: "slider.horizontal.3")
+        }
+
+        Button {
+            SpaceComposerRequest.post(.create(parentId: thinkspace.id))
+        } label: {
+            Label("New Child Space", systemImage: "rectangle.stack.badge.plus")
         }
 
         if thinkspace.parentThinkspaceId != nil {
@@ -948,35 +850,78 @@ struct SidebarThinkspaceSection: View {
 
     // MARK: - Empty State
 
+    /// A teaching row in the row grammar: the first space is one click away.
     private var thinkspaceEmptyState: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "rectangle.3.group")
-                .font(.system(size: 18))
-                .foregroundStyle(DS.textMuted)
+        Button {
+            SpaceComposerRequest.post(.create(parentId: nil))
+        } label: {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "plus.circle")
+                    .font(DS.callout.weight(.medium))
+                    .foregroundStyle(DS.accent)
+                    .frame(width: 24, height: 24)
 
-            Text("No thinkspaces yet")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(DS.textSecondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Create your first space")
+                        .font(DS.callout.weight(.semibold))
+                        .foregroundStyle(DS.text)
+                    Text("A canvas, a library, or a topic's deep dive — the kind decides.")
+                        .font(DS.footnote)
+                        .foregroundStyle(DS.textMuted)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
-            Text("Create one to start organizing the canvas.")
-                .font(.system(size: 11))
-                .foregroundStyle(DS.textMuted)
-                .multilineTextAlignment(.center)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .unifiedSidebarRowChrome(isActive: false, isHovered: isEmptyStateHovered)
+            .contentShape(Rectangle())
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 18)
+        .buttonStyle(.plain)
+        .onHover { isEmptyStateHovered = $0 }
+        .animation(hoverAnimation, value: isEmptyStateHovered)
+        .help("New space")
+        .accessibilityLabel("Create your first space")
+    }
+
+    // MARK: - New Space Row
+
+    /// The ghost row that closes the list — the same row chrome, muted until
+    /// hovered, one click to the composer.
+    private var newSpaceGhostRow: some View {
+        Button {
+            SpaceComposerRequest.post(.create(parentId: nil))
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "plus.circle")
+                    .font(DS.callout.weight(.medium))
+                    .foregroundStyle(DS.textMuted)
+                    .frame(width: 24, height: 24)
+
+                Text("New space…")
+                    .font(DS.callout.weight(.medium))
+                    .foregroundStyle(isNewSpaceRowHovered ? DS.textSecondary : DS.textMuted)
+
+                Spacer()
+            }
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity, minHeight: UnifiedSidebarMetrics.thinkspaceRowHeight, alignment: .leading)
+            .unifiedSidebarRowChrome(isActive: false, isHovered: isNewSpaceRowHovered)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isNewSpaceRowHovered = $0 }
+        .animation(hoverAnimation, value: isNewSpaceRowHovered)
+        .help("New space")
+        .accessibilityLabel("New space")
     }
 
     private var createThinkspaceButton: some View {
-        Button("New thinkspace", systemImage: "plus") {
-            withAnimation(actionAnimation) {
-                isCreatingThinkspace = true
-                creatingChildOfThinkspace = nil
-                newName = ""
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                isNameFieldFocused = true
-            }
+        Button("New space", systemImage: "plus") {
+            SpaceComposerRequest.post(.create(parentId: nil))
         }
         .labelStyle(.iconOnly)
         .font(.system(size: 12, weight: .semibold))
@@ -988,7 +933,7 @@ struct SidebarThinkspaceSection: View {
                 .stroke(DS.accent.opacity(0.12), lineWidth: 1)
         )
         .buttonStyle(.plain)
-        .help("New ThinkSpace")
+        .help("New space")
     }
 
     private func thinkspaceRowFill(color: Color, isActive: Bool, isHovered: Bool, isDropTarget: Bool) -> Color {
@@ -1042,60 +987,6 @@ struct SidebarThinkspaceSection: View {
             } else {
                 expandedThinkspaces.insert(thinkspace.id)
             }
-        }
-    }
-
-    private func createThinkspace() {
-        let trimmedName = newName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedName.isEmpty else {
-            withAnimation(actionAnimation) {
-                isCreatingThinkspace = false
-                creatingChildOfThinkspace = nil
-            }
-            return
-        }
-        Task {
-            let createdThinkspace: Thinkspace?
-            if let parent = creatingChildOfThinkspace {
-                createdThinkspace = await manager.createSubThinkspace(name: trimmedName, parent: parent)
-            } else {
-                createdThinkspace = await manager.createThinkspace(name: trimmedName)
-            }
-
-            if let thinkspace = createdThinkspace {
-                await manager.switchTo(thinkspace)
-                withAnimation(actionAnimation) {
-                    currentDestination = .thinkspace(id: thinkspace.id)
-                    if let parent = creatingChildOfThinkspace {
-                        expandedThinkspaces.insert(parent.id)
-                    }
-                }
-                onNavigate()
-            }
-            withAnimation(actionAnimation) {
-                isCreatingThinkspace = false
-                creatingChildOfThinkspace = nil
-            }
-        }
-    }
-
-    private func startCreatingChildThinkspace(parent: Thinkspace) {
-        withAnimation(actionAnimation) {
-            creatingChildOfThinkspace = parent
-            isCreatingThinkspace = true
-            newName = ""
-            expandedThinkspaces.insert(parent.id)
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            isNameFieldFocused = true
-        }
-    }
-
-    private func cancelCreateThinkspace() {
-        withAnimation(actionAnimation) {
-            isCreatingThinkspace = false
-            creatingChildOfThinkspace = nil
-            newName = ""
         }
     }
 
@@ -1158,10 +1049,6 @@ struct SidebarThinkspaceSection: View {
     private func handleKeyEscape() {
         if renamingThinkspaceId != nil {
             cancelRename()
-        } else if isCreatingThinkspace {
-            withAnimation(actionAnimation) {
-                isCreatingThinkspace = false
-            }
         }
     }
 
@@ -1200,8 +1087,7 @@ struct SidebarThinkspaceSection: View {
 
     private func thinkspaceIsExpandable(_ thinkspace: Thinkspace) -> Bool {
         thinkspace.hasChildren ||
-            !manager.childThinkspaces(of: thinkspace.id).isEmpty ||
-            creatingChildOfThinkspace?.id == thinkspace.id
+            !manager.childThinkspaces(of: thinkspace.id).isEmpty
     }
 
     private func appendNavigationItems(

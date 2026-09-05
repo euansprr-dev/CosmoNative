@@ -58,23 +58,6 @@ final class SwipeLibraryFilteringTests: XCTestCase {
         )
     }
 
-    func testShelvesAreDeterministicAndLimited() {
-        let items = (0..<8).map { index in
-            makeItem(
-                title: "Swipe \(index)",
-                hookScore: Double(10 - index),
-                createdAt: "2026-05-\(String(format: "%02d", index + 1))T00:00:00Z"
-            )
-        }
-
-        let shelves = SwipeLibraryFiltering.shelves(from: items, limit: 4)
-
-        XCTAssertEqual(shelves.first?.id, .recentlyAdded)
-        XCTAssertEqual(shelves.first?.items.count, 4)
-        XCTAssertEqual(shelves.first?.items.first?.title, "Swipe 7")
-        XCTAssertEqual(shelves.map(\.id), [.recentlyAdded, .highPerforming, .hooksToTry])
-    }
-
     func testVisibleItemsIdentityChangesOnlyWhenVisibleIDsChange() {
         let first = makeItem(atomUUID: "a", title: "A")
         let second = makeItem(atomUUID: "b", title: "B")

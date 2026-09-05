@@ -222,15 +222,28 @@ final class InquiryRepository {
 
     // MARK: - Linked atoms (Topic Inbox / Questions / Sources / Lexicon / Connections / Sessions)
 
+    /// Scope on the reader before decoding bodies/metadata. Opening a space
+    /// should only hydrate that space's research, even in a large library.
+    private func fetchChildren(type: AtomType, deepDiveUUID: String) async throws -> [Atom] {
+        try await CosmoDatabase.shared.asyncRead { db in
+            try Atom.filter(Column("type") == type.rawValue)
+                .filter(Column("is_deleted") == false)
+                .filter(sql: "CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.parentDeepDiveUUID') END = ?",
+                        arguments: [deepDiveUUID])
+                .order(Column("updated_at").desc)
+                .fetchAll(db)
+        }
+    }
+
     /// All Question atoms whose metadata.parentDeepDiveUUID matches.
     func fetchQuestions(forDeepDive uuid: String) async throws -> [Atom] {
-        let list = try await atoms.fetchAll(type: .question)
+        let list = try await fetchChildren(type: .question, deepDiveUUID: uuid)
         return list.filter { $0.questionMetadata?.parentDeepDiveUUID == uuid }
     }
 
     /// Lexicon entries scoped to a Deep Dive.
     func fetchLexicon(forDeepDive uuid: String) async throws -> [Atom] {
-        let list = try await atoms.fetchAll(type: .lexiconEntry)
+        let list = try await fetchChildren(type: .lexiconEntry, deepDiveUUID: uuid)
         return list.filter { $0.lexiconMetadata?.parentDeepDiveUUID == uuid }
     }
 
@@ -238,7 +251,7 @@ final class InquiryRepository {
     /// Metadata is decoded once per atom — the accessor parses JSON on every
     /// call, so filtering/sorting through it decoded per comparison.
     func fetchSessions(forDeepDive uuid: String) async throws -> [Atom] {
-        let list = try await atoms.fetchAll(type: .inquirySession)
+        let list = try await fetchChildren(type: .inquirySession, deepDiveUUID: uuid)
         return list
             .compactMap { atom -> (atom: Atom, lastActiveAt: String)? in
                 guard let meta = atom.inquirySessionMetadata,
@@ -251,7 +264,7 @@ final class InquiryRepository {
 
     /// Extracts captured during sessions of a Deep Dive.
     func fetchExtracts(forDeepDive uuid: String) async throws -> [Atom] {
-        let list = try await atoms.fetchAll(type: .extract)
+        let list = try await fetchChildren(type: .extract, deepDiveUUID: uuid)
         return list.filter { $0.extractMetadata?.parentDeepDiveUUID == uuid }
     }
 

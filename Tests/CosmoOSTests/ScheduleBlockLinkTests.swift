@@ -27,6 +27,31 @@ final class ScheduleBlockLinkTests: XCTestCase {
 
     // MARK: - Occurrence projection (pure)
 
+    func testBatchProjectionMatchesIndividualDaysIncludingEmptyDays() {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: .now)
+        let days = (0..<7).map { calendar.date(byAdding: .day, value: $0, to: today)! }
+        var oneOff = ScheduleBlockMetadata()
+        oneOff.startTime = ISO8601.string(from: date(9, 0))
+        oneOff.endTime = ISO8601.string(from: date(10, 0))
+        var recurring = ScheduleBlockMetadata()
+        recurring.startTime = ISO8601.string(from: date(15, 0, dayOffset: -7))
+        recurring.endTime = ISO8601.string(from: date(16, 0, dayOffset: -7))
+        recurring.recurrence = RecurrenceRule.weekly(on: [DayOfWeek(rawValue: calendar.component(.weekday, from: today))!]).toJSON()
+        let atoms = [oneOff, recurring].enumerated().map { index, meta in
+            var atom = Atom.new(type: .scheduleBlock, title: "Block \(index)")
+            atom.metadata = Atom.mergedJSONObjectString(existing: nil, overlay: meta, context: "test")
+            return atom
+        }
+        let batch = ScheduleBlockEngine.project(atoms: atoms, on: days, calendar: calendar)
+        XCTAssertEqual(batch.count, 7)
+        XCTAssertEqual(batch[today]?.map(\.title), ["Block 0", "Block 1"])
+        XCTAssertEqual(batch[days[1]], [])
+        for day in days {
+            XCTAssertEqual(batch[day], ScheduleBlockEngine.project(atoms: atoms, on: [day], calendar: calendar)[day])
+        }
+    }
+
     func testOccurrenceRangeMatchesOneOffDayOnly() {
         var meta = ScheduleBlockMetadata()
         meta.startTime = ISO8601.string(from: date(10, 0))

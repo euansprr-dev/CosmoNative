@@ -258,6 +258,18 @@ class CosmoDatabase: ObservableObject {
     }
 
     // MARK: - Database Migrator
+
+    /// Adds `canvas_blocks.is_placed` (idempotent — a fresh schema declares it
+    /// in CREATE TABLE, an upgraded one gets the ALTER). Extracted so the
+    /// upgrade test can drive it on a scratch database.
+    nonisolated static func addIsPlacedColumn(_ db: Database) throws {
+        let columns = try db.columns(in: "canvas_blocks").map(\.name)
+        if !columns.contains("is_placed") {
+            try db.execute(sql: "ALTER TABLE canvas_blocks ADD COLUMN is_placed INTEGER NOT NULL DEFAULT 1")
+        }
+        try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_canvas_blocks_thinkspace_placed ON canvas_blocks(thinkspace_id, is_placed, is_deleted)")
+    }
+
     private var migrator: DatabaseMigrator {
         var migrator = DatabaseMigrator()
 
@@ -2608,6 +2620,14 @@ class CosmoDatabase: ObservableObject {
             print("✅ canvas_blocks entity_uuid index created")
         }
 
+        // Membership without position (September 2026): a canvas_blocks row is
+        // a space MEMBERSHIP; `is_placed` says whether it also has a spot on
+        // the canvas. Every existing row is placed (default 1). Unplaced rows
+        // wait in the canvas tray and show in the space's library/board.
+        migrator.registerMigration("add_is_placed_to_canvas_blocks") { db in
+            try Self.addIsPlacedColumn(db)
+        }
+
         return migrator
     }
 
@@ -2957,7 +2977,8 @@ class CosmoDatabase: ObservableObject {
                 _local_pending INTEGER DEFAULT 0,
                 thinkspace_id TEXT,
                 is_pinned INTEGER DEFAULT 0,
-                atom_uuid TEXT
+                atom_uuid TEXT,
+                is_placed INTEGER NOT NULL DEFAULT 1
             );
 
             CREATE TABLE IF NOT EXISTS sync_queue (

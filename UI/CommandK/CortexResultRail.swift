@@ -12,6 +12,10 @@ enum CommandKDomainOpenTarget: Equatable {
     /// Jump out of the palette to the Ideas destination (Command-K is the
     /// fast keyboard PATH to ideas — the browse lives on the surface).
     case ideasBoard(clientUUID: String?)
+    /// Jump to the content Pipeline (Board / Calendar / List) — Sept 2026.
+    case pipeline(view: PipelineView)
+    /// Jump to the Clients index.
+    case clients
 }
 
 enum CommandKDomainRailItem: Identifiable {
@@ -23,6 +27,10 @@ enum CommandKDomainRailItem: Identifiable {
     /// browse and search forms so a fresh query re-lands selection on the
     /// top hit instead of sticking to the jump row.
     case ideasBoardJump(clientUUID: String?, clientName: String?, isSearch: Bool)
+    /// Find-and-jump rows for the Pipeline and the Clients index — the
+    /// keyboard path to the other two Studio › Create rooms.
+    case pipelineJump(view: PipelineView)
+    case clientsJump
 
     var id: String { selectionID }
 
@@ -33,6 +41,8 @@ enum CommandKDomainRailItem: Identifiable {
         case .idea(let item): return item.atomUUID
         case .readwise(let book): return "readwise-\(book.id)"
         case .ideasBoardJump(_, _, let isSearch): return isSearch ? "ideas-board-jump-search" : "ideas-board-jump"
+        case .pipelineJump(let view): return "pipeline-jump-\(view.rawValue)"
+        case .clientsJump: return "clients-jump"
         }
     }
 
@@ -44,6 +54,10 @@ enum CommandKDomainRailItem: Identifiable {
         case .readwise(let book): return book.title
         case .ideasBoardJump(_, let clientName, _):
             return clientName.map { "Open \($0)'s board" } ?? "Open Ideas board"
+        case .pipelineJump(let view):
+            return "Open Pipeline · \(view.title)"
+        case .clientsJump:
+            return "Open Clients"
         }
     }
 
@@ -62,6 +76,10 @@ enum CommandKDomainRailItem: Identifiable {
             return [book.author, book.category.displayName].compactMap { $0 }.joined(separator: " · ")
         case .ideasBoardJump:
             return "Jump to the Ideas surface ↵"
+        case .pipelineJump:
+            return "Jump to the content Pipeline ↵"
+        case .clientsJump:
+            return "Jump to your Clients ↵"
         }
     }
 
@@ -76,6 +94,8 @@ enum CommandKDomainRailItem: Identifiable {
         case .readwise: return DS.entityReadwise
         case .ideasBoardJump(let clientUUID, _, _):
             return clientUUID.map { DS.clientColor(for: $0) } ?? DS.entityIdea
+        case .pipelineJump, .clientsJump:
+            return DS.accent
         }
     }
 
@@ -85,7 +105,7 @@ enum CommandKDomainRailItem: Identifiable {
         case .swipe(let item): return item.thumbnailUrl
         case .idea: return nil
         case .readwise(let book): return book.coverImageUrl
-        case .ideasBoardJump: return nil
+        case .ideasBoardJump, .pipelineJump, .clientsJump: return nil
         }
     }
 
@@ -110,7 +130,7 @@ enum CommandKDomainRailItem: Identifiable {
                 limit: CommandKPreviewExcerpt.thumbnailLimit
             )
         case .readwise(let book): return book.highlights.first?.text ?? "\(book.numHighlights) saved highlights"
-        case .ideasBoardJump: return nil
+        case .ideasBoardJump, .pipelineJump, .clientsJump: return nil
         }
     }
 
@@ -140,6 +160,10 @@ enum CommandKDomainRailItem: Identifiable {
             )
         case .ideasBoardJump:
             return CommandKVisualIdentity.atom(type: .idea)
+        case .pipelineJump:
+            return CommandKVisualIdentity.atom(type: .content)
+        case .clientsJump:
+            return CommandKVisualIdentity.atom(type: .clientProfile)
         }
     }
 
@@ -149,7 +173,7 @@ enum CommandKDomainRailItem: Identifiable {
         case .swipe(let item): return item.atomUUID
         case .idea(let item): return item.atomUUID
         case .readwise: return nil
-        case .ideasBoardJump: return nil
+        case .ideasBoardJump, .pipelineJump, .clientsJump: return nil
         }
     }
 
@@ -159,7 +183,7 @@ enum CommandKDomainRailItem: Identifiable {
         case .swipe: return .research
         case .idea: return .idea
         case .readwise: return nil
-        case .ideasBoardJump: return nil
+        case .ideasBoardJump, .pipelineJump, .clientsJump: return nil
         }
     }
 
@@ -169,7 +193,7 @@ enum CommandKDomainRailItem: Identifiable {
         case .swipe(let item): return item.entityId
         case .idea(let item): return item.entityId
         case .readwise: return 0
-        case .ideasBoardJump: return 0
+        case .ideasBoardJump, .pipelineJump, .clientsJump: return 0
         }
     }
 
@@ -195,6 +219,10 @@ enum CommandKDomainRailItem: Identifiable {
             return .readwiseBook(book.id)
         case .ideasBoardJump(let clientUUID, _, _):
             return .ideasBoard(clientUUID: clientUUID)
+        case .pipelineJump(let view):
+            return .pipeline(view: view)
+        case .clientsJump:
+            return .clients
         }
     }
 
@@ -204,7 +232,7 @@ enum CommandKDomainRailItem: Identifiable {
         case .swipe(let item): return .swipe(item)
         case .idea(let item): return .idea(item)
         case .readwise(let book): return .readwise(book)
-        case .ideasBoardJump: return .empty
+        case .ideasBoardJump, .pipelineJump, .clientsJump: return .empty
         }
     }
 }
@@ -337,7 +365,10 @@ enum CommandKDomainRailDataSource {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             let rows = CommandKIdeaRailGrouping.orderedItems(from: ideaItems).map(CommandKDomainRailItem.idea)
+            // The other two Studio › Create rooms trail the browse — reachable
+            // by arrowing past the ideas, never in front of them.
             return [.ideasBoardJump(clientUUID: nil, clientName: nil, isSearch: false)] + rows
+                + [.pipelineJump(view: .board), .clientsJump]
         }
 
         let normalizedQuery = CommandKSearchMatcher.normalizeQuery(trimmed)
@@ -349,7 +380,23 @@ enum CommandKDomainRailDataSource {
             clientUUID: inferred?.items.first?.clientUUID,
             clientName: inferred?.title,
             isSearch: true
-        )]
+        )] + roomJumps(matching: trimmed)
+    }
+
+    /// Typing the room's name surfaces its jump row ("pipe…", "calendar",
+    /// "clients"); anything else keeps the rail to idea hits.
+    static func roomJumps(matching query: String) -> [CommandKDomainRailItem] {
+        let q = query.lowercased()
+        var rows: [CommandKDomainRailItem] = []
+        if q.hasPrefix("cal") {
+            rows.append(.pipelineJump(view: .calendar))
+        } else if q.hasPrefix("pipe") || q.hasPrefix("board") || q.hasPrefix("content") {
+            rows.append(.pipelineJump(view: .board))
+        }
+        if q.hasPrefix("client") {
+            rows.append(.clientsJump)
+        }
+        return rows
     }
 
     private static func unfilteredItems(
@@ -384,7 +431,7 @@ enum CommandKDomainRailDataSource {
             return IdeasTab.matchesSearch(ideaItem, normalizedQuery: normalizedQuery)
         case .readwise(let book):
             return ReadwiseBookStore.matchesSearch(book, normalizedQuery: normalizedQuery)
-        case .ideasBoardJump:
+        case .ideasBoardJump, .pipelineJump, .clientsJump:
             return true
         }
     }

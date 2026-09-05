@@ -130,7 +130,14 @@ export async function understandReelVideo(videoData: Buffer, caption?: string): 
     for (let attempt = 0; attempt < models.length; attempt += 1) {
       try {
         const result = await viaGeminiAPI(videoData, prompt, models[attempt]);
-        if (result) return result;
+        if (result) {
+          console.log(
+            `🎞 tier-1 (${models[attempt]}): ${result.modality}, ${result.slides.length} slide(s), ` +
+            `${result.speechTranscript.length} segment(s), text ${result.visualTextDensity}`
+          );
+          return result;
+        }
+        console.warn(`⚠️ tier-1 video understanding (${models[attempt]}) returned nothing parseable — dropping a tier`);
         break; // parse-level null: retrying the same video won't help
       } catch (error) {
         console.warn(`⚠️ tier-1 video understanding failed (${models[attempt]}, attempt ${attempt + 1}):`, error instanceof Error ? error.message : error);
@@ -210,10 +217,21 @@ async function viaGeminiAPI(videoData: Buffer, prompt: string, model: string): P
       throw new Error(`generateContent ${response.status}: ${detail.slice(0, 200)}`);
     }
     const payload = await response.json() as {
-      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> }; finishReason?: string }>;
+      promptFeedback?: { blockReason?: string };
     };
-    const text = payload.candidates?.[0]?.content?.parts?.map(p => p.text ?? '').join('') ?? '';
-    return parseVideoUnderstanding(text, 'gemini');
+    const candidate = payload.candidates?.[0];
+    const text = candidate?.content?.parts?.map(p => p.text ?? '').join('') ?? '';
+    const parsed = parseVideoUnderstanding(text, 'gemini');
+    if (!parsed) {
+      // Say WHY — a silent null here sent whole reels down the frame-batch
+      // tier for weeks with no trace in the log.
+      console.warn(
+        `⚠️ tier-1 unparseable: finish=${candidate?.finishReason ?? payload.promptFeedback?.blockReason ?? '?'} ` +
+        `chars=${text.length} head=${JSON.stringify(text.slice(0, 160))}`
+      );
+    }
+    return parsed;
   } finally {
     void deleteGeminiFile(fileUri);
   }

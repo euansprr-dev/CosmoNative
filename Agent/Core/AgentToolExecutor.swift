@@ -1970,13 +1970,14 @@ class AgentToolExecutor {
         guard let title = args["title"] as? String else {
             return jsonError("Missing required parameter: title")
         }
-        let atom = try await atomRepo.create(
-            type: .thinkspace,
-            title: title
-        )
+        // Through the manager so the space gets real metadata (kind, views,
+        // colour) and the sidebar reloads — a bare atom had neither.
+        guard let thinkspace = await ThinkspaceManager.shared.createThinkspace(name: title) else {
+            return jsonError("Failed to create thinkspace: \(title)")
+        }
         return jsonEncode([
             "success": true,
-            "uuid": atom.uuid,
+            "uuid": thinkspace.id,
             "title": title,
             "message": "Thinkspace created: \(title)"
         ] as [String: Any])
@@ -3579,11 +3580,16 @@ class AgentToolExecutor {
             return jsonError("Missing or invalid contentUUID")
         }
 
-        // Advance pipeline phase for XP
-        _ = try? await ContentPipelineService().advancePhase(
-            contentUUID: contentUUID,
-            notes: "Draft generated via cloud writing engine"
-        )
+        // A first draft moves the piece into Draft — never past it (an
+        // unconditional advance used to push a Polish piece to Archived).
+        if let existing = try? await AtomRepository.shared.fetch(uuid: contentUUID),
+           ContentPipelineService.currentPhase(of: existing) == .ideation {
+            _ = try? await ContentPipelineService().setPhase(
+                contentUUID: contentUUID,
+                to: .draft,
+                notes: "Draft generated via cloud writing engine"
+            )
+        }
 
         // Check if content atom has a codex outline → single agentic session (Opus, adaptive thinking)
         let atom = try? await AtomRepository.shared.fetch(uuid: contentUUID)
@@ -4454,8 +4460,16 @@ class AgentToolExecutor {
         switch normalized {
         case "haiku", "fast":
             return .sensor
-        case "sonnet", "balanced":
+        case "balanced", "default", "dailydriver":
             return .strategist
+        case "sonnet", "sonnet5", "claudesonnet5":
+            return .sonnet5
+        case "sol", "gpt56sol", "gpt5.6sol", "gpt56":
+            return .gpt56Sol
+        case "terra", "gpt56terra", "gpt5.6terra":
+            return .gpt56Terra
+        case "luna", "gpt56luna", "gpt5.6luna":
+            return .gpt56Luna
         case "opus", "opus46", "claudeopus46", "writer":
             return .writer
         case "gpt55thinking", "gpt5.5thinking":

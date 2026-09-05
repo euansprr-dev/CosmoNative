@@ -7,11 +7,21 @@ import SwiftUI
 
 @MainActor
 struct DeepDiveOverviewView: View {
+    /// A deep dive is hosted two ways: as a focus overlay with its own study
+    /// bar, or as a VIEW inside its space, where the space chrome row renders
+    /// the same islands and this view draws no chrome of its own.
+    enum Presentation {
+        case focusOverlay
+        case embeddedInSpace
+    }
+
     let atom: Atom
+    let presentation: Presentation
     let onClose: () -> Void
 
     @State private var viewModel: DeepDiveOverviewViewModel
-    @State private var selectedTab: DeepDiveOverviewTab = .overview
+    @State private var chrome: DeepDiveStudyChromeModel
+    private var selectedTab: DeepDiveOverviewTab { chrome.selectedTab }
     /// Tabs mount on first visit and then stay alive (opacity-swapped), so a
     /// tab switch never rebuilds the outgoing surface mid-spring and scroll
     /// positions survive. Bounded by what the user actually opened.
@@ -34,10 +44,17 @@ struct DeepDiveOverviewView: View {
     @State private var seedlingsExpanded = false
     @State private var inboxExpanded = false
 
-    init(atom: Atom, onClose: @escaping () -> Void) {
+    init(
+        atom: Atom,
+        presentation: Presentation = .focusOverlay,
+        chrome: DeepDiveStudyChromeModel? = nil,
+        onClose: @escaping () -> Void
+    ) {
         self.atom = atom
+        self.presentation = presentation
         self.onClose = onClose
         self._viewModel = State(initialValue: DeepDiveOverviewViewModel(atom: atom))
+        self._chrome = State(initialValue: chrome ?? DeepDiveStudyChromeModel())
     }
 
     var body: some View {
@@ -46,19 +63,17 @@ struct DeepDiveOverviewView: View {
                 .ignoresSafeArea()
             tabContent
         }
-        .overlay(alignment: .top) { studyBar }
-        .overlay(alignment: .bottomTrailing) {
-            // The thinkspace's mode switcher lives here too — Canvas, Library,
-            // and Deep Dive stay siblings of one place.
-            StudyThinkspaceModeSwitcher(
-                thinkspaceUUID: viewModel.atom.deepDiveMetadata?.primaryThinkspaceUUID
-                    ?? viewModel.atom.deepDiveMetadata?.parentThinkspaceUUIDs?.first
-            )
-            .padding(.trailing, 20)
-            .padding(.bottom, 20)
+        .overlay(alignment: .top) {
+            if presentation == .focusOverlay { studyBar }
         }
+        .onAppear(perform: installChromeActions)
+        .onChange(of: viewModel.atom.title) { _, _ in syncChromeIdentity() }
+        .onChange(of: viewModel.isTidyingMap) { _, tidying in chrome.isTidyingMap = tidying }
+        .onChange(of: mastheadVisible) { _, _ in syncChromeMasthead() }
+        .onChange(of: chrome.selectedTab) { _, _ in syncChromeMasthead() }
         .task {
             await viewModel.load()
+            syncChromeIdentity()
             // One-frame rule: flip the cascade flag after data lands so the
             // dossier assembles on arrival instead of mounting pre-visible.
             try? await Task.sleep(for: .milliseconds(16))
@@ -129,27 +144,42 @@ struct DeepDiveOverviewView: View {
     // MARK: - Study Bar (the one piece of chrome)
 
     private var studyBar: some View {
-        DeepDiveStudyBar(
-            title: viewModel.atom.title ?? "Deep Dive",
-            maturityLabel: (viewModel.atom.deepDiveMetadata?.maturity ?? .spark).displayName,
-            selectedTab: $selectedTab,
-            showsTitle: selectedTab != .overview || !mastheadVisible,
-            recede: selectedTab == .overview && !mastheadVisible,
-            mapShowsQuestions: $mapShowsQuestions,
-            isTidyingMap: viewModel.isTidyingMap,
-            onTidyMap: { Task { await viewModel.runTidyMapPass() } },
-            onTitleTap: { scrollHomeTick += 1 },
-            onStartInquiry: { startInquiry() }
+        DeepDiveStudyBar(chrome: chrome)
+            .background {
+                // Esc retraces the trail (routed through onClose → trailStepBack).
+                // Focus presentation only — inside a space, Esc belongs to the
+                // shell's ladder (MainView's monitor), never to the dossier.
+                Button("", action: onClose)
+                    .keyboardShortcut(.escape, modifiers: [])
+                    .buttonStyle(.plain)
+                    .opacity(0)
+                    .frame(width: 0, height: 0)
+                    .accessibilityHidden(true)
+            }
+    }
+
+    /// The chrome model is the islands' one source of truth in BOTH
+    /// presentations; the view feeds it identity, masthead state and verbs.
+    private func installChromeActions() {
+        chrome.actions = DeepDiveStudyChromeModel.Actions(
+            startInquiry: { startInquiry() },
+            tidyMap: { Task { await viewModel.runTidyMapPass() } },
+            scrollToTop: { scrollHomeTick += 1 }
         )
-        .background {
-            // Esc retraces the trail (routed through onClose → trailStepBack).
-            Button("", action: onClose)
-                .keyboardShortcut(.escape, modifiers: [])
-                .buttonStyle(.plain)
-                .opacity(0)
-                .frame(width: 0, height: 0)
-                .accessibilityHidden(true)
-        }
+        syncChromeIdentity()
+        syncChromeMasthead()
+    }
+
+    private func syncChromeIdentity() {
+        chrome.title = viewModel.atom.title ?? "Deep Dive"
+        chrome.maturityLabel = (viewModel.atom.deepDiveMetadata?.maturity ?? .spark).displayName
+    }
+
+    private func syncChromeMasthead() {
+        let showsTitle = selectedTab != .overview || !mastheadVisible
+        let recede = selectedTab == .overview && !mastheadVisible
+        if chrome.showsTitle != showsTitle { chrome.showsTitle = showsTitle }
+        if chrome.recede != recede { chrome.recede = recede }
     }
 
     // MARK: - Tab Content
@@ -180,7 +210,7 @@ struct DeepDiveOverviewView: View {
                     .accessibilityHidden(selectedTab != .map)
             }
         }
-        .onChange(of: selectedTab) { _, tab in
+        .onChange(of: chrome.selectedTab) { _, tab in
             visitedTabs.insert(tab)
         }
     }
@@ -196,7 +226,9 @@ struct DeepDiveOverviewView: View {
                 ScrollView {
                     dossierLayout(isWide: isWide)
                         .padding(.horizontal, DS.space40)
-                        .padding(.top, 76)   // Breathing room under the floating bar
+                        // Breathing room under the floating chrome row (the
+                        // study bar or the space row — same baseline).
+                        .padding(.top, SpaceChromeMetrics.contentTopInset + DS.space16)
                         .padding(.bottom, DS.space40)
                         .frame(maxWidth: .infinity, alignment: .top)
                 }
@@ -1144,7 +1176,7 @@ struct DeepDiveOverviewView: View {
         case .seedling:
             // Seedlings develop from the overview's SEEDLINGS section; the map
             // node is presence, not a door (the Concept Desk arrives next).
-            selectedTab = .overview
+            chrome.select(.overview)
         case .root, .questionGroup:
             break
         }

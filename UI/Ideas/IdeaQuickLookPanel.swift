@@ -15,6 +15,9 @@ struct IdeaQuickLookPanel: View {
     let onOpen: () -> Void
     let onOpenAsPane: () -> Void
     let onClose: () -> Void
+    var availableWidth: CGFloat = 640
+    var availableHeight: CGFloat = 720
+    @State private var contentHeight: CGFloat = 240
 
     /// The linked swipe, fetched on arrival — powers attribution + the door.
     @State private var sourceSwipe: SwipeGalleryItem?
@@ -23,7 +26,6 @@ struct IdeaQuickLookPanel: View {
     private var thumbs: [String] { model.inspirationThumbs[idea.atomUUID] ?? [] }
 
     private var headline: String {
-        if let hook = idea.hooks.first, !hook.isEmpty { return hook }
         return idea.title
     }
 
@@ -51,18 +53,18 @@ struct IdeaQuickLookPanel: View {
                 .padding(.horizontal, DS.space20)
                 .padding(.vertical, DS.space16)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { contentHeight = $0 }
             }
             // Hug short sparks instead of stretching to the cap — the outer
             // maxHeight clamps tall ideas and scrolling takes over.
-            .fixedSize(horizontal: false, vertical: true)
+            .frame(height: min(contentHeight, max(100, min(540, availableHeight - 148))))
             .scrollBounceBehavior(.basedOnSize)
             Divider().overlay(DS.palette.sepiaBorder)
             footer
                 .padding(.horizontal, DS.space20)
                 .padding(.vertical, DS.space12)
         }
-        .frame(width: 560)
-        .frame(maxHeight: 660)
+        .frame(width: min(560, max(280, availableWidth - 32)))
         .background(DS.surfaceElevated)
         .clipShape(.rect(cornerRadius: 22, style: .continuous))
         .overlay(
@@ -71,6 +73,7 @@ struct IdeaQuickLookPanel: View {
         )
         .dsFloatingShadow()
         .task(id: idea.atomUUID) { await loadSource() }
+        .accessibilityElement(children: .contain)
         .accessibilityAddTraits(.isModal)
         .accessibilityLabel("Quick look: \(headline)")
     }
@@ -86,8 +89,8 @@ struct IdeaQuickLookPanel: View {
                 Text(clientName)
                 Text("·")
             }
-            Text(idea.status.displayName)
-                .foregroundStyle(idea.status == .ready ? DS.entityIdea : DS.textMuted)
+            Text(idea.status == .archived ? "Archived idea" : "Saved idea")
+                .foregroundStyle(DS.textMuted)
             Text("·")
             Text(ageText)
                 .monospacedDigit()
@@ -129,9 +132,10 @@ struct IdeaQuickLookPanel: View {
                     .lineLimit(5)
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
-                Text(IdeasDeskEngine.whyLine(for: idea, inspiration: thumbs.isEmpty ? [] : [idea.atomUUID]))
-                    .font(DS.caption)
-                    .foregroundStyle(DS.textMuted)
+                if idea.contentCount > 0 {
+                    Text("Used in \(idea.contentCount) piece\(idea.contentCount == 1 ? "" : "s") · available to use again")
+                        .font(DS.caption).foregroundStyle(DS.textMuted)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if !thumbs.isEmpty {

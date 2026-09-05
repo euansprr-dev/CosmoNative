@@ -19,7 +19,7 @@ struct IdeaDeskActions {
     var togglePin: () -> Void
     var pass: () -> Void
     var setStatus: (IdeaStatus) -> Void
-    var assignClient: (String) -> Void
+    var assignClient: (String?) -> Void
     var schedule: (Date) -> Void
     var delete: () -> Void
     var dropSwipe: (String) -> Void

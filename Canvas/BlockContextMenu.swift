@@ -71,7 +71,10 @@ struct BlockContextMenu: View {
     /// Non-destructive removal — take the block out of this thinkspace without
     /// trashing the atom (it stays in the database and any other thinkspaces).
     private var removalItems: [MenuItem] {
-        [MenuItem("removeFromThinkspace", icon: "square.stack.3d.up.slash", label: "Remove from Thinkspace")]
+        [
+            MenuItem("removeFromCanvas", icon: "rectangle.dashed", label: "Remove from Canvas"),
+            MenuItem("removeFromThinkspace", icon: "square.stack.3d.up.slash", label: "Remove from Space")
+        ]
     }
 
     private var destructiveItems: [MenuItem] {
@@ -335,6 +338,12 @@ struct BlockContextMenu: View {
                 name: CosmoNotification.Navigation.openAsPane,
                 object: nil,
                 userInfo: ["type": block.entityType, "id": block.entityId]
+            )
+        case "removeFromCanvas":
+            NotificationCenter.default.post(
+                name: .removeBlockFromCanvas,
+                object: nil,
+                userInfo: ["blockId": blockId]
             )
         case "removeFromThinkspace":
             NotificationCenter.default.post(

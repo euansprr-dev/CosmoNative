@@ -91,6 +91,7 @@ struct CommandCenterDashboard: View {
                     // One frame at rest, then the cascade — flipped in the
                     // same update, sections would mount already-visible.
                     try? await Task.sleep(for: .milliseconds(16))
+                    guard !Task.isCancelled else { return }
                     viewModel.hasPlayedArrivalCascade = true
                 }
                 // Warm the sound graph so the first completion of the session
@@ -101,6 +102,7 @@ struct CommandCenterDashboard: View {
                 // already startIfNeeded() lazily, so a completion inside this
                 // window still plays.
                 try? await Task.sleep(for: .milliseconds(400))
+                guard !Task.isCancelled else { return }
                 SoundEngine.shared.prewarm()
             }
             .onAppear(perform: publishCommandCenterContext)
@@ -187,13 +189,10 @@ struct CommandCenterDashboard: View {
         } else if viewModel.viewMode == .upcoming {
             CommandCenterMasthead(viewModel: viewModel)
 
-            if viewModel.upcomingLens == .content {
-                ContentCalendarView(viewModel: viewModel)
-                    .frame(maxHeight: .infinity)
-            } else {
-                UpcomingBoardView(viewModel: viewModel, composer: composer)
-                    .frame(maxHeight: .infinity)
-            }
+            // The content calendar moved to Studio › Pipeline (one room per
+            // stage of material); Upcoming is the time board only.
+            UpcomingBoardView(viewModel: viewModel, composer: composer)
+                .frame(maxHeight: .infinity)
         } else {
             // ONE composed group: masthead, brief, gauge, divider, and the
             // two working columns share a single bounded width — defined by
@@ -430,18 +429,11 @@ struct CommandCenterDashboard: View {
 
     // MARK: - Right Column (280px) — Context-Sensitive Inspector
 
-    /// In Upcoming's Content lens the rail stops being the habits/reports
-    /// inspector and becomes the Shelf — the searchable idea/draft library
-    /// you drag onto calendar days.
-    private var showsContentShelf: Bool {
-        viewModel.viewMode == .upcoming && viewModel.upcomingLens == .content
-    }
-
-    /// The schedule lens offers a Shelf too — the ideas you drag onto the week
-    /// board to book writing sessions. Unlike the Content lens it's a TAB, not
-    /// a takeover: habits, reports and task details stay one click away.
+    /// Upcoming offers a Shelf — the ideas you drag onto the week board to
+    /// book writing sessions. It's a TAB, not a takeover: habits, reports
+    /// and task details stay one click away.
     private var offersWorkShelf: Bool {
-        viewModel.viewMode == .upcoming && viewModel.upcomingLens == .schedule
+        viewModel.viewMode == .upcoming
     }
 
     private var showsWorkShelf: Bool {
@@ -451,21 +443,16 @@ struct CommandCenterDashboard: View {
     private var rightColumn: some View {
         CommandCenterRail {
             VStack(alignment: .leading, spacing: DS.space16) {
-                if showsContentShelf {
-                    ContentShelfRail(viewModel: viewModel)
+                rightColumnTabs
+                if showsWorkShelf {
+                    IdeaWorkShelfRail(viewModel: viewModel)
                 } else {
-                    rightColumnTabs
-                    if showsWorkShelf {
-                        IdeaWorkShelfRail(viewModel: viewModel)
-                    } else {
-                        rightColumnContent
-                    }
+                    rightColumnContent
                 }
                 Spacer(minLength: 0)
             }
         }
         .frame(width: DashboardLayoutMetrics.railWidth)
-        .animation(ProMotionSprings.gentle, value: showsContentShelf)
         .animation(ProMotionSprings.gentle, value: showsWorkShelf)
     }
 

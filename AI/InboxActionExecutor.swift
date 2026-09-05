@@ -873,7 +873,7 @@ final class InboxActionExecutor {
                 if atom.type == .note, Self.isQuickThought(item.rawText) {
                     block.size = Self.thoughtCardSize(for: item.rawText)
                 }
-                let record = CanvasBlockRecord.from(block, documentType: "home", documentId: 0, thinkspaceId: thinkspaceId)
+                let record = CanvasBlockRecord.from(block, documentType: "home", documentId: 0, thinkspaceId: thinkspaceId, isPlaced: false)
                 try await persistCanvasBlockSnapshot(record)
                 createdBlockRecord = record
             }
@@ -1032,7 +1032,7 @@ final class InboxActionExecutor {
         )
         guard let x = plan?.blockPositionX, let y = plan?.blockPositionY else { return }
         let block = CanvasBlock.fromAtom(atom, position: CGPoint(x: x, y: y))
-        let record = CanvasBlockRecord.from(block, documentType: "home", documentId: 0, thinkspaceId: thinkspaceId)
+        let record = CanvasBlockRecord.from(block, documentType: "home", documentId: 0, thinkspaceId: thinkspaceId, isPlaced: false)
         try? await persistCanvasBlockSnapshot(record)
         await refreshThinkspace(thinkspaceId)
     }

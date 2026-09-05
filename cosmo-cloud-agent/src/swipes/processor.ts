@@ -19,7 +19,11 @@ import { supabase, userId } from '../db/client';
 import { config } from '../config';
 import { Atom, fetchAtom, updateAtom } from '../db/queries';
 import { apifyBudgetAvailable, extractInstagramPost, instagramShortcode } from './instagram';
-import { ensureBuckets, mirrorCarousel, mirrorThumbnail, mirrorVideoBuffer, resolveInstantThumbnailURL, downloadBinary } from './media';
+import {
+  ensureBuckets, downloadBinary, downloadCarouselSlides, mirrorCarouselBuffers, mirrorThumbnail,
+  mirrorVideoBuffer, resolveInstantThumbnailURL,
+} from './media';
+import { describeFetchError } from './http';
 import { transcribeSlides, transcribeSpeech, whisperConfigured } from './transcribe';
 import { postProcessSlidesJSON, sanitizeSlideText } from './slideText';
 import { annotateSlidesWithVoiceover, deduplicateSlidesJSON, extractAudioTrack, transcribeReel } from './reelPipeline';
@@ -372,7 +376,7 @@ async function processInstagram(uuid: string, url: string): Promise<void> {
     try {
       videoData = await downloadBinary(media.videoUrl, 'video');
     } catch (error) {
-      console.warn(`⚠️ video download failed for ${uuid.slice(0, 8)}:`, error instanceof Error ? error.message : error);
+      console.warn(`⚠️ video download failed for ${uuid.slice(0, 8)}:`, describeFetchError(error));
     }
   }
   if (videoData) setProgress(uuid, 'extracting', 0.45);
@@ -389,9 +393,26 @@ async function processInstagram(uuid: string, url: string): Promise<void> {
       metadataUpdates.thumbnailUrl = media.thumbnailUrl;
     } catch { /* quick stage may already have covered this */ }
   }
-  if (media.slides.length > 1) {
-    const slideImageUrls = media.slides.map(s => (s.isVideo ? s.thumbnailUrl ?? s.mediaUrl : s.mediaUrl));
-    const mirrored = await mirrorCarousel(uuid, slideImageUrls);
+  // Carousel slides: ONE download serves both the permanent mirror and the
+  // OCR pass (the bytes go to the vision model inline — no provider has to
+  // reach Instagram's CDN itself). An already-mirrored carousel on an
+  // analysis-only retry downloads nothing at all.
+  const editedByUser = atom.structured?.swipeAnalysis?.transcriptEditedByUser === true;
+  const slideImageUrls = media.slides.map(s => (s.isVideo ? s.thumbnailUrl ?? s.mediaUrl : s.mediaUrl));
+  const existingMirror = atom.metadata?.carouselImageStorageURLs;
+  const carouselMirrored = slideImageUrls.length > 1
+    && Array.isArray(existingMirror) && existingMirror.length === slideImageUrls.length;
+  const needsSlideOCR = !prior && !editedByUser && media.contentType === 'carousel' && slideImageUrls.length > 0;
+  let slideBuffers: (Buffer | null)[] = slideImageUrls.map(() => null);
+  if (slideImageUrls.length > 0 && ((slideImageUrls.length > 1 && !carouselMirrored) || needsSlideOCR)) {
+    slideBuffers = await downloadCarouselSlides(slideImageUrls);
+    const fetched = slideBuffers.filter(Boolean).length;
+    if (fetched < slideBuffers.length) {
+      console.warn(`⚠️ carousel ${uuid.slice(0, 8)}: ${fetched}/${slideBuffers.length} slide(s) downloaded`);
+    }
+  }
+  if (slideImageUrls.length > 1 && !carouselMirrored) {
+    const mirrored = await mirrorCarouselBuffers(uuid, slideBuffers);
     if (mirrored) metadataUpdates.carouselImageStorageURLs = mirrored;
   }
   if (Object.keys(metadataUpdates).length > 0) {
@@ -401,7 +422,6 @@ async function processInstagram(uuid: string, url: string): Promise<void> {
   // Transcription.
   setProgress(uuid, 'transcribing', 0.55);
   await setStatus(uuid, 'transcribing');
-  const editedByUser = atom.structured?.swipeAnalysis?.transcriptEditedByUser === true;
 
   let slides: TranscriptSlideJSON[] = [];
   let rawSlides: TranscriptSlideJSON[] = [];
@@ -425,15 +445,18 @@ async function processInstagram(uuid: string, url: string): Promise<void> {
       `(${slides.length} slide(s), ${speech.length} segment(s)) — skipping vision`
     );
   } else if (!editedByUser) {
-    if (media.contentType === 'carousel' && media.slides.length > 0) {
-      const slideImageUrls = media.slides.map(s => (s.isVideo ? s.thumbnailUrl ?? s.mediaUrl : s.mediaUrl));
-      rawSlides = await transcribeSlides(slideImageUrls);
+    if (media.contentType === 'carousel' && slideImageUrls.length > 0) {
+      rawSlides = await transcribeSlides(slideImageUrls.map((url, index) => ({ url, data: slideBuffers[index] ?? null })));
       // Mac-parity repair pass (postProcessSlides port): merge visual
       // line-wraps into sentences, one idea per line, drop artifacts/dupes.
       // Without this, cloud carousels rendered mid-sentence line breaks.
       slides = postProcessSlidesJSON(rawSlides, { isCarousel: true });
     } else if (media.contentType === 'image' && media.thumbnailUrl) {
-      rawSlides = await transcribeSlides([media.thumbnailUrl]);
+      const imageData = await downloadBinary(media.thumbnailUrl, 'image', 30_000).catch(error => {
+        console.warn(`⚠️ image download failed for ${uuid.slice(0, 8)}:`, describeFetchError(error));
+        return null;
+      });
+      rawSlides = await transcribeSlides([{ url: media.thumbnailUrl, data: imageData }]);
       slides = postProcessSlidesJSON(rawSlides, { isCarousel: false });
     } else if (videoData) {
       // Reels V3: Whisper (precision timestamps) runs IN PARALLEL with one

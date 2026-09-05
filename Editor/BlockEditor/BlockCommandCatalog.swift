@@ -7,6 +7,8 @@ struct BlockCommand: Identifiable, Equatable, Hashable {
         /// "Heading 1" and "Toggle Heading 1" are distinct menu entries.
         case transformHeading(RichBlockKind, collapsible: Bool)
         case replaceOrInsert(RichBlockKind)
+        /// A table sized by the slash query ("/3x4") — see SlashTableSizeQuery.
+        case insertTable(rows: Int, columns: Int)
         case insertElement(DocumentElementDefinition)
         case createElement
         case openElementsSubmenu
@@ -36,6 +38,8 @@ extension BlockCommand.Action {
             return "Transform to \(collapsible ? "Toggle " : "")\(kind.editorDisplayName)"
         case .replaceOrInsert(let kind):
             return "Insert \(kind.editorDisplayName)"
+        case .insertTable:
+            return "Insert Table"
         case .insertElement:
             return "Insert Element"
         case .createElement:
@@ -163,6 +167,22 @@ enum BlockCommandCatalog {
             action: .transform(.code)
         ),
         BlockCommand(
+            id: "section",
+            title: "Section",
+            subtitle: "Titled box for a group of blocks",
+            systemImage: "square.text.square",
+            aliases: ["section", "box", "group", "container", "part", "chapter"],
+            action: .transform(.section)
+        ),
+        BlockCommand(
+            id: "table",
+            title: "Table",
+            subtitle: "Rows and columns",
+            systemImage: "tablecells",
+            aliases: ["table", "grid", "matrix", "compare", "3x3", "2x2", "rows", "columns"],
+            action: .replaceOrInsert(.table)
+        ),
+        BlockCommand(
             id: "divider",
             title: "Divider",
             subtitle: "Separate sections",
@@ -219,8 +239,11 @@ enum BlockCommandCatalog {
 
         guard !normalized.isEmpty else { return baseCommands }
 
+        // "3x4" is a table request, not a search term.
+        let isTableSize = SlashTableSizeQuery.parse(normalized) != nil
         return baseCommands
             .compactMap { command -> (BlockCommand, Int)? in
+                if isTableSize, command.action == .replaceOrInsert(.table) { return (command, 0) }
                 if command.title.lowercased().hasPrefix(normalized) { return (command, 0) }
                 if command.searchableText.contains(normalized) { return (command, 1) }
                 return nil
@@ -261,6 +284,10 @@ enum BlockCommandCatalog {
             return .transform(.code)
         case .sketch:
             return .replaceOrInsert(.sketch)
+        case .section:
+            return .transform(.section)
+        case .table:
+            return .replaceOrInsert(.table)
         case .content:
             return .replaceOrInsert(.content)
         case .research:
@@ -282,7 +309,29 @@ enum BlockCommandCatalog {
         if slashCommand.type == .element, let definition = slashCommand.elementDefinition {
             return .insertElement(definition)
         }
+        // The query the user committed with rides on the command
+        // (RichTextEditor stamps `invocationQuery` at selection time) —
+        // "/3x4" sizes the table it inserts.
+        if slashCommand.type == .table, let size = SlashTableSizeQuery.parse(slashCommand.invocationQuery) {
+            return .insertTable(rows: size.rows, columns: size.columns)
+        }
         return action(for: slashCommand.type)
+    }
+}
+
+/// "/3x4" — a slash query of the shape `<rows>x<columns>` (single digits,
+/// either case, or the × sign) asks for a table of exactly that size. Shared
+/// by the slash catalog's matcher and the command → action mapping so the
+/// query that matched is the query that sizes.
+enum SlashTableSizeQuery {
+    static func parse(_ query: String) -> (rows: Int, columns: Int)? {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let match = trimmed.wholeMatch(of: #/^([1-9])[xX×]([1-9])$/#),
+              let rows = Int(match.1),
+              let columns = Int(match.2) else {
+            return nil
+        }
+        return (rows, columns)
     }
 }
 
@@ -306,6 +355,8 @@ private extension RichBlockKind {
         case .toggle: return "Toggle"
         case .code: return "Code Block"
         case .sketch: return "Sketch"
+        case .table: return "Table"
+        case .section: return "Section"
         }
     }
 }

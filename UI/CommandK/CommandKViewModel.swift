@@ -1495,6 +1495,15 @@ public final class CommandKViewModel {
     /// so each keystroke does not invalidate the entire Command-K surface.
     @ObservationIgnored public var query: String = ""
 
+    /// Observation-tracked mirror of `query`, published for the one surface
+    /// that filters LOCALLY instead of through `performSearch`: the expanded
+    /// domain rail (Swipe File / Database / Library scopes). Those scopes
+    /// return early out of `performSearch`, so a keystroke there changes
+    /// nothing else SwiftUI can see — the rail's cached rows never refresh
+    /// and the list stays unfiltered. Any body or `onChange` that must
+    /// re-evaluate as the user types reads THIS, never `query`.
+    public private(set) var domainFilterQuery: String = ""
+
     /// Bumped only when the view model changes the field programmatically.
     public private(set) var querySyncToken: Int = 0
 
@@ -2137,7 +2146,7 @@ public final class CommandKViewModel {
 
     public func updateQuery(_ newQuery: String) {
         guard query != newQuery else { return }
-        query = newQuery
+        writeQuery(newQuery)
         liveQueryGeneration &+= 1
         let queryGeneration = liveQueryGeneration
 
@@ -2180,8 +2189,16 @@ public final class CommandKViewModel {
             querySyncToken &+= 1
             return
         }
-        query = newQuery
+        writeQuery(newQuery)
         querySyncToken &+= 1
+    }
+
+    /// The single write point for the query. Both the untracked field the
+    /// search pipeline reads and its tracked mirror move together — a write
+    /// that skips this leaves the domain rail filtering on a stale string.
+    private func writeQuery(_ newQuery: String) {
+        query = newQuery
+        domainFilterQuery = newQuery
     }
 
     private func cancelActiveSearchWork() {
@@ -3274,7 +3291,8 @@ public final class CommandKViewModel {
             openThinkspaceAsPane(id: id)
         case .readwiseBook:
             break
-        case .ideasBoard:
+        case .ideasBoard, .pipeline, .clients:
+            // Destinations, not atoms — nothing to open as a pane.
             break
         }
     }
@@ -3450,6 +3468,15 @@ public final class CommandKViewModel {
                 object: nil,
                 userInfo: userInfo
             )
+        case .pipeline(let view):
+            // MainView lands on the Pipeline in that view and closes the palette.
+            NotificationCenter.default.post(
+                name: CosmoNotification.Navigation.openPipeline,
+                object: nil,
+                userInfo: ["view": view.rawValue]
+            )
+        case .clients:
+            NotificationCenter.default.post(name: CosmoNotification.Navigation.openClients, object: nil)
         }
     }
 
@@ -4884,7 +4911,7 @@ public final class CommandKViewModel {
             for atom in ideaAtoms {
                 let clientName = atom.ideaClientUUID.flatMap { clientNameCache[$0] }
                 if let galleryItem = atom.toIdeaGalleryItem(clientName: clientName),
-                   !galleryItem.status.isActivated {
+                   galleryItem.status != .archived {
                     items.append(galleryItem)
                 }
             }

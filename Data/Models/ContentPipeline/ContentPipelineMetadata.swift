@@ -95,6 +95,32 @@ public enum ContentPhase: String, Codable, CaseIterable, Sendable {
     }
 }
 
+// MARK: - Stage machine helpers (Pipeline, Sept 2026)
+
+extension ContentPhase {
+    /// Position in the pipeline order. "Forward" for XP purposes means a
+    /// strictly greater ordinal; `.archived` sits last so archiving from any
+    /// live phase is forward (and worth 0 XP by its `completionXP`).
+    var ordinal: Int { Self.allCases.firstIndex(of: self) ?? 0 }
+
+    /// A phase you only reach by shipping. Published and analyzing pieces are
+    /// history on the calendar; scheduling them again is a repost, never a
+    /// stage change.
+    var isShipped: Bool { self == .published || self == .analyzing }
+
+    /// Phases a calendar drop may move into `.scheduled` (and back out of).
+    /// Shipped and archived pieces keep their phase when a date is set.
+    var isSchedulable: Bool { [.ideation, .draft, .polish, .scheduled].contains(self) }
+
+    /// The legacy `status` string other readers (iOS cluster boards, the
+    /// shelf rails' `ContentQueueItem.status`) still mirror from the phase.
+    var statusMirror: String {
+        if isShipped { return "published" }
+        if self == .scheduled { return "scheduled" }
+        return "draft"
+    }
+}
+
 // MARK: - Social Platform
 
 /// Supported social media platforms
@@ -1147,6 +1173,10 @@ struct ClientProfileMetadata: Codable, Sendable {
     /// Signature phrases, catchphrases, recurring openers, trademark expressions
     var signaturePhrases: [String]?
 
+    /// Pinned identity colour as 6-digit hex (no "#"). Absent → the app's
+    /// deterministic hash colour (`DS.clientColor(for:)` via ClientColorResolver).
+    var colorHex: String?
+
     // MARK: - Intelligence Model (Client Intelligence Engine)
 
     /// AI-generated intelligence model from profile documents
@@ -1206,7 +1236,8 @@ struct ClientProfileMetadata: Codable, Sendable {
         legacyFields: [String: String]? = nil,
         topPerformingPosts: [TopPost]? = nil,
         extractedVoicePatterns: VoiceProfile? = nil,
-        preferredBeatPatterns: [String]? = nil
+        preferredBeatPatterns: [String]? = nil,
+        colorHex: String? = nil
     ) {
         self.clientId = clientId
         self.clientName = clientName
@@ -1242,6 +1273,7 @@ struct ClientProfileMetadata: Codable, Sendable {
         self.topPerformingPosts = topPerformingPosts
         self.extractedVoicePatterns = extractedVoicePatterns
         self.preferredBeatPatterns = preferredBeatPatterns
+        self.colorHex = colorHex
     }
 
     // MARK: - Resilient Decoding
@@ -1286,6 +1318,7 @@ struct ClientProfileMetadata: Codable, Sendable {
         topPerformingPosts = try container.decodeIfPresent([TopPost].self, forKey: .topPerformingPosts)
         extractedVoicePatterns = try container.decodeIfPresent(VoiceProfile.self, forKey: .extractedVoicePatterns)
         preferredBeatPatterns = try container.decodeIfPresent([String].self, forKey: .preferredBeatPatterns)
+        colorHex = try container.decodeIfPresent(String.self, forKey: .colorHex)
     }
 }
 

@@ -83,6 +83,12 @@ struct AtomWindowRootView: View {
             }
         case .connection:
             ConnectionFocusModeView(atom: atom, onClose: handleClose)
+        case .inquirySession:
+            if atom.isSwipeLab {
+                SwipeLabFocusModeView(atom: atom, onClose: handleClose)
+            } else {
+                InquiryWorkspaceView(sessionAtom: atom, onClose: handleClose)
+            }
         case .idea:
             IdeaFocusModeView(atom: atom, onClose: handleClose)
         case .content:

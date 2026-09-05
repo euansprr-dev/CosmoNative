@@ -220,6 +220,10 @@ private struct LibraryGalleryRail: View {
                 LibraryRailButton(title: "Reveal on Canvas", icon: "scope", help: "Fly the canvas camera to this block") {
                     context.actions.revealOnCanvas(item)
                 }
+            } else {
+                LibraryRailButton(title: "Place on Canvas", icon: "rectangle.dashed.badge.plus", help: "Give this member a spot on the canvas at the camera") {
+                    context.actions.placeOnCanvas(item)
+                }
             }
         }
     }

@@ -1,0 +1,4 @@
+name,quote,score
+Alpha,"Hello, world",1
+Beta,"Multi
+line",2

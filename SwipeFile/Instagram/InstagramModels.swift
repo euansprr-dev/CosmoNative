@@ -442,3 +442,43 @@ enum InstagramExtractionError: LocalizedError {
         }
     }
 }
+
+// MARK: - CDN host hygiene
+
+/// Instagram CDN host hygiene for every live (un-mirrored) Instagram URL.
+///
+/// Apify — and Instagram's own embed/GraphQL responses — hand back media URLs
+/// on whichever edge served the scraper, often an ISP-embedded cache node
+/// (`instagram.frtm1-1.fna.fbcdn.net`; FNA = Facebook Network Appliance, a
+/// box racked inside one ISP's network). Those nodes are unreachable or
+/// glacial from any other network: the Railway worker's mirror died on them
+/// and the clients showed the same slides as blank or crawling (Sept 2026).
+/// The signed query (`oh=`/`oe=`) is host-independent, so the same path
+/// served from Instagram's general front door works — verified live.
+///
+/// TWINS: cosmo-cloud-agent/src/swipes/media.ts `canonicalInstagramCDNURL`
+/// and iOS `InstagramCDN` (CosmoCoreKit/Models/InstagramCDN.swift).
+enum InstagramCDN {
+    /// Instagram's general-purpose CDN front door; every signed path resolves here.
+    static let canonicalHost = "scontent.cdninstagram.com"
+
+    /// True for ISP-embedded cache nodes (`*.fna.fbcdn.net`).
+    static func isEdgeCacheHost(_ host: String?) -> Bool {
+        host?.lowercased().hasSuffix(".fna.fbcdn.net") == true
+    }
+
+    /// The URL with an FNA host swapped for the canonical front door; any
+    /// other URL comes back untouched. The query string is never rewritten —
+    /// the signature lives there and must survive byte-for-byte.
+    static func canonicalized(_ url: URL) -> URL {
+        guard isEdgeCacheHost(url.host),
+              var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url }
+        components.host = canonicalHost
+        return components.url ?? url
+    }
+
+    static func canonicalized(_ urlString: String) -> String {
+        guard let url = URL(string: urlString) else { return urlString }
+        return canonicalized(url).absoluteString
+    }
+}

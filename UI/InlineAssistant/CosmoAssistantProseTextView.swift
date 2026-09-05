@@ -1,27 +1,35 @@
 // CosmoOS/UI/InlineAssistant/CosmoAssistantProseTextView.swift
-// Read-only TextKit renderer for finalized pane answers: prose with inline
-// document pills drawn by the same CosmoMentionPillCell the composer uses, so
-// a citation looks exactly like a mention the user typed.
-// June 2026
+// Read-only TextKit renderer for pane answers: Markdown-rendered prose with
+// inline document pills drawn by the same CosmoMentionPillCell the composer
+// uses, so a citation looks exactly like a mention the user typed. One view
+// serves streaming and finalized rows — the text changes, the view never swaps.
+// June 2026 · Markdown + decorations September 2026
 
 import SwiftUI
 import AppKit
 
 struct CosmoAssistantProseTextView: NSViewRepresentable {
-    let segments: [CosmoAssistantProseSegment]
+    let rendered: CosmoAssistantRenderedAnswer
 
     /// Select→mint: hosts that install `conceptMintPillHost()` receive this
     /// view's text selections (nil on collapse). Inert everywhere else.
     @Environment(\.conceptMintReporter) private var mintReporter
 
-    /// Reading measure shared with the streaming `Text` fallback so the
-    /// finalize swap doesn't reflow.
+    /// Reading measure for pane answers.
     static let readingMeasure: CGFloat = 620
-    static let bodyFont = NSFont.systemFont(ofSize: 15)
-    static let lineSpacing: CGFloat = 3
+    static let bodyFont = NSFont.systemFont(ofSize: CosmoAssistantMarkdownRenderer.bodySize)
+    static let lineSpacing: CGFloat = CosmoAssistantMarkdownRenderer.lineSpacing
 
     func makeNSView(context: Context) -> NSTextView {
-        let textView = CosmoProsePillTextView()
+        // Explicit TextKit 1 stack: attachment cells (CosmoMentionPillCell) and
+        // the decorating layout manager both require it.
+        let storage = NSTextStorage()
+        let layoutManager = CosmoProseLayoutManager()
+        storage.addLayoutManager(layoutManager)
+        let container = NSTextContainer(size: NSSize(width: Self.readingMeasure, height: .greatestFiniteMagnitude))
+        layoutManager.addTextContainer(container)
+
+        let textView = CosmoProsePillTextView(frame: .zero, textContainer: container)
         textView.isEditable = false
         textView.isSelectable = true
         textView.drawsBackground = false
@@ -37,32 +45,28 @@ struct CosmoAssistantProseTextView: NSViewRepresentable {
         textView.isVerticallyResizable = false
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
-        textView.textContainer?.widthTracksTextView = true
-        textView.textContainer?.heightTracksTextView = false
-        textView.textContainer?.lineBreakMode = .byWordWrapping
-        textView.textContainer?.lineFragmentPadding = 0
+        container.widthTracksTextView = true
+        container.heightTracksTextView = false
+        container.lineBreakMode = .byWordWrapping
+        container.lineFragmentPadding = 0
 
-        // Pills carry `.link`; keep the pointer affordance but none of the
-        // default blue-underline dressing (the capsule IS the affordance).
+        // Pills carry `.link` (a uuid string); URLs carry `.link` (a URL).
+        // Keep the pointer affordance but none of the default blue underline —
+        // the renderer already tints link runs with the accent.
         textView.linkTextAttributes = [.cursor: NSCursor.pointingHand]
-
-        // Touching layoutManager pins this view to TextKit 1 — attachment
-        // cells (CosmoMentionPillCell) require it.
-        _ = textView.layoutManager
 
         return textView
     }
 
     func updateNSView(_ textView: NSTextView, context: Context) {
         context.coordinator.parent = self
-        guard context.coordinator.shouldUpdate(segments: segments) else { return }
+        guard context.coordinator.shouldUpdate(key: rendered.key) else { return }
 
-        let attributed = Self.attributedString(from: segments)
         textView.textStorage?.beginEditing()
-        textView.textStorage?.setAttributedString(attributed)
+        textView.textStorage?.setAttributedString(rendered.attributed)
         textView.textStorage?.endEditing()
 
-        context.coordinator.record(segments: segments)
+        context.coordinator.record(key: rendered.key)
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSTextView, context: Context) -> CGSize? {
@@ -105,44 +109,12 @@ struct CosmoAssistantProseTextView: NSViewRepresentable {
         coordinator.closePreview()
     }
 
-    // MARK: - Attributed string
-
-    static func attributedString(from segments: [CosmoAssistantProseSegment]) -> NSAttributedString {
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.lineSpacing = lineSpacing
-
-        let baseAttributes: [NSAttributedString.Key: Any] = [
-            .foregroundColor: NSColor(DS.text),
-            .font: bodyFont,
-            .paragraphStyle: paragraphStyle
-        ]
-
-        let result = NSMutableAttributedString()
-        for segment in segments {
-            switch segment {
-            case .text(let run):
-                result.append(NSAttributedString(string: run, attributes: baseAttributes))
-            case .pill(let ref):
-                let attachment = CosmoMentionPillAttachment(sourceRef: ref)
-                let pill = NSMutableAttributedString(attachment: attachment)
-                pill.addAttributes([
-                    .link: ref.uuid as NSString,
-                    .paragraphStyle: paragraphStyle,
-                    // Baseline math in the cell assumes the surrounding font.
-                    .font: bodyFont
-                ], range: NSRange(location: 0, length: pill.length))
-                result.append(pill)
-            }
-        }
-        return result
-    }
-
     // MARK: - Coordinator
 
     @MainActor
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: CosmoAssistantProseTextView
-        private var lastSegments: [CosmoAssistantProseSegment] = []
+        private var lastKey: String?
 
         private var hoveredUUID: String?
         private var hoverTask: Task<Void, Never>?
@@ -150,15 +122,15 @@ struct CosmoAssistantProseTextView: NSViewRepresentable {
         /// Atom snippets are tiny but the fetch hits GRDB — remember answers
         /// (including misses) for the view's lifetime.
         private var snippetCache: [String: String?] = [:]
-        /// Measured heights per proposed width, valid until the segments change.
+        /// Measured heights per proposed width, valid until the content changes.
         private var sizeCache: [CGFloat: CGSize] = [:]
 
         init(parent: CosmoAssistantProseTextView) {
             self.parent = parent
         }
 
-        func shouldUpdate(segments: [CosmoAssistantProseSegment]) -> Bool {
-            segments != lastSegments
+        func shouldUpdate(key: String) -> Bool {
+            key != lastKey
         }
 
         /// Reports name-shaped highlights to the mint pill host (conversation
@@ -186,8 +158,8 @@ struct CosmoAssistantProseTextView: NSViewRepresentable {
             }
         }
 
-        func record(segments: [CosmoAssistantProseSegment]) {
-            lastSegments = segments
+        func record(key: String) {
+            lastKey = key
             sizeCache.removeAll()
         }
 
@@ -200,6 +172,14 @@ struct CosmoAssistantProseTextView: NSViewRepresentable {
         }
 
         func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
+            if let url = link as? URL {
+                NSWorkspace.shared.open(url)
+                return true
+            }
+            if let raw = link as? String, let url = URL(string: raw), url.scheme?.hasPrefix("http") == true {
+                NSWorkspace.shared.open(url)
+                return true
+            }
             guard let uuid = link as? String else { return false }
             closePreview()
             NotificationCenter.default.post(
@@ -226,7 +206,7 @@ struct CosmoAssistantProseTextView: NSViewRepresentable {
                 guard let self, let textView, !Task.isCancelled, self.hoveredUUID == uuid else { return }
                 let snippet = await self.snippet(forUUID: uuid)
                 guard !Task.isCancelled, self.hoveredUUID == uuid else { return }
-                guard let ref = self.ref(forUUID: uuid) else { return }
+                guard let ref = self.ref(forUUID: uuid, in: textView) else { return }
                 self.showPreview(
                     ref: ref,
                     snippet: snippet,
@@ -241,13 +221,19 @@ struct CosmoAssistantProseTextView: NSViewRepresentable {
             previewPopover = nil
         }
 
-        private func ref(forUUID uuid: String) -> CosmoAssistantSourceRef? {
-            for segment in parent.segments {
-                if case .pill(let ref) = segment, ref.uuid == uuid {
-                    return ref
-                }
+        /// The pill attachment carrying this uuid, read back from the live
+        /// storage so the hover never depends on a stale segment list.
+        private func ref(forUUID uuid: String, in textView: NSTextView) -> CosmoAssistantSourceRef? {
+            guard let storage = textView.textStorage else { return nil }
+            var found: CosmoAssistantSourceRef?
+            storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) { value, range, stop in
+                guard let attachment = value as? CosmoMentionPillAttachment,
+                      let link = storage.attribute(.link, at: range.location, effectiveRange: nil) as? String,
+                      link == uuid else { return }
+                found = attachment.sourceRef
+                stop.pointee = true
             }
-            return nil
+            return found
         }
 
         private func snippet(forUUID uuid: String) async -> String? {
@@ -288,10 +274,88 @@ struct CosmoAssistantProseTextView: NSViewRepresentable {
     }
 }
 
+// MARK: - Decorating layout manager
+
+/// Paints the renderer's block decorations — rounded code/quote backgrounds,
+/// the quote's accent bar, inline-code chips — behind the glyphs. Decoration is
+/// a draw-time concern: it adds no layout, so the pane's per-frame cost is the
+/// same as plain text.
+final class CosmoProseLayoutManager: NSLayoutManager {
+    override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
+        super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
+        guard let storage = textStorage, let container = textContainers.first else { return }
+        let characterRange = self.characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
+        guard characterRange.length > 0 else { return }
+
+        let palette = CosmoAssistantMarkdownRenderer.Palette.current
+        let containerWidth = container.containerSize.width
+
+        // Block decorations: one rounded rect per contiguous run, spanning the
+        // full measure so the background reads as a block, not a highlight.
+        storage.enumerateAttribute(.cosmoProseBlock, in: characterRange, options: [.longestEffectiveRangeNotRequired]) { value, range, _ in
+            guard let raw = value as? String, let kind = CosmoProseBlockDecoration(rawValue: raw) else { return }
+            var fullRange = NSRange(location: range.location, length: range.length)
+            // Extend to the whole decorated run even when only part is being drawn.
+            var effective = NSRange()
+            _ = storage.attribute(.cosmoProseBlock, at: range.location, longestEffectiveRange: &effective, in: NSRange(location: 0, length: storage.length))
+            if effective.length > 0 { fullRange = effective }
+
+            let glyphRange = self.glyphRange(forCharacterRange: fullRange, actualCharacterRange: nil)
+            var union = NSRect.null
+            self.enumerateLineFragments(forGlyphRange: glyphRange) { rect, _, _, _, _ in
+                union = union.union(rect)
+            }
+            guard !union.isNull else { return }
+
+            let pad = CosmoAssistantMarkdownRenderer.blockVerticalPad - 2
+            var block = NSRect(
+                x: origin.x,
+                y: union.minY + origin.y - pad,
+                width: containerWidth,
+                height: union.height + pad * 2
+            )
+            block = block.integral
+            let path = NSBezierPath(roundedRect: block, xRadius: CosmoAssistantMarkdownRenderer.cornerRadius, yRadius: CosmoAssistantMarkdownRenderer.cornerRadius)
+            palette.blockFill.setFill()
+            path.fill()
+            palette.blockBorder.setStroke()
+            path.lineWidth = 1
+            path.stroke()
+
+            if kind == .quote {
+                let bar = NSRect(
+                    x: block.minX + CosmoAssistantMarkdownRenderer.blockInset - CosmoAssistantMarkdownRenderer.quoteBarWidth - 4,
+                    y: block.minY + 6,
+                    width: CosmoAssistantMarkdownRenderer.quoteBarWidth,
+                    height: block.height - 12
+                )
+                palette.accent.withAlphaComponent(0.55).setFill()
+                NSBezierPath(roundedRect: bar, xRadius: 1.5, yRadius: 1.5).fill()
+            }
+        }
+
+        // Inline code chips: a small rounded rect behind each enclosing rect.
+        storage.enumerateAttribute(.cosmoProseInlineCode, in: characterRange, options: []) { value, range, _ in
+            guard (value as? Bool) == true else { return }
+            let glyphRange = self.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            self.enumerateEnclosingRects(forGlyphRange: glyphRange, withinSelectedGlyphRange: NSRange(location: NSNotFound, length: 0), in: container) { rect, _ in
+                let chip = NSRect(
+                    x: rect.minX + origin.x - 2,
+                    y: rect.minY + origin.y + 1,
+                    width: rect.width + 4,
+                    height: rect.height - 2
+                )
+                palette.inlineCodeFill.setFill()
+                NSBezierPath(roundedRect: chip, xRadius: 4, yRadius: 4).fill()
+            }
+        }
+    }
+}
+
 // MARK: - Hover-aware text view
 
 /// NSTextView that reports which document pill the pointer is over, so the
-/// coordinator can stage a preview card. Pills are the only link runs here.
+/// coordinator can stage a preview card. Pills are the only attachment runs.
 final class CosmoProsePillTextView: NSTextView {
     var onPillHover: (@MainActor (String?, NSRect) -> Void)?
 

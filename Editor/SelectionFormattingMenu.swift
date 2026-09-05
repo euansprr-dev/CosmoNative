@@ -1,7 +1,8 @@
 // CosmoOS/Editor/SelectionFormattingMenu.swift
 // The quill bar — floating formatting capsule for text selections.
-// One glass capsule: B I U S̶ · Aa ▾ · ✦, with a styles panel (headings + lists)
-// and an AI mode (Expand/Condense/Rephrase + custom prompt).
+// One glass capsule: B I U S̶ · A• Aa ▾ · ✦, with a colour panel (ink +
+// highlight + link), a styles panel (headings + lists) and an AI mode
+// (Expand/Condense/Rephrase + custom prompt).
 //
 // Positioning is owned here: the host passes the selection rect (`anchor`) and
 // its own bounds (`container`); the bar measures itself, clamps horizontally,
@@ -10,12 +11,22 @@
 
 import SwiftUI
 
+/// Ink / highlight / link carried by the whole selection (or the caret's
+/// typing attributes). Nil on the menu = the host does not know yet — the
+/// swatches then show no selection ring and the glyph dot stays muted.
+struct SelectionInlineColorState: Equatable {
+    var inkID: String? = nil
+    var highlightID: String? = nil
+    var href: String? = nil
+}
+
 struct SelectionFormattingMenu: View {
     /// Selection rect in the host's coordinate space.
     let anchor: CGRect
     /// Host bounds the bar must stay inside.
     let container: CGSize
     var traits: SelectionFormattingTraits = .none
+    var inlineColor: SelectionInlineColorState? = nil
     var compact: Bool = false
     var darkMode: Bool = false
     let onDismiss: () -> Void
@@ -25,9 +36,13 @@ struct SelectionFormattingMenu: View {
 
     @State private var mode: MenuMode = .formatting
     @State private var showStylePanel = false
+    @State private var showColorPanel = false
     @State private var showCustomPrompt = false
     @State private var customPromptText = ""
+    @State private var linkText = ""
     @State private var barSize: CGSize = .zero
+    @FocusState private var linkFieldFocused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private enum MenuMode {
         case formatting, ai
@@ -82,6 +97,7 @@ struct SelectionFormattingMenu: View {
         .fixedSize()
         .animation(ProMotionSprings.snappy, value: mode)
         .animation(ProMotionSprings.snappy, value: showStylePanel)
+        .animation(reduceMotion ? nil : ProMotionSprings.snappy, value: showColorPanel)
         .animation(ProMotionSprings.snappy, value: showCustomPrompt)
         .position(resolvedPosition)
         .animation(ProMotionSprings.snappy, value: anchor)
@@ -108,6 +124,10 @@ struct SelectionFormattingMenu: View {
     private var attachedPanels: some View {
         if showStylePanel && mode == .formatting {
             stylePanel
+                .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: panelsGrowDownward ? .top : .bottom)))
+        }
+        if showColorPanel && mode == .formatting {
+            colorPanel
                 .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: panelsGrowDownward ? .top : .bottom)))
         }
         if showCustomPrompt && mode == .ai {
@@ -137,6 +157,7 @@ struct SelectionFormattingMenu: View {
 
         quillDividerDot
 
+        colorButton
         styleChip
 
         if onWritingAIRequest != nil || onAIAction != nil {
@@ -148,10 +169,31 @@ struct SelectionFormattingMenu: View {
                     onWritingAIRequest()
                 } else {
                     showStylePanel = false
+                    showColorPanel = false
                     mode = .ai
                 }
             }
         }
+    }
+
+    /// The colour control — a `textformat` glyph over a dot in the current
+    /// ink (muted while the host has not reported the selection's colour).
+    private var colorButton: some View {
+        QuillColorButton(
+            dotColor: currentInkDot,
+            isActive: showColorPanel || inlineColor?.inkID != nil || inlineColor?.highlightID != nil
+        ) {
+            showStylePanel = false
+            if !showColorPanel { linkText = inlineColor?.href ?? "" }
+            showColorPanel.toggle()
+        }
+    }
+
+    private var currentInkDot: Color {
+        guard let inkID = inlineColor?.inkID, RichInlineColor.isKnownTone(inkID) else {
+            return DS.textMuted
+        }
+        return NoteInkPalette.tone(inkID).ink(darkMode: darkMode)
     }
 
     /// The Aa chip — names the current block style and opens the styles panel.
@@ -161,6 +203,7 @@ struct SelectionFormattingMenu: View {
             isActive: showStylePanel || traits.headingLevel != nil || traits.listKind != .none,
             hint: "Text style"
         ) {
+            showColorPanel = false
             showStylePanel.toggle()
         }
     }
@@ -258,6 +301,125 @@ struct SelectionFormattingMenu: View {
                     .font(DS.callout)
             }
         }
+    }
+
+    // MARK: - Colour panel (ink + highlight + link)
+
+    /// Attached exactly like the styles panel: same chrome, same spring,
+    /// no popover window (one would take first responder from the text
+    /// view and drop the selection the colour is meant for).
+    private var colorPanel: some View {
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: DS.space8) {
+                inkRow
+                highlightRow
+                Rectangle()
+                    .fill(DS.glassBorder)
+                    .frame(height: 0.5)
+                linkRow
+            }
+            .padding(DS.space8)
+            QuillKeycapFooter(darkMode: darkMode)
+        }
+        .frame(width: 280)
+        .cosmoMenuChrome(cornerRadius: 14, darkMode: darkMode)
+        .onChange(of: inlineColor?.href) { _, href in
+            if !linkFieldFocused { linkText = href ?? "" }
+        }
+    }
+
+    private var inkRow: some View {
+        HStack(spacing: DS.space6) {
+            swatchRowLabel("Ink")
+            ForEach(NoteInkPalette.tones) { tone in
+                QuillSwatch(
+                    outline: .circle,
+                    fill: tone.ink(darkMode: darkMode),
+                    isSelected: inlineColor?.inkID == tone.id,
+                    hint: "\(tone.label) ink"
+                ) { EditorCommandBus.shared.applyInk(tone.id) }
+            }
+            QuillSwatch(
+                outline: .circle,
+                fill: DS.documentText,
+                isSelected: inlineColor != nil && inlineColor?.inkID == nil,
+                hint: "Default ink"
+            ) { EditorCommandBus.shared.applyInk(nil) }
+        }
+    }
+
+    private var highlightRow: some View {
+        HStack(spacing: DS.space6) {
+            swatchRowLabel("Highlight")
+            ForEach(NoteInkPalette.tones) { tone in
+                QuillSwatch(
+                    outline: .square,
+                    fill: tone.ink(darkMode: darkMode).opacity(0.28),
+                    isSelected: inlineColor?.highlightID == tone.id,
+                    hint: "\(tone.label) highlight"
+                ) { EditorCommandBus.shared.applyHighlight(tone.id) }
+            }
+            QuillSwatch(
+                outline: .square,
+                fill: .clear,
+                hairlineOnly: true,
+                isSelected: inlineColor != nil && inlineColor?.highlightID == nil,
+                hint: "No highlight"
+            ) { EditorCommandBus.shared.applyHighlight(nil) }
+        }
+    }
+
+    /// Small caps from a sentence-case source (`.smallCaps()` on UPPERCASE
+    /// is a no-op); menus carry `textMuted` — the one small-caps dialect.
+    private func swatchRowLabel(_ label: String) -> some View {
+        Text(label)
+            .font(DS.smallCaps)
+            .tracking(DS.smallCapsTracking)
+            .foregroundStyle(DS.textMuted)
+            .frame(width: 52, alignment: .leading)
+    }
+
+    /// One field, one verb: the chip reads "Apply" while the field holds a
+    /// URL and "Remove" when it is empty — Return does whatever the chip says.
+    private var linkRow: some View {
+        HStack(spacing: DS.space6) {
+            swatchRowLabel("Link")
+            linkField
+            QuillChipButton(
+                label: linkText.isEmpty ? "Remove" : "Apply",
+                isActive: !linkText.isEmpty,
+                hint: linkText.isEmpty ? "Remove link" : "Apply link (↩)"
+            ) { commitLink() }
+            .frame(width: 60)
+        }
+    }
+
+    private var linkField: some View {
+        HStack(spacing: DS.space4) {
+            Image(systemName: "link")
+                .font(DS.caption2.weight(.medium))
+                .foregroundStyle(linkFieldFocused ? DS.accent : DS.textMuted)
+            TextField("Paste a link", text: $linkText)
+                .textFieldStyle(.plain)
+                .font(DS.callout)
+                .foregroundStyle(DS.text)
+                .focused($linkFieldFocused)
+                .onSubmit { commitLink() }
+                .onKeyPress(.escape) {
+                    showColorPanel = false
+                    return .handled
+                }
+                .accessibilityLabel("Link URL")
+        }
+        .padding(.horizontal, DS.space8)
+        .frame(height: 26)
+        .dsGlassInput(isFocused: linkFieldFocused, cornerRadius: 8)
+        .animation(ProMotionSprings.hover, value: linkFieldFocused)
+    }
+
+    private func commitLink() {
+        EditorCommandBus.shared.applyLink(QuillLinkField.normalized(linkText))
+        showColorPanel = false
     }
 
     // MARK: - AI mode
@@ -441,5 +603,157 @@ private struct QuillPanelRow<Content: View>: View {
             withAnimation(ProMotionSprings.hover) { isHovered = hovering }
         }
         .accessibilityAddTraits(active ? .isSelected : [])
+    }
+}
+
+// MARK: - Colour button (glyph over a tone dot)
+
+/// `textformat` over a 6pt dot that wears the selection's ink — the
+/// Craft/Pages register. Visual 30pt circle like its siblings; the hit
+/// frame is the full 44pt target, with negative padding so the bar's 2pt
+/// glyph rhythm stays intact (hit slop, not layout).
+private struct QuillColorButton: View {
+    let dotColor: Color
+    let isActive: Bool
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 2) {
+                Image(systemName: "textformat")
+                    .font(DS.buttonText.weight(.semibold))
+                Circle()
+                    .fill(dotColor)
+                    .frame(width: 6, height: 6)
+            }
+            .foregroundStyle(isActive ? DS.accent : (isHovered ? DS.text : DS.textSecondary))
+            .frame(width: 30, height: 30)
+            .background(
+                isActive ? AnyShapeStyle(DS.accentSoft) :
+                    (isHovered ? AnyShapeStyle(DS.glassCardFill) : AnyShapeStyle(.clear)),
+                in: Circle()
+            )
+            .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
+            .padding(.horizontal, -5)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.hover) { isHovered = hovering }
+        }
+        .help("Text colour")
+        .accessibilityLabel("Text colour")
+        .accessibilityAddTraits(isActive ? .isSelected : [])
+    }
+}
+
+// MARK: - Swatch (ink circle / highlight square)
+
+/// 18pt swatch with a concentric accent ring when selected (1.5pt, 2pt
+/// outside the swatch). Hover is a 1.04 whisper — never ≥ 1.05.
+private struct QuillSwatch: View {
+    enum Outline { case circle, square }
+
+    let outline: Outline
+    let fill: Color
+    var hairlineOnly = false
+    let isSelected: Bool
+    let hint: String
+    let action: () -> Void
+
+    @State private var isHovered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private static let size: CGFloat = 18
+    private static let ringGap: CGFloat = 2
+    private static let ringWidth: CGFloat = 1.5
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                swatch
+                ring
+            }
+            .frame(width: 24, height: 24)
+            .scaleEffect(isHovered && !reduceMotion ? 1.04 : 1)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(ProMotionSprings.snappy) { isHovered = hovering }
+        }
+        .help(hint)
+        .accessibilityLabel(hint)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private var swatch: some View {
+        swatchShape(cornerRadius: 5)
+            .fill(fill)
+            .overlay(
+                swatchShape(cornerRadius: 5)
+                    .stroke(hairlineOnly ? DS.glassBorder : DS.glassBorder.opacity(0.35), lineWidth: 1)
+            )
+            .frame(width: Self.size, height: Self.size)
+    }
+
+    /// Ring centre-line sits gap + half the stroke outside the swatch; the
+    /// square's radius grows by the same amount so the corners stay concentric.
+    private var ring: some View {
+        let outset = Self.ringGap + Self.ringWidth / 2
+        return swatchShape(cornerRadius: 5 + outset)
+            .stroke(DS.accent, lineWidth: Self.ringWidth)
+            .frame(width: Self.size + outset * 2, height: Self.size + outset * 2)
+            .opacity(isSelected ? 1 : 0)
+            .animation(ProMotionSprings.snappy, value: isSelected)
+    }
+
+    private func swatchShape(cornerRadius: CGFloat) -> AnyShape {
+        switch outline {
+        case .circle: return AnyShape(Circle())
+        case .square: return AnyShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        }
+    }
+}
+
+// MARK: - Link normalisation
+
+enum QuillLinkField {
+    /// "example.com" → "https://example.com"; schemes and mailto pass
+    /// through; blank → nil (remove the link).
+    static func normalized(_ raw: String) -> String? {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        if text.contains("://") || text.lowercased().hasPrefix("mailto:") { return text }
+        return "https://" + text
+    }
+}
+
+// MARK: - Keycap footer (the CosmoKeyboardFooter dialect, panel-specific hints)
+
+private struct QuillKeycapFooter: View {
+    var darkMode: Bool = false
+
+    private var ink: Color { darkMode ? Color.white.opacity(0.5) : DS.textMuted }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Rectangle()
+                .fill(darkMode ? Color.white.opacity(0.06) : DS.sepiaBorder.opacity(0.7))
+                .frame(height: 1)
+            HStack {
+                Text("⌘⇧H Highlight")
+                Spacer()
+                Text("↩ Apply link")
+                Text("⎋ Close")
+            }
+            .font(DS.keycap)
+            .foregroundStyle(ink)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(darkMode ? Color.white.opacity(0.05) : DS.glassInputFill.opacity(0.24))
+        }
     }
 }

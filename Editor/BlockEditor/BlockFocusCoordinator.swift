@@ -238,9 +238,16 @@ final class BlockFocusCoordinator {
 
         let nextIndex = currentIndex + offset
         guard order.indices.contains(nextIndex) else { return false }
+        lastNavigationOffset = offset
         setFocusedBlockID(order[nextIndex])
         return true
     }
+
+    /// The direction of the last ⬆/⬇ navigation (−1 = moved up, +1 = moved
+    /// down). A container that gains focus this way (a table) enters at its
+    /// last row when the user came from below. Imperative read only — never
+    /// tracked from a row body.
+    @ObservationIgnored private(set) var lastNavigationOffset = 1
 
     /// The blocks reachable by ⬆/⬇, in document order. We start from the visual
     /// `navigationOrder` and keep only IDs that currently have a live editor

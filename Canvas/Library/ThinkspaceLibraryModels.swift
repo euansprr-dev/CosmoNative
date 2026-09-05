@@ -6,31 +6,8 @@
 
 import SwiftUI
 
-// MARK: - Thinkspace Canvas Mode
-
-enum ThinkspaceCanvasMode: String, CaseIterable, Identifiable {
-    case canvas
-    case library
-    case deepDive
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .canvas: return "Canvas"
-        case .library: return "Library"
-        case .deepDive: return "Deep Dive"
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .canvas: return "square.grid.3x3"
-        case .library: return "folder"
-        case .deepDive: return "circle.hexagongrid.circle"
-        }
-    }
-}
+// The space's views (Canvas / Library / Deep Dive …) are `SpaceView` in
+// Canvas/Spaces/SpaceModels.swift — per space, persisted, kind-shaped.
 
 // MARK: - Library View Mode (the lenses)
 
@@ -237,7 +214,8 @@ struct ThinkspaceLibrarySnapshot: Equatable {
     /// Every document in the thinkspace, foldered or loose — the search scope
     /// and the Recents shelf both read from here.
     var allItems: [ThinkspaceLibraryItem] {
-        looseItems + folders.flatMap(\.items)
+        var seen: Set<String> = []
+        return (looseItems + folders.flatMap(\.items)).filter { seen.insert($0.entityUuid).inserted }
     }
 
     /// Which folder an item lives in, for provenance columns and search results.
@@ -248,7 +226,8 @@ struct ThinkspaceLibrarySnapshot: Equatable {
     static func make(
         blocks: [CanvasBlock],
         clusters: [CanvasCluster],
-        inventory: [ChildDoc]
+        inventory: [ChildDoc],
+        materialGroups: [SpaceMaterialGroup]? = nil
     ) -> ThinkspaceLibrarySnapshot {
         var itemsByUUID: [String: ThinkspaceLibraryItem] = [:]
 
@@ -276,23 +255,14 @@ struct ThinkspaceLibrarySnapshot: Equatable {
             )
         }
 
-        let sortedClusters = clusters.sorted { lhs, rhs in
-            lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+        let groups = materialGroups ?? clusters.map {
+            SpaceMaterialGroup(id: $0.id, name: $0.name, colorIndex: $0.colorIndex, itemUUIDs: $0.blockUUIDs)
         }
-
-        let folders = sortedClusters.map { cluster in
-            let items = cluster.blockUUIDs
-                .compactMap { itemsByUUID[$0] }
-                .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
-            return ThinkspaceLibraryFolder(
-                id: cluster.id,
-                title: cluster.name,
-                colorIndex: cluster.colorIndex,
-                items: items
-            )
+        let folders = groups.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }.map { group in
+            ThinkspaceLibraryFolder(id: group.id, title: group.name, colorIndex: group.colorIndex,
+                items: group.itemUUIDs.compactMap { itemsByUUID[$0] }.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending })
         }
-
-        let clusteredUUIDs = Set(clusters.flatMap(\.blockUUIDs))
+        let clusteredUUIDs = Set(groups.flatMap(\.itemUUIDs))
         let looseItems = itemsByUUID.values
             .filter { !clusteredUUIDs.contains($0.entityUuid) }
             .sorted { lhs, rhs in
@@ -554,6 +524,10 @@ struct ThinkspaceLibraryActions {
     /// Delete the document: tombstones the atom (restorable via Recently
     /// Deleted) and removes any canvas block.
     var deleteItem: (ThinkspaceLibraryItem) -> Void
+    /// A member without a position (waiting in the tray) gets a spot at the
+    /// camera. Optional so older call sites keep compiling.
+    var placeOnCanvas: (ThinkspaceLibraryItem) -> Void = { _ in }
+    var removeFromSpace: (ThinkspaceLibraryItem) -> Void = { _ in }
 }
 
 // MARK: - Sorting

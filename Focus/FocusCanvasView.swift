@@ -168,7 +168,7 @@ struct FocusCanvasView: View {
                 // Right-click context menu for adding floating blocks (standard mode only)
                 .contextMenu {
                     Button {
-                        addFocusBlock(type: .note, title: "Note", at: screenCenter.applying(.init(translationX: -200, y: 0)))
+                        addFocusBlock(type: .note, title: "Page", at: screenCenter.applying(.init(translationX: -200, y: 0)))
                     } label: {
                         Label("Add Note", systemImage: "note.text")
                     }
@@ -401,7 +401,7 @@ struct FocusCanvasView: View {
                 case .note:
                     if let atom = try? await AtomRepository.shared.create(
                         type: .note,
-                        title: title == "Note" ? nil : title
+                        title: ["Note", "Page"].contains(title) ? nil : title
                     ) {
                         entityId = atom.id ?? -1
                         entityUUID = atom.uuid
@@ -645,7 +645,7 @@ struct FocusCanvasView: View {
                         await createFloatingBlockFromEntity(type: entityType, id: entityId)
                     } else {
                         // Create NEW entity as floating block
-                        let title = prefillTitle ?? "New \(entityType.rawValue.capitalized)"
+                        let title = prefillTitle ?? "New \(entityType.displayName)"
                         let blockPosition = position ?? CGPoint(
                             x: 500 + CGFloat.random(in: -50...50),
                             y: 400 + CGFloat.random(in: -50...50)
@@ -726,7 +726,7 @@ struct FocusCanvasView: View {
         do {
             // Fetch entity using AtomRepository
             if let atom = try await AtomRepository.shared.fetch(id: id) {
-                title = atom.title ?? "Untitled \(type.rawValue.capitalized)"
+                title = atom.title ?? "Untitled \(type.displayName)"
                 entityUUID = atom.uuid
             }
         } catch {
@@ -820,7 +820,7 @@ struct FocusCanvasView: View {
                 // Notes always get a backing atom for reliable persistence
                 let atom = try await AtomRepository.shared.create(
                     type: .note,
-                    title: title == "Note" ? nil : title,
+                    title: ["Note", "Page"].contains(title) ? nil : title,
                     body: content
                 )
                 entityId = atom.id ?? -1
@@ -909,7 +909,7 @@ struct FocusCanvasHeader: View {
             HStack(spacing: 6) {
                 Image(cosmo: entity.type.cosmoIcon)
                     .font(.system(size: 11))
-                Text(entity.type.rawValue.capitalized)
+                Text(entity.type.displayName)
                     .font(CosmoTypography.labelSmall)
             }
             .foregroundColor(CosmoMentionColors.color(for: entity.type))

@@ -31,6 +31,9 @@ struct InboxView: View {
             viewModel.isInboxVisible = true
         }
         .onDisappear { viewModel.isInboxVisible = false }
+        .onReceive(NotificationCenter.default.publisher(for: SpaceCompositionService.didFailUndo)) { notification in
+            if let message = notification.userInfo?["message"] as? String { viewModel.presentLaneToast(message, isError: true) }
+        }
         .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Inbox.focusCaptureField)) { _ in
             route = .global
             viewModel.requestCaptureFieldFocus()
@@ -160,7 +163,15 @@ struct InboxView: View {
                     Label("Restore “\(entry.title)”", systemImage: "arrow.uturn.backward")
                 }
             } else {
-                Text("Placed: \(entry.title)")
+                Text(entry.title)
+                Text(entry.subtitle)
+                if let receipt = item.placementReceipt, !receipt.isUndone {
+                    Button("Open saved item") {
+                        NotificationCenter.default.post(name: CosmoNotification.NodeGraph.openAtomFromCommandK, object: nil,
+                            userInfo: ["atomUUID": receipt.resultAtomUUID])
+                    }
+                    Button("Undo filing") { Task { await viewModel.undoFilingFromHistory(item) } }
+                }
             }
         case .deletedLane(let lane):
             Button {

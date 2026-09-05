@@ -58,9 +58,10 @@ struct SpacePageEditor: View {
             editorTargetID: EditorCommandTarget.noteBody(atom.uuid),
             navigationTargetID: initialBlockID,
             progressiveHydration: true,
+            minimumWritingHeight: minimumBodyHeight,
+            minimumTailHeight: 160,
             landingHighlightBlockID: initialBlockID
         )
-        .frame(minHeight: minimumBodyHeight, alignment: .topLeading)
         .disabled(session.isDeleted)
     }
 

@@ -55,6 +55,24 @@ enum CanvasNotePersistence {
     static func saveSticky(
         in db: Database, blockID: String, document: RichDocument, plainText: String
     ) throws -> SavedSticky {
+        if blockID.hasPrefix("composition:") {
+            let parts = blockID.split(separator: ":", maxSplits: 2).map(String.init)
+            guard parts.count == 3,
+                  let container = try Atom.filter(Column("uuid") == parts[1]).filter(Column("is_deleted") == false).fetchOne(db),
+                  try SpaceCanvasPersistence.items(in: container, db: db).contains(where: { $0.uuid == parts[2] }),
+                  let atom = try Atom.filter(Column("uuid") == parts[2]).filter(Column("is_deleted") == false).fetchOne(db) else { throw SaveError.missingBlock }
+            let current = document.plainText == plainText ? document : RichDocument.migrateLegacy(plainText)
+            let fields = RichDocumentPersistence.writeAtomDocuments(existingMetadata: atom.metadata, bodyDocument: current)
+            AtomRevisionWriter.snapshotBeforeRawWrite(db, uuid: atom.uuid, incomingTitle: atom.title, incomingBody: plainText)
+            try db.execute(sql: """
+                UPDATE atoms SET body = ?, metadata = ?, updated_at = ?, _local_version = _local_version + 1, _local_pending = 1
+                WHERE uuid = ? AND is_deleted = 0
+                """, arguments: [plainText, fields.metadata, ISO8601.string(from: Date()), atom.uuid])
+            guard let saved = try Atom.filter(Column("uuid") == atom.uuid).fetchOne(db) else { throw SaveError.deletedAtom }
+            var metadata = RichDocumentPersistence.writeBlockDocument(current, key: RichDocumentMetadataKeys.bodyDocument, metadata: [:])
+            metadata["content"] = plainText
+            return SavedSticky(atom: saved, metadata: metadata)
+        }
         guard let row = try Row.fetchOne(db,
             sql: "SELECT * FROM canvas_blocks WHERE id = ? AND is_deleted = 0",
             arguments: [blockID]

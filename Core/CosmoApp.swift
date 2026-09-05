@@ -528,6 +528,19 @@ public enum EntityType: String, Codable, Sendable {
 
     public var icon: String { cosmoIcon.systemName }
 
+    /// Product language is independent of the persisted type and URL aliases.
+    public var displayName: String {
+        switch self {
+        case .note: return "Page"
+        case .connection: return "Concept"
+        case .thinkspace: return "Space"
+        case .cosmo, .cosmoAI: return "Cosmo"
+        case .swipeFile: return "Swipe File"
+        case .inquirySession: return "Inquiry"
+        default: return rawValue.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+
     var cosmoIcon: CosmoIcon {
         switch self {
         case .idea: return .idea

@@ -341,30 +341,10 @@ final class InboxIngestService {
                 rationale: result.recommendationBundle.primaryRecommendation?.rationale,
                 placementPlanSummary: result.recommendationBundle.primaryRecommendation?.placementPlan?.summary
             )
-            await autoGrowIfUnmistakable(itemUUID: item.uuid, bundle: result.recommendationBundle)
+            // Confidence is evidence for a suggestion, never permission to file.
         } catch {
             print("⚠️ [InboxIngest] Failed to store classification for \(item.uuid): \(error)")
             PersistenceHealth.note(.writeFailure, context: context, detail: "classification store failed for \(item.uuid): \(error.localizedDescription)")
-        }
-    }
-
-    /// The self-draining path for thought captures: an unmistakable
-    /// `feedSeedling` primary applies itself. Mass accrues automatically;
-    /// the receipt lands in history ("Grew …") with full undo; the queue
-    /// only holds captures that actually need a human decision. Feeding is
-    /// the ONLY auto-applied verb — it creates no atom, touches no canvas,
-    /// and never names anything.
-    private func autoGrowIfUnmistakable(itemUUID: String, bundle: InboxRecommendationBundle) async {
-        guard let primary = bundle.primaryRecommendation,
-              primary.kind == .feedSeedling,
-              primary.confidence >= InboxRoutingConfig.shared.seedlingAutoGrowMinConfidence,
-              let fresh = try? await inboxRepo.fetch(uuid: itemUUID),
-              fresh.status == .classified, !fresh.isDeleted else { return }
-        do {
-            _ = try await InboxActionExecutor.shared.executeFeedSeedling(item: fresh, recommendation: primary)
-        } catch {
-            // The suggestion pill is still there — the user can grow it by hand.
-            print("⚠️ [InboxIngest] Auto-grow failed for \(itemUUID): \(error)")
         }
     }
 

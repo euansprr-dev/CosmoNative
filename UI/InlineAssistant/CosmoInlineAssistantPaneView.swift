@@ -453,7 +453,7 @@ enum CosmoScopeSurfaceIdentity {
     static func label(for entity: String?) -> String {
         switch entity {
         case "content": return "Draft"
-        case "note": return "Note"
+        case "note": return "Page"
         case "idea": return "Idea"
         case "connection": return "Concept"
         case "thinkspace": return "Thinkspace"

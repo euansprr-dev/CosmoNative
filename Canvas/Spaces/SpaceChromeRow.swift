@@ -34,7 +34,7 @@ enum SpaceAddKind: String, CaseIterable, Identifiable {
         switch self {
         case .group: return "New material group"
         case .existing: return "Add existing material…"
-        case .note: return "Note"
+        case .note: return "Page"
         case .idea: return "Idea"
         case .task: return "Task"
         case .content: return "Content piece"

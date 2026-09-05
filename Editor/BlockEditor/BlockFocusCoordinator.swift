@@ -8,6 +8,7 @@ struct BlockCaretRequest: Equatable {
     var blockID: UUID
     var utf16OffsetFromEnd: Int
     var token: Int
+    var windowPoint: CGPoint? = nil
 }
 
 /// Per-row focus signals. Row bodies read ONLY their own instance, so a focus
@@ -138,6 +139,7 @@ final class BlockFocusCoordinator {
         }
         if let previous, let state = rowStates[previous], state.isFocused {
             state.isFocused = false
+            state.caretRequest = nil
         }
         if let newValue {
             let state = rowState(for: newValue)
@@ -181,14 +183,15 @@ final class BlockFocusCoordinator {
     }
 
     /// Focus with an explicit caret placement (used after structural edits).
-    func focus(_ blockID: UUID?, caretOffsetFromEnd: Int?) {
+    func focus(_ blockID: UUID?, caretOffsetFromEnd: Int?, windowPoint: CGPoint? = nil) {
         guard let blockID else { return }
         focus(blockID)
         guard let caretOffsetFromEnd else { return }
         caretRequest = BlockCaretRequest(
             blockID: blockID,
             utf16OffsetFromEnd: caretOffsetFromEnd,
-            token: (caretRequest?.token ?? 0) + 1
+            token: (caretRequest?.token ?? 0) + 1,
+            windowPoint: windowPoint
         )
         // Only the target row observes its own request — placing the caret
         // after a split must not re-render every other mounted row.

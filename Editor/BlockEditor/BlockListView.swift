@@ -99,6 +99,10 @@ struct BlockListView: View {
     /// bodies) must keep single-pass mounting.
     var progressiveHydration: Bool = false
     var autoFocusFirstTextRegion: Bool = false
+    /// Writing hosts share one blank-tail interaction; embedded block bodies
+    /// keep their compact size by leaving these at zero.
+    var minimumWritingHeight: CGFloat = 0
+    var minimumTailHeight: CGFloat = 0
     /// Jump-to-sentence landing: the block that holds a search match wears a
     /// soft accent wash while set (the host scrolls to it and clears this
     /// after the pulse). Rows also carry `.id(block.id)` scroll anchors so a
@@ -144,7 +148,18 @@ struct BlockListView: View {
             ForEach(Array(document.blocks.enumerated()), id: \.element.id) { index, block in
                 rowView(index: index, block: block, fingerprint: fingerprint, listOrdinals: listOrdinals)
             }
+            if minimumTailHeight > 0 {
+                Button(action: continueWritingAtEnd) {
+                    Color.clear
+                        .frame(maxWidth: .infinity, minHeight: minimumTailHeight, maxHeight: .infinity)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Continue writing")
+                .help("Continue writing at the end of the page")
+            }
         }
+        .frame(minHeight: minimumWritingHeight, alignment: .topLeading)
         .onAppear { startHydrationPumpIfNeeded() }
         // Paragraph-focus dim animation lives on each row (scoped to its own
         // rowOpacity) — animating on focusedBlockID here read the coordinator
@@ -277,7 +292,8 @@ struct BlockListView: View {
                     // it and hands it the caret — the row registers
                     // with the focus coordinator as it mounts.
                     hydratedRowLimit = max(hydratedRowLimit, index + 1)
-                    resolvedFocusCoordinator.focus(block.id)
+                    resolvedFocusCoordinator.focus(block.id, caretOffsetFromEnd: 0,
+                                                   windowPoint: NSApp.currentEvent?.locationInWindow)
                 }
             )
             .id(block.id)
@@ -308,7 +324,8 @@ struct BlockListView: View {
                     } else {
                         resolvedSelectionCoordinator.clear()
                         deactivateSelectionKeyboard()
-                        resolvedFocusCoordinator.focus(block.id)
+                        resolvedFocusCoordinator.focus(block.id, caretOffsetFromEnd: 0,
+                                                       windowPoint: NSApp.currentEvent?.locationInWindow)
                     }
                 }
             ) {
@@ -318,6 +335,18 @@ struct BlockListView: View {
             // not rebuild and re-diff every row's chrome + editor subtree.
             .equatable()
             .id(block.id)
+        }
+    }
+
+    private func continueWritingAtEnd() {
+        resolvedSelectionCoordinator.clear()
+        deactivateSelectionKeyboard()
+        let continuation = BlockWritingTailPolicy.continuation(in: document)
+        if continuation.document != document {
+            commit(continuation, undoActionName: "Continue Writing")
+        } else if let path = continuation.focusPath,
+                  let block = try? BlockOperations.currentBlock(in: document, at: path) {
+            resolvedFocusCoordinator.focus(block.id, caretOffsetFromEnd: 0)
         }
     }
 
@@ -1739,5 +1768,18 @@ enum BlockPlaceholderPolicy {
             return false
         }
         return true
+    }
+}
+
+enum BlockWritingTailPolicy {
+    static func continuation(in document: RichDocument) -> BlockOperationResult {
+        if let last = document.blocks.last,
+           last.kind.isTextEditableBlock,
+           last.plainInlineText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return BlockOperationResult(document: document, focusPath: .root(index: document.blocks.count - 1), caretUTF16Offset: 0)
+        }
+        var updated = document
+        updated.blocks.append(.paragraph(""))
+        return BlockOperationResult(document: updated, focusPath: .root(index: updated.blocks.count - 1), caretUTF16Offset: 0)
     }
 }

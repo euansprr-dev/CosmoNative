@@ -390,7 +390,7 @@ struct ClusterListRow: View {
             let status = block.metadata["status"] ?? "active"
             return (status.capitalized, CosmoMentionColors.project)
         default:
-            return (block.entityType.rawValue.capitalized, CosmoMentionColors.defaultColor)
+            return (block.entityType.displayName, CosmoMentionColors.defaultColor)
         }
     }
 

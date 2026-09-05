@@ -29,6 +29,7 @@ actor InboxAtlasRouter {
 
     enum MoveKind: String, Sendable, CaseIterable {
         case advanceQuestion
+        case fileToDestination
         case spawnQuestion
         case feedConnection
         case attachClient
@@ -204,6 +205,10 @@ actor InboxAtlasRouter {
     (with keys). Answer with MOVES — what the capture should become — not just where to file it.
 
     THE MOVES (use the kind value exactly):
+    - "fileToDestination" — save in a listed GROUP or attach a reference to a listed PAGE. \
+    targetKey must name that exact Group or Page. Group membership never changes canvas layout; \
+    Page references never change writing or authored order. Do not propose moving existing Pages \
+    or creating Groups. This is a normal home for useful captured writing and supporting material.
     - "advanceQuestion" — the capture is material (evidence, an insight, a lead, a source) that helps \
     answer one of the OPEN QUESTIONS listed. targetKey = that question's key.
     - "spawnQuestion" — the capture IS a research question worth pursuing that no listed open question \
@@ -224,7 +229,7 @@ actor InboxAtlasRouter {
     - "placeThinkspace" — it fits a workspace but no cluster there. targetKey = thinkspace key.
     - "feedSeedling" — the capture adds mass to one of the GROWING SEEDLINGS listed (a named \
     proto-concept still accruing thoughts before it earns a page). targetKey = that seedling's key. \
-    This is the DEFAULT home for insight-shaped captures.
+    Suggest it when the capture clearly develops that named concept. Pages and Groups remain valid homes for ordinary thoughts.
     - "startSeedling" — the capture states a reusable principle, framework, or named idea that no \
     listed seedling or concept page covers. newTitle = a noun-phrase name for the concept. The \
     seedling grows in the nursery — no page and no canvas object is created until it ripens and the \
@@ -254,12 +259,10 @@ actor InboxAtlasRouter {
     charter and example contents. The name alone is never enough evidence.
     4. QUESTIONS BEFORE FOLDERS — if the capture is a question or clearly serves one, prefer \
     advanceQuestion/spawnQuestion over spatial placement; research threads compound, folders don't.
-    5. INSIGHTS GROW BEFORE THEY LAND — a raw thought (captureType "insight") prefers feedSeedling / \
-    startSeedling (or feedConnection when a developed page already covers it) over placeCluster / \
-    placeThinkspace. A canvas is a workspace of deliberate objects, not a pile of loose thoughts; \
-    spatial placement is for material that IS an object (a document, an image, a reference). When an \
-    insight matches a cluster's theme, that cluster tells you what the seedling is ABOUT — it does \
-    not make the canvas the right home.
+    5. MATCH THE USER’S WORK — Pages and Groups are valid homes for thoughts and writing. \
+    Suggest Concept development only when it clearly develops a named concept; it is optional. \
+    A Page destination attaches a reference; a Group destination adds membership. No suggestion \
+    changes authored section order or creates a canvas layout.
     6. ABSTAIN OVER GUESS — if two destinations feel equally plausible, or nothing fits, return \
     fewer moves or none. moves: [] is a correct, honest answer. Guessing wrong is worse.
 
@@ -394,8 +397,10 @@ actor InboxAtlasRouter {
             (.question, "OPEN QUESTIONS:"),
             (.deepDive, "RESEARCH TOPICS:"),
             (.connection, "CONCEPT PAGES:"),
-            (.seedling, "GROWING SEEDLINGS (proto-concepts accruing thoughts — the default home for insights):"),
-            (.cluster, "CLUSTERS:"),
+            (.seedling, "GROWING SEEDLINGS (optional concept development):"),
+            (.group, "GROUPS (membership only):"),
+            (.page, "PAGES (attach original reference; never rewrite):"),
+            (.cluster, "LEGACY GROUPS:"),
             (.thinkspace, "WORKSPACES:")
         ]
         for (kind, header) in order {
@@ -528,6 +533,9 @@ actor InboxAtlasRouter {
         // Per-kind structural validation — a move without its required
         // target is dropped, not repaired into a guess.
         switch kind {
+        case .fileToDestination:
+            guard let key = targetKey, let entry = entriesByKey[key],
+                  entry.kind == .group || entry.kind == .page, entry.filingDestination != nil else { return nil }
         case .advanceQuestion:
             guard let key = targetKey, entriesByKey[key]?.kind == .question else { return nil }
         case .spawnQuestion:

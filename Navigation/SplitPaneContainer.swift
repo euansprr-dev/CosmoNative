@@ -534,7 +534,7 @@ enum PaneInfo {
     static func fallbackTitle(for content: PaneContent) -> String {
         switch content {
         case .entity(let entity):
-            return entity.type.rawValue.replacingOccurrences(of: "_", with: " ").capitalized
+            return entity.type.displayName
         case .thinkspace: return "Thinkspace"
         case .commandCenter: return "Command Center"
         case .swipeGallery: return "Swipe File"

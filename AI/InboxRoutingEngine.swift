@@ -213,6 +213,12 @@ actor InboxRoutingEngine {
                 : move.growth
 
             switch move.kind {
+            case .fileToDestination:
+                guard let key = move.targetKey, let destination = entriesByKey[key]?.filingDestination else { continue }
+                results.append(InboxRecommendation(kind: .fileToDestination, confidence: move.confidence,
+                    suggestedAtomType: AtomType.note.rawValue, destinationPath: destination.path,
+                    rationale: rationale, thinkspaceId: destination.spaceID,
+                    filingDestination: destination, filingAction: destination.defaultAction))
             case .advanceQuestion:
                 guard let key = move.targetKey, let entry = entriesByKey[key],
                       let deepDiveUUID = entry.parentUUID else { continue }
@@ -630,30 +636,6 @@ actor InboxRoutingEngine {
                         rationale: "This capture belongs with the material in \(best.thinkspaceName), but no single cluster there is a tight fit.",
                         thinkspaceId: best.thinkspaceId,
                         thinkspaceName: best.thinkspaceName,
-                        placementPlan: plan
-                    )
-                )
-            }
-
-            let clusterName = suggestClusterName(from: title, removing: best.thinkspaceName)
-            if let plan = await planNewCluster(
-                title: title,
-                atomType: suggestedAtomType,
-                destination: best,
-                clusterName: clusterName,
-                relatedAtomUUIDs: Array(searchResultUUIDs)
-            ) {
-                recommendations.append(
-                    InboxRecommendation(
-                        kind: .createClusterAndPlace,
-                        confidence: clamp01(best.score - 0.05),
-                        suggestedAtomType: suggestedAtomType.rawValue,
-                        destinationPath: "\(best.thinkspaceName) › \(clusterName)",
-                        rationale: "It fits \(best.thinkspaceName) but starts a thread of its own — a fresh \(clusterName) cluster keeps it distinct.",
-                        thinkspaceId: best.thinkspaceId,
-                        thinkspaceName: best.thinkspaceName,
-                        clusterId: plan.targetClusterId,
-                        clusterName: clusterName,
                         placementPlan: plan
                     )
                 )

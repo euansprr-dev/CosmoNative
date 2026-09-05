@@ -570,6 +570,10 @@ struct RichTextEditor: View {
                     if showSlashMenu {
                         dismissAllOverlays(includeSelection: false)
                     }
+                    if showSelectionMenu {
+                        showSelectionMenu = false
+                        overlayPresenter?.clearSelectionSession(ownedBy: overlayEscapeOwnerID)
+                    }
                     onDeactivate?()
                 },
                 onCommit: onCommit,
@@ -612,23 +616,6 @@ struct RichTextEditor: View {
                     .padding(.leading, editorInsets.leading)
                     .allowsHitTesting(false)
 
-                // Clickable overlay to focus empty editor
-                Color.clear
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        shouldRefocusEditor = true
-                    }
-            }
-
-            // MARK: - Invisible dismiss layer (captures outside clicks)
-            if isOverlayVisible {
-                Color.clear
-                    .contentShape(Rectangle())
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .onTapGesture {
-                        dismissAllOverlays()
-                    }
-                    .allowsHitTesting(true)
             }
 
             // Slash command menu — inline presentation only when no block-list
@@ -745,9 +732,7 @@ struct RichTextEditor: View {
             overlayPresenter?.clearSelectionSession(ownedBy: overlayEscapeOwnerID)
         }
         .onChange(of: autoFocus) { _, shouldFocus in
-            if shouldFocus {
-                shouldRefocusEditor = true
-            }
+            shouldRefocusEditor = shouldFocus
         }
         .onReceive(Self.dismissOverlaysPublisher) { _ in
             dismissAllOverlays()
@@ -784,7 +769,10 @@ struct RichTextEditor: View {
     }
 
     private var externalTextPadding: EditorTextPadding {
-        EditorTextInsetPolicy.externalTextPadding(
+        // A block row is a paragraph in a document, not an independently
+        // padded editor. The list owns its vertical rhythm and text measure.
+        if splitsOnReturn { return .zero }
+        return EditorTextInsetPolicy.externalTextPadding(
             scrollsInternally: scrollsInternally,
             singleLine: singleLine,
             isTitleMode: titleConfiguration != nil,
@@ -1110,7 +1098,8 @@ struct RichTextEditor: View {
     }
 
     private var editorInsets: EdgeInsets {
-        EditorTextInsetPolicy.visualPadding(
+        if splitsOnReturn { return EditorTextPadding.zero.edgeInsets }
+        return EditorTextInsetPolicy.visualPadding(
             singleLine: singleLine,
             isTitleMode: titleConfiguration != nil,
             compact: compact,

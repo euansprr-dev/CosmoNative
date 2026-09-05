@@ -1033,7 +1033,7 @@ struct CommandKNoteComposerFields: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DS.space12) {
             CommandKComposerHeroTitleField(
-                placeholder: "Note title",
+                placeholder: "Page title",
                 text: pane.binding(.title),
                 accent: DS.entityNote,
                 focus: pane.focusBinding,
@@ -1048,7 +1048,7 @@ struct CommandKNoteComposerFields: View {
                 minHeight: 88,
                 lineLimit: 3...14
             )
-            Label("Creates the note and opens the editor", systemImage: "square.and.pencil")
+            Label("Creates the page and opens the editor", systemImage: "square.and.pencil")
                 .font(DS.caption)
                 .foregroundStyle(DS.textMuted)
         }

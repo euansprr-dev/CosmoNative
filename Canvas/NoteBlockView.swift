@@ -9,6 +9,8 @@ import Combine
 
 struct NoteBlockView: View {
     let block: CanvasBlock
+    /// Scoped canvases open the same saved Page within their own navigation.
+    var onOpen: ((Atom) -> Void)? = nil
 
     @State private var noteTitleDocument: RichDocument = .empty
     @State private var noteBodyDocument: RichDocument = .empty
@@ -252,7 +254,7 @@ struct NoteBlockView: View {
            !firstLine.isEmpty {
             return String(firstLine.prefix(40))
         }
-        return "Untitled Note"
+        return "Untitled Page"
     }
 
     // MARK: - Note Content
@@ -461,7 +463,7 @@ struct NoteBlockView: View {
         // Fall back to block.title / block.subtitle (for atom-backed blocks via fromAtom())
         if noteTitleText.isEmpty {
             let blockTitle = block.title
-            if blockTitle != "Note" && blockTitle != "Untitled" {
+            if !["Note", "Page", "Untitled"].contains(blockTitle) {
                 noteTitleText = blockTitle
                 noteTitleDocument = RichDocument.migrateLegacy(blockTitle)
             }
@@ -974,7 +976,7 @@ struct NoteBlockView: View {
                         WHERE id = ?
                         """,
                         arguments: [
-                            snapshot.titlePlainText.isEmpty ? "Note" : snapshot.titlePlainText,
+                            snapshot.titlePlainText.isEmpty ? "Page" : snapshot.titlePlainText,
                             snapshot.bodyPlainText,
                             blockMetadataJSON,
                             now,
@@ -1012,7 +1014,7 @@ struct NoteBlockView: View {
                         """,
                         arguments: [
                             atomId,
-                            snapshot.titlePlainText.isEmpty ? "Note" : snapshot.titlePlainText,
+                            snapshot.titlePlainText.isEmpty ? "Page" : snapshot.titlePlainText,
                             snapshot.bodyPlainText,
                             blockMetadataJSON,
                             now,
@@ -1094,19 +1096,18 @@ struct NoteBlockView: View {
                                 "entityUuid": existing.uuid
                             ]
                         )
-                        NotificationCenter.default.post(
-                            name: .enterFocusMode,
-                            object: nil,
-                            userInfo: [
-                                "type": EntityType.note,
-                                "id": existing.id ?? -1
-                            ]
-                        )
+                        openResolvedPage(existing)
                     }
                     return
                 }
 
                 if trackedEntityId > 0 {
+                    if let existing = try await CosmoDatabase.shared.asyncRead({ db in
+                        try Atom.fetchOne(db, key: trackedEntityId)
+                    }) {
+                        await MainActor.run { openResolvedPage(existing) }
+                        return
+                    }
                     await MainActor.run {
                         NotificationCenter.default.post(
                             name: .enterFocusMode,
@@ -1159,19 +1160,21 @@ struct NoteBlockView: View {
                             "entityUuid": created.uuid
                         ]
                     )
-                    NotificationCenter.default.post(
-                        name: .enterFocusMode,
-                        object: nil,
-                        userInfo: [
-                            "type": EntityType.note,
-                            "id": atomId
-                        ]
-                    )
+                    openResolvedPage(created)
                 }
             } catch {
                 PersistenceHealth.note(.writeFailure, context: "noteBlock.createBackingAtom", detail: "uuid=\(trackedEntityUuid): \(error)")
                 print("NoteBlock: Failed to create backing atom: \(error)")
             }
+        }
+    }
+
+    private func openResolvedPage(_ atom: Atom) {
+        if let onOpen {
+            onOpen(atom)
+        } else {
+            NotificationCenter.default.post(name: .enterFocusMode, object: nil,
+                                            userInfo: ["type": EntityType.note, "id": atom.id ?? -1])
         }
     }
 

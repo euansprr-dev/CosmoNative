@@ -847,7 +847,7 @@ final class CosmoWindowViewModel: ObservableObject {
            let body = activeContext.data.viewSpecificData["noteBody"] {
             return rememberNoteStructureSnapshot(NoteStructureSourceSnapshot(
                 sourceNoteUUID: noteUUID,
-                sourceTitle: activeContext.data.currentAtomTitle ?? "Untitled Note",
+                sourceTitle: activeContext.data.currentAtomTitle ?? "Untitled Page",
                 body: body
             ))
         }
@@ -877,7 +877,7 @@ final class CosmoWindowViewModel: ObservableObject {
         let body = DocumentElementContextFormatter.contextBody(for: atom)
         return rememberNoteStructureSnapshot(NoteStructureSourceSnapshot(
             sourceNoteUUID: noteUUID,
-            sourceTitle: atom.title ?? "Untitled Note",
+            sourceTitle: atom.title ?? "Untitled Page",
             body: body
         ))
     }

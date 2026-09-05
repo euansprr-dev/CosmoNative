@@ -13,6 +13,8 @@ struct SpaceWorkspaceView: View {
     @State private var preparingExport = false
     @State private var imageItem: Atom?
     @State private var organizing: SpaceWorkspaceOrganizeAction?
+    @State private var contentIdeaSource: Atom?
+    @State private var preparingContentIdea = false
     private var store: SpaceWorkspaceStore { .shared }
 
     var body: some View {
@@ -72,6 +74,7 @@ struct SpaceWorkspaceView: View {
             if let atom = store.selectedItem(in: spaceID) { SpaceWorkspaceOrganizeSheet(spaceID: spaceID, source: atom, action: action) }
         }
         .sheet(item: $imageItem) { atom in SpaceWorkspaceImageViewer(atom: atom) }
+        .sheet(item: $contentIdeaSource) { PageContentIdeaSheet(source: $0) }
     }
 
     private func header(_ atom: Atom, width: CGFloat) -> some View {
@@ -126,6 +129,8 @@ struct SpaceWorkspaceView: View {
                 Menu {
                     Button("Move into…", systemImage: "folder") { organizing = .move }
                     Button("Adapt into a new piece…", systemImage: "arrow.triangle.branch") { organizing = .adapt }
+                    Button("Create content idea…", systemImage: "lightbulb") { createContentIdea(from: atom) }
+                        .disabled(preparingContentIdea)
                     Divider()
                     Toggle("Include in export", isOn: Binding(get: { atom.spaceComposition?.includeInExport ?? true }, set: { included in
                         store.perform(in: spaceID) { try await SpaceCompositionService.setIncludedInExport(included, for: atom.uuid) }
@@ -157,7 +162,9 @@ struct SpaceWorkspaceView: View {
 
     @ViewBuilder private func content(_ atom: Atom) -> some View {
         switch effectiveView(atom) {
-        case .canvas, .grid, .list:
+        case .canvas:
+            SpaceWorkspaceCollectionView(spaceID: spaceID, container: atom, view: .canvas, onOpen: open)
+        case .grid, .list:
             if store.items(in: atom, spaceID: spaceID).isEmpty {
                 empty(atom)
             } else {
@@ -208,7 +215,7 @@ struct SpaceWorkspaceView: View {
             Label(atom.spaceCompositionKind == .group ? "Bring things together" : "Room for the next chapter",
                   systemImage: atom.spaceCompositionKind?.symbol ?? "doc.text")
         } description: {
-            Text(atom.spaceCompositionKind == .group ? "Add images, notes or references. Arrange them as your collection grows." : "Add a section, or switch to Write and start with a thought.")
+            Text(atom.spaceCompositionKind == .group ? "Add images, pages or references. Arrange them as your collection grows." : "Add a section, or switch to Write and start with a thought.")
         } actions: {
             if atom.spaceCompositionKind == .group { Button("Add existing…") { adding = true } }
             Button(atom.spaceCompositionKind == .group ? "New page" : "New section") { creating = .page }
@@ -249,6 +256,25 @@ struct SpaceWorkspaceView: View {
             do {
                 let snapshot = try await SpaceCompositionService.load(in: spaceID)
                 preview = try SpaceCompositionExportSnapshot.capture(from: snapshot, rootUUID: uuid)
+            } catch { store.report(error, in: spaceID) }
+        }
+    }
+
+    private func createContentIdea(from atom: Atom) {
+        guard !preparingContentIdea else { return }
+        preparingContentIdea = true
+        Task { @MainActor in
+            defer { preparingContentIdea = false }
+            NSApp.keyWindow?.makeFirstResponder(nil)
+            await Task.yield()
+            guard await SpacePageEditorStore.shared.flushAll() else {
+                store.report(SpaceCompositionError.conflict, in: spaceID); return
+            }
+            do {
+                guard let fresh = try await AtomRepository.shared.fetch(uuid: atom.uuid), !fresh.isDeleted else {
+                    throw PageContentHandoffError.unavailablePage
+                }
+                contentIdeaSource = fresh
             } catch { store.report(error, in: spaceID) }
         }
     }

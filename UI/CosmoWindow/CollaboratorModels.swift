@@ -296,8 +296,8 @@ struct CollaborationTarget: Equatable, Codable, Sendable {
         case .connection: return "Concept"
         case .content: return "Content"
         case .idea: return "Idea"
-        case .note: return "Note"
-        default: return entityType.rawValue.capitalized
+        case .note: return "Page"
+        default: return entityType.displayName
         }
     }
 }

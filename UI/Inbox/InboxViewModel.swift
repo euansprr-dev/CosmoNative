@@ -252,17 +252,18 @@ final class InboxViewModel {
 
     func applyItems(_ newItems: [InboxItem]) {
         guard items != newItems else { return }
+        let previousIndex = focusedItemId.flatMap { id in items.firstIndex { $0.uuid == id } }
         items = newItems
         regroupItems()
-        reconcileFocus()
+        reconcileFocus(previousIndex: previousIndex)
         selectedItemIds.formIntersection(newItems.map(\.uuid))
     }
 
     /// Keep keyboard focus on a real row after items change underneath it.
-    private func reconcileFocus() {
+    private func reconcileFocus(previousIndex: Int?) {
         guard let focusedItemId, !items.contains(where: { $0.uuid == focusedItemId }) else { return }
-        self.focusedItemId = nil
-        isInspectorOpen = false
+        self.focusedItemId = items.isEmpty ? nil : items[min(previousIndex ?? 0, items.count - 1)].uuid
+        if items.isEmpty { isInspectorOpen = false }
     }
 
     // MARK: - Temporal Grouping
@@ -520,29 +521,55 @@ final class InboxViewModel {
                 developSeedlingNow(uuid: seedling.uuid)
                 return
             }
-            presentUndoToast(for: item, destination: item.spatialDestinationTitle)
+            presentOutcomeToast(for: item, outcome: outcome, destination: item.spatialDestinationTitle)
             guard let atom = outcome.atom else { return }
-            let targetThinkspaceId = item.primaryRecommendationValue?.thinkspaceId
-                ?? item.primaryRecommendationValue?.placementPlan?.targetThinkspaceId
-                ?? item.placeThinkspaceId
-            guard let targetThinkspaceId else { return }
-            NotificationCenter.default.post(
-                name: CosmoNotification.Navigation.navigateToThinkspaceById,
-                object: nil,
-                userInfo: CosmoNotification.Navigation.ThinkspacePayload(thinkspaceId: targetThinkspaceId).userInfo
-            )
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                NotificationCenter.default.post(
-                    name: CosmoNotification.Navigation.openEntityOnCanvas,
-                    object: nil,
-                    userInfo: ["atomUUID": atom.uuid]
-                )
-            }
+            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.openAtomFromCommandK,
+                object: nil, userInfo: ["atomUUID": atom.uuid])
         } catch {
             print("⚠️ [InboxVM] Place & Go failed: \(error)")
             PersistenceHealth.note(.writeFailure, context: "InboxVM.placeAndGo", detail: error.localizedDescription)
             presentErrorToast("Couldn't place that capture — it's still in your inbox.")
         }
+    }
+
+    /// The destination picker and its receipt name the same actual operation.
+    func fileCapture(_ item: InboxItem, destination: InboxFilingDestination, action: InboxFilingAction) async -> String? {
+        guard processingItemIds.insert(item.uuid).inserted else { return "This capture is already saving." }
+        defer { processingItemIds.remove(item.uuid) }
+        do {
+            if action == .swipe {
+                let outcome = try await executor.executeSwipeOutcome(item: item)
+                presentUndoToast(message: outcome.adoptedExisting ? "Existing Swipe reused" : "Saved in Swipe")
+            } else {
+                let (atom, receipt) = try await executor.executeFiling(item: item, destination: destination, action: action)
+                presentFilingReceipt(receipt)
+                if atom.type == .idea { Task { await IdeaInsightEngine.shared.quickEnrich(atom: atom) } }
+            }
+            showOverrideSheet = false
+            recordRoutingOutcome(for: item, chosenKind: action.rawValue, chosenLabel: destination.path)
+            await refreshHistory()
+            return nil
+        } catch {
+            presentErrorToast(error.localizedDescription)
+            return error.localizedDescription
+        }
+    }
+
+    private func presentFilingReceipt(_ receipt: InboxPlacementReceipt) {
+        presentToast(message: receipt.outcome, isError: false, actionLabel: "Open") {
+            NotificationCenter.default.post(name: CosmoNotification.NodeGraph.openAtomFromCommandK, object: nil,
+                userInfo: ["atomUUID": receipt.resultAtomUUID])
+        }
+        Task { await refreshHistory() }
+    }
+
+    func undoFilingFromHistory(_ item: InboxItem) async {
+        guard let receipt = item.placementReceipt else { return }
+        do {
+            let result = try await InboxPlacementService.shared.undo(receipt)
+            presentUndoToast(message: result.retainedOriginal ? "Filing undone · edited original retained" : "Filing undone")
+            await refreshHistory()
+        } catch { presentErrorToast(error.localizedDescription) }
     }
 
     // MARK: - Closed-Loop Verbs
@@ -1032,14 +1059,14 @@ final class InboxViewModel {
 
     func undoLastInboxAction() async {
         await CosmoUndoManager.shared.undo()
-        withAnimation(.easeOut(duration: 0.2)) {
+        withAnimation(ProMotionSprings.snappy) {
             showUndoToast = false
         }
     }
 
     func dismissUndoToast() {
         undoToastTask?.cancel()
-        withAnimation(.easeOut(duration: 0.2)) {
+        withAnimation(ProMotionSprings.snappy) {
             showUndoToast = false
         }
     }
@@ -1096,7 +1123,9 @@ final class InboxViewModel {
         outcome: InboxExecutionOutcome,
         destination: String
     ) {
-        if case .seedling(let seedling) = outcome {
+        if case .filed(_, let receipt) = outcome {
+            presentFilingReceipt(receipt)
+        } else if case .seedling(let seedling) = outcome {
             presentGrowToast(for: seedling)
         } else {
             presentUndoToast(for: item, destination: destination)
@@ -1126,14 +1155,14 @@ final class InboxViewModel {
         undoToastIsError = isError
         undoToastActionLabel = actionLabel
         undoToastAction = action
-        withAnimation(.easeOut(duration: 0.2)) {
+        withAnimation(ProMotionSprings.snappy) {
             showUndoToast = true
         }
 
         undoToastTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(6))
             guard let self, !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.2)) {
+            withAnimation(ProMotionSprings.snappy) {
                 self.showUndoToast = false
             }
         }

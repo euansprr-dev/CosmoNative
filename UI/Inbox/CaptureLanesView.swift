@@ -44,11 +44,8 @@ final class CaptureLanesViewModel {
     /// atoms the verbs create come out real.
     func inspectorItem(for capture: CapturedItem) -> InboxItem {
         let attachmentUUIDs = (attachmentsByItemId[capture.uuid] ?? []).map(\.uuid)
-        var metadata: String?
-        if !attachmentUUIDs.isEmpty,
-           let data = try? JSONSerialization.data(withJSONObject: ["attachmentUUIDs": attachmentUUIDs]) {
-            metadata = String(data: data, encoding: .utf8)
-        }
+        let payload: [String: Any] = ["attachmentUUIDs": attachmentUUIDs, "captureRecordKind": "lane"]
+        let metadata = (try? JSONSerialization.data(withJSONObject: payload)).map { String(decoding: $0, as: UTF8.self) }
         return InboxItem(
             id: nil,
             uuid: capture.uuid,
@@ -77,9 +74,9 @@ final class CaptureLanesViewModel {
             metadata: metadata,
             isDeleted: false,
             syncUpdatedAt: nil,
-            localVersion: 0,
-            serverVersion: 0,
-            syncVersion: 0
+            localVersion: capture.localVersion,
+            serverVersion: capture.serverVersion,
+            syncVersion: capture.syncVersion
         )
     }
 

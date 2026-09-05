@@ -10,6 +10,20 @@ enum SpaceCompositionService {
     static let didChange = Notification.Name("com.cosmo.spaceCompositionChanged")
     static let didFailUndo = Notification.Name("com.cosmo.spaceCompositionUndoFailed")
 
+    /// Capture settlement shares the structural validator and membership writer,
+    /// while its caller owns the enclosing atom + source + receipt transaction.
+    nonisolated static func captureSnapshot(in spaceID: String, db: Database) throws -> SpaceCompositionSnapshot {
+        try requireSpace(spaceID, db: db)
+        return try SpaceCompositionSnapshot(spaceID: spaceID, atoms: members(in: spaceID, db: db))
+    }
+
+    nonisolated static func captureAddMembership(_ atom: Atom, in spaceID: String, db: Database) throws -> [CanvasBlockRecord] {
+        try requireSpace(spaceID, db: db)
+        var change = Mutation()
+        try addMembership(atom, in: spaceID, change: &change, db: db)
+        return change.membershipAfter
+    }
+
     static func load(in spaceID: String) async throws -> SpaceCompositionSnapshot {
         let mapping = try await migrateLegacyGroups(in: spaceID)
         return try await CosmoDatabase.shared.asyncRead { db in
@@ -268,7 +282,13 @@ enum SpaceCompositionService {
             value.placements.removeAll { $0.itemUUID == itemUUID }
             if let placement { value.placements.append(placement) }
             var change = Mutation()
-            try save(container.replacingSpaceComposition(value), before: container, change: &change, db: db)
+            var updated = try container.replacingSpaceComposition(value)
+            if placement != nil {
+                var canvas = try updated.decodedSpaceCanvas()
+                canvas.hiddenItemUUIDs.removeAll { $0 == itemUUID }
+                updated = try updated.replacingSpaceCanvas(canvas)
+            }
+            try save(updated, before: container, change: &change, db: db)
             return change
         }
         await finish(result, title: placement == nil ? "Remove from canvas" : "Arrange canvas")

@@ -102,7 +102,7 @@ enum BlockInteractionPolicy {
     static func handleMetrics(for kind: RichBlockKind) -> HandleMetrics {
         switch kind {
         case .heading1, .heading2, .heading3:
-            return HandleMetrics(verticalAnchor: .headingBaseline, topPadding: 12, hitSize: CGSize(width: 28, height: 32))
+            return HandleMetrics(verticalAnchor: .headingBaseline, topPadding: 0, hitSize: CGSize(width: 28, height: 32))
         case .divider:
             return HandleMetrics(verticalAnchor: .center, topPadding: 0, hitSize: CGSize(width: 28, height: 28))
         case .element, .image, .sketch:
@@ -112,7 +112,7 @@ enum BlockInteractionPolicy {
         case .content, .research:
             return HandleMetrics(verticalAnchor: .cardHeader, topPadding: 20, hitSize: CGSize(width: 28, height: 32))
         case .paragraph, .quote, .bulletList, .numberedList, .checklist, .toggle:
-            return HandleMetrics(verticalAnchor: .textBaseline, topPadding: 11, hitSize: CGSize(width: 28, height: 30))
+            return HandleMetrics(verticalAnchor: .textBaseline, topPadding: 0, hitSize: CGSize(width: 28, height: 24))
         case .table, .section:
             return HandleMetrics(verticalAnchor: .cardHeader, topPadding: 8, hitSize: CGSize(width: 28, height: 32))
         }

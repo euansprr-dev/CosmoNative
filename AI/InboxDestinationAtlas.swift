@@ -23,6 +23,8 @@ import Foundation
 
 enum InboxAtlasKind: String, Sendable, CaseIterable {
     case thinkspace
+    case group
+    case page
     case cluster
     case connection
     case deepDive
@@ -45,6 +47,7 @@ struct InboxAtlasEntry: Sendable, Equatable {
     let examples: [String]
     let parentUUID: String?
     let parentName: String?
+    var filingDestination: InboxFilingDestination? = nil
 
     /// Content fingerprint — charter or examples changing invalidates the
     /// cached embedding for this entry.
@@ -139,7 +142,9 @@ actor InboxDestinationAtlas {
         func take(_ kind: InboxAtlasKind, _ count: Int) {
             result.append(contentsOf: (scored[kind] ?? []).prefix(count))
         }
-        take(.cluster, 4)
+        take(.group, 4)
+        take(.page, 4)
+        take(.cluster, 2)
         take(.thinkspace, 2)
         take(.connection, 3)
         take(.deepDive, 2)
@@ -168,11 +173,23 @@ actor InboxDestinationAtlas {
 
     private func buildEntries() async -> [InboxAtlasEntry] {
         async let spatialEntries = buildSpatialEntries()
+        async let compositionEntries = buildCompositionEntries()
         async let connectionEntries = buildConnectionEntries()
         async let inquiryEntries = buildInquiryEntries()
         async let clientEntries = buildClientEntries()
         async let seedlingEntries = buildSeedlingEntries()
-        return await spatialEntries + connectionEntries + inquiryEntries + clientEntries + seedlingEntries
+        return await spatialEntries + compositionEntries + connectionEntries + inquiryEntries + clientEntries + seedlingEntries
+    }
+
+    private func buildCompositionEntries() async -> [InboxAtlasEntry] {
+        let destinations = (try? await InboxPlacementService.shared.destinations()) ?? []
+        return destinations.filter { $0.kind == .group || $0.kind == .page }.map { destination in
+            InboxAtlasEntry(key: "composition-\(destination.id)", kind: destination.kind == .group ? .group : .page,
+                uuid: destination.uuid!, name: destination.name,
+                charter: "\(destination.path). \(destination.defaultAction.consequence(in: destination))",
+                examples: [], parentUUID: destination.spaceID, parentName: destination.path,
+                filingDestination: destination)
+        }
     }
 
     private func buildSeedlingEntries() async -> [InboxAtlasEntry] {
@@ -228,26 +245,6 @@ actor InboxDestinationAtlas {
         var entries: [InboxAtlasEntry] = []
         for atom in thinkspaces {
             guard let metadata = atom.metadataValue(as: ThinkspaceMetadata.self) else { continue }
-
-            for cluster in metadata.clusters {
-                let examples = cluster.blockUUIDs.prefix(exampleTitleLimit).compactMap { titlesByUUID[$0] }
-                var charterParts: [String] = ["Cluster in \(metadata.name)."]
-                if let intent = cluster.intent, !intent.isEmpty {
-                    charterParts.append("Collects: \(String(intent.prefix(160))).")
-                } else if let synthesis = cluster.synthesis, !synthesis.isEmpty {
-                    charterParts.append(String(synthesis.prefix(160)))
-                }
-                entries.append(InboxAtlasEntry(
-                    key: "cluster-\(cluster.id)",
-                    kind: .cluster,
-                    uuid: cluster.id,
-                    name: cluster.name,
-                    charter: charterParts.joined(separator: " "),
-                    examples: examples,
-                    parentUUID: atom.uuid,
-                    parentName: metadata.name
-                ))
-            }
 
             let clusterNames = metadata.clusters.map(\.name).prefix(6)
             let charter = clusterNames.isEmpty

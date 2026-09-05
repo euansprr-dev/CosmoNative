@@ -239,7 +239,7 @@ struct AtomWindowChromeTrailingControls: View {
             Button("Idea", systemImage: AtomType.idea.iconName) {
                 context.actions.createAtom(.idea)
             }
-            Button("Note", systemImage: AtomType.note.iconName) {
+            Button("Page", systemImage: AtomType.note.iconName) {
                 context.actions.createAtom(.note)
             }
             Button("Content", systemImage: AtomType.content.iconName) {

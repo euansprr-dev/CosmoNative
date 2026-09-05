@@ -396,15 +396,15 @@ struct CommandKVisualIdentity: Equatable {
         case .content:
             // The library's kind mark (doc.richtext) — one content identity
             // everywhere; the paper plane read as "send", not "writing".
-            return CommandKVisualIdentity(style: .content, icon: .content, title: "Content", subtitle: "Writing", badge: "POST")
+            return CommandKVisualIdentity(style: .content, icon: .content, title: "Content", subtitle: "Production draft", badge: "POST")
         case .note:
-            return CommandKVisualIdentity(style: .document, icon: .note, title: "Note", subtitle: "Page", badge: "NOTE")
+            return CommandKVisualIdentity(style: .document, icon: .note, title: "Page", subtitle: "Writing", badge: "PAGE")
         case .connection:
-            return CommandKVisualIdentity(style: .connection, icon: .concept, title: "Concept", subtitle: "Relationship", badge: "LINK")
+            return CommandKVisualIdentity(style: .connection, icon: .concept, title: "Concept", subtitle: "Reusable understanding", badge: "CONCEPT")
         case .image:
             return CommandKVisualIdentity(style: .image, symbolName: "photo", title: "Image", subtitle: "Visual", badge: "IMG")
         case .thinkspace:
-            return CommandKVisualIdentity(style: .thinkspace, icon: .space, title: "Thinkspace", subtitle: "Canvas workspace", badge: "SPACE")
+            return CommandKVisualIdentity(style: .thinkspace, icon: .space, title: "Space", subtitle: "Collect, think, and create", badge: "SPACE")
         default:
             return CommandKVisualIdentity(style: .document, symbolName: type.iconName, title: type.displayName, subtitle: "Object", badge: "OPEN")
         }
@@ -415,7 +415,7 @@ struct CommandKVisualIdentity: Equatable {
         case "swipeGallery":
             return CommandKVisualIdentity(style: .swipeShelf, icon: .swipe, title: "Swipe File", subtitle: "Captures and hooks", badge: "BROWSE")
         case "ideas":
-            return CommandKVisualIdentity(style: .idea, icon: .idea, title: "Ideas", subtitle: "Sparks and notes", badge: "IDEA")
+            return CommandKVisualIdentity(style: .idea, icon: .idea, title: "Ideas", subtitle: "Ideas for your content", badge: "IDEA")
         case "readwise":
             return CommandKVisualIdentity(style: .readwise, symbolName: "books.vertical", title: "Library", subtitle: "Books and highlights", badge: "BOOK")
         case "database":
@@ -465,6 +465,7 @@ enum CommandKActionParser {
     private static let reservedLanePrefixes: Set<String> = [
         "inbox",
         "note",
+        "page",
         "new",
         "create",
         "idea",
@@ -775,7 +776,7 @@ enum CommandKActionParser {
 
         static let all: [BareCreationShape] = [
             BareCreationShape(kind: .createTask, keywords: ["task", "todo"], title: "Create task", icon: "checkmark.circle", prefillsBody: false),
-            BareCreationShape(kind: .createNote, keywords: ["note"], title: "Create note", icon: "doc.text", prefillsBody: false),
+            BareCreationShape(kind: .createNote, keywords: ["page", "note"], title: "Create page", icon: "doc.text", prefillsBody: false),
             // Bare "idea" only — "idea <text>" is the scoped client-capture
             // grammar (parseScopedIdeaCapture claims it first).
             BareCreationShape(kind: .createIdea, keywords: ["idea"], title: "Create idea", icon: "lightbulb", prefillsBody: false),

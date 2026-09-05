@@ -102,7 +102,7 @@ enum CosmoInlineAssistantContextMentionFormatter {
         case .research:
             return "Research"
         case .note:
-            return "Note"
+            return "Page"
         case .creator:
             return "Swipe"
         default:

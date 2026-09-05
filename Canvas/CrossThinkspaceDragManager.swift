@@ -345,7 +345,7 @@ struct CrossThinkspaceDragPreview: View {
                         )
 
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(block.entityType.rawValue.capitalized)
+                        Text(block.entityType.displayName)
                             .dsSmallCapsLabel()
 
                         Text(block.title)
@@ -428,7 +428,7 @@ struct CrossThinkspaceDragPreview: View {
                 }
 
                 HStack(spacing: 6) {
-                    miniPill(label: block.entityType.rawValue.capitalized, tint: accent)
+                    miniPill(label: block.entityType.displayName, tint: accent)
 
                     if let status = block.metadata["status"], !status.isEmpty {
                         miniPill(label: status.capitalized, tint: DS.textSecondary, isSecondary: true)

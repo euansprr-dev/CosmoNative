@@ -66,6 +66,8 @@ enum CommandKAskEngine {
     /// question with scope tokens stripped.
     static func parseScope(_ body: String) -> (types: Set<AtomType>?, label: String?, cleaned: String) {
         let scopeMap: [String: [AtomType]] = [
+            "page": [.note],
+            "pages": [.note],
             "note": [.note, .stickyNote],
             "notes": [.note, .stickyNote],
             "idea": [.idea], "ideas": [.idea],
@@ -347,7 +349,7 @@ struct CommandKAskPane: View {
             Text("Nothing in your cortex covers this yet.")
                 .font(DS.callout)
                 .foregroundStyle(DS.textSecondary)
-            Text("Your saved notes, concepts, and research don't have a confident answer — that's a gap worth filling, not one to paper over.")
+            Text("Your saved pages, concepts, and research don't have a confident answer — that's a gap worth filling, not one to paper over.")
                 .font(DS.caption)
                 .foregroundStyle(DS.textMuted)
                 .fixedSize(horizontal: false, vertical: true)

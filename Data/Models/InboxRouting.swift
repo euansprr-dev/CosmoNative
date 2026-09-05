@@ -3,6 +3,7 @@ import CoreGraphics
 
 enum InboxRouteKind: String, Codable, CaseIterable, Sendable {
     case mergeAtom
+    case fileToDestination
     case placeInExistingCluster
     case createClusterAndPlace
     case placeInThinkspace
@@ -38,13 +39,14 @@ enum InboxRouteKind: String, Codable, CaseIterable, Sendable {
     func outcomeNoun(suggestedAtomType: String?) -> String {
         let atomNoun = suggestedAtomType
             .flatMap(AtomType.init(rawValue:))
-            .map(\.displayName) ?? "Note"
+            .map(\.displayName) ?? "Page"
         switch self {
+        case .fileToDestination: return "File capture"
         case .mergeAtom:
-            return "Merge"
+            return "Attach reference"
         case .placeInExistingCluster, .createClusterAndPlace,
              .placeInThinkspace, .createThinkspaceAndPlace:
-            return "\(atomNoun) on canvas"
+            return "Page in Space"
         case .createStandaloneAtom:
             return atomNoun
         case .advanceQuestion:
@@ -52,7 +54,7 @@ enum InboxRouteKind: String, Codable, CaseIterable, Sendable {
         case .spawnQuestion:
             return "New question"
         case .feedConnection:
-            return "Develops a concept page"
+            return "Evidence for review"
         case .attachClient:
             return "Client idea"
         case .germinateDeepDive:
@@ -71,8 +73,9 @@ enum InboxRouteKind: String, Codable, CaseIterable, Sendable {
     /// The SF symbol that pairs with `outcomeNoun` in pills and the inspector.
     var outcomeIcon: String {
         switch self {
+        case .fileToDestination: return "tray.and.arrow.down"
         case .mergeAtom:
-            return "arrow.triangle.merge"
+            return "link"
         case .placeInExistingCluster, .createClusterAndPlace,
              .placeInThinkspace, .createThinkspaceAndPlace, .createStandaloneAtom:
             return "arrow.turn.down.right"
@@ -98,14 +101,15 @@ enum InboxRouteKind: String, Codable, CaseIterable, Sendable {
     /// The primary accept button says what accepting DOES — one word per kind.
     var primaryVerbLabel: String {
         switch self {
+        case .fileToDestination: return "File"
         case .mergeAtom:
-            return "Merge"
+            return "Attach reference"
         case .startSeedling, .germinateConnection:
             return "Start concept"
         case .feedSeedling:
             return "Add to concept"
         case .feedConnection:
-            return "Stage"
+            return "Add for review"
         case .advanceQuestion:
             return "Answer"
         case .spawnQuestion:
@@ -139,7 +143,7 @@ enum InboxRouteKind: String, Codable, CaseIterable, Sendable {
         switch self {
         case .mergeAtom:
             return .merge
-        case .placeInExistingCluster, .createClusterAndPlace, .placeInThinkspace, .createThinkspaceAndPlace:
+        case .fileToDestination, .placeInExistingCluster, .createClusterAndPlace, .placeInThinkspace, .createThinkspaceAndPlace:
             return .place
         case .advanceQuestion, .spawnQuestion, .feedConnection, .attachClient,
              .germinateConnection, .germinateDeepDive, .feedSeedling, .startSeedling,
@@ -296,6 +300,8 @@ struct InboxRecommendation: Codable, Equatable, Identifiable, Sendable {
     /// Atlas destination payload (inquiry question, connection section, client…).
     /// Optional for decode compatibility with pre-July-2026 bundles.
     let atlasMove: InboxAtlasMove?
+    let filingDestination: InboxFilingDestination?
+    let filingAction: InboxFilingAction?
 
     init(
         id: String = UUID().uuidString,
@@ -312,7 +318,9 @@ struct InboxRecommendation: Codable, Equatable, Identifiable, Sendable {
         clusterId: String? = nil,
         clusterName: String? = nil,
         placementPlan: InboxPlacementPlan? = nil,
-        atlasMove: InboxAtlasMove? = nil
+        atlasMove: InboxAtlasMove? = nil,
+        filingDestination: InboxFilingDestination? = nil,
+        filingAction: InboxFilingAction? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -329,6 +337,8 @@ struct InboxRecommendation: Codable, Equatable, Identifiable, Sendable {
         self.clusterName = clusterName
         self.placementPlan = placementPlan
         self.atlasMove = atlasMove
+        self.filingDestination = filingDestination
+        self.filingAction = filingAction
     }
 }
 
@@ -428,7 +438,9 @@ extension InboxRecommendation {
             clusterId: clusterId,
             clusterName: clusterName,
             placementPlan: adjustedPlan,
-            atlasMove: atlasMove
+            atlasMove: atlasMove,
+            filingDestination: filingDestination,
+            filingAction: filingAction
         )
     }
 }

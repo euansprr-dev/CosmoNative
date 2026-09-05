@@ -71,10 +71,13 @@ struct BlockContextMenu: View {
     /// Non-destructive removal — take the block out of this thinkspace without
     /// trashing the atom (it stays in the database and any other thinkspaces).
     private var removalItems: [MenuItem] {
-        [
-            MenuItem("removeFromCanvas", icon: "rectangle.dashed", label: "Remove from Canvas"),
-            MenuItem("removeFromThinkspace", icon: "square.stack.3d.up.slash", label: "Remove from Space")
-        ]
+        var items = [MenuItem("removeFromCanvas", icon: "rectangle.dashed", label: "Remove from Canvas")]
+        if block.metadata["spaceCanvasContainerUUID"] == nil {
+            items.append(MenuItem("removeFromThinkspace", icon: "square.stack.3d.up.slash", label: "Remove from Space"))
+        } else if block.metadata["spaceCanvasKind"] == "group" {
+            items.append(MenuItem("removeFromThinkspace", icon: "square.stack.3d.up.slash", label: "Remove from Group"))
+        }
+        return items
     }
 
     private var destructiveItems: [MenuItem] {
@@ -133,7 +136,7 @@ struct BlockContextMenu: View {
         let typeColor = CosmoMentionColors.color(for: block.entityType)
         let title: String = isStickyNote
             ? "Sticky Note"
-            : (block.title.isEmpty ? block.entityType.rawValue.capitalized : block.title)
+            : (block.title.isEmpty ? block.entityType.displayName : block.title)
 
         return HStack(spacing: 6) {
             Circle()
@@ -302,6 +305,10 @@ struct BlockContextMenu: View {
                 userInfo: ["id": block.entityId]
             )
         case "focus":
+            if block.metadata["spaceCanvasContainerUUID"] != nil {
+                NotificationCenter.default.post(name: Notification.Name("spaceCanvasOpenBlock"), object: nil, userInfo: ["blockId": blockId])
+                return
+            }
             NotificationCenter.default.post(
                 name: .enterFocusMode,
                 object: nil,

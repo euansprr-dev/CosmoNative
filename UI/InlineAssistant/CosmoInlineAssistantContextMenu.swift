@@ -27,7 +27,7 @@ enum CosmoInlineContextScope: String, CaseIterable, Equatable {
         case .swipe: return "Swipes"
         case .idea: return "Ideas"
         case .research: return "Research"
-        case .note: return "Notes"
+        case .note: return "Pages"
         }
     }
 

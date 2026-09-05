@@ -172,10 +172,23 @@ enum ConnectionStagingStore {
     /// material wasn't wanted HERE, but it was still the user's thought.
     /// Best-effort: a capture dismissed or deleted since stays put.
     static func returnSourceCapture(of insert: ConnectionStagedInsert) async {
-        guard insert.sourceKind == "inbox", let captureUUID = insert.sourceUUID,
-              let item = try? await InboxRepository.shared.fetch(uuid: captureUUID),
-              item.status == .actioned else { return }
-        try? await InboxRepository.shared.restore(item)
+        guard let captureUUID = insert.sourceUUID else { return }
+        if insert.sourceKind == "inbox",
+           var item = try? await InboxRepository.shared.fetch(uuid: captureUUID),
+           item.status == .actioned, !item.isDeleted {
+            item.status = item.classification == nil ? .pending : .classified
+            item.actionedAt = nil
+            try? await InboxRepository.shared.restore(item)
+        } else if insert.sourceKind == "lane",
+                  let item = try? await CapturedItemRepository.shared.fetch(uuid: captureUUID),
+                  item.status == .applied, !item.isDeleted {
+            try? await CapturedItemRepository.shared.updateRouting(uuid: item.uuid,
+                destinationId: item.captureDestinationId, parsedCommand: item.parsedCommand,
+                parsedIntent: item.parsedIntent, confidence: item.routingConfidence,
+                status: .routed, createdObjectIds: item.createdObjectIds,
+                parentDeepDiveId: item.parentDeepDiveId, parentInquirySessionId: item.parentInquirySessionId,
+                parentQuestionId: item.parentQuestionId, parentProjectId: item.parentProjectId)
+        }
     }
 
     private static func notifyChanged(_ connectionUUID: String) {

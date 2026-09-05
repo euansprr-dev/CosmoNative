@@ -2135,6 +2135,7 @@ final class CommandKSearchPipelineTests: XCTestCase {
         XCTAssertEqual(CommandKActionParser.parse("idea")?.kind, .createIdea)
         XCTAssertEqual(CommandKActionParser.parse("task")?.kind, .createTask)
         XCTAssertEqual(CommandKActionParser.parse("note")?.kind, .createNote)
+        XCTAssertEqual(CommandKActionParser.parse("page")?.kind, .createNote)
         XCTAssertEqual(CommandKActionParser.parse("content")?.kind, .createContent)
         XCTAssertEqual(CommandKActionParser.parse("capture")?.kind, .captureInbox)
         XCTAssertEqual(CommandKActionParser.parse("inbox")?.kind, .captureInbox)
@@ -2148,6 +2149,7 @@ final class CommandKSearchPipelineTests: XCTestCase {
     func testBareCreationRespectsWordBoundaries() {
         XCTAssertNotEqual(CommandKActionParser.parse("ideation")?.kind, .createIdea)
         XCTAssertNotEqual(CommandKActionParser.parse("noteworthy findings")?.kind, .createNote)
+        XCTAssertNotEqual(CommandKActionParser.parse("pagespeed findings")?.kind, .createNote)
     }
 
     func testTaskTrailingTextPrefillsComposerTitle() {
@@ -2175,6 +2177,10 @@ final class CommandKSearchPipelineTests: XCTestCase {
         XCTAssertEqual(note?.kind, .createNote)
         XCTAssertEqual(note?.payload.title, "morning pages")
 
+        let page = CommandKActionParser.parse("new page morning pages")
+        XCTAssertEqual(page?.kind, note?.kind)
+        XCTAssertEqual(page?.payload.title, note?.payload.title)
+
         // The explicit verb is unambiguous, so idea prefill is allowed here.
         let idea = CommandKActionParser.parse("new idea morning hooks")
         XCTAssertEqual(idea?.kind, .createIdea)
@@ -2194,7 +2200,7 @@ final class CommandKSearchPipelineTests: XCTestCase {
         let creationTitles = rows.filter { $0.subtitle.contains("Create") }.map(\.title)
         XCTAssertEqual(
             creationTitles,
-            ["New Task", "New Note", "New Idea", "New Capture", "New Content", "New Swipe", "New Thinkspace"]
+            ["New Task", "New Page", "New Idea", "New Capture", "New Content", "New Swipe", "New Space"]
         )
     }
 

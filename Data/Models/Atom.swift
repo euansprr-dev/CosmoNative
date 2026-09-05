@@ -294,9 +294,9 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         case .livingInsight: return "Living Insight"
         case .syncState: return "Sync State"
         // Thinkspace
-        case .note: return "Note"
+        case .note: return "Page"
         case .stickyNote: return "Sticky Note"
-        case .thinkspace: return "Thinkspace"
+        case .thinkspace: return "Space"
         // Planning
         case .objective: return "Objective"
         // Swipe Intelligence Taxonomy
@@ -398,9 +398,9 @@ public enum AtomType: String, Codable, CaseIterable, Sendable {
         case .livingInsight: return "Living Insights"
         case .syncState: return "Sync States"
         // Thinkspace
-        case .note: return "Notes"
+        case .note: return "Pages"
         case .stickyNote: return "Sticky Notes"
-        case .thinkspace: return "Thinkspaces"
+        case .thinkspace: return "Spaces"
         // Planning
         case .objective: return "Objectives"
         // Swipe Intelligence Taxonomy
@@ -2377,6 +2377,8 @@ struct IdeaMetadata: Codable, Sendable {
     var statusChangedAt: String?
     var captureSource: String?
     var originSwipeUUID: String?
+    /// Explicit Page → Content handoff; preserved by the typed idea editor.
+    var pageContentSourceUUID: String?
     var suggestedFramework: String?
     var suggestedHookType: String?
     var insightScore: Double?

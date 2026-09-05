@@ -31,7 +31,7 @@ struct RadialMenuView: View {
     // Default block types for canvas creation
     private static let defaultActions: [RadialAction] = [
         RadialAction(icon: "doc.text.fill", label: "Content", color: DS.entityContent, type: .createContent),
-        RadialAction(icon: "note.text", label: "Note", color: DS.entityNote, type: .createNote),
+        RadialAction(icon: "note.text", label: "Page", color: DS.entityNote, type: .createNote),
         RadialAction(icon: "square.and.pencil", label: "Sticky", color: DS.entityStickyNote, type: .createStickyNote),
         RadialAction(icon: "point.3.connected.trianglepath.dotted", label: "Concept", color: DS.entityConnection, type: .createConnection),
         RadialAction(icon: "circle.hexagongrid.circle.fill", label: "Deep Dive", color: CosmoMentionColors.color(for: .deepDive), type: .createDeepDive),

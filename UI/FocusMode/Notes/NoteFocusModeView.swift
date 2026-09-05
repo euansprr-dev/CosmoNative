@@ -142,6 +142,30 @@ enum NoteSaveKind: Equatable, Sendable {
     case richDocumentCheckpoint
 }
 
+/// Prepared text can be expensive to serialize, but it never owns the rest
+/// of an Atom's metadata. Call inside the write transaction with fresh JSON.
+enum NoteEditorMetadataMerge {
+    enum Failure: Error { case unreadableMetadata }
+
+    static func merging(fresh: String?, prepared: String?) throws -> String {
+        func fields(_ json: String?) throws -> [String: Any] {
+            guard let json, !json.isEmpty else { return [:] }
+            guard let data = json.data(using: .utf8),
+                  let fields = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                throw Failure.unreadableMetadata
+            }
+            return fields
+        }
+        var result = try fields(fresh)
+        let writing = try fields(prepared)
+        for key in [RichDocumentField.title.metadataKey, RichDocumentField.body.metadataKey,
+                    "tags", NoteDocumentStyle.metadataKey] {
+            result[key] = writing[key]
+        }
+        return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+    }
+}
+
 struct NoteAutosavePolicy: Equatable, Sendable {
     var richCheckpointCharacterThreshold: Int = 4_000
     var richCheckpointInterval: TimeInterval = 30
@@ -297,6 +321,10 @@ struct NoteFocusModeView: View {
     /// Non-nil while the inline assistant has staged reviewable changes for this note —
     /// drives the in-document diff that temporarily replaces the body editor.
     @State private var bodyReviewProposal: CosmoAssistantProposal?
+    @State private var showContentIdea = false
+    @State private var contentIdeaSource: Atom?
+    @State private var contentIdeaPreparing = false
+    @State private var contentIdeaError: String?
     /// Keeps the center scroll anchored across the review → editor swap.
     @State private var inlineReviewScrollKeeper = CosmoInlineReviewScrollPositionKeeper()
     @State private var titlePlainText: String = ""
@@ -662,6 +690,17 @@ struct NoteFocusModeView: View {
         .sheet(isPresented: $showTagEditor) {
             TagEditorSheet(tags: $tags)
         }
+        .sheet(isPresented: $showContentIdea) {
+            if let contentIdeaSource { PageContentIdeaSheet(source: contentIdeaSource) }
+        }
+        .alert("Couldn’t prepare content idea", isPresented: Binding(
+            get: { contentIdeaError != nil },
+            set: { if !$0 { contentIdeaError = nil } }
+        )) {
+            Button("OK", role: .cancel) { contentIdeaError = nil }
+        } message: {
+            Text(contentIdeaError ?? "Your writing remains on this page.")
+        }
         .sheet(isPresented: $historySheetPresented) {
             AtomHistorySheet(atom: atom) { historySheetPresented = false }
         }
@@ -820,6 +859,7 @@ struct NoteFocusModeView: View {
             CosmoChromeIsland {
                 styleMenuButton
                 shareMenuButton
+                pageMoreMenu
                 AtomWindowChromeDivider()
                 AtomWindowChromeTrailingControls(context: atomChrome)
             }
@@ -878,9 +918,9 @@ struct NoteFocusModeView: View {
         HStack(spacing: DS.space6) {
             Image(systemName: "note.text")
                 .font(DS.caption2)
-                .accessibilityLabel("Note")
+                .accessibilityLabel("Page")
             // Sentence-case source: .smallCaps() on "NOTE" was a no-op.
-            Text("Note")
+            Text("Page")
                 .font(DS.smallCaps)
                 .tracking(DS.smallCapsTracking)
             if !isEmptyNote {
@@ -906,13 +946,63 @@ struct NoteFocusModeView: View {
             historyButton
             styleMenuButton
             shareMenuButton
+            pageMoreMenu
+        }
+    }
+
+    private var pageMoreMenu: some View {
+        Menu {
+            Button("Create content idea…", systemImage: "lightbulb") { prepareContentIdea() }
+                .disabled(contentIdeaPreparing)
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(DS.subheadline)
+                .foregroundStyle(focusTextMuted)
+                .frame(width: 32, height: 32)
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Page actions")
+        .accessibilityLabel("Page actions")
+    }
+
+    private func prepareContentIdea() {
+        guard !contentIdeaPreparing else { return }
+        contentIdeaPreparing = true
+        NSApp.keyWindow?.makeFirstResponder(nil)
+        Task { @MainActor in
+            defer { contentIdeaPreparing = false }
+            // Resigning first responder commits the native attributed buffer.
+            // Let its binding handoff finish before capturing this Page.
+            await Task.yield()
+            autoSaveTask?.cancel()
+            saveGeneration += 1
+            guard saveAtomImmediately() else {
+                contentIdeaError = "The page could not finish saving. Your writing is kept here; try again when it can be saved."
+                return
+            }
+            do {
+                let uuid = atom.uuid
+                guard let saved = try await database.asyncRead({ db in
+                    try Atom.filter(Column("uuid") == uuid).fetchOne(db)
+                }), !saved.isDeleted else {
+                    contentIdeaError = "This page is no longer available. Your writing remains here."
+                    return
+                }
+                contentIdeaSource = saved
+                showContentIdea = true
+            } catch {
+                contentIdeaError = "The saved page could not be read. \(error.localizedDescription)"
+            }
         }
     }
 
     private var shareMenuButton: some View {
         chromeIconButton(
             systemName: "square.and.arrow.up", isActive: shareDraft != nil,
-            tint: DS.accent, help: "Share note", accessibilityLabel: "Share note"
+            tint: DS.accent, help: "Share page", accessibilityLabel: "Share page"
         ) {
             // Blur commits the active row before taking a portable snapshot.
             NSApp.keyWindow?.makeFirstResponder(nil)
@@ -922,8 +1012,8 @@ struct NoteFocusModeView: View {
         .popover(isPresented: Binding(get: { shareDraft != nil }, set: { if !$0 { shareDraft = nil } })) {
             if let shareDraft {
                 VStack(alignment: .leading, spacing: DS.space12) {
-                    Text("Share note").font(DS.headline)
-                    Text("A copy of the full note. Edits stay in Cosmo.")
+                    Text("Share page").font(DS.headline)
+                    Text("A copy of the full page. Edits stay in Cosmo.")
                         .font(DS.caption).foregroundStyle(DS.textSecondary)
                     ShareLink(item: shareDraft) {
                         Label("Share a copy…", systemImage: "square.and.arrow.up")
@@ -1019,29 +1109,6 @@ struct NoteFocusModeView: View {
     /// chrome whitespace — gets the width.
     private var manuscriptMargin: CGFloat {
         scrollViewportWidth > 0 && scrollViewportWidth < 900 ? DS.space16 : DS.space40
-    }
-
-    /// Click in the empty space below the last block to keep writing — focuses
-    /// the tail paragraph, creating one if the document ends with something else.
-    private var bodyTailClickCatcher: some View {
-        Color.clear
-            .frame(maxWidth: .infinity)
-            .frame(minHeight: 160)
-            .contentShape(Rectangle())
-            .onTapGesture { focusDocumentTail() }
-    }
-
-    private func focusDocumentTail() {
-        if let last = bodyDocument.blocks.last,
-           last.kind.isTextEditableBlock,
-           last.plainInlineText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            bodyFocusCoordinator.focus(last.id)
-            return
-        }
-        let paragraph = RichBlock.paragraph("")
-        bodyDocument.blocks.append(paragraph)
-        handleBodyDocumentChange(bodyDocument, plainText: bodyDocument.plainText)
-        bodyFocusCoordinator.focus(paragraph.id)
     }
 
     private var centerColumn: some View {
@@ -1180,6 +1247,8 @@ struct NoteFocusModeView: View {
                             navigationTargetID: bodyNavigationTargetID,
                             focusCoordinator: bodyFocusCoordinator,
                             progressiveHydration: true,
+                            minimumWritingHeight: max(400, scrollViewportHeight - 200),
+                            minimumTailHeight: max(160, scrollViewportHeight * 0.35),
                             landingHighlightBlockID: landingHighlightBlockID,
                             onSelectionChanged: { snapshot in
                                 // Every caret move (keystroke, click) lands here
@@ -1200,17 +1269,11 @@ struct NoteFocusModeView: View {
                             },
                             onDocumentChange: handleBodyDocumentChange
                         )
-                        bodyTailClickCatcher
                     }
                     .frame(maxWidth: bodyColumnWidth, alignment: .topLeading)
-                    .frame(
-                        minHeight: max(400, scrollViewportHeight - 200),
-                        alignment: .topLeading
-                    )
                     .padding(.top, isEmptyNote ? DS.space32 : DS.space24)
                     // Scroll past end — the last line can always sit at eye
                     // level instead of being pinned to the screen's bottom edge.
-                    .padding(.bottom, max(DS.space48, scrollViewportHeight * 0.35))
                 }
             }
             .frame(maxWidth: .infinity)
@@ -1353,7 +1416,7 @@ struct NoteFocusModeView: View {
 
     private var noteOutlineSection: some View {
         MarginaliaDisclosureSection(
-            "On this note",
+            "On this page",
             countText: bodyHeadingOutline.isEmpty ? nil : "\(bodyHeadingOutline.count)",
             storageKey: "note.outline",
             defaultExpanded: true
@@ -1540,7 +1603,7 @@ struct NoteFocusModeView: View {
             spacing: DS.space8
         ) {
             if resonantThemes.isEmpty {
-                Text("tag this note to surface resonances")
+                Text("Tag this page to find related ideas")
                     .font(DS.dateSerif)
                     .italic()
                     .foregroundStyle(focusTextMuted)
@@ -1583,7 +1646,7 @@ struct NoteFocusModeView: View {
                     Text("Ask Cosmo")
                         .font(DS.rowTitleCompact)
                         .foregroundStyle(focusText)
-                    Text("scoped to this note + backlinks")
+                    Text("This page and its backlinks")
                         .font(DS.rowMeta)
                         .foregroundStyle(focusTextMuted)
                 }
@@ -1606,7 +1669,7 @@ struct NoteFocusModeView: View {
             .clipShape(.rect(cornerRadius: DS.radiusMedium))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Ask Cosmo about this note")
+        .accessibilityLabel("Ask Cosmo about this page")
     }
 
     // MARK: - Actions
@@ -1796,7 +1859,7 @@ struct NoteFocusModeView: View {
     // MARK: - Title Section
 
     private var titlePlaceholder: String {
-        titleChromeMode == .emptyEditableTitle ? "Untitled note" : "Untitled Note"
+        titleChromeMode == .emptyEditableTitle ? "Untitled page" : "Untitled Page"
     }
 
     private var titleTextAlignment: TextAlignment {
@@ -2353,7 +2416,8 @@ struct NoteFocusModeView: View {
 
     /// Immediate synchronous save (used on close) — blocks until DB write completes.
     /// Guarantees data is persisted before the view/app exits.
-    private func saveAtomImmediately() {
+    @discardableResult
+    private func saveAtomImmediately() -> Bool {
         NoteFocusLog.debug("[FOCUS-NOTE] saveAtomImmediately() — uuid=\(atom.uuid) titleLen=\(titlePlainText.count) bodyLen=\(plainContent.count) hasLocalBodyEdits=\(hasLocalBodyEdits) hasLocalMetaEdits=\(hasLocalMetaEdits) bodyPreview=\"\(String(plainContent.prefix(80)))\"")
         // Dirty gate: a session with zero local edits must not write its stale
         // open-time snapshot over newer external writes (agent edits, another
@@ -2361,7 +2425,7 @@ struct NoteFocusModeView: View {
         // set their flag; autosaves clear them once persisted.
         guard hasLocalBodyEdits || hasLocalMetaEdits else {
             NoteFocusLog.debug("[FOCUS-NOTE] saveAtomImmediately() SKIPPED — no local edits, avoiding stale overwrite uuid=\(atom.uuid)")
-            return
+            return true
         }
         let closeSnapshot = makeCloseSnapshot()
         let titleDocumentCopy = closeSnapshot.titleDocument
@@ -2394,6 +2458,7 @@ struct NoteFocusModeView: View {
                     await ChangeTracker.shared.trackUpdate(table: "atoms", entity: updatedAtom, skipVersionIncrement: true)
                 }
             }
+            return true
         } catch {
             // The close/termination save is the LAST chance to persist this
             // session — dead-letter the snapshot so the next open can restore it.
@@ -2410,6 +2475,7 @@ struct NoteFocusModeView: View {
             }
             PersistenceHealth.note(.writeFailure, context: "noteFocus.closeSave", detail: "uuid=\(uuid): \(error)")
             print("Failed to save note (sync): \(error)")
+            return false
         }
     }
 
@@ -2467,7 +2533,10 @@ struct NoteFocusModeView: View {
         ) else {
             throw NoteSaveError.rejectedEmptyOverwrite(uuid: closeSnapshot.uuid)
         }
-        let metadataString = Self.metadataString(for: snapshot, tags: closeSnapshot.tags, style: closeSnapshot.noteStyle)
+        let metadataString = try NoteEditorMetadataMerge.merging(
+            fresh: existingMetadata,
+            prepared: Self.metadataString(for: snapshot, tags: closeSnapshot.tags, style: closeSnapshot.noteStyle)
+        )
 
         // History before the overwrite, in the same transaction (never blocks the save).
         AtomRevisionWriter.snapshotBeforeRawWrite(
@@ -2491,7 +2560,7 @@ struct NoteFocusModeView: View {
             arguments: [
                 snapshot.atomTitle,
                 snapshot.bodyPlainText,
-                metadataString ?? snapshot.metadata,
+                metadataString,
                 ISO8601.string(from: Date()),
                 closeSnapshot.uuid
             ]
@@ -2697,14 +2766,11 @@ struct NoteFocusModeView: View {
                 switch kind {
                 case .plainText:
                     var existingMetadata: String?
-                    var existingBody: String?
                     if let row = try await database.asyncRead({ db in
                         try Row.fetchOne(db, sql: "SELECT metadata, body FROM atoms WHERE uuid = ?", arguments: [uuid])
                     }) {
                         existingMetadata = row["metadata"]
-                        existingBody = row["body"]
                     }
-                    let existingBodyForWrite = existingBody
 
                     let snapshot = await Task.detached(priority: .utility) {
                         RichDocumentPersistence.noteSnapshot(
@@ -2723,14 +2789,18 @@ struct NoteFocusModeView: View {
                     }
 
                     try await database.asyncWrite { db in
+                        let fresh = try Row.fetchOne(db, sql: "SELECT metadata, body FROM atoms WHERE uuid = ?", arguments: [uuid])
                         guard NoteWritePolicy.allowsBodyWrite(
-                            existingBody: existingBodyForWrite,
+                            existingBody: fresh?["body"],
                             proposedBody: snapshot.bodyPlainText,
                             hasLocalEdits: hasLocalBodyEditsCopy
                         ) else {
                             throw NoteSaveError.rejectedEmptyOverwrite(uuid: uuid)
                         }
-                        let metadataString = Self.metadataString(for: snapshot, tags: tagsCopy, style: noteStyleCopy)
+                        let metadataString = try NoteEditorMetadataMerge.merging(
+                            fresh: fresh?["metadata"],
+                            prepared: Self.metadataString(for: snapshot, tags: tagsCopy, style: noteStyleCopy)
+                        )
 
                         // History before the overwrite, in the same transaction (never blocks the save).
                         AtomRevisionWriter.snapshotBeforeRawWrite(
@@ -2754,7 +2824,7 @@ struct NoteFocusModeView: View {
                             arguments: [
                                 snapshot.atomTitle ?? RichDocumentPersistence.nilIfEmpty(titleCopy),
                                 snapshot.bodyPlainText,
-                                metadataString ?? snapshot.metadata,
+                                metadataString,
                                 ISO8601.string(from: Date()),
                                 uuid
                             ]
@@ -2794,19 +2864,19 @@ struct NoteFocusModeView: View {
                     }
 
                     try await database.asyncWrite { db in
-                        var existingBody: String?
-                        if let row = try Row.fetchOne(db, sql: "SELECT body FROM atoms WHERE uuid = ?", arguments: [uuid]) {
-                            existingBody = row["body"]
-                        }
+                        let fresh = try Row.fetchOne(db, sql: "SELECT metadata, body FROM atoms WHERE uuid = ?", arguments: [uuid])
 
                         guard NoteWritePolicy.allowsBodyWrite(
-                            existingBody: existingBody,
+                            existingBody: fresh?["body"],
                             proposedBody: snapshot.bodyPlainText,
                             hasLocalEdits: hasLocalBodyEditsCopy
                         ) else {
                             throw NoteSaveError.rejectedEmptyOverwrite(uuid: uuid)
                         }
-                        let metadataString = Self.metadataString(for: snapshot, tags: tagsCopy, style: noteStyleCopy)
+                        let metadataString = try NoteEditorMetadataMerge.merging(
+                            fresh: fresh?["metadata"],
+                            prepared: Self.metadataString(for: snapshot, tags: tagsCopy, style: noteStyleCopy)
+                        )
 
                         // History before the overwrite, in the same transaction (never blocks the save).
                         AtomRevisionWriter.snapshotBeforeRawWrite(
@@ -2830,7 +2900,7 @@ struct NoteFocusModeView: View {
                             arguments: [
                                 snapshot.atomTitle,
                                 snapshot.bodyPlainText,
-                                metadataString ?? snapshot.metadata,
+                                metadataString,
                                 ISO8601.string(from: Date()),
                                 uuid
                             ]
@@ -3276,7 +3346,7 @@ class NoteContextProvider: CosmoContextProvider, CosmoEditableSurfaceProvider {
     var contextSummary: String {
         let title = resolvedTitle
         let words = contentRef().split(separator: " ").count
-        return "Note: \(title.isEmpty ? "Untitled" : title) (\(words) words)"
+        return "Page: \(title.isEmpty ? "Untitled" : title) (\(words) words)"
     }
 
     var contextData: CosmoContextData {
@@ -3312,7 +3382,7 @@ class NoteContextProvider: CosmoContextProvider, CosmoEditableSurfaceProvider {
             surfaceID: surfaceID,
             targetID: Self.targetID(for: atom.uuid),
             kind: .text,
-            title: resolvedTitle.isEmpty ? "Untitled note" : resolvedTitle,
+            title: resolvedTitle.isEmpty ? "Untitled page" : resolvedTitle,
             text: content,
             sourceHash: CosmoEditableSurfaceHasher.hash(content),
             anchors: [
@@ -3324,7 +3394,7 @@ class NoteContextProvider: CosmoContextProvider, CosmoEditableSurfaceProvider {
 
     func apply(operation: CosmoAssistantProposalOperation) async throws -> CosmoEditableOperationResult {
         guard let applyBodyEdit else {
-            return CosmoEditableOperationResult(operationID: operation.id, status: .conflicted, message: "Note editor is unavailable")
+            return CosmoEditableOperationResult(operationID: operation.id, status: .conflicted, message: "Page editor is unavailable")
         }
         return try await applyBodyEdit(operation)
     }
@@ -3341,7 +3411,7 @@ class NoteContextProvider: CosmoContextProvider, CosmoEditableSurfaceProvider {
             CosmoWindowAction(
                 id: "note-insert-selection",
                 name: "Insert at Cursor",
-                description: "Insert into the active note editor at the current cursor.",
+                description: "Insert into the active page editor at the current cursor.",
                 modelTier: .balanced
             ) { prompt in
                 let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3352,12 +3422,12 @@ class NoteContextProvider: CosmoContextProvider, CosmoEditableSurfaceProvider {
                     targetEditorID: targetEditorID,
                     allowInactive: true
                 )
-                return "Inserted into the note."
+                return "Inserted into the page."
             },
             CosmoWindowAction(
                 id: "note-append-end",
-                name: "Append to Note",
-                description: "Append a new paragraph to the end of the note.",
+                name: "Append to Page",
+                description: "Append a new paragraph to the end of the page.",
                 modelTier: .balanced
             ) { prompt in
                 let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3368,7 +3438,7 @@ class NoteContextProvider: CosmoContextProvider, CosmoEditableSurfaceProvider {
                     targetEditorID: targetEditorID,
                     allowInactive: true
                 )
-                return "Appended to the note."
+                return "Appended to the page."
             }
         ]
     }

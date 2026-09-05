@@ -428,7 +428,7 @@ struct CanvasBlock: Identifiable, Codable, Equatable {
             entityType: .note,
             entityId: -1,
             entityUuid: UUID().uuidString,
-            title: "Note",
+            title: "Page",
             subtitle: nil,
             metadata: [
                 "content": content,

@@ -246,7 +246,7 @@ struct ThinkspaceLibrarySnapshot: Equatable {
         for block in blocks where !block.entityUuid.isEmpty {
             itemsByUUID[block.entityUuid] = ThinkspaceLibraryItem(
                 id: block.entityUuid,
-                title: block.title.isEmpty ? block.entityType.rawValue.replacingOccurrences(of: "_", with: " ").capitalized : block.title,
+                title: block.title.isEmpty ? block.entityType.displayName : block.title,
                 entityType: block.entityType,
                 entityId: block.entityId,
                 entityUuid: block.entityUuid,
@@ -456,7 +456,7 @@ struct ThinkspaceLibraryCardModel {
         case .stickyNote: return "Sticky Note"
         case .cosmoAI: return "Cosmo"
         default:
-            return item.entityType.rawValue.replacingOccurrences(of: "_", with: " ").capitalized
+            return item.entityType.displayName
         }
     }
 

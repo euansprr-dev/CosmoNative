@@ -463,7 +463,7 @@ struct ConnectionLibraryDashboard: View {
             Text("No concepts yet")
                 .font(.system(size: 16, weight: .medium))
                 .foregroundColor(DS.textSecondary)
-            Text("Create concepts to build your knowledge framework")
+            Text("Develop an insight with claims and evidence, then reuse it across your Spaces, pages, and content.")
                 .font(.system(size: 13))
                 .foregroundColor(DS.textMuted)
         }

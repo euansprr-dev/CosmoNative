@@ -216,7 +216,8 @@ struct BlockTextEditorRow: View, Equatable {
     /// the coordinator-wide property) so only the target row re-renders.
     private func editorCaretRequest(from rowFocus: BlockRowFocusState) -> EditorCaretRequest? {
         guard let request = rowFocus.caretRequest, request.blockID == blockID else { return nil }
-        return EditorCaretRequest(utf16OffsetFromEnd: request.utf16OffsetFromEnd, token: request.token)
+        return EditorCaretRequest(utf16OffsetFromEnd: request.utf16OffsetFromEnd, token: request.token,
+                                  windowPoint: request.windowPoint)
     }
 
     private var currentPath: BlockPath? {

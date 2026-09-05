@@ -79,7 +79,11 @@ final class CanvasBlockFrameTracker: ObservableObject {
     @Published var blockFrames: [String: CGRect] = [:]
     /// The renderable block set (cluster-consumed blocks excluded), matching
     /// `CanvasRenderSnapshot`'s notion of what is visible on the canvas.
-    private(set) var trackedBlocks: [CanvasBlock] = []
+    private var ownTrackedBlocks: [CanvasBlock] = []
+    var trackedBlocks: [CanvasBlock] { forwardedTracker?.trackedBlocks ?? ownTrackedBlocks }
+    weak var forwardedTracker: CanvasBlockFrameTracker?
+    weak var nativeSurface: NSView?
+    var windowFrame = CGRect.zero
 
     // Canvas-space geometry — transform-independent, so it only changes when
     // block/cluster data changes, never on pan/zoom.
@@ -107,6 +111,10 @@ final class CanvasBlockFrameTracker: ObservableObject {
     /// Hit-test a right-click. Returns nil when the canvas surface isn't the
     /// active interaction layer — the caller must pass the event through.
     func rightClickHitTest(at screenPoint: CGPoint) -> CanvasRightClickHit? {
+        if let child = forwardedTracker {
+            guard child.windowFrame.contains(screenPoint) else { return nil }
+            return child.rightClickHitTest(at: CGPoint(x: screenPoint.x - child.windowFrame.minX, y: screenPoint.y - child.windowFrame.minY))
+        }
         guard isCanvasSurfaceActive else { return nil }
         if chromeExclusionRects.values.contains(where: { $0.contains(screenPoint) }) { return nil }
         guard let transform = liveTransformProvider?() ?? nil else { return nil }
@@ -140,7 +148,7 @@ final class CanvasBlockFrameTracker: ObservableObject {
         }
 
         let renderable = blocks.filter { !consumedUUIDs.contains($0.entityUuid) }
-        trackedBlocks = renderable
+        ownTrackedBlocks = renderable
         expandedClusterCanvasRects = expandedRects
 
         var canvasRects: [String: CGRect] = [:]

@@ -163,6 +163,110 @@ final class BlockRowHeightTruthTests: XCTestCase {
 
     // MARK: - Scenarios
 
+    func testOrdinaryParagraphsUseDocumentRhythmInsteadOfEditorCardMargins() throws {
+        let first = RichBlock.paragraph("First paragraph")
+        let second = RichBlock.paragraph("Second paragraph")
+        mount(RichDocument(blocks: [first, second]))
+        let a = try XCTUnwrap(textView(for: first.id))
+        let b = try XCTUnwrap(textView(for: second.id))
+        let firstFrame = a.convert(a.bounds, to: nil)
+        let secondFrame = b.convert(b.bounds, to: nil)
+        let gap = abs(firstFrame.midY - secondFrame.midY) - (firstFrame.height + secondFrame.height) / 2
+        XCTAssertLessThanOrEqual(gap, 16, "Each paragraph must not bring a separate 32pt padding box")
+    }
+
+    func testClickAfterTextSelectionStillHitsNativeWritingSurface() throws {
+        let paragraph = RichBlock.paragraph("A paragraph with a formatting selection")
+        mount(RichDocument(blocks: [paragraph]))
+        let view = try focus(paragraph.id)
+        view.setSelectedRange(NSRange(location: 2, length: 9))
+        pump(0.3)
+        let root = try XCTUnwrap(window.contentView)
+        let point = view.convert(NSPoint(x: view.bounds.midX, y: view.bounds.midY), to: root)
+        let hit = root.hitTest(point)
+        XCTAssertTrue(hit === view || hit?.isDescendant(of: view) == true,
+                      "Formatting chrome must not consume the next caret click: \(String(describing: hit))")
+    }
+
+    func testBlockClickUsesNativeViewCoordinatesWithInsets() throws {
+        let view = CosmoTextView(frame: NSRect(x: 0, y: 0, width: 500, height: 160))
+        view.font = .monospacedSystemFont(ofSize: 17, weight: .regular)
+        view.textContainerInset = NSSize(width: 24, height: 16)
+        view.string = "A native insertion point is measured in view coordinates."
+        view.isEditable = true
+        view.blockRowMode = true
+        let controller = BlockDragSelectionController()
+        view.blockDragSelectionController = controller
+        window = NSWindow(contentRect: view.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = view
+        view.layoutManager?.ensureLayout(for: view.textContainer!)
+        let point = NSPoint(x: 180, y: 28)
+        let expected = view.characterIndexForInsertion(at: point)
+        let windowPoint = view.convert(point, to: nil)
+        let up = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseUp, location: windowPoint,
+            modifierFlags: [], timestamp: 1, windowNumber: window.windowNumber, context: nil,
+            eventNumber: 2, clickCount: 1, pressure: 0))
+        NSApp.postEvent(up, atStart: true)
+        let down = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseDown, location: windowPoint,
+            modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil,
+            eventNumber: 1, clickCount: 1, pressure: 1))
+        view.mouseDown(with: down)
+        XCTAssertEqual(view.selectedRange().location, expected)
+    }
+
+    func testExternalFormattingKeepsCaretAtUTF16EndOfEmojiText() throws {
+        let paragraph = RichBlock.paragraph("A 🧑🏽‍💻 writes café")
+        mount(RichDocument(blocks: [paragraph]))
+        let view = try focus(paragraph.id)
+        let end = (view.string as NSString).length
+        model.document.blocks[0].inlines[0].marks = [.bold]
+        pump(0.3)
+        XCTAssertEqual(view.selectedRange(), NSRange(location: end, length: 0))
+    }
+
+    func testMarkedTextDoesNotTriggerMarkdownTransformBeforeCommit() throws {
+        let paragraph = RichBlock.paragraph("")
+        mount(RichDocument(blocks: [paragraph]))
+        let view = try focus(paragraph.id)
+        view.setMarkedText("# ", selectedRange: NSRange(location: 2, length: 0),
+                           replacementRange: NSRange(location: NSNotFound, length: 0))
+        view.didChangeText()
+        pump(0.1)
+        XCTAssertTrue(view.hasMarkedText())
+        XCTAssertEqual(model.document.blocks[0].kind, .paragraph)
+        XCTAssertEqual(model.document.blocks.count, 1)
+        view.insertText("# ", replacementRange: view.markedRange())
+        pump(0.3)
+        XCTAssertFalse(view.hasMarkedText())
+        XCTAssertEqual(model.document.blocks[0].kind, .heading1)
+    }
+
+    func testQueuedTypingSyncDoesNotPersistAnUncommittedIMECandidate() throws {
+        let paragraph = RichBlock.paragraph("Committed")
+        mount(RichDocument(blocks: [paragraph]))
+        let view = try focus(paragraph.id)
+
+        // Ordinary typing queues a 250ms attributed-buffer sync. Starting
+        // composition before it fires must not let that older job serialize
+        // the candidate currently owned by the input method.
+        view.insertText(" ", replacementRange: view.selectedRange())
+        view.setMarkedText("候補", selectedRange: NSRange(location: 2, length: 0),
+                           replacementRange: NSRange(location: NSNotFound, length: 0))
+        view.didChangeText()
+        pump(0.4)
+
+        XCTAssertTrue(view.hasMarkedText())
+        XCTAssertFalse(model.document.plainText.contains("候補"),
+                       "A queued sync must leave the unfinished candidate in native storage only")
+        XCTAssertEqual(model.document.blocks.count, 1)
+
+        view.insertText("確定", replacementRange: view.markedRange())
+        pump(0.4)
+        XCTAssertFalse(view.hasMarkedText())
+        XCTAssertEqual(model.document.plainText, "Committed 確定")
+        XCTAssertEqual(model.document.blocks.count, 1)
+    }
+
     /// Type a burst and press Return within the 250ms commit window.
     func testReturnRightAfterTypingLeavesNoGap() throws {
         let paragraph = RichBlock.paragraph(Self.wrappingParagraph)

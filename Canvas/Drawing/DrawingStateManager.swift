@@ -14,6 +14,16 @@ enum ShapeResizeCorner: CaseIterable, Hashable {
 @MainActor
 @Observable
 final class DrawingStateManager {
+    let compositionSession: SpaceCompositionCanvasSession?
+
+    init(compositionSession: SpaceCompositionCanvasSession? = nil) {
+        self.compositionSession = compositionSession
+    }
+
+    private func registerUndo(_ action: UndoableAction) {
+        if compositionSession == nil { CosmoUndoManager.shared.register(action) }
+    }
+
 
     // MARK: - Tool State
 
@@ -81,6 +91,10 @@ final class DrawingStateManager {
     // MARK: - Load
 
     func loadDrawings(thinkspaceId: String?) {
+        if let compositionSession {
+            drawings = compositionSession.drawings
+            return
+        }
         currentThinkspaceId = thinkspaceId
         Task {
             do {
@@ -180,6 +194,8 @@ final class DrawingStateManager {
             drawings.append(drawing)
         }
 
+        if let compositionSession { compositionSession.saveDrawing(drawing); return }
+
         // Persist
         let record = drawing.toRecord(thinkspaceId: currentThinkspaceId)
         Task {
@@ -198,7 +214,7 @@ final class DrawingStateManager {
     func deleteDrawing(_ id: String) {
         // Snapshot before removal for undo (CosmoUndoManager ignores during undo/redo)
         if let drawing = drawings.first(where: { $0.id == id }) {
-            CosmoUndoManager.shared.register(DeleteDrawingAction(drawing: drawing, drawingState: self))
+            registerUndo(DeleteDrawingAction(drawing: drawing, drawingState: self))
         }
 
         drawings.removeAll { $0.id == id }
@@ -215,6 +231,8 @@ final class DrawingStateManager {
         if groupShapeResizeSession?.selectedShapeIds.contains(id) == true {
             groupShapeResizeSession = nil
         }
+
+        if let compositionSession { compositionSession.deleteDrawing(id); return }
 
         // Soft-delete in DB
         Task {
@@ -236,6 +254,8 @@ final class DrawingStateManager {
     func restoreDrawing(_ drawing: CanvasDrawing) {
         // Re-add to memory
         drawings.append(drawing)
+
+        if let compositionSession { compositionSession.saveDrawing(drawing); return }
 
         // Un-soft-delete in DB
         let record = drawing.toRecord(thinkspaceId: currentThinkspaceId)
@@ -306,7 +326,7 @@ final class DrawingStateManager {
         let newOrigin = drawings[idx].origin
         let newPathPoints = drawings[idx].pathPoints
         if oldOrigin != newOrigin {
-            CosmoUndoManager.shared.register(
+            registerUndo(
                 MoveDrawingAction(
                     drawingId: dragId,
                     oldOrigin: oldOrigin,
@@ -454,7 +474,7 @@ final class DrawingStateManager {
         if s.width > 3 || s.height > 3 {
             drawing.zIndex = (drawings.map(\.zIndex).max() ?? 0) + 1
             saveDrawing(drawing)
-            CosmoUndoManager.shared.register(CreateDrawingAction(drawing: drawing, drawingState: self))
+            registerUndo(CreateDrawingAction(drawing: drawing, drawingState: self))
         }
         activeDrawing = nil
     }
@@ -525,7 +545,7 @@ final class DrawingStateManager {
         drawing.pathWidths = activePathWidths
         drawing.zIndex = (drawings.map(\.zIndex).max() ?? 0) + 1
         saveDrawing(drawing)
-        CosmoUndoManager.shared.register(CreateDrawingAction(drawing: drawing, drawingState: self))
+        registerUndo(CreateDrawingAction(drawing: drawing, drawingState: self))
         activeDrawing = nil
         activePathPoints = []
         activePathWidths = []

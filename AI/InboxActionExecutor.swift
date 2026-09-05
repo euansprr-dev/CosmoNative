@@ -6,13 +6,16 @@ import GRDB
 /// an atom; the Seedbed verbs grow a seedling — no atom, no canvas object.
 enum InboxExecutionOutcome {
     case atom(Atom)
+    case filed(Atom, InboxPlacementReceipt)
     case seedling(Seedling)
 
     /// The produced atom, when the outcome is spatial/knowledge-graph work
     /// (navigation targets, reindex hooks). Seedling growth has none.
     var atom: Atom? {
-        if case .atom(let atom) = self { return atom }
-        return nil
+        switch self {
+        case .atom(let atom), .filed(let atom, _): return atom
+        case .seedling: return nil
+        }
     }
 }
 
@@ -28,8 +31,48 @@ final class InboxActionExecutor {
 
     private init() {}
 
+    func executeFiling(item: InboxItem, destination: InboxFilingDestination,
+                       action: InboxFilingAction? = nil, section: String? = nil,
+                       preparedAtom: Atom? = nil, existingAtomUUID: String? = nil) async throws -> (Atom, InboxPlacementReceipt) {
+        var request = try await InboxPlacementService.shared.request(for: item, destination: destination, action: action)
+        request.connectionSection = section
+        request.existingAtomUUID = existingAtomUUID
+        let receipt = try await InboxPlacementService.shared.execute(request, preparedAtom: preparedAtom)
+        registerFilingUndo(receipt)
+        guard let atom = try await atomRepo.fetch(uuid: receipt.resultAtomUUID) else { throw InboxPlacementError.conflict }
+        return (atom, receipt)
+    }
+
+    private func registerFilingUndo(_ receipt: InboxPlacementReceipt) {
+        CosmoUndoManager.shared.register(InlineUndoAction(actionDescription: receipt.request.action.title) {
+            do { _ = try await InboxPlacementService.shared.undo(receipt) }
+            catch { NotificationCenter.default.post(name: SpaceCompositionService.didFailUndo, object: nil, userInfo: ["message": error.localizedDescription]) }
+        } redo: {
+            do { _ = try await InboxPlacementService.shared.redo(receipt) }
+            catch { NotificationCenter.default.post(name: SpaceCompositionService.didFailUndo, object: nil, userInfo: ["message": error.localizedDescription]) }
+        })
+    }
+
+    private func spatialDestination(_ recommendation: InboxRecommendation) async throws -> InboxFilingDestination {
+        let destinations = try await InboxPlacementService.shared.destinations()
+        guard let spaceID = recommendation.thinkspaceId else { throw InboxPlacementError.missingDestination }
+        if recommendation.kind == .placeInExistingCluster, let clusterID = recommendation.clusterId {
+            let space = try await atomRepo.fetch(uuid: spaceID)
+            let mapping = space?.metadataDict?[SpaceCompositionLegacyMigration.metadataKey] as? [String: Any]
+            let groups = mapping?["groups"] as? [String: String] ?? [:]
+            let uuid = groups[clusterID] ?? clusterID
+            guard let group = destinations.first(where: { $0.kind == .group && $0.uuid == uuid && $0.spaceID == spaceID }) else {
+                throw InboxPlacementError.missingDestination
+            }
+            return group
+        }
+        guard let space = destinations.first(where: { $0.kind == .space && $0.spaceID == spaceID }) else { throw InboxPlacementError.missingDestination }
+        return space
+    }
+
     @discardableResult
     func executePrimaryRecommendation(item: InboxItem) async throws -> InboxExecutionOutcome? {
+        if let raw = item.primaryRouteKind, InboxRouteKind(rawValue: raw) == nil { throw InboxPlacementError.unsupported }
         if let recommendation = item.primaryRecommendationValue {
             return try await executeRecommendation(item: item, recommendation: recommendation)
         }
@@ -49,12 +92,22 @@ final class InboxActionExecutor {
 
     @discardableResult
     func executeRecommendation(item: InboxItem, recommendation: InboxRecommendation) async throws -> InboxExecutionOutcome? {
+        if let destination = recommendation.filingDestination {
+            let (atom, receipt) = try await executeFiling(item: item, destination: destination,
+                action: recommendation.filingAction ?? destination.defaultAction)
+            return .filed(atom, receipt)
+        }
         switch recommendation.kind {
+        case .fileToDestination: throw InboxPlacementError.unsupported
         case .mergeAtom:
             guard let targetUuid = recommendation.mergeTargetUuid else { return nil }
             return try await executeMerge(item: item, targetAtomUuid: targetUuid).map { .atom($0) }
-        case .placeInExistingCluster, .createClusterAndPlace, .placeInThinkspace, .createThinkspaceAndPlace:
-            return try await executePlacementRecommendation(item: item, recommendation: recommendation).map { .atom($0) }
+        case .placeInExistingCluster, .placeInThinkspace:
+            let destination = try await spatialDestination(recommendation)
+            let (atom, receipt) = try await executeFiling(item: item, destination: destination)
+            return .filed(atom, receipt)
+        case .createClusterAndPlace, .createThinkspaceAndPlace:
+            throw InboxPlacementError.unsupported
         case .advanceQuestion:
             return try await executeAdvanceQuestion(item: item, recommendation: recommendation).map { .atom($0) }
         case .spawnQuestion:
@@ -88,138 +141,30 @@ final class InboxActionExecutor {
 
     @discardableResult
     func executeMerge(item: InboxItem, targetAtomUuid: String) async throws -> Atom? {
-        guard let targetAtom = try await atomRepo.fetch(uuid: targetAtomUuid) else {
-            print("⚠️ [InboxAction] Merge target not found: \(targetAtomUuid)")
-            return nil
-        }
-
-        let existingBody = targetAtom.body ?? ""
-        let newText = item.rawText
-        // Long targets never go through the LLM: blendMerge only sees the first
-        // 3000 chars, so an LLM rewrite would silently amputate the tail.
-        // The lossless append fallback preserves every byte.
-        let mergedBody: String
-        if existingBody.count > 3000 {
-            mergedBody = fallbackMerge(existing: existingBody, newContext: newText)
-        } else {
-            mergedBody = await blendMerge(existing: existingBody, newContext: newText, title: targetAtom.title ?? "Note")
-        }
-
-        // Durable undo source: persist the pre-merge body on the inbox item
-        // BEFORE mutating the target, so the original text survives app restarts.
-        do {
-            try await inboxRepo.updateMetadata(uuid: item.uuid, merging: [
-                "premergeBody": existingBody,
-                "premergeTargetUuid": targetAtomUuid
-            ])
-        } catch {
-            print("⚠️ [InboxAction] Failed to persist pre-merge snapshot: \(error)")
-            PersistenceHealth.note(.writeFailure, context: "InboxActionExecutor.executeMerge", detail: "pre-merge snapshot store failed for \(item.uuid): \(error.localizedDescription)")
-        }
-
-        let updated = try await atomRepo.update(uuid: targetAtomUuid) { atom in
-            atom.body = mergedBody
-        }
-
-        if let updated {
-            await adoptAttachments(from: item, into: updated.uuid)
-            await reindex(atom: updated)
-            try await inboxRepo.markActioned(uuid: item.uuid)
-
-            let originalItem = item
-            let targetUUID = updated.uuid
-            let merged = updated.body ?? mergedBody
-            let previousBody = existingBody
-
-            CosmoUndoManager.shared.register(
-                InlineUndoAction(actionDescription: "Merge Inbox Capture") { [weak self] in
-                    guard let self else { return }
-                    _ = try? await self.atomRepo.update(uuid: targetUUID) { atom in
-                        atom.body = previousBody
-                    }
-                    if let restored = try? await self.atomRepo.fetch(uuid: targetUUID) {
-                        await self.reindex(atom: restored)
-                    }
-                    try? await self.inboxRepo.restore(originalItem)
-                } redo: { [weak self] in
-                    guard let self else { return }
-                    _ = try? await self.atomRepo.update(uuid: targetUUID) { atom in
-                        atom.body = merged
-                    }
-                    if let restored = try? await self.atomRepo.fetch(uuid: targetUUID) {
-                        await self.reindex(atom: restored)
-                    }
-                    try? await self.inboxRepo.markActioned(uuid: originalItem.uuid)
-                }
-            )
-        }
-
-        return updated
+        guard let target = try await atomRepo.fetch(uuid: targetAtomUuid), !target.isDeleted else { return nil }
+        let kind: InboxFilingDestination.Kind = target.type == .connection ? .connection : .page
+        guard kind == .connection || target.spaceCompositionKind?.isAuthored == true else { throw InboxPlacementError.unsupported }
+        let name = target.title ?? "Untitled Page"
+        let destination = InboxFilingDestination(kind: kind, uuid: target.uuid, name: name, path: name)
+        return try await executeFiling(item: item, destination: destination).0
     }
 
     @discardableResult
-    func executePlace(
-        item: InboxItem,
-        thinkspaceId: String,
-        atomType: AtomType = .connection
-    ) async throws -> Atom {
-        let thinkspaceName = await resolveThinkspaceName(for: thinkspaceId) ?? "Thinkspace"
-        let plan = await planner.planForThinkspacePlacement(
-            title: item.title ?? fallbackTitle(for: item),
-            atomType: atomType,
-            thinkspaceId: thinkspaceId,
-            thinkspaceName: thinkspaceName,
-            relatedAtomUUIDs: []
-        )
-
-        let recommendation = InboxRecommendation(
-            kind: .placeInThinkspace,
-            confidence: 1.0,
-            suggestedAtomType: atomType.rawValue,
-            destinationPath: thinkspaceName,
-            rationale: "Manual override: place directly on \(thinkspaceName).",
-            thinkspaceId: thinkspaceId,
-            thinkspaceName: thinkspaceName,
-            placementPlan: plan
-        )
-
-        guard let atom = try await executePlacementRecommendation(item: item, recommendation: recommendation) else {
-            throw NSError(domain: "InboxActionExecutor", code: 2, userInfo: [NSLocalizedDescriptionKey: "Failed to place inbox item"])
-        }
-        return atom
+    func executePlace(item: InboxItem, thinkspaceId: String, atomType: AtomType = .note) async throws -> Atom {
+        let name = await resolveThinkspaceName(for: thinkspaceId) ?? "Space"
+        let destination = InboxFilingDestination(kind: .space, uuid: thinkspaceId, spaceID: thinkspaceId, name: name, path: name)
+        return try await executeFiling(item: item, destination: destination).0
     }
 
     @discardableResult
-    func executeNew(item: InboxItem, atomType: AtomType = .connection) async throws -> Atom {
-        var atom = Atom.new(
-            type: atomType,
-            title: item.title ?? fallbackTitle(for: item),
-            body: item.rawText
-        )
-        atom = applyingChecklist(to: atom, atomType: atomType, rawText: item.rawText)
-        atom = atom.mergingMetadataKeys(captureProvenance(for: item))
-        atom = try await atomRepo.create(atom)
-        await adoptAttachments(from: item, into: atom.uuid)
-        await reindex(atom: atom)
-        try await inboxRepo.markActioned(uuid: item.uuid)
-
-        let createdAtom = atom
-        let originalItem = item
-
-        CosmoUndoManager.shared.register(
-            InlineUndoAction(actionDescription: "Create Inbox Atom") { [weak self] in
-                guard let self else { return }
-                try? await self.atomRepo.delete(uuid: createdAtom.uuid)
-                try? await self.inboxRepo.restore(originalItem)
-            } redo: { [weak self] in
-                guard let self else { return }
-                try? await self.restoreAtomSnapshot(createdAtom)
-                await self.reindex(atom: createdAtom)
-                try? await self.inboxRepo.markActioned(uuid: originalItem.uuid)
-            }
-        )
-
-        return atom
+    func executeNew(item: InboxItem, atomType: AtomType = .note) async throws -> Atom {
+        let destination: InboxFilingDestination
+        switch atomType {
+        case .idea: destination = .init(kind: .ideas, name: "Personal", path: "Content › Personal ideas")
+        case .task: destination = .init(kind: .today, name: "Today", path: "Today › Tasks")
+        default: destination = .init(kind: .pages, name: "Pages", path: "Pages")
+        }
+        return try await executeFiling(item: item, destination: destination).0
     }
 
     /// Create a `.connection` atom from the capture and link it to the atoms
@@ -227,6 +172,7 @@ final class InboxActionExecutor {
     /// a connection between them, not a duplicate of any one.
     @discardableResult
     func executeConnect(item: InboxItem, relatedAtomUUIDs: [String]) async throws -> Atom {
+        try await requireInboxSource(item)
         var atom = Atom.new(
             type: .connection,
             title: item.title ?? fallbackTitle(for: item),
@@ -301,19 +247,18 @@ final class InboxActionExecutor {
         let url = item.detectedSwipeURL
             ?? item.rawText.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // Same link already swiped? Adopt the existing card — never a duplicate.
         if let existing = await QuickCaptureProcessor.findExistingLiveSwipe(url: url) {
-            try await inboxRepo.markActioned(uuid: item.uuid)
-            let originalItem = item
-            CosmoUndoManager.shared.register(
-                InlineUndoAction(actionDescription: "File Inbox Swipe") { [weak self] in
-                    // The swipe pre-existed this capture — undo only frees the capture.
-                    try? await self?.inboxRepo.restore(originalItem)
-                } redo: { [weak self] in
-                    try? await self?.inboxRepo.markActioned(uuid: originalItem.uuid)
-                }
-            )
-            return SwipeFilingOutcome(atom: existing, adoptedExisting: true)
+            let (saved, _) = try await executeFiling(item: item,
+                destination: .init(kind: .swipe, name: "Swipe", path: "Swipe"), existingAtomUUID: existing.uuid)
+            return SwipeFilingOutcome(atom: saved, adoptedExisting: true)
+        }
+        if item.detectedSwipeURL == nil {
+            var prepared = Atom.swipeFromRawText(text: item.rawText, hook: item.title)
+            prepared = prepared.withSwipeArtifact(SwipeArtifact(kind: .note, units: SwipeTextSlicer.units(from: item.rawText), captureMode: "inbox"))
+            let (saved, _) = try await executeFiling(item: item,
+                destination: .init(kind: .swipe, name: "Swipe", path: "Swipe"), preparedAtom: prepared)
+            SwipeIntakeRouter.noteExternallyCreatedSwipe(saved, publishesReceipt: false)
+            return SwipeFilingOutcome(atom: saved, adoptedExisting: false)
         }
 
         let classification = SwipeURLClassifier().classify(url)
@@ -330,28 +275,10 @@ final class InboxActionExecutor {
         if let note = Self.swipeNote(rawText: item.rawText, url: url) {
             atom.body = note
         }
-        atom = atom.mergingMetadataKeys(captureProvenance(for: item))
-        atom = try await atomRepo.create(atom)
-        await adoptAttachments(from: item, into: atom.uuid)
-        await reindex(atom: atom)
-        try await inboxRepo.markActioned(uuid: item.uuid)
+        atom = try await executeFiling(item: item,
+            destination: .init(kind: .swipe, name: "Swipe", path: "Swipe"), preparedAtom: atom).0
         CloudSwipeAPI.kickProcessing(swipeUUID: atom.uuid)
         SwipeIntakeRouter.noteExternallyCreatedSwipe(atom, publishesReceipt: false)
-
-        let createdAtom = atom
-        let originalItem = item
-        CosmoUndoManager.shared.register(
-            InlineUndoAction(actionDescription: "File Inbox Swipe") { [weak self] in
-                guard let self else { return }
-                try? await self.atomRepo.delete(uuid: createdAtom.uuid)
-                try? await self.inboxRepo.restore(originalItem)
-            } redo: { [weak self] in
-                guard let self else { return }
-                try? await self.restoreAtomSnapshot(createdAtom)
-                await self.reindex(atom: createdAtom)
-                try? await self.inboxRepo.markActioned(uuid: originalItem.uuid)
-            }
-        )
 
         return SwipeFilingOutcome(atom: atom, adoptedExisting: false)
     }
@@ -390,11 +317,8 @@ final class InboxActionExecutor {
         if let thumbnail = images.first?.thumbnailPath {
             atom.updateResearchMetadata { $0.thumbnailUrl = URL(fileURLWithPath: thumbnail).absoluteString }
         }
-        atom = atom.mergingMetadataKeys(captureProvenance(for: item))
-        atom = try await atomRepo.create(atom)
-        await adoptAttachments(from: item, into: atom.uuid)
-        await reindex(atom: atom)
-        try await inboxRepo.markActioned(uuid: item.uuid)
+        atom = try await executeFiling(item: item,
+            destination: .init(kind: .swipe, name: "Swipe", path: "Swipe"), preparedAtom: atom).0
 
         // The front door's completion hook — flow append + library refresh.
         // This executor owns its own undo (below) and the Inbox shows its own
@@ -408,20 +332,6 @@ final class InboxActionExecutor {
             await SwipeFrameDecomposition.run(swipeUUID: uuid, note: note.isEmpty ? nil : note)
         }
 
-        let createdAtom = atom
-        let originalItem = item
-        CosmoUndoManager.shared.register(
-            InlineUndoAction(actionDescription: "File Inbox Swipe") { [weak self] in
-                guard let self else { return }
-                try? await self.atomRepo.delete(uuid: createdAtom.uuid)
-                try? await self.inboxRepo.restore(originalItem)
-            } redo: { [weak self] in
-                guard let self else { return }
-                try? await self.restoreAtomSnapshot(createdAtom)
-                await self.reindex(atom: createdAtom)
-                try? await self.inboxRepo.markActioned(uuid: originalItem.uuid)
-            }
-        )
         return atom
     }
 
@@ -439,6 +349,7 @@ final class InboxActionExecutor {
     /// capture would.
     @discardableResult
     func executeAdvanceQuestion(item: InboxItem, recommendation: InboxRecommendation) async throws -> Atom? {
+        try await requireInboxSource(item)
         guard let move = recommendation.atlasMove,
               let questionUUID = move.questionUUID,
               let question = try await atomRepo.fetch(uuid: questionUUID),
@@ -475,6 +386,7 @@ final class InboxActionExecutor {
     /// deep dive, honoring the nesting-contract parent the router chose.
     @discardableResult
     func executeSpawnQuestion(item: InboxItem, recommendation: InboxRecommendation) async throws -> Atom? {
+        try await requireInboxSource(item)
         guard let move = recommendation.atlasMove,
               let deepDiveUUID = move.deepDiveUUID,
               let deepDive = try await atomRepo.fetch(uuid: deepDiveUUID),
@@ -533,45 +445,12 @@ final class InboxActionExecutor {
     /// until the row is accepted.
     @discardableResult
     func executeFeedConnection(item: InboxItem, recommendation: InboxRecommendation) async throws -> Atom? {
-        guard let move = recommendation.atlasMove,
-              let connectionUUID = move.connectionUUID,
-              let sectionRaw = move.connectionSection,
-              let sectionType = ConnectionSectionType(rawValue: sectionRaw),
-              let connection = try await atomRepo.fetch(uuid: connectionUUID),
-              !connection.isDeleted else { return nil }
-
-        let insert = ConnectionStagedInsert(
-            section: sectionType.rawValue,
-            text: item.rawText,
-            sourceKind: "inbox",
-            sourceUUID: item.uuid,
-            attachmentUUIDs: item.attachmentUUIDs
-        )
-        guard let updated = try await ConnectionStagingStore.stage(insert, onConnection: connectionUUID) else {
-            return nil
-        }
-
-        let name = connection.title ?? "concept page"
-        try? await inboxRepo.updateMetadata(uuid: item.uuid, merging: [
-            "actionOutcome": "Staged for \(name) › \(sectionType.displayName)"
-        ])
-        try await inboxRepo.markActioned(uuid: item.uuid)
-
-        let originalItem = item
-        let insertId = insert.id
-        let stagedInsert = insert
-
-        CosmoUndoManager.shared.register(
-            InlineUndoAction(actionDescription: "Feed Concept Page") { [weak self] in
-                _ = try? await ConnectionStagingStore.remove(insertId: insertId, fromConnection: connectionUUID)
-                try? await self?.inboxRepo.restore(originalItem)
-            } redo: { [weak self] in
-                _ = try? await ConnectionStagingStore.stage(stagedInsert, onConnection: connectionUUID)
-                try? await self?.inboxRepo.markActioned(uuid: originalItem.uuid)
-            }
-        )
-
-        return updated
+        guard let move = recommendation.atlasMove, let uuid = move.connectionUUID,
+              let target = try await atomRepo.fetch(uuid: uuid), !target.isDeleted else { return nil }
+        let name = target.title ?? "Concept"
+        return try await executeFiling(item: item,
+            destination: .init(kind: .connection, uuid: uuid, name: name, path: "Concepts › \(name)"),
+            section: move.connectionSection).0
     }
 
     /// The capture is a content idea for a client: a typed idea atom carrying
@@ -579,35 +458,12 @@ final class InboxActionExecutor {
     /// enriched by the idea pipeline.
     @discardableResult
     func executeAttachClient(item: InboxItem, recommendation: InboxRecommendation) async throws -> Atom? {
-        guard let move = recommendation.atlasMove,
-              let clientUUID = move.clientUUID,
-              let client = try await atomRepo.fetch(uuid: clientUUID),
-              !client.isDeleted else { return nil }
-
-        var atom = Atom.new(
-            type: .idea,
-            title: item.title ?? fallbackTitle(for: item),
-            body: item.rawText
-        )
-        atom = atom.addingLink(AtomLink(
-            type: AtomLinkType.ideaToClient.rawValue,
-            uuid: client.uuid,
-            entityType: AtomType.clientProfile.rawValue
-        ))
-        atom = atom.withUpdatedIdeaMetadata { ideaMeta in
-            ideaMeta.ideaStatus = ideaMeta.ideaStatus ?? .spark
-            ideaMeta.clientUUID = client.uuid
-            ideaMeta.clientName = client.title ?? move.clientName
-        }
-        atom = atom.mergingMetadataKeys(captureProvenance(for: item))
-        atom = try await atomRepo.create(atom)
-        await adoptAttachments(from: item, into: atom.uuid)
-        await reindex(atom: atom)
-        try await inboxRepo.markActioned(uuid: item.uuid)
-        registerCreationUndo(created: atom, item: item, actionDescription: "File Idea for Client")
-
-        let created = atom
-        Task { await IdeaInsightEngine.shared.quickEnrich(atom: created) }
+        guard let move = recommendation.atlasMove, let uuid = move.clientUUID,
+              let target = try await atomRepo.fetch(uuid: uuid), !target.isDeleted else { return nil }
+        let name = target.title ?? "Client"
+        let atom = try await executeFiling(item: item,
+            destination: .init(kind: .ideas, uuid: uuid, name: name, path: "Content › \(name) › Ideas")).0
+        Task { await IdeaInsightEngine.shared.quickEnrich(atom: atom) }
         return atom
     }
 
@@ -616,6 +472,7 @@ final class InboxActionExecutor {
     /// ripens toward one development conversation.
     @discardableResult
     func executeFeedSeedling(item: InboxItem, recommendation: InboxRecommendation) async throws -> Seedling? {
+        try await requireInboxSource(item)
         guard let move = recommendation.atlasMove,
               let seedlingUUID = move.seedlingUUID,
               let seedling = try await SeedlingRepository.shared.fetch(uuid: seedlingUUID),
@@ -650,6 +507,7 @@ final class InboxActionExecutor {
     /// later, through development, if the seedling earns it.
     @discardableResult
     func executeStartSeedling(item: InboxItem, recommendation: InboxRecommendation) async throws -> Seedling? {
+        try await requireInboxSource(item)
         let name = recommendation.atlasMove?.germinateTitle ?? item.title ?? fallbackTitle(for: item)
         let thought = SeedlingThought(text: item.rawText, sourceKind: .inbox, sourceUUID: item.uuid)
 
@@ -744,6 +602,7 @@ final class InboxActionExecutor {
     /// whose root question is the capture.
     @discardableResult
     func executeGerminateDeepDive(item: InboxItem, recommendation: InboxRecommendation) async throws -> Atom? {
+        try await requireInboxSource(item)
         let topicTitle = recommendation.atlasMove?.germinateTitle ?? item.title ?? fallbackTitle(for: item)
         let dive = try await InquiryRepository.shared.createDeepDive(
             title: topicTitle,
@@ -768,6 +627,14 @@ final class InboxActionExecutor {
 
     /// Shared undo shape for Atlas moves that created one primary atom:
     /// undo deletes the atom and restores the capture; redo re-persists it.
+    /// Specialized legacy development commands have queue-owned inverses.
+    /// Lane originals use the typed filing commands until those domains expose
+    /// a lane-aware transaction; never manufacture an Inbox row on Undo.
+    private func requireInboxSource(_ item: InboxItem) async throws {
+        guard item.captureReference.kind == .inbox,
+              try await inboxRepo.fetch(uuid: item.uuid) != nil else { throw InboxPlacementError.unsupported }
+    }
+
     private func registerCreationUndo(created: Atom, item: InboxItem, actionDescription: String) {
         let createdAtom = created
         let originalItem = item
@@ -812,191 +679,6 @@ final class InboxActionExecutor {
         let lines = max(2, (CGFloat(text.count) / charsPerLine).rounded(.up))
         let height = min(340, max(116, lines * 21 + 62))
         return CGSize(width: width, height: height)
-    }
-
-    private func executePlacementRecommendation(
-        item: InboxItem,
-        recommendation: InboxRecommendation
-    ) async throws -> Atom? {
-        let atomType = AtomType(rawValue: recommendation.suggestedAtomType) ?? .connection
-        let originalItem = item
-
-        var targetThinkspaceId = recommendation.thinkspaceId
-        var mutatedThinkspaceBefore: Atom?
-        var mutatedThinkspaceAfter: Atom?
-
-        if recommendation.kind == .createThinkspaceAndPlace {
-            let thinkspaceName = recommendation.placementPlan?.targetThinkspaceName
-                ?? recommendation.thinkspaceName
-                ?? recommendation.destinationPath
-            guard let thinkspace = await ThinkspaceManager.shared.createThinkspace(name: thinkspaceName) else {
-                return nil
-            }
-            targetThinkspaceId = thinkspace.id
-        }
-
-        var atom = Atom.new(
-            type: atomType,
-            title: item.title ?? fallbackTitle(for: item),
-            body: item.rawText
-        )
-        atom = applyingChecklist(to: atom, atomType: atomType, rawText: item.rawText)
-        atom = atom.mergingMetadataKeys(captureProvenance(for: item))
-        atom = try await atomRepo.create(atom)
-        await adoptAttachments(from: item, into: atom.uuid)
-        await reindex(atom: atom)
-
-        var createdBlockRecord: CanvasBlockRecord?
-
-        if let thinkspaceId = targetThinkspaceId {
-            if recommendation.kind == .placeInExistingCluster || recommendation.kind == .createClusterAndPlace || recommendation.kind == .createThinkspaceAndPlace,
-               let placementPlan = recommendation.placementPlan {
-                let snapshots = try await applyClusterMutation(
-                    thinkspaceId: thinkspaceId,
-                    recommendation: recommendation,
-                    placementPlan: placementPlan,
-                    atomUUID: atom.uuid
-                )
-                mutatedThinkspaceBefore = snapshots.before
-                mutatedThinkspaceAfter = snapshots.after
-            }
-
-            if let placementPlan = recommendation.placementPlan,
-               let x = placementPlan.blockPositionX,
-               let y = placementPlan.blockPositionY {
-                var block = CanvasBlock.fromAtom(atom, position: CGPoint(x: x, y: y))
-                // A quick thought never wears the letter-page costume: it
-                // lands as a compact card sized to its own words (the block's
-                // footprint IS the contract — NoteBlockView renders compact
-                // short notes as thought cards, and growing the note past a
-                // page's worth of words graduates it back to the page shape).
-                if atom.type == .note, Self.isQuickThought(item.rawText) {
-                    block.size = Self.thoughtCardSize(for: item.rawText)
-                }
-                let record = CanvasBlockRecord.from(block, documentType: "home", documentId: 0, thinkspaceId: thinkspaceId, isPlaced: false)
-                try await persistCanvasBlockSnapshot(record)
-                createdBlockRecord = record
-            }
-
-            await refreshThinkspace(thinkspaceId)
-        }
-
-        try await inboxRepo.markActioned(uuid: item.uuid)
-
-        let afterThinkspaceSnapshot = mutatedThinkspaceAfter
-        let beforeThinkspaceSnapshot = mutatedThinkspaceBefore
-        let createdAtom = atom
-        let blockSnapshot = createdBlockRecord
-        let affectedThinkspaceId = targetThinkspaceId
-
-        CosmoUndoManager.shared.register(
-            InlineUndoAction(actionDescription: "Apply Inbox Recommendation") { [weak self] in
-                guard let self else { return }
-
-                try? await self.atomRepo.delete(uuid: createdAtom.uuid)
-
-                if let beforeThinkspaceSnapshot {
-                    try? await self.persistAtomSnapshot(beforeThinkspaceSnapshot)
-                } else if let afterThinkspaceSnapshot {
-                    try? await self.atomRepo.delete(uuid: afterThinkspaceSnapshot.uuid)
-                }
-
-                if let affectedThinkspaceId {
-                    await ThinkspaceManager.shared.loadThinkspaces()
-                    await self.refreshThinkspace(affectedThinkspaceId)
-                }
-
-                try? await self.inboxRepo.restore(originalItem)
-            } redo: { [weak self] in
-                guard let self else { return }
-
-                if let afterThinkspaceSnapshot {
-                    try? await self.restoreAtomSnapshot(afterThinkspaceSnapshot)
-                    await ThinkspaceManager.shared.loadThinkspaces()
-                }
-
-                try? await self.restoreAtomSnapshot(createdAtom)
-                if let blockSnapshot {
-                    try? await self.persistCanvasBlockSnapshot(blockSnapshot)
-                }
-                await self.reindex(atom: createdAtom)
-
-                if let affectedThinkspaceId {
-                    await self.refreshThinkspace(affectedThinkspaceId)
-                }
-
-                try? await self.inboxRepo.markActioned(uuid: originalItem.uuid)
-            }
-        )
-
-        return atom
-    }
-
-    private func applyClusterMutation(
-        thinkspaceId: String,
-        recommendation: InboxRecommendation,
-        placementPlan: InboxPlacementPlan,
-        atomUUID: String
-    ) async throws -> (before: Atom, after: Atom) {
-        guard var thinkspaceAtom = try await atomRepo.fetch(uuid: thinkspaceId) else {
-            throw NSError(domain: "InboxActionExecutor", code: 3, userInfo: [NSLocalizedDescriptionKey: "Thinkspace not found"])
-        }
-
-        let before = thinkspaceAtom
-        var metadata = thinkspaceAtom.metadataValue(as: ThinkspaceMetadata.self) ?? ThinkspaceMetadata(
-            name: recommendation.thinkspaceName ?? thinkspaceAtom.title ?? "Thinkspace"
-        )
-
-        let clusterId = placementPlan.targetClusterId ?? recommendation.clusterId ?? UUID().uuidString
-        let clusterName = placementPlan.targetClusterName ?? recommendation.clusterName ?? "Cluster"
-        let rect = placementPlan.clusterRect
-
-        if let index = metadata.clusters.firstIndex(where: { $0.id == clusterId }) {
-            if !metadata.clusters[index].blockUUIDs.contains(atomUUID) {
-                metadata.clusters[index].blockUUIDs.append(atomUUID)
-            }
-            metadata.clusters[index].name = clusterName
-            metadata.clusters[index].intent = recommendation.rationale
-            metadata.clusters[index].viewMode = placementPlan.clusterViewMode ?? metadata.clusters[index].viewMode
-            if let rect {
-                metadata.clusters[index].originX = rect.originX
-                metadata.clusters[index].originY = rect.originY
-                metadata.clusters[index].rectWidth = rect.width
-                metadata.clusters[index].rectHeight = rect.height
-                metadata.clusters[index].manualWidth = rect.width
-                metadata.clusters[index].manualHeight = rect.height
-            }
-        } else {
-            metadata.clusters.append(
-                CodableCluster(
-                    id: clusterId,
-                    name: clusterName,
-                    blockUUIDs: [atomUUID],
-                    colorIndex: 0,
-                    originX: rect?.originX,
-                    originY: rect?.originY,
-                    rectWidth: rect?.width,
-                    rectHeight: rect?.height,
-                    manualWidth: rect?.width,
-                    manualHeight: rect?.height,
-                    isZone: true,
-                    zoneType: nil,
-                    intent: recommendation.rationale,
-                    viewMode: placementPlan.clusterViewMode ?? ClusterViewMode.canvas.rawValue,
-                    sortOrder: ClusterSortOrder.dateUpdated.rawValue,
-                    boardGrouping: ClusterBoardGrouping.auto.rawValue
-                )
-            )
-        }
-
-        if let json = try? JSONEncoder().encode(metadata),
-           let string = String(data: json, encoding: .utf8) {
-            thinkspaceAtom.metadata = string
-        }
-        thinkspaceAtom.title = metadata.name
-
-        try await persistAtomSnapshot(thinkspaceAtom)
-        return (before, thinkspaceAtom)
     }
 
     private func persistAtomSnapshot(_ atom: Atom) async throws {
@@ -1129,45 +811,4 @@ final class InboxActionExecutor {
         await RecallIndexer.shared.noteAtomChanged(atom)
     }
 
-    private func blendMerge(existing: String, newContext: String, title: String) async -> String {
-        guard !existing.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return newContext
-        }
-
-        do {
-            let prompt = """
-            You are merging new context into an existing note. Produce a single coherent document that integrates both.
-
-            RULES:
-            - Preserve all information from both texts
-            - Do not add commentary or headings
-            - Write naturally as if this were always one note
-            - Keep contradictions if both perspectives matter
-            - Return only the merged note
-
-            EXISTING NOTE ("\(title)"):
-            \(String(existing.prefix(3000)))
-
-            NEW CONTEXT:
-            \(String(newContext.prefix(2000)))
-            """
-
-            let result = try await ResearchService.shared.analyze(
-                prompt: prompt,
-                model: flashModel,
-                maxTokens: 4000,
-                temperature: 0.1
-            )
-
-            let cleaned = result.trimmingCharacters(in: .whitespacesAndNewlines)
-            return cleaned.isEmpty ? fallbackMerge(existing: existing, newContext: newContext) : cleaned
-        } catch {
-            return fallbackMerge(existing: existing, newContext: newContext)
-        }
-    }
-
-    private func fallbackMerge(existing: String, newContext: String) -> String {
-        let datestamp = DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .none)
-        return existing + "\n\n---\n\nAdded \(datestamp):\n\n" + newContext
-    }
 }

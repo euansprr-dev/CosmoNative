@@ -13,6 +13,9 @@ struct CanvasClusterDropResolution: Equatable {
 @MainActor
 @Observable
 class CanvasClusterEngine {
+    let compositionSession: SpaceCompositionCanvasSession?
+    init(compositionSession: SpaceCompositionCanvasSession? = nil) { self.compositionSession = compositionSession }
+
 
     // MARK: - Published State
 
@@ -1058,6 +1061,7 @@ class CanvasClusterEngine {
     /// `userClusters` — an unguarded assignment after the await let a
     /// superseded switch stamp ANOTHER space's clusters onto the current one.
     func computeUserClusters(thinkspaceId: String?, blocks: [CanvasBlock]) async -> [CanvasCluster]? {
+        if let compositionSession { return compositionSession.clusters(blocks: blocks) }
         guard let tsId = thinkspaceId else {
             return []
         }
@@ -1109,6 +1113,7 @@ class CanvasClusterEngine {
     /// persist keyed off the wrong cluster's id) would silently overwrite
     /// another thinkspace's saved layout with foreign clusters.
     private func persistUserClusters(thinkspaceId: String?) {
+        if let compositionSession { compositionSession.saveClusters(userClusters); return }
         guard let tsId = thinkspaceId else { return }
 
         let codable = userClusters

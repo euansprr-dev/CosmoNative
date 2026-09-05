@@ -46,7 +46,7 @@ enum ConceptRecommendationOrigin: String, CaseIterable, Sendable {
         case .concept: return "Concept"
         case .research: return "Research"
         case .swipe: return "Swipe"
-        case .note: return "Note"
+        case .note: return "Page"
         case .inbox: return "Inbox"
         }
     }

@@ -85,11 +85,11 @@ struct SpaceCanvasWelcome: View {
         VStack(spacing: DS.space16) {
             Image(systemName: "rectangle.3.group").font(DS.pageTitle).foregroundStyle(DS.textMuted)
             Text("Room to think").font(DS.title2).foregroundStyle(DS.text)
-            Text(purpose.flatMap { $0.isEmpty ? nil : $0 } ?? "Place notes and sources side by side. Arrange them as your thinking takes shape.")
+            Text(purpose.flatMap { $0.isEmpty ? nil : $0 } ?? "Place pages and sources side by side. Arrange them as your thinking takes shape.")
                 .font(DS.body).foregroundStyle(DS.textSecondary).multilineTextAlignment(.center)
             HStack(spacing: DS.space20) {
-                Button("New note", systemImage: "square.and.pencil", action: createNote)
-                    .buttonStyle(.plain).foregroundStyle(DS.accent).help("Create a note on the canvas").frame(minHeight: 44)
+                Button("New page", systemImage: "square.and.pencil", action: createNote)
+                    .buttonStyle(.plain).foregroundStyle(DS.accent).help("Create a page on the canvas").frame(minHeight: 44)
                 Button("Add materials", systemImage: "plus", action: addMaterials)
                     .buttonStyle(.plain).foregroundStyle(DS.textSecondary).help("Place existing material in this space").frame(minHeight: 44)
             }.font(DS.callout.weight(.medium))

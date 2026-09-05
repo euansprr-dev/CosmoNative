@@ -13,36 +13,20 @@ struct SpaceWorkspaceCollectionView: View {
     @State private var store = SpaceWorkspaceStore.shared
     @State private var hovered: String?
     @FocusState private var focused: String?
-    @State private var camera = SpaceCollectionCamera()
-    @State private var viewport = CGSize.zero
-    @State private var initialPositions: [String: SpaceCollectionPoint] = [:]
-    @State private var optimistic: [String: SpaceCompositionPlacement] = [:]
-    @State private var movingID: String?
-    @State private var movement = CGSize.zero
-    @GestureState private var pan = CGSize.zero
-    @GestureState private var magnification: CGFloat = 1
-    @State private var loadedContainerID: String?
-    @State private var needsInitialFit = true
-
-    private let cardSize = CGSize(width: 252, height: 230)
     private var items: [Atom] { store.items(in: container, spaceID: spaceID) }
     private var selected: String? { store.location(spaceID).selectedUUID }
     private var currentContainer: Atom { store.snapshots[spaceID]?.atomsByUUID[container.uuid] ?? container }
-    private var cameraKey: String { "cosmo.space.collection.camera.mac.\(container.uuid)" }
-    private var positionsKey: String { "cosmo.space.collection.positions.mac.\(container.uuid)" }
-
     var body: some View {
         Group {
-            if items.isEmpty { emptyState }
-            else if view == .canvas { canvas }
+            if view == .canvas {
+                SpaceCompositionCanvasHost(spaceID: spaceID, container: currentContainer, items: items, onOpen: onOpen)
+                    .id(container.uuid)
+            }
+            else if items.isEmpty { emptyState }
             else if view == .list { list }
             else { grid }
         }
         .background(DS.bg)
-        .task(id: container.uuid) { restoreCamera(); ensurePositions(); fitInitialCanvasIfNeeded() }
-        .onChange(of: items.map(\.uuid)) { _, _ in ensurePositions(); fitInitialCanvasIfNeeded() }
-        .onChange(of: view) { _, _ in fitInitialCanvasIfNeeded() }
-        .onDisappear { if view == .canvas { persistCamera() } }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("space.collection.\(view.rawValue)")
     }
@@ -70,55 +54,6 @@ struct SpaceWorkspaceCollectionView: View {
             .background(DS.surfaceElevated, in: .rect(cornerRadius: DS.radiusLarge))
             .padding(DS.space32)
         }.scrollEdgeEffectStyle(.soft, for: .all)
-    }
-
-    private var canvas: some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .topLeading) {
-                DS.canvas
-                    .contentShape(.rect)
-                    .onTapGesture { store.select(nil, in: spaceID); focused = nil }
-                    .gesture(panGesture)
-                dotGrid
-                    .allowsHitTesting(false)
-                ForEach(visibleItems(in: geometry.size), id: \.uuid) { atom in
-                    canvasCard(atom)
-                }
-            }
-            .frame(width: geometry.size.width, height: geometry.size.height)
-            .clipped()
-            .simultaneousGesture(zoomGesture)
-            .background(SpaceCollectionScrollBridge { event in scroll(event) })
-            .overlay(alignment: .bottom) { canvasControls.padding(DS.space16) }
-            .onGeometryChange(for: CGSize.self, of: \.size) { viewport = $0; fitInitialCanvasIfNeeded() }
-        }
-        .accessibilityElement(children: .contain)
-    }
-
-    private func canvasCard(_ atom: Atom) -> some View {
-        let position = position(for: atom.uuid)
-        let delta = movingID == atom.uuid ? movement : .zero
-        return interactive(atom) { card(atom, spatial: true) }
-            .frame(width: cardSize.width, height: cardSize.height)
-            .scaleEffect(effectiveScale, anchor: .topLeading)
-            .offset(x: (position.x + delta.width) * effectiveScale + effectiveOffset.width,
-                    y: (position.y + delta.height) * effectiveScale + effectiveOffset.height)
-            .zIndex(movingID == atom.uuid ? 2 : selected == atom.uuid ? 1 : 0)
-            .gesture(DragGesture(minimumDistance: 4, coordinateSpace: .global).onChanged { value in
-                if movingID != atom.uuid { movingID = atom.uuid; store.select(atom.uuid, in: spaceID) }
-                movement = CGSize(width: value.translation.width / effectiveScale, height: value.translation.height / effectiveScale)
-            }.onEnded { value in
-                let target = SpaceCompositionPlacement(itemUUID: atom.uuid,
-                    x: position.x + value.translation.width / effectiveScale,
-                    y: position.y + value.translation.height / effectiveScale,
-                    width: cardSize.width, height: cardSize.height)
-                movingID = nil; movement = .zero
-                savePlacement(target)
-            })
-            .accessibilityAction(named: "Move left") { nudge(atom, x: -24, y: 0) }
-            .accessibilityAction(named: "Move right") { nudge(atom, x: 24, y: 0) }
-            .accessibilityAction(named: "Move up") { nudge(atom, x: 0, y: -24) }
-            .accessibilityAction(named: "Move down") { nudge(atom, x: 0, y: 24) }
     }
 
     private func interactive<Content: View>(_ atom: Atom, @ViewBuilder content: () -> Content) -> some View {
@@ -164,7 +99,7 @@ struct SpaceWorkspaceCollectionView: View {
         .clipShape(.rect(cornerRadius: DS.radiusLarge))
         .overlay { RoundedRectangle(cornerRadius: DS.radiusLarge).strokeBorder(focused == atom.uuid ? DS.focusRing : selected == atom.uuid ? DS.accent : DS.borderSubtle, lineWidth: selected == atom.uuid || focused == atom.uuid ? 2 : 1) }
         .shadow(color: DS.text.opacity(hovered == atom.uuid ? 0.07 : 0.025), radius: hovered == atom.uuid ? 14 : 5, y: hovered == atom.uuid ? 4 : 1)
-        .scaleEffect(hovered == atom.uuid && movingID == nil && !reduceMotion ? 1.008 : 1)
+        .scaleEffect(hovered == atom.uuid && !reduceMotion ? 1.008 : 1)
         .animation(reduceMotion ? nil : ProMotionSprings.hover, value: hovered == atom.uuid)
     }
 
@@ -192,9 +127,6 @@ struct SpaceWorkspaceCollectionView: View {
 
     @ViewBuilder private func contextMenu(_ atom: Atom) -> some View {
         Button("Open", systemImage: "arrow.up.right.square") { open(atom) }
-        if view == .canvas {
-            Button("Bring into view", systemImage: "viewfinder") { fit(atom) }
-        }
         if atom.spaceCompositionKind?.isAuthored == true {
             let included = atom.spaceComposition?.includeInExport != false
             Button(included ? "Exclude from export" : "Include in export", systemImage: included ? "eye.slash" : "eye") {
@@ -224,160 +156,7 @@ struct SpaceWorkspaceCollectionView: View {
         }.frame(maxWidth: 390).padding(DS.space32).frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private var effectiveScale: CGFloat { min(2.5, max(0.2, camera.scale * magnification)) }
-    private var effectiveOffset: CGSize {
-        let shift = effectiveScale / camera.scale
-        return CGSize(width: viewport.width / 2 + (camera.x - viewport.width / 2) * shift + pan.width,
-                      height: viewport.height / 2 + (camera.y - viewport.height / 2) * shift + pan.height)
-    }
-    private var panGesture: some Gesture {
-        DragGesture(minimumDistance: 2).updating($pan) { value, state, _ in state = value.translation }
-            .onEnded { camera.x += $0.translation.width; camera.y += $0.translation.height; persistCamera() }
-    }
-    private var zoomGesture: some Gesture {
-        MagnifyGesture().updating($magnification) { value, state, _ in state = value.magnification }
-            .onEnded { zoom(to: camera.scale * $0.magnification, around: CGPoint(x: viewport.width / 2, y: viewport.height / 2), animate: false) }
-    }
-    private var dotGrid: some View {
-        SwiftUI.Canvas { context, size in
-            let spacing = max(16, 32 * effectiveScale)
-            let origin = effectiveOffset
-            let startX = origin.width.truncatingRemainder(dividingBy: spacing)
-            let startY = origin.height.truncatingRemainder(dividingBy: spacing)
-            var path = Path()
-            for x in stride(from: startX - spacing, through: size.width, by: spacing) {
-                for y in stride(from: startY - spacing, through: size.height, by: spacing) {
-                    path.addEllipse(in: CGRect(x: x, y: y, width: 1.4, height: 1.4))
-                }
-            }
-            context.fill(path, with: .color(DS.textMuted.opacity(0.19)))
-        }
-    }
-    private var canvasControls: some View {
-        HStack(spacing: DS.space4) {
-            control("Zoom out", symbol: "minus") { zoom(to: camera.scale / 1.2) }
-            Text("\(Int((camera.scale * 100).rounded()))%")
-                .font(DS.caption.monospacedDigit()).foregroundStyle(DS.textSecondary).frame(width: 48)
-            control("Zoom in", symbol: "plus") { zoom(to: camera.scale * 1.2) }
-            Rectangle().fill(DS.borderSubtle).frame(width: 1, height: 18).padding(.horizontal, DS.space8)
-            control("Fit all items", symbol: "arrow.up.left.and.arrow.down.right") { fitAll() }
-            if let atom = items.first(where: { $0.uuid == selected }) {
-                control("Fit selection", symbol: "viewfinder") { fit(atom) }
-                control("Open selection", symbol: "arrow.up.right.square") { open(atom) }
-            }
-        }
-        .padding(DS.space4)
-        .glassEffect(.regular, in: .capsule)
-    }
-    private func control(_ title: String, symbol: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) { Image(systemName: symbol).font(DS.callout).frame(width: 44, height: 44).contentShape(.circle) }
-            .buttonStyle(.plain).foregroundStyle(DS.textSecondary).help(title).accessibilityLabel(title)
-    }
-
     private func open(_ atom: Atom) { store.select(atom.uuid, in: spaceID); onOpen(atom) }
-    private func position(for id: String) -> CGPoint {
-        if let value = optimistic[id] ?? currentContainer.spaceComposition?.placements.first(where: { $0.itemUUID == id }) {
-            return CGPoint(x: value.x, y: value.y)
-        }
-        let fallback = initialPositions[id] ?? SpaceCollectionPoint(x: 0, y: 0)
-        return CGPoint(x: fallback.x, y: fallback.y)
-    }
-    private func visibleItems(in size: CGSize) -> [Atom] {
-        let screen = CGRect(origin: .zero, size: size).insetBy(dx: -120, dy: -120)
-        return items.filter { atom in
-            if atom.uuid == movingID { return true }
-            let point = position(for: atom.uuid)
-            return CGRect(x: point.x * effectiveScale + effectiveOffset.width, y: point.y * effectiveScale + effectiveOffset.height,
-                          width: cardSize.width * effectiveScale, height: cardSize.height * effectiveScale).intersects(screen)
-        }
-    }
-    private func savePlacement(_ placement: SpaceCompositionPlacement) {
-        optimistic[placement.itemUUID] = placement
-        Task { @MainActor in
-            do {
-                try await SpaceCompositionService.setPlacement(placement, for: placement.itemUUID, in: container.uuid)
-                await store.load(spaceID)
-            } catch { store.report(error, in: spaceID) }
-            if optimistic[placement.itemUUID] == placement { optimistic[placement.itemUUID] = nil }
-        }
-    }
-    private func nudge(_ atom: Atom, x: Double, y: Double) {
-        let point = position(for: atom.uuid)
-        savePlacement(.init(itemUUID: atom.uuid, x: point.x + x, y: point.y + y, width: cardSize.width, height: cardSize.height))
-    }
-    private func ensurePositions() {
-        var changed = false
-        for atom in items where initialPositions[atom.uuid] == nil {
-            let index = initialPositions.count
-            initialPositions[atom.uuid] = .init(x: Double(index % 3) * 292, y: Double(index / 3) * 270)
-            changed = true
-        }
-        if changed, let data = try? JSONEncoder().encode(initialPositions) { UserDefaults.standard.set(data, forKey: positionsKey) }
-    }
-    private func restoreCamera() {
-        guard loadedContainerID != container.uuid else { return }
-        loadedContainerID = container.uuid
-        camera = SpaceCollectionCamera()
-        needsInitialFit = true
-        initialPositions = [:]
-        optimistic = [:]
-        if let data = UserDefaults.standard.data(forKey: cameraKey), let saved = try? JSONDecoder().decode(SpaceCollectionCamera.self, from: data), saved.isValid {
-            camera = saved
-            needsInitialFit = false
-        }
-        if let data = UserDefaults.standard.data(forKey: positionsKey), let positions = try? JSONDecoder().decode([String: SpaceCollectionPoint].self, from: data) { initialPositions = positions }
-    }
-    private func persistCamera() {
-        guard camera.isValid, let data = try? JSONEncoder().encode(camera) else { return }
-        needsInitialFit = false
-        UserDefaults.standard.set(data, forKey: cameraKey)
-    }
-    private func fitInitialCanvasIfNeeded() {
-        guard needsInitialFit, view == .canvas, loadedContainerID == container.uuid,
-              !items.isEmpty, viewport.width > 0, viewport.height > 0 else { return }
-        ensurePositions()
-        let rect = items.reduce(CGRect.null) { $0.union(CGRect(origin: position(for: $1.uuid), size: cardSize)) }
-        fit(rect, animate: false)
-    }
-    private func zoom(to scale: CGFloat, around point: CGPoint? = nil, animate: Bool = true) {
-        let anchor = point ?? CGPoint(x: viewport.width / 2, y: viewport.height / 2)
-        let next = min(2.5, max(0.2, scale)), ratio = next / camera.scale
-        withAnimation(animate && !reduceMotion ? ProMotionSprings.gentle : nil) {
-            camera.x = anchor.x + (camera.x - anchor.x) * ratio
-            camera.y = anchor.y + (camera.y - anchor.y) * ratio
-            camera.scale = next
-        }
-        persistCamera()
-    }
-    private func fitAll() {
-        let rect = items.reduce(CGRect.null) { $0.union(CGRect(origin: position(for: $1.uuid), size: cardSize)) }
-        fit(rect)
-    }
-    private func fit(_ atom: Atom) { fit(CGRect(origin: position(for: atom.uuid), size: cardSize)) }
-    private func fit(_ rect: CGRect, animate: Bool = true) {
-        guard !rect.isNull, viewport.width > 0, viewport.height > 0 else { return }
-        let scale = min(1.2, max(0.2, min((viewport.width - 96) / rect.width, (viewport.height - 128) / rect.height)))
-        withAnimation(reduceMotion || !animate ? nil : ProMotionSprings.gentle) {
-            camera = .init(x: viewport.width / 2 - rect.midX * scale, y: (viewport.height - 64) / 2 - rect.midY * scale, scale: scale)
-        }
-        persistCamera()
-    }
-    private func scroll(_ event: SpaceCollectionScrollEvent) {
-        if event.zoom {
-            zoom(to: camera.scale * exp(event.dy * 0.008), around: event.location, animate: false)
-        } else {
-            camera.x += event.dx; camera.y += event.dy
-            if event.ended { persistCamera() }
-        }
-    }
-}
-
-private struct SpaceCollectionPoint: Codable { var x: Double; var y: Double }
-private struct SpaceCollectionCamera: Codable {
-    var x: CGFloat = 48
-    var y: CGFloat = 40
-    var scale: CGFloat = 1
-    var isValid: Bool { x.isFinite && y.isFinite && scale.isFinite && (0.2...2.5).contains(scale) }
 }
 
 /// Images decode directly at thumbnail size; only generic files need Quick Look.
@@ -479,46 +258,4 @@ private actor SpaceCollectionImageCache {
 
 private extension CachedImagePhase {
     var isFailure: Bool { if case .failure = self { true } else { false } }
-}
-
-private struct SpaceCollectionScrollEvent {
-    var dx: CGFloat
-    var dy: CGFloat
-    var location: CGPoint
-    var zoom: Bool
-    var ended: Bool
-}
-
-/// The monitor is limited to this visible canvas and its own window. Ordinary
-/// trackpad scrolling pans; Command-scroll zooms around the pointer.
-private struct SpaceCollectionScrollBridge: NSViewRepresentable {
-    var onScroll: (SpaceCollectionScrollEvent) -> Void
-    func makeNSView(context: Context) -> Surface { let surface = Surface(); surface.onScroll = onScroll; return surface }
-    func updateNSView(_ view: Surface, context: Context) { view.onScroll = onScroll }
-    static func dismantleNSView(_ view: Surface, coordinator: ()) { view.stop() }
-
-    final class Surface: NSView {
-        var onScroll: ((SpaceCollectionScrollEvent) -> Void)?
-        private var monitor: Any?
-        override var isFlipped: Bool { true }
-        override func hitTest(_ point: NSPoint) -> NSView? { nil }
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            stop()
-            guard window != nil else { return }
-            monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
-                guard let self, let window = self.window, event.window === window,
-                      !self.isHiddenOrHasHiddenAncestor else { return event }
-                let point = self.convert(event.locationInWindow, from: nil)
-                guard self.visibleRect.contains(point) else { return event }
-                let multiplier: CGFloat = event.hasPreciseScrollingDeltas ? 1 : 12
-                self.onScroll?(.init(dx: event.scrollingDeltaX * multiplier, dy: event.scrollingDeltaY * multiplier,
-                    location: point, zoom: event.modifierFlags.contains(.command),
-                    ended: event.phase == .ended || event.momentumPhase == .ended || event.phase.isEmpty))
-                return nil
-            }
-        }
-        func stop() { if let monitor { NSEvent.removeMonitor(monitor); self.monitor = nil } }
-        deinit { if let monitor { NSEvent.removeMonitor(monitor) } }
-    }
 }

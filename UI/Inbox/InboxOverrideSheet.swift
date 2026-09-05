@@ -1,302 +1,173 @@
-// CosmoOS/UI/Inbox/InboxOverrideSheet.swift
-// Override sheet for changing AI-suggested inbox action
-// March 2026
-
 import SwiftUI
 
+/// One destination, one visible effect, one commit. Selecting a row previews it.
 struct InboxOverrideSheet: View {
     let item: InboxItem
     @Bindable var viewModel: InboxViewModel
-
-    @State private var selectedTab: OverrideTab = .merge
-    @State private var searchQuery = ""
-    @State private var selectedAtomType: AtomType = .connection
     @Environment(\.dismiss) private var dismiss
+    @State private var query = ""
+    @State private var destinations: [InboxFilingDestination] = []
+    @State private var selected: InboxFilingDestination?
+    @State private var action: InboxFilingAction = .page
+    @State private var isLoading = true
+    @State private var isSaving = false
+    @State private var error: String?
+    @FocusState private var searchFocused: Bool
 
-    enum OverrideTab: String, CaseIterable {
-        case merge = "Merge"
-        case place = "Place"
-        case new = "New"
+    private var results: [InboxFilingDestination] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return needle.isEmpty ? destinations : destinations.filter { $0.path.localizedCaseInsensitiveContains(needle) }
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            sheetHeader
-            Divider().foregroundStyle(DS.border)
-
-            // Tab picker
-            tabPicker
-                .padding(.horizontal, 20)
-                .padding(.top, 16)
-
-            // Tab content
-            switch selectedTab {
-            case .merge:
-                mergeTab
-            case .place:
-                placeTab
-            case .new:
-                newTab
-            }
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            searchField
+            destinationList
+            consequence
+            footer
         }
-        .frame(width: 480, height: 500)
+        .frame(width: 540, height: 650)
         .background(DS.bg)
+        .task { await load() }
     }
 
-    // MARK: - Header
-
-    private var sheetHeader: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Change Action")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(DS.text)
-                Text(item.title ?? String(item.rawText.prefix(50)))
-                    .font(.system(size: 12))
-                    .foregroundStyle(DS.textMuted)
-                    .lineLimit(1)
+    private var header: some View {
+        HStack(alignment: .top, spacing: DS.space16) {
+            VStack(alignment: .leading, spacing: DS.space4) {
+                Text("Choose destination").font(DS.title2).foregroundStyle(DS.text)
+                Text(item.title ?? String(item.rawText.prefix(80)))
+                    .font(DS.subheadline).foregroundStyle(DS.textSecondary).lineLimit(2)
             }
             Spacer()
             Button { dismiss() } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(DS.textMuted)
-                    .frame(width: 28, height: 28)
-                    .background(DS.surface, in: RoundedRectangle(cornerRadius: 8))
+                Image(systemName: "xmark").frame(width: 44, height: 44)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.plain).foregroundStyle(DS.textSecondary)
+            .help("Close destination picker (Esc)").accessibilityLabel("Close destination picker")
+            .keyboardShortcut(.cancelAction)
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 14)
+        .padding(DS.space24)
     }
 
-    // MARK: - Tab Picker
-
-    private var tabPicker: some View {
-        HStack(spacing: 4) {
-            ForEach(OverrideTab.allCases, id: \.self) { tab in
-                tabButton(tab)
-            }
+    private var searchField: some View {
+        HStack(spacing: DS.space8) {
+            Image(systemName: "magnifyingglass").foregroundStyle(DS.textMuted)
+            TextField("Search Spaces, Groups, Pages, clients…", text: $query)
+                .textFieldStyle(.plain).font(DS.body).focused($searchFocused)
+                .accessibilityLabel("Search destinations")
         }
-        .padding(3)
-        .background(DS.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .padding(DS.space12).dsGlassInput(cornerRadius: 14)
+        .padding(.horizontal, DS.space24)
     }
 
-    @ViewBuilder
-    private func tabButton(_ tab: OverrideTab) -> some View {
-        Button {
-            withAnimation(ProMotionSprings.snappy) { selectedTab = tab }
-        } label: {
-            Text(tab.rawValue)
-                .font(.system(size: 12, weight: selectedTab == tab ? .semibold : .medium))
-                .foregroundStyle(selectedTab == tab ? DS.text : DS.textMuted)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 6)
-                .background(
-                    selectedTab == tab
-                        ? RoundedRectangle(cornerRadius: 8, style: .continuous).fill(DS.surfaceCard)
-                        : nil
-                )
-        }
-        .buttonStyle(.plain)
-    }
-
-    // MARK: - Merge Tab
-
-    private var mergeTab: some View {
-        VStack(spacing: 12) {
-            // Search field
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 13))
-                    .foregroundStyle(DS.textMuted)
-                TextField("Search atoms to merge into…", text: $searchQuery)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13))
-                    .foregroundStyle(DS.text)
-                    .onChange(of: searchQuery) { _, query in
-                        viewModel.scheduleOverrideSearch(query: query)
+    private var destinationList: some View {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                if isLoading {
+                    ForEach(0..<5, id: \.self) { _ in
+                        HStack { RoundedRectangle(cornerRadius: 4).fill(DS.surface).frame(width: 220, height: 16); Spacer() }
+                            .padding(DS.space16).accessibilityHidden(true)
                     }
-            }
-            .padding(10)
-            .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(DS.border, lineWidth: 1)
-            )
-
-            // Results
-            ScrollView {
-                LazyVStack(spacing: 6) {
-                    ForEach(viewModel.overrideSearchResults) { result in
-                        mergeResultRow(result)
+                } else if results.isEmpty {
+                    Text("No destinations match. Try a Page, Group, Space, or client name.")
+                        .font(DS.body).foregroundStyle(DS.textSecondary).padding(DS.space24)
+                } else {
+                    ForEach(results) { destination in
+                        InboxDestinationRow(destination: destination, isSelected: selected?.id == destination.id) {
+                            selected = destination
+                            action = destination.defaultAction
+                            error = nil
+                        }
                     }
                 }
             }
         }
-        .padding(20)
+        .padding(.horizontal, DS.space16).padding(.vertical, DS.space12)
+        .scrollEdgeEffectStyle(.soft, for: .all)
     }
 
-    @ViewBuilder
-    private func mergeResultRow(_ result: HybridSearchEngine.SearchResult) -> some View {
-        Button {
-            guard let uuid = result.entityUUID else { return }
-            Task { await viewModel.overrideMerge(item: item, targetUuid: uuid) }
-        } label: {
-            HStack(spacing: 10) {
-                Image(cosmo: result.entityType.cosmoIcon)
-                    .font(.system(size: 12))
-                    .foregroundStyle(DS.accent)
-                    .frame(width: 24, height: 24)
-                    .background(DS.accentSoft, in: RoundedRectangle(cornerRadius: 6))
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(result.title)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(DS.text)
-                        .lineLimit(1)
-                    Text(result.preview)
-                        .font(.system(size: 11))
-                        .foregroundStyle(DS.textMuted)
-                        .lineLimit(1)
+    @ViewBuilder private var consequence: some View {
+        if let selected {
+            VStack(alignment: .leading, spacing: DS.space8) {
+                Text(selected.path).font(DS.headline).foregroundStyle(DS.text).lineLimit(2)
+                if selected.kind == .page {
+                    Picker("Save as", selection: $action) {
+                        Text("Reference").tag(InboxFilingAction.reference)
+                        Text("New child Page").tag(InboxFilingAction.childPage)
+                    }
+                    .pickerStyle(.segmented)
                 }
+                Text(action.consequence(in: selected)).font(DS.subheadline).foregroundStyle(DS.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(DS.space16).frame(maxWidth: .infinity, alignment: .leading)
+            .background(DS.surface).clipShape(.rect(cornerRadius: 14))
+            .padding(.horizontal, DS.space24)
+        }
+    }
 
+    private var footer: some View {
+        VStack(alignment: .leading, spacing: DS.space8) {
+            if let error { Text(error).font(DS.subheadline).foregroundStyle(DS.textSecondary) }
+            HStack {
+                Button("Cancel") { dismiss() }.buttonStyle(.plain).foregroundStyle(DS.textSecondary)
                 Spacer()
-
-                let pct = Int(result.combinedScore * 100)
-                Text("\(pct)%")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(DS.textMuted)
+                Button(isSaving ? "Saving…" : action.title) { Task { await save() } }
+                    .buttonStyle(.borderedProminent).tint(DS.accent)
+                    .disabled(selected == nil || isSaving).keyboardShortcut(.defaultAction)
+                    .help("Save to the selected destination (Return)")
             }
-            .padding(10)
-            .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(DS.border, lineWidth: 1)
-            )
         }
-        .buttonStyle(.plain)
+        .padding(DS.space24)
     }
 
-    // MARK: - Place Tab
+    private func load() async {
+        do {
+            destinations = try await InboxPlacementService.shared.destinations()
+            selected = destinations.first
+            action = selected?.defaultAction ?? .page
+            isLoading = false
+            searchFocused = true
+        } catch {
+            isLoading = false
+            self.error = error.localizedDescription
+        }
+    }
 
-    private var placeTab: some View {
-        VStack(spacing: 12) {
-            Text("Choose a thinkspace")
-                .font(.system(size: 13))
-                .foregroundStyle(DS.textMuted)
-                .frame(maxWidth: .infinity, alignment: .leading)
+    private func save() async {
+        guard let selected, !isSaving else { return }
+        isSaving = true
+        error = await viewModel.fileCapture(item, destination: selected, action: action)
+        isSaving = false
+        if error == nil { dismiss() }
+    }
+}
 
-            ScrollView {
-                LazyVStack(spacing: 6) {
-                    ForEach(viewModel.thinkspaces) { ts in
-                        placeThinkspaceRow(ts)
-                    }
+private struct InboxDestinationRow: View {
+    let destination: InboxFilingDestination
+    let isSelected: Bool
+    let select: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: select) {
+            HStack(spacing: DS.space12) {
+                Image(systemName: destination.symbol).frame(width: 24).foregroundStyle(isSelected ? DS.accent : DS.textSecondary)
+                VStack(alignment: .leading, spacing: DS.space4) {
+                    Text(destination.name).font(DS.body.weight(.medium)).foregroundStyle(DS.text)
+                    Text(destination.path).font(DS.caption).foregroundStyle(DS.textSecondary).lineLimit(1)
                 }
-            }
-
-            atomTypePicker
-        }
-        .padding(20)
-    }
-
-    @ViewBuilder
-    private func placeThinkspaceRow(_ ts: Thinkspace) -> some View {
-        Button {
-            Task { await viewModel.overridePlace(item: item, thinkspaceId: ts.id, atomType: selectedAtomType) }
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "rectangle.3.group")
-                    .font(.system(size: 12))
-                    .foregroundStyle(DS.accent)
-                    .frame(width: 24, height: 24)
-                    .background(DS.accentSoft, in: RoundedRectangle(cornerRadius: 6))
-
-                Text(ts.name)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(DS.text)
-
                 Spacer()
-
-                Text("\(ts.blockCount) blocks")
-                    .font(.system(size: 11))
-                    .foregroundStyle(DS.textMuted)
+                Image(systemName: "checkmark").foregroundStyle(DS.accent).opacity(isSelected ? 1 : 0)
             }
-            .padding(10)
-            .background(DS.surfaceCard, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(DS.border, lineWidth: 1)
-            )
+            .padding(.horizontal, DS.space12).padding(.vertical, DS.space12)
+            .frame(minHeight: 52).frame(maxWidth: .infinity, alignment: .leading)
+            .background(isSelected ? DS.accentSoft : isHovered ? DS.surface : Color.clear)
+            .clipShape(.rect(cornerRadius: 12)).contentShape(.rect)
         }
-        .buttonStyle(.plain)
-    }
-
-    // MARK: - New Tab
-
-    private var newTab: some View {
-        VStack(spacing: 16) {
-            Text("Create as a new atom")
-                .font(.system(size: 13))
-                .foregroundStyle(DS.textMuted)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            atomTypePicker
-
-            Spacer()
-
-            Button {
-                Task { await viewModel.overrideNew(item: item, atomType: selectedAtomType) }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.system(size: 13))
-                    Text("Create \(selectedAtomType.rawValue.capitalized)")
-                        .font(.system(size: 13, weight: .semibold))
-                }
-                .foregroundStyle(DS.textOnAccent)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
-                .background(DS.accent, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(20)
-    }
-
-    // MARK: - Atom Type Picker
-
-    private var atomTypePicker: some View {
-        HStack(spacing: 8) {
-            ForEach(atomTypeOptions, id: \.self) { type in
-                atomTypeChip(type)
-            }
-        }
-    }
-
-    private var atomTypeOptions: [AtomType] {
-        [.connection, .idea, .research, .note]
-    }
-
-    @ViewBuilder
-    private func atomTypeChip(_ type: AtomType) -> some View {
-        let isSelected = selectedAtomType == type
-        Button {
-            withAnimation(ProMotionSprings.snappy) { selectedAtomType = type }
-        } label: {
-            Text(type.rawValue.capitalized)
-                .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
-                .foregroundStyle(isSelected ? DS.accent : DS.textSecondary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(
-                    isSelected ? DS.accentSoft : DS.surface,
-                    in: Capsule()
-                )
-                .overlay(
-                    Capsule().stroke(isSelected ? DS.accent.opacity(0.3) : DS.border, lineWidth: 1)
-                )
-        }
-        .buttonStyle(.plain)
+        .buttonStyle(.plain).onHover { isHovered = $0 }
+        .help("Choose \(destination.path)")
+        .accessibilityElement(children: .combine).accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }

@@ -24,7 +24,7 @@ struct CosmoMentionOverlay: View {
         (swipeFilterTag, "Swipe", "bookmark.fill"),
         (.idea, "Idea", "lightbulb"),
         (.connection, "Concept", "link"),
-        (.note, "Note", "note.text"),
+        (.note, "Page", "note.text"),
         (.clientProfile, "Profile", "person.crop.circle"),
         (.task, "Task", "checkmark.circle")
     ]

@@ -56,7 +56,7 @@ public enum CommandKTab: String, CaseIterable, Equatable {
         switch self {
         case .database: return "All objects"
         case .swipeGallery: return "Captures & hooks"
-        case .ideas: return "Sparks & notes"
+        case .ideas: return "Ideas for your content"
         case .readwise: return "Books & sources"
         case .inquiry: return "Questions & evidence"
         }

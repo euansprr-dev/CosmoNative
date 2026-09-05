@@ -887,12 +887,13 @@ extension IdeaFocusModeView {
         let entityType = EntityType(rawValue: mentioned.type.rawValue) ?? .idea
         let chipColor = CosmoMentionColors.color(for: entityType)
         return HStack(spacing: DS.space4) {
-            Image(cosmo: mentioned.type.cosmoIcon)
-                .font(DS.caption2)
-                .accessibilityHidden(true)
-            Text(mentioned.title ?? "Untitled")
-                .font(DS.caption)
-                .lineLimit(1)
+            Button { openAtomInPane(mentioned.uuid) } label: {
+                HStack(spacing: DS.space4) {
+                    Image(cosmo: mentioned.type.cosmoIcon).font(DS.caption2).accessibilityHidden(true)
+                    Text(mentioned.title ?? "Untitled").font(DS.caption).lineLimit(1)
+                }.contentShape(.rect)
+            }.buttonStyle(.plain).help("Open \(mentioned.title ?? mentioned.type.displayName)")
+                .accessibilityLabel("Open \(mentioned.title ?? mentioned.type.displayName)")
             Button {
                 withAnimation(ProMotionSprings.snappy) {
                     viewModel.removeMention(mentioned)

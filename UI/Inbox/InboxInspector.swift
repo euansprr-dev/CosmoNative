@@ -46,18 +46,19 @@ struct InboxInspector: View {
                 originalsSection
                 lensRow
                 suggestionSection
-                minimapSection
                 alternatesSection
                 verbGrid
             }
             .padding(DS.space18)
         }
-        .frame(width: 340)
-        .cosmoGlassPanel(role: .focusSidebar, cornerRadius: 22)
+        .frame(width: 390)
+        .background(DS.bg)
+        .clipShape(.rect(cornerRadius: 22))
+        .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(DS.borderSubtle, lineWidth: 0.5))
         .offset(x: appeared ? 0 : 24)
         .opacity(appeared ? 1 : 0)
         .onAppear {
-            withAnimation(reduceMotion ? .linear(duration: 0.01) : ProMotionSprings.gentle) {
+            withAnimation(reduceMotion ? nil : ProMotionSprings.gentle) {
                 appeared = true
             }
         }
@@ -141,8 +142,7 @@ struct InboxInspector: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)
 
-            if isHoveringEssence {
-                Button {
+            Button {
                     beginEditing()
                 } label: {
                     Image(systemName: "square.and.pencil")
@@ -154,8 +154,7 @@ struct InboxInspector: View {
                 .buttonStyle(.plain)
                 .help("Edit capture text")
                 .accessibilityLabel("Edit capture text")
-                .transition(.opacity)
-            }
+                .opacity(isHoveringEssence ? 1 : 0.35)
         }
         .contentShape(Rectangle())
         .onHover { hovering in
@@ -296,14 +295,17 @@ struct InboxInspector: View {
     }
 
     private var outcomeNoun: String {
+        if let recommendation = item.primaryRecommendationValue, let action = recommendation.filingAction {
+            return action.title
+        }
         if let kind = item.primaryRouteKindValue {
             return kind.outcomeNoun(suggestedAtomType: item.placeAtomType)
         }
-        if item.classification == .merge { return "Merge" }
+        if item.classification == .merge { return "Attach reference" }
         let atomNoun = item.placeAtomType
             .flatMap(AtomType.init(rawValue:))
             .map(\.displayName) ?? "Note"
-        return "\(atomNoun) on canvas"
+        return "Save \(atomNoun)"
     }
 
     private var suggestionFallbackCopy: String {
@@ -312,51 +314,20 @@ struct InboxInspector: View {
         }
         return item.status == .pending
             ? "Cosmo is still reading this capture."
-            : "Nothing in your system matched confidently — file it with a verb below, or leave it for the next taxonomy pass."
+            : "Choose where to save this capture, or leave it here until you are ready."
     }
 
     private var suggestionWhy: String? {
+        if let recommendation = item.primaryRecommendationValue, let destination = recommendation.filingDestination {
+            return (recommendation.filingAction ?? destination.defaultAction).consequence(in: destination)
+        }
+        if item.classification == .merge { return "Keeps the complete original and adds a reference for review. Existing writing stays as it is." }
+        if item.primaryRouteKindValue == .placeInThinkspace || item.primaryRouteKindValue == .placeInExistingCluster {
+            return "Adds the Page to this destination. The canvas arrangement stays as it is."
+        }
         if let rationale = item.rationale, !rationale.isEmpty { return rationale }
         if let summary = item.placementPlanSummary, !summary.isEmpty { return summary }
         return nil
-    }
-
-    // MARK: - Minimap
-
-    @ViewBuilder
-    private var minimapSection: some View {
-        if let thinkspaceId = targetThinkspaceId, item.classification == .place {
-            VStack(alignment: .leading, spacing: DS.space8) {
-                Text("Landing spot")
-                    .dsSmallCapsLabel()
-
-                InboxPlacementMinimap(
-                    thinkspaceId: thinkspaceId,
-                    proposedPosition: proposedPosition,
-                    adjustedPosition: $adjustedPosition
-                )
-                .frame(height: 160)
-
-                Text(adjustedPosition == nil
-                     ? "Drag the glowing block to choose a different spot."
-                     : "Adjusted — Place uses your spot.")
-                    .font(DS.caption)
-                    .foregroundStyle(DS.textMuted)
-            }
-        }
-    }
-
-    private var targetThinkspaceId: String? {
-        item.primaryRecommendationValue?.thinkspaceId
-            ?? item.primaryRecommendationValue?.placementPlan?.targetThinkspaceId
-            ?? item.placeThinkspaceId
-    }
-
-    private var proposedPosition: CGPoint? {
-        guard let plan = item.primaryRecommendationValue?.placementPlan,
-              let x = plan.blockPositionX,
-              let y = plan.blockPositionY else { return nil }
-        return CGPoint(x: x, y: y)
     }
 
     // MARK: - Alternates
@@ -373,7 +344,7 @@ struct InboxInspector: View {
 
                 ForEach(Array(alternates), id: \.id) { alternate in
                     Button {
-                        Task { await applyAlternate(alternate) }
+                        viewModel.showOverride(for: item)
                     } label: {
                         HStack(spacing: DS.space6) {
                             Image(systemName: "arrow.turn.down.right")
@@ -390,7 +361,7 @@ struct InboxInspector: View {
                     }
                     .buttonStyle(.plain)
                     .background(DS.glassSectionFill, in: .rect(cornerRadius: 8))
-                    .help("Place here instead")
+                    .help("Review another destination")
                 }
             }
         }
@@ -403,64 +374,35 @@ struct InboxInspector: View {
     // MARK: - Verbs
 
     private var verbGrid: some View {
-        VStack(spacing: DS.space8) {
-            HStack(spacing: DS.space8) {
-                primaryVerb
-                // For a concept suggestion, "go" means the development
-                // conversation — the workspace where the page is born.
-                secondaryVerb(
-                    label: isSeedlingSuggestion ? "Grow & Develop" : "Place & Go",
-                    icon: isSeedlingSuggestion ? "leaf.arrow.circlepath" : "arrowshape.turn.up.right",
-                    shortcut: "⌘⏎"
-                ) {
-                    Task { await viewModel.placeAndGo(item) }
-                }
-            }
-            HStack(spacing: DS.space8) {
-                secondaryVerb(label: "Task", icon: "checkmark.circle", shortcut: "T") {
-                    Task { await viewModel.makeTask(item) }
-                }
-                secondaryVerb(label: "Ask", icon: "questionmark.bubble", shortcut: "A") {
-                    Task { await viewModel.askInDeepDive(item) }
-                }
-                secondaryVerb(label: "Idea", icon: "lightbulb", shortcut: "I") {
-                    Task { await viewModel.fileAsIdea(item) }
-                }
-                // A link, an image, or a line of copy can become a swipe. The
-                // label NAMES what it will make ("Swipe · Page") because the
-                // user never chose the kind — the same contract the capture
-                // receipt keeps.
-                if item.canBecomeSwipe {
-                    let kind = item.predictedSwipeKind
-                    secondaryVerb(
-                        label: "Swipe · \(kind.displayName)",
-                        icon: kind.iconName,
-                        shortcut: "S"
-                    ) {
-                        Task { await viewModel.fileAsSwipe(item) }
+        VStack(spacing: DS.space12) {
+            primaryVerb
+            Button("Change destination…") { viewModel.showOverride(for: item) }
+                .buttonStyle(.plain).font(DS.callout).foregroundStyle(DS.accent)
+                .frame(maxWidth: .infinity, minHeight: 44).help("Choose where and how to save this capture")
+            HStack {
+                Menu {
+                    Button("Create task", systemImage: "checkmark.circle") { Task { await viewModel.makeTask(item) } }
+                    Button("Start inquiry", systemImage: "questionmark.bubble") { Task { await viewModel.askInDeepDive(item) } }
+                    Button("Save Content idea…", systemImage: "lightbulb") { viewModel.showOverride(for: item) }
+                    if item.canBecomeSwipe {
+                        Button("Save in Swipe", systemImage: item.predictedSwipeKind.iconName) { Task { await viewModel.fileAsSwipe(item) } }
                     }
-                }
-                if viewModel.hasFlows {
-                    secondaryVerb(label: "Flow", icon: SwipeKind.flow.iconName, shortcut: "F") {
-                        Task { await viewModel.addCaptureToFlow(item) }
+                    if viewModel.hasFlows {
+                        Button("Add to Swipe flow…", systemImage: SwipeKind.flow.iconName) { Task { await viewModel.addCaptureToFlow(item) } }
                     }
-                }
-            }
-            HStack(spacing: DS.space8) {
-                // Manual grow — the thought becomes (or feeds) a growing
-                // concept in the nursery, no canvas object, no premature page.
-                secondaryVerb(label: "Concept", icon: "leaf", shortcut: "G") {
-                    Task { await viewModel.growSeedling(item) }
-                }
-                if !item.relatedAtomUUIDsValue.isEmpty {
-                    secondaryVerb(label: "Connect", icon: "point.3.connected.trianglepath.dotted", shortcut: "C") {
-                        Task { await viewModel.connectCapture(item) }
+                    Divider()
+                    Button("Develop a Concept", systemImage: "leaf") { Task { await viewModel.growSeedling(item) } }
+                    if !item.relatedAtomUUIDsValue.isEmpty {
+                        Button("Save related Concept", systemImage: "point.3.connected.trianglepath.dotted") { Task { await viewModel.connectCapture(item) } }
                     }
+                } label: {
+                    Label("More actions", systemImage: "ellipsis").font(DS.callout).foregroundStyle(DS.textSecondary)
                 }
-                secondaryVerb(label: "Change", icon: "slider.horizontal.3", shortcut: nil) {
-                    viewModel.showOverride(for: item)
-                }
-                dismissVerb
+                .menuStyle(.borderlessButton).fixedSize().help("Additional capture actions")
+                Spacer()
+                Button("Dismiss") { Task { await viewModel.dismiss(item: item) } }
+                    .buttonStyle(.plain).font(DS.callout).foregroundStyle(DS.textSecondary)
+                    .frame(minHeight: 44).help("Dismiss capture (Delete)")
             }
         }
     }
@@ -470,23 +412,25 @@ struct InboxInspector: View {
         // The button says what accepting DOES: start/grow a concept, stage a
         // ✓/✗ ghost row, answer a question — "Place" only for spatial kinds.
         let label: String = {
+            if !item.hasActionableSuggestion { return "Choose destination…" }
+            if let action = item.primaryRecommendationValue?.filingAction { return action.title }
             if let kind = item.primaryRouteKindValue { return kind.primaryVerbLabel }
-            return item.classification == .merge ? "Merge" : "Place"
+            return item.classification == .merge ? "Attach reference" : "Save Page"
         }()
         Button {
-            Task { await viewModel.place(item, adjustedPosition: adjustedPosition) }
+            if item.hasActionableSuggestion { Task { await viewModel.place(item, adjustedPosition: nil) } }
+            else { viewModel.showOverride(for: item) }
         } label: {
             Label(label, systemImage: isSeedlingSuggestion ? "leaf" : "checkmark")
                 .font(DS.subheadline.weight(.semibold))
                 .foregroundStyle(DS.textOnAccent)
                 .frame(maxWidth: .infinity)
-                .frame(height: 34)
+                .frame(height: 44)
                 .background(item.classification == .merge ? DS.orange : DS.accent, in: .rect(cornerRadius: 10))
         }
         .buttonStyle(.plain)
         .help("\(label) (⏎)")
-        .disabled(!item.hasActionableSuggestion)
-        .opacity(item.hasActionableSuggestion ? 1 : 0.4)
+
     }
 
     private var isSeedlingSuggestion: Bool {
@@ -499,7 +443,7 @@ struct InboxInspector: View {
                 .font(DS.subheadline.weight(.medium))
                 .foregroundStyle(DS.text)
                 .frame(maxWidth: .infinity)
-                .frame(height: 34)
+                .frame(height: 44)
                 .background(DS.glassSectionFill, in: .rect(cornerRadius: 10))
         }
         .buttonStyle(.plain)
@@ -514,7 +458,7 @@ struct InboxInspector: View {
                 .font(DS.subheadline.weight(.medium))
                 .foregroundStyle(DS.red)
                 .frame(maxWidth: .infinity)
-                .frame(height: 34)
+                .frame(height: 44)
                 .background(DS.redSoft, in: .rect(cornerRadius: 10))
         }
         .buttonStyle(.plain)
@@ -547,150 +491,5 @@ struct InboxInspector: View {
         if interval < 3600 { return "\(Int(interval / 60))m ago" }
         if interval < 86400 { return "\(Int(interval / 3600))h ago" }
         return "\(Int(interval / 86400))d ago"
-    }
-}
-
-// MARK: - Live placement minimap
-
-/// A miniature of the destination thinkspace: real block footprints, the
-/// proposed landing spot glowing, and a draggable ghost to adjust it.
-private struct InboxPlacementMinimap: View {
-    let thinkspaceId: String
-    let proposedPosition: CGPoint?
-    @Binding var adjustedPosition: CGPoint?
-
-    @State private var blocks: [MiniBlock] = []
-    @State private var dragLocation: CGPoint?
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var pulse = false
-
-    struct MiniBlock: Identifiable {
-        let id: String
-        let rect: CGRect
-    }
-
-    var body: some View {
-        GeometryReader { proxy in
-            let transform = canvasTransform(in: proxy.size)
-            ZStack {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(DS.bg.opacity(0.7))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .strokeBorder(DS.borderSubtle, lineWidth: 0.5)
-                    )
-
-                ForEach(blocks) { block in
-                    RoundedRectangle(cornerRadius: 2, style: .continuous)
-                        .fill(DS.textMuted.opacity(0.22))
-                        .frame(
-                            width: max(4, block.rect.width * transform.scale),
-                            height: max(3, block.rect.height * transform.scale)
-                        )
-                        .position(transform.apply(CGPoint(x: block.rect.midX, y: block.rect.midY)))
-                }
-
-                if let ghostCenter = ghostCenter(transform: transform) {
-                    ghostBlock(at: ghostCenter)
-                }
-            }
-            .contentShape(Rectangle())
-            .gesture(dragGesture(transform: transform))
-        }
-        .task(id: thinkspaceId) { await loadBlocks() }
-        .onAppear {
-            guard !reduceMotion else { return }
-            withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) {
-                pulse = true
-            }
-        }
-        .accessibilityLabel("Destination minimap — drag to adjust the landing spot")
-    }
-
-    private func ghostBlock(at center: CGPoint) -> some View {
-        RoundedRectangle(cornerRadius: 3, style: .continuous)
-            .fill(DS.accent.opacity(0.85))
-            .frame(width: 16, height: 11)
-            .shadow(color: DS.accent.opacity(pulse ? 0.55 : 0.25), radius: pulse ? 9 : 5)
-            .position(center)
-    }
-
-    private func ghostCenter(transform: CanvasTransform) -> CGPoint? {
-        if let dragLocation { return dragLocation }
-        if let adjustedPosition { return transform.apply(adjustedPosition) }
-        if let proposedPosition { return transform.apply(proposedPosition) }
-        return nil
-    }
-
-    private func dragGesture(transform: CanvasTransform) -> some Gesture {
-        DragGesture(minimumDistance: 2)
-            .onChanged { value in
-                dragLocation = value.location
-            }
-            .onEnded { value in
-                dragLocation = nil
-                adjustedPosition = transform.invert(value.location)
-            }
-    }
-
-    // MARK: - Data
-
-    private func loadBlocks() async {
-        let id = thinkspaceId
-        let records = (try? await CosmoDatabase.shared.asyncRead { db in
-            try CanvasBlockRecord
-                .filter(Column("thinkspace_id") == id)
-                .filter(Column("is_deleted") == false)
-                .limit(80)
-                .fetchAll(db)
-        }) ?? []
-
-        blocks = records.map { record in
-            MiniBlock(
-                id: record.id,
-                rect: CGRect(
-                    x: Double(record.positionX),
-                    y: Double(record.positionY),
-                    width: Double(record.width ?? 320),
-                    height: Double(record.height ?? 200)
-                )
-            )
-        }
-    }
-
-    // MARK: - Transform
-
-    private struct CanvasTransform {
-        let scale: CGFloat
-        let offset: CGPoint
-
-        func apply(_ point: CGPoint) -> CGPoint {
-            CGPoint(x: point.x * scale + offset.x, y: point.y * scale + offset.y)
-        }
-
-        func invert(_ point: CGPoint) -> CGPoint {
-            CGPoint(x: (point.x - offset.x) / scale, y: (point.y - offset.y) / scale)
-        }
-    }
-
-    private func canvasTransform(in size: CGSize) -> CanvasTransform {
-        var bounds = blocks.reduce(CGRect.null) { $0.union($1.rect) }
-        if let proposedPosition {
-            bounds = bounds.union(CGRect(origin: proposedPosition, size: CGSize(width: 320, height: 200)))
-        }
-        if bounds.isNull || bounds.isEmpty {
-            bounds = CGRect(x: 0, y: 0, width: 1200, height: 800)
-        }
-        bounds = bounds.insetBy(dx: -bounds.width * 0.08, dy: -bounds.height * 0.08)
-
-        let inset: CGFloat = 10
-        let availableWidth = max(size.width - inset * 2, 1)
-        let availableHeight = max(size.height - inset * 2, 1)
-        let scale = min(availableWidth / bounds.width, availableHeight / bounds.height)
-        let offset = CGPoint(
-            x: inset + (availableWidth - bounds.width * scale) / 2 - bounds.minX * scale,
-            y: inset + (availableHeight - bounds.height * scale) / 2 - bounds.minY * scale
-        )
-        return CanvasTransform(scale: scale, offset: offset)
     }
 }

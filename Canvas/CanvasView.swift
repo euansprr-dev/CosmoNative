@@ -250,6 +250,24 @@ struct CanvasView: View {
     /// Whether this canvas is the active (visible) destination.
     /// When false, event monitors and interactive notification handlers are gated.
     var isActive: Bool = true
+    let compositionSession: SpaceCompositionCanvasSession?
+
+    init(thinkspaceId: String?, isActive: Bool = true, compositionSession: SpaceCompositionCanvasSession? = nil) {
+        self.thinkspaceId = thinkspaceId
+        self.isActive = isActive
+        self.compositionSession = compositionSession
+        _spatialEngine = State(initialValue: SpatialEngine(database: .shared, localLLM: .shared, compositionSession: compositionSession))
+        _drawingState = State(initialValue: DrawingStateManager(compositionSession: compositionSession))
+        _clusterEngine = State(initialValue: CanvasClusterEngine(compositionSession: compositionSession))
+    }
+
+    @State private var scopedViewportRestored = false
+    @State private var scopedCameraWasChanged = false
+    @State private var scopedLegacyCamera: [String: Double]?
+
+    private func registerCanvasUndo(_ action: UndoableAction) {
+        if compositionSession == nil { CosmoUndoManager.shared.register(action) }
+    }
 
     // Mirror isActive into @State so NSEvent monitor closures capture a mutable reference
     // (let properties captured by closures would be stale after the struct is re-created)
@@ -395,13 +413,17 @@ struct CanvasView: View {
     /// The view this space is showing. Resolved through the store so every
     /// space remembers its own; a nil thinkspace (never mounted today) is a canvas.
     private var activeSpaceView: SpaceView {
-        thinkspaceId.map { SpaceViewStore.shared.activeView(for: $0) } ?? .canvas
+        compositionSession != nil ? .canvas : (thinkspaceId.map { SpaceViewStore.shared.activeView(for: $0) } ?? .canvas)
     }
 
     /// The canvas world takes gestures, drops and right-clicks only while it
     /// is the active view — every other view is a surface laid over it.
     private var isCanvasViewActive: Bool {
-        activeSpaceView == .canvas && !(thinkspaceId.map { SpaceWorkspaceStore.shared.isPresenting(in: $0) } ?? false)
+        if let compositionSession {
+            let location = SpaceWorkspaceStore.shared.location(compositionSession.spaceID)
+            return location.itemUUID == compositionSession.containerUUID && location.view == .canvas
+        }
+        return activeSpaceView == .canvas && !(thinkspaceId.map { SpaceWorkspaceStore.shared.isPresenting(in: $0) } ?? false)
     }
 
     // Notification observer management - prevent duplicate registrations
@@ -511,6 +533,7 @@ struct CanvasView: View {
                 // GeometryReader window + clip keeps them LAYOUT-INERT: the
                 // dossier's fixed columns must never propose a size to this
                 // ZStack (the union would misplace every overlay below).
+                if compositionSession == nil {
                 GeometryReader { window in
                     SpaceViewHost(
                         thinkspaceId: thinkspaceId,
@@ -525,12 +548,13 @@ struct CanvasView: View {
                 }
                 .allowsHitTesting(!isCanvasViewActive)
                 .zIndex(2000)
+                }
 
                 if isCanvasViewActive, !spatialEngine.isLoading, spatialEngine.blocks.isEmpty,
                    clusterEngine.clusters.isEmpty, drawingState.drawings.isEmpty {
                     SpaceCanvasWelcome(purpose: currentSpace?.purpose,
                         createNote: { addFromChromeRow(.note) }, addMaterials: { addFromChromeRow(.existing) })
-                        .padding(.leading, crossDragManager.sidebarTotalWidth)
+                        .padding(.leading, compositionSession == nil ? crossDragManager.sidebarTotalWidth : 0)
                         .zIndex(1999)
                 }
 
@@ -576,7 +600,10 @@ struct CanvasView: View {
                 }
             ))
             .overlay(alignment: .bottomTrailing) {
-                zoomIndicator
+                Group {
+                    if compositionSession != nil { scopedCanvasControls }
+                    else { zoomIndicator }
+                }
                     .padding(.trailing, 20)
                     .padding(.bottom, 20)
             }
@@ -605,7 +632,7 @@ struct CanvasView: View {
                     }
                     .padding(.trailing, 16)
                     // Below the space chrome row — the row owns the baseline.
-                    .padding(.top, SpaceChromeMetrics.contentTopInset)
+                    .padding(.top, compositionSession == nil ? SpaceChromeMetrics.contentTopInset : DS.space16)
                     .animation(ProMotionSprings.gentle, value: selectedBlockId)
                     .animation(ProMotionSprings.gentle, value: clusterEngine.selectedClusterId)
                     .transition(.opacity.combined(with: .offset(y: -10)))
@@ -613,7 +640,7 @@ struct CanvasView: View {
             }
             // The space chrome row — last overlay, so it is frontmost.
             .overlay(alignment: .top) {
-                spaceChromeRow
+                if compositionSession == nil { spaceChromeRow }
             }
             // Thinkspace sidebar trigger + overlay disabled — UnifiedSidebar + peek rail handle navigation
             // PERF: Debounced frame tracker updates — only needed for right-click hit testing,
@@ -623,13 +650,15 @@ struct CanvasView: View {
                 clusterEngine.scheduleRecompute(blocks: spatialEngine.blocks)
                 clusterEngine.updateUserClusterBounds(blocks: spatialEngine.blocks)
                 rebuildMediaContentCache()
-                ThinkspaceCanvasSnapshotCache.shared.store(
+                if compositionSession == nil {
+                    ThinkspaceCanvasSnapshotCache.shared.store(
                     blocks: spatialEngine.blocks,
                     zoomLevel: canvasScale,
                     panOffset: canvasOffset,
                     thinkspaceId: thinkspaceId,
                     userClusters: clusterEngine.userClusters
                 )
+                }
             }
             .onChange(of: canvasOffset) { _, _ in
                 rememberCurrentSessionViewport()
@@ -683,7 +712,7 @@ struct CanvasView: View {
         CanvasTrayDragSession.draggingEntityUuid = nil
         Task { @MainActor in
             guard let block = await spatialEngine.placeMember(entityUuid: entityUuid, at: position) else { return }
-            CosmoUndoManager.shared.register(
+            registerCanvasUndo(
                 PlaceMemberAction(entityUuid: entityUuid, position: position, placedBlockId: block.id, spatialEngine: spatialEngine)
             )
             refreshLibraryInventory()
@@ -822,7 +851,7 @@ struct CanvasView: View {
             }
             if isCanvasViewActive {
                 NotificationCenter.default.post(name: CosmoNotification.Canvas.createEntityAtPosition, object: nil,
-                    userInfo: ["type": entityType, "position": viewportCenterCanvasPoint()])
+                    userInfo: ["type": entityType, "position": viewportCenterCanvasPoint(), "positionSpace": "canvas"])
             } else if let thinkspaceId, let atomType = AtomType(rawValue: entityType.rawValue) {
                 Task {
                     do {
@@ -851,6 +880,40 @@ struct CanvasView: View {
     }
 
     // MARK: - Zoom Indicator
+    private var scopedCanvasControls: some View {
+        HStack(spacing: DS.space4) {
+            Button { canvasScale = max(minScale, canvasScale / 1.2) } label: {
+                Image(systemName: "minus").frame(width: 44, height: 44)
+            }.help("Zoom out").accessibilityLabel("Zoom out")
+            Text("\(Int((canvasScale * 100).rounded()))%")
+                .font(DS.caption.monospacedDigit()).foregroundStyle(DS.textSecondary).frame(minWidth: 44)
+            Button { canvasScale = min(maxScale, canvasScale * 1.2) } label: {
+                Image(systemName: "plus").frame(width: 44, height: 44)
+            }.help("Zoom in").accessibilityLabel("Zoom in")
+            Button { fitScopedCanvasIfNeeded(force: true) } label: {
+                Image(systemName: "arrow.up.left.and.arrow.down.right").frame(width: 44, height: 44)
+            }.help("Fit all items").accessibilityLabel("Fit all items")
+            if let compositionSession {
+                Menu {
+                    Button("Fit selection", systemImage: "viewfinder") {
+                        if let selectedBlockId, let block = spatialEngine.blocks.first(where: { $0.id == selectedBlockId }) {
+                            flyCameraToBlock(atomUUID: block.entityUuid)
+                        }
+                    }.disabled(selectedBlockId == nil)
+                    let hidden = Set((try? compositionSession.container?.decodedSpaceCanvas().hiddenItemUUIDs) ?? [])
+                    if !hidden.isEmpty {
+                        Divider()
+                        ForEach(compositionSession.items.filter { hidden.contains($0.uuid) }, id: \.uuid) { atom in
+                            Button("Show \(atom.title ?? "Untitled")") { _ = compositionSession.saveGeometry(compositionSession.project(atom)) }
+                        }
+                    }
+                } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("Canvas options")
+            }
+        }.buttonStyle(.plain).font(DS.callout).foregroundStyle(DS.text)
+            .padding(DS.space4).glassEffect(.regular, in: .capsule)
+    }
+
     private var zoomIndicator: some View {
         CanvasLiveTransformReader(viewportState: viewportState) { liveTransform in
             let scale = liveTransform.effectiveScale
@@ -914,13 +977,7 @@ struct CanvasView: View {
                 block: selectedBlock,
                 currentThinkspaceId: spatialEngine.currentThinkspaceId,
                 onClose: { clearSelectedBlock() },
-                onFocusMode: {
-                    NotificationCenter.default.post(
-                        name: .enterFocusMode,
-                        object: nil,
-                        userInfo: ["type": selectedBlock.entityType, "id": selectedBlock.entityId]
-                    )
-                },
+                onFocusMode: { openBlockInFocusMode(selectedBlock) },
                 onOpenAsPane: {
                     NotificationCenter.default.post(
                         name: CosmoNotification.Navigation.openAsPane,
@@ -1334,7 +1391,7 @@ struct CanvasView: View {
         let position = viewportCenterCanvasPoint()
         Task { @MainActor in
             guard let block = await spatialEngine.placeMember(entityUuid: item.entityUuid, at: position) else { return }
-            CosmoUndoManager.shared.register(
+            registerCanvasUndo(
                 PlaceMemberAction(entityUuid: item.entityUuid, position: position, placedBlockId: block.id, spatialEngine: spatialEngine)
             )
             refreshLibraryInventory()
@@ -1352,6 +1409,7 @@ struct CanvasView: View {
     }
 
     private func refreshLibraryInventory() {
+        guard compositionSession == nil else { return }
         guard let activeThinkspaceId = thinkspaceId ?? spatialEngine.currentThinkspaceId else {
             libraryInventory = []
             return
@@ -1399,7 +1457,7 @@ struct CanvasView: View {
     /// — removing the block IS the delete the user asked for.
     private func removeLibraryMember(_ item: ThinkspaceLibraryItem) {
         guard let thinkspaceId else { return }
-        CosmoUndoManager.shared.register(DetachAtomAction(entityUuid: item.entityUuid, thinkspaceId: thinkspaceId, spatialEngine: spatialEngine))
+        registerCanvasUndo(DetachAtomAction(entityUuid: item.entityUuid, thinkspaceId: thinkspaceId, spatialEngine: spatialEngine))
         Task {
             await spatialEngine.removeAtomFromThinkspace(entityUuid: item.entityUuid, thinkspaceId: thinkspaceId)
             refreshLibraryInventory()
@@ -1414,7 +1472,7 @@ struct CanvasView: View {
             if !item.entityUuid.isEmpty {
                 do {
                     try await AtomRepository.shared.delete(uuid: item.entityUuid)
-                    CosmoUndoManager.shared.register(InlineUndoAction(
+                    registerCanvasUndo(InlineUndoAction(
                         actionDescription: "Delete material",
                         undo: { try? await AtomRepository.shared.restore(uuid: item.entityUuid); SpaceMembershipService.notifyMembersChanged() },
                         redo: { try? await AtomRepository.shared.delete(uuid: item.entityUuid); SpaceMembershipService.notifyMembersChanged() }
@@ -1530,7 +1588,8 @@ struct CanvasView: View {
                     block: block,
                     isMediaContent: snapshot.mediaContentBlockIds.contains(block.id),
                     isViewportActive: snapshot.visibleBlockIds.contains(block.id),
-                    spaceID: thinkspaceId
+                    spaceID: thinkspaceId,
+                    onOpenPage: compositionSession == nil ? nil : { atom in compositionSession?.open(atom) }
                 ),
                 onDragChanged: { translation in
                     if NSEvent.modifierFlags.contains(.option) {
@@ -1645,6 +1704,7 @@ struct CanvasView: View {
 
     @discardableResult
     private func applyCachedThinkspaceSnapshot(for thinkspaceId: String?) -> Bool {
+        guard compositionSession == nil else { return false }
         guard let cached = ThinkspaceCanvasSnapshotCache.shared.entry(for: thinkspaceId) else {
             return false
         }
@@ -1683,6 +1743,7 @@ struct CanvasView: View {
     }
 
     private func applySessionThinkspaceViewport(for thinkspaceId: String?) {
+        if compositionSession != nil { restoreScopedViewport(); return }
         let viewport = openingSessionViewport(for: thinkspaceId)
         canvasScale = viewport.zoomLevel
         canvasOffset = viewport.panOffset
@@ -1709,6 +1770,7 @@ struct CanvasView: View {
     }
 
     private func rememberCurrentSessionViewport(for thinkspaceId: String? = nil) {
+        if compositionSession != nil { saveScopedViewport(); return }
         CanvasSessionViewportStore.shared.remember(
             CanvasSessionViewportState(zoomLevel: canvasScale, panOffset: canvasOffset),
             for: thinkspaceId ?? spatialEngine.currentThinkspaceId ?? self.thinkspaceId
@@ -1738,6 +1800,7 @@ struct CanvasView: View {
     /// the user clicks, `applyCachedThinkspaceSnapshot` hits and entry is
     /// instant.
     private func prewarmThinkspaceSnapshot(_ targetId: String) {
+        guard compositionSession == nil else { return }
         guard targetId != spatialEngine.currentThinkspaceId,
               ThinkspaceCanvasSnapshotCache.shared.entry(for: targetId) == nil,
               !prewarmInFlight.contains(targetId) else { return }
@@ -1754,13 +1817,15 @@ struct CanvasView: View {
             // never clobber it with prefetched data.
             guard ThinkspaceCanvasSnapshotCache.shared.entry(for: targetId) == nil else { return }
             let viewport = openingSessionViewport(for: targetId)
-            ThinkspaceCanvasSnapshotCache.shared.store(
+            if compositionSession == nil {
+                ThinkspaceCanvasSnapshotCache.shared.store(
                 blocks: blocks,
                 zoomLevel: viewport.zoomLevel,
                 panOffset: viewport.panOffset,
                 thinkspaceId: targetId,
                 userClusters: clusters
             )
+            }
         }
     }
 
@@ -1864,11 +1929,17 @@ struct CanvasView: View {
         let handler: (Notification) -> Void
         if activeOnly {
             handler = { [self] notification in
-                guard canvasIsActive else { return }
+                guard canvasIsActive && isCanvasViewActive else { return }
+                if compositionSession != nil, let id = notification.userInfo?["blockId"] as? String,
+                   !spatialEngine.blocks.contains(where: { $0.id == id }) { return }
                 block(notification)
             }
         } else {
-            handler = block
+            handler = { notification in
+                if compositionSession != nil, let id = notification.userInfo?["blockId"] as? String,
+                   !spatialEngine.blocks.contains(where: { $0.id == id }) { return }
+                block(notification)
+            }
         }
         let token = NotificationCenter.default.addObserver(
             forName: name,
@@ -1894,6 +1965,88 @@ struct CanvasView: View {
         scheduleFrameUpdate()
     }
 
+    @ViewBuilder
+    private var canvasPresentation: some View {
+        if compositionSession == nil {
+            canvasContent.cosmoSurfaceKeyWindowActivation(
+                surfaceID: ThinkspaceEditableSurface.surfaceID(forThinkspaceId: resolvedThinkspaceSurfaceId))
+        } else {
+            canvasContent.sheet(isPresented: $showingMaterialPicker) {
+                if let compositionSession, let atom = compositionSession.container {
+                    SpaceWorkspaceItemPicker(spaceID: compositionSession.spaceID, target: atom,
+                        purpose: atom.spaceCompositionKind == .group ? .members : .references)
+                }
+            }
+        }
+    }
+
+    private func applyScopedSnapshot() {
+        guard let compositionSession else { return }
+        let previous = spatialEngine.blocks
+        var projected = compositionSession.projectedBlocks()
+        for index in projected.indices {
+            if let old = previous.first(where: { $0.id == projected[index].id }) {
+                projected[index].isSelected = old.isSelected
+            }
+        }
+        if projected != previous { spatialEngine.blocks = projected }
+        if drawingState.draggingDrawingId == nil && drawingState.editingTextId == nil {
+            drawingState.drawings = compositionSession.drawings
+        }
+        if interactionState.draggingClusterId == nil && clusterResizeSession == nil {
+            let clusters = compositionSession.clusters(blocks: projected)
+            if clusters != clusterEngine.userClusters { clusterEngine.userClusters = clusters }
+        }
+        rebuildMediaContentCache()
+        fitScopedCanvasIfNeeded()
+    }
+
+    private func restoreScopedViewport() {
+        guard let compositionSession, !scopedViewportRestored else { return }
+        scopedViewportRestored = true
+        if let values = UserDefaults.standard.array(forKey: compositionSession.cameraKey) as? [Double],
+           values.count == 3, values.allSatisfy(\.isFinite), (minScale...maxScale).contains(values[0]) {
+            scopedCameraWasChanged = true
+            canvasScale = values[0]; canvasOffset = CGSize(width: values[1], height: values[2])
+        } else if let data = UserDefaults.standard.data(forKey: "cosmo.space.collection.camera.mac.\(compositionSession.containerUUID)"),
+                  let legacy = try? JSONDecoder().decode([String: Double].self, from: data),
+                  let scale = legacy["scale"], let x = legacy["x"], let y = legacy["y"],
+                  scale.isFinite, x.isFinite, y.isFinite, scale > 0 {
+            scopedLegacyCamera = legacy
+        }
+        loadPlaces(for: thinkspaceId)
+        fitScopedCanvasIfNeeded()
+    }
+
+    private func saveScopedViewport() {
+        guard let compositionSession, scopedViewportRestored, canvasSize.width > 0, canvasSize.height > 0 else { return }
+        scopedCameraWasChanged = true
+        UserDefaults.standard.set([Double(canvasScale), Double(canvasOffset.width), Double(canvasOffset.height)], forKey: compositionSession.cameraKey)
+    }
+
+    private func fitScopedCanvasIfNeeded(force: Bool = false) {
+        if !force, let legacy = scopedLegacyCamera, canvasSize.width > 0, canvasSize.height > 0,
+           let scale = legacy["scale"], let x = legacy["x"], let y = legacy["y"] {
+            scopedLegacyCamera = nil
+            canvasScale = min(maxScale, max(minScale, scale))
+            canvasOffset = CGSize(width: (x - canvasSize.width / 2 * (1 - canvasScale)) / canvasScale,
+                                  height: (y - canvasSize.height / 2 * (1 - canvasScale)) / canvasScale)
+            saveScopedViewport(); return
+        }
+        guard compositionSession != nil, scopedViewportRestored, force || !scopedCameraWasChanged,
+              canvasSize.width > 0, canvasSize.height > 0, !spatialEngine.blocks.isEmpty || !drawingState.drawings.isEmpty else { return }
+        var rect = spatialEngine.blocks.reduce(CGRect.null) { rect, block in
+            rect.union(CGRect(x: block.position.x - block.size.width / 2, y: block.position.y - block.size.height / 2,
+                              width: block.size.width, height: block.size.height))
+        }
+        for drawing in drawingState.drawings { rect = rect.union(drawing.boundingRect) }
+        let scale = min(1, max(minScale, min((canvasSize.width - 96) / max(1, rect.width), (canvasSize.height - 96) / max(1, rect.height))))
+        scopedCameraWasChanged = true
+        canvasScale = scale
+        canvasOffset = CGSize(width: canvasSize.width / 2 - rect.midX, height: canvasSize.height / 2 - rect.midY)
+        saveScopedViewport()
+    }
+
     // MARK: - Body
 
     /// The canvas without an explicit thinkspace is the home space — one
@@ -1904,10 +2057,7 @@ struct CanvasView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            canvasContent
-                .cosmoSurfaceKeyWindowActivation(
-                    surfaceID: ThinkspaceEditableSurface.surfaceID(forThinkspaceId: resolvedThinkspaceSurfaceId)
-                )
+            canvasPresentation
                 .onAppear {
                     updateCanvasSize(geometry.size)
                     canvasIsActive = isActive
@@ -1924,7 +2074,7 @@ struct CanvasView: View {
                 // launch prewarm must not claim the context — the user is
                 // looking at another destination; registration happens when
                 // the canvas becomes active instead.
-                if isActive {
+                if isActive && compositionSession == nil {
                     let provider = CanvasContextProvider(spatialEngine: spatialEngine, thinkspaceId: thinkspaceId)
                     CosmoWindowViewModel.shared.updateContext(provider: provider)
                     registerThinkspaceSurface()
@@ -1932,6 +2082,13 @@ struct CanvasView: View {
 
                 // Load persisted blocks from database for this ThinkSpace
                 Task { @MainActor in
+                    if let compositionSession {
+                        compositionSession.reload()
+                        spatialEngine.currentThinkspaceId = compositionSession.spaceID
+                        applyScopedSnapshot()
+                        restoreScopedViewport()
+                        return
+                    }
                     let cachedSnapshotApplied = applyCachedThinkspaceSnapshot(for: thinkspaceId)
 
                     await spatialEngine.loadBlocks(for: "home", documentId: 0, thinkspaceId: thinkspaceId)
@@ -1962,13 +2119,15 @@ struct CanvasView: View {
                     if let initialClusters {
                         clusterEngine.userClusters = initialClusters
                     }
-                    ThinkspaceCanvasSnapshotCache.shared.store(
+                    if compositionSession == nil {
+                        ThinkspaceCanvasSnapshotCache.shared.store(
                         blocks: spatialEngine.blocks,
                         zoomLevel: canvasScale,
                         panOffset: canvasOffset,
                         thinkspaceId: thinkspaceId,
                         userClusters: clusterEngine.userClusters
                     )
+                    }
 
                     // Non-critical work trails the interactive path so the
                     // first presented frame never competes with it. A hidden
@@ -1983,23 +2142,25 @@ struct CanvasView: View {
                         // snapshot for the next visit. Same ownership guard:
                         // the launch prewarm slept 1s above, plenty of time
                         // for a real visit to have moved the canvas elsewhere.
-                        ThinkspaceCanvasSnapshotCache.shared.store(
+                        if compositionSession == nil {
+                            ThinkspaceCanvasSnapshotCache.shared.store(
                             blocks: spatialEngine.blocks,
                             zoomLevel: canvasScale,
                             panOffset: canvasOffset,
                             thinkspaceId: thinkspaceId,
                             userClusters: clusterEngine.userClusters
                         )
+                        }
                     }
                     refreshLibraryInventory()
                 }
 
                 // Load persisted inbox blocks
-                loadInboxBlockPositions()
+                if compositionSession == nil { loadInboxBlockPositions() }
 
                 // Register notification observers only once
                 guard !observersRegistered else {
-                    if isActive {
+                    if isActive && compositionSession == nil {
                         CanvasPendingPlacementQueue.shared.markCanvasReady()
                     }
                     return
@@ -2648,14 +2809,24 @@ struct CanvasView: View {
                     Task { await handleCanvasPaste() }
                 }
 
+                addCanvasObserver(forName: Notification.Name("spaceCanvasOpenBlock"), activeOnly: true) { notification in
+                    guard compositionSession != nil, let id = notification.userInfo?["blockId"] as? String,
+                          let block = spatialEngine.blocks.first(where: { $0.id == id }) else { return }
+                    openBlockInFocusMode(block)
+                }
+
                 // MARK: - Scroll Wheel Zoom (Mouse)
                 // Set up scroll wheel event monitor for smooth mouse zoom
                 // Uses Option+scroll for zoom to avoid conflicting with normal scrolling
-                CanvasEscapeCoordinator.shared.register(id: "canvas-overlays") {
+                CanvasEscapeCoordinator.shared.register(id: compositionSession?.scopeID ?? "canvas-overlays") {
                     dismissTopCanvasOverlay()
                 }
                 scrollWheelMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [self] event in
-                    guard canvasIsActive else { return event }
+                    guard canvasIsActive && isCanvasViewActive else { return event }
+                    if compositionSession != nil {
+                        guard let surface = blockFrameTracker.nativeSurface, surface.window === event.window,
+                              surface.bounds.contains(surface.convert(event.locationInWindow, from: nil)) else { return event }
+                    }
                     let isOptionHeld = event.modifierFlags.contains(.option)
 
                     if isOptionHeld {
@@ -2682,7 +2853,10 @@ struct CanvasView: View {
                 // MARK: - Space+Drag Pan (Hand Tool)
                 // Track space bar press to enable drag-to-pan over any element
                 keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { [self] event in
-                    guard canvasIsActive else { return event }
+                    guard canvasIsActive && isCanvasViewActive else { return event }
+                    if compositionSession != nil {
+                        guard let surface = blockFrameTracker.nativeSurface, surface.window === event.window else { return event }
+                    }
                     guard !MainKeyboardShortcutPolicy.reservesDocumentKeyboard(in: event.window) else { return event }
                     if CanvasKeyboardShortcutPolicy.shouldToggleMinimap(
                         keyCode: event.keyCode,
@@ -2754,7 +2928,7 @@ struct CanvasView: View {
 
                 // Observers are live — consume any placements that were queued
                 // while the canvas wasn't mounted (replaces the 0.3s timer race).
-                if isActive {
+                if isActive && compositionSession == nil {
                     CanvasPendingPlacementQueue.shared.markCanvasReady()
                 }
             }
@@ -2771,8 +2945,8 @@ struct CanvasView: View {
                     keyMonitor = nil
                 }
                 isSpaceHeld = false
-                CanvasEscapeCoordinator.shared.unregister(id: "canvas-overlays")
-                CanvasPendingPlacementQueue.shared.markCanvasNotReady()
+                CanvasEscapeCoordinator.shared.unregister(id: compositionSession?.scopeID ?? "canvas-overlays")
+                if compositionSession == nil { CanvasPendingPlacementQueue.shared.markCanvasNotReady() }
                 removeCanvasObservers()
                 thinkspaceSwitchTask?.cancel()
                 thinkspaceSwitchTask = nil
@@ -2781,6 +2955,15 @@ struct CanvasView: View {
             }
             .onChange(of: geometry.size) { _, newSize in
                 updateCanvasSize(newSize)
+                fitScopedCanvasIfNeeded()
+            }
+            .onChange(of: compositionSession?.revision) { _, _ in applyScopedSnapshot() }
+            .onChange(of: selectedBlockId) { _, id in
+                if let compositionSession {
+                    let uuid = id.flatMap { compositionSession.atom(forBlockID: $0)?.uuid }
+                    compositionSession.selectedUUID = uuid
+                    SpaceWorkspaceStore.shared.select(uuid, in: compositionSession.spaceID)
+                }
             }
             .onChange(of: isActive) { _, newValue in
                 canvasIsActive = newValue
@@ -2793,7 +2976,7 @@ struct CanvasView: View {
                 if !newValue && isSpaceHeld {
                     isSpaceHeld = false
                 }
-                if newValue {
+                if newValue && compositionSession == nil {
                     // The canvas just became the visible destination — claim
                     // the Cosmo window context now (a hidden prewarm mount
                     // deliberately skipped this in onAppear).
@@ -2801,13 +2984,14 @@ struct CanvasView: View {
                     CosmoWindowViewModel.shared.updateContext(provider: provider)
                     registerThinkspaceSurface()
                 }
-                if newValue, observersRegistered {
+                if newValue, observersRegistered, compositionSession == nil {
                     CanvasPendingPlacementQueue.shared.markCanvasReady()
                 } else if !newValue {
-                    CanvasPendingPlacementQueue.shared.markCanvasNotReady()
+                    if compositionSession == nil { CanvasPendingPlacementQueue.shared.markCanvasNotReady() }
                 }
             }
             .onChange(of: thinkspaceId) { _, newId in
+                guard compositionSession == nil else { return }
                 thinkspaceSwitchTask?.cancel()
                 // Commit visible drafts before starting a read for another
                 // space; a rapid return must not fetch before its close save.
@@ -2925,13 +3109,15 @@ struct CanvasView: View {
 
                     rebuildMediaContentCache()
                     refreshLibraryInventoryForThinkspaceSwitch()
-                    ThinkspaceCanvasSnapshotCache.shared.store(
+                    if compositionSession == nil {
+                        ThinkspaceCanvasSnapshotCache.shared.store(
                         blocks: spatialEngine.blocks,
                         zoomLevel: canvasScale,
                         panOffset: canvasOffset,
                         thinkspaceId: newId,
                         userClusters: clusterEngine.userClusters
                     )
+                    }
 
                     if !cachedThinkspaceSnapshotApplied {
                         // 3. Animate new content IN (emerging from background)
@@ -2955,6 +3141,7 @@ struct CanvasView: View {
                 flyToPlace(place)
             }
             .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Navigation.showLibraryFolder)) { notification in
+                guard compositionSession == nil else { return }
                 if let folderID = notification.userInfo?["folderID"] as? UUID {
                     if let thinkspaceId,
                        let snapshot = SpaceWorkspaceStore.shared.snapshots[thinkspaceId],
@@ -2977,6 +3164,7 @@ struct CanvasView: View {
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: CosmoNotification.Automation.flowDidRun)) { notification in
+                guard compositionSession == nil else { return }
                 guard let tsId = notification.userInfo?["thinkspaceId"] as? String,
                       tsId == thinkspaceId,
                       let flowUUID = notification.userInfo?["flowUUID"] as? String else { return }
@@ -2990,6 +3178,7 @@ struct CanvasView: View {
             }
             // Keyboard handler for ESC to collapse expanded blocks / dismiss overlays
             .onKeyPress(.escape) {
+                guard canvasIsActive && isCanvasViewActive else { return .ignored }
                 if flowVerbPickerClusterId != nil {
                     withAnimation(ProMotionSprings.snappy) { flowVerbPickerClusterId = nil }
                     return .handled
@@ -3018,6 +3207,7 @@ struct CanvasView: View {
             }
             // TAB: Toggle minimap navigator (skip when Command-K is open — Tab cycles tabs there)
             .onKeyPress(.tab) {
+                guard canvasIsActive && isCanvasViewActive else { return .ignored }
                 guard !appState.isCommandKVisible else { return .ignored }
                 guard appState.focusedEntity == nil else { return .ignored }
                 withAnimation(ProMotionSprings.snappy) {
@@ -3027,6 +3217,7 @@ struct CanvasView: View {
             }
             // Cmd+Shift+H: Toggle crystallization heatmap
             .onKeyPress(characters: .init(charactersIn: "hH")) { press in
+                guard canvasIsActive && isCanvasViewActive else { return .ignored }
                 guard press.modifiers.contains(.command), press.modifiers.contains(.shift) else {
                     return .ignored
                 }
@@ -3231,7 +3422,7 @@ struct CanvasView: View {
             blockIds: clusterPopoverBlockIds,
             position: clusterPopoverPosition,
             onCreateCluster: { name, colorIndex in
-                let thinkspaceId = thinkspaceManager.currentThinkspace?.id
+                let thinkspaceId = compositionSession?.spaceID ?? thinkspaceManager.currentThinkspace?.id
                 if clusterPopoverBlockIds.isEmpty {
                     // Zone mode — create empty zone cluster
                     clusterEngine.createZoneCluster(
@@ -3379,6 +3570,10 @@ struct CanvasView: View {
     }
 
     private func persistPlaces() {
+        if let compositionSession {
+            if let data = try? JSONEncoder().encode(canvasPlaces) { UserDefaults.standard.set(data, forKey: compositionSession.cameraKey + ".places") }
+            return
+        }
         guard let tsId = thinkspaceId else { return }
         let places = canvasPlaces
         thinkspaceManager.updateCurrentPlaces(places)
@@ -3386,6 +3581,13 @@ struct CanvasView: View {
     }
 
     private func loadPlaces(for thinkspaceId: String?) {
+        if let compositionSession {
+            canvasFlows = UserDefaults.standard.data(forKey: compositionSession.cameraKey + ".flows")
+                .flatMap { try? JSONDecoder().decode([CanvasFlow].self, from: $0) } ?? []
+            canvasPlaces = UserDefaults.standard.data(forKey: compositionSession.cameraKey + ".places")
+                .flatMap { try? JSONDecoder().decode([CanvasPlace].self, from: $0) } ?? []
+            return
+        }
         guard let tsId = thinkspaceId else {
             canvasPlaces = []
             canvasFlows = []
@@ -3402,6 +3604,10 @@ struct CanvasView: View {
     // MARK: - Flows (Living Workflows)
 
     private func persistFlows() {
+        if let compositionSession {
+            if let data = try? JSONEncoder().encode(canvasFlows) { UserDefaults.standard.set(data, forKey: compositionSession.cameraKey + ".flows") }
+            return
+        }
         guard let tsId = thinkspaceId else { return }
         let flows = canvasFlows
         Task { await thinkspaceManager.saveFlows(flows, for: tsId) }
@@ -3436,6 +3642,10 @@ struct CanvasView: View {
 
     /// Change how a flow fires — compiles to (or removes) its AutomationRule.
     private func setFlowRunMode(_ flow: CanvasFlow, mode: FlowRunMode, clusterName: String) {
+        if let compositionSession {
+            compositionSession.error = "Automatic flows are available on the Space canvas. You can run this group’s flow manually here."
+            return
+        }
         guard let index = canvasFlows.firstIndex(where: { $0.uuid == flow.uuid }) else { return }
         withAnimation(ProMotionSprings.snappy) {
             canvasFlows[index].runMode = mode
@@ -3608,6 +3818,7 @@ struct CanvasView: View {
     @MainActor
     @discardableResult
     private func repairLegacyBlocksIfNeeded() async -> Int {
+        guard compositionSession == nil else { return 0 }
         let repairableTypes: Set<EntityType> = [.idea, .content, .research, .task, .connection]
         let indicesToRepair = spatialEngine.blocks.indices.filter { idx in
             let b = spatialEngine.blocks[idx]
@@ -3770,10 +3981,12 @@ struct CanvasView: View {
     }
 
     private func storeThinkspaceSnapshotCache() {
-        ThinkspaceCanvasSnapshotCache.shared.store(
+        if compositionSession == nil {
+            ThinkspaceCanvasSnapshotCache.shared.store(
             blocks: spatialEngine.blocks, zoomLevel: canvasScale, panOffset: canvasOffset,
             thinkspaceId: spatialEngine.currentThinkspaceId, userClusters: clusterEngine.userClusters
         )
+        }
     }
 
     private func handleUpdateBlockMetadata(notification: Notification) {
@@ -3849,6 +4062,7 @@ struct CanvasView: View {
     // MARK: - Zoom/Pan Persistence
 
     private func debouncedSaveZoomPan() {
+        if compositionSession != nil { saveScopedViewport(); return }
         // Trailing-edge debounce: cancel any pending save and restart the timer.
         // Only saves once the user STOPS panning/zooming for 2 seconds.
         zoomPanSaveTask?.cancel()
@@ -3862,13 +4076,15 @@ struct CanvasView: View {
                 panOffset: canvasOffset,
                 blockIds: blockIds
             )
-            ThinkspaceCanvasSnapshotCache.shared.store(
+            if compositionSession == nil {
+                ThinkspaceCanvasSnapshotCache.shared.store(
                 blocks: spatialEngine.blocks,
                 zoomLevel: canvasScale,
                 panOffset: canvasOffset,
                 thinkspaceId: thinkspaceId,
                 userClusters: clusterEngine.userClusters
             )
+            }
         }
     }
 
@@ -3907,7 +4123,7 @@ struct CanvasView: View {
         // Register undo action if old size was provided
         if let oldSize = userInfo["oldSize"] as? CGSize {
             if oldSize != newSize {
-                CosmoUndoManager.shared.register(
+                registerCanvasUndo(
                     ResizeBlockAction(blockId: blockId, oldSize: oldSize, newSize: newSize, spatialEngine: spatialEngine)
                 )
             }
@@ -4053,7 +4269,14 @@ struct CanvasView: View {
         }
 
         // Convert screen position to canvas position (accounting for zoom)
-        let position = screenToCanvasPosition(screenPosition)
+        let position: CGPoint
+        if userInfo["positionSpace"] as? String == "canvas" { position = screenPosition }
+        else {
+            let local = compositionSession == nil ? screenPosition : CGPoint(
+                x: screenPosition.x - blockFrameTracker.windowFrame.minX,
+                y: screenPosition.y - blockFrameTracker.windowFrame.minY)
+            position = screenToCanvasPosition(local)
+        }
 
         // Handle existing atom from database picker
         if let existingUUID = userInfo["existingAtomUUID"] as? String {
@@ -4139,16 +4362,18 @@ struct CanvasView: View {
                     bodyDocument: RichDocument.migrateLegacy(prefillBody ?? ""),
                     plainBodyText: prefillBody ?? ""
                 )
-                let createdAtom = try await AtomRepository.shared.create(
-                    type: .note,
-                    title: snapshot.atomTitle,
-                    body: snapshot.atomBody,
-                    metadata: snapshot.metadata
-                )
+                var draft = Atom.new(type: .note, title: snapshot.atomTitle, body: snapshot.atomBody, metadata: snapshot.metadata)
+                if let compositionSession {
+                    let parent = compositionSession.container?.spaceCompositionKind?.isAuthored == true ? compositionSession.containerUUID : nil
+                    draft = try draft.replacingSpaceComposition(.init(parentUUID: parent,
+                        sortOrder: Double(compositionSession.items.count)))
+                }
+                let createdAtom = try await AtomRepository.shared.create(draft)
                 let block = CanvasBlock.fromAtom(createdAtom, position: position)
                 await spatialEngine.addBlock(block, persist: true)
                 print("📝 Created atom-backed note block at \(position) with atom \(createdAtom.uuid)")
             } catch {
+                if let compositionSession { compositionSession.report(error); return }
                 PersistenceHealth.note(.writeFailure, context: "canvas.createNoteBlock", detail: "falling back to freeform block: \(error)")
                 let block = CanvasBlock.noteBlock(position: position, content: prefillBody ?? "")
                 await spatialEngine.addBlock(block, persist: true)
@@ -4193,6 +4418,7 @@ struct CanvasView: View {
 
     /// Detect when a dragged block enters the sidebar zone for cross-thinkspace transfer
     private func checkCrossThinkspaceDrag(block: CanvasBlock, translation: CGSize) {
+        guard compositionSession == nil else { return }
         let mouseLocation = NSEvent.mouseLocation
         guard let window = NSApp.keyWindow ?? NSApp.mainWindow else { return }
 
@@ -4292,7 +4518,7 @@ struct CanvasView: View {
 
             // Register undo action (only if position actually changed)
             if oldPosition != newPosition {
-                CosmoUndoManager.shared.register(
+                registerCanvasUndo(
                     MoveBlockAction(blockId: blockId, oldPosition: oldPosition, newPosition: newPosition, spatialEngine: spatialEngine)
                 )
             }
@@ -4308,13 +4534,15 @@ struct CanvasView: View {
             userClusters: clusterEngine.userClusters,
             transform: viewportTransform
         )
-        ThinkspaceCanvasSnapshotCache.shared.store(
+        if compositionSession == nil {
+            ThinkspaceCanvasSnapshotCache.shared.store(
             blocks: spatialEngine.blocks,
             zoomLevel: canvasScale,
             panOffset: canvasOffset,
             thinkspaceId: thinkspaceId,
             userClusters: clusterEngine.userClusters
         )
+        }
 
         // Check cluster zone membership after drag
         if let block = spatialEngine.blocks.first(where: { $0.id == blockId }) {
@@ -4612,6 +4840,7 @@ struct CanvasView: View {
     /// surface and makes it the assistant's active scope. Called when the
     /// canvas becomes the visible destination and when the thinkspace changes.
     private func registerThinkspaceSurface() {
+        guard compositionSession == nil else { return }
         let surfaceId = resolvedThinkspaceSurfaceId
         if let existing = thinkspaceEditableSurface,
            existing.surfaceID == ThinkspaceEditableSurface.surfaceID(forThinkspaceId: surfaceId) {
@@ -4653,6 +4882,7 @@ struct CanvasView: View {
     /// Untargeted (legacy) payloads fall back to the old behavior: the active
     /// canvas handles them.
     private func planTargetMatchesThisCanvas(_ userInfo: [AnyHashable: Any]?) -> Bool {
+        guard compositionSession == nil else { return false }
         guard let target = userInfo?["thinkspaceId"] as? String, !target.isEmpty else {
             return true
         }
@@ -4746,6 +4976,7 @@ struct CanvasView: View {
     }
 
     private func updateInlineEditableSurface(forBlockId blockId: String) {
+        guard compositionSession == nil else { return }
         guard let block = spatialEngine.blocks.first(where: { $0.id == blockId }),
               CanvasBlockEditableSurface.supports(block.entityType) else { return }
 
@@ -4807,6 +5038,9 @@ struct CanvasView: View {
     }
 
     private func openBlockInFocusMode(_ block: CanvasBlock) {
+        if let compositionSession, let atom = compositionSession.items.first(where: { $0.uuid == block.entityUuid }) {
+            compositionSession.open(atom); return
+        }
         AppPerformanceInstrumentation.trace("CANVAS openBlockInFocusMode \(block.entityType.rawValue)#\(block.entityId)")
         if block.entityType == .note, let thinkspaceId,
            let atom = SpaceWorkspaceStore.shared.snapshots[thinkspaceId]?.atomsByUUID[block.entityUuid] {
@@ -4968,7 +5202,7 @@ struct CanvasView: View {
         }
 
         // Snapshot block before removal for undo
-        CosmoUndoManager.shared.register(
+        registerCanvasUndo(
             DeleteBlockAction(block: block, spatialEngine: spatialEngine)
         )
 
@@ -5065,7 +5299,7 @@ struct CanvasView: View {
             removeBlockSafely(blockId)
             return
         }
-        CosmoUndoManager.shared.register(UnplaceBlockAction(block: block, spatialEngine: spatialEngine))
+        registerCanvasUndo(UnplaceBlockAction(block: block, spatialEngine: spatialEngine))
         Task { @MainActor in
             _ = await spatialEngine.unplaceBlock(blockId)
             refreshLibraryInventory()
@@ -5081,7 +5315,7 @@ struct CanvasView: View {
             return
         }
 
-        CosmoUndoManager.shared.register(
+        registerCanvasUndo(
             DetachAtomAction(entityUuid: block.entityUuid, thinkspaceId: thinkspaceId, spatialEngine: spatialEngine)
         )
         let entityUuid = block.entityUuid
@@ -5254,6 +5488,8 @@ struct CanvasView: View {
             print("⚠️ No block selected to open in focus mode")
             return
         }
+
+        if compositionSession != nil { openBlockInFocusMode(block); return }
 
         // Only applicable types can enter focus mode
         if [.idea, .content, .research, .connection].contains(block.entityType) {
@@ -6101,7 +6337,7 @@ struct CanvasView: View {
         for (index, fileURL) in fileURLs.enumerated() {
             do {
                 let imported = try await FilePortalImportService.shared.importFile(at: fileURL)
-                try await SpaceMembershipService.add(imported.atom, to: destination)
+                if compositionSession == nil { try await SpaceMembershipService.add(imported.atom, to: destination) }
                 guard destination == spatialEngine.currentThinkspaceId else { continue }
                 let anchor = CGPoint(x: position.x + CGFloat(index % columns) * 360,
                                      y: position.y + CGFloat(index / columns) * 380)
@@ -6616,6 +6852,12 @@ struct CanvasBlockStaticView: View, Equatable {
     let isMediaContent: Bool
     let isViewportActive: Bool
     var spaceID: String? = nil
+    var onOpenPage: ((Atom) -> Void)? = nil
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.block == rhs.block && lhs.isMediaContent == rhs.isMediaContent &&
+        lhs.isViewportActive == rhs.isViewportActive && lhs.spaceID == rhs.spaceID
+    }
 
     var body: some View {
         switch block.entityType {
@@ -6624,7 +6866,7 @@ struct CanvasBlockStaticView: View, Equatable {
         case .note:
             if let spaceID, let atom = compositionPortal {
                 SpaceCompositionCanvasPortal(block: block, atom: atom, spaceID: spaceID)
-            } else { NoteBlockView(block: block) }
+            } else { NoteBlockView(block: block, onOpen: onOpenPage) }
         case .calendar:
             Text("Calendar")
                 .font(DS.body)

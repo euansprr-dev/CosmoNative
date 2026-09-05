@@ -27,7 +27,7 @@ struct FocusBlockContextMenuModifier: ViewModifier {
                     }
 
                     Button {
-                        createAndAddBlock(type: .note, title: "New Note")
+                        createAndAddBlock(type: .note, title: "New Page")
                     } label: {
                         Label("Add Note", systemImage: "note.text")
                     }

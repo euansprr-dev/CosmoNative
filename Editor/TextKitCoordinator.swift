@@ -365,6 +365,9 @@ final class ImageResizeOverlayView: NSView {
 
 final class CosmoTextView: NSTextView {
     fileprivate weak var shortcutDelegate: CosmoTextViewShortcutDelegate?
+    /// A later native click supersedes queued structural focus work.
+    private(set) static var pointerInteractionGeneration: UInt64 = 0
+    var onNativeMouseDown: (() -> Void)?
 
     override func makeBackingLayer() -> CALayer {
         let layer = super.makeBackingLayer()
@@ -715,6 +718,8 @@ final class CosmoTextView: NSTextView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        Self.pointerInteractionGeneration &+= 1
+        onNativeMouseDown?()
         guard isEditable else {
             // Notify the canvas block to enter edit mode.
             // After SwiftUI re-renders with isEditable=true, we become
@@ -780,10 +785,7 @@ final class CosmoTextView: NSTextView {
     ) -> Bool {
         guard let window, isEditable else { return false }
         let localPoint = convert(event.locationInWindow, from: nil)
-        let anchor = characterIndexForInsertion(at: NSPoint(
-            x: localPoint.x - textContainerInset.width,
-            y: localPoint.y - textContainerInset.height
-        ))
+        let anchor = characterIndexForInsertion(at: localPoint)
         // Click inside an existing selection starts text drag-and-drop —
         // that's native behavior, keep it.
         let existing = selectedRange()
@@ -855,10 +857,7 @@ final class CosmoTextView: NSTextView {
                 escalated = false
             }
             let point = convert(lastWindowPoint, from: nil)
-            let index = characterIndexForInsertion(at: NSPoint(
-                x: point.x - textContainerInset.width,
-                y: point.y - textContainerInset.height
-            ))
+            let index = characterIndexForInsertion(at: point)
             let range = NSRange(location: min(anchor, index), length: abs(index - anchor))
             setSelectedRange(range, affinity: index < anchor ? .upstream : .downstream, stillSelecting: true)
         }
@@ -2063,6 +2062,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         // write @Binding values synchronously (causes "Modifying state during view update").
         context.coordinator.isUpdatingFromSwiftUI = true
         defer { context.coordinator.isUpdatingFromSwiftUI = false }
+        // The input method owns its attributed buffer and selection until
+        // commit; even a typography reconfiguration must wait.
+        guard !textView.hasMarkedText() else { return }
         let signature = configSignature
         if context.coordinator.lastConfigSignature != signature {
             context.coordinator.lastConfigSignature = signature
@@ -2097,10 +2099,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             context.coordinator.applyPolishHighlights(to: textView)
             context.coordinator.applyFocusBand(to: textView)
             if shouldRefocus {
-                DispatchQueue.main.async {
-                    textView.window?.makeFirstResponder(textView)
-                    self.shouldRefocus = false
-                }
+                context.coordinator.scheduleRefocus(to: textView)
             }
             context.coordinator.applyCaretRequestIfNeeded(to: textView)
             context.coordinator.navigateIfNeeded(to: navigationTargetID, in: textView)
@@ -2152,8 +2151,9 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
                 let caretRequestPending = caretRequest != nil
                     && caretRequest?.token != context.coordinator.lastAppliedCaretToken
                 if !caretRequestPending {
-                    let safeLocation = min(selectedRange.location, textView.string.count)
-                    let safeLength = min(selectedRange.length, textView.string.count - safeLocation)
+                    let length = (textView.string as NSString).length
+                    let safeLocation = min(selectedRange.location, length)
+                    let safeLength = min(selectedRange.length, length - safeLocation)
                     textView.setSelectedRange(NSRange(location: safeLocation, length: safeLength))
                 }
                 context.coordinator.normalizeSingleLineViewport(for: textView)
@@ -2200,10 +2200,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
         context.coordinator.navigateIfNeeded(to: navigationTargetID, in: textView)
 
         if shouldRefocus {
-            DispatchQueue.main.async {
-                textView.window?.makeFirstResponder(textView)
-                self.shouldRefocus = false
-            }
+            context.coordinator.scheduleRefocus(to: textView)
         }
     }
 
@@ -2224,6 +2221,11 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             coordinator?.parent.onActivate?()
             // Entering a row (a click into a suspicious gap) verifies it.
             coordinator?.scheduleIntrinsicHeightReconcile()
+        }
+        textView.onNativeMouseDown = { [weak coordinator = context.coordinator] in
+            // Dismiss chrome and continue the ORIGINAL native event. An
+            // invisible SwiftUI tap layer used to eat this caret click.
+            coordinator?.dismissMenus()
         }
         textView.onResignFirstResponder = { [weak coordinator = context.coordinator] in
             // Leaving a row is the moment a stale height would be left
@@ -2451,7 +2453,8 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
     }
 
     private func resolvedTextInsets() -> NSSize {
-        EditorTextInsetPolicy.textContainerInset(
+        if splitsOnReturn { return .zero }
+        return EditorTextInsetPolicy.textContainerInset(
             scrollsInternally: scrollsInternally,
             singleLine: singleLine,
             isTitleMode: titleConfiguration != nil,
@@ -3078,6 +3081,18 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             guard !isApplyingStructuralEdit else {
                 return
             }
+            guard !textView.hasMarkedText() else {
+                // No markdown transform, hard-newline split, or model echo
+                // may replace the input method's in-progress composition.
+                // An earlier ordinary keystroke may already have queued a
+                // snapshot of this live buffer; that job must wait too.
+                deferredSyncWorkItem?.cancel()
+                deferredSyncWorkItem = nil
+                isUpdatingFromTextView = false
+                viewContentDirty = true
+                notifyContentHeightChange(for: textView)
+                return
+            }
 
             // Containment: a hard newline reached a block row anyway
             // (dictation, IME commit, RTF paste). Splice it into real blocks
@@ -3331,6 +3346,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
 
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let textView = notification.object as? CosmoTextView else { return }
+            guard !textView.hasMarkedText() else { return }
             normalizeSingleLineViewport(for: textView)
             let selectedRange = textView.selectedRange()
 
@@ -4216,7 +4232,7 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             return CGPoint(x: screenRect.origin.x, y: screenRect.origin.y + screenRect.height)
         }
 
-        private func dismissMenus() {
+        fileprivate func dismissMenus() {
             mentionStartIndex = nil
             slashStartIndex = nil
             parent.onDismissMenus?()
@@ -4231,8 +4247,21 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             placeCaretWhenReady(
                 in: textView,
                 utf16OffsetFromEnd: request.utf16OffsetFromEnd,
-                windowPoint: request.windowPoint
+                windowPoint: request.windowPoint,
+                requestToken: request.token,
+                pointerGeneration: CosmoTextView.pointerInteractionGeneration
             )
+        }
+
+        func scheduleRefocus(to textView: CosmoTextView) {
+            let pointerGeneration = CosmoTextView.pointerInteractionGeneration
+            DispatchQueue.main.async { [weak self, weak textView] in
+                guard let self, let textView, self.parent.shouldRefocus else { return }
+                self.parent.shouldRefocus = false
+                guard pointerGeneration == CosmoTextView.pointerInteractionGeneration,
+                      !textView.hasMarkedText() else { return }
+                textView.window?.makeFirstResponder(textView)
+            }
         }
 
         /// Focuses `textView` and places the caret after a structural edit
@@ -4245,16 +4274,23 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             in textView: CosmoTextView,
             utf16OffsetFromEnd: Int,
             windowPoint: CGPoint? = nil,
+            requestToken: Int,
+            pointerGeneration: UInt64,
             attemptsRemaining: Int = 8
         ) {
             DispatchQueue.main.async { [weak textView] in
-                guard let textView else { return }
+                guard let textView,
+                      self.parent.caretRequest?.token == requestToken,
+                      pointerGeneration == CosmoTextView.pointerInteractionGeneration,
+                      !textView.hasMarkedText() else { return }
                 guard let window = textView.window else {
                     if attemptsRemaining > 0 {
                         self.placeCaretWhenReady(
                             in: textView,
                             utf16OffsetFromEnd: utf16OffsetFromEnd,
                             windowPoint: windowPoint,
+                            requestToken: requestToken,
+                            pointerGeneration: pointerGeneration,
                             attemptsRemaining: attemptsRemaining - 1
                         )
                     }
@@ -5842,6 +5878,10 @@ struct TextKitEditorRepresentable: NSViewRepresentable {
             isUpdatingFromTextView = true
             let workItem = DispatchWorkItem { [weak self] in
                 guard let self else { return }
+                guard !textView.hasMarkedText() else {
+                    self.isUpdatingFromTextView = false
+                    return
+                }
                 guard !self.awaitingExternalContent else {
                     // The view is the stale side of a structural rebuild —
                     // never write its content back, but its HEIGHT is still

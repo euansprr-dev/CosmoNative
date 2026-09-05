@@ -537,7 +537,7 @@ struct LibraryView: View {
                 .font(.system(size: 16, weight: .medium))
                 .foregroundColor(DS.textSecondary)
 
-            Text("Create your first note, idea, or thinkspace to get started")
+            Text("Start a page, save an idea, or bring your work together in a Space.")
                 .font(.system(size: 13))
                 .foregroundColor(DS.textMuted)
         }

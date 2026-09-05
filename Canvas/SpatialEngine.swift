@@ -14,6 +14,9 @@ class SpatialEngine {
     var isLoading = false
     private(set) var blocksDataRevision = 0
 
+    let compositionSession: SpaceCompositionCanvasSession?
+    var ownsScopedUndo: Bool { compositionSession != nil }
+
     private let database: CosmoDatabase
     private let localLLM: LocalLLM
 
@@ -35,7 +38,8 @@ class SpatialEngine {
         self.init(database: .shared, localLLM: .shared)
     }
 
-    init(database: CosmoDatabase, localLLM: LocalLLM) {
+    init(database: CosmoDatabase, localLLM: LocalLLM, compositionSession: SpaceCompositionCanvasSession? = nil) {
+        self.compositionSession = compositionSession
         self.database = database
         self.localLLM = localLLM
         DirtyEditorRegistry.shared.register(id: dirtyRegistryId) { [weak self] in
@@ -53,6 +57,7 @@ class SpatialEngine {
     /// Synchronous, DB-only flush of any in-flight position/size writes.
     /// Called by DirtyEditorRegistry at app termination.
     private func flushPendingGeometryWritesSync() {
+        if let compositionSession { compositionSession.retry(); return }
         guard !pendingGeometryWrites.isEmpty else { return }
         let writes = pendingGeometryWrites
         do {
@@ -104,6 +109,11 @@ class SpatialEngine {
 
     // MARK: - Load Blocks from Database
     func loadBlocks(for documentType: String = "home", documentId: Int64 = 0, thinkspaceId: String? = nil) async {
+        if let compositionSession {
+            currentThinkspaceId = compositionSession.spaceID
+            compositionSession.reload(); blocks = compositionSession.projectedBlocks(); isLoading = false
+            return
+        }
         let signpost = CanvasPerformanceInstrumentation.signposter.beginInterval("thinkspace-load-blocks")
         isLoading = true
         currentDocumentType = documentType
@@ -130,6 +140,7 @@ class SpatialEngine {
     /// (including per-atom metadata JSON decoding) runs off the main actor.
     /// Returns nil on error so callers can preserve existing state.
     func fetchBlocksSnapshot(for documentType: String = "home", documentId: Int64 = 0, thinkspaceId: String? = nil) async -> [CanvasBlock]? {
+        if let compositionSession { compositionSession.reload(); return compositionSession.projectedBlocks() }
         do {
             let tsId = thinkspaceId  // Capture for closure
             let (savedBlocks, metadataJSONByBlockId): ([CanvasBlockRecord], [String: String]) = try await database.asyncRead { db in
@@ -250,6 +261,7 @@ class SpatialEngine {
     /// Apply a snapshot from fetchBlocksSnapshot as the current canvas state.
     /// Cheap main-thread array swap; nil (fetch error) preserves existing blocks.
     func applyFetchedBlocks(_ fetched: [CanvasBlock]?, for documentType: String = "home", documentId: Int64 = 0, thinkspaceId: String? = nil) {
+        if let compositionSession { blocks = compositionSession.projectedBlocks(); isLoading = false; return }
         currentDocumentType = documentType
         currentDocumentId = documentId
         currentThinkspaceId = thinkspaceId
@@ -395,6 +407,8 @@ class SpatialEngine {
 
     // MARK: - Save Block to Database
     func saveBlock(_ block: CanvasBlock) async {
+        if let compositionSession { _ = compositionSession.saveGeometry(block); return }
+        guard !SpaceCompositionCanvasSession.isProjectedID(block.id) else { return }
         let docType = currentDocumentType
         let docId = currentDocumentId
         let tsId = currentThinkspaceId
@@ -521,6 +535,15 @@ class SpatialEngine {
     /// Content changes patch the current row. Layout saves above never own
     /// note_content/metadata, so a delayed resize cannot erase a newer edit.
     func updateBlockMetadata(blockID: String, patch: [String: String], alreadyPersisted: Bool = false) throws {
+        if let compositionSession {
+            if !alreadyPersisted { try compositionSession.updateAtomMetadata(blockID: blockID, patch: patch) }
+            if let index = blocks.firstIndex(where: { $0.id == blockID }) {
+                blocks[index].metadata.merge(patch) { _, new in new }
+                if let title = patch["title"] { blocks[index].title = title }
+            }
+            return
+        }
+        guard !SpaceCompositionCanvasSession.isProjectedID(blockID) else { return }
         var committed = patch
         if !alreadyPersisted {
             committed = try database.write { db in
@@ -561,6 +584,12 @@ class SpatialEngine {
 
     // MARK: - Update Block Position
     func updateBlockPosition(_ blockId: String, position: CGPoint) {
+        if let compositionSession {
+            guard let index = blocks.firstIndex(where: { $0.id == blockId }) else { return }
+            blocks[index].position = position
+            _ = compositionSession.saveGeometry(blocks[index]); return
+        }
+        guard !SpaceCompositionCanvasSession.isProjectedID(blockId) else { return }
         // Update in memory (instant)
         if let index = blocks.firstIndex(where: { $0.id == blockId }) {
             blocks[index].position = position
@@ -588,6 +617,12 @@ class SpatialEngine {
     }
 
     func updateBlockGeometry(_ blockId: String, position: CGPoint, size: CGSize) {
+        if let compositionSession {
+            guard let index = blocks.firstIndex(where: { $0.id == blockId }) else { return }
+            blocks[index].position = position; blocks[index].size = size
+            _ = compositionSession.saveGeometry(blocks[index], title: "Resize canvas item"); return
+        }
+        guard !SpaceCompositionCanvasSession.isProjectedID(blockId) else { return }
         if let index = blocks.firstIndex(where: { $0.id == blockId }) {
             blocks[index].position = position
             blocks[index].size = size
@@ -630,6 +665,7 @@ class SpatialEngine {
     /// Persist a cross-thinkspace move directly, without needing an engine whose
     /// in-memory context matches the source space (MainView's drop handler has none).
     static func persistCrossThinkspaceMove(blockId: String, targetThinkspaceId: String, position: CGPoint) async throws {
+        guard !SpaceCompositionCanvasSession.isProjectedID(blockId) else { throw SpaceCompositionError.invalidPlacement }
         try await CosmoDatabase.shared.asyncWrite { db in
             try db.execute(
                 sql: """
@@ -666,6 +702,7 @@ class SpatialEngine {
     /// (entity_uuid, thinkspace_id) like `saveBlock`'s insert path; an existing
     /// row is left untouched (filing is idempotent, not a move).
     static func persistBlockToUnmountedThinkspace(_ block: CanvasBlock, thinkspaceId: String, isPlaced: Bool = false) async throws {
+        guard !SpaceCompositionCanvasSession.isProjectedID(block.id) else { throw SpaceCompositionError.invalidPlacement }
         try await CosmoDatabase.shared.asyncWrite { db in
             if !block.entityUuid.isEmpty {
                 let existing = try String.fetchOne(db,
@@ -715,6 +752,10 @@ class SpatialEngine {
     }
 
     func moveBlockToThinkspace(_ blockId: String, newThinkspaceId: String, position: CGPoint) async {
+        if let compositionSession {
+            compositionSession.report(SpaceCompositionError.invalidParent); return
+        }
+        guard !SpaceCompositionCanvasSession.isProjectedID(blockId) else { return }
         // Remove from in-memory array (it belongs to the new thinkspace now)
         withAnimation(.easeOut(duration: 0.15)) {
             blocks.removeAll { $0.id == blockId }
@@ -741,6 +782,11 @@ class SpatialEngine {
 
     // MARK: - Remove Block
     func removeBlock(_ blockId: String) async {
+        if let compositionSession {
+            if let block = blocks.first(where: { $0.id == blockId }) { compositionSession.hide(block) }
+            blocks = compositionSession.projectedBlocks(); return
+        }
+        guard !SpaceCompositionCanvasSession.isProjectedID(blockId) else { return }
         // Remove from memory FIRST (instant UI update)
         withAnimation(.easeOut(duration: 0.15)) {
             blocks.removeAll { $0.id == blockId }
@@ -766,6 +812,8 @@ class SpatialEngine {
 
     // MARK: - Restore Block (undo delete)
     func restoreBlock(_ block: CanvasBlock) async {
+        if let compositionSession { _ = compositionSession.saveGeometry(block); blocks = compositionSession.projectedBlocks(); return }
+        guard !SpaceCompositionCanvasSession.isProjectedID(block.id) else { return }
         blocks.append(block)
 
         // Un-soft-delete in database
@@ -798,6 +846,10 @@ class SpatialEngine {
     /// `updated_at` to the cloud and SQLite's space-separated format breaks the
     /// LWW cursor comparison (same reason AtomRepository.delete uses ISO8601).
     func removeAtomFromThinkspace(entityUuid: String, thinkspaceId: String) async {
+        if let compositionSession {
+            if let block = blocks.first(where: { $0.entityUuid == entityUuid }) { compositionSession.removeMembership(block) }
+            blocks = compositionSession.projectedBlocks(); return
+        }
         guard !entityUuid.isEmpty, !thinkspaceId.isEmpty else { return }
 
         // Remove from memory FIRST (instant UI update). `blocks` only holds the
@@ -829,6 +881,7 @@ class SpatialEngine {
     /// in that one thinkspace and reload the current canvas if it's the one that
     /// changed, so the restored blocks reappear in memory.
     func reattachAtomToThinkspace(entityUuid: String, thinkspaceId: String) async {
+        if let compositionSession { compositionSession.reload(); blocks = compositionSession.projectedBlocks(); return }
         guard !entityUuid.isEmpty, !thinkspaceId.isEmpty else { return }
 
         let db = database
@@ -856,6 +909,11 @@ class SpatialEngine {
 
     // MARK: - Add Block (with persistence)
     func addBlock(_ block: CanvasBlock, persist: Bool = true) async {
+        if let compositionSession {
+            if persist { _ = await compositionSession.add(block) }
+            blocks = compositionSession.projectedBlocks(); return
+        }
+        guard !SpaceCompositionCanvasSession.isProjectedID(block.id) else { return }
         // Prevent duplicate blocks for the same entity (in-memory check)
         if !block.entityUuid.isEmpty,
            blocks.contains(where: { $0.entityUuid == block.entityUuid }) {
@@ -904,6 +962,7 @@ class SpatialEngine {
     }
 
     private func entityPlacement(_ entityUuid: String) async -> EntityPlacement {
+        if let compositionSession { return compositionSession.projectedBlocks().contains { $0.entityUuid == entityUuid } ? .placed : .absent }
         let docType = currentDocumentType
         let docId = currentDocumentId
         let tsId = currentThinkspaceId
@@ -979,6 +1038,12 @@ class SpatialEngine {
     /// for the undo action. ISO8601 stamp — the observer pushes it to the cloud.
     @discardableResult
     func unplaceBlock(_ blockId: String) async -> CanvasBlock? {
+        if let compositionSession {
+            let block = blocks.first { $0.id == blockId }
+            if let block { compositionSession.hide(block) }
+            blocks = compositionSession.projectedBlocks(); return block
+        }
+        guard !SpaceCompositionCanvasSession.isProjectedID(blockId) else { return nil }
         let removed = blocks.first { $0.id == blockId }
         withAnimation(.easeOut(duration: 0.15)) {
             blocks.removeAll { $0.id == blockId }
@@ -1000,6 +1065,8 @@ class SpatialEngine {
 
     /// Undo of `unplaceBlock`: the exact placement comes back.
     func restorePlacement(_ block: CanvasBlock) async {
+        if let compositionSession { _ = compositionSession.saveGeometry(block); blocks = compositionSession.projectedBlocks(); return }
+        guard !SpaceCompositionCanvasSession.isProjectedID(block.id) else { return }
         var placed = block
         placed.isPlaced = true
         if !blocks.contains(where: { $0.id == block.id }) {
@@ -1023,6 +1090,11 @@ class SpatialEngine {
     /// position and joins the world. Returns the live block.
     @discardableResult
     func placeMember(entityUuid: String, at position: CGPoint) async -> CanvasBlock? {
+        if let compositionSession {
+            guard let atom = try? await AtomRepository.shared.fetch(uuid: entityUuid) else { return nil }
+            let result = await compositionSession.add(CanvasBlock.fromAtom(atom, position: position))
+            blocks = compositionSession.projectedBlocks(); return result
+        }
         guard !entityUuid.isEmpty, let tsId = currentThinkspaceId else { return nil }
         if let existing = blocks.first(where: { $0.entityUuid == entityUuid }) {
             return existing
@@ -1073,6 +1145,15 @@ class SpatialEngine {
     /// Lay every unplaced member out on a grid around the anchor — one undo.
     @discardableResult
     func placeAllUnplaced(anchor: CGPoint) async -> [String] {
+        if let compositionSession {
+            let hidden = Set((try? compositionSession.container?.decodedSpaceCanvas().hiddenItemUUIDs) ?? [])
+            var placed: [String] = []
+            for atom in compositionSession.items where hidden.contains(atom.uuid) {
+                let block = CanvasBlock.fromAtom(atom, position: CGPoint(x: anchor.x + CGFloat(placed.count % 3) * 500, y: anchor.y + CGFloat(placed.count / 3) * 630))
+                if await compositionSession.add(block) != nil { placed.append(atom.uuid) }
+            }
+            blocks = compositionSession.projectedBlocks(); return placed
+        }
         guard let tsId = currentThinkspaceId,
               let members = try? await Self.fetchUnplacedMembers(thinkspaceId: tsId),
               !members.isEmpty else { return [] }

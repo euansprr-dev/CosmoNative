@@ -53,11 +53,11 @@ struct CommandKInlineFormModel: Equatable {
         case .createIdea:
             return "Create Idea"
         case .createNote:
-            return "Create Note"
+            return "Create Page"
         case .createContent:
             return "Create Content"
         case .createThinkspace:
-            return "Create Thinkspace"
+            return "Create Space"
         case .createInquiry:
             return "Start Inquiry"
         case .createQuicklink:

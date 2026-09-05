@@ -43,8 +43,9 @@ struct InboxHistoryEntry: Identifiable, Equatable {
     var subtitle: String {
         switch kind {
         case .capture(let item):
-            if item.status == .actioned, let destination = item.destinationPath ?? item.placeThinkspaceName {
-                return "Placed · \(destination)"
+            if item.status == .actioned {
+                if let outcome = item.metadataDictionary["actionOutcome"] as? String { return outcome }
+                return "Filed · \(item.destinationPath ?? item.placeThinkspaceName ?? "Saved capture")"
             }
             if item.status == .dismissed {
                 return "Dismissed capture"
@@ -134,6 +135,7 @@ extension InboxRouteKind {
     /// flows, orange only for merges (the caught-a-duplicate warning voice).
     var outcomeTint: Color {
         switch self {
+        case .fileToDestination: return DS.accent
         case .mergeAtom:
             return DS.orange
         case .feedConnection:

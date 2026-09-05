@@ -46,7 +46,7 @@ enum CosmoContextType: String, Codable, Sendable {
         case .researchFocusMode: return "Research"
         case .connectionFocusMode: return "Concept"
         case .ideaFocusMode: return "Idea"
-        case .noteFocusMode: return "Note"
+        case .noteFocusMode: return "Page"
         case .library: return "Library"
         case .plannerum: return "Plannerum"
         case .dayTimeline: return "Day Timeline"

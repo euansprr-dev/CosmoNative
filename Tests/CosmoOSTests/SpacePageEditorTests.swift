@@ -3,6 +3,46 @@ import GRDB
 @testable import CosmoOS
 
 final class SpacePageEditorTests: XCTestCase {
+    func testMatureEditorSaveMergesOnlyWritingKeysIntoFreshCompositionMetadata() throws {
+        let prepared = RichDocumentPersistence.noteSnapshot(existingMetadata: "{\"spaceComposition\":{\"parentUUID\":\"old\"},\"obsoleteAtSnapshot\":true}",
+            titleDocument: .migrateLegacy("Page title"), bodyDocument: .migrateLegacy("New words"), plainBodyText: "New words")
+        let fresh = "{\"spaceComposition\":{\"parentUUID\":\"new\",\"canvas\":{\"drawings\":[{\"id\":\"ink\"}]}},\"references\":[\"source\"],\"future\":true}"
+        let merged = try NoteEditorMetadataMerge.merging(fresh: fresh, prepared: prepared.metadata)
+        let fields = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(merged.utf8)) as? [String: Any])
+        let composition = try XCTUnwrap(fields["spaceComposition"] as? [String: Any])
+        XCTAssertEqual(composition["parentUUID"] as? String, "new")
+        XCTAssertNotNil(composition["canvas"])
+        XCTAssertEqual(fields["references"] as? [String], ["source"])
+        XCTAssertEqual(fields["future"] as? Bool, true)
+        XCTAssertNil(fields["obsoleteAtSnapshot"])
+        XCTAssertEqual(RichDocumentMetadataStorage.readDocument(from: merged, key: RichDocumentField.body.metadataKey)?.plainText, "New words")
+        XCTAssertThrowsError(try NoteEditorMetadataMerge.merging(fresh: "invalid", prepared: prepared.metadata))
+    }
+
+    func testWritingTailReusesAnEmptyParagraphAndKeepsRichBlocks() throws {
+        let document = RichDocument(blocks: [.table(RichTable()), .paragraph("Words")])
+        let first = BlockWritingTailPolicy.continuation(in: document)
+        XCTAssertEqual(Array(first.document.blocks.prefix(2)), document.blocks)
+        XCTAssertEqual(first.document.blocks.count, 3)
+        XCTAssertEqual(first.focusPath, .root(index: 2))
+        let second = BlockWritingTailPolicy.continuation(in: first.document)
+        XCTAssertEqual(second.document, first.document, "Repeated tail clicks must not create spare blank blocks")
+        XCTAssertEqual(second.focusPath, first.focusPath)
+        XCTAssertEqual(BlockWritingTailPolicy.continuation(in: .empty).document.blocks.count, 1)
+    }
+
+    @MainActor
+    func testClickCaretRequestRetainsPointAndIsCancelledWhenAnotherRowFocuses() {
+        let focus = BlockFocusCoordinator()
+        let first = UUID(), second = UUID()
+        focus.focus(first, caretOffsetFromEnd: 0, windowPoint: CGPoint(x: 81, y: 120))
+        XCTAssertEqual(focus.rowState(for: first).caretRequest?.windowPoint, CGPoint(x: 81, y: 120))
+        focus.focus(second)
+        XCTAssertNil(focus.rowState(for: first).caretRequest)
+        XCTAssertFalse(focus.rowState(for: first).isFocused)
+        XCTAssertTrue(focus.rowState(for: second).isFocused)
+    }
+
     private func page(_ document: RichDocument = .migrateLegacy("Original writing")) -> Atom {
         let fields = RichDocumentPersistence.writeAtomDocuments(existingMetadata: "{\"spaceComposition\":{\"parentUUID\":\"book\"},\"futureField\":true}", bodyDocument: document)
         return Atom.new(type: .note, title: "Chapter", body: document.plainText, metadata: fields.metadata)

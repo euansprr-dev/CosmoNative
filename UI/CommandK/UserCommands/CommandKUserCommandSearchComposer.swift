@@ -158,13 +158,13 @@ struct CommandKSystemCommandComposer {
         ),
         SystemCommand(
             id: "system-new-note",
-            title: "New Note",
-            subtitle: "Create a note and open the editor",
+            title: "New Page",
+            subtitle: "Write freely, from a thought to a chapter",
             category: "Create",
             kind: .createNote,
             icon: "doc.text",
             payload: CommandKActionPayload(rawText: "new note"),
-            aliases: ["new", "create", "new note", "create note", "note"],
+            aliases: ["new", "create", "new page", "create page", "page", "new note", "create note", "note"],
             priority: 105
         ),
         SystemCommand(
@@ -192,7 +192,7 @@ struct CommandKSystemCommandComposer {
         SystemCommand(
             id: "system-new-content",
             title: "New Content",
-            subtitle: "Create a content draft and open it",
+            subtitle: "Start a draft in your content pipeline",
             category: "Create",
             kind: .createContent,
             icon: "paperplane.fill",
@@ -213,13 +213,13 @@ struct CommandKSystemCommandComposer {
         ),
         SystemCommand(
             id: "system-new-thinkspace",
-            title: "New Thinkspace",
-            subtitle: "Name a fresh canvas workspace",
+            title: "New Space",
+            subtitle: "Bring a subject, collection, or project together",
             category: "Create",
             kind: .createThinkspace,
             icon: "rectangle.3.group",
             payload: CommandKActionPayload(rawText: "new thinkspace"),
-            aliases: ["new", "create", "new thinkspace", "create thinkspace"],
+            aliases: ["new", "create", "new space", "create space", "new thinkspace", "create thinkspace"],
             priority: 100
         ),
     ]

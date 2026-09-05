@@ -30,6 +30,7 @@ struct BlockRowView<Content: View>: View {
 
     @State private var hoverBox = BlockRowHoverBox()
     @State private var highlightedDropPosition: BlockDropPosition?
+    @State private var rowHeight: CGFloat = 0
 
     var body: some View {
         HStack(alignment: .top, spacing: 4) {
@@ -49,8 +50,16 @@ struct BlockRowView<Content: View>: View {
                 .frame(maxWidth: .infinity, alignment: .topLeading)
                 .background(selectionWash)
         }
-        .overlay(alignment: .top) { dropZone(.above) }
-        .overlay(alignment: .bottom) { dropZone(.below) }
+        .contentShape(Rectangle())
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { rowHeight = $0 }
+        // A drop destination on the row does not put a transparent view on
+        // top of the text or handle. One region resolves above/below by y.
+        .onDrop(of: [UTType.json.identifier], delegate: BlockRowDropDelegate(
+            targetBlockID: block.id,
+            rowHeight: rowHeight,
+            highlightedDropPosition: $highlightedDropPosition,
+            onMove: onMove
+        ))
         .overlay(alignment: .top) { dropIndicator(for: .above) }
         .overlay(alignment: .bottom) { dropIndicator(for: .below) }
         .onHover { hovering in
@@ -80,22 +89,6 @@ struct BlockRowView<Content: View>: View {
 
     // MARK: - Drop Targets
 
-    private func dropZone(_ position: BlockDropPosition) -> some View {
-        Rectangle()
-            .fill(Color.clear)
-            .frame(height: 14)
-            .contentShape(Rectangle())
-            .onDrop(
-                of: [UTType.json.identifier],
-                delegate: BlockRowDropDelegate(
-                    targetBlockID: block.id,
-                    position: position,
-                    highlightedDropPosition: $highlightedDropPosition,
-                    onMove: onMove
-                )
-            )
-    }
-
     @ViewBuilder
     private func dropIndicator(for position: BlockDropPosition) -> some View {
         if highlightedDropPosition == position {
@@ -114,6 +107,7 @@ struct BlockRowView<Content: View>: View {
                 .opacity(chrome.dropIndicatorOpacity)
                 .transition(.opacity)
                 .accessibilityHidden(true)
+                .allowsHitTesting(false)
         }
     }
 }
@@ -133,6 +127,7 @@ private struct BlockRowGutter: View {
     let handleMenu: (() -> BlockHandleMenuView)?
 
     @State private var isMenuPresented = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         let metrics = BlockInteractionPolicy.handleMetrics(for: block.kind)
@@ -140,8 +135,9 @@ private struct BlockRowGutter: View {
             insertButton(metrics: metrics)
             dragHandle(metrics: metrics)
         }
+        .contentShape(Rectangle())
         .opacity(gutterOpacity)
-        .animation(.spring(response: BlockMotionPolicy.chromeResponse, dampingFraction: BlockMotionPolicy.chromeDampingFraction), value: gutterOpacity)
+        .animation(reduceMotion ? nil : ProMotionSprings.hover, value: gutterOpacity)
     }
 
     private var gutterOpacity: Double {
@@ -241,18 +237,21 @@ private struct BlockRowDropDelegate: DropDelegate {
     /// this ID at commit time, never from a captured path (rows can skip
     /// re-renders across structural shifts, so captured paths go stale).
     let targetBlockID: UUID
-    let position: BlockDropPosition
+    let rowHeight: CGFloat
     @Binding var highlightedDropPosition: BlockDropPosition?
     var onMove: (BlockDragPayload, BlockDropPosition, UUID) -> Void
 
     func dropEntered(info: DropInfo) {
-        highlightedDropPosition = position
+        highlightedDropPosition = position(for: info)
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        highlightedDropPosition = position(for: info)
+        return DropProposal(operation: .move)
     }
 
     func dropExited(info: DropInfo) {
-        if highlightedDropPosition == position {
-            highlightedDropPosition = nil
-        }
+        highlightedDropPosition = nil
     }
 
     func validateDrop(info: DropInfo) -> Bool {
@@ -260,6 +259,7 @@ private struct BlockRowDropDelegate: DropDelegate {
     }
 
     func performDrop(info: DropInfo) -> Bool {
+        let position = position(for: info)
         highlightedDropPosition = nil
         guard let provider = info.itemProviders(for: [UTType.json.identifier]).first else {
             return false
@@ -274,5 +274,9 @@ private struct BlockRowDropDelegate: DropDelegate {
             }
         }
         return true
+    }
+
+    private func position(for info: DropInfo) -> BlockDropPosition {
+        info.location.y < rowHeight / 2 ? .above : .below
     }
 }

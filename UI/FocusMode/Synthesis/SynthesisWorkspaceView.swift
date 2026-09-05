@@ -421,7 +421,7 @@ struct SynthesisWorkspaceView: View {
                 HStack(spacing: 4) {
                     Image(systemName: "note.text")
                         .font(.system(size: 11, weight: .medium))
-                    Text("Create Note")
+                    Text("Create Page")
                         .font(.system(size: 12, weight: .medium))
                 }
                 .foregroundColor(DS.text)
